@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::{FixOrSuggest, get_fix_or_suggest};
+use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
@@ -20,10 +21,9 @@ const PREFER_RECORD_SUGGESTION: Message = Message::new(
     "Change into a record instead of an index signature.",
 );
 
-/// Whether there is a comment in `node` that is in none of `preserved`: a fix that only keeps the
-/// text of those would drop it.
+/// True if `node` has a comment outside all of `preserved`. A fix that only keeps the text of those would drop it.
 ///
-/// oxlint does not look for them.
+/// oxlint doesn't check for comments.
 fn has_unpreserved_comments<'a>(file: &'a File<'a>, node: Span, preserved: [Option<TypeNode<'a>>; 2]) -> bool {
     !file.language().is_oxlint
         && file
@@ -31,7 +31,7 @@ fn has_unpreserved_comments<'a>(file: &'a File<'a>, node: Span, preserved: [Opti
             .any(|comment| preserved.iter().flatten().all(|target| !target.span().contains(comment.span())))
 }
 
-/// The type alias that `ty` is part of, with no type annotation in between.
+/// Returns the type alias that `ty` is part of, with no type annotation in between.
 fn find_parent_declaration(ty: TypeNode<'_>) -> Option<Alias<'_>> {
     let mut at = Node::Type(ty);
     loop {
@@ -54,8 +54,8 @@ fn find_parent_declaration(ty: TypeNode<'_>) -> Option<Alias<'_>> {
 
 type Nodes<'a> = SmallVec<[Node<'a>; 4]>;
 
-/// What typescript-eslint's `isDeeplyReferencingType` goes on with from `node`. It looks a name up in `scope`, that of the type
-/// that must not refer to itself, wherever the name is written.
+/// Returns the nodes typescript-eslint's `isDeeplyReferencingType` visits next from `node`. Wherever a name is written,
+/// it's looked up in `scope`, the scope of the type that must not refer to itself.
 fn referenced_by<'a>(node: Node<'a>, scope: Scope<'a>) -> Nodes<'a> {
     let types = |types: &[TypeNode<'a>]| -> Nodes<'a> { types.iter().map(|it| Node::Type(*it)).collect() };
     match node {
@@ -84,8 +84,8 @@ fn referenced_by<'a>(node: Node<'a>, scope: Scope<'a>) -> Nodes<'a> {
     }
 }
 
-/// Whether there is a way from `from` to `to`, which is not empty, with the names looked up in `scope`.
-fn leads<'a>(from: Node<'a>, to: Node<'a>, scope: Scope<'a>) -> bool {
+/// True if there's a non-empty path from `from` to `to`, with names looked up in `scope`.
+fn has_path<'a>(from: Node<'a>, to: Node<'a>, scope: Scope<'a>) -> bool {
     let mut visited: FxHashSet<Node<'a>> = FxHashSet::default();
     let mut stack = referenced_by(from, scope);
     while let Some(node) = stack.pop() {
@@ -99,24 +99,24 @@ fn leads<'a>(from: Node<'a>, to: Node<'a>, scope: Scope<'a>) -> bool {
     false
 }
 
-/// typescript-eslint's `isDeeplyReferencingType` of each of `nodes`: whether it refers to `super_var`, directly or through other
-/// types. It compares names and not variables.
+/// typescript-eslint's `isDeeplyReferencingType` for each of `nodes`: true if one refers to `super_var`, directly or
+/// through other types. It compares names, not variables.
 fn is_deeply_referencing_type<'a>(nodes: impl IntoIterator<Item = Node<'a>>, super_var: Symbol<'a>) -> bool {
     if super_var.references().next().is_none() {
         return false;
     }
-    // Only its name leads to its declarations.
+    // Its declarations can only be reached through its name.
     let scope = super_var.scope();
     let declarations: Nodes<'a> = super_var.declarations().filter_map(Declaration::node).collect();
-    nodes.into_iter().any(|node| declarations.iter().any(|it| leads(node, *it, scope)))
+    nodes.into_iter().any(|node| declarations.iter().any(|it| has_path(node, *it, scope)))
 }
 
 fn any_is_referencing<'a>(types: List<'a, TypeNode<'a>>, super_var: Symbol<'a>) -> bool {
     is_deeply_referencing_type(types.iter().map(Node::Type), super_var)
 }
 
-/// typescript-eslint's `checkMembers`. `node`: the type literal, or the statement of `interface`.
-/// `parent`: the interface or the type alias that must not refer to itself, and its name.
+/// typescript-eslint's `checkMembers`. `node` is the type literal or the `interface` statement. `parent` is the
+/// interface or type alias that must not refer to itself, with its name.
 fn check_members<'a>(
     members: List<'a, Member<'a>>,
     node: Node<'a>,
@@ -147,7 +147,7 @@ fn check_members<'a>(
     let (Some(key), Some(value)) = (parameter.ty(), func.return_type()) else {
         return;
     };
-    // oxlint's `contains_convertible_index_signature`: of two it reports the inner one.
+    // oxlint's `contains_convertible_index_signature`: of two nested ones it reports the inner one.
     if cx.language().is_oxlint
         && !value.is_parenthesized()
         && let TypeKind::Object(inner) = value.kind()
@@ -171,8 +171,11 @@ fn check_members<'a>(
         FixOrSuggest::Fix
     };
     // oxlint points at the index signature.
-    let place = if cx.language().is_oxlint { member.span() } else { at };
-    get_fix_or_suggest(cx.report(place, PREFER_RECORD), fix_or_suggest, PREFER_RECORD_SUGGESTION, |fixer| {
+    let report_span = if cx.language().is_oxlint { member.span() } else { at };
+    let fix = |fixer: Fixer<'a>| {
+        if interface.is_some_and(is_declared_again) {
+            return None;
+        }
         let mut text = Vec::new();
         if let Some(interface) = interface {
             text.extend_from_slice(b"type ");
@@ -197,8 +200,13 @@ fn check_members<'a>(
         if interface.is_some() {
             text.push(b';');
         }
-        fixer.replace(at, text)
-    });
+        Some(fixer.replace(at, text))
+    };
+    let report = cx.report(report_span, PREFER_RECORD);
+    match fix_or_suggest {
+        FixOrSuggest::Fix => report.fix_where_safe(|| interface.is_none_or(is_only_declaration), fix),
+        _ => get_fix_or_suggest(report, fix_or_suggest, PREFER_RECORD_SUGGESTION, fix),
+    };
 }
 
 impl ConsistentIndexedObjectStyle {
@@ -236,7 +244,7 @@ impl ConsistentIndexedObjectStyle {
         let Some(constraint) = mapped.param().constraint() else {
             return;
         };
-        // Modifiers are preserved by such a mapped type, and not by `Record`.
+        // Such a mapped type preserves modifiers, and `Record` doesn't.
         if constraint.tag() == TypeTag::Keyof && !constraint.is_parenthesized() {
             return;
         }
@@ -244,10 +252,10 @@ impl ConsistentIndexedObjectStyle {
         if mapped.param().symbol().is_some_and(|key| key.references().any(Reference::is_type)) {
             return;
         }
-        // oxlint looks for a circle only if the mapped type is all of the alias.
-        let is_all_of_alias = matches!(ty.parent(), Node::Stmt(_)) && !ty.is_parenthesized();
+        // oxlint only looks for a cycle if the mapped type is the alias's whole type.
+        let is_whole_alias = matches!(ty.parent(), Node::Stmt(_)) && !ty.is_parenthesized();
         if let Some(alias) = find_parent_declaration(ty)
-            && (is_all_of_alias || !cx.language().is_oxlint)
+            && (is_whole_alias || !cx.language().is_oxlint)
             && let Some(super_var) = Node::Type(ty).scope().resolve_name(alias.name().name())
         {
             let is_circular = match ty.parent() {

@@ -218,7 +218,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
   );
 });
 
-// What the kernel does for a filesystem without symlinks: the path is looked up first.
+// This is what the kernel does for a file system without symlinks: the path is looked up first.
 const symlinkShimC = (errno: string) => /* c */ `
 #define _GNU_SOURCE
 #include <errno.h>

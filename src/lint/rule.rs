@@ -1,4 +1,4 @@
-//! What a lint rule is.
+//! The definition of a lint rule.
 //!
 //! ```ignore
 //! /// Disallow the use of `debugger`.
@@ -21,21 +21,20 @@
 //! }
 //! ```
 //!
-//! A rule is created once for each distinct set of options, and shared by all threads. What it
-//! listens to is a constant, [`Rule::ON`]: which of its methods are called is known when it is
-//! compiled. For each file that has something of that, [`Rule::start`] returns the state that it
-//! keeps while the file is linted.
+//! A rule is created once per distinct set of options and shared by all threads. What it listens to
+//! is a constant, [`Rule::ON`], so which of its methods get called is known at compile time. For
+//! each file that has any of those nodes, [`Rule::start`] returns the state that the rule keeps
+//! while the file is linted.
 //!
-//! How rules are run is designed around the HIR, which stores the nodes of a file in one vector
-//! per sort:
-//! - [`Rule::expr`], [`Rule::stmt`] and the like are called with every such node of the file, one
-//!   sort after the other, each in a tight loop over the nodes of the kinds that `ON` names. There
-//!   is no walk over the tree, and no work for a node that nobody listens for. The nodes come **in
-//!   no particular order**.
-//! - A rule that depends on the order, because it pushes on entering a function and pops on
-//!   leaving it, has [`Rule::enter`] and [`Rule::exit`]. The nodes that are listened for so are
-//!   put in order once for all rules, and only if there are any. Most rules do not need it: from
-//!   any node the way up is a few loads ([`Node::ancestors`](crate::ast::Node::ancestors)).
+//! The way rules run is designed around the HIR, which stores a file's nodes in one vector per sort:
+//! - [`Rule::expr`], [`Rule::stmt`] and the like are called with every such node in the file, one
+//!   sort after the other, each in a tight loop over the nodes of the kinds listed in `ON`. There's
+//!   no tree walk, and no work for a node that no rule listens for. The nodes come **in no
+//!   particular order**.
+//! - A rule that depends on the order, e.g. because it pushes on entering a function and pops on
+//!   leaving it, uses [`Rule::enter`] and [`Rule::exit`]. The nodes with such listeners are sorted
+//!   once for all rules, and only if there are any. Most rules don't need this: walking up from any
+//!   node takes a few loads ([`Node::ancestors`](crate::ast::Node::ancestors)).
 //! - [`Rule::finish`] is called last.
 
 use crate::ast::{
@@ -48,17 +47,17 @@ use crate::options::Options;
 use crate::semantic::Symbol;
 use bun_wyhash::hash_const;
 
-/// A message that a rule reports. `{{name}}` in `text` is replaced by what
-/// [`Report::data`](crate::context::Report::data) provides.
+/// A message that a rule reports. `{{name}}` in `text` is replaced with the value passed to
+/// [`Report::data`](crate::context::Report::data).
 #[derive(Copy, Clone, Debug)]
 pub struct Message {
     /// ESLint's `messageId`.
     pub id: &'static str,
     pub text: &'static str,
-    /// Whether there is a `{{` in `text`.
+    /// True if `text` contains a `{{`.
     pub(crate) may_have_placeholders: bool,
-    /// A hash of `id` and `text`. By it and [`Meta::key`], [`oxlint_help`](crate::oxlint_help) finds what belongs to a message of a
-    /// rule. Both are constants, and so are these.
+    /// A hash of `id` and `text`. [`oxlint_help`](crate::oxlint_help) uses it with [`Meta::key`] to look up the help
+    /// for a rule's message. `id` and `text` are constants, so both keys are too.
     pub(crate) key: u32,
 }
 
@@ -80,47 +79,47 @@ impl Message {
     }
 }
 
-/// Who answers for the rules of a plugin in a configuration of ESLint.
+/// Which implementation runs a plugin's rules under an ESLint config.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum UnderEslint {
-    /// The rules here, and no configuration, whosever it is, has to name the plugin: those of ESLint itself, and Bun's.
+    /// The built-in rules, and no tool's config has to list the plugin. These are ESLint's own rules and Bun's.
     Always,
-    /// The rules here. There is no package that could.
+    /// The built-in rules. There's no package that could run instead.
     Here,
-    /// The rules here, in place of those of the package of that name, which is loaded for the rules that do not exist
-    /// here. Without a name: whatever the plugin of the configuration says it is called. And the version of the package that
-    /// the rules here do the same as.
-    InPlaceOf(Option<&'static str>, &'static str),
-    /// Like `InPlaceOf`, for a plugin that defines [languages](crate::languages) and rules for files in those
+    /// The built-in rules, replacing those of the package with this name. The package is still loaded for the rules
+    /// that aren't built in. Without a name, it doesn't matter what the config's plugin says it's called. The second
+    /// field is the package version that the built-in rules match.
+    Replaces(Option<&'static str>, &'static str),
+    /// Like `Replaces`, for a plugin that defines [languages](crate::languages) and rules for files in those
     /// languages. Only ESLint has languages, so the plugin doesn't exist with any other config, or without a config.
     Languages(&'static str, &'static str),
-    /// The package of the project, which has other messages and other options: the rules here are those of oxlint,
-    /// for a configuration of oxlint.
+    /// The project's package, which has different messages and options. The built-in rules are oxlint's, for an oxlint
+    /// config.
     Package,
 }
 
-/// What a plugin is called, and who answers for it.
+/// A plugin's names, and which implementation runs it.
 struct Names {
-    /// What can be before the `/`. The first is in the name that a rule is reported under, which is the name that is
-    /// usual with ESLint. The others are what oxlint calls the plugin.
+    /// The prefixes allowed before the `/`. The first one is used in the name that a rule is reported under, and it's
+    /// the usual name with ESLint. The others are oxlint's names for the plugin.
     prefixes: &'static [&'static str],
     under_eslint: UnderEslint,
     has: Has,
 }
 
-/// How many of the rules of a plugin exist here. With a part of them, a rule that does not, and that only a comment
-/// names, is one of the package, and no mistake.
+/// How many of a plugin's rules are built in. With `Part`, an unknown rule that's only mentioned in a comment is
+/// assumed to belong to the package, so it isn't an error.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Has {
     Whole,
     Part,
-    /// oxlint has the plugin built in. Its configuration can name the plugin and its rules, which do not run.
+    /// oxlint has the plugin built in. Its config can list the plugin and its rules, but they don't run.
     Nothing,
 }
 
 macro_rules! plugins {
     ($($(#[$example:meta])* $plugin:ident: $prefixes:expr, $under_eslint:expr, $has:ident;)*) => {
-        /// Where a rule is from. It decides the prefix of its name in a configuration.
+        /// Where a rule comes from. It determines the prefix of the rule's name in a config.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         pub enum Plugin {
             $($(#[$example])* $plugin,)*
@@ -130,7 +129,7 @@ macro_rules! plugins {
             pub(crate) const ALL: &'static [Plugin] = &[$(Plugin::$plugin),*];
 
             const fn names(self) -> Names {
-                use UnderEslint::{Always, Here, InPlaceOf, Languages, Package};
+                use UnderEslint::{Always, Here, Replaces, Languages, Package};
                 match self {
                     $(Plugin::$plugin => Names {
                         prefixes: &$prefixes,
@@ -143,27 +142,27 @@ macro_rules! plugins {
     };
 }
 
-// The one place that says what a plugin is called and who answers for it: what finds a rule by its name, what reads the
-// `plugins` of a configuration and what decides whether a package is loaded all ask here. oxlint has the rules of
-// `react-hooks` in `react`. Two lists answer other questions: the order in which oxlint looks for a name without a
-// prefix (`PLUGINS_OF_OXLINT`), and that in which its rules report at one node (`order_fixes_as_oxlint`).
+// The single source of truth for a plugin's names and which implementation runs it. Looking up a rule by name, reading
+// a config's `plugins` and deciding whether to load a package all go through it. oxlint has the `react-hooks` rules in
+// `react`. Two other lists answer different questions: the order in which oxlint searches for a name without a prefix
+// (`OXLINT_PLUGINS`), and the order in which its rules report at the same node (`order_fixes_as_oxlint`).
 plugins! {
     /// `no-debugger`
     Eslint: ["", "eslint"], Always, Whole;
     /// `@typescript-eslint/no-explicit-any`
-    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None, "8.71.1"), Whole;
+    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], Replaces(None, "8.71.1"), Whole;
     /// `react-hooks/rules-of-hooks`
-    ReactHooks: ["react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
+    ReactHooks: ["react-hooks", "react_hooks"], Replaces(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
     /// `import/no-cycle`
-    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"), "2.32.0"), Part;
+    Import: ["import", "import-x"], Replaces(Some("eslint-plugin-import"), "2.32.0"), Part;
     /// `n/no-unsupported-features/es-syntax`
-    Node: ["n", "node"], InPlaceOf(Some("eslint-plugin-n"), "18.4.1"), Part;
+    Node: ["n", "node"], Replaces(Some("eslint-plugin-n"), "18.4.1"), Part;
     /// `oxc/no-accumulating-spread`
     Oxc: ["oxc"], Here, Part;
     /// `unicorn/no-null`
     Unicorn: ["unicorn"], Package, Part;
     /// `react/jsx-key`
-    React: ["react", "react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react"), "7.37.5"), Part;
+    React: ["react", "react-hooks", "react_hooks"], Replaces(Some("eslint-plugin-react"), "7.37.5"), Part;
     /// `react-perf/jsx-no-new-object-as-prop`
     ReactPerf: ["react-perf", "react_perf"], Package, Part;
     /// `jsx-a11y/alt-text`
@@ -185,7 +184,7 @@ plugins! {
     /// `bun:test/no-focused-tests`
     BunTest: ["bun:test"], Always, Whole;
     /// `prettier/prettier`
-    Prettier: ["prettier"], InPlaceOf(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
+    Prettier: ["prettier"], Replaces(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
     /// `json/no-duplicate-keys`
     Json: ["json"], Languages("@eslint/json", "2.1.1"), Whole;
     /// `markdown/no-html`
@@ -193,7 +192,7 @@ plugins! {
 }
 
 impl Plugin {
-    /// What is before the `/` in the name that a rule is reported under. Empty for a rule of ESLint.
+    /// The part before the `/` in the name that a rule is reported under. Empty for ESLint's own rules.
     pub const fn prefix(self) -> &'static str {
         match self.names().prefixes.first() {
             Some(prefix) => *prefix,
@@ -201,16 +200,15 @@ impl Plugin {
         }
     }
 
-    fn is_called(self, prefix: &[u8]) -> bool {
+    fn has_prefix(self, prefix: &[u8]) -> bool {
         self.names()
             .prefixes
             .iter()
             .any(|it| it.as_bytes() == prefix)
     }
 
-    /// Whether its rules can be configured without the plugin being named. A plugin of the project with that name hides
-    /// it.
-    pub fn is_always_there(self) -> bool {
+    /// True if its rules can be configured without listing the plugin. A project plugin with the same name shadows it.
+    pub fn is_always_available(self) -> bool {
         self.names().under_eslint == UnderEslint::Always
     }
 
@@ -218,46 +216,45 @@ impl Plugin {
         self.names().has == Has::Whole
     }
 
-    /// None of its rules is here.
+    /// True if none of its rules are built in.
     pub fn has_no_rules(self) -> bool {
         self.names().has == Has::Nothing
     }
 
-    fn is_only_of_oxlint(self) -> bool {
+    fn is_oxlint_only(self) -> bool {
         self.names().under_eslint == UnderEslint::Package
     }
 
-    /// The plugin that a configuration or a comment calls `prefix`: by the name that is usual with ESLint, or by one
-    /// that oxlint has for it.
-    pub fn of_prefix(prefix: &[u8]) -> Option<Plugin> {
+    /// The plugin that a config or comment calls `prefix`, by its usual ESLint name or by one of oxlint's names.
+    pub fn from_prefix(prefix: &[u8]) -> Option<Plugin> {
         let all = || {
             Plugin::ALL
                 .iter()
                 .copied()
-                .filter(|it| !it.is_only_of_oxlint())
+                .filter(|it| !it.is_oxlint_only())
         };
-        // `react-hooks` is also what oxlint calls its `react`.
+        // `react-hooks` is also one of oxlint's names for its `react`.
         all()
             .find(|it| it.prefix().as_bytes() == prefix)
-            .or_else(|| all().find(|it| it.is_called(prefix)))
+            .or_else(|| all().find(|it| it.has_prefix(prefix)))
     }
 
-    /// The same in a configuration of oxlint and in the comments of a file that is linted with one. oxlint has more
-    /// plugins built in. With ESLint these are packages of the project.
-    pub fn of_oxlint_prefix(prefix: &[u8]) -> Option<Plugin> {
+    /// Same, for an oxlint config and the comments of a file linted with one. oxlint has more plugins built in. With
+    /// ESLint those are packages in the project.
+    pub fn from_oxlint_prefix(prefix: &[u8]) -> Option<Plugin> {
         let mut all = Plugin::ALL.iter().copied();
-        all.find(|it| it.is_only_of_oxlint() && it.is_called(prefix))
-            .or_else(|| Plugin::of_prefix(prefix))
+        all.find(|it| it.is_oxlint_only() && it.has_prefix(prefix))
+            .or_else(|| Plugin::from_prefix(prefix))
             .filter(|it| !matches!(it.names().under_eslint, UnderEslint::Languages(..)))
             .map(Plugin::in_oxlint)
     }
 
-    /// Whether the rules here answer for the plugin that a configuration of ESLint has as `prefix`, in place of those
-    /// of the package: it has the name that is usual for it, and it is that package. `package`: what the plugin says it
-    /// is called, if it says so.
-    pub(crate) fn answers_in_place_of(prefix: &[u8], package: Option<&[u8]>) -> bool {
+    /// True if the built-in rules replace the package's for the plugin that an ESLint config registers as `prefix`.
+    /// That requires the plugin's usual prefix and the matching package. `package` is the name the plugin reports for
+    /// itself, if any.
+    pub(crate) fn replaces_package(prefix: &[u8], package: Option<&[u8]>) -> bool {
         Plugin::ALL.iter().any(|it| match it.names().under_eslint {
-            UnderEslint::InPlaceOf(usual, _) => {
+            UnderEslint::Replaces(usual, _) => {
                 it.prefix().as_bytes() == prefix
                     && (usual.zip(package))
                         .is_none_or(|(usual, package)| usual.as_bytes() == package)
@@ -270,17 +267,15 @@ impl Plugin {
         })
     }
 
-    /// Whether, with a configuration of ESLint, the rules here answer for the plugin that is usually called `prefix`.
+    /// True if, with an ESLint config, the built-in rules run for the plugin usually called `prefix`.
     pub fn is_native_under_eslint(prefix: &[u8]) -> bool {
-        Plugin::answers_in_place_of(prefix, None)
+        Plugin::replaces_package(prefix, None)
     }
 
-    /// The version of the package that the rules here do the same as, if they answer in place of one.
+    /// The package version that the built-in rules match, if they replace a package.
     pub fn follows(self) -> Option<&'static str> {
         match self.names().under_eslint {
-            UnderEslint::InPlaceOf(_, version) | UnderEslint::Languages(_, version) => {
-                Some(version)
-            }
+            UnderEslint::Replaces(_, version) | UnderEslint::Languages(_, version) => Some(version),
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
         }
     }
@@ -288,7 +283,7 @@ impl Plugin {
     /// The package that the built-in rules replace, if they only replace that specific package.
     pub fn package(self) -> Option<&'static str> {
         match self.names().under_eslint {
-            UnderEslint::InPlaceOf(package, _) => package,
+            UnderEslint::Replaces(package, _) => package,
             UnderEslint::Languages(package, _) => Some(package),
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
         }
@@ -327,7 +322,7 @@ impl Plugin {
         }
     }
 
-    /// The plugin of oxlint that has the rules of this one: those of `react-hooks` are in its `react`.
+    /// The oxlint plugin that has this plugin's rules. The `react-hooks` rules are in its `react`.
     pub const fn in_oxlint(self) -> Plugin {
         match self {
             Plugin::ReactHooks => Plugin::React,
@@ -345,6 +340,9 @@ bitflags::bitflags! {
         const NEXT = 1 << 1;
         const JEST = 1 << 2;
         const VITEST = 1 << 3;
+        /// Not a framework. Set if the nearest package.json has `"type": "module"`. It's a flag here because it's read
+        /// from the same file, and config objects test for it the same way.
+        const TYPE_MODULE = 1 << 4;
         /// Monorepos usually list these only in the root package.json, so nested packages inherit them.
         const TEST_RUNNERS = Self::JEST.bits() | Self::VITEST.bits();
     }
@@ -360,7 +358,7 @@ impl Frameworks {
     ];
 }
 
-/// The major and the minor version in `version`.
+/// The major and minor version in `version`.
 pub fn minor_of(version: &[u8]) -> Option<(u32, u32)> {
     let mut parts = bun_core::strings::split(version, b".");
     let mut number = || std::str::from_utf8(parts.next()?).ok()?.parse().ok();
@@ -376,7 +374,7 @@ pub enum Kind {
     Suggestion,
     /// Whitespace, semicolons, commas, parentheses.
     Layout,
-    /// The rule does not say.
+    /// The rule doesn't specify one.
     None,
 }
 
@@ -389,12 +387,12 @@ pub enum Fixable {
 }
 
 bitflags::bitflags! {
-    /// The configurations that ESLint and typescript-eslint publish, and that enable the rule.
+    /// The configs published by ESLint and typescript-eslint that enable the rule.
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub struct Presets: u8 {
         /// `js.configs.recommended`, `tseslint.configs.recommended`
         const RECOMMENDED = 1 << 0;
-        /// `tseslint.configs.recommendedTypeChecked`, and not `recommended`
+        /// `tseslint.configs.recommendedTypeChecked`, but not `recommended`
         const RECOMMENDED_TYPE_CHECKED = 1 << 1;
         /// `tseslint.configs.strict`
         const STRICT = 1 << 2;
@@ -405,12 +403,12 @@ bitflags::bitflags! {
     }
 }
 
-/// When the original reports: it decides about the order of what starts at one place.
+/// When the original rule reports. This determines the order of reports that start at the same position.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum When {
-    /// Before any node, rule by rule: `run_once` of a rule of oxlint, [`Meta::reports_on_creation`].
+    /// Before any node, rule by rule: an oxlint rule's `run_once`, or [`Meta::reports_on_creation`].
     Once,
-    /// In a listener that is called on entering a node: the longer first.
+    /// In a listener called on entering a node. Longer nodes come first.
     Entering,
     /// [`Report::by_selector`](crate::context::Report::by_selector)
     EnteringBySelector,
@@ -422,38 +420,38 @@ pub enum When {
     LeavingCodePath,
     /// [`Meta::reports_at_the_end`]
     AtTheEnd,
-    /// After everything else, the longer first: what tsgolint reports.
+    /// After everything else, longer nodes first. This is for tsgolint's reports.
     Last,
 }
 
 /// ESLint's `meta`.
 #[derive(Copy, Clone, Debug)]
 pub struct Meta {
-    /// Without the prefix of the plugin.
+    /// Without the plugin's prefix.
     pub name: &'static str,
     pub plugin: Plugin,
     pub kind: Kind,
     pub fixable: Fixable,
     pub has_suggestions: bool,
     pub presets: Presets,
-    /// It runs only on a file of a program that has been type checked, and
-    /// [`File::types`](crate::ast::File::types) never fails in it.
+    /// The rule only runs on files of a type-checked program, where [`File::types`](crate::ast::File::types) never
+    /// fails.
     pub requires_types: bool,
     /// The rule also runs without types, and uses them in files that have them.
     pub uses_types: bool,
     pub is_deprecated: bool,
-    /// The rule of ESLint that this rule of typescript-eslint replaces.
+    /// The ESLint rule that this typescript-eslint rule replaces.
     pub extends_base_rule: Option<&'static str>,
-    /// For a rule without types: the rule of typescript-eslint that looks for the same with types. See
-    /// [`Pairs`](crate::rule_set::Pairs), which is made of it when the linter is compiled.
+    /// For a rule without types: the typescript-eslint rule that checks the same thing with types. See
+    /// [`Pairs`](crate::rule_set::Pairs), which is built from this at compile time.
     pub(crate) with_types: Option<&'static str>,
-    /// It is about several files: see [`modules`](crate::modules).
+    /// The rule looks at several files. See [`modules`](crate::modules).
     pub needs_modules: bool,
     /// The rule is a port of oxlint's version, not of the ESLint plugin's, so the messages, locations, fixes and options are
     /// oxlint's. It doesn't exist with an ESLint config. The project's installed package runs there instead.
     pub follows_oxlint: bool,
-    /// The rule stands in for that of a package only for some files: for the others it calls `File::hand_back`, and the
-    /// rule of the package is asked.
+    /// The rule only replaces a package's rule for some files. For the others it calls `File::hand_back`, and the
+    /// package's rule runs.
     pub hands_back: bool,
     /// Upstream sets `fixable`, but the rule never attaches a fix. `--rules` and the docs don't list it as fixable.
     pub never_fixes: bool,
@@ -505,12 +503,12 @@ impl Meta {
         Meta::new(Plugin::TypeScript, name, kind)
     }
 
-    /// A rule of another plugin.
+    /// A rule from another plugin.
     pub const fn plugin(plugin: Plugin, name: &'static str, kind: Kind) -> Meta {
         Meta::new(plugin, name, kind)
     }
 
-    /// A rule of a plugin that is built into oxlint, as oxlint has it: [`Meta::follows_oxlint`].
+    /// A rule from a plugin that's built into oxlint, ported from oxlint's version: [`Meta::follows_oxlint`].
     pub const fn oxlint(plugin: Plugin, name: &'static str, kind: Kind) -> Meta {
         let mut meta = Meta::new(plugin, name, kind);
         meta.follows_oxlint = true;
@@ -557,8 +555,8 @@ impl Meta {
         self
     }
 
-    /// Whether enabling this rule gets a file type checked, if the file's config asks for types.
-    pub const fn asks_types(&self) -> bool {
+    /// True if enabling this rule gets a file type checked, provided the file's config asks for types.
+    pub const fn triggers_type_check(&self) -> bool {
         self.requires_types || self.uses_types
     }
 
@@ -592,29 +590,29 @@ impl Meta {
         self
     }
 
-    /// Of what starts at one place, what this rule reports comes before all that is reported for a node, by the order of the
-    /// rules: as from `create`, which ESLint calls for every rule before it visits the first node.
+    /// Among reports that start at the same position, this rule's come before everything reported for a node, in rule
+    /// order. That matches reports from `create`, which ESLint calls for every rule before it visits the first node.
     pub const fn reports_on_creation(mut self) -> Meta {
         self.reports = When::Once;
         self
     }
 
-    /// Of what starts at one place, what this rule reports comes last, and of that the shorter first: as from a listener that
-    /// is called on leaving a node, the inner node first. Without it the longer comes first.
+    /// Among reports that start at the same position, this rule's come last, shorter nodes first. That matches a
+    /// listener called on leaving a node, where the inner node comes first. Without this, longer nodes come first.
     pub const fn reports_on_exit(mut self) -> Meta {
         self.reports = When::Leaving;
         self
     }
 
-    /// As [`Meta::reports_on_exit`], for a rule that reports when the code path of a function ends: ESLint calls the listeners on
-    /// leaving the function first.
+    /// Like [`Meta::reports_on_exit`], for a rule that reports when a function's code path ends. ESLint calls the
+    /// listeners for leaving the function first.
     pub const fn reports_on_code_path_end(mut self) -> Meta {
         self.reports = When::LeavingCodePath;
         self
     }
 
-    /// Of what starts at one place, what this rule reports comes after all that is reported for a node, by the order of the rules:
-    /// as from a listener that is called when the program ends.
+    /// Among reports that start at the same position, this rule's come after everything reported for a node, in rule
+    /// order. That matches a listener called at the end of the program.
     pub const fn reports_at_the_end(mut self) -> Meta {
         self.reports = When::AtTheEnd;
         self
@@ -640,42 +638,46 @@ impl Meta {
 pub trait Rule: Send + Sync + Sized + 'static {
     const META: Meta;
 
-    /// What it listens to: the methods below that are called. A file that has none of it is passed over without a call.
+    /// The nodes the rule listens to, which determines which of the methods below are called. A file that has none of
+    /// them is skipped without a call.
     const ON: On;
 
-    /// What the rule keeps while one file is linted: [`Cx::state`]. [`no_state!`](crate::no_state) writes this line and
-    /// [`Rule::start`] for a rule that keeps nothing.
+    /// The state the rule keeps while one file is linted: [`Cx::state`]. [`no_state!`](crate::no_state) writes this
+    /// line and [`Rule::start`] for a stateless rule.
     type State<'a>;
 
-    /// `options`: what follows the severity in the configuration. They have passed the schema and not yet [`Rule::validate`],
-    /// which is asked afterwards: this takes whatever the schema lets through, without a panic. What it makes of options that
-    /// `validate` refuses lints nothing.
+    /// `options` is whatever follows the severity in the config. It has passed the schema but not yet
+    /// [`Rule::validate`], which runs afterwards, so this has to accept anything the schema allows without panicking. A
+    /// rule built from options that `validate` rejects never lints anything.
     fn new(options: &Options) -> Self;
 
-    /// What is wrong with `options` that the schema of the rule cannot tell, where ESLint's rule throws: the message.
+    /// Checks `options` for problems that the rule's schema can't express, where ESLint's rule throws. Returns the
+    /// message.
     fn validate(_options: &Options) -> Result<(), Vec<u8>> {
         Ok(())
     }
 
-    /// What of [`Rule::ON`] the rule listens to with its options, in this file: for a rule that is about fewer kinds then, or
-    /// about kinds that only its options know. What is not in `ON` does not count: which methods are called is a constant.
+    /// The subset of [`Rule::ON`] that the rule listens to in this file with its options. It's for a rule that needs
+    /// fewer kinds in some cases, or whose kinds depend on its options. Anything that isn't in `ON` is ignored, because
+    /// the set of called methods is a constant.
     #[inline(always)]
     fn narrow<'a>(&self, _file: &'a File<'a>) -> On {
         Self::ON
     }
 
-    /// Once for each file that has something of that, like ESLint's `create`. `None`: not this file.
+    /// Called once for each file that has any of those nodes, like ESLint's `create`. Return `None` to skip the file.
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>>;
 
-    // In no particular order within a kind. The sorts in this order, the kinds of a sort in the order of their `enum`.
+    // Calls come in no particular order within a kind. The sorts come in the order below, and a sort's kinds in `enum`
+    // order.
 
     /// Every expression of one of these kinds.
     fn expr<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
     /// Every `Dot`, `Index` and `Call` that is part of an optional chain ([`Expr::chain`] is not `Chain::No`): in
     /// `a?.b.c()` that is `a?.b`, `a?.b.c` and `a?.b.c()`. Not the `!` in a chain.
     fn optional_chain<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
-    /// Every [`ExprKind::Binary`](crate::ast::ExprKind::Binary) with one of these operators. A rule that is about `==`
-    /// is not called with the other operators, and not at all in a file without a `==`.
+    /// Every [`ExprKind::Binary`](crate::ast::ExprKind::Binary) with one of these operators. A rule about `==` isn't
+    /// called with other operators, and isn't called at all in a file without a `==`.
     fn binary<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
     /// Every [`ExprKind::Unary`](crate::ast::ExprKind::Unary) with one of these operators.
     fn unary<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
@@ -711,26 +713,26 @@ pub trait Rule: Send + Sync + Sized + 'static {
     /// Everything that the file declares in a scope: variables, functions, classes, parameters,
     /// imports, types, namespaces, enums.
     fn symbol<'a>(&self, _symbol: Symbol<'a>, _cx: &mut Cx<'a, Self>) {}
-    /// Every string in quotes, which is a `Literal` for ESLint: not only the expressions, also the keys of properties and
-    /// members, literal types, module specifiers, the names in quotes of imports and exports. Not the text in JSX.
+    /// Every quoted string, which is a `Literal` for ESLint. Besides expressions, that includes property and member
+    /// keys, literal types, module specifiers, and quoted names in imports and exports. It doesn't include JSX text.
     fn string_literal<'a>(&self, _literal: Literal<'a>, _cx: &mut Cx<'a, Self>) {}
-    /// The same for numbers, including `1n`.
+    /// Same for numbers, including `1n`.
     fn number_literal<'a>(&self, _literal: Literal<'a>, _cx: &mut Cx<'a, Self>) {}
-    /// Every node of one of these kinds: for a rule that learns from its options which kinds it is about.
+    /// Every node of one of these kinds. For a rule whose kinds depend on its options.
     fn node<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
 
-    // After those of all rules, in the order of the source.
+    // These run after all rules' methods above, in source order.
 
     /// Every node of one of these kinds, before its children.
     fn enter<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
     /// Every node of one of these kinds, after its children.
     fn exit<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
 
-    /// At the end.
+    /// Called last.
     fn finish(&self, _cx: &mut Cx<'_, Self>) {}
 }
 
-/// In the `impl` of a [`Rule`] that keeps nothing while a file is linted, and that is for every file.
+/// For the `impl` of a stateless [`Rule`] that runs on every file.
 #[macro_export]
 macro_rules! no_state {
     () => {
@@ -742,27 +744,27 @@ macro_rules! no_state {
     };
 }
 
-/// What a rule listens to: [`Rule::ON`]. Each method here names the method of [`Rule`] that is then called.
+/// The set of nodes a rule listens to: [`Rule::ON`]. Each method's docs link to the [`Rule`] method that it enables.
 ///
 /// `On::new().exprs(&[ExprTag::Call, ExprTag::New]).binaries(&[BinOp::EqEq]).funcs().finish()`
 #[derive(Copy, Clone)]
 pub struct On {
-    // A bit for each kind.
+    // One bit per kind.
     pub(crate) exprs: u64,
     pub(crate) binaries: u64,
     pub(crate) unaries: u64,
     pub(crate) stmts: u64,
     pub(crate) types: u64,
     pub(crate) pats: u64,
-    /// [`On::method_calls`]: a bit for each [`name_class`]. Then [`On::function_calls`]: a bit for each two classes.
+    /// [`On::method_calls`]: one bit per [`name_class`]. Then [`On::function_calls`]: one bit per two classes.
     calls: [u64; 3],
-    /// [`On::members_named`]: a bit for each [`name_class`].
+    /// [`On::members_named`]: one bit per [`name_class`].
     members: [u64; 2],
-    /// `mention_bit` of each of the names of `calls` and `members`, and how many they are. More than there is room for: it is
-    /// not known what they are.
-    mentions: [u16; On::MOST_MENTIONS],
+    /// `mention_bit` of each name in `calls` and `members`, and how many there are. If there are more than fit, the
+    /// names are unknown.
+    mentions: [u16; On::MAX_MENTIONS],
     mention_count: u8,
-    /// The constants below.
+    /// A combination of the constants below.
     sorts: u32,
     pub(crate) nodes: NodeTags,
     pub(crate) enter: NodeTags,
@@ -771,11 +773,12 @@ pub struct On {
 
 const _: () = assert!(ExprTag::COUNT <= 64 && StmtTag::COUNT <= 64 && TypeTag::COUNT <= 64);
 
-/// How many classes [`name_class`] tells apart.
+/// Number of classes that [`name_class`] distinguishes.
 pub(crate) const NAME_CLASSES: usize = 128;
 
-/// The class of a name. The calls and the members of a file are grouped by it. It depends on nothing but the text, so for a
-/// name in [`Rule::ON`] it is a constant of the program, and a file is asked for no name. Names that differ can be of one class.
+/// A name's class. A file's calls and members are grouped by it. It depends only on the text, so for a name in
+/// [`Rule::ON`] it's a compile-time constant, and no name has to be looked up in a file. Different names can have the
+/// same class.
 #[inline]
 pub(crate) const fn name_class(text: &[u8]) -> usize {
     let len = text.len();
@@ -831,7 +834,7 @@ impl On {
             pats: 0,
             calls: [0; 3],
             members: [0; 2],
-            mentions: [0; On::MOST_MENTIONS],
+            mentions: [0; On::MAX_MENTIONS],
             mention_count: 0,
             sorts: 0,
             nodes: NodeTags::EMPTY,
@@ -868,24 +871,24 @@ impl On {
         finish finish FINISH 15;
     }
 
-    /// [`Rule::expr`], with fewer `Call`s than `.exprs(&[ExprTag::Call])`: for a rule that does nothing with a call unless what
-    /// is called has one of a few names. What counts is [`Call::callee`](crate::ast::Call::callee), for which parentheses
-    /// and JSDoc casts are nothing. Every `Call` of a file is one of three:
-    /// - The callee is a `Dot` whose name is not private: `a.b()`, `a?.b()`, `a.b?.()`, `(a.b)()`, `super.b()`,
-    ///   `a.\u0062()`. The rule is called with it if the name, as [`Expr::member_name`] has it, is one of `names`.
+    /// [`Rule::expr`], with fewer `Call`s than `.exprs(&[ExprTag::Call])`. It's for a rule that ignores a call unless
+    /// the callee has one of a few names. The callee is [`Call::callee`](crate::ast::Call::callee), which skips
+    /// parentheses and JSDoc casts. Every `Call` in a file is one of three sorts:
+    /// - The callee is a `Dot` whose name isn't private: `a.b()`, `a?.b()`, `a.b?.()`, `(a.b)()`, `super.b()`,
+    ///   `a.\u0062()`. The rule is called with it if the name, as returned by [`Expr::member_name`], is one of `names`.
     /// - The callee is an identifier: `b()`, `b?.()`, `(b)()`. See [`On::function_calls`].
-    /// - All others: ``a["b"]()``, ``a[`b`]()``, `a.#b()`, `a.b!()`, `(a.b as T)()`, `(<T>a.b)()`, `a()()`, `super()`,
-    ///   `(a || b)()`, `(function () {})()`. The rule is called with all of them, and looks at them as it does today.
+    /// - Everything else: ``a["b"]()``, ``a[`b`]()``, `a.#b()`, `a.b!()`, `(a.b as T)()`, `(<T>a.b)()`, `a()()`,
+    ///   `super()`, `(a || b)()`, `(function () {})()`. The rule is called with all of them.
     ///
-    /// `new a.b()`, ``a.b`c` `` and `import()` are no `Call`s.
+    /// `new a.b()`, ``a.b`c` `` and `import()` aren't `Call`s.
     ///
-    /// **The rule still has to compare the name**: the calls are grouped by a class of names, so it is also called with
-    /// a few calls of other names. The calls that it is called with come in the order in which it would be called with
-    /// all, and where it would be. In a file that has none of them it is not started. A file that
-    /// [mentions](File::mentions) none of up to 12 names is not even asked for more than the calls of the third sort.
+    /// **The rule still has to compare the name.** Calls are grouped by name class, so the rule is also called with a
+    /// few calls of other names. The calls arrive in the same order and at the same point as they would with every
+    /// `Call` enabled. The rule isn't started in a file that has none of them. A file that [mentions](File::mentions)
+    /// none of up to 12 names is only searched for calls of the third sort.
     ///
-    /// With `.exprs(&[ExprTag::Call])` as well, the rule is called with every call. [`Rule::narrow`] of a rule with that in
-    /// its `ON` can name methods and functions that its options tell.
+    /// With `.exprs(&[ExprTag::Call])` as well, the rule is called with every call. If a rule has that in its `ON`, its
+    /// [`Rule::narrow`] can list methods and functions that come from its options.
     pub const fn method_calls(mut self, names: &[&str]) -> On {
         let mut at = 0;
         while at < names.len() {
@@ -902,7 +905,7 @@ impl On {
         self.with_mention_of(name)
     }
 
-    const MOST_MENTIONS: usize = 12;
+    const MAX_MENTIONS: usize = 12;
 
     const fn with_mention_of(mut self, name: &[u8]) -> On {
         let (bit, count) = (
@@ -910,27 +913,27 @@ impl On {
             self.mention_count as usize,
         );
         let mut at = 0;
-        while at < count && at < On::MOST_MENTIONS {
+        while at < count && at < On::MAX_MENTIONS {
             if self.mentions[at] == bit {
                 return self;
             }
             at += 1;
         }
-        if count < On::MOST_MENTIONS {
+        if count < On::MAX_MENTIONS {
             self.mentions[count] = bit;
         }
         self.mention_count = self.mention_count.saturating_add(1);
         self
     }
 
-    /// `mention_bit` of each name that a `Call` or a `Dot` by name can have. `None`: that is not known.
+    /// `mention_bit` of each name that a `Call` or `Dot` selected by name can have. `None` if that's unknown.
     #[inline]
     pub(crate) fn mentions(&self) -> Option<&[u16]> {
         self.mentions.get(..self.mention_count as usize)
     }
 
-    /// As [`On::method_calls`], and together with it: the `Call`s whose callee is an identifier that is one of `names`.
-    /// With only one of the two, the rule is called with no call of the other sort.
+    /// Like [`On::method_calls`], and can be combined with it: the `Call`s whose callee is an identifier in `names`.
+    /// With only one of the two, the rule isn't called with calls of the other sort.
     pub const fn function_calls(mut self, names: &[&str]) -> On {
         let mut at = 0;
         while at < names.len() {
@@ -951,9 +954,10 @@ impl On {
         self.method_calls(names).function_calls(names)
     }
 
-    /// [`Rule::expr`], with fewer `Dot`s than `.exprs(&[ExprTag::Dot])`: those whose name, as [`Expr::member_name`] has it, is
-    /// one of `names`, and all whose name is private (`a.#b`). As with [`On::method_calls`], the rule still has to compare
-    /// the name, the order is that in which it would be called with all, and `.exprs(&[ExprTag::Dot])` as well means all.
+    /// [`Rule::expr`], with fewer `Dot`s than `.exprs(&[ExprTag::Dot])`: those whose name, as returned by
+    /// [`Expr::member_name`], is one of `names`, plus all with a private name (`a.#b`). As with [`On::method_calls`],
+    /// the rule still has to compare the name, the order is the same as with every `Dot` enabled, and adding
+    /// `.exprs(&[ExprTag::Dot])` enables all of them.
     pub const fn members_named(mut self, names: &[&str]) -> On {
         let mut at = 0;
         while at < names.len() {
@@ -970,10 +974,10 @@ impl On {
         self.with_mention_of(name)
     }
 
-    /// The groups of the `Call`s by name that it is called with: see `runner::ByName`. None: it is called with all `Call`s or
-    /// with no `Call`.
+    /// The groups of `Call`s by name that the rule is called with: see `runner::ByName`. All zero if it's called with
+    /// every `Call` or with none.
     #[inline]
-    pub(crate) const fn groups_of_calls(self) -> [u64; 4] {
+    pub(crate) const fn call_name_groups(self) -> [u64; 4] {
         let [low, high, functions] = self.calls;
         match !self.has_expr(ExprTag::Call) && low | high | functions != 0 {
             true => [low, high, functions, 1],
@@ -981,9 +985,9 @@ impl On {
         }
     }
 
-    /// The same for the `Dot`s.
+    /// Same for `Dot`s.
     #[inline]
-    pub(crate) const fn groups_of_members(self) -> [u64; 4] {
+    pub(crate) const fn member_name_groups(self) -> [u64; 4] {
         let [low, high] = self.members;
         match !self.has_expr(ExprTag::Dot) && low | high != 0 {
             true => [low, high, 0, 1],
@@ -1014,7 +1018,7 @@ impl On {
         self
     }
 
-    /// The sorts that have kinds: the first row of each, and the one after its last.
+    /// The sorts that have kinds: each one's first row, and the row after its last.
     pub(crate) const KINDS: [(usize, usize); 6] = [
         (0, On::BINARIES),
         (On::BINARIES, On::UNARIES),
@@ -1029,18 +1033,18 @@ impl On {
     const TYPES: usize = On::STMTS + StmtTag::COUNT;
     const PATS: usize = On::TYPES + TypeTag::COUNT;
     pub(crate) const SORTS: usize = On::PATS + PatTag::COUNT;
-    /// The row of the rules that are started whatever a file has.
+    /// The row for rules that are started regardless of what a file contains.
     pub const ALWAYS: usize = On::SORTS + 12;
-    /// What a file can have or not have: a row for each kind of expression, operator, statement, type and pattern, in
-    /// this order, one for each of the sorts from `optional_chains` to `export_specs`, and [`On::ALWAYS`].
+    /// Things a file can have or lack: one row per kind of expression, operator, statement, type and pattern, in this
+    /// order, one per sort from `optional_chains` to `export_specs`, and [`On::ALWAYS`].
     pub const ROWS: usize = On::ALWAYS + 1;
 
-    /// The rows that it names: the first of some rows, and a bit for each from there on.
+    /// The rows this `On` selects, as pairs of a starting row and a bitmask of the rows from there on.
     pub(crate) const fn rows(self) -> [(usize, u64); 8] {
         let in_every_file = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
         let is_always = self.has_later() || self.has(in_every_file) || !self.nodes.is_empty();
-        let named = ((self.groups_of_calls()[3]) << ExprTag::Call as u32)
-            | ((self.groups_of_members()[3]) << ExprTag::Dot as u32);
+        let named = ((self.call_name_groups()[3]) << ExprTag::Call as u32)
+            | ((self.member_name_groups()[3]) << ExprTag::Dot as u32);
         [
             (0, self.exprs | named),
             (On::BINARIES, self.binaries),
@@ -1053,10 +1057,10 @@ impl On {
         ]
     }
 
-    /// What is in both.
+    /// The intersection of the two.
     #[inline]
     pub(crate) const fn and(self, other: &On) -> On {
-        // All of a kind are those of every name.
+        // Listening to a whole kind is the same as listening to every name.
         let (calls, other_calls) = (
             match self.has_expr(ExprTag::Call) {
                 true => [u64::MAX; 3],
@@ -1077,7 +1081,7 @@ impl On {
                 false => other.members,
             },
         );
-        // What is by name in one is among the names of that one.
+        // Whatever one side selects by name is among that side's names, so its mentions still cover the intersection.
         let (all_calls, all_members) = (self.has_expr(ExprTag::Call), self.has_expr(ExprTag::Dot));
         let (other_all_calls, other_all_members) =
             (other.has_expr(ExprTag::Call), other.has_expr(ExprTag::Dot));
@@ -1111,13 +1115,13 @@ impl On {
         }
     }
 
-    /// `sort`: one or more of the constants.
+    /// `sort` is one or more of the constants.
     #[inline]
     pub(crate) const fn has(self, sort: u32) -> bool {
         self.sorts & sort != 0
     }
 
-    /// Something is called in the order of the source or at the end.
+    /// True if any method runs in source order or at the end.
     #[inline]
     pub(crate) const fn has_later(self) -> bool {
         self.has(On::FINISH) || !self.enter.is_empty() || !self.exit.is_empty()
@@ -1157,7 +1161,7 @@ impl NodeTags {
 
     pub(crate) const COUNT: usize = REST as usize + 16;
 
-    /// In a constant: `NodeTags::new().exprs(&[ExprTag::Fn]).stmts(&[StmtTag::Block]).union(NodeTags::FUNC)`
+    /// For use in a constant: `NodeTags::new().exprs(&[ExprTag::Fn]).stmts(&[StmtTag::Block]).union(NodeTags::FUNC)`
     pub const fn new() -> NodeTags {
         NodeTags::EMPTY
     }
@@ -1205,13 +1209,14 @@ impl NodeTags {
         self.0 & (1 << index) != 0
     }
 
-    /// The number of the lowest bit that is set: of one kind, what [`NodeTags::index_of`] says for a node of it.
+    /// The index of the lowest set bit. For a single kind, that's what [`NodeTags::index_of`] returns for a node of
+    /// that kind.
     #[inline]
     pub(crate) const fn first_index(self) -> u32 {
         self.0.trailing_zeros()
     }
 
-    /// The numbers of the bits that are set: see [`NodeTags::index_of`].
+    /// The indexes of the set bits. See [`NodeTags::index_of`].
     #[inline]
     pub(crate) fn indices(self) -> impl Iterator<Item = u32> {
         let mut rest = self.0 & ((1 << NodeTags::COUNT) - 1);
@@ -1229,7 +1234,7 @@ impl NodeTags {
         self.has_index(NodeTags::index_of(node))
     }
 
-    /// The number of the bit for the kind of `node`.
+    /// The bit index for `node`'s kind.
     #[inline]
     pub(crate) fn index_of(node: Node) -> u32 {
         match node {

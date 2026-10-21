@@ -71,7 +71,7 @@ fn get_write_node(reference: Reference) -> Span {
         match node {
             Node::Expr(e) => match e.tag() {
                 ExprTag::Unary | ExprTag::Call => return e.span(),
-                // Not the default value in a pattern.
+                // A default value in a pattern doesn't count.
                 ExprTag::Assign if !utils::is_assignment_target(e) => return e.span(),
                 _ => {}
             },
@@ -79,15 +79,15 @@ fn get_write_node(reference: Reference) -> Span {
             _ => {}
         }
     }
-    // `import type { A } from "a"; const A: A = 0`: the annotation is a part of the `Identifier`.
+    // `import type { A } from "a"; const A: A = 0`: the annotation is part of the `Identifier`.
     match reference.node() {
         id @ Node::Pat(_) => utils::estree_span(id),
         _ => reference.span(),
     }
 }
 
-/// oxlint points at the name, or at the member that is written to.
-fn oxlint_place(reference: Reference) -> Span {
+/// oxlint reports at the name, or at the member that's written to.
+fn oxlint_report_span(reference: Reference) -> Span {
     let id = reference.expr().filter(|_| !reference.is_write());
     match id.map(Expr::parent) {
         Some(Node::Expr(parent)) if ast_utils::member_object(parent) == id => parent.span(),
@@ -98,8 +98,8 @@ fn oxlint_place(reference: Reference) -> Span {
 impl Rule for NoImportAssign {
     const META: Meta = Meta::eslint("no-import-assign", Kind::Problem).recommended();
     const ON: On = On::new().stmts(&[StmtTag::Import]);
-    /// Whether an import that is not of a namespace can have something to report: something is assigned to what one imports,
-    /// or declared several times. Found out for the first import.
+    /// True if a non-namespace import could have anything to report: something assigns to an imported name, or one is
+    /// declared several times. Computed for the first import.
     type State<'a> = Option<bool>;
 
     fn new(_: &Options) -> Self {
@@ -122,7 +122,7 @@ impl Rule for NoImportAssign {
             }
             return;
         }
-        // Only the members of a namespace are left to look at.
+        // Only a namespace's members are left to check.
         let Some(namespace) = stmt.as_import().and_then(|it| it.namespace()) else {
             return;
         };
@@ -136,7 +136,7 @@ impl Rule for NoImportAssign {
     }
 }
 
-/// `variable`: what an import declares.
+/// `variable` is a symbol that an import declares.
 fn check<'a>(variable: Symbol<'a>, cx: &mut Cx<'a, NoImportAssign>) {
     let should_check_members = variable.declarations().any(|it| matches!(it, Declaration::ImportNamespace(_)));
     if !should_check_members && !variable.has_writes() {
@@ -150,7 +150,7 @@ fn check<'a>(variable: Symbol<'a>, cx: &mut Cx<'a, NoImportAssign>) {
         if previous.replace(start) == Some(start) {
             continue;
         }
-        // `import type { A } from "a"; const A = 0`: for oxlint a declaration assigns nothing.
+        // `import type { A } from "a"; const A = 0`: for oxlint a declaration isn't an assignment.
         if is_oxlint && reference.is_init() {
             continue;
         }
@@ -161,7 +161,7 @@ fn check<'a>(variable: Symbol<'a>, cx: &mut Cx<'a, NoImportAssign>) {
         } else {
             continue;
         };
-        let place = if is_oxlint { oxlint_place(reference) } else { get_write_node(reference) };
-        cx.report(place, message).data("name", reference.name());
+        let report_span = if is_oxlint { oxlint_report_span(reference) } else { get_write_node(reference) };
+        cx.report(report_span, message).data("name", reference.name());
     }
 }

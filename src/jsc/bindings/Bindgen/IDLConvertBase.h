@@ -71,6 +71,10 @@ private:
     const WTF::ASCIILiteral m_name;
 };
 
+// For a context made in the argument list of the conversion that takes it.
+template<typename Ctx>
+Ctx& asLvalue(Ctx&& ctx LIFETIME_BOUND) { return static_cast<Ctx&>(ctx); }
+
 // A value of the wrong type throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`.
 struct NodeArgumentContext : Detail::ContextBase<NodeArgumentContext> {
     using ElementContext = Detail::ElementOf<NodeArgumentContext>;
@@ -97,6 +101,32 @@ private:
     const WTF::ASCIILiteral m_name;
     const std::span<const WTF::ASCIILiteral> m_expected;
     const JSC::JSValue m_actual;
+};
+
+// A value of the wrong type throws `ERR_INVALID_ARG_TYPE` with the schema's own message, which says nothing of the value.
+struct ArgumentMessageContext : Detail::ContextBase<ArgumentMessageContext> {
+    using ElementContext = Detail::ElementOf<ArgumentMessageContext>;
+
+    consteval ArgumentMessageContext(WTF::ASCIILiteral name, WTF::ASCIILiteral message)
+        : m_name(name)
+        , m_message(message)
+    {
+    }
+
+    auto source()
+    {
+        return m_name;
+    }
+
+    template<typename String>
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    {
+        Bun::throwError(&global, scope, ErrorCode::ERR_INVALID_ARG_TYPE, m_message);
+    }
+
+private:
+    const WTF::ASCIILiteral m_name;
+    const WTF::ASCIILiteral m_message;
 };
 
 }

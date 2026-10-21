@@ -25,7 +25,8 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
             dangling_comments(pat.as_ast_nodes()).with_soft_block_indent()
         );
     } else {
-        // `[, /* comment */]`: a hole is no node, so the comment dangles. Prettier's `printArray` writes it after the elements.
+        // `[, /* comment */]`: a hole isn't a node, so the comment dangles. Prettier's `printArray` prints it after the
+        // elements.
         let dangling_comments = match f.is_quiet() {
             true => CommentList::empty(),
             false => f.comments().of_node(pat.as_ast_nodes()).dangling,
@@ -69,7 +70,7 @@ fn write_assignment_pattern<'a>(left: Pat<'a>, right: Expr<'a>, f: &mut Formatte
     write!(f, [group(&left), space(), "=", space(), right]);
 }
 
-/// `[...a = 1]` is an error, and `a = 1` in typescript-estree's tree.
+/// `[...a = 1]` is an error, and typescript-estree's tree has `a = 1` for it.
 fn is_rest_element(element: PatElem<'_>) -> bool {
     element.is_rest() && element.default().is_none()
 }
@@ -98,7 +99,7 @@ pub(crate) fn write_binding_property<'a>(property: PatProp<'a>, f: &mut Formatte
     AssignmentLike::BindingProperty(property).fmt(f);
 }
 
-/// `BindingProperty.value`: the `b = 1` of `a: b = 1`, the `a = 1` of `{ a = 1 }`.
+/// `BindingProperty.value`: the `b = 1` in `a: b = 1`, the `a = 1` in `{ a = 1 }`.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatBindingPropertyValue<'a>(pub(crate) PatProp<'a>);
 
@@ -106,7 +107,7 @@ impl<'a> Format<'a> for FormatBindingPropertyValue<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (property, value) = (self.0, self.0.value());
         match property.default() {
-            // With the parentheses of the default, as in ESTree.
+            // Includes the default's parentheses, as in ESTree.
             Some(default) => format_node(
                 AstNodes::AssignmentPattern(Node::PatProp(property)),
                 f,

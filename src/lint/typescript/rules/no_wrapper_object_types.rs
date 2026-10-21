@@ -10,18 +10,18 @@ const BANNED_CLASS_TYPE: Message = Message::new(
     "Prefer using the primitive `{{preferred}}` as a type name, rather than the upper-cased `{{typeName}}`.",
 );
 
-/// What [`is_reference_to_global_function`] answers for a name in a scope.
+/// Caches [`is_reference_to_global_function`]'s result per scope and name.
 pub(crate) type GlobalFunctions<'a> = FxHashMap<(Scope<'a>, Name<'a>), bool>;
 
-/// [`is_reference_to_global_function`], which looks at all references of the scope, once for a name and a scope.
+/// [`is_reference_to_global_function`], cached because it scans all of the scope's references.
 pub(crate) fn is_reference_to_global<'a>(name: Name<'a>, ty: TypeNode<'a>, known: &mut GlobalFunctions<'a>) -> bool {
     *known.entry((Node::Type(ty).scope(), name)).or_insert_with(|| is_reference_to_global_function(name, ty))
 }
 
-/// It is what a class implements or what an interface extends, where a primitive cannot be.
+/// True if it's in a class's `implements` or an interface's `extends` list, where a primitive isn't allowed.
 fn is_heritage(ty: TypeNode<'_>) -> bool {
     match ty.parent() {
-        // Before what it implements are only the type arguments of what it extends.
+        // Only the type arguments of the `extends` clause come before the `implements` list.
         Node::Class(class) => class.implements().first().is_some_and(|first| first.span().start <= ty.span().start),
         Node::Stmt(statement) => statement.tag() == StmtTag::Interface,
         _ => false,
@@ -68,6 +68,10 @@ impl Rule for NoWrapperObjectTypes {
         cx.report(name, BANNED_CLASS_TYPE)
             .data("preferred", preferred)
             .data("typeName", name)
-            .fix(|fixer| (!is_heritage(ty)).then(|| fixer.replace(name, preferred)));
+            // `Object` accepts a primitive and `object` doesn't, so `const a: object = 1` is an error.
+            .fix_where_safe(
+                || preferred != "object",
+                |fixer| (!is_heritage(ty)).then(|| fixer.replace(name, preferred)),
+            );
     }
 }

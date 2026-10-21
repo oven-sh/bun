@@ -11439,6 +11439,36 @@ export function k8() { let s: S | null = mk(); while (s) { const cur = s.kids.at
       expect(exitCode).toBe(1);
     });
 
+    // `return` checks `v` before it asks for the return type of `h`. Narrowing `v` infers a type predicate for `p`, which
+    // leads back to `v`, and by then `p` has none.
+    test("narrowing by a function whose parameter's initializer calls the narrowing function isn't a circularity", async () => {
+      using dir = project({
+        "a.ts": `function h(v: string | number) { if (p(v)) { return v; } return 0; }
+function p(x: string | number, { a } = { a: h(1) }) { return !!x; }
+export const n1: never = h(1);
+export const n2: never = p;
+function h2(v: string | number) { if (p2(v)) { return v; } return 0; }
+function p2(x: string | number, y = h2(1)) { return !!x; }
+export const n3: never = h2(1);
+export const n4: never = p2;
+function p3(x: string | number, y = h3(1)) { return !!x; }
+function h3(v: string | number) { if (p3(v)) { return v; } return 0; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,14): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(4,14): error TS2322: Type '(x: string | number, { a }?: { a: string | number; }) => boolean' is not assignable to type 'never'.
+        a.ts(7,14): error TS2322: Type 'string | number' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(8,14): error TS2322: Type '(x: string | number, y?: string | number) => boolean' is not assignable to type 'never'.
+        a.ts(9,33): error TS7022: 'y' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+        a.ts(10,10): error TS7023: 'h3' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     // While `[k]` is being checked, it declares no member.
     test("a computed name whose type is read from the type it's a member of isn't a circularity", async () => {
       using dir = project({

@@ -152,6 +152,14 @@ impl PartialEq for Reference {
     }
 }
 
+/// A function whose type predicate is being inferred.
+struct PredicateInProgress {
+    file: FileId,
+    func: FnId,
+    /// The height of `stack` when that began.
+    from: usize,
+}
+
 /// Flow analysis memo tables that aren't keyed by just a node. They belong to the checker, so
 /// they're dropped at the end of the task. The tables keyed by a node are fields of `Program`.
 /// Those are stored with `rewrite`, because tsgo assigns the link when the computation ends,
@@ -190,7 +198,7 @@ pub(super) struct FlowMemo {
     stopping_calls: Vec<u64>,
     /// The functions whose `type_predicates_from_body` is being computed:
     /// `sig.resolvedTypePredicate = c.noTypePredicate`.
-    type_predicates_in_progress: SmallVec<[(FileId, FnId); 2]>,
+    type_predicates_in_progress: SmallVec<[PredicateInProgress; 2]>,
     /// `flowNodePostSuper`
     flow_node_post_super: FxHashMap<(FileId, FlowId), bool>,
     /// `finalArrayType` of an evolving array type whose element type is a union.
@@ -8187,12 +8195,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`. A condition
         // evaluated below may call this function.
-        if (self.flow_memo.type_predicates_in_progress).contains(&(file, func)) {
+        if self.is_inferring_predicate(file, func) {
             return None;
         }
-        self.flow_memo
-            .type_predicates_in_progress
-            .push((file, func));
+        let from = self.stack.len();
+        (self.flow_memo.type_predicates_in_progress).push(PredicateInProgress { file, func, from });
         let (predicate, stored) = self.run_memoizable(|c| {
             c.check_if_expression_refines_any_parameter(file, func, body, before)
         });
@@ -8210,7 +8217,23 @@ impl<'p, 's> Checker<'p, 's> {
             || (self.p.type_predicates_from_body)
                 .get(&self.task, &(file, func))
                 .is_some()
-                && !(self.flow_memo.type_predicates_in_progress).contains(&(file, func))
+                && !self.is_inferring_predicate(file, func)
+    }
+
+    fn is_inferring_predicate(&self, file: FileId, func: FnId) -> bool {
+        let mut in_progress = self.flow_memo.type_predicates_in_progress.iter();
+        in_progress.any(|it| it.file == file && it.func == func)
+    }
+
+    /// True if repeating the path from `stack[i]` ends before it reaches a resolution, at a function whose type
+    /// predicate is being inferred. The next request gets `noTypePredicate`.
+    pub(super) fn ends_at_type_predicate_in_progress(&self, i: usize) -> bool {
+        let in_progress = &self.flow_memo.type_predicates_in_progress;
+        if in_progress.is_empty() {
+            return false;
+        }
+        let resolution = self.first_resolution_from(i);
+        (in_progress.iter()).any(|it| it.from > i && it.from <= resolution)
     }
 
     /// Runs the syntax checks at the start of `getTypePredicateFromBody`. Returns the only

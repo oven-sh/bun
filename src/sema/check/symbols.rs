@@ -3707,9 +3707,13 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((ty, true)) = known {
             return ty;
         }
-        // tsgo doesn't request it here (`sig_params_of_declaration`), or requests it after every
-        // file is checked (a baseline writer).
-        if self.is_requested_eagerly(self.stack.len()) || self.is_type_checked {
+        // tsgo doesn't request it here (`sig_params_of_declaration`). A request that it does make in the meantime has
+        // to find this one.
+        if self.is_requested_eagerly(self.stack.len()) {
+            return self.resolve_type_of_pat(file, pat, Query::ParameterSymbol(file, pat));
+        }
+        // It requests it after every file is checked (a baseline writer).
+        if self.is_type_checked {
             return self.type_of_pat(file, pat);
         }
         let resolved = (self.p.resolved_parameter_symbols).get(&self.task, &(file, p));

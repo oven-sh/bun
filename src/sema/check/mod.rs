@@ -2637,7 +2637,7 @@ impl<'p, 's> Checker<'p, 's> {
         // second visit doesn't close a cycle if it ends in one of these ways:
         // - It gets `any` for the return type that's being resolved.
         // - It does without the base constraint that's being resolved.
-        // - It finds the members in place, the intersection as is, no equivalent base type, or a
+        // - It finds the members in place, the intersection as is, no equivalent base type, no type predicate, or a
         //   function that gets its type immediately.
         // - It's below a stale entry, where `findResolutionCycleStartIndex` stops.
         // - It reaches the `typeToStringEx` call that led here, with no type resolution on the way, and
@@ -2656,6 +2656,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.ends_at_members_in_place(i)
                 || self.ends_at_reduction_in_progress(i)
                 || self.ends_at_reverse_mapped_inference_in_progress(i)
+                || self.ends_at_type_predicate_in_progress(i)
                 || self.ends_at_default_in_progress(i)
                 || self.ends_at_identical_base_type_in_progress(i)
                 || self.ends_at_function_in_context_check(i)

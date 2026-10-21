@@ -14564,6 +14564,39 @@ export default (OnlyType);
       expect(exitCode).toBe(1);
     });
 
+    test("`export default I` uses an imported type, unless the statement is misplaced", async () => {
+      using dir = project({
+        "types.ts": `export interface I { a: 1 }
+export namespace NT { export interface J {} }
+export type T = string;
+`,
+        "a.ts": `import type { I } from "./types";
+export default I;
+`,
+        "b.ts": `import { NT } from "./types";
+export default NT;
+`,
+        "c.ts": `import { T } from "./types";
+export default T;
+`,
+        "d.ts": `namespace N1 { interface I {} export = I; }
+namespace N2 { type T = 1; export default T; }
+function f() { interface K {} export default K; }
+export { N1, N2, f };
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--noUnusedLocals"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "d.ts(1,26): error TS6196: 'I' is declared but never used.
+        d.ts(1,31): error TS1063: An export assignment cannot be used in a namespace.
+        d.ts(2,21): error TS6196: 'T' is declared but never used.
+        d.ts(2,28): error TS1319: A default export can only be used in an ECMAScript-style module.
+        d.ts(3,26): error TS6196: 'K' is declared but never used.
+        d.ts(3,31): error TS1258: A default export must be at the top level of a file or module declaration."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2866 for an exported name that is a type here and a global value", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "lib": ["es2022"], "types": [], "isolatedModules": true}}`,

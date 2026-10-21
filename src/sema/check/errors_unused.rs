@@ -1315,15 +1315,20 @@ impl Unused<'_, '_> {
                 }
             }
         }
-        // `export default I`, `export = I`: a type is accepted too.
-        for &(e, scope) in &bound.free_idents {
+        // `checkExportAssignment`: `export default I` and `export = I` reference `I` with any meaning, unless they're
+        // misplaced or in a namespace.
+        for &(e, scope) in bound.free_idents.iter().chain(&bound.alias_idents) {
             if let Parent::Stmt(s) = bound.parent_of_expr(e)
                 && matches!(
                     hir[s].kind,
                     StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
                 )
                 && let ExprKind::Ident(name) = hir[e].kind
-                && !self.is_never_checked(hir[e].pos)
+                && match bound.parent_of_stmt(s) {
+                    Parent::File => true,
+                    Parent::Module(m) => !matches!(hir[m].name, ModuleName::Ident(_)),
+                    _ => false,
+                }
             {
                 self.note_name(scope, name, SymFlags::all(), ALL);
             }

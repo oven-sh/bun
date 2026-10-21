@@ -475,7 +475,11 @@ function on(emitter, event, options = {}) {
     } else {
       error = err;
     }
-    removeAllListeners();
+    // Node finishes the iterator here (it calls `iterator.return()`), so reads
+    // that are already pending, and any later ones, settle with `{ done: true }`
+    // instead of hanging. The first rejection still wins, because `next` checks
+    // the queued events and `error` before `finished`.
+    closeHandler();
   }
 
   function closeHandler() {

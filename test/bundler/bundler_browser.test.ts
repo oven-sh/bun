@@ -205,6 +205,7 @@ describe("bundler", () => {
           const it = on(e, "x");
           e.emit("error", new Error("boom"));
           results.push(await it.next().then(() => "resolved", err => "rejected:" + err.message));
+          results.push(JSON.stringify(await it.next()) + " " + e.listenerCount("x") + "," + e.listenerCount("error"));
         }
         {
           const e = new EventEmitter();
@@ -212,6 +213,7 @@ describe("bundler", () => {
           const it = on(e, "x", { signal: ac.signal });
           ac.abort();
           results.push(await it.next().then(() => "resolved", err => err.name + ":" + err.code));
+          results.push(JSON.stringify(await it.next()));
         }
         {
           const et = new EventTarget();
@@ -225,7 +227,7 @@ describe("bundler", () => {
     },
     target: "browser",
     run: {
-      stdout: '[1,"a"] [2]\n0,0,0\nrejected:boom\nAbortError:ABORT_ERR\nping',
+      stdout: '[1,"a"] [2]\n0,0,0\nrejected:boom\n{"done":true} 0,0\nAbortError:ABORT_ERR\n{"done":true}\nping',
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");

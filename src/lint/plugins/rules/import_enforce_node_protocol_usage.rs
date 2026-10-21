@@ -34,7 +34,7 @@ impl Rule for EnforceNodeProtocolUsage {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         match Settings::new(file.settings()).node_version() {
             None => Some(None),
-            // Upstream throws at what is no version.
+            // Upstream throws if the setting isn't a valid version.
             Some(node_version) => Some(Some(version_of(node_version.as_str()?)?)),
         }
     }
@@ -76,9 +76,9 @@ impl EnforceNodeProtocolUsage {
         match module_name.strip_prefix(b"node:") {
             Some(actual_module_name) if self.is_never && is_core_module(actual_module_name) => {
                 cx.report(src, FORBID_NODE_PROTOCOL).data("moduleName", actual_module_name).fix(|fixer| {
-                    // Five characters of the source, whatever they are: `"\x6eode:fs"`.
-                    let written = fixer.file().slice(Span::new(first_character_index, src.end));
-                    let length = strings::wtf8_offset_of_utf16_index(written, 5) as u32;
+                    // Upstream removes five characters of the source, whatever they are: `"\x6eode:fs"`.
+                    let source_text = fixer.file().slice(Span::new(first_character_index, src.end));
+                    let length = strings::wtf8_offset_of_utf16_index(source_text, 5) as u32;
                     fixer.remove(Span::new(first_character_index, first_character_index + length))
                 });
             }
@@ -96,8 +96,8 @@ impl EnforceNodeProtocolUsage {
 }
 
 /// `/^[0-9]+\.[0-9]+\.[0-9]+$/`
-fn version_of(written: &[u8]) -> Option<[u32; 3]> {
-    let mut parts = strings::split(written, b".").map(|part| {
+fn version_of(version_text: &[u8]) -> Option<[u32; 3]> {
+    let mut parts = strings::split(version_text, b".").map(|part| {
         let is_number = !part.is_empty() && part.iter().all(u8::is_ascii_digit);
         let digits = part.iter().map(|digit| u32::from(digit - b'0'));
         is_number.then(|| digits.fold(0u32, |it, digit| it.saturating_mul(10).saturating_add(digit)))

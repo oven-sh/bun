@@ -1,4 +1,4 @@
-use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs};
+use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer};
 use bun_collections::VecExt as _;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
@@ -68,6 +68,16 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
         // Allow numbers to be passed as strings.
         let str = value.to_js_string(global)?;
         return JSArgument::from_js_maybe_file(global, str.to_js(), FileBlobs::Reject);
+    }
+
+    // Copy the bytes. A later argument's `toString()` can detach this buffer before the command is serialized.
+    if let Some(buffer) = value.as_array_buffer(global) {
+        let Some(copy) = buffer.try_copy_bytes() else {
+            return Err(global.throw_out_of_memory());
+        };
+        return Ok(Some(JSArgument::StringOrBuffer(StringOrBuffer::owned(
+            copy,
+        ))));
     }
 
     JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)

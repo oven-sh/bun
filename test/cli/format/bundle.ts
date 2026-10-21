@@ -1,5 +1,6 @@
-// Many small files in one: `=== /<path> <length in bytes>\n`, the bytes, `\n`, one after the other, compressed with zstd.
-// Some fixtures are about byte order marks, line endings and malformed text, so nothing is decoded.
+// Packs many small files into one. Each file is `=== /<path> <length in bytes>\n`, its bytes and `\n`, and the whole
+// thing is compressed with zstd. Some fixtures test byte order marks, line endings and malformed text, so nothing is
+// decoded.
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -17,7 +18,7 @@ export function readBundle(path: string): Map<string, Buffer> {
   return files;
 }
 
-/** The files one after the other, not compressed. */
+/** Concatenates the files without compressing them. */
 export function concatenate(files: Map<string, Uint8Array>) {
   const parts: Uint8Array[] = [];
   for (const name of [...files.keys()].sort()) {
@@ -31,7 +32,7 @@ export function writeBundle(path: string, files: Map<string, Uint8Array>) {
   writeFileSync(path, Bun.zstdCompressSync(concatenate(files), { level: 19 }));
 }
 
-/** Writes the files whose path contains `part` below `into`. */
+/** Writes the files whose path contains `part` into the `into` directory. */
 export function extract(bundle: string, part: string, into: string) {
   let count = 0;
   for (const [name, bytes] of readBundle(bundle)) {
@@ -43,7 +44,7 @@ export function extract(bundle: string, part: string, into: string) {
   return count;
 }
 
-/** The files below `root`/`directory`, by their path from `root`. */
+/** Adds the files under `root`/`directory` to `files`, keyed by their path relative to `root`. */
 export function collect(root: string, directory: string, files: Map<string, Uint8Array>, skip: (name: string) => boolean) {
   for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {
     const path = `${directory}/${entry.name}`;

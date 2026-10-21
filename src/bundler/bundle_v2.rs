@@ -7490,8 +7490,8 @@ pub mod bv2_impl {
             let mut diff: i32 = 0;
             // reshaped for borrowck — `graph` and the
             // path map are both needed across the loop body. We (a) capture a raw self ptr for
-            // ParseTask.ctx and (b) scope the map borrow to the get_or_put so later
-            // `self.graph.*` writes don't overlap.
+            // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
+            // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
             // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
             let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>> =
                 Some(unsafe {
@@ -7499,6 +7499,7 @@ pub mod bv2_impl {
                         std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
                     )
                 });
+            let dev_server_is_none = self.dev_server.is_none();
             for (key, value) in resolve_queue.iter() {
                 let value: *mut ParseTask = *value;
                 // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
@@ -7510,7 +7511,8 @@ pub mod bv2_impl {
                         .loader(&self.transpiler.options.loaders)
                         .unwrap_or(Loader::File)
                 });
-                let is_html_entrypoint = self.is_server_html_import(loader, target);
+                let is_html_entrypoint =
+                    loader == Loader::Html && target.is_server_side() && dev_server_is_none;
                 // Select map and perform get_or_put, capturing the slot as a raw ptr
                 // so the &mut on self.graph is released before we touch other fields.
                 let (found_existing, value_ptr): (bool, *mut IndexInt) = {

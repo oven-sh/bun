@@ -2679,6 +2679,46 @@ describe("bundler", () => {
       stdout: "1 2 1 2 1 2\n1 2",
     },
   });
+  // The same declaration over the `require()` call itself, which the parser
+  // made an import. Each declaration takes its copies where it runs.
+  itBundled("cjs2esm/NamespaceDestructuringOfARequireCall", {
+    files: {
+      "/entry.js": /* js */ `
+        const { count, inc } = require("react");
+        inc();
+        const { count: later } = require("react");
+        console.log(count, later);
+      `,
+      ...counterPackage("react"),
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_react");
+    },
+    run: {
+      stdout: "0 1",
+    },
+  });
+  // A CommonJS file is lifted also when it is not one of the packages with a
+  // `require()` that becomes an import.
+  itBundled("cjs2esm/NamespaceDestructuringOfALiftedFileOutsideThePackages", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as Star from "./unlisted.cjs";
+        const { count, inc } = Star;
+        inc();
+        console.log(count, Star.count);
+      `,
+      "/unlisted.cjs": counterPackage("unlisted")["/node_modules/unlisted/index.js"],
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_");
+    },
+    run: {
+      stdout: "0 1",
+    },
+  });
   // The same declaration in a module that other code imports, and exported.
   itBundled("cjs2esm/NamespaceDestructuringExportedCopies", {
     files: {
@@ -2756,46 +2796,58 @@ describe("bundler", () => {
   });
   // Only the keys that are static exports of the module can be copies. A
   // declaration with any other key reads the namespace object, as before:
-  // an inherited key, `default` (not a key of the namespace object of a
-  // lifted module), `__esModule`, a missing key, and a pattern that is not a
-  // list of plain keys.
+  // an inherited key, a missing key, and a pattern that is not a list of
+  // plain keys. `default` and `__esModule` also read the object: the
+  // CommonJS interop rules decide those two. Each declaration has a module of
+  // its own here, so that no other one holds its namespace.
   itBundled("cjs2esm/NamespaceDestructuringReadsTheObjectForOtherKeys", {
     files: {
       "/entry.js": /* js */ `
-        import * as Inherited from "react-is";
-        import * as NoDefault from "scheduler";
-        import * as Flagged from "react";
-        import * as Shapes from "react-dom";
+        import * as Inherited from "./inherited.cjs";
+        import * as OwnDefault from "./own-default.cjs";
+        import * as Flagged from "./flagged.cjs";
+        import * as Missing from "./missing.cjs";
+        import * as Rest from "./rest.cjs";
+        import * as WithDefault from "./with-default.cjs";
+        import * as Computed from "./computed.cjs";
+        import * as Nested from "./nested.cjs";
         const { hasOwnProperty, count } = Inherited;
-        const { default: noDefault, count: second } = NoDefault;
+        const { default: ownDefault, count: second } = OwnDefault;
         const { __esModule, count: third } = Flagged;
-        const { missing } = Shapes;
-        const { count: fourth, ...rest } = Shapes;
-        const { missing: withDefault = "fallback" } = Shapes;
-        const { ["count"]: computed } = Shapes;
-        const { inc: { name } } = Shapes;
-        console.log(typeof hasOwnProperty, count, typeof noDefault, second, __esModule, third);
+        const { missing } = Missing;
+        const { count: fourth, ...rest } = Rest;
+        const { missing: withDefault = "fallback" } = WithDefault;
+        const { ["count"]: computed } = Computed;
+        const { inc: { name } } = Nested;
+        console.log(typeof hasOwnProperty, count, ownDefault, second, __esModule, third);
         console.log(missing, fourth, Object.keys(rest).join(), withDefault, computed, name);
       `,
-      ...counterPackage("react-is"),
-      ...counterPackage("scheduler"),
-      "/node_modules/react/index.js": /* js */ `
-        exports.__esModule = true;
-        exports.count = 0;
-      `,
-      "/node_modules/react-dom/index.js": /* js */ `
-        exports.count = 0;
-        exports.inc = function inc() {};
-      `,
+      ...Object.fromEntries(
+        ["inherited", "missing", "rest", "with-default", "computed", "nested"].map(name => [
+          `/${name}.cjs`,
+          `exports.count = 0; exports.inc = function inc() {};`,
+        ]),
+      ),
+      "/own-default.cjs": `exports.count = 0; exports.default = "own default";`,
+      "/flagged.cjs": `exports.__esModule = true; exports.count = 0;`,
     },
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      for (const name of ["react_is", "scheduler", "react", "react_dom"]) {
-        expect(code).toContain(`var exports_${name} = {}`);
+      for (const declaration of [
+        "{ hasOwnProperty, count } = exports_inherited;",
+        "{ default: ownDefault, count: second } = exports_own_default;",
+        "{ __esModule, count: third } = exports_flagged;",
+        "{ missing } = exports_missing;",
+        "{ count: fourth, ...rest } = exports_rest;",
+        '{ missing: withDefault = "fallback" } = exports_with_default;',
+        '{ ["count"]: computed } = exports_computed;',
+        "{ inc: { name } } = exports_nested;",
+      ]) {
+        expect(code).toContain(declaration);
       }
     },
     run: {
-      stdout: "function 0 undefined 0 true 0\nundefined 0 inc fallback 0 inc",
+      stdout: "function 0 own default 0 true 0\nundefined 0 inc fallback 0 inc",
     },
   });
   // Code that holds the namespace object can change the object and not the
@@ -2816,6 +2868,92 @@ describe("bundler", () => {
     },
     run: {
       stdout: "42 REMOVE_react-is",
+    },
+  });
+  // The holder can have another name than the local of the declaration: a
+  // second local of the package, a `require()` call in an expression, or
+  // `.default` of a lifted module, which is the object itself.
+  itBundled("cjs2esm/NamespaceDestructuringReadsAnObjectThatAnotherNameHolds", {
+    files: {
+      "/entry.js": /* js */ `
+        import Lib from "scheduler";
+        import * as Star from "scheduler";
+        import Same from "react-dom";
+        const Held = require("react-is");
+        const Other = require("react-is");
+        Object.defineProperty(Other, "count", { value: 42 });
+        const { count } = Held;
+        Object.defineProperty(require("react"), "count", { value: 43 });
+        const { count: second } = require("react");
+        Object.defineProperty(Star.default, "count", { value: 44 });
+        const { count: third } = Lib;
+        Object.defineProperty(Same.default, "count", { value: 45 });
+        const { count: fourth } = Same;
+        console.log(count, second, third, fourth);
+      `,
+      ...counterPackage("react-is"),
+      ...counterPackage("react"),
+      ...counterPackage("scheduler"),
+      ...counterPackage("react-dom"),
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("{ count } = exports_react_is;");
+      expect(code).toContain("{ count: second } = (exports_react);");
+      expect(code).toContain("{ count: third } = exports_scheduler;");
+      expect(code).toContain("{ count: fourth } = exports_react_dom;");
+    },
+    run: {
+      stdout: "42 43 44 45",
+    },
+  });
+  // `import()` of the package gives the object as `default`. With code
+  // splitting the package stays lifted, and the declaration reads the object.
+  itBundled("cjs2esm/NamespaceDestructuringReadsAnObjectThatAnImportCallHolds", {
+    files: {
+      "/entry.js": /* js */ `
+        import Legacy from "react-is";
+        Object.defineProperty((await import("react-is")).default, "count", { value: 42 });
+        const { count } = Legacy;
+        console.log(count);
+      `,
+      ...counterPackage("react-is"),
+    },
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("{ count } = exports_react_is;");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "42",
+    },
+  });
+  // A property of the default import that is not a static export, and a call
+  // that needs the object as `this`, print as reads of the object.
+  itBundled("cjs2esm/NamespaceDestructuringNextToAPropertyThatReadsTheObject", {
+    files: {
+      "/entry.js": /* js */ `
+        import Unbound from "scheduler";
+        import Method from "react-is";
+        const { count } = Unbound;
+        const { count: second } = Method;
+        console.log(count, Unbound.notExported, second, Method.withThis());
+      `,
+      ...counterPackage("scheduler"),
+      "/node_modules/react-is/index.js": /* js */ `
+        exports.count = 0;
+        exports.withThis = function () { return typeof this; };
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("{ count } = exports_scheduler;");
+      expect(code).toContain("{ count: second } = exports_react_is;");
+    },
+    run: {
+      stdout: "0 undefined 0 object",
     },
   });
   // The rule looks at the file as written. A holder counts also when tree
@@ -2839,8 +2977,8 @@ describe("bundler", () => {
     },
   });
   // A write through the default import of a lifted module assigns the lifted
-  // binding, and it holds the namespace object. The declaration reads the new
-  // value either way.
+  // binding, and it holds the namespace object. The declaration reads the
+  // object.
   itBundled("cjs2esm/NamespaceDestructuringAfterAWriteThroughTheNamespace", {
     files: {
       "/entry.js": /* js */ `
@@ -2850,6 +2988,9 @@ describe("bundler", () => {
         console.log(count);
       `,
       ...counterPackage("react-is"),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ count } = exports_react_is;");
     },
     run: {
       stdout: "PATCHED",
@@ -2905,30 +3046,40 @@ describe("bundler", () => {
     },
   });
   // A local that is assigned again does not hold the namespace any more. The
-  // declaration reads what the local holds, also through an export of it.
+  // declaration reads what the local holds, also through an export of it:
+  // from another file, and from the file itself.
   itBundled("cjs2esm/NamespaceDestructuringOfAReassignedLocal", {
     files: {
       "/entry.js": /* js */ `
         import { Exported } from "./reassigned.js";
+        import { fromSelf } from "./self.js";
         let Reassigned = require("react-is");
         Reassigned = { count: 42 };
         const { count } = Reassigned;
         const { count: fromExport } = Exported;
-        console.log(count, fromExport);
+        console.log(count, fromExport, fromSelf);
       `,
       "/reassigned.js": /* js */ `
         let Exported = require("scheduler");
         Exported = { count: 43 };
         export { Exported };
       `,
+      "/self.js": /* js */ `
+        let Own = require("react");
+        export { Own };
+        import { Own as Again } from "./self.js";
+        Own = { count: 44 };
+        export const { count: fromSelf } = Again;
+      `,
       ...counterPackage("react-is"),
       ...counterPackage("scheduler"),
+      ...counterPackage("react"),
     },
     run: {
-      stdout: "42 43",
+      stdout: "42 43 44",
     },
   });
-  // A \`require()\` of an ES module, or of a package that is not on the list,
+  // A `require()` of an ES module, or of a package that is not on the list,
   // gives an object and not a namespace of the bundle. CommonJS output does
   // not lift a package at all. These declarations print as written.
   itBundled("cjs2esm/NamespaceDestructuringOfOtherRequires", {
@@ -2978,7 +3129,7 @@ describe("bundler", () => {
       stdout: "0 1",
     },
   });
-  // A lifted file that reads \`module.exports\` as a value prints its namespace
+  // A lifted file that reads `module.exports` as a value prints its namespace
   // object there. Nothing records that use, so a declaration over the
   // namespace keeps the object.
   itBundled("cjs2esm/NamespaceDestructuringOfAModuleThatReadsModuleExports", {
@@ -2996,6 +3147,31 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("{ parse, version } = exports_react_is;");
+    },
+    run: {
+      stdout: "parsed:x 1.0.0",
+    },
+  });
+  // The same file behind a barrel with no side effects. Only the
+  // `export *` statement of the barrel holds the object of impl.cjs, and
+  // only the namespace object of the barrel keeps that statement.
+  itBundled("cjs2esm/NamespaceDestructuringOfABarrelOverAModuleThatReadsModuleExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as UI from "ui";
+        const { parse, version } = UI;
+        console.log(parse("x"), version);
+      `,
+      "/node_modules/ui/package.json": `{ "name": "ui", "sideEffects": false, "main": "./wrapper.mjs" }`,
+      "/node_modules/ui/wrapper.mjs": `export * from "./impl.cjs";`,
+      "/node_modules/ui/impl.cjs": /* js */ `
+        exports.parse = function (s) { return "parsed:" + s; };
+        exports.version = "1.0.0";
+        exports.default = module.exports;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ parse, version } = exports_wrapper;");
     },
     run: {
       stdout: "parsed:x 1.0.0",

@@ -1790,6 +1790,8 @@ pub(crate) struct NamespacePatternPlan {
     part_index: u32,
     base: Ref,
     target_source: crate::IndexInt,
+    /// `exports_ref` of the target. Every name of the namespace object is bound to it.
+    namespace: Ref,
     /// The keys, in pattern order, as they are spelled in `resolved_exports` of the target.
     names: Vec<bun_ast::StoreStr>,
     /// `var a = <export a>, c = <export b>`.
@@ -5010,7 +5012,7 @@ impl<'a> LinkerContext<'a> {
         dependencies.extend_from_slice(&member.re_exports);
     }
 
-    /// Each tagged part `const { a, b: c } = X` takes one copy per key, as `X.a` binds, unless this file uses `X` as a value somewhere else.
+    /// Each tagged part `const { a, b: c } = X` takes one copy per key, as `X.a` binds, unless this file reaches the namespace object of `X` somewhere else.
     fn bind_namespace_patterns(
         &mut self,
         source_index: crate::IndexInt,
@@ -5034,15 +5036,21 @@ impl<'a> LinkerContext<'a> {
         }
         let mut held: HashMap<Ref, bool> = HashMap::default();
         for plan in &plans {
-            held.insert(plan.base, false);
+            held.insert(plan.namespace, false);
         }
-        self.mark_held_namespaces(source_index, &plans, imports_to_bind, &mut held);
+        self.mark_held_namespaces(
+            source_index,
+            &plans,
+            imports_to_bind,
+            member_resolutions,
+            &mut held,
+        );
 
         let id = source_index as usize;
         let mut dependencies: Vec<Dependency> = Vec::new();
         let mut bound_bases: Vec<Ref> = Vec::new();
         for plan in &plans {
-            if held.get(&plan.base).copied().unwrap_or(false) {
+            if held.get(&plan.namespace).copied().unwrap_or(false) {
                 continue;
             }
             dependencies.clear();
@@ -5096,14 +5104,27 @@ impl<'a> LinkerContext<'a> {
         let bun_ast::b::B::BObject(pattern) = decl.binding.data else {
             return None;
         };
+        // The read of the namespace is the part's one symbol use. Dead code records none. A `require()` call that the parser made an import leaves a use of `require`.
+        let require_ref = self.graph.ast.items_require_ref()[id];
+        let mut uses = part
+            .symbol_uses
+            .keys()
+            .iter()
+            .zip(part.symbol_uses.values())
+            .filter(|&(&symbol, _)| symbol != require_ref);
+        let (Some((&used, base_use)), None) = (uses.next(), uses.next()) else {
+            return None;
+        };
         let base = match decl.value.map(|value| value.data) {
             Some(bun_ast::ExprData::EIdentifier(identifier)) => identifier.ref_,
             Some(bun_ast::ExprData::EImportIdentifier(identifier)) => identifier.ref_,
+            // The call itself: the use is of the namespace symbol of that import.
+            Some(bun_ast::ExprData::ERequireString(request))
+                if request.unwrapped_id.get().is_some() =>
+            {
+                used
+            }
             _ => return None,
-        };
-        // The read of `base` is the part's one symbol use. Dead code records none.
-        let (&[used], &[base_use]) = (part.symbol_uses.keys(), part.symbol_uses.values()) else {
-            return None;
         };
         if used != base || base_use.count_estimate() != 1 {
             return None;
@@ -5114,26 +5135,27 @@ impl<'a> LinkerContext<'a> {
         if !self.is_esm_namespace_ref(target_source, target.import_ref) {
             return None;
         }
-        // A `require()` local of another file on the way to the namespace is a variable that file can assign again.
+        // A `require()` local other than `base` on the way to the namespace is a variable that its file can assign again.
         let parts = self.graph.ast.items_parts();
+        let base_parts = self.top_level_symbols_to_parts(source_index, base);
         if import_data.re_exports.slice().iter().any(|dependency| {
             let dependency_source = dependency.source_index.get();
-            dependency_source != source_index
-                && parts[dependency_source as usize].as_slice()[dependency.part_index as usize].tag
-                    == bun_ast::PartTag::ImportToConvertFromRequire
+            parts[dependency_source as usize].as_slice()[dependency.part_index as usize].tag
+                == bun_ast::PartTag::ImportToConvertFromRequire
+                && !(dependency_source == source_index
+                    && base_parts.contains(&dependency.part_index))
         }) {
             return None;
         }
-        let target_flags = self.graph.ast.items_flags()[target_source as usize];
         // #18008: a name this target exports only at run time prints as `exports_x.name`, with no dependency on the namespace part.
         if self.graph.ast.items_exports_kind()[target_source as usize]
             .is_esm_with_dynamic_fallback()
-            && !target_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
+            && !self.graph.ast.items_flags()[target_source as usize]
+                .contains(AstFlags::FORCE_CJS_TO_ESM)
         {
             return None;
         }
-        // A lifted file that reads `module.exports` as a value prints `exports_x` there, and records no use of it.
-        if target_flags.contains(AstFlags::USES_MODULE_REF) {
+        if self.prints_own_exports_object(target_source) {
             return None;
         }
         let resolved_exports = &self.graph.meta.items_resolved_exports()[target_source as usize];
@@ -5167,11 +5189,12 @@ impl<'a> LinkerContext<'a> {
                 .get(&(target_source, name))
                 .unwrap()
                 .as_ref()?;
-            // Only the namespace part keeps the `export *` statements that run a wrapped file on the way to `member`.
+            // Only the namespace part keeps the `export *` statements on the way to `member` that run a wrapped file or hold its `exports` object.
             if member.through_namespace
                 || (member.source_index != target_source
-                    && self.graph.meta.items_flags()[member.source_index as usize].wrap
-                        != WrapKind::None)
+                    && (self.graph.meta.items_flags()[member.source_index as usize].wrap
+                        != WrapKind::None
+                        || self.prints_own_exports_object(member.source_index)))
             {
                 return None;
             }
@@ -5196,6 +5219,7 @@ impl<'a> LinkerContext<'a> {
             part_index,
             base,
             target_source,
+            namespace: target.import_ref,
             names,
             copies: bun_ast::StoreSlice::new_mut(
                 self.arena().alloc_slice_fill_iter(core::iter::once(copies)),
@@ -5203,26 +5227,33 @@ impl<'a> LinkerContext<'a> {
         })
     }
 
-    /// Sets `held` for each namespace local that this file uses as a value anywhere but in the planned declarations.
+    /// Sets `held` for each planned target whose namespace object this file reaches in another way than the planned declarations.
     fn mark_held_namespaces(
         &self,
         source_index: crate::IndexInt,
         plans: &[NamespacePatternPlan],
         imports_to_bind: &crate::RefImportData,
+        member_resolutions: &ImportMemberResolutions,
         held: &mut HashMap<Ref, bool>,
     ) {
         let id = source_index as usize;
+        // `held` has the `exports_ref` of each target. A second local, `X.default` of a lifted module, a key that is a namespace: all are bound to it.
+        let namespace_of = |symbol: Ref| {
+            imports_to_bind
+                .get(&symbol)
+                .map_or(symbol, |import| import.data.import_ref)
+        };
         let named_imports = &self.graph.ast.items_named_imports()[id];
         for (&item, named_import) in named_imports.keys().iter().zip(named_imports.values()) {
             if named_import.is_exported
-                && let Some(is_held) = held.get_mut(&item)
+                && let Some(is_held) = held.get_mut(&namespace_of(item))
             {
                 *is_held = true;
             }
-            // An item `base.name` that is not bound to an export prints as a property of the namespace object.
+            // An item `X.name` that is not bound to an export prints as a property of the namespace object.
             if named_import.namespace_ref != item
                 && !imports_to_bind.contains(&item)
-                && let Some(is_held) = held.get_mut(&named_import.namespace_ref)
+                && let Some(is_held) = held.get_mut(&namespace_of(named_import.namespace_ref))
                 && self
                     .graph
                     .symbols
@@ -5232,24 +5263,43 @@ impl<'a> LinkerContext<'a> {
                 *is_held = true;
             }
         }
+        let exports_refs = self.graph.ast.items_exports_ref();
+        for record in self.graph.ast.items_import_records()[id].as_slice() {
+            if matches!(record.kind, ImportKind::Dynamic | ImportKind::Require)
+                && let Some(exports_ref) = exports_refs.get(record.source_index.get() as usize)
+                && let Some(is_held) = held.get_mut(exports_ref)
+            {
+                *is_held = true;
+            }
+        }
         // `plans` is in part order.
-        let mut planned = plans.iter().map(|plan| plan.part_index as usize).peekable();
+        let mut planned = plans.iter().peekable();
         for (part_index, part) in self.graph.ast.items_parts()[id]
             .as_slice()
             .iter()
             .enumerate()
         {
-            if planned.next_if_eq(&part_index).is_some() {
+            if let Some(plan) = planned.next_if(|plan| plan.part_index as usize == part_index) {
+                for &name in &plan.names {
+                    let member = member_resolutions
+                        .get(&(plan.target_source, name))
+                        .unwrap()
+                        .as_ref()
+                        .unwrap();
+                    if let Some(is_held) = held.get_mut(&member.r#ref) {
+                        *is_held = true;
+                    }
+                }
                 continue;
             }
-            for (symbol, symbol_use) in part
+            for (&symbol, symbol_use) in part
                 .symbol_uses
                 .keys()
                 .iter()
                 .zip(part.symbol_uses.values())
             {
                 if symbol_use.count_estimate() > 0
-                    && let Some(is_held) = held.get_mut(symbol)
+                    && let Some(is_held) = held.get_mut(&namespace_of(symbol))
                 {
                     *is_held = true;
                 }
@@ -5257,14 +5307,24 @@ impl<'a> LinkerContext<'a> {
             let Some(uses) = part.import_symbol_property_uses.as_ref() else {
                 continue;
             };
-            for (symbol, properties) in uses.keys().iter().zip(uses.values()) {
+            for (&symbol, properties) in uses.keys().iter().zip(uses.values()) {
                 if properties.count() > 0
-                    && let Some(is_held) = held.get_mut(symbol)
+                    && let Some(is_held) = held.get_mut(&namespace_of(symbol))
                 {
                     *is_held = true;
                 }
             }
         }
+    }
+
+    /// The file prints its own `exports` object where the parser recorded no use of it: `module.exports` as a value in a lifted file, `exports.name` in an ES module that never assigns it.
+    fn prints_own_exports_object(&self, source_index: crate::IndexInt) -> bool {
+        let id = source_index as usize;
+        self.graph.ast.items_flags()[id].contains(AstFlags::USES_MODULE_REF)
+            || self.graph.ast.items_commonjs_named_exports()[id]
+                .values()
+                .iter()
+                .any(|export| export.needs_decl)
     }
 
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.

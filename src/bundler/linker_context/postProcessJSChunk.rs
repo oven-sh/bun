@@ -49,8 +49,7 @@ fn split_banner_hashbang(banner: &[u8]) -> (&[u8], &[u8]) {
     )
 }
 
-/// The banner without the hashbang comment it starts with. As in the lexer, the
-/// comment ends at the first line break, so the text after a lone CR stays.
+/// The banner after its hashbang comment, which ends at the first JS line break as in the lexer.
 fn banner_without_hashbang(banner: &[u8]) -> &[u8] {
     if !banner.starts_with(b"#!") {
         return banner;
@@ -446,8 +445,7 @@ pub(crate) fn post_process_js_chunk(
         j.push_static(hashbang);
         j.push_static(b"\n");
         line_offset.advance(hashbang);
-        // The hashbang line of a CRLF banner keeps its CR, and that CR already
-        // counted as the line break.
+        // The CR that a CRLF banner leaves on the hashbang already counted as this line break.
         if !strings::ends_with_char(hashbang, b'\r') {
             line_offset.advance(b"\n");
         }

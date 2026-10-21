@@ -33,6 +33,7 @@ use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, relative_normalized};
 use smallvec::SmallVec;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 
 mod commonjs;
@@ -6441,6 +6442,80 @@ impl<'p, 's> Checker<'p, 's> {
         Vec::new()
     }
 
+    /// `tryDirectoryWithPackageJson`, for a `directory` in the package at `package_directory`, which contains the file
+    /// at `path`. `package_name` is the path of `directory` from `node_modules`. If the `package.json` there has
+    /// `exports`, breaks with the file's specifier, which is empty if `exports` doesn't expose the file. Otherwise
+    /// continues with true if `package_name` resolves to the file.
+    fn try_directory_with_package_json(
+        &self,
+        path: &[u8],
+        directory: &[u8],
+        package_directory: &[u8],
+        package_name: &[u8],
+        importing: FileId,
+        mode: ResolutionMode,
+    ) -> ControlFlow<Vec<u8>, bool> {
+        let files = self.files();
+        let Some(json) = files.package_jsons.get(directory) else {
+            // An `index` file resolves from the package name anyway.
+            return ControlFlow::Continue(matches!(
+                path.get(package_directory.len() + 1..),
+                Some(b"index.d.ts" | b"index.js" | b"index.ts" | b"index.tsx")
+            ));
+        };
+        if files.options.resolve_package_json_exports
+            && let Some(exports) = json.get(b"exports")
+        {
+            let mode = match known_extension(path) {
+                b".cjs" | b".cts" | b".d.cts" => ResolutionMode::Require,
+                b".mjs" | b".mts" | b".d.mts" => ResolutionMode::Import,
+                _ if mode == ResolutionMode::None => {
+                    files.default_resolution_mode_for_file(importing)
+                }
+                _ => mode,
+            };
+            return ControlFlow::Break(try_get_module_name_from_exports(
+                &self.target_file(
+                    path,
+                    TargetFileOptions {
+                        is_imports: false,
+                        prefers_ts_extension: false,
+                    },
+                ),
+                directory,
+                &package_name_from_types_package_name(package_name),
+                exports,
+                &self.get_conditions(mode),
+            ));
+        }
+        // The main file's specifier is the package name.
+        let main = [b"typings".as_slice(), b"types", b"main"]
+            .iter()
+            .find_map(|field| json.get(field).and_then(Json::as_str))
+            .unwrap_or(b"index.js");
+        if main.is_empty() {
+            return ControlFlow::Continue(false);
+        }
+        // `isPackageMainFile`
+        let is_same_path =
+            |a: &[u8], b: &[u8]| compare_paths(a, b, files.is_case_sensitive).is_eq();
+        let main_export = join(directory, main);
+        ControlFlow::Continue(
+            !main.ends_with(b"/")
+                && is_same_path(
+                    remove_file_extension(&main_export),
+                    remove_file_extension(path),
+                )
+                || json.get(b"type").and_then(Json::as_str) != Some(b"module")
+                    && !matches!(
+                        known_extension(path),
+                        b".mts" | b".d.mts" | b".mjs" | b".cts" | b".d.cts" | b".cjs"
+                    )
+                    && is_same_path(dirname::<Posix>(path), &main_export)
+                    && remove_file_extension(get_base_file_name(path)) == b"index",
+        )
+    }
+
     /// `tryGetModuleNameAsNodeModule`: the specifier `importing` uses for the file at `path`, which is in
     /// `node_modules`. Empty if it has no specifier through `node_modules`.
     fn try_get_module_name_as_node_module(
@@ -6451,77 +6526,54 @@ impl<'p, 's> Checker<'p, 's> {
         prefers_js: bool,
     ) -> Vec<u8> {
         let files = self.files();
-        let options = &files.options;
         let Some((top_level_node_modules, top_level_package_name, package_root)) =
             node_module_path_parts(path)
         else {
             return Vec::new();
         };
-        let package_directory = &path[..package_root];
-        // `tryDirectoryWithPackageJson`
-        let is_package_root = match files.package_jsons.get(package_directory) {
-            // An `index` file resolves from the package name anyway.
-            None => matches!(
-                path.get(package_root + 1..),
-                Some(b"index.d.ts" | b"index.js" | b"index.ts" | b"index.tsx")
-            ),
-            Some(json) => {
-                if options.resolve_package_json_exports
-                    && let Some(exports) = json.get(b"exports")
-                {
-                    let mode = match known_extension(path) {
-                        b".cjs" | b".cts" | b".d.cts" => ResolutionMode::Require,
-                        b".mjs" | b".mts" | b".d.mts" => ResolutionMode::Import,
-                        _ if mode == ResolutionMode::None => {
-                            self.files().default_resolution_mode_for_file(importing)
-                        }
-                        _ => mode,
-                    };
-                    // A file that `exports` doesn't expose has no specifier through `node_modules`.
-                    return try_get_module_name_from_exports(
-                        &self.target_file(
-                            path,
-                            TargetFileOptions {
-                                is_imports: false,
-                                prefers_ts_extension: false,
-                            },
-                        ),
-                        package_directory,
-                        &package_name_from_types_package_name(
-                            &package_directory[top_level_package_name + 1..],
-                        ),
-                        exports,
-                        &self.get_conditions(mode),
-                    );
-                }
-                // The main file's specifier is the package name.
-                let main = [b"typings".as_slice(), b"types", b"main"]
-                    .iter()
-                    .find_map(|field| json.get(field).and_then(Json::as_str))
-                    .unwrap_or(b"index.js");
-                let main = join(package_directory, main);
-                remove_file_extension(&main) == remove_file_extension(path)
-                    || json.get(b"type").and_then(Json::as_str) != Some(b"module")
-                        && !matches!(
-                            known_extension(path),
-                            b".mts" | b".d.mts" | b".mjs" | b".cts" | b".d.cts" | b".cjs"
-                        )
-                        && dirname::<Posix>(path) == main
-                        && remove_file_extension(&path[main.len()..]) == b"/index"
-            }
-        };
-        let module_specifier = if is_package_root {
-            package_directory.to_vec()
-        } else {
-            let allowed = self.allowed_endings(importing, prefers_js, ResolutionMode::None);
-            self.process_ending(path, path, &allowed)
-        };
-        if !dirname::<Posix>(files.module(importing).file_name())
-            .starts_with(&path[..top_level_node_modules])
-        {
+        // `exports` only helps an importing file that finds the package in a `node_modules` above it.
+        if !contains_path(
+            &path[..top_level_node_modules.max(get_root_length(path))],
+            dirname::<Posix>(files.module(importing).file_name()),
+            files.is_case_sensitive,
+        ) {
             return Vec::new();
         }
-        package_name_from_types_package_name(&module_specifier[top_level_package_name + 1..])
+        // The package's directory, then each directory from there down to the file's. A file right in `node_modules`
+        // has no package.
+        let mut directory_end = if package_root > top_level_package_name {
+            package_root
+        } else {
+            path.len()
+        };
+        while let Some(rest) = path.get(directory_end + 1..) {
+            let directory = &path[..directory_end];
+            let package_name = &directory[top_level_package_name + 1..];
+            match self.try_directory_with_package_json(
+                path,
+                directory,
+                &path[..package_root],
+                package_name,
+                importing,
+                mode,
+            ) {
+                ControlFlow::Break(from_exports) => return from_exports,
+                ControlFlow::Continue(true) => {
+                    return package_name_from_types_package_name(package_name);
+                }
+                ControlFlow::Continue(false) => {}
+            }
+            let Some(next) = strings::index_of_char_usize(rest, b'/') else {
+                break;
+            };
+            directory_end += 1 + next;
+        }
+        let allowed = self.allowed_endings(importing, prefers_js, ResolutionMode::None);
+        let module_specifier = self.process_ending(path, path, &allowed);
+        match module_specifier.get(top_level_package_name + 1..) {
+            Some(name) => package_name_from_types_package_name(name),
+            None => Vec::new(),
+        }
     }
 
     /// `GetEachFileNameOfModule`: the paths that reach one of `targets` through a symlink to a directory that contains

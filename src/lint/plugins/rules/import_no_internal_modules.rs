@@ -89,7 +89,7 @@ impl Rule for NoInternalModules {
                 types.of_name(import_path, visited.is_require)
             } else {
                 let resolved = types.resolvers().resolve(file, import_path, visited.is_require);
-                // What is not found is neither allowed nor forbidden by its path, and is not reported.
+                // A module that doesn't resolve has no path to allow or forbid, so it isn't reported.
                 if resolved.file().is_none_or(|it| self.is_listed(&normalize_sep(it)) != self.is_forbid) {
                     continue;
                 }

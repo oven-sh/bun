@@ -2,6 +2,7 @@
 #include "V8HandleScope.h"
 #include "V8Isolate.h"
 #include "v8_compatibility_assertions.h"
+#include "napi.h"
 
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -21,6 +22,7 @@ static Local<ResultType> newTypedArray(Local<ArrayBuffer> array_buffer, size_t b
     RELEASE_ASSERT(jsBuffer, "v8::TypedArray::New: not an ArrayBuffer");
     auto* globalObject = Isolate::GetCurrent()->globalObject();
     auto& vm = globalObject->vm();
+    NapiUngatedScope ungated { vm };
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     RefPtr<JSC::ArrayBuffer> backing = jsBuffer->impl();
@@ -28,7 +30,7 @@ static Local<ResultType> newTypedArray(Local<ArrayBuffer> array_buffer, size_t b
     auto* view = JSCType::create(globalObject, structure, WTF::move(backing), byte_offset, length);
     RETURN_IF_EXCEPTION(scope, Local<ResultType>());
 
-    HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     return handleScope->createLocal<ResultType>(vm, view);
 }
 

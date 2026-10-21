@@ -16,9 +16,12 @@
 //     subscription for that topic, so the socket still received its frames.
 //     A hot update that only such a socket received reached
 //     `put_or_increment_ref_count`'s `debug_assert!(ref_count > 0)`.
+//   - "s" with topic `M` arms a timer. Its handler left the fired timer marked
+//     active, so closing the socket removed it from the timer heap a second time:
+//     `assert!(self.root == v)`, or a different timer dropped on a canary build.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -455,3 +458,41 @@ test.concurrent("a subscribe frame that drops a topic stops delivery of that top
     { topics: "hr", ids: ["r", "u"] },
   ]);
 });
+
+// Only canary and debug builds have the memory visualizer topic.
+test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
+  "the memory visualizer topic sends a frame every second until the socket closes",
+  async () => {
+    using dir = tempDir("hmr-socket-memory-visualizer", {
+      "index.html": indexHtml,
+      "entry.ts": `console.log("entry");`,
+      "server.ts": serverTs,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const dev = watchDevServer(proc);
+    const port = await dev.port;
+
+    // Subscribing sends the first frame. The timer sends the rest.
+    let frames = 0;
+    const third = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const hmr = await connectHmr(
+      port,
+      id => void (id === "M" && ++frames === 3 && third.resolve()),
+      err => (third.reject(err), closed.resolve()),
+    );
+    hmr.ws.send("sM");
+    await third.promise;
+    hmr.ws.close();
+    await closed.promise;
+
+    const res = await fetch(`http://127.0.0.1:${port}/fallback`);
+    expect(await res.text(), dev.stderr()).toBe("fallback");
+  },
+);

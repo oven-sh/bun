@@ -153,7 +153,7 @@ impl IncomingBuffer {
     fn init(mode: Mode) -> IncomingBuffer {
         match mode {
             Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
-            Mode::Json => IncomingBuffer::Json(JSONLineBuffer::default()),
+            Mode::Json => IncomingBuffer::Json(JSONLineBuffer::new(json::max_line_len())),
         }
     }
 }
@@ -262,6 +262,11 @@ mod advanced {
     const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
     // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
     const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
+
+    /// Returns the longest body the deserializer's `WTF::Vector<uint8_t>` can store without crashing.
+    fn max_message_len() -> usize {
+        BunString::max_length()
+    }
     // v2 added `SerializedMessageWithBuffers`. The peer's advertised version is
     // debug-logged, never consulted, so mixed-version pairs only break when a
     // Buffer-bearing message actually crosses to a v1 peer.
@@ -334,7 +339,8 @@ mod advanced {
                 || x == IPCMessageType::SerializedInternalMessage as u8
                 || x == IPCMessageType::SerializedMessageWithBuffers as u8 =>
             {
-                if message_len > u32::MAX - HEADER_LENGTH_U32 {
+                // Reject based on the header, before buffering the body.
+                if message_len as usize > max_message_len() {
                     return Err(IPCDecodeError::InvalidFormat);
                 }
                 // `header_length + message_len` would be evaluated as u32; a peer-controlled
@@ -452,6 +458,12 @@ mod json {
     // to be able to distinguish whether it is a regular json message or an internal one for cluster ipc communication.
     // 2 is internal
     // ["[{\d\.] is regular
+
+    /// Returns the longest line, not counting the newline, that can become a string.
+    pub(super) fn max_line_len() -> usize {
+        // The longest string in UTF-8 (at most 3 bytes per code unit), plus an internal message's tag byte.
+        BunString::max_length().saturating_mul(3).saturating_add(1)
+    }
 
     pub(super) fn decode_ipc_message(
         data: &[u8],
@@ -893,6 +905,9 @@ enum ContinueSendReason {
     NewMessageAppended,
     OnWritable,
 }
+
+/// The transport returns the number of bytes written as an `i32`.
+const MAX_WRITE_LEN: usize = i32::MAX as usize;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct SendQueue {
@@ -1536,6 +1551,7 @@ impl SendQueue {
         enum Done {
             AwaitAck,
             Completed(SendHandle),
+            Capped,
             Partial,
             NoProgress,
             Error,
@@ -1543,7 +1559,10 @@ impl SendQueue {
         let done = self.queue.with_mut(|queue| {
             let first = &mut queue[0];
             let to_send_len = first.data.list.len() - first.data.cursor;
-            if n as usize == to_send_len {
+            let Ok(written) = usize::try_from(n) else {
+                return Done::Error;
+            };
+            if written == to_send_len {
                 if first.handle.is_some() {
                     // the message was fully written, but it had a handle.
                     // we must wait for ACK or NACK before sending any more messages.
@@ -1561,12 +1580,16 @@ impl SendQueue {
                     // shift the queue and try to send the next item immediately.
                     Done::Completed(queue.remove(0))
                 }
-            } else if n > 0 && n < i32::try_from(first.data.list.len()).expect("int cast") {
+            } else if written > 0 && written < to_send_len {
                 // the item was partially sent; update the cursor and wait for writable to send the rest
                 // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
-                first.data.cursor += usize::try_from(n).expect("int cast");
-                Done::Partial
-            } else if n == 0 {
+                first.data.cursor += written;
+                if written == MAX_WRITE_LEN {
+                    Done::Capped
+                } else {
+                    Done::Partial
+                }
+            } else if written == 0 {
                 // no bytes written; wait for writable
                 Done::NoProgress
             } else {
@@ -1579,6 +1602,10 @@ impl SendQueue {
             }
             Done::Completed(item) => {
                 item.complete(&global_this); // call the callback & deinit
+                self.continue_send(&global_this, ContinueSendReason::OnWritable);
+            }
+            Done::Capped => {
+                // The transport accepted all `MAX_WRITE_LEN` bytes, so it won't send a writable event.
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
             Done::Partial | Done::NoProgress => {}
@@ -1705,7 +1732,7 @@ impl SendQueue {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
-                let write_len = data.len().min(i32::MAX as usize);
+                let write_len = data.len().min(MAX_WRITE_LEN);
                 Box::from(&data[0..write_len])
             });
 
@@ -1760,6 +1787,7 @@ impl SendQueue {
                 let first = &queue[0];
                 let data = &first.data.list[first.data.cursor..];
                 log!("SendQueue#write len {}", data.len());
+                let data = &data[..data.len().min(MAX_WRITE_LEN)];
                 if let Some(fd_unwrapped) = fd {
                     socket.write_fd(data, fd_unwrapped.native())
                 } else {
@@ -2279,6 +2307,10 @@ fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) 
             unreachable!()
         };
         let Some(msg) = json_buf.next() else {
+            if json_buf.is_too_long() {
+                // Fail the same way as a complete line that's too long to become a string.
+                return DecodeStep::Fail(IPCDecodeError::Js(JsError::OutOfMemory));
+            }
             return DecodeStep::Wait;
         };
         match decode_ipc_message(Mode::Json, msg.data, global, Some(msg.newline_pos)) {

@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Disallow `: unknown` on the variable of a `catch` clause, its type anyway with `useUnknownInCatchVariables`.
+/// Disallow `: unknown` on a `catch` clause's variable, which already has that type with `useUnknownInCatchVariables`.
 pub struct NoRedundantCatchType;
 
 const REDUNDANT_TYPE: Message = Message::new(

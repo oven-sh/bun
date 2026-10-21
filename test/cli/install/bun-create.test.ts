@@ -1022,30 +1022,6 @@ describe.concurrent("GitHub template", () => {
     expect(await tree(String(dir))).toEqual(before);
     expect(exitCode).toBe(1);
   });
-
-  // `bun install` reads package.json with comments and trailing commas allowed, so a template may use them.
-  // package-json-comments.test.ts has the same cases for a template from a local folder.
-  it.each([
-    ["a trailing comma", `{\n  "name": "template",\n  "bun-create": { "start": "bun run go" },\n}\n`],
-    ["a comment", `{\n  // note\n  "name": "template",\n  "bun-create": { "start": "bun run go" }\n}\n`],
-  ])("applies the package.json transforms when package.json has %s", async (_, manifest) => {
-    using github = await serveGithub({ "package.json": manifest });
-    using dir = tempDir("create-github-package-json", {});
-    const created = await create(
-      String(dir),
-      ["dylan-conway/create-test", "dest", "--no-install", "--no-git"],
-      github.env,
-    );
-
-    expect(created).toEqual({
-      out: expect.stringContaining("\n  cd dest\n  bun run go\n"),
-      err: expect.not.stringContaining("error:"),
-      exitCode: 0,
-    });
-    // Read as JSONC: a rewrite can keep the comment of the template.
-    const written = await Bun.file(join(String(dir), "dest", "package.json")).text();
-    expect(Bun.JSONC.parse(written)).toEqual({ name: "dest" });
-  });
 });
 
 describe.concurrent.each([
@@ -1191,6 +1167,33 @@ it.concurrent("should preserve package.json indentation from the template", asyn
     `{\n\t"name": "dest",\n\t"version": "1.0.0",\n\t"scripts": {\n\t\t"start": "bun index.js"\n\t}\n}\n`,
   );
   expect(exitCode).toBe(0);
+});
+
+// `bun install` reads package.json with comments and trailing commas allowed, so a template may use them.
+describe.concurrent.each(["local", "GitHub"])("the package.json of a %s template", kind => {
+  const fields = `"name": "tpl",\n  "version": "1.0.0",\n  "bun-create": { "start": "bun run go" }`;
+
+  it.each([
+    ["a trailing comma", `{\n  ${fields},\n}\n`],
+    ["a comment", `{\n  // note\n  ${fields}\n}\n`],
+  ])("gets the transforms when it has %s", async (_, manifest) => {
+    using github = await serveGithub({ "package.json": manifest });
+    using dir = tempDir("create-package-json-dialect", { "bun-create/tpl/package.json": manifest });
+    const created = await create(
+      String(dir),
+      [kind === "local" ? "tpl" : "dylan-conway/create-test", "dest", "--no-install", "--no-git"],
+      github.env,
+    );
+
+    expect(created).toEqual({
+      out: expect.stringContaining("\n  cd dest\n  bun run go\n"),
+      err: expect.not.stringContaining("error:"),
+      exitCode: 0,
+    });
+    // Read as JSONC: a rewrite can keep the comment of the template.
+    const written = await Bun.file(join(String(dir), "dest", "package.json")).text();
+    expect(Bun.JSONC.parse(written)).toEqual({ name: "dest", version: "1.0.0" });
+  });
 });
 
 // Windows copies from and to absolute paths, so a home directory like C:\Users\José is part of both.

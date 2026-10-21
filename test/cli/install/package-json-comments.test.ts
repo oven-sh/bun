@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 // `bun install` reads package.json with comments and trailing commas allowed. Every command below reads a
 // package.json too, so it has to take the file that `bun install` takes.
+// `bun create` reads the package.json of a template: bun-create.test.ts has those cases.
 const dialects = [
   ["a trailing comma", (pkg: object) => JSON.stringify(pkg, null, 2).replace(/\n}$/, ",\n}\n")],
   ["a comment", (pkg: object) => JSON.stringify(pkg, null, 2).replace(/^{/, "{\n  // note") + "\n"],
@@ -169,27 +170,6 @@ describe.each(dialects)("a package.json with %s", (_, write) => {
       expect(stderr).toBe("");
       expect(JSON.parse(stdout).name).toBe("named-in-package-json");
       expect(exitCode).toBe(0);
-    });
-  });
-
-  // A template from GitHub takes the same read. Its cases are in bun-create.test.ts, with the other GitHub templates.
-  test.concurrent("bun create: a local template gets the package.json transforms", async () => {
-    const template = { name: "template", version: "1.0.0", "bun-create": { start: "bun run go" } };
-    using dir = tempDir("package-json-comments-create", {
-      "templates/template/package.json": write(template),
-    });
-
-    const created = await run(String(dir), ["create", "template", "dest", "--no-git"], {
-      BUN_CREATE_DIR: join(String(dir), "templates"),
-    });
-    expect(created).toEqual({
-      stdout: expect.stringContaining("\n  cd dest\n  bun run go\n"),
-      stderr: expect.not.stringContaining("error:"),
-      exitCode: 0,
-    });
-    expect(await readManifest(join(String(dir), "dest", "package.json"))).toEqual({
-      name: "dest",
-      version: "1.0.0",
     });
   });
 });

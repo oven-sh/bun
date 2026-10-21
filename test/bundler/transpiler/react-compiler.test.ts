@@ -3553,7 +3553,8 @@ describe("bundler", () => {
       await SourceMapConsumer.with(JSON.parse(api.readFile("/out/entry.js.map")), null, map => {
         const original = (line: number, column: number) => {
           const position = map.originalPositionFor({ line: line + 1, column });
-          return source[position.line! - 1].slice(position.column!);
+          const text = source[position.line! - 1];
+          return text.slice(0, position.column!).trimStart() + "|" + text.slice(position.column!);
         };
         const words = api
           .readFile("/out/entry.js")
@@ -3565,8 +3566,8 @@ describe("bundler", () => {
             ]),
           );
         expect(words).toEqual([
-          ["catch {", "{"],
-          ["catch (e) {", "{"],
+          ["} |catch {", "} catch |{"],
+          ["} |catch (e) {", "} catch (e) |{"],
         ]);
       });
     },

@@ -7643,6 +7643,26 @@ it.each([
   }
 });
 
+it("end() sends 200 after statusCode is deleted", async () => {
+  const server = http.createServer((req, res) => {
+    // @ts-expect-error
+    delete res.statusCode;
+    try {
+      res.end();
+    } catch {
+      res.statusCode = 500;
+      res.end();
+    }
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(response.status).toBe(200);
+  } finally {
+    server.close();
+  }
+});
+
 it.each(["write", "end"] as const)("%s(body) sends no body when statusCode is the string 304", async method => {
   const server = http.createServer((req, res) => {
     // @ts-expect-error

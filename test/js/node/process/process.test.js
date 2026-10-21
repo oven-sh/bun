@@ -3649,3 +3649,17 @@ it("native functions that define a property on `this` throw a TypeError when the
     exitCode: 0,
   });
 });
+
+it("the EventEmitter methods that node:process exports act on process", async () => {
+  const ns = await import("node:process");
+  const { emit, listenerCount } = ns;
+  const received = [];
+  const listener = value => received.push(value);
+  expect(ns.on("namespace-event", listener)).toBe(process);
+  expect(process.listeners("namespace-event")).toEqual([listener]);
+  expect(listenerCount("namespace-event")).toBe(1);
+  expect(emit("namespace-event", "hello")).toBe(true);
+  expect(received).toEqual(["hello"]);
+  expect(ns.off("namespace-event", listener)).toBe(process);
+  expect(process.listenerCount("namespace-event")).toBe(0);
+});

@@ -2425,6 +2425,8 @@ function ServerResponse(req, options): void {
   this.chunkedEncoding = false;
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
+// A response whose own statusCode was deleted sends 200, as in Node.js.
+ServerResponse.prototype.statusCode = 200;
 
 // ServerResponse stores its outgoing headers the same way Node.js does (the
 // kOutHeaders map inherited from OutgoingMessage). Right before the headers

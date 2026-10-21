@@ -818,6 +818,7 @@ impl Builtin {
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
+    /// `Relaxed` here and in `stop`: see `ShellTask::stopped`.
     #[inline]
     pub(crate) fn is_stopped(&self) -> bool {
         self.stopped.load(core::sync::atomic::Ordering::Relaxed)

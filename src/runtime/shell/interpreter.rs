@@ -2933,7 +2933,7 @@ impl ShellTask {
         task
     }
 
-    /// The owner was stopped: pool work does nothing more.
+    /// The owner was stopped: pool work does nothing more. `Relaxed`: a latch that orders no other memory, and a read that misses it does one more step, as a read just before the store does.
     #[inline]
     pub(crate) fn stopped(&self) -> bool {
         self.stop.is_some_and(|stop| stop.load(Ordering::Relaxed))

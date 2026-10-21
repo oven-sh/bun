@@ -5,7 +5,7 @@ pub(crate) use bun_lint::linter::write_json_indented as write_indented;
 use bun_lint::linter::{Entry, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 
-// Out of line: what builds JSON to print calls these two over a hundred times.
+// Not inlined, because the code that builds JSON to print calls these two over a hundred times.
 
 #[inline(never)]
 pub(crate) fn text(text: &[u8]) -> Json {
@@ -22,8 +22,8 @@ pub(crate) fn object(entries: Vec<(&[u8], Json)>) -> Json {
     )
 }
 
-/// What ESLint prints for a file that has `config`, but for the default options of the rules, which
-/// ESLint fills in. `None`: the file is not linted.
+/// Returns what ESLint prints for a file with `config`, except for the rules' default options, which ESLint fills in.
+/// `None` means the file isn't linted.
 #[optimize(size)]
 pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     let Some(config) = config else {
@@ -64,11 +64,11 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
         Some((id, Json::Array(setting.collect())))
     });
     let mut plugins = vec![text(b"@")];
-    let of_rules = config.configured().map(|it| it.entry.meta.plugin);
+    let rule_plugins = config.configured().map(|it| it.entry.meta.plugin);
     for prefix in config
         .plugins
         .clone()
-        .unwrap_or_else(|| of_rules.collect())
+        .unwrap_or_else(|| rule_plugins.collect())
         .iter()
         .map(|it| text(it.prefix().as_bytes()))
     {
@@ -86,6 +86,8 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
         (
             &b"sourceType"[..],
             text(match language.source_type {
+                // Babel's and oxc's name for a source type that's decided by the file's syntax.
+                _ if language.without_module_syntax.is_some() => b"unambiguous",
                 SourceType::Module => b"module",
                 SourceType::Script => b"script",
                 SourceType::CommonJs => b"commonjs",
@@ -132,7 +134,7 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     ));
     all.push((
         b"languageOptions",
-        match &config.options_of_other_language {
+        match &config.other_language_options {
             Some(Json::Null) => object(Vec::new()),
             Some(options) => options.clone(),
             None => object(language_options),

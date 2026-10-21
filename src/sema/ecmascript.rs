@@ -1,28 +1,28 @@
-//! What is no JavaScript, although TypeScript's parser reads it in a JavaScript file and
-//! `checkJSSyntax` has nothing to say about it: its checker reports it. A tool that follows acorn
-//! or Babel does not run the checker, and takes a file without a syntax error for JavaScript.
+//! Syntax that isn't JavaScript, even though TypeScript's parser accepts it in a JavaScript file and `checkJSSyntax`
+//! doesn't report it. TypeScript's checker reports it instead. A tool that follows acorn or Babel doesn't run the
+//! checker, and treats a file without a syntax error as JavaScript.
 
 use crate::atom::known;
 use crate::hir::*;
 use bun_core::strings;
 
-/// The modifiers that are JavaScript's (`ModifierFlagsJavaScript`). `checkJSSyntax` reports the others.
-const JAVASCRIPT: Flags = Flags::EXPORT
+/// JavaScript's own modifiers (`ModifierFlagsJavaScript`). `checkJSSyntax` reports the others.
+const JAVASCRIPT_MODIFIERS: Flags = Flags::EXPORT
     .union(Flags::STATIC)
     .union(Flags::ACCESSOR)
     .union(Flags::ASYNC)
     .union(Flags::DEFAULT);
 
-/// The first of `modifiers` that acorn and Babel do not take for a modifier of something that can
-/// have those in `allowed`: another one, one for the second time, `static` after another. Only
-/// those in `looked_at` count.
-fn misplaced(modifiers: &[Modifier], allowed: Flags, looked_at: Flags) -> Option<Found> {
+/// Returns the first of `modifiers` that acorn and Babel reject on something that can have the modifiers in `allowed`:
+/// one that isn't allowed, a repeated one, or `static` after another modifier. Only the modifiers in `relevant` are
+/// considered.
+fn misplaced(modifiers: &[Modifier], allowed: Flags, relevant: Flags) -> Option<Found> {
     let mut seen = Flags::empty();
     for modifier in modifiers {
         let ModifierKind::Keyword(flag) = modifier.kind else {
             continue;
         };
-        if !looked_at.intersects(flag) {
+        if !relevant.intersects(flag) {
             continue;
         }
         if !allowed.contains(flag)
@@ -36,26 +36,27 @@ fn misplaced(modifiers: &[Modifier], allowed: Flags, looked_at: Flags) -> Option
     None
 }
 
-/// The position, the code and the argument of an error.
+/// An error's position, code and argument.
 type Found = (u32, u32, &'static str);
 
-/// Where the first `sign` from `from` on is. It follows a name that starts or ends there.
+/// Returns the position of the first `sign` at or after `from`. It follows a name that starts or ends there.
 fn position_of(sign: u8, text: &[u8], from: u32) -> u32 {
     let rest = text.get(from as usize..).unwrap_or_default();
     from + strings::index_of_char(rest, sign).unwrap_or(0)
 }
 
-/// The errors of the checker's `checkGrammar..` about syntax that only TypeScript has, in the file
-/// `file` with the text `text`:
-/// - a modifier of JavaScript where it cannot be: `class A { async a }`, `({ static a: 1 })`,
-///   `export export class A {}`, and any modifier of a property of an object literal
-/// - `!` after the name of a variable or of a property of a class
+/// Reports the errors of the checker's `checkGrammar..` functions about TypeScript-only syntax in `file`, whose text is
+/// `text`:
+/// - a JavaScript modifier where it isn't allowed: `class A { async a }`, `({ static a: 1 })`, `export export class A
+///   {}`, and any modifier on a property of an object literal
+/// - `!` after the name of a variable or a class property
 /// - `?` after the name of an accessor or a constructor, `?` and `!` in an object literal
-/// - a parameter `this`
+/// - a `this` parameter
 /// - `declare module "a"`, `declare global`, `export as namespace a`
-pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
+pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
     let mut found: Vec<Found> = Vec::new();
-    for stmt in file.stmts.iter() {
+    for (stmt, id) in file.stmts.iter().zip(0..) {
+        let modifier_span = file.stmt_modifiers(StmtId(id));
         match stmt.kind {
             StmtKind::Module(module) if !matches!(file[module].name, ModuleName::Ident(_)) => {
                 found.push((stmt.start, 8006, "module"));
@@ -63,10 +64,14 @@ pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
             StmtKind::ExportAsNamespace(_) => {
                 found.push((stmt.start, 8006, "export as namespace"));
             }
-            _ if stmt.modifiers.is_empty() => {}
+            _ if modifier_span.is_empty() => {}
             _ => {
-                let modifiers = file.modifier_list(stmt.modifiers);
-                found.extend(misplaced(modifiers, JAVASCRIPT, JAVASCRIPT));
+                let modifiers = file.modifier_list(modifier_span);
+                found.extend(misplaced(
+                    modifiers,
+                    JAVASCRIPT_MODIFIERS,
+                    JAVASCRIPT_MODIFIERS,
+                ));
             }
         }
     }
@@ -94,14 +99,14 @@ pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
         if member.flags.contains(Flags::DEFINITE) {
             found.push((position_of(b'!', text, member.name_pos), 1255, ""));
         }
-        // `checkJSSyntax` reports that of a property and of a method.
+        // `checkJSSyntax` reports the `?` of a property and of a method.
         if member.flags.contains(Flags::OPTIONAL)
             && !matches!(member.kind, MemberKind::Property | MemberKind::Method)
         {
             found.push((position_of(b'?', text, member.name_pos), 8009, "?"));
         }
         let modifiers = file.modifier_list(member.modifiers);
-        found.extend(misplaced(modifiers, allowed, JAVASCRIPT));
+        found.extend(misplaced(modifiers, allowed, JAVASCRIPT_MODIFIERS));
         if member.kind == MemberKind::StaticBlock {
             let is_decorator = |it: &&Modifier| matches!(it.kind, ModifierKind::Decorator(_));
             let decorator = modifiers.iter().find(is_decorator);
@@ -111,19 +116,19 @@ pub fn report_syntax_of_typescript(file: &mut FileBuilder, text: &[u8]) {
     for prop in file.props.iter().filter(|it| it.postfix_token != 0) {
         match text.get(prop.postfix_token as usize) {
             Some(b'!') => found.push((prop.postfix_token, 1255, "")),
-            // `checkJSSyntax` reports that of a method.
+            // `checkJSSyntax` reports the `?` of a method.
             _ if prop.kind == PropKind::Method => {}
             _ => found.push((prop.postfix_token, 1162, "")),
         }
     }
     for &(prop, modifiers) in file.modifiers_of_props.iter() {
-        // `checkJSSyntax` looks at the modifiers of a method only.
-        let (allowed, looked_at) = match file[prop].kind {
-            PropKind::Method => (Flags::ASYNC, JAVASCRIPT),
+        // `checkJSSyntax` only looks at the modifiers of a method.
+        let (allowed, relevant) = match file[prop].kind {
+            PropKind::Method => (Flags::ASYNC, JAVASCRIPT_MODIFIERS),
             _ => (Flags::empty(), Flags::all()),
         };
         let modifiers = file.modifier_list(modifiers);
-        found.extend(misplaced(modifiers, allowed, looked_at));
+        found.extend(misplaced(modifiers, allowed, relevant));
     }
     for (pos, code, argument) in found {
         let arguments: &[&[u8]] = &[argument.as_bytes()];

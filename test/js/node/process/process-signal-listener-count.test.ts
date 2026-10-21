@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 
 // When multiple listeners are registered for the same signal, removing one
@@ -133,4 +133,66 @@ test.skipIf(isWindows)("re-adding a listener after removing all reinstalls the h
 done"
 `);
   expect(exitCode).toBe(0);
+});
+
+// SIGIOT is an alias for SIGABRT. Node starts one watcher per event name, so one signal runs the listeners
+// for both names, and the OS handler is only removed once both names have no listeners.
+// On Windows, no signal number has two names.
+describe.concurrent.skipIf(isWindows)("SIGABRT and SIGIOT", () => {
+  // The child adds a listener for each of `events` and sends `sent` to itself.
+  // It prints every listener call as [event, name argument, number argument].
+  // It also adds a listener for `removed` and removes it before sending the signal.
+  async function run({ sent, events, removed }: { sent: string; events: string[]; removed?: string }) {
+    const script = /*js*/ `
+      const calls = [];
+      for (const event of ${JSON.stringify(events)}) {
+        process.on(event, (name, number) => calls.push([event, name, number]));
+      }
+      const removed = ${JSON.stringify(removed)};
+      if (removed) {
+        const listener = () => calls.push([removed, "removed"]);
+        process.on(removed, listener);
+        process.off(removed, listener);
+      }
+
+      const keepAlive = setTimeout(() => {}, 60_000);
+      process.on("SIGUSR2", () => {
+        clearTimeout(keepAlive);
+        console.log(JSON.stringify(calls.sort()));
+      });
+      process.kill(process.pid, ${JSON.stringify(sent)});
+      // The event loop runs the pending signal's listeners before the immediate.
+      setImmediate(() => process.kill(process.pid, "SIGUSR2"));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  const listenersRan = (events: string[]) => ({
+    stdout: JSON.stringify(events.map(event => [event, event, 6]).sort()) + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+
+  test.each([
+    ["SIGABRT", ["SIGIOT"]],
+    ["SIGIOT", ["SIGABRT"]],
+    ["SIGABRT", ["SIGABRT", "SIGIOT"]],
+  ])("sending %s runs the listeners for %p", async (sent, events) => {
+    expect(await run({ sent, events })).toEqual(listenersRan(events));
+  });
+
+  test.each([
+    ["SIGABRT", "SIGIOT"],
+    ["SIGIOT", "SIGABRT"],
+  ])("removing the %s listener keeps the handler for the %s listener", async (removed, kept) => {
+    expect(await run({ sent: removed, events: [kept], removed })).toEqual(listenersRan([kept]));
+  });
 });

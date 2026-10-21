@@ -29,7 +29,7 @@ impl Rule for NoConfusingSetTimeout {
     }
 }
 
-/// Of `jest`, `Jest`, `jEst` and so on.
+/// The mention bits of `jest` in every casing: `jest`, `Jest`, `jEst` and so on.
 const JEST_BITS: [u32; 16] = {
     let (mut bits, mut i) = ([0; 16], 0);
     while i < 16 {
@@ -46,14 +46,14 @@ const JEST_BITS: [u32; 16] = {
     bits
 };
 
-/// `jest`, and `Jest` for `import { jest as Jest } from "@jest/globals"`.
+/// Matches `jest`, and `Jest` for `import { jest as Jest } from "@jest/globals"`.
 fn is_jest_call(reference: Expr) -> bool {
     reference.as_ident().is_some_and(|name| name.bytes().eq_ignore_ascii_case(b"jest"))
 }
 
 fn run_once<'a>(cx: &Cx<'a, NoConfusingSetTimeout>) {
     let file = cx.file();
-    // The `jest.setTimeout`s, those of a global `jest` first.
+    // Every `jest.setTimeout`, with those on a global `jest` first.
     let set_timeout = file.name_of("setTimeout");
     let is_set_timeout = |it: &Expr<'a>| {
         it.member_name().is_some_and(|name| name.name() == set_timeout)
@@ -67,7 +67,7 @@ fn run_once<'a>(cx: &Cx<'a, NoConfusingSetTimeout>) {
     if jest_reference_list.is_empty() {
         return;
     }
-    // In the order in which oxlint comes to them: by the name or the declaration, and then by the place.
+    // Sort them the way oxlint visits them: by name or declaration, then by position.
     if jest_reference_list.len() > 1 {
         let order = OxlintOrder::new(file);
         utils::sort::sort_by_cached_key(&mut jest_reference_list, |it| {
@@ -78,7 +78,7 @@ fn run_once<'a>(cx: &Cx<'a, NoConfusingSetTimeout>) {
             (it.0, group, it.1.span().start)
         });
     }
-    // Where the first identifier is that is called as, or passed to, a function of Jest.
+    // The position of the first identifier that's called as, or passed to, a Jest function.
     let mut tops = AncestorMemo::default();
     let first_jest_fn_call = (file.exprs_of_kind(ExprTag::Ident))
         .filter(|it| !is_jest_call(*it) && is_jest_fn_call(*it, file, &mut tops))
@@ -98,7 +98,7 @@ fn run_once<'a>(cx: &Cx<'a, NoConfusingSetTimeout>) {
     }
 }
 
-/// `tops`: the whole chain of calls, members and tagged templates that something is a link of.
+/// `tops` caches the top of the chain of calls, members and tagged templates that an expression is part of.
 fn is_jest_fn_call<'a>(reference: Expr<'a>, file: &'a File<'a>, tops: &mut AncestorMemo<'a, Expr<'a>>) -> bool {
     let Some(parent_node) = parent_expression(reference).filter(|it| it.tag() == ExprTag::Call) else {
         return false;

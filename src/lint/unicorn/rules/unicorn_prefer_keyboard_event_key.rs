@@ -44,7 +44,7 @@ impl Rule for PreferKeyboardEventKey {
 
 type Context<'a> = Cx<'a, PreferKeyboardEventKey>;
 
-/// The innermost function around `node`, or `node` itself, that is the second argument of `a.addEventListener(..)`.
+/// The innermost function at or around `node` that's the second argument of `a.addEventListener(..)`.
 fn find_add_event_listener_callback<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, Func<'a>>) -> Option<Func<'a>> {
     known.find(node, |child, parent| {
         let (callback, call) = (child.as_expr()?, parent.as_expr()?.as_call()?);
@@ -56,7 +56,7 @@ fn find_add_event_listener_callback<'a>(node: Node<'a>, known: &mut AncestorMemo
     })
 }
 
-/// Whether the identifier `expr` is the first parameter of the callback around `node`.
+/// True if the identifier `expr` is the first parameter of the callback around `node`.
 fn is_event_parameter<'a>(expr: Expr<'a>, node: Node<'a>, cx: &mut Context<'a>) -> bool {
     expr.tag() == ExprTag::Ident
         && !expr.is_parenthesized()
@@ -86,7 +86,9 @@ fn check_static_member_expression<'a>(_: &PreferKeyboardEventKey, member_expr: E
             .find(|it| it.0.tag() == ExprTag::Number && !it.0.is_parenthesized())
         && let Some(key_name) = get_key_from_code(code)
     {
-        report.fix(|fixer| {
+        // For a key that types a character, `key` depends on the layout and on Shift: `keyCode` 65 is both `a` and `A`.
+        let is_safe = || key_name.len() > 1 && property.name().is_any(&["keyCode", "which"]);
+        report.fix_where_safe(is_safe, |fixer| {
             let mut key_str = Vec::new();
             print_string(&mut key_str, key_name.as_bytes(), b'\'');
             [fixer.replace(property, "key"), fixer.replace(number, key_str)]
@@ -104,17 +106,17 @@ fn check_binding_property<'a>(prop: PatProp<'a>, cx: &mut Context<'a>) {
     if !value_name.is_any(&DEPRECATED_PROPERTIES) {
         return;
     }
-    // What the pattern that it is in is the whole of.
+    // The node that owns the outermost enclosing pattern.
     let mut owner = prop.parent();
     while matches!(owner, Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_)) {
         owner = owner.parent();
     }
-    let is_of_event = match owner {
+    let is_event_pattern = match owner {
         Node::VarDecl(declarator) => declarator.init().is_some_and(|init| is_event_parameter(init, owner, cx)),
         Node::Param(param) => find_add_event_listener_callback(Node::Param(param).parent(), &mut cx.state).is_some(),
         _ => false,
     };
-    if is_of_event {
+    if is_event_pattern {
         cx.report(prop.value(), PREFER_KEYBOARD_EVENT_KEY).data("deprecated_prop", value_name.bytes());
     }
 }

@@ -1,16 +1,16 @@
-//! `ts.TypeChecker` as those outside the checker use it: what is the type at this node, what does
-//! this name refer to, what are the properties of this type.
+//! `ts.TypeChecker` for callers outside the checker: what's the type at this node, what does this
+//! name refer to, what are this type's properties.
 //!
-//! A [`Services`] is entered for a file right after that file has been checked
-//! ([`Checker::with_services`]), and answers until it is dropped. Nothing that it hands out may be
-//! kept longer: the ids of types, signatures and names belong to the task that checks the file.
+//! A [`Services`] is created for a file right after that file is checked
+//! ([`Checker::with_services`]) and answers queries until it's dropped. Don't keep anything it
+//! returns any longer: type, signature and name ids belong to the task that checks the file.
 //!
-//! - A node is a [`NodeRef`]: a file of the program and a [`Node`] of it.
+//! - A node is a [`NodeRef`]: a file of the program and a [`Node`] in it.
 //! - A type is a `TypeId`, a signature a `SigId`.
-//! - A symbol is a [`SymbolRef`]. The checker has no one thing that is a `ts.Symbol`: what the
-//!   binder declares in a table is a `Sym`, a property of a type is a `Prop` and the mapper to read
-//!   it with, a parameter of a signature is a `SigParam`. This numbers them as they come up, so
-//!   that equal numbers are what TypeScript has one object for.
+//! - A symbol is a [`SymbolRef`]. The checker has no single counterpart of `ts.Symbol`: a symbol
+//!   the binder declares in a table is a `Sym`, a property of a type is a `Prop` plus the mapper to
+//!   read it with, and a signature's parameter is a `SigParam`. `Services` numbers them as they
+//!   come up, so equal numbers mean the same `ts.Symbol` object in TypeScript.
 
 mod jsdoc;
 pub(in crate::check) mod symbol_at_location;
@@ -24,100 +24,102 @@ pub use vocabulary::ObjectFlags;
 pub use vocabulary::*;
 
 use super::*;
-use crate::bind::{Decl, ScopeId, SymbolId};
+use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::node::{Kind, Node, NodeData};
 use smallvec::SmallVec;
 use std::cell::OnceCell;
 use symbols::{Entry, Key};
 use visited::VisitedKind;
 
-/// Calls what it is given with the text of the file of the default library that has that name, if it
-/// can be read. The checker does not keep that text.
+/// Passes the text of the default library file with the given name to the callback, if the file can be read. The
+/// checker doesn't keep that text.
 pub type ReadLibrary<'r> = &'r (dyn Fn(&[u8], &mut dyn FnMut(&[u8])) + Sync);
 
-/// What has more constituents or signatures than that has many: what is found by going through them is kept.
+/// Above this many constituents, signatures or elements, a result that takes a pass over all of them is cached.
 const MANY: usize = 16;
 
-/// A child of a node of the file at hand that is a HIR node, or is around one.
+/// A child node in the current file that is a HIR node or wraps one.
 #[derive(Copy, Clone)]
 struct ChildSpan {
     start: u32,
     end: u32,
-    /// Which of the children it is.
+    /// Its index among the children.
     position: u32,
     node: Node,
 }
 
-/// The children of a node that has many, for [`Services::name_at`].
+/// The children of a node with many children, indexed for [`Services::name_at`].
 #[derive(Copy, Clone)]
 struct ManyChildren<'c> {
-    /// Those that are HIR nodes, or are around one. From one to the next neither the start nor the end goes down.
+    /// The children that are HIR nodes or wrap one. Both their starts and their ends are non-decreasing.
     spans: &'c [ChildSpan],
-    /// The others, each with which of the children it is.
+    /// The other children, each with its index among the children.
     parts: &'c [(u32, Node)],
 }
 
 impl ManyChildren<'_> {
-    /// Adds the parts and the children that `offset` is in, in the order of the children. It takes the logarithm of their number.
-    fn push_around(self, offset: u32, work: &mut SmallVec<[Node; 16]>) {
+    /// Pushes the parts and the children that contain `offset`, in child order. Finds the children by binary search.
+    fn push_containing(self, offset: u32, work: &mut SmallVec<[Node; 16]>) {
         let from = self.spans.partition_point(|it| it.end <= offset);
         let to = self.spans.partition_point(|it| it.start <= offset);
-        let mut around = self
+        let mut containing = self
             .spans
             .get(from..to)
             .unwrap_or_default()
             .iter()
             .peekable();
         for &(position, part) in self.parts {
-            while let Some(it) = around.next_if(|it| it.position < position) {
+            while let Some(it) = containing.next_if(|it| it.position < position) {
                 work.push(it.node);
             }
             work.push(part);
         }
-        work.extend(around.map(|it| it.node));
+        work.extend(containing.map(|it| it.node));
     }
 }
 
 pub struct Services<'c, 'p, 's> {
     c: &'c mut Checker<'p, 's>,
     file: FileId,
-    /// For the lists that are made up for an answer.
+    /// Holds the lists built for results.
     arena: &'c Arena,
     symbols: Vec<Entry<'c>>,
     symbol_ids: FxHashMap<Key<'c>, SymbolRef>,
-    /// What `properties_of_type` and `signature_info` have answered.
+    /// Cached results of `properties_of_type` and `signature_info`.
     properties: FxHashMap<TypeId, &'c [SymbolRef]>,
     signatures: FxHashMap<SigId, SignatureInfo<'c>>,
-    /// What `type_at_location` has answered: many rules ask about the same node, and some about one node from each of its
+    /// Cached results of `type_at_location`. Many rules query the same node, and some query one node from each of its
     /// many children.
     types_at: FxHashMap<NodeRef, TypeId>,
-    /// What `type_op` has answered for a union or an intersection of many, which it goes through.
+    /// Cached results of `type_op` for unions and intersections with many constituents, which it
+    /// iterates over.
     ops_on_many: FxHashMap<(TypeOp, TypeId), Option<TypeId>>,
-    /// What `flags_of_constituents` has answered for a union of many.
+    /// Cached results of `flags_of_constituents` for unions with many constituents.
     flags_of_many: FxHashMap<TypeId, TypeFlags>,
-    /// What `signatures_of_type` has answered for a type that has many: a list of them for each call of a function with
-    /// many overloads takes memory in proportion to the product.
+    /// Cached results of `signatures_of_type` for types with many signatures. A new list for every call of a heavily
+    /// overloaded function would take memory proportional to calls times overloads.
     many_signatures: FxHashMap<(TypeId, SignatureKind), &'c [SigId]>,
-    /// The contextual types of the object and array literals with many properties or elements.
+    /// The contextual types of object and array literals with many properties or elements.
     expected_of_many: FxHashMap<(FileId, ExprId), TypeId>,
-    /// What `node_children` has answered for the nodes that have many: a list of them for each member of a class that asks for
-    /// the heritage clauses takes memory in proportion to the square of their number.
+    /// Cached results of `node_children` for nodes with many children. A new list each time a class member requests the
+    /// heritage clauses would take memory quadratic in the number of members.
     children: FxHashMap<NodeRef, &'c [Node]>,
-    /// `all_super_type_nodes`
+    /// Cached results of `all_super_type_nodes`.
     super_type_nodes: FxHashMap<NodeRef, &'c [Node]>,
-    /// For the nodes of `file` with many children that `name_at` has come through. `None`: they are not in order.
+    /// The nodes of `file` with many children that `name_at` has visited. `None` if the children aren't sorted.
     many_children: FxHashMap<Node, Option<ManyChildren<'c>>>,
     /// `Checker::symbols_of_declarations` of `file`.
     symbols_of_declarations: OnceCell<FxHashMap<Decl, SymbolId>>,
     read_library: Option<ReadLibrary<'c>>,
-    /// What the queries must not change for the files that the task checks next.
+    /// The checker's list, restored on drop so that queries don't change it for the files the task
+    /// checks next.
     flow_analysis_was_disabled: Vec<FileId>,
 }
 
 impl<'p, 's> Checker<'p, 's> {
     /// Calls `then` with the services for `file`, which has just been checked.
     ///
-    /// `read_library`: without it nothing in the default library counts as deprecated.
+    /// Without `read_library`, nothing in the default library counts as deprecated.
     pub fn with_services<R>(
         &mut self,
         file: FileId,
@@ -125,17 +127,17 @@ impl<'p, 's> Checker<'p, 's> {
         then: impl FnOnce(&mut Services<'_, 'p, 's>) -> R,
     ) -> R {
         let arena = Arena::new();
-        // `check_file` skips a file that reports no semantic errors, and rules do not ask in source order.
+        // `check_file` skips a file that reports no semantic errors, and rules don't query in source order.
         if self.task.file == Some(file)
             && self.bound(file).has_types_that_depend_on_order()
             && !self.reports_semantic_errors(file)
         {
-            self.check_source_file_and_report_nothing(file);
+            self.check_source_file_silently(file);
         }
-        // A reference whose control flow walk is too deep disables the analysis (2563), and from then
-        // on every reference has the error type, until the function or module block around it ends: at
-        // the top level of a file, for good. The questions of the rules are in no block, and begin
-        // with the analysis enabled. What the check has stored while it was disabled stays.
+        // A reference whose control flow walk is too deep disables the analysis (2563). From then on every reference
+        // has the error type until the enclosing function or module block ends, which at the top level of a file is
+        // never. Rule queries aren't inside any block, so they start with the analysis enabled. Results the check
+        // stored while it was disabled stay.
         let flow_analysis_was_disabled = std::mem::take(&mut self.flow_analysis_disabled);
         let mut services = Services {
             flow_analysis_was_disabled,
@@ -170,8 +172,8 @@ impl Drop for Services<'_, '_, '_> {
 }
 
 impl<'c, 'p, 's> Services<'c, 'p, 's> {
-    /// Whether the control flow analysis was disabled when the file had been checked, or a question
-    /// has disabled it since: there are references in the file that have the error type.
+    /// True if control flow analysis was disabled when the check of the file finished, or a query
+    /// has disabled it since. Some references in the file then have the error type.
     pub fn was_flow_analysis_ever_disabled(&self) -> bool {
         self.flow_analysis_was_disabled.contains(&self.file)
             || self.c.flow_analysis_disabled.contains(&self.file)
@@ -185,26 +187,27 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    /// Whether `file` is one whose tree can be read.
+    /// True if `file` is in the program, so its tree can be read.
     #[inline]
     fn has_file(&self, file: FileId) -> bool {
         (file.0 as usize) < self.c.files().modules.len()
     }
 
-    /// `node`, if it is a node of a file of the program.
+    /// Returns `node` with its file's HIR, if it's a node in a file of the program.
     #[inline]
     fn valid(&self, node: NodeRef) -> Option<(&'p hir::File<'s>, Node)> {
         (node.node.is_some() && self.has_file(node.file))
             .then(|| (self.c.hir(node.file), node.node))
     }
 
-    /// The expression that `node` is, or is the parentheses around.
+    /// The expression that `node` is, or that `node` parenthesizes.
     fn expr_of(&self, node: NodeRef) -> Option<ExprId> {
         let (hir, at) = self.valid(node)?;
         match hir.data(at) {
             NodeData::Expr(e) => Some(e),
             NodeData::Paren(p) => hir.parens.get(p.idx()).map(|it| it.0),
-            // A function or a class that is an expression has the handle of its own.
+            // A function or class expression's node data is its function or class handle, not an
+            // `ExprId`.
             _ => match hir.kind(at) {
                 Kind::FunctionExpression | Kind::ArrowFunction => {
                     match self
@@ -258,7 +261,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             verbatim_module_syntax: options.verbatim_module_syntax,
             experimental_decorators: options.experimental_decorators,
             emit_decorator_metadata: options.emit_decorator_metadata,
-            // TypeScript 7 has neither as an option: both are always on.
+            // TypeScript 7 dropped both options. They're always on.
             allow_synthetic_default_imports: true,
             es_module_interop: true,
             allow_js: options.allow_js,
@@ -307,8 +310,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    /// `sourceFileToPackageName` of the files that a link in a `node_modules` leads to, as in a
-    /// workspace. Their paths do not tell: what tells is that something imports them as a package.
+    /// `sourceFileToPackageName` for files reached through a symlink in `node_modules`, as in a
+    /// workspace. Their real paths don't contain `node_modules`, so the name comes from an import
+    /// that refers to them as a package.
     fn package_names_of_linked_files(&self) -> &'p FxHashMap<FileId, Vec<u8>> {
         let program = self.c.p;
         program.package_names_of_linked_files.get_or_init(|| {
@@ -334,7 +338,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                         continue;
                     }
                     let name = cat!(package, b"/", in_package);
-                    // Whatever the order of the imports.
+                    // Keep the smallest name, so the result doesn't depend on the order of the
+                    // imports.
                     match names.entry(file) {
                         std::collections::hash_map::Entry::Occupied(mut known)
                             if name < *known.get() =>
@@ -342,18 +347,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                             known.insert(name);
                         }
                         std::collections::hash_map::Entry::Occupied(_) => {}
-                        std::collections::hash_map::Entry::Vacant(place) => {
-                            place.insert(name);
+                        std::collections::hash_map::Entry::Vacant(vacant) => {
+                            vacant.insert(name);
                         }
                     }
                 }
             }
             names
         })
-    }
-
-    pub fn source_file(&mut self, file_name: &[u8]) -> Option<FileId> {
-        self.c.files().by_path.get(file_name)
     }
 
     /// `checker.getAmbientModules().find(it => it.name === '"name"')`
@@ -372,7 +373,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     // ───────────────────────────── nodes ─────────────────────────────
 
-    /// The node of the file at hand that `location` names. `NONE` if there is none.
+    /// The node in the current file that `location` refers to, or `NONE`.
     pub fn node(&mut self, location: Location) -> Node {
         let hir = self.c.hir(self.file);
         let row = match location.row {
@@ -400,7 +401,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Row::NameAt(offset) => self.name_at(offset),
         };
         match location.part {
-            // `node.name`, which for a variable, a parameter or a binding element is a pattern.
+            // `node.name`, which is a pattern for a variable, parameter or binding element.
             Some(crate::node::Part::Name) if row.is_some() => hir.name(row),
             Some(part) => row.with(part),
             None => row,
@@ -416,16 +417,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             let before = work.len();
             let known = self.many_children.get(&at).copied();
             if let Some(Some(children)) = known {
-                children.push_around(offset, &mut work);
+                children.push_containing(offset, &mut work);
             } else {
                 let mut count = 0;
                 hir.for_each_child(at, &mut |child| {
                     count += 1;
-                    // Where a node begins and ends that is derived from another is not always known.
-                    let is_around = child.part().is_some()
+                    // The span of a node derived from another node isn't always known.
+                    let contains_offset = child.part().is_some()
                         || hir.start(child) <= offset
                             && offset < self.c.end_of_node(self.file, child);
-                    if is_around {
+                    if contains_offset {
                         work.push(child);
                     }
                     false
@@ -442,14 +443,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Node::NONE
     }
 
-    /// `None` if a search in them would not find what going through them finds.
+    /// `None` if a binary search wouldn't find the same children as a linear scan.
     fn many_children_of(&self, at: Node) -> Option<ManyChildren<'c>> {
         let hir = self.c.hir(self.file);
         let (mut spans, mut parts) = (Vec::new(), SmallVec::<[(u32, Node); 8]>::new());
         let mut position = 0;
         hir.for_each_child(at, &mut |child| {
             match child.part() {
-                // It is around the node that it belongs to, and there is no name in the rest of it.
+                // It wraps its row's node, and the rest of it contains no name.
                 Some(crate::node::Part::Span | crate::node::Part::JsxExpression) => {
                     spans.push(ChildSpan {
                         start: hir.start(child.row()),
@@ -537,10 +538,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     pub fn node_span(&mut self, node: NodeRef) -> (u32, u32) {
         match self.valid(node) {
-            // The text of the default library is not kept, and the end of a node is found in it.
+            // Finding a node's end takes the file's text, and the default library's text isn't
+            // kept.
             Some((hir, at)) if !hir.text.is_empty() => {
                 let (start, end) = (hir.start(at), self.c.end_of_node(node.file, at));
-                // The HIR does not say where every node is that is derived from another.
+                // The HIR doesn't record a span for every derived node.
                 match at.part().is_some()
                     && (end <= start || start == 0 && hir.start(at.row()) != 0)
                 {
@@ -562,8 +564,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    /// `checker.getAccessedPropertyName(node)`: of a property access the name as it is written, of
-    /// an element access what `tryGetElementAccessExpressionName` finds for its key.
+    /// `checker.getAccessedPropertyName(node)`: the name as written for a property access, or what
+    /// `tryGetElementAccessExpressionName` finds for the key of an element access.
     pub fn accessed_property_name(&mut self, node: NodeRef) -> Option<&'p [u8]> {
         let e = self.expr_of(node)?;
         let name = match self.c.hir(node.file)[e].kind {
@@ -574,7 +576,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(crate::atom::written_name(self.c.atoms().bytes(name)))
     }
 
-    /// The text of the file from the first token of `node` to the end of its last.
+    /// The source text from `node`'s first token through its last.
     pub fn node_source_text(&mut self, node: NodeRef) -> &'p [u8] {
         let (start, end) = self.node_span(node);
         match self.valid(node) {
@@ -609,7 +611,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     hir[i].flags.contains(Flags::TYPE_ONLY)
                 }
                 (StmtKind::ExportNamed(e), NodeData::Stmt(_)) => !with_parents && hir[e].type_only,
-                // `export type * from "m"` is one, `export type * as ns from "m"` has a clause that is.
+                // `export type * from "m"` is type-only itself. In `export type * as ns from "m"` the clause is.
                 (StmtKind::ExportStar { type_only, .. }, NodeData::Stmt(_)) => {
                     type_only
                         && (!with_parents
@@ -626,7 +628,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    /// What the HIR stores for `node` besides its modifiers: `?`, `...`, `!`, `*`.
+    /// The flags the HIR stores for `node`. Besides modifiers they include `?`, `...`, `!` and `*`.
     pub fn node_hir_flags(&mut self, node: NodeRef) -> Flags {
         self.valid(node)
             .map_or(Flags::empty(), |(hir, node)| hir.flags(node))
@@ -637,15 +639,15 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let Some((hir, mut at)) = self.valid(node) else {
             return ModifierFlags::empty();
         };
-        // `getCombinedFlags`: of a binding element, those of the declaration it is part of, and of
-        // a variable declaration also those of its list and its statement.
+        // `getCombinedFlags`: a binding element takes the flags of the declaration it's part of,
+        // and a variable declaration also those of its list and statement.
         let mut depth = 0;
         while hir.kind(at) == Kind::BindingElement && depth < 4096 {
             at = hir.parent(hir.parent(at));
             depth += 1;
         }
         let mut flags = hir.flags(at);
-        // Only the modifier `declare` is `ModifierFlags.Ambient`. That of a variable is on its
+        // Only a `declare` modifier counts as `ModifierFlags.Ambient`. A variable's is on its
         // statement.
         if flags.contains(Flags::AMBIENT) {
             let modified = match hir.kind(at) {
@@ -691,7 +693,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 }
                 StmtKind::Module(module) => match hir[module].name {
                     ModuleName::Global => flags |= NodeFlags::GLOBAL_AUGMENTATION,
-                    ModuleName::Ident(_) if self.is_written_as_namespace(node.file, at) => {
+                    ModuleName::Ident(_) if self.has_namespace_keyword(node.file, at) => {
                         flags |= NodeFlags::NAMESPACE;
                     }
                     _ => {}
@@ -713,9 +715,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         flags
     }
 
-    /// The keyword of the `ModuleDeclaration` is `namespace`. An inner part of `namespace a.b` has
-    /// none of its own.
-    fn is_written_as_namespace(&self, file: FileId, node: Node) -> bool {
+    /// True if the `ModuleDeclaration` uses the `namespace` keyword. An inner part of
+    /// `namespace a.b` has no keyword and counts too.
+    fn has_namespace_keyword(&self, file: FileId, node: Node) -> bool {
         let hir = self.c.hir(file);
         let mut text = hir.text.get(hir.start(node) as usize..).unwrap_or_default();
         for modifier in [&b"export"[..], b"declare"] {
@@ -728,7 +730,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     // ───────────────────────────── from a node ─────────────────────────────
 
-    /// `node.Symbol` of a declaration for which the binder has no table. `NONE`: it has none.
+    /// `node.Symbol` of a declaration for which the binder has no table. `NONE` if it has no
+    /// symbol.
     fn symbol_of_rejected_declaration(&self, file: FileId, decl: Decl) -> SymbolId {
         let found = match file == self.file {
             true => {
@@ -741,7 +744,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         found.unwrap_or(SymbolId::NONE)
     }
 
-    /// What `node` is, if it is an expression, an identifier or the name of a declaration.
+    /// Classifies `node` if it's an expression, an identifier or a declaration's name.
     fn visited_kind(&self, node: NodeRef) -> Option<VisitedKind> {
         self.c.visited_kind(node.file, node.node, &|decl| {
             self.symbol_of_rejected_declaration(node.file, decl).some()
@@ -757,7 +760,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     pub fn contextual_type(&mut self, node: NodeRef) -> Option<TypeId> {
         if let Some((hir, at)) = self.valid(node) {
-            // The name in the tag of a JSX element: `getContextualJsxElementAttributesType`.
+            // A JSX element's tag name gets `getContextualJsxElementAttributesType`.
             let tag = hir.parent(at);
             if matches!(
                 hir.kind(tag),
@@ -772,8 +775,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 self.c.end_recheck(outer);
                 return ty;
             }
-            // The name of a property of an object literal: `getContextualTypeForObjectLiteralElement`,
-            // which is what its value gets.
+            // An object literal property's name gets `getContextualTypeForObjectLiteralElement`, the same as its value.
             if at.part() == Some(crate::node::Part::Name)
                 && let NodeData::Prop(p) = hir.data(at.row())
                 && matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand)
@@ -785,8 +787,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 });
             }
         }
-        // A `JsxExpression` that is the value of an attribute has the contextual type of what is
-        // in it. One that is a child has none.
+        // A `JsxExpression` that's an attribute's value has the contextual type of the expression
+        // inside it. One that's a child has none.
         let node = match self.valid(node) {
             Some((hir, at)) if at.part() == Some(crate::node::Part::JsxExpression) => {
                 if hir.kind(hir.parent(at)) != Kind::JsxAttribute {
@@ -801,7 +803,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         };
         let e = self.expr_of(node)?;
         let outer = self.c.begin_recheck();
-        let is_pushed = self.push_contextual_type_of_literal_around(node.file, e);
+        let is_pushed = self.push_contextual_type_of_enclosing_literal(node.file, e);
         let ty = self.c.contextual_type(node.file, e, ContextFlags::empty());
         if is_pushed {
             self.c.pop_contextual_type();
@@ -810,12 +812,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         ty
     }
 
-    /// `pushCachedContextualType` of the literal that `e` is in, if that has many properties or elements: as while the
-    /// literal is checked, what it is expected to be is found once for all of them. It can take as long as there are many:
-    /// the type that a pattern implies is made of all its properties. Whether something has been pushed.
-    fn push_contextual_type_of_literal_around(&mut self, file: FileId, e: ExprId) -> bool {
+    /// `pushCachedContextualType` for the literal that contains `e`, if it has many properties or elements. As during
+    /// the check of the literal, its contextual type is then computed once for all of them. Computing it can take time
+    /// linear in their number, because the type a pattern implies is built from all its properties. Returns true if a
+    /// type was pushed.
+    fn push_contextual_type_of_enclosing_literal(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        let literal = match bound.expr_parent[e.idx()] {
+        let literal = match bound.parent_of_expr(e) {
             crate::bind::Parent::Prop(p) => bound.prop_owner[p.idx()],
             crate::bind::Parent::Expr(outer) => outer,
             _ => return false,
@@ -826,7 +829,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 ExprKind::Array(elements) => elements.len() > MANY,
                 _ => false,
             };
-        // While the control flow analysis is disabled a reference has the error type that had another before.
+        // While control flow analysis is disabled, a reference that had a real type before has the error type.
         if !has_many || !self.c.flow_analysis_disabled.is_empty() {
             return false;
         }
@@ -836,7 +839,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         else {
             return false;
         };
-        // What the checker gave up on it can find when it knows more.
+        // Don't cache a type the checker gave up on. It may resolve later, when more is known.
         if known.is_none() {
             if !self.c.flow_analysis_disabled.is_empty()
                 || self.type_test(TypeTest::Unresolved, expected)
@@ -879,7 +882,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     pub fn resolved_signature(&mut self, call: NodeRef) -> Option<SigId> {
         let (hir, at) = self.valid(call)?;
-        // The opening element of a JSX element is resolved as the element.
+        // A JSX opening element resolves as its element.
         let at = match at.part() {
             Some(crate::node::Part::Opening) => at.row(),
             _ => at,
@@ -895,8 +898,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 ..
             }
         ) || matches!(
-            self.c.bound(call.file).expr_parent.get(e.idx()),
-            Some(crate::bind::Parent::Decorator(..))
+            self.c.bound(call.file).parent_of_expr(e),
+            Parent::ClassDecorator(_) | Parent::MemberDecorator(_) | Parent::ParamDecorator(_)
         );
         if !is_call_like {
             return None;
@@ -913,21 +916,22 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.c.sig_of_fn(node.file, function))
     }
 
-    /// `context_free_type_of_expression` as a tool gets it that asks before anything has resolved the call `node`: the
-    /// call is resolved again, with nothing expected of it. For what is no call, `context_free_type_of_expression`.
-    pub fn context_free_type_of_call_resolved_afresh(&mut self, node: NodeRef) -> TypeId {
+    /// `context_free_type_of_expression` as a tool sees it when it asks before anything has resolved the call `node`.
+    /// The call is resolved again, without a contextual type. Anything but a call gets plain
+    /// `context_free_type_of_expression`.
+    pub fn context_free_type_of_freshly_resolved_call(&mut self, node: NodeRef) -> TypeId {
         let Some(e) = self.expr_of(node) else {
             return TypeId::ERROR;
         };
         match self.c.hir(node.file)[e].kind {
             ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) => {
-                (self.c).context_free_type_of_call_resolved_afresh(node.file, e)
+                (self.c).context_free_type_of_freshly_resolved_call(node.file, e)
             }
             _ => self.c.context_free_type_of_expression(node.file, e),
         }
     }
 
-    /// The scope that names at `node` are resolved from.
+    /// The scope in which names at `node` are resolved.
     fn scope_at(&self, node: NodeRef) -> Option<ScopeId> {
         let (hir, mut at) = self.valid(node)?;
         let bound = self.c.bound(node.file);
@@ -940,7 +944,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 NodeData::Member(m) => Some(self.c.enclosing_scope_of_member(node.file, m)),
                 NodeData::Prop(p) => Some(self.c.enclosing_scope_of_property(node.file, p)),
                 NodeData::Type(t) => bound.type_scope.get(t.idx()).copied(),
-                NodeData::Stmt(s) => bound.stmt_scope.get(s.idx()).copied(),
+                NodeData::Stmt(s) => bound.scope_of_stmt(s).some(),
                 _ => None,
             };
             if let Some(scope) = scope.filter(|scope| scope.is_some()) {
@@ -963,15 +967,15 @@ fn flags_of_var_kind(kind: VarKind) -> NodeFlags {
     }
 }
 
-/// `packageIdToPackageName`: the name of the package and the path in it, which is what follows the
-/// last `node_modules`. `getPackageNameFromTypesPackageName` is not applied.
+/// `packageIdToPackageName`: the package name plus the path inside the package, which is everything
+/// after the last `node_modules/`. `getPackageNameFromTypesPackageName` is not applied.
 fn path_in_node_modules(path: &[u8]) -> Option<&[u8]> {
     const NODE_MODULES: &[u8] = b"/node_modules/";
     let at = bun_core::strings::last_index_of(path, NODE_MODULES)?;
     Some(&path[at + NODE_MODULES.len()..])
 }
 
-/// `a` of `a/b`, `@a/b` of `@a/b/c`. `None` for a path.
+/// `a` for `a/b`, `@a/b` for `@a/b/c`. `None` for a path.
 fn package_of_specifier(specifier: &[u8]) -> Option<&[u8]> {
     if matches!(specifier.first(), None | Some(b'.' | b'/' | b'#')) {
         return None;

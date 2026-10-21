@@ -468,8 +468,8 @@ describe.each(Object.keys(builds))("the source map of %s", name => {
         const repeated = previous === (previous = `${source}:${originalLine}:${originalColumn}`);
         const word = wordAt(generated[generatedLine], generatedColumn);
         // A word that Bun made up, or renamed, is not in the source. The output of each member of an enum or of a
-        // namespace starts with the name of the enum or of the namespace. `else` has the position of what follows it.
-        if (repeated || !word || word === "else" || !map.sourcesContent[source].includes(word)) continue;
+        // namespace starts with the name of the enum or of the namespace.
+        if (repeated || !word || !map.sourcesContent[source].includes(word)) continue;
         if (map.sources[source].endsWith("lowered.ts")) continue;
         checked++;
         const original = originals[source][originalLine]?.slice(originalColumn, originalColumn + word.length);

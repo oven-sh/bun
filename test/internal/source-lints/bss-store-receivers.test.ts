@@ -28,7 +28,7 @@ const code = source.replace(/^[ \t]*\/\/.*$/gm, "");
 
 const STORES = ["BSSList", "BSSMapInner", "BSSStringList", "OverflowList", "BSSListOverflowBlock"];
 
-type Method = { store: string; name: string; receiver: string; line: number };
+type Method = { store: string; name: string; params: string; line: number };
 
 /** The self type of an `impl` header: `impl<..> Trait for Type<..>` or `impl<..> Type<..>`. */
 function selfType(header: string): string {
@@ -47,7 +47,7 @@ function selfType(header: string): string {
   return /^\s*(\w+)/.exec(rest)?.[1] ?? "";
 }
 
-/** Every `fn` in every `impl` block whose self type is a BSS store, and the blocks whose end the scan did not find. */
+/** Every `fn` in every `impl` block whose self type is a BSS store, with its parameter list, and the blocks whose end the scan did not find. */
 function storeMethods(text: string): { methods: Method[]; unclosed: string[] } {
   const methods: Method[] = [];
   const unclosed: string[] = [];
@@ -65,11 +65,18 @@ function storeMethods(text: string): { methods: Method[]; unclosed: string[] } {
       continue;
     }
     const body = text.slice(start, start + close.index);
-    for (const fn of body.matchAll(/\bfn\s+(\w+)\s*(?:<[^(]*>)?\s*\(\s*([^,)]*)/g)) {
+    for (const fn of body.matchAll(/\bfn\s+(\w+)\s*(?:<[^(]*>)?\s*\(/g)) {
+      // The parameter list ends at the `)` that closes it.
+      const open = fn.index + fn[0].length;
+      let end = open;
+      for (let depth = 1; end < body.length; end++) {
+        if (body[end] === "(") depth++;
+        else if (body[end] === ")" && --depth === 0) break;
+      }
       methods.push({
         store,
         name: fn[1],
-        receiver: fn[2].replace(/\s+/g, " ").trim(),
+        params: body.slice(open, end).replace(/\s+/g, " ").replace(/,? ?$/, "").trim(),
         line: lineAt(start + fn.index),
       });
     }
@@ -81,17 +88,20 @@ function storeMethods(text: string): { methods: Method[]; unclosed: string[] } {
 const SELF_RECEIVER = /^(?:&\s*(?:'\w+\s+)?)?(?:mut\s+)?self\b/;
 /** `&self` and `&'a self`. */
 const SHARED_RECEIVER = /^&\s*(?:'\w+\s+)?self$/;
-/** A first parameter that is the store by pointer: `*mut Self`, `*const Self`, `&mut Self`, `NonNull<Self>`. */
-const SELF_POINTER = /:\s*(?:\*(?:mut|const)\s+|&\s*(?:'\w+\s+)?mut\s+|(?:\w+::)*NonNull\s*<\s*)Self\b/;
+/** A parameter that is a store by pointer: `*mut Self`, `*const Self`, `&mut Self`, `NonNull<Self>`, also with the name of a store for `Self`. */
+const STORE_POINTER = new RegExp(
+  String.raw`:\s*(?:\*(?:mut|const)\s+|&\s*(?:'\w+\s+)?mut\s+|(?:\w+::)*NonNull\s*<\s*)(?:Self|${STORES.join("|")})\b`,
+);
 
-/** Why the first parameter of a store method is banned, or `null` when it is allowed. */
-function offense(name: string, receiver: string): string | null {
+/** Why the parameters of a store method are banned, or `null` when they are allowed. */
+function offense(name: string, params: string): string | null {
   // `Drop::drop` owns the store: no slot pointer is in use any more.
   if (name === "drop") return null;
-  if (SELF_RECEIVER.test(receiver)) return SHARED_RECEIVER.test(receiver) ? null : "the receiver is not `&self`";
+  const receiver = params.split(",")[0].trim();
+  if (SELF_RECEIVER.test(receiver) && !SHARED_RECEIVER.test(receiver)) return "the receiver is not `&self`";
   // `init_at(slot: *mut Self)` writes a store that does not exist yet.
   if (name === "init_at") return null;
-  return SELF_POINTER.test(receiver) ? "takes the store by pointer" : null;
+  return STORE_POINTER.test(params) ? "takes a store by pointer" : null;
 }
 
 const { methods, unclosed } = storeMethods(code);
@@ -128,9 +138,9 @@ test("the scan takes the whole `impl` block, also with a brace in a literal", ()
   ].join("\n");
   expect(storeMethods(sample)).toEqual({
     methods: [
-      { store: "BSSList", name: "first", receiver: "&self", line: 2 },
-      { store: "BSSList", name: "second", receiver: "&'a mut self", line: 5 },
-      { store: "OverflowList", name: "drop", receiver: "&mut self", line: 13 },
+      { store: "BSSList", name: "first", params: "&self", line: 2 },
+      { store: "BSSList", name: "second", params: "&'a mut self, open: &str", line: 5 },
+      { store: "OverflowList", name: "drop", params: "&mut self", line: 13 },
     ],
     unclosed: [],
   });
@@ -152,18 +162,29 @@ test("the receiver check recognizes the spellings it claims to", () => {
     "this: &'a mut Self",
     "this: NonNull<Self>",
     "this: core::ptr::NonNull<Self>",
+    // The type of a store where `Self` can be.
+    "this: *mut BSSList<ValueType, COUNT>",
+    "this: *const BSSMapInner<V, N, R>",
+    "this: &mut BSSStringList<N, M>",
+    "this: NonNull<OverflowList<V, N>>",
+    "block: *mut BSSListOverflowBlock<V>",
+    // Not the first parameter.
+    "index: usize, this: *mut Self",
+    "&self, other: &mut Self",
   ];
   const allowed = [
     "&self",
     "&'a self",
     "&'static self",
+    "&self, counts: &mut OverflowCounts, value: ValueType,",
+    "&self, result: &Result, value: ValueType",
     // An associated function that does not take the store.
     "",
     "denormalized_key: &[u8]",
     "state: &mut BSSListState<ValueType>",
   ];
-  expect(banned.filter(receiver => offense("method", receiver) === null)).toEqual([]);
-  expect(allowed.filter(receiver => offense("method", receiver) !== null)).toEqual([]);
+  expect(banned.filter(params => offense("method", params) === null)).toEqual([]);
+  expect(allowed.filter(params => offense("method", params) !== null)).toEqual([]);
   // The two exceptions are by name, and `init_at` is not an exception for a receiver.
   expect({
     drop: offense("drop", "&mut self"),
@@ -174,8 +195,8 @@ test("the receiver check recognizes the spellings it claims to", () => {
 
 test("a BSS store method takes `&self`", () => {
   const offenders = methods.flatMap(m => {
-    const why = offense(m.name, m.receiver);
-    return why ? [`${file}:${m.line}: ${m.store}::${m.name}(${m.receiver}, ..): ${why}`] : [];
+    const why = offense(m.name, m.params);
+    return why ? [`${file}:${m.line}: ${m.store}::${m.name}(${m.params}): ${why}`] : [];
   });
   expect(offenders).toEqual([]);
 });

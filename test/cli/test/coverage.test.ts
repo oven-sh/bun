@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -1238,7 +1238,12 @@ test("list", () => { Object(list); });
   const run = async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
-      env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+      env: {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache,
+        // A debug build only writes the cache without it.
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+      },
       cwd: String(dir),
       stdout: "ignore",
       stderr: "inherit",
@@ -1247,14 +1252,62 @@ test("list", () => { Object(list); });
     const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
     return { record: lcov.split("end_of_record").find(r => r.includes("lib.ts\n")), exitCode };
   };
+  // A run that does not take the entry writes it again.
+  const written = () =>
+    readdirSync(cache).map(name => [name, statSync(path.join(cache, name), { bigint: true }).mtimeNs]);
   const printed = await run();
-  const entries = readdirSync(cache);
+  const entries = written();
   expect(entries).not.toBeEmpty();
   expect(printed.record).toContain("DA:2,1\n");
   expect(printed.record).toContain("DA:4,1\n");
   expect(await run()).toEqual(printed);
-  expect(readdirSync(cache)).toEqual(entries);
+  expect(written()).toEqual(entries);
   expect(printed.exitCode).toBe(0);
+});
+
+test("objects that are not in the file do not move the lines that are listed", async () => {
+  using dir = tempDir("cov-generated-objects", {
+    "macro.ts": `export const make = () => ({ a: { b: 1 }, c: [{}] });`,
+    "lib.ts": `// 1
+// 2
+// 3
+// 4
+import { make } from "./macro.ts" with { type: "macro" };
+declare const DEFINED: object;
+export const made = make();
+export const defined =
+  DEFINED;
+export const list = [
+  {
+    one: 1,
+  },
+];
+`,
+    "lib.test.ts": `
+import { test } from "bun:test";
+import * as lib from "./lib.ts";
+test("lib", () => { Object(lib); });
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      "--coverage",
+      "--coverage-reporter=lcov",
+      "--define",
+      'DEFINED={"a":1, "b":  { "c": [{  }] }}',
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  const exitCode = await proc.exited;
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("lib.ts\n"));
+  expect(record!.match(/^DA:.*$/gm)).toEqual([7, 8, 9, 10, 11, 12, 13, 14].map(line => `DA:${line},1`));
+  expect(exitCode).toBe(0);
 });
 
 test("an error has the same position with --coverage", async () => {

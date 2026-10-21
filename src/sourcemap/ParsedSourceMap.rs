@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::fmt;
 
+use crate::LineColumnOffset;
 use crate::Ordinal;
 
 use crate::mapping;
@@ -264,8 +265,9 @@ impl ParsedSourceMap {
         }
     }
 
-    /// The mappings of the braces of object literals, if `js_printer::Options::code_coverage` was on.
-    pub fn for_each_object_brace(&self, each: impl FnMut(Mapping)) {
+    /// The generated and the original position of each brace of an object literal, if the printer
+    /// marked them.
+    pub fn for_each_object_brace(&self, each: impl FnMut(LineColumnOffset, LineColumnOffset)) {
         if let Some(ism) = &self.internal {
             ism.for_each_object_brace(each);
         }

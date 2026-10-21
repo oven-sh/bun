@@ -834,14 +834,14 @@ impl ByteRangeMapping {
                 InternalSourceMap {
                     data: blob.list.as_ptr(),
                 }
-                .for_each_object_brace(|mapping| self.set_executable(mapping.original));
+                .for_each_object_brace(|_, original| self.set_executable(original));
             }
         } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
             .as_mut()
             .source_mappings()
             .get(self.source_url.slice())
         {
-            source_map.for_each_object_brace(|mapping| self.set_executable(mapping.generated));
+            source_map.for_each_object_brace(|generated, _| self.set_executable(generated));
         }
     }
 

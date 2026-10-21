@@ -616,13 +616,10 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.has_prev_state = true;
     }
 
-    /// After `add_source_mapping`, which adds none for a `loc` it has just had or for `Loc::EMPTY`.
     /// VLQ has nowhere to keep it.
-    pub fn mark_object_brace(&mut self, output: &[u8]) {
-        if self.last_generated_update as usize == output.len()
-            && let Some(internal) = &mut self.source_map.ctx.internal
-        {
-            internal.mark_object_brace();
+    pub fn mark_object_brace(&mut self) {
+        if let Some(internal) = &mut self.source_map.ctx.internal {
+            internal.mark_object_brace(&self.prev_state);
         }
     }
 

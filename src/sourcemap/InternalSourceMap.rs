@@ -69,7 +69,7 @@
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
 //!     [stream_offset..]  Window[sync_count]
-//!     [..total_len-stream_tail_pad]  u32[object_brace_count] -- see `Builder::mark_object_brace`
+//!     [..total_len-stream_tail_pad]  ObjectBrace[object_brace_count] -- see `Builder::mark_object_brace`
 //!     [total_len-stream_tail_pad..total_len]      zero bytes (see `STREAM_TAIL_PAD`)
 //! ```
 //!
@@ -134,6 +134,9 @@ pub struct SyncEntry {
 
 const _: () = assert!(size_of::<SyncEntry>() == 24);
 
+/// Generated line and column, original line and column.
+type ObjectBrace = [i32; 4];
+
 impl SyncEntry {
     #[inline]
     fn less_or_equal(self, line: i32, col: i32) -> bool {
@@ -185,14 +188,13 @@ impl InternalSourceMap {
         unsafe { ptr::read_unaligned(self.data.add(off).cast::<SyncEntry>()) }
     }
 
-    /// Which mappings are marked, counted from the first one, ascending: a `u32` each.
-    fn object_braces(&self) -> &[u8] {
+    fn object_braces(&self) -> &[[u8; size_of::<ObjectBrace>()]] {
         // SAFETY: blob is at least HEADER_SIZE bytes.
         let count = unsafe { u32::from_ne_bytes(*self.data.add(20).cast::<[u8; 4]>()) };
         let stream = self.stream();
-        let len = count as usize * size_of::<u32>();
+        let len = count as usize * size_of::<ObjectBrace>();
         match stream.len().checked_sub(len + STREAM_TAIL_PAD) {
-            Some(start) => &stream[start..][..len],
+            Some(start) => stream[start..][..len].as_chunks().0,
             None => &[],
         }
     }
@@ -667,23 +669,17 @@ impl InternalSourceMap {
         }
     }
 
-    /// The mappings that `Builder::mark_object_brace` marked, in generated order.
-    pub fn for_each_object_brace(self, mut each: impl FnMut(Mapping)) {
-        let mut marked = self
-            .object_braces()
-            .chunks_exact(size_of::<u32>())
-            .map(|index| u32::from_ne_bytes(index.try_into().unwrap()));
-        let Some(mut next) = marked.next() else {
-            return;
-        };
-        let mut index = 0;
-        self.for_each(|mapping| {
-            if index == next {
-                each(mapping);
-                next = marked.next().unwrap_or(u32::MAX);
-            }
-            index += 1;
-        });
+    /// The generated and the original position of each mapping that `Builder::mark_object_brace`
+    /// marked.
+    pub fn for_each_object_brace(self, mut each: impl FnMut(LineColumnOffset, LineColumnOffset)) {
+        for bytes in self.object_braces() {
+            let (values, _) = bytes.as_chunks::<4>();
+            let position = |line: usize| LineColumnOffset {
+                lines: Ordinal(i32::from_ne_bytes(values[line])),
+                columns: Ordinal(i32::from_ne_bytes(values[line + 1])),
+            };
+            each(position(0), position(2));
+        }
     }
 
     /// Re-encode the full mapping stream as a standard VLQ "mappings" string. Only
@@ -774,7 +770,7 @@ pub struct Builder {
     pending_original_line: [i32; SYNC_INTERVAL],
     pending_original_column: [i32; SYNC_INTERVAL],
     finalized: Option<MutableString>,
-    object_braces: Vec<u32>,
+    object_braces: Vec<ObjectBrace>,
 }
 
 impl Default for Builder {
@@ -836,15 +832,15 @@ impl Builder {
         }
     }
 
-    /// The last mapping is of a brace of an object literal, which is code. A block's is not, and
-    /// coverage sees the same character.
-    pub(crate) fn mark_object_brace(&mut self) {
-        let Some(index) = self.count.checked_sub(1) else {
-            return;
-        };
-        if self.object_braces.last() != Some(&index) {
-            self.object_braces.push(index);
-        }
+    /// `last`, the last mapping, is of a brace of an object literal, which is code. A block's is
+    /// not, and coverage sees the same character.
+    pub(crate) fn mark_object_brace(&mut self, last: &SourceMapState) {
+        self.object_braces.push([
+            self.generated_line,
+            last.generated_column,
+            last.original_line,
+            last.original_column,
+        ]);
     }
 
     fn flush_window(&mut self) {
@@ -1069,14 +1065,14 @@ impl Builder {
             let sync_bytes = self.sync_entries.len() * size_of::<SyncEntry>();
             let stream_offset: u32 = u32::try_from(HEADER_SIZE + sync_bytes).expect("int cast");
             let object_braces_offset = stream_offset as usize + self.win_stream.len();
-            let object_braces_bytes = self.object_braces.len() * size_of::<u32>();
+            let object_braces_bytes = self.object_braces.len() * size_of::<ObjectBrace>();
             let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
             // Every byte in [0..total) is written below: [0..20] zero-filled,
             // [20..32] header u32s, [32..32+sync_bytes] sync table memcpy,
             // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
-            // [object_braces_offset..total-STREAM_TAIL_PAD] one u32 at a time,
+            // [object_braces_offset..total-STREAM_TAIL_PAD] one i32 at a time,
             // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
             // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
             // no uninit bytes are exposed by set_len.
@@ -1105,11 +1101,13 @@ impl Builder {
             }
             blob[stream_offset as usize..stream_offset as usize + self.win_stream.len()]
                 .copy_from_slice(&self.win_stream);
-            for (bytes, index) in blob[object_braces_offset..][..object_braces_bytes]
-                .chunks_exact_mut(size_of::<u32>())
-                .zip(&self.object_braces)
+            for (bytes, value) in blob[object_braces_offset..][..object_braces_bytes]
+                .as_chunks_mut()
+                .0
+                .iter_mut()
+                .zip(self.object_braces.as_flattened())
             {
-                bytes.copy_from_slice(&index.to_ne_bytes());
+                *bytes = value.to_ne_bytes();
             }
             blob[total - STREAM_TAIL_PAD..total].fill(0);
 

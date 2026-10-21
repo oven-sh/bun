@@ -2452,8 +2452,7 @@ pub(crate) mod __gated_printer {
             if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
                 return;
             }
-            self.source_map_builder
-                .mark_object_brace(self.writer.slice());
+            self.source_map_builder.mark_object_brace();
         }
 
         #[inline]

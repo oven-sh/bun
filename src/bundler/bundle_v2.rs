@@ -1999,8 +1999,7 @@ pub mod bv2_impl {
                 unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
 
             ct.options.target = Target::Browser;
-            // The client assets of an HTML import are ES modules whatever the
-            // server bundle's format is (`--compile --bytecode` forces CommonJS).
+            // Client assets are ES modules whatever the server format is.
             ct.options.output_format = options::Format::Esm;
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
@@ -7695,8 +7694,7 @@ pub mod bv2_impl {
                 b"__jsonParse",
             )?
             .ok_or(Error::ParserError)?;
-            // The manifest is a server-side module: it links against the
-            // server runtime's `__jsonParse` and lands in the server chunk.
+            // The manifest is a server-side module.
             manifest_ast.target = target;
             let ast_for_html_entrypoint = JSAst::init(manifest_ast);
 

@@ -571,8 +571,7 @@ pub(crate) fn post_process_js_chunk(
 
         // TODO: extracated legal comments
 
-        // Add a comment with the file path before the file contents. The
-        // runtime helpers get none.
+        // Add a comment with the file path before the file contents (not for the runtime)
         if show_comments
             && !is_runtime
             && source_index != prev_filename_comment

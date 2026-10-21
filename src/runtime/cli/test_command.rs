@@ -3043,7 +3043,9 @@ impl TestCommand {
                 // refing the loop. Hold a loop ref for the duration so
                 // `auto_tick` parks on the next timer-heap deadline rather
                 // than busy-spinning when a test awaits an unref'd timer.
-                let _loop_ref = vm.event_loop_shared().ref_loop_scoped();
+                // Released before the liveness-gated `on_before_exit` drain
+                // below, which must read the real ref state.
+                let loop_ref = vm.event_loop_shared().ref_loop_scoped();
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
                     if buntest.wants_wakeup {
@@ -3061,6 +3063,7 @@ impl TestCommand {
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
+                drop(loop_ref);
 
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.

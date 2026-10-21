@@ -486,3 +486,35 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
 });
+
+it("a child that awaits a message on an unref'd channel at the top level does not spin", async () => {
+  // The parent answers after a fixed wait. The child measures its own CPU time over that wait:
+  // an event loop that parks on the channel uses almost none, one that polls without blocking
+  // uses most of it.
+  const waitMs = 500;
+  const { promise: ready, resolve: onReady } = Promise.withResolvers<void>();
+  await using child = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.channel.unref();
+      const start = process.cpuUsage();
+      process.send("ready");
+      await new Promise(resolve => process.once("message", resolve));
+      const used = process.cpuUsage(start);
+      console.log(JSON.stringify({ cpuMs: (used.user + used.system) / 1000 }));`,
+    ],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "inherit"],
+    ipc(message) {
+      if (message === "ready") onReady();
+    },
+  });
+  await ready;
+  await Bun.sleep(waitMs);
+  child.send("go");
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+  const { cpuMs } = JSON.parse(stdout);
+  expect(cpuMs).toBeLessThan(waitMs / 2);
+  expect(exitCode).toBe(0);
+});

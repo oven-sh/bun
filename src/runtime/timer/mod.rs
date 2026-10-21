@@ -952,7 +952,7 @@ impl All {
     /// re-enter `(*runtime_state()).timer`. `vm` is the erased
     /// `*mut VirtualMachine` for the calling JS thread and must remain live
     /// across any `EventLoopTimer::fire` re-entry.
-    pub unsafe fn get_timeout(
+    pub(crate) unsafe fn get_timeout(
         this: *mut Self,
         spec: &mut Timespec,
         has_pending_immediate: bool,
@@ -1052,7 +1052,10 @@ impl All {
     /// `(*runtime_state()).timer`. `vm` is the erased `*mut VirtualMachine`
     /// for the calling JS thread and must remain live across any
     /// `EventLoopTimer::fire` re-entry.
-    pub unsafe fn drain_timers(this: *mut Self, vm: *mut () /* erased *mut VirtualMachine */) {
+    pub(crate) unsafe fn drain_timers(
+        this: *mut Self,
+        vm: *mut (), /* erased *mut VirtualMachine */
+    ) {
         // Note (§Forbidden aliased-&mut): fired handlers re-enter
         // `(*runtime_state()).timer.{update,remove}()` (setInterval
         // reschedule, `cancel()`). Per `# Safety` the receiver is a raw

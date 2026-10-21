@@ -2092,11 +2092,11 @@ pub mod bv2_impl {
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
         pub(crate) scb_list: server_component_boundary::Slice<'a>,
 
-        /// Files which are imported by JS and inlined in CSS
-        pub(crate) additional_files_imported_by_js_and_inlined_in_css:
-            &'a mut DynamicBitSetUnmanaged,
-        /// Files which are imported by CSS and inlined in CSS
-        pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
+        /// Assets inlined in CSS that a JS or HTML importer, or their own entry-point chunk,
+        /// still needs the output path of.
+        pub(crate) asset_path_needed_outside_css: &'a mut DynamicBitSetUnmanaged,
+        /// Assets that a stylesheet imports and inlines.
+        pub(crate) asset_inlined_by_css: &'a mut DynamicBitSetUnmanaged,
 
         pub(crate) stack: Vec<ReachFrame>,
     }
@@ -2194,7 +2194,6 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
                 let is_css = self.all_loaders[source_index.get() as usize].is_css();
 
                 let import_record_list_id = source_index;
@@ -2245,17 +2244,19 @@ pub mod bv2_impl {
                             let import_record = &mut self.all_import_records
                                 [import_record_list_id.get() as usize]
                                 .as_mut_slice()[ir_idx];
-                            // Mark if the file is imported by JS and its URL is inlined for CSS
+                            // A stylesheet inlines the asset. Any other importer prints its path.
                             let is_inlined = import_record.source_index.is_valid()
                                 && !self.all_urls_for_css
                                     [import_record.source_index.get() as usize]
                                     .is_empty();
-                            if is_js && is_inlined {
-                                self.additional_files_imported_by_js_and_inlined_in_css
-                                    .set(import_record.source_index.get() as usize);
-                            } else if is_css && is_inlined {
-                                self.additional_files_imported_by_css_and_inlined
-                                    .set(import_record.source_index.get() as usize);
+                            if is_inlined {
+                                if is_css {
+                                    self.asset_inlined_by_css
+                                        .set(import_record.source_index.get() as usize);
+                                } else {
+                                    self.asset_path_needed_outside_css
+                                        .set(import_record.source_index.get() as usize);
+                                }
                             }
 
                             let next_source = import_record.source_index;
@@ -2350,10 +2351,14 @@ pub mod bv2_impl {
                 None
             };
 
-            let mut additional_files_imported_by_js_and_inlined_in_css =
+            let mut asset_path_needed_outside_css =
                 DynamicBitSetUnmanaged::init_empty(self.graph.input_files.len())?;
-            let mut additional_files_imported_by_css_and_inlined =
+            let mut asset_inlined_by_css =
                 DynamicBitSetUnmanaged::init_empty(self.graph.input_files.len())?;
+            // An entry-point asset prints its own path in its own chunk.
+            for entry_point in self.graph.entry_points.iter() {
+                asset_path_needed_outside_css.set(entry_point.get() as usize);
+            }
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
 
@@ -2390,10 +2395,8 @@ pub mod bv2_impl {
                 all_targets,
                 scb_bitset,
                 scb_list,
-                additional_files_imported_by_js_and_inlined_in_css:
-                    &mut additional_files_imported_by_js_and_inlined_in_css,
-                additional_files_imported_by_css_and_inlined:
-                    &mut additional_files_imported_by_css_and_inlined,
+                asset_path_needed_outside_css: &mut asset_path_needed_outside_css,
+                asset_inlined_by_css: &mut asset_inlined_by_css,
                 stack: Vec::new(),
             };
 
@@ -2438,23 +2441,20 @@ pub mod bv2_impl {
             // cleanup loop reads them.
             let ReachableFileVisitor { reachable, .. } = visitor;
 
-            // reshaped for borrowck — three disjoint mutable SoA
+            // reshaped for borrowck — two disjoint mutable SoA
             // columns via `split_mut()` on a value-type `Slice` snapshot.
             let mut input_files_slice = self.graph.input_files.slice();
             let input_files_cols = input_files_slice.split_mut();
-            let additional_files: &mut [bun_alloc::AstVec<crate::AdditionalFile>] =
-                input_files_cols.additional_files;
             let unique_keys: &mut [Box<[u8], bun_alloc::AstAlloc>] =
                 input_files_cols.unique_key_for_additional_file;
             let content_hashes: &mut [u64] = input_files_cols.content_hash_for_additional_file;
             for (index, url_for_css) in all_urls_for_css.iter().enumerate() {
                 if !url_for_css.is_empty() {
-                    // We like to inline additional files in CSS if they fit a size threshold
-                    // If we do inline a file in CSS, and it is not imported by JS, then we don't need to copy the additional file into the output directory
-                    if additional_files_imported_by_css_and_inlined.is_set(index)
-                        && !additional_files_imported_by_js_and_inlined_in_css.is_set(index)
+                    // An asset that only a stylesheet uses, and that the stylesheet inlines,
+                    // is not copied to the output directory.
+                    if asset_inlined_by_css.is_set(index)
+                        && !asset_path_needed_outside_css.is_set(index)
                     {
-                        additional_files[index].clear_retaining_capacity();
                         unique_keys[index] = bun_alloc::AstAlloc::vec().into_boxed_slice();
                         content_hashes[index] = 0;
                     }
@@ -3120,17 +3120,6 @@ pub mod bv2_impl {
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
-                if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
-                    self.graph.estimated_file_loader_count += 1;
-                }
-
                 self.graph.pool().schedule(task);
             }
             Ok(())
@@ -3232,17 +3221,6 @@ pub mod bv2_impl {
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
-                if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
-                    self.graph.estimated_file_loader_count += 1;
-                }
-
                 self.graph.pool().schedule(task);
             }
 
@@ -4151,17 +4129,6 @@ pub mod bv2_impl {
 
             // Handle onLoad plugins
             if !self.enqueue_on_load_plugin_if_needed(task) {
-                if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
-                    self.graph.estimated_file_loader_count += 1;
-                }
-
                 self.graph.pool().schedule(task);
             }
 
@@ -4250,16 +4217,6 @@ pub mod bv2_impl {
             // Handle onLoad plugins
             // SAFETY: `task` lives in the bundle-pass arena; sole reference until scheduled.
             if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
-                if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
-                    self.graph.estimated_file_loader_count += 1;
-                }
-
                 self.graph.pool().schedule(task);
             }
             Ok(source_index.get())
@@ -4728,10 +4685,10 @@ pub mod bv2_impl {
             &mut self,
             reachable_files: &[Index],
         ) -> Result<(), Error> {
-            if self.graph.estimated_file_loader_count > 0 {
+            if self.graph.asset_file_count > 0 {
                 // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
                 // sidestep so we can hold several read-only column slices, one mutable
-                // column slice (`additional_files`), and call `transpiler_for_target`
+                // column slice (`asset_output_file`), and call `transpiler_for_target`
                 // (which needs `&mut self`) inside the loop.
                 let self_ptr: *mut Self = self;
                 // SAFETY: see note above — disjoint MultiArrayList columns,
@@ -4742,7 +4699,7 @@ pub mod bv2_impl {
                     content_hashes_for_additional_files,
                     sources,
                     targets,
-                    additional_files,
+                    asset_output_files,
                     loaders,
                 ) = unsafe {
                     (
@@ -4756,7 +4713,7 @@ pub mod bv2_impl {
                             .items_content_hash_for_additional_file(),
                         (*self_ptr).graph.input_files.items_source_mut(),
                         (*self_ptr).graph.ast.items_target(),
-                        (*self_ptr).graph.input_files.items_additional_files_mut(),
+                        (*self_ptr).graph.input_files.items_asset_output_file_mut(),
                         (*self_ptr).graph.input_files.items_loader(),
                     )
                 };
@@ -4912,9 +4869,8 @@ pub mod bv2_impl {
                                 ..Default::default()
                             },
                         ));
-                        additional_files[index].push(crate::AdditionalFile::OutputFile(
-                            (additional_output_files.len() - 1) as u32,
-                        ));
+                        asset_output_files[index] =
+                            Some((additional_output_files.len() - 1) as u32);
                     }
                 }
 
@@ -5079,20 +5035,7 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
                     // `code`: LoadSuccess { source_code, loader }
-                    // When a plugin returns a file loader, we always need to populate additional_files
                     let should_copy_for_bundling = code.loader.should_copy_for_bundling();
-                    if should_copy_for_bundling {
-                        let source_index = load.source_index;
-                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                            &mut this.graph.input_files.items_additional_files_mut()
-                                [source_index.get() as usize];
-                        let _ = additional_files
-                            .push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                        this.graph.input_files.items_side_effects_mut()
-                            [source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                        this.graph.estimated_file_loader_count += 1;
-                    }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
                         code.loader;
                     this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
@@ -5457,20 +5400,6 @@ pub mod bv2_impl {
                             this.increment_scan_counter();
 
                             if !this.enqueue_on_load_plugin_if_needed(task) {
-                                if loader.should_copy_for_bundling() {
-                                    let additional_files: &mut bun_alloc::AstVec<
-                                        crate::AdditionalFile,
-                                    > = &mut this.graph.input_files.items_additional_files_mut()
-                                        [source_index.get() as usize];
-                                    additional_files.push(crate::AdditionalFile::SourceIndex(
-                                        task.source_index.get(),
-                                    ));
-                                    this.graph.input_files.items_side_effects_mut()
-                                        [source_index.get() as usize] =
-                                        bun_ast::SideEffects::NoSideEffectsPureData;
-                                    this.graph.estimated_file_loader_count += 1;
-                                }
-
                                 this.graph.pool().schedule(task);
                             }
                         } else {
@@ -7361,7 +7290,6 @@ pub mod bv2_impl {
             &mut self,
             resolve_queue: &ResolveQueue,
             target: options::Target,
-            importer_source_index: IndexInt,
         ) -> i32 {
             let mut diff: i32 = 0;
             // reshaped for borrowck — `graph` and the
@@ -7454,31 +7382,8 @@ pub mod bv2_impl {
                         continue;
                     }
 
-                    if loader.should_copy_for_bundling() {
-                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                            &mut self.graph.input_files.items_additional_files_mut()
-                                [importer_source_index as usize];
-                        additional_files.push(crate::AdditionalFile::SourceIndex(
-                            new_task.source_index.get(),
-                        ));
-                        self.graph.input_files.items_side_effects_mut()
-                            [new_task.source_index.get() as usize] =
-                            bun_ast::SideEffects::NoSideEffectsPureData;
-                        self.graph.estimated_file_loader_count += 1;
-                    }
-
                     self.graph.pool().schedule(new_task);
                 } else {
-                    if loader.should_copy_for_bundling() {
-                        // SAFETY: value_ptr is valid (see above).
-                        let existing_idx = unsafe { *value_ptr };
-                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                            &mut self.graph.input_files.items_additional_files_mut()
-                                [importer_source_index as usize];
-                        additional_files.push(crate::AdditionalFile::SourceIndex(existing_idx));
-                        self.graph.estimated_file_loader_count += 1;
-                    }
-
                     // ParseTask is arena-allocated; the slab itself is reclaimed on
                     // arena reset, but its heap-owned fields (path/jsx clones) need
                     // their destructors run now.
@@ -7831,17 +7736,14 @@ pub mod bv2_impl {
                         .input_files
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
-                    if !result.unique_key_for_additional_file.is_empty()
-                        && result.loader == Loader::Text
-                    {
-                        // `process_resolve_queue` only counts `should_copy_for_bundling()`
-                        // loaders, and a zero count skips `process_files_to_copy`.
-                        this.graph.estimated_file_loader_count += 1;
+                    let has_asset = !result.unique_key_for_additional_file.is_empty();
+                    if has_asset {
+                        this.graph.asset_file_count += 1;
                     }
-                    if !result.unique_key_for_additional_file.is_empty()
-                        && result.loader.should_copy_for_bundling()
-                    {
-                        if let Some(dev) = this.dev_server {
+                    if result.loader.should_copy_for_bundling() {
+                        this.graph.input_files.items_side_effects_mut()[result_source_index] =
+                            bun_ast::SideEffects::NoSideEffectsPureData;
+                        if has_asset && let Some(dev) = this.dev_server {
                             let source =
                                 &this.graph.input_files.items_source()[result_source_index];
                             dev.put_or_overwrite_asset_erased(
@@ -7871,11 +7773,7 @@ pub mod bv2_impl {
                         this.graph.css_file_count += 1;
                     }
 
-                    diff += this.process_resolve_queue(
-                        &resolve_queue,
-                        result.ast.target,
-                        result_source_index as IndexInt,
-                    );
+                    diff += this.process_resolve_queue(&resolve_queue, result.ast.target);
 
                     let result_heap = *result.ast.import_records.allocator();
                     let mut import_records = core::mem::replace(

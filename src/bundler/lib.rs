@@ -246,6 +246,8 @@ pub mod linker_context {
 // modules above.
 // ---------------------------------------------------------------------------
 
+/// `bun_ast::Index` — source-index newtype, re-exported for crate-wide use.
+pub(crate) use bun_ast::{Index, IndexInt};
 /// See `bundle_v2`.
 pub use bundle_v2::BundleV2;
 /// See `chunk` module.
@@ -269,13 +271,6 @@ pub use parse_task::ParseTask;
 pub use thread_pool::{ThreadPool, Worker};
 /// See `transpiler`.
 pub use transpiler::Transpiler;
-pub enum AdditionalFile {
-    SourceIndex(u32),
-    OutputFile(u32),
-}
-
-/// `bun_ast::Index` — source-index newtype, re-exported for crate-wide use.
-pub(crate) use bun_ast::{Index, IndexInt};
 
 // Re-export the `options` module. `Loader`/`Target` live in
 // `bun_options_types::bundle_enums` — `options_impl` re-exports the canonical

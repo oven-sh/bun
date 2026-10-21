@@ -1108,6 +1108,112 @@ describe("bundler", () => {
     },
   });
 
+  // An onLoad hook that matches an asset and returns undefined falls through to
+  // the default loader. The asset is copied as if no plugin had matched.
+  itBundled("plugin/FileLoaderOnLoadFallthrough", {
+    files: {
+      "index.js": /* js */ `
+        import imgUrl from "./image.png";
+        import wasmUrl from "./module.wasm";
+        console.log(imgUrl, wasmUrl);
+      `,
+      "image.png": "png data",
+      "module.wasm": "wasm data",
+    },
+    entryPoints: ["./index.js"],
+    outdir: "/out",
+    plugins(build) {
+      build.onLoad({ filter: /\.(png|wasm)$/ }, () => undefined);
+    },
+    run: {
+      stdout: /\.(png|wasm)/,
+    },
+    onAfterBundle(api) {
+      const js = api.readFile("index.js");
+      expect(api.readFile(js.match(/"\.\/([^"]+\.png)"/)![1])).toBe("png data");
+      expect(api.readFile(js.match(/"\.\/([^"]+\.wasm)"/)![1])).toBe("wasm data");
+    },
+  });
+
+  itBundled("plugin/NapiLoaderOnLoadFallthrough", {
+    files: {
+      "index.js": /* js */ `
+        const addon = require("./addon.node");
+        console.log(typeof addon);
+      `,
+      "addon.node": "not a real addon",
+    },
+    entryPoints: ["./index.js"],
+    outdir: "/out",
+    target: "bun",
+    plugins(build) {
+      build.onLoad({ filter: /\.node$/ }, () => undefined);
+    },
+    onAfterBundle(api) {
+      const js = api.readFile("index.js");
+      expect(api.readFile(js.match(/"\.\/([^"]+\.node)"/)![1])).toBe("not a real addon");
+    },
+  });
+
+  // A catch-all onLoad hook that returns undefined (what unplugin's Bun adapter does)
+  // must not change the assets of a build: not an entry-point asset, not one with an
+  // unknown extension, and not one that onResolve redirected to.
+  test.concurrent("plugin/OnLoadFallthroughMatchesNoPlugin", async () => {
+    using dir = tempDir("plugin-onload-fallthrough", {
+      "index.js": /* js */ `
+        import bin from "./data.bin";
+        import logo from "./logo.alias";
+        import { used } from "./lib.js";
+        console.log(bin, logo, used);
+      `,
+      "lib.js": /* js */ `
+        import unused from "./unused.bin";
+        export const used = 1;
+        export const keep = () => unused;
+      `,
+      "data.bin": "binary data",
+      "unused.bin": "unused binary data",
+      "logo.png": "logo data",
+    });
+    const alias: Bun.BunPlugin = {
+      name: "alias",
+      setup(builder) {
+        builder.onResolve({ filter: /\.alias$/ }, args => ({
+          path: join(dirname(args.importer), args.path.replace(/\.alias$/, ".png")),
+        }));
+      },
+    };
+    const fallthrough: Bun.BunPlugin = {
+      name: "fallthrough",
+      setup(builder) {
+        builder.onLoad({ filter: /.*/ }, () => undefined);
+      },
+    };
+    const build = async (withFallthrough: boolean) => {
+      const { success, logs, outputs } = await Bun.build({
+        entrypoints: [join(String(dir), "index.js"), join(String(dir), "logo.png")],
+        outdir: join(String(dir), withFallthrough ? "out-fallthrough" : "out-plain"),
+        throw: false,
+        plugins: withFallthrough ? [alias, fallthrough] : [alias],
+      });
+      const files: Record<string, string> = {};
+      for (const output of outputs) files[path.basename(output.path)] = await output.text();
+      return { success, logs: logs.map(log => log.message), files };
+    };
+    const plain = await build(false);
+    const withFallthrough = await build(true);
+    expect(plain.success).toBe(true);
+    expect(plain.logs).toEqual([]);
+    expect(Object.keys(plain.files).sort()).toEqual([
+      expect.stringMatching(/^data-\w+\.bin$/),
+      "index.js",
+      expect.stringMatching(/^logo-\w+\.png$/),
+      "logo.js",
+      expect.stringMatching(/^unused-\w+\.bin$/),
+    ]);
+    expect(withFallthrough).toEqual(plain);
+  });
+
   itBundled("plugin/OnEndBasic", ({ root }) => {
     let onEndCalled = false;
 

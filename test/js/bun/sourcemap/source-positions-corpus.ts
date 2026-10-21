@@ -423,14 +423,13 @@ export const cases: Record<string, Case> = {
   },
   // `finally` ran as often as its block, however the `try` was left.
   "finally.ts": {
-    functions: "10/11",
+    functions: "9/10",
     lines: `
-17|function g() {}
  2|function completes() {
  2|  try {
- 2|    g();
+ 2|    at();
  2|  } finally {
- 2|    g();
+ 2|    at();
  -|  }
  -|}
  1|completes();
@@ -439,9 +438,9 @@ export const cases: Record<string, Case> = {
  1|  try {
  1|    throw new Error();
  1|  } catch {
- 1|    g();
+ 1|    at();
  1|  } finally {
- 1|    g();
+ 1|    at();
  -|  }
  -|}
  1|handles();
@@ -449,7 +448,7 @@ export const cases: Record<string, Case> = {
  1|  try {
  1|    throw new Error();
  1|  } finally {
- 1|    g();
+ 1|    at();
  -|  }
  -|}
  1|try {
@@ -460,7 +459,7 @@ export const cases: Record<string, Case> = {
  3|    try {
  3|      continue;
  3|    } finally {
- 3|      g();
+ 3|      at();
  -|    }
  -|  }
  -|}
@@ -469,48 +468,48 @@ export const cases: Record<string, Case> = {
  1|  try {
  1|    yield 1;
  1|  } finally {
- 1|    g();
+ 1|    at();
  -|  }
  -|}
- 1|const generator = closed();
- 1|generator.next();
- 1|generator.return();
+ 1|const returned = closed();
+ 1|returned.next();
+ 1|returned.return();
  1|async function stuck() {
  1|  try {
  1|    await new Promise(() => {});
  0|  } finally {
- 0|    g();
+ 0|    at();
  -|  }
  -|}
  1|stuck();
  0|export function uncalled() {
  0|  try {
- 0|    g();
+ 0|    at();
  0|  } finally {
- 0|    g();
+ 0|    at();
  -|  }
  -|}
- 1|function spread() {
+ 1|function multiline() {
  1|  try
  -|  {
- 1|    g();
+ 1|    at();
  -|  }
  1|  finally
  -|  {
- 1|    g();
+ 1|    at();
  -|  }
  -|}
- 1|spread();
- 3|function shares(x: boolean) {
+ 1|multiline();
+ 3|function sameLine(x: boolean) {
  3|  try {
  3|    if (x) return 1;
- 3|    g(); } finally {
- 3|    g();
+ 3|    at(); } finally {
+ 3|    at();
  -|  }
  -|}
- 1|shares(true);
- 1|shares(true);
- 1|shares(false);
+ 1|sameLine(true);
+ 1|sameLine(true);
+ 1|sameLine(false);
 `,
   },
   // What is after a statement that the function was left at, and did not come back to.

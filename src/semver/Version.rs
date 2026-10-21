@@ -102,9 +102,10 @@ impl VersionType<u32> {
 }
 
 impl VersionType<u64> {
-    /// `semver.coerce(text)` of node-semver: the first thing in `text` that looks like a version,
-    /// up to its third number. `None` where that returns `null`: nothing looks like one, or one of
-    /// the numbers begins with a `0` that is not all of it, or is over `Number.MAX_SAFE_INTEGER`.
+    /// node-semver's `semver.coerce(text)`: returns the first thing in `text` that looks like a
+    /// version, up to its third number. Returns `None` where node-semver returns `null`: nothing
+    /// looks like a version, or one of the numbers has a leading zero or is above
+    /// `Number.MAX_SAFE_INTEGER`.
     pub fn coerce(text: &[u8]) -> Option<Self> {
         /// `MAX_SAFE_COMPONENT_LENGTH`
         const LONGEST: usize = 16;
@@ -112,7 +113,8 @@ impl VersionType<u64> {
         fn digits(text: &[u8]) -> usize {
             text.iter().take_while(|it| it.is_ascii_digit()).count()
         }
-        /// `(?:\.(\d{1,16}))?` before what is no digit: the digits, and what follows them.
+        /// Matches `(?:\.(\d{1,16}))?` followed by a non-digit. Returns the digits and the text
+        /// after them.
         fn part(text: &[u8]) -> Option<(&[u8], &[u8])> {
             let text = text.strip_prefix(b".")?;
             let length = digits(text);
@@ -128,7 +130,8 @@ impl VersionType<u64> {
         }
         let mut rest = text;
         loop {
-            // A number begins where no digit is before it: one that is too long is passed over.
+            // A number starts where the previous character isn't a digit. A number that's too long
+            // is skipped.
             let start = rest.iter().take_while(|it| !it.is_ascii_digit()).count();
             let (_, from) = rest.split_at(start);
             let (major, after) = from.split_at(digits(from));
@@ -160,7 +163,8 @@ impl<T: VersionInt> VersionType<T> {
         Self::parse(SlicedString { buf: slice, slice })
     }
 
-    /// One complete version and nothing else (surrounding whitespace aside): no range, wildcard, missing part or trailing bytes.
+    /// Parses one complete version and nothing else, apart from surrounding whitespace. Rejects
+    /// ranges, wildcards, missing parts and trailing bytes.
     pub fn parse_exact(sliced_string: SlicedString) -> Option<Self> {
         let trimmed = strings::trim(sliced_string.slice, &strings::WHITESPACE_CHARS);
         let parsed = Self::parse(sliced_string.sub(trimmed));
@@ -992,7 +996,7 @@ pub struct Tag {
 // TODO: support multiple tags
 
 impl Tag {
-    /// `-0`, the lowest prerelease: node-semver's `^1.2.3` is `>=1.2.3 <2.0.0-0`.
+    /// `-0`, the lowest prerelease. For example, node-semver's `^1.2.3` is `>=1.2.3 <2.0.0-0`.
     pub(crate) const ZERO_PRE: Tag = Tag {
         pre: ExternalString {
             value: SemverString {
@@ -1264,7 +1268,8 @@ pub struct ParseResult<T: VersionInt> {
     /// A number before any wildcard is above `T::MAX`. The range parser reads this, not `valid`.
     pub(crate) overflow: bool,
     pub version: Partial<T>,
-    /// Where parsing stopped; shorter than the input when trailing bytes are not part of the version.
+    /// Where parsing stopped. It's shorter than the input if trailing bytes aren't part of the
+    /// version.
     pub(crate) len: u32,
 }
 
@@ -1321,7 +1326,7 @@ mod tests {
         assert_eq!(b2.tag.build.slice(&buf), b"build.bbbbbbbb");
     }
 
-    /// What node-semver 6.3.1 and 7.8.5 say.
+    /// The expected values are what node-semver 6.3.1 and 7.8.5 return.
     #[test]
     fn coerce() {
         let cases: &[(&[u8], Option<[u64; 3]>)] = &[

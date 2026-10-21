@@ -43,8 +43,7 @@ fn object_of(node: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `TSClassImplements MemberExpression, TSInterfaceHeritage MemberExpression`: it is in a type
-/// argument there.
+/// `TSClassImplements MemberExpression, TSInterfaceHeritage MemberExpression`: true if it's in a type argument there.
 fn is_in_implements_or_interface_heritage(node: Expr) -> bool {
     Node::Expr(node).ancestors().any(|ancestor| {
         let Node::Type(ty) = ancestor else {
@@ -60,8 +59,7 @@ fn is_in_implements_or_interface_heritage(node: Expr) -> bool {
     })
 }
 
-/// tsgolint looks for a `HeritageClause` above it: the `extends` of a class too, and all that is
-/// written in it.
+/// tsgolint looks for a `HeritageClause` ancestor, which includes a class's `extends` and everything written in it.
 fn is_in_class_extends(node: Expr) -> bool {
     let mut child = Node::Expr(node);
     loop {
@@ -76,8 +74,8 @@ fn is_in_class_extends(node: Expr) -> bool {
     }
 }
 
-/// Whether the accesses that `object` starts with are not asked: ESLint has a `ChainExpression`
-/// there, tsgolint a `ParenthesizedExpression`, which is no access expression.
+/// True if the accesses inside `object` aren't checked. ESLint has a `ChainExpression` there, and tsgolint has a
+/// `ParenthesizedExpression`, which isn't an access expression.
 fn ends_member_chain(object: Expr, is_oxlint: bool) -> bool {
     match is_oxlint {
         true => object.is_parenthesized(),
@@ -86,7 +84,7 @@ fn ends_member_chain(object: Expr, is_oxlint: bool) -> bool {
 }
 
 impl NoUnsafeMemberAccess {
-    /// Whether the member expression `node`, or one that it starts with, reads from an `any`.
+    /// True if the member expression `node`, or one nested in its object, reads from an `any`.
     fn is_unsafe(&self, mut node: Expr, is_oxlint: bool) -> bool {
         loop {
             let Some(object) = object_of(node) else {
@@ -109,7 +107,7 @@ impl NoUnsafeMemberAccess {
         let is_oxlint = cx.language().is_oxlint;
         let (object, property, computed) = match node.kind() {
             ExprKind::Dot { obj, name, .. } => (obj, name.span(), false),
-            // tsgolint reports the `ArgumentExpression`, which has its parentheses.
+            // tsgolint reports the `ArgumentExpression`, which includes its parentheses.
             ExprKind::Index { obj, index, .. } if is_oxlint => (obj, index.outer_span(), true),
             ExprKind::Index { obj, index, .. } => (obj, index.span(), true),
             _ => return,
@@ -117,7 +115,7 @@ impl NoUnsafeMemberAccess {
         if self.allow_optional_chaining && node.is_optional() {
             return;
         }
-        // For tsgolint the `a.b` of `<a.b>` and of `</a.b>` is a member expression like any other.
+        // For tsgolint the `a.b` in `<a.b>` and `</a.b>` is a member expression like any other.
         if !computed && (node.is_in_type_query() || node.is_jsx_tag_name() && !cx.language().is_oxlint) {
             return;
         }
@@ -125,7 +123,7 @@ impl NoUnsafeMemberAccess {
         if !is_type_any_type(ty) {
             return;
         }
-        // It is reported where the first of them is.
+        // Only the innermost unsafe access is reported.
         if !ends_member_chain(object, is_oxlint) && self.is_unsafe(object, is_oxlint) {
             return;
         }
@@ -183,7 +181,7 @@ impl NoUnsafeMemberAccess {
             true => ERROR_COMPUTED_MEMBER_ACCESS,
             false => UNSAFE_COMPUTED_MEMBER_ACCESS,
         };
-        // tsgolint reports the `ArgumentExpression`, which has its parentheses.
+        // tsgolint reports the `ArgumentExpression`, which includes its parentheses.
         match cx.language().is_oxlint && node.is_parenthesized() {
             true => {
                 let span = node.outer_span();

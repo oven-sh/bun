@@ -5,7 +5,6 @@ use core::ptr::NonNull;
 
 use bun_ptr::{ParentRef, RefPtr};
 
-use bun_core::Utf8Bytes;
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
@@ -97,81 +96,8 @@ impl CountedKeepAlive {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_as_array::<2>();
-
-    let data_view;
-    let data_buffer;
-    let data: Utf8Bytes = 'blk: {
-        let data: JSValue = arguments[0];
-
-        if callframe.arguments_count() < 1 {
-            return Err(global_this.throw_invalid_argument_type_value(
-                b"data",
-                b"string or an instance of Buffer, TypedArray, or DataView",
-                JSValue::UNDEFINED,
-            ));
-        }
-        if data.is_string_literal() {
-            data_view = data.as_string().view(global_this)?;
-            break 'blk data_view.to_utf8();
-        }
-        let Some(buffer) = data.as_array_buffer(global_this) else {
-            let ty_str = data.js_type_string(global_this);
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_TYPE,
-                    format_args!(
-                        "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {}",
-                        ty_str,
-                    ),
-                )
-                .throw());
-        };
-        data_buffer = buffer;
-        break 'blk Utf8Bytes::Borrowed(data_buffer.byte_slice());
-    };
-
-    let value: u32 = 'blk: {
-        let value: JSValue = arguments[1];
-        if callframe.arguments_count() < 2 {
-            break 'blk 0;
-        }
-        if !value.is_number() {
-            return Err(global_this.throw_invalid_argument_type_value(b"value", b"number", value));
-        }
-        let valuef = value.as_number();
-        let min: u32 = 0;
-        let max: u32 = u32::MAX;
-
-        if valuef.floor() != valuef {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                        "value", valuef,
-                    ),
-                )
-                .throw());
-        }
-        if valuef < min as f64 || valuef > max as f64 {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
-                        "value", min, max, valuef,
-                    ),
-                )
-                .throw());
-        }
-        break 'blk valuef as u32;
-    };
-
-    let crc = bun_zlib::crc32_bytes(value, data.slice());
-    Ok(JSValue::js_number(f64::from(crc)))
+pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
+    bun_zlib::crc32_bytes(value, data)
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────
@@ -194,6 +120,15 @@ pub(crate) trait CompressionContext {
 // R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
 // cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
+/// Stores a stream's copy of an input that `can_be_freed_while_pinned`.
+/// Empty when the stream has no copy.
+#[derive(Default)]
+pub(crate) struct InputCopy {
+    bytes: Vec<u8>,
+    /// The copied view's pointer and length. Only compared, never dereferenced.
+    from: (*const u8, usize),
+}
+
 pub(crate) trait CompressionStreamImpl:
     Sized + Taskable + bun_ptr::CellRefCounted + bun_ptr::AnyRefCounted + 'static
 {
@@ -238,6 +173,8 @@ pub(crate) trait CompressionStreamImpl:
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pinned_buffers(&self) -> &Cell<u8>;
+    /// Returns the copy that [`CompressionStream::borrow_input_copy`] fills and reuses.
+    fn input_copy(&self) -> &JsCell<InputCopy>;
     fn pending_close(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
 
@@ -391,12 +328,13 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        if out_buf.resizable && !out_buf.shared {
+        // The pool thread writes to `out` after this call returns.
+        if out_buf.can_be_freed_while_pinned() {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
-                        "The \"out\" argument must not be backed by a resizable ArrayBuffer"
+                        "The \"out\" argument must not be backed by a resizable ArrayBuffer or a WebAssembly.Memory"
                     ),
                 )
                 .throw());
@@ -415,15 +353,31 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             };
             Some(buf)
         };
-        let in_: Option<&[u8]> = in_buf
-            .as_ref()
-            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
             if let Some(buf) = &in_buf {
                 buf.unpin();
             }
             return Err(global_this.throw_out_of_memory());
         };
+        let mut in_: Option<&[u8]> = in_buf
+            .as_ref()
+            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
+        // The pool thread reads the input after this call returns, so give it
+        // a copy if the pin can't keep the bytes mapped.
+        if let Some(buf) = in_buf.as_ref().filter(|b| b.can_be_freed_while_pinned()) {
+            let Some(copied) = Self::borrow_input_copy(
+                this,
+                global_this,
+                buf.byte_slice(),
+                in_off as usize,
+                in_len as usize,
+            ) else {
+                buf.unpin();
+                out_buf.unpin();
+                return Err(global_this.throw_out_of_memory());
+            };
+            in_ = Some(copied);
+        }
         this.pinned_buffers().set(
             u8::from(in_buf.as_ref().is_some_and(|b| b.pinned)) | (u8::from(out_buf.pinned) << 1),
         );
@@ -492,6 +446,41 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         // `this` may be freed by the JS thread the moment this is queued.
         ticket.post(ConcurrentTask::create(Task::init(this)));
+    }
+
+    /// Returns `view[in_off..in_off + in_len]` from the stream's copy of `view`, or
+    /// `None` if the copy can't be allocated.
+    ///
+    /// `processCallback` resends the same view with a larger `in_off` for each output
+    /// chunk, so the whole view is copied once and reused until a different view arrives.
+    fn borrow_input_copy<'a>(
+        this: &'a T,
+        global: &JSGlobalObject,
+        view: &[u8],
+        in_off: usize,
+        in_len: usize,
+    ) -> Option<&'a [u8]> {
+        // Once the input is consumed, each further output chunk is a write with no input.
+        if in_len == 0 {
+            return Some(&[]);
+        }
+        this.input_copy().with_mut(|copy| {
+            if copy.from != (view.as_ptr(), view.len()) {
+                copy.from = (core::ptr::null(), 0);
+                copy.bytes.clear();
+                if copy.bytes.try_reserve_exact(view.len()).is_err() {
+                    return None;
+                }
+                copy.bytes.extend_from_slice(view);
+                copy.from = (view.as_ptr(), view.len());
+                global.vm().report_extra_memory(copy.bytes.len());
+            }
+            let chunk = copy.bytes.get(in_off..in_off + in_len)?;
+            // SAFETY: `write()`, `reset()` and `close()` throw or are deferred while a write
+            // is in progress, and the completion frees the copy only after the input is
+            // consumed, so the bytes outlive the job that reads them.
+            Some(unsafe { core::slice::from_raw_parts(chunk.as_ptr(), chunk.len()) })
+        })
     }
 
     /// Releases the pins `write()` took; the cached slots keep rooting the values either way.
@@ -576,6 +565,14 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this.flush_write_result(global, this_value);
         this_value.ensure_still_alive();
+
+        // The copy is only read again if some input is unconsumed, because JS then resends it.
+        let (mut avail_in, mut avail_out) = (0, 0);
+        this.stream()
+            .with_mut(|s| s.update_write_result(&mut avail_in, &mut avail_out));
+        if avail_in == 0 {
+            this.input_copy().set(InputCopy::default());
+        }
 
         // `init()` caches the JS write callback; a handle whose `init()` was
         // never called has none, so there is nothing to notify.
@@ -751,6 +748,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             return;
         }
         let err = this.stream().with_mut(|s| s.reset());
+        // Free the copy before `emit_error`. Its callback can call `write()`, which makes a copy the pool thread reads.
+        this.input_copy().set(InputCopy::default());
         if err.is_error() {
             Self::emit_error(this, global_this, this_value, err);
         }
@@ -774,6 +773,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.closed().set(true);
         this.this_value().with_mut(|v| v.deinit());
         this.stream().with_mut(|s| s.close());
+        this.input_copy().set(InputCopy::default());
     }
 
     pub(crate) fn set_on_error(
@@ -1026,6 +1026,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pinned_buffers(&self) -> &::core::cell::Cell<u8> { &self.pinned_buffers }
+            #[inline] fn input_copy(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::InputCopy> { &self.input_copy }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 

@@ -3,7 +3,7 @@ pub trait ArgIter<'a> {
     fn next(&mut self) -> Option<&'a [u8]>;
     /// Remaining unconsumed args as a slice (for `stop_after_positional_at`).
     fn remain(&self) -> &[&'a [u8]];
-    /// Whether the arg `next` returned last was spliced in from `BUN_OPTIONS`.
+    /// Returns true if the arg that `next` returned last came from `BUN_OPTIONS`.
     fn last_is_from_bun_options(&self) -> bool {
         false
     }
@@ -74,7 +74,7 @@ impl ArgIter<'static> for OsIterator {
         self.remain
     }
     fn last_is_from_bun_options(&self) -> bool {
-        // argv[0], then the `BUN_OPTIONS` tokens, then what was typed.
+        // The order is argv[0], then the `BUN_OPTIONS` tokens, then what the user typed.
         os_argv().len() - self.remain.len() <= 1 + bun_core::bun_options_argc()
     }
 }

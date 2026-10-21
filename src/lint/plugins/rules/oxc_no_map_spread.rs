@@ -23,7 +23,7 @@ const MAP_FN_NAMES: [&str; 2] = ["map", "flatMap"];
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// Where the last reference ends that reads a variable.
+    /// The end of the last reference that reads each variable.
     last_reads: IdMap<Symbol<'a>, u32>,
 }
 
@@ -48,7 +48,7 @@ impl Rule for NoMapSpread {
         let Some((mapper, callback)) = get_map_callback(call_expr) else {
             return;
         };
-        // All that is looked for is in the callback.
+        // Fast path: everything the rule looks for is inside the callback.
         if !bun_core::strings::contains(mapper.text(), b"...") {
             return;
         }
@@ -68,7 +68,7 @@ impl Rule for NoMapSpread {
         if !leftmost.is_parenthesized() {
             match leftmost.tag() {
                 ExprTag::Ident if self.is_ignored_map_call(leftmost, e.span(), cx) => return,
-                // The elements of what a class has are likely spread to leave the instance alone.
+                // Elements of a class's own property are probably spread to avoid mutating the instance.
                 ExprTag::This => return,
                 _ => {}
             }
@@ -105,21 +105,21 @@ impl NoMapSpread {
         let Some(symbol) = ident.symbol() else {
             return false;
         };
-        // A `map` of one's own.
+        // A user-defined `map` function.
         if symbol.name().is_any(&MAP_FN_NAMES) {
             return true;
         }
         if self.ignore_args && matches!(symbol.declarations().next(), Some(Declaration::Param(pat)) if !is_in_rest_parameter(pat)) {
             return true;
         }
-        // `ident` itself ends before the call does.
+        // `ident` itself ends before the call does, so it doesn't count as a later read.
         let is_read = |it: &Reference| it.is_read() && !it.expr().is_some_and(Expr::is_in_type_query);
         let last_read = || symbol.references().rev().find(is_read).map_or(0, |it| it.span().end);
         self.ignore_rereads && *cx.state.last_reads.get_or_insert_with(symbol, last_read) > call_site.end
     }
 }
 
-/// `...a`, `...[a]`: not a parameter for oxlint.
+/// `...a`, `...[a]`: oxlint doesn't treat these as parameters.
 fn is_in_rest_parameter(pat: Pat) -> bool {
     let parameter = Node::Pat(pat).ancestors().find_map(|it| match it {
         Node::Param(parameter) => Some(parameter.is_rest()),
@@ -129,7 +129,7 @@ fn is_in_rest_parameter(pat: Pat) -> bool {
     parameter == Some(true)
 }
 
-/// The function that is the one argument of `a.map(..)` or `a.flatMap(..)`.
+/// Returns the function that's the only argument of `a.map(..)` or `a.flatMap(..)`.
 fn get_map_callback(call_expr: Call<'_>) -> Option<(Expr<'_>, Func<'_>)> {
     if call_expr.args().len() != 1 {
         return None;
@@ -139,7 +139,7 @@ fn get_map_callback(call_expr: Call<'_>) -> Option<(Expr<'_>, Func<'_>)> {
     is_method_call(call_expr, None, Some(&MAP_FN_NAMES), Some(1), Some(1)).then_some((arg, callback))
 }
 
-/// `{ ...a, b, c, ...d }` as `Object.assign(a, { b, c }, d)`.
+/// Prints `{ ...a, b, c, ...d }` as `Object.assign(a, { b, c }, d)`.
 fn spread_to_object_assign<'a>(properties: List<'a, Prop<'a>>) -> Vec<u8> {
     fn separate(codegen: &mut Codegen) {
         if !codegen.code.ends_with(b"(") {
@@ -149,7 +149,7 @@ fn spread_to_object_assign<'a>(properties: List<'a, Prop<'a>>) -> Vec<u8> {
     let mut codegen = Codegen::default();
     codegen.code.extend_from_slice(b"Object.assign(");
     let mut curr_obj_properties: SmallVec<[Prop<'a>; 8]> = SmallVec::new();
-    // After the last property there is nothing to spread.
+    // The trailing `None` flushes the properties after the last spread.
     for property in properties.iter().map(Some).chain([None]) {
         if let Some(property) = property.filter(|it| it.kind() != PropKind::Spread) {
             curr_obj_properties.push(property);
@@ -162,7 +162,7 @@ fn spread_to_object_assign<'a>(properties: List<'a, Prop<'a>>) -> Vec<u8> {
         }
         if let Some(argument) = property.and_then(Prop::value) {
             separate(&mut codegen);
-            // The parentheses around an argument are not printed.
+            // oxlint doesn't print the parentheses around an argument.
             match argument.is_parenthesized() {
                 true => codegen.code.extend_from_slice(argument.text()),
                 false => codegen.print_expression(argument),
@@ -173,11 +173,11 @@ fn spread_to_object_assign<'a>(properties: List<'a, Prop<'a>>) -> Vec<u8> {
     codegen.code
 }
 
-/// Literals with a spread, each as often as it is found.
+/// Literals that contain a spread, each listed as many times as it's found.
 #[derive(Copy, Clone)]
 enum Found<'a> {
     One(Expr<'a>),
-    /// All in the list at this index of `SpreadFinder::lists`.
+    /// Everything in the list at this index of `SpreadFinder::lists`.
     Many(usize),
 }
 
@@ -189,18 +189,18 @@ enum Visit<'a> {
 enum Task<'a> {
     Expr(Expr<'a>),
     Pat(Pat<'a>),
-    /// Everything in the last of the groups has been looked at.
+    /// Marks that everything in the last group has been visited.
     End,
 }
 
-/// What is found in a declaration, or in what is returned.
+/// The spreads found in one declaration, or in the returned expression.
 #[derive(Default)]
 struct Group<'a> {
     declarator: Option<VarDecl<'a>>,
     found: SmallVec<[Found<'a>; 2]>,
 }
 
-/// The call, each `...` of `spread`, and what is returned if `spread` is not in it.
+/// Labels the call, each `...` in `spread`, and the returned expression if `spread` isn't inside it.
 fn label(labels: &mut Details, spread: Expr, return_span: Option<Span>) {
     let is_spread = |it: &Prop| it.kind() == PropKind::Spread;
     let spans: SmallVec<[Span; 4]> = match spread.kind() {
@@ -224,14 +224,14 @@ fn label(labels: &mut Details, spread: Expr, return_span: Option<Span>) {
     }
 }
 
-/// oxlint's `SpreadInReturnVisitor`. That looks at the declaration of a variable each time the variable is returned, or is the value
-/// of one that is. Here a declaration is looked at once.
+/// oxlint's `SpreadInReturnVisitor`. oxlint visits a variable's declaration every time the variable is returned or is
+/// the value of one that is. This visits each declaration once.
 struct SpreadFinder<'a> {
     callback: Func<'a>,
     declarations: IdMap<VarDecl<'a>, Visit<'a>>,
-    /// Each has two elements or more.
+    /// Each list has at least two elements.
     lists: Vec<Vec<Found<'a>>>,
-    /// What the last `return` returns.
+    /// The span of what the last `return` returns.
     return_span: Option<Span>,
 }
 
@@ -247,8 +247,8 @@ impl<'a> SpreadFinder<'a> {
         };
         let mut spreads = Vec::new();
         let mut last_return = 0;
-        // Also what the functions and the methods of the classes return that are declared in the callback. No expression is looked
-        // into but what is returned.
+        // This also covers the `return`s of functions and class methods declared in the callback. The only expressions
+        // searched are the returned ones.
         while let Some(statement) = pending.pop() {
             if let StmtKind::Return(argument) = statement.kind()
                 && statement.span().start >= last_return
@@ -282,7 +282,7 @@ impl<'a> SpreadFinder<'a> {
         spreads
     }
 
-    /// The literals with a spread that `returned` can be.
+    /// Returns the literals with a spread that `returned` can evaluate to.
     fn spreads_in(&mut self, returned: Expr<'a>) -> Option<Found<'a>> {
         let mut tasks: SmallVec<[Task<'a>; 8]> = smallvec![Task::End, Task::Expr(returned)];
         let mut groups: SmallVec<[Group<'a>; 2]> = smallvec![Group::default()];
@@ -320,7 +320,7 @@ impl<'a> SpreadFinder<'a> {
                         _ => {}
                     }
                 }
-                // The defaults and the computed keys.
+                // Only the defaults and the computed keys are expressions.
                 Task::Pat(pat) => match pat.kind() {
                     PatKind::Object(properties) => {
                         for property in properties {
@@ -361,7 +361,7 @@ impl<'a> SpreadFinder<'a> {
         None
     }
 
-    /// The `a = b` that declares the variable `ident`, if that is in the callback.
+    /// Returns the `a = b` that declares the variable `ident`, if it's inside the callback.
     fn declarator_in_callback(&self, ident: Expr<'a>) -> Option<VarDecl<'a>> {
         let symbol = ident.symbol()?;
         if !self.callback.scope()?.contains(symbol.scope()) {

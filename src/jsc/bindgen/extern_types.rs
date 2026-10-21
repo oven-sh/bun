@@ -3,7 +3,7 @@
 use core::ffi::{c_uint, c_void};
 
 use super::JsHeap;
-use crate::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
+use crate::{JSGlobalObject, JSValue};
 
 /// `WTF::StringImpl*` carrying one ref, or null.
 pub type ExternString = *mut bun_core::WTFStringImplStruct;
@@ -83,7 +83,7 @@ impl<T: Copy> ExternVector<T> {
     }
 }
 
-/// Bytes in the C++ host function's frame, or in a JS value that frame keeps alive, until it returns.
+/// Bytes in the C++ host function's frame, or in a JS value that frame keeps alive, until it returns. Another thread can write those of a shared buffer.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternBytes {
@@ -118,12 +118,21 @@ pub struct ExternWithValue<T: Copy> {
 }
 
 unsafe extern "C" {
-    pub(super) fn Bun__Bindgen__constructArray(
-        global: *mut JSGlobalObject,
-        values: *mut MarkedArgumentBuffer,
-    ) -> JSValue;
+    /// `value` is a `BufferSource`, or holds a `Blob` whose bytes are in memory.
+    pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBuffer(value: JSValue) -> ExternBytes;
+    /// As above. Always sets `is_shared`.
+    pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(
+        value: JSValue,
+        is_shared: &mut bool,
+    ) -> ExternBytes;
     pub(super) fn Bun__Bindgen__constructArrayFromValues(
         global: *mut JSGlobalObject,
+        values: *const JSValue,
+        count: usize,
+    ) -> JSValue;
+    pub(super) fn Bun__Bindgen__createNullPrototypeObject(
+        global: *mut JSGlobalObject,
+        first_member_name_index: u32,
         values: *const JSValue,
         count: usize,
     ) -> JSValue;
@@ -137,6 +146,13 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         index: u32,
     ) -> JSValue;
+    pub(super) fn Bun__Bindgen__putRecordEntry(
+        global: &JSGlobalObject,
+        record: JSValue,
+        key: *const u8,
+        key_length: usize,
+        value: JSValue,
+    ) -> bool;
     pub(super) fn Bun__Bindgen__setInternalField(
         global: *mut JSGlobalObject,
         cell: *mut c_void,

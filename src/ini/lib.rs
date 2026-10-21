@@ -81,12 +81,13 @@ pub enum ConfigOpt {
 
 /// One `//<key>:<opt>=<value>` line. The lines of every `.npmrc` go into one list, as npm collapses its files into one map.
 pub(crate) struct ConfigItem {
-    /// The text between `//` and `:<opt>=` after `normalize_key`; compared byte for byte from then on.
+    /// The text between `//` and `:<opt>=`, after `normalize_key`. From then on it's compared byte
+    /// for byte.
     pub(crate) registry_url: Box<[u8]>,
     pub(crate) optname: ConfigOpt,
     pub(crate) value: Box<[u8]>,
     pub(crate) loc: Loc,
-    /// Which of the files `load_npmrc_config` parsed, for diagnostics.
+    /// The index of the file that `load_npmrc_config` parsed this from. Used for diagnostics.
     pub(crate) source_idx: u32,
 }
 
@@ -1010,7 +1011,8 @@ mod draft {
         !folded.is_empty() && NAMES.iter().any(|name| fold(name) == folded)
     }
 
-    /// npm's `nerfDart`: no scheme, a lowercase host, no default port of a spelled-out scheme.
+    /// npm's `nerfDart`: removes the scheme, lowercases the host, and drops the port if it's the
+    /// default for a scheme that was written out.
     fn normalize_key(raw: &[u8]) -> Box<[u8]> {
         let has_scheme = |scheme: &[u8]| {
             raw.len() >= scheme.len() && raw[..scheme.len()].eq_ignore_ascii_case(scheme)
@@ -1046,7 +1048,8 @@ mod draft {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),
             ExprData::ENull(_) => Some(false),
-            // ini JSON-parses a single-quoted value: `'1'` is a number, `'{}'` an object
+            // ini parses a single-quoted value as JSON, so `'1'` is a number and `'{}'` is an
+            // object.
             ExprData::ENumber(_) => expr.as_number().map(|n| n != 0.0),
             ExprData::EObject(_) => Some(true),
             ExprData::EString(_) => Some(npm_config_bool(expr.as_utf8_string_literal()?)),
@@ -1063,7 +1066,7 @@ mod draft {
         if matches!(value, b"false" | b"null" | b"undefined") {
             return false;
         }
-        // nopt: a numeric string is `!!Number(value)`, any other string is true
+        // Like nopt: a numeric string is `!!Number(value)`, and any other string is true.
         bun_ast::expr::string_to_equivalent_number_value(value) != 0.0
     }
 
@@ -1071,49 +1074,39 @@ mod draft {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum NpmrcDiagnostics {
         Print,
-        /// Runtime auto-install: the stderr is the script's.
+        /// For runtime auto-install, where stderr belongs to the script.
         Discard,
     }
 
     /// Reads every `.npmrc` into `install`; `bunfig` only tells the diagnostics which registries exist.
-    /// Returns the path of the first `.npmrc` that exists but could not be read.
-    pub fn load_npmrc_config<'a>(
+    /// Like npm, skips a file that can't be read.
+    pub fn load_npmrc_config(
         install: &mut BunInstall,
         bunfig: &BunInstall,
         env: &DotEnvLoader,
         diagnostics: NpmrcDiagnostics,
-        npmrc_paths: &[&'a ZStr],
-    ) -> Option<&'a ZStr> {
+        npmrc_paths: &[&ZStr],
+    ) {
         let mut log = Log::init();
         let mut configs: Vec<ConfigItem> = Vec::new();
         let mut sources: Vec<Source> = Vec::new();
-        let mut unreadable = None;
 
         for &npmrc_path in npmrc_paths {
             match bun_ast::source_from_file(
                 npmrc_path,
                 bun_ast::ToSourceOptions { convert_bom: true },
             ) {
-                Ok(source) => sources.push(source),
-                Err(err) => {
-                    // A directory named `.npmrc` gets the warning too, but it is not reported to
-                    // the caller as unreadable.
-                    let is_file = err.is_unreadable_file(npmrc_path.as_bytes());
-                    if (is_file || err.is_directory())
-                        && diagnostics == NpmrcDiagnostics::Print
-                        && log.level.at_least(bun_ast::Level::Warn)
+                Ok(source) => {
+                    if source
+                        .check_parseable_len(&mut log, "INI document")
+                        .is_err()
                     {
-                        bun_core::warn!(
-                            "{}\nignoring registry and auth settings in <b>{}<r>",
-                            err,
-                            bstr::BStr::new(npmrc_path.as_bytes()),
-                        );
+                        report_log(&mut log, diagnostics);
+                        continue;
                     }
-                    if is_file {
-                        unreadable.get_or_insert(npmrc_path);
-                    }
-                    continue;
+                    sources.push(source);
                 }
+                Err(_) => continue,
             }
 
             let source_idx = sources.len() - 1;
@@ -1130,7 +1123,6 @@ mod draft {
 
         resolve_url_auth(install, bunfig, &configs, &sources, &mut log);
         report_log(&mut log, diagnostics);
-        unreadable
     }
 
     /// Prints and clears `log`, under a header that names the file of its first error.
@@ -1170,11 +1162,12 @@ mod draft {
         }
     }
 
-    /// A URL as npm's key walk sees it: its WHATWG serialisation without scheme and query.
+    /// A URL as npm's key walk sees it: its WHATWG serialization without the scheme and the query.
     pub struct RegistryKey {
-        /// `<host><path>/`: npm's key for the registry itself, and where the walk starts.
+        /// `<host><path>/`, which is npm's key for the registry itself and where the walk starts.
         key: Box<[u8]>,
-        /// `key` with the default port of the URL's scheme written out: `//host:443/` lines matched before the walk.
+        /// `key` with the default port of the URL's scheme written out. Lines like `//host:443/`
+        /// are matched before the walk.
         with_default_port: Option<Box<[u8]>>,
     }
 
@@ -1190,7 +1183,8 @@ mod draft {
 
         /// The key of a URL that is already a WHATWG serialisation, without parsing it again.
         pub fn from_parsed(url: &URL) -> RegistryKey {
-            // `pathname` carries the query; `path` is query-free but collapses a one-byte path such as `/r/` to `/`.
+            // `pathname` includes the query. `path` doesn't, but it collapses a one-byte path such
+            // as `/r/` to `/`.
             let pathname = url.pathname;
             let path_end =
                 bun_core::strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len());
@@ -1221,7 +1215,8 @@ mod draft {
             }
         }
 
-        /// npm's `regFromURI`. `https://h/a/`: `h/a/`, `h:443/a/`, `h/a`, `h:443/a`, ..., `h:443`.
+        /// npm's `regFromURI`. For `https://h/a/`, it yields `h/a/`, `h:443/a/`, `h/a`, `h:443/a`,
+        /// ..., `h:443`.
         pub fn walk(&self) -> impl Iterator<Item = &[u8]> {
             let mut next = Some(self.key.len());
             let mut with_default_port: Option<&[u8]> = None;
@@ -1249,7 +1244,8 @@ mod draft {
         }
     }
 
-    /// npm's config is a flat map: a key repeated across `.npmrc` files collapses to the last one read.
+    /// npm's config is a flat map, so a key that's repeated across `.npmrc` files collapses to the
+    /// last one read.
     fn lookup<'a>(configs: &'a [ConfigItem], key: &[u8], opt: ConfigOpt) -> Option<&'a ConfigItem> {
         configs
             .iter()
@@ -1258,7 +1254,8 @@ mod draft {
 
     /// npm's `Buffer.from(value, "base64")`, which skips invalid bytes and never fails.
     fn decode_password(value: &[u8]) -> Box<[u8]> {
-        // Among the bytes it would skip are the CR, LF and NUL that `Scope::from_api` refuses: left for it to see.
+        // The bytes it would skip include the CR, LF and NUL that `Scope::from_api` refuses, so
+        // leave them in for that check.
         if bun_core::strings::contains_any(value, b"\r\n\0") {
             return value.into();
         }
@@ -1268,9 +1265,11 @@ mod draft {
         decoded.into_boxed_slice()
     }
 
-    /// npm's `hasAuth` order, without `certfile` / `keyfile` (no mTLS): they would stop the walk.
+    /// Follows the order of npm's `hasAuth`, without `certfile` and `keyfile` (no mTLS), which
+    /// would stop the walk.
     fn credentials_of_key(configs: &[ConfigItem], key: &[u8]) -> Option<NpmRegistry> {
-        // npm's `opts[k]` truthiness test, after the collapse: a later `username=` clears an earlier one.
+        // npm's `opts[k]` truthiness test, applied after the collapse, so a later `username=`
+        // clears an earlier one.
         let truthy =
             |opt| Some(&lookup(configs, key, opt)?.value).filter(|value| !value.is_empty());
         let mut credentials = NpmRegistry::default();
@@ -1287,7 +1286,8 @@ mod draft {
         Some(credentials)
     }
 
-    /// `install.url_auth`: npm's config map, one entry per key that carries a complete credential.
+    /// Fills `install.url_auth`, which mirrors npm's config map: one entry per key that has a
+    /// complete credential.
     fn resolve_url_auth(
         install: &mut BunInstall,
         bunfig: &BunInstall,
@@ -1420,7 +1420,7 @@ mod draft {
 
         let ca = out.as_property(b"ca");
         let cafile = out.as_property(b"cafile");
-        // `ca` + `cafile` are one setting: a file that sets either replaces both.
+        // `ca` and `cafile` are one setting, so a file that sets either one replaces both.
         if ca.is_some() || cafile.is_some() {
             install.ca = None;
             install.cafile = None;
@@ -1563,12 +1563,14 @@ mod draft {
                 .ok()
                 .and_then(|word| word.parse::<ConfigOpt>().ok())
             else {
-                // `/` right before the colon: in `//host/:_auth:dXNl…` the word is the credential.
+                // A `/` right before the colon: in `//host/:_auth:dXNl…`, the word is the
+                // credential.
                 if key[colon - 1] == b'/'
                     && !bun_core::strings::contains_char(word, b'/')
                     && folds_to_credential_option(word)
                 {
-                    // No excerpt: the redactor does not recognise a secret under a misspelt name.
+                    // No excerpt, because the redactor doesn't recognize a secret under a
+                    // misspelled name.
                     log.add_warning_fmt_no_excerpt(
                         source,
                         keyexpr.loc,

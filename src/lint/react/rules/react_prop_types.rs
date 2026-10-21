@@ -40,7 +40,8 @@ impl Rule for PropTypes {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
-        // The stages look at every function, and few files without JSX have a component.
+        // The prop type stages visit every function, and files without JSX rarely have a component, so detect those
+        // first.
         if !file.has_exprs([ExprTag::Jsx]) {
             let mut detection = Components::new(file);
             detection.finish();
@@ -51,7 +52,7 @@ impl Rule for PropTypes {
         let mut components = Components::new(file).with(declared(&self.custom_validators)).with(used(file));
         components.finish();
         let nothing = DeclaredPropTypes::default();
-        let mut around = AncestorMemo::default();
+        let mut enclosing_memo = AncestorMemo::default();
         let list = components.list();
         let is_certain = |node| components.get(node).is_some_and(|it| components.component(it).confidence >= 2);
         for id in list {
@@ -63,21 +64,21 @@ impl Rule for PropTypes {
             {
                 continue;
             }
-            // upstream's `isDeclaredInComponent` asks the component, and each that it is in.
+            // Upstream's `isDeclaredInComponent` checks the component and every component enclosing it.
             let mut declaring = Vec::new();
             let mut certain = Some(component.node);
             while let Some(node) = certain {
                 let declared_prop_types =
                     components.get(node).and_then(|it| components.component(it).declared_prop_types.as_ref());
                 declaring.push(declared_prop_types.unwrap_or(&nothing));
-                certain = around.find_with(node, estree_parent, |_, parent| is_certain(parent).then_some(parent));
+                certain = enclosing_memo.find_with(node, estree_parent, |_, parent| is_certain(parent).then_some(parent));
             }
             self.report_undeclared_prop_types(used_prop_types, &declaring, cx);
         }
     }
 }
 
-/// upstream's `internalIsDeclaredInComponent`. `None`: the `children` of what has none.
+/// Upstream's `internalIsDeclaredInComponent`. Pass `None` for the `children` of a prop type that has none.
 fn internal_is_declared_in_component(declared_prop_types: Option<&DeclaredPropTypes<'_>>, key_list: &[&[u8]]) -> bool {
     let Some((&key, rest)) = key_list.split_first() else {
         return true;
@@ -91,19 +92,20 @@ fn internal_is_declared_in_component(declared_prop_types: Option<&DeclaredPropTy
         return accepts(prop_type, key_list);
     }
     if is_in_object_prototype(key) {
-        // `Object.prototype` is an object without a `type`. The others are functions: no `children`.
+        // `__proto__` finds `Object.prototype`, an object without a `type`. The other keys find functions, which have
+        // no `children`.
         return key == b"__proto__" || internal_is_declared_in_component(None, rest);
     }
     // If not, check if this type accepts any key
     declared_prop_types.get(b"__ANY_KEY__").map_or(is_computed, |it| accepts(it, key_list))
 }
 
-/// What `internalIsDeclaredInComponent` goes on to do with the `propType` of the first of `key_list`.
+/// The rest of `internalIsDeclaredInComponent`, once it has the `propType` for `key_list`'s first key.
 fn accepts(prop_type: &DeclaredPropType<'_>, key_list: &[&[u8]]) -> bool {
     let rest = key_list.get(1..).unwrap_or_default();
     match &prop_type.children {
         _ if prop_type.kind.is_none() => true,
-        // The last key accepts everything.
+        // At the last key, a union accepts anything.
         Children::Union(union_types) => rest.is_empty() || union_types.iter().any(|it| accepts(it, key_list)),
         Children::Named(children) => internal_is_declared_in_component(Some(children), rest),
         Children::None => internal_is_declared_in_component(None, rest),
@@ -116,7 +118,7 @@ impl PropTypes {
         component.used_prop_types.is_some() && !component.ignore_props_validation && !is_skipped_by_config
     }
 
-    /// upstream's `checkNestedComponent`. Where that throws, it is not nested.
+    /// Upstream's `checkNestedComponent`. Returns false where upstream throws.
     fn check_nested_component<'a>(&self, component: &Component<'a>, components: &Components<'a>) -> bool {
         let Node::Expr(node) = component.node else {
             return false;

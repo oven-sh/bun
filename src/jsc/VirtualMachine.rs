@@ -353,6 +353,10 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
+    /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.
+    hot_run_failed: bool,
+    /// The watcher's loop turned after an unhandled error, so that error did not stop the timers.
+    pub timers_ran_after_error: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
@@ -2235,7 +2239,7 @@ impl VirtualMachine {
         // the hard-exit flag ourselves since we're skipping the dispatch that
         // would have set it, so a throw from an 'exit' listener still stops
         // subsequent listeners.
-        if self.unhandled_error_counter > 0 {
+        if self.unhandled_error_counter > 0 || self.hot_run_failed {
             self.exit_on_uncaught_exception = true;
             return;
         }
@@ -2841,6 +2845,15 @@ pub struct WorkerExecArgvFlags {
     pub invalid: Option<usize>,
 }
 
+/// Which of its timers a `--hot` run takes with it.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum CancelHotRunTimers {
+    None,
+    /// A `setTimeout` may be the next step of an earlier run's loop.
+    Intervals,
+    All,
+}
+
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
@@ -3009,6 +3022,11 @@ pub struct RuntimeHooks {
     /// `only`: just the timers script of that context set (the context
     /// stopped; the VM keeps running).
     pub cancel_timers: unsafe fn(vm: *mut VirtualMachine, only: Option<crate::ContextId>),
+    /// A `--hot` run ends, before `hot_reload_counter` moves on. The timers of the runs before it are kept.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM, on the JS thread; `runtime_state` is installed.
+    pub end_hot_run_timers: unsafe fn(vm: *mut VirtualMachine, cancel: CancelHotRunTimers),
     /// Destroy the per-VM global DNS resolver's c-ares channel now, while JSC,
     /// the event loop, `RareData.file_polls`, and `runtime_state` are all
     /// live. `ares_destroy()` re-enters the resolver's socket-state and query
@@ -4770,15 +4788,25 @@ impl VirtualMachine {
         // `JSGlobalObject::reload` drains microtasks + collects async + clears
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
-        self.hot_reload_counter += 1;
-        // An unhandled error stopped the timers of the run it ended. This run starts without them.
-        if self.unhandled_error_counter > 0 {
-            self.unhandled_error_counter = 0;
-            if let Some(hooks) = runtime_hooks() {
-                // SAFETY: live per-thread VM on the JS thread; `runtime_state` stays installed.
-                unsafe { (hooks.cancel_timers)(core::ptr::from_mut(self), None) };
+        // An unhandled error stops all timers. The next run starts them again, without those of the failed run.
+        // libuv fires timers on Windows, error or not.
+        let timers_ran = core::mem::take(&mut self.timers_ran_after_error) || cfg!(windows);
+        let cancel = if core::mem::take(&mut self.unhandled_error_counter) == 0 {
+            CancelHotRunTimers::None
+        } else {
+            self.hot_run_failed = true;
+            self.exit_handler.exit_code = 0;
+            if timers_ran {
+                CancelHotRunTimers::Intervals
+            } else {
+                CancelHotRunTimers::All
             }
+        };
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: live per-thread VM on the JS thread; `runtime_state` stays installed.
+            unsafe { (hooks.end_hot_run_timers)(core::ptr::from_mut(self), cancel) };
         }
+        self.hot_reload_counter += 1;
         // reload_entry_point() stores into pending_internal_promise whenever it returns a promise.
         let main = self.main;
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid

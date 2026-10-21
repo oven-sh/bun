@@ -1269,3 +1269,66 @@ it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exc
   expect(await stdout("timer fired")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+it.each([
+  [
+    "a throw",
+    `setInterval(() => console.log("failed run's interval in run " + globalThis.run), 1);\nthrow new Error("the bug");`,
+  ],
+  ["a syntax error", `const = ;`],
+])("--hot keeps the timers of earlier runs when a save fixes %s", async (_, bug) => {
+  const source = (run: number, tail: string) => `
+    globalThis.run = ${run};
+    globalThis.kept ??= setInterval(() => console.log("kept interval in run " + globalThis.run), 1);
+    require("fs").watchFile("watched", { interval: 1 }, () => {
+      console.log("watchFile listener of run ${run}");
+      if (${run} === 3) process.exit(0);
+    });
+    ${tail}
+  `;
+  using dir = tempDir("hot-kept-timers", { "main.js": source(1, ""), "watched": "" });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("kept interval in run 1")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), source(2, bug));
+  expect(await stderr("error: ")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), source(3, ""));
+  expect(await stdout("kept interval in run 3")).toBe(true);
+  writeFileSync(join(String(dir), "watched"), "changed");
+  expect(await stdout("watchFile listener of run 3")).toBe(true);
+  expect(await stdout("failed run's interval in run 3")).not.toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+it("--hot does not emit beforeExit to the listeners of a failed run", async () => {
+  using dir = tempDir("hot-failed-before-exit", {
+    "main.js": `process.on("beforeExit", () => process.exit(1));\nthrow new Error("the bug");`,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stderr("error: the bug")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), `console.log("fixed");`);
+  expect(await stdout("fixed")).toBe(true);
+  writeFileSync(join(String(dir), "main.js"), `console.log("still running");\nprocess.exit();`);
+  expect(await stdout("still running")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});

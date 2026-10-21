@@ -7,6 +7,15 @@ use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
+/// `shouldConsumeBinaryOperator`: true if `operator` binds before an operator of `current_precedence`. At equal
+/// precedence only `**` does, which is right associative.
+#[inline(always)]
+fn should_consume_binary_operator(operator: T, current_precedence: u8) -> bool {
+    let precedence = operator.binary_precedence();
+    precedence > current_precedence
+        || precedence == current_precedence && operator == T::AsteriskAsterisk
+}
+
 fn binary_operator(token: T) -> BinOp {
     match token {
         T::Plus => BinOp::Add,
@@ -669,8 +678,21 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.is_too_deep() {
             return left;
         }
-        // The precedence of the operator of `left`, if this loop built `left`. Otherwise `OperatorPrecedenceHighest`.
+        // The precedence of the operator of `left`, or `OperatorPrecedenceHighest` if it has none. Of the binary
+        // expressions, `parseUnaryExpressionOrHigher` only returns `a ** b`.
         let mut last_precedence = u8::MAX;
+        if matches!(self.token(), T::As | T::Satisfies)
+            && matches!(
+                self.f.exprs.get(left.idx()),
+                Some(Expr {
+                    kind: ExprKind::Binary { op: BinOp::Pow, .. },
+                    ..
+                })
+            )
+            && !self.is_parenthesized(left)
+        {
+            last_precedence = T::AsteriskAsterisk.binary_precedence();
+        }
         loop {
             // "We either have a binary operator here, or we're finished."
             if self.token() == T::GreaterThan {
@@ -678,12 +700,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             let token = self.token();
             let new_precedence = token.binary_precedence();
-            // `**` is right associative.
-            let consumes = match token {
-                T::AsteriskAsterisk => new_precedence >= precedence,
-                _ => new_precedence > precedence,
-            };
-            if !consumes {
+            if !should_consume_binary_operator(token, precedence) {
                 return left;
             }
             match token {
@@ -714,12 +731,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                             }
                         };
                     left = self.finish_expr(kind, start);
-                    // "Stop if the precedence of the next operator is too high": in `a + b as T * c`
-                    // the `as T` could not be erased.
+                    // "Stop if the next operator would bind before the last operator when the
+                    // assertion is erased": `a + b as T * c`, `a ** b as T ** c`.
                     if self.token() == T::GreaterThan {
                         self.lx.rescan_greater_than();
                     }
-                    if self.token().binary_precedence() > last_precedence && !self.is_flow() {
+                    if should_consume_binary_operator(self.token(), last_precedence)
+                        && !self.is_flow()
+                    {
                         return left;
                     }
                 }

@@ -4093,7 +4093,18 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.needs_declare,
         ) = saved;
         let mut emitted = emitted?;
-        let comments = self.leading_comments(hir[s].loc.pos);
+        let mut comments = self.leading_comments(hir[s].loc.pos);
+        // The modifiers of a function made from an `@overload` tag are clones of its host's and have their positions.
+        // Where `ensureModifiers` returns them, the first is emitted with the comments before the host.
+        if let StmtKind::Fn(f) = kind
+            && hir[f].flags.contains(Flags::REPARSED)
+            && let Some(Statement { modifiers, .. }) = emitted.first()
+            && !modifiers.is_empty()
+            && modifiers.iter().all(|&it| hir[f].flags.contains(it))
+            && let Some(host) = self.host_of_overload(f)
+        {
+            comments = self.leading_comments(hir[host].loc.pos);
+        }
         let preserves_comments = match kind {
             StmtKind::Class(_) => emitted.last_mut(),
             _ => emitted.first_mut(),
@@ -4103,6 +4114,20 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             statement.text = self.with_comments((None, hir[s].loc.end), &statement.text);
         }
         Some(self.create_full_expando_block(s, emitted))
+    }
+
+    /// Returns the function declaration whose `@overload` tag the function `f` is made from.
+    fn host_of_overload(&self, f: FnId) -> Option<StmtId> {
+        let (file, files) = (self.file(), self.c.files());
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let symbol = bound.fn_symbol[f.idx()].some()?;
+        let declarations = files.decls_of(files.sym(file, symbol));
+        let host = declarations.iter().find(|&&(of, decl)| {
+            matches!(decl, Decl::Fn(host) if of == file
+                && !hir[host].flags.contains(Flags::REPARSED)
+                && hir[host].start > hir[f].start)
+        })?;
+        files.statement_of_declaration(file, host.1)
     }
 
     /// `transformExpandoHost` for a function: the function `name` with `signature`, replacing the statement `s`.

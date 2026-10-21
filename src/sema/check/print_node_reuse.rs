@@ -1398,6 +1398,23 @@ impl<'p> Printer<'_, 'p, '_> {
                     {
                         continue;
                     }
+                    // `omitPrivateMethodType`: emitted once, regardless of its overloads.
+                    if self.is_transformer
+                        && hir[m].kind == MemberKind::Method
+                        && hir[m].flags.contains(Flags::PRIVATE)
+                    {
+                        let files = self.c.files();
+                        let symbol = self.c.bound(file).member_symbol[m.idx()];
+                        if symbol.is_none()
+                            || files.decls_of(files.sym(file, symbol)).first()
+                                == Some(&(file, Decl::Member(m)))
+                        {
+                            let comments = self.comments_before(file, hir.node(m));
+                            let name = self.property_key_text(file, hir.name(hir.node(m)));
+                            elements.push(cat!(comments, b"private ", name, b";"));
+                        }
+                        continue;
+                    }
                     let outer_scope = hir[m]
                         .func
                         .some()

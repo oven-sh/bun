@@ -193,6 +193,160 @@ devTest("asset referenced in css", {
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
   },
 });
+devTest("asset referenced in css by a percent-encoded url", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      body {
+        background-image: url(./my%20photo.png);
+      }
+    `,
+    "my photo.png": imageFixtures.bun,
+    "other photo.png": imageFixtures.bun2,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    let backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    // A hot reload resolves the decoded path too.
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          background-image: url(./other%20photo.png);
+        }
+      `,
+    );
+    backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
+  },
+});
+// The directory of the decoded path is the one to watch and to read again.
+devTest("asset referenced in css by a percent-encoded url is created later", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      body {
+        background-image: url(./my%20dir/photo.png);
+      }
+    `,
+    "my dir/other.png": imageFixtures.bun2,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ['styles.css:2:21: error: Could not resolve: "./my%20dir/photo.png"'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("my dir/photo.png", imageFixtures.bun);
+    });
+    const backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+  },
+});
+devTest("imported css with a percent-encoded url hot reloads every time", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./child.css";
+    `,
+    "child.css": `
+      body {
+        color: red;
+        background-image: url(./my%20photo.png);
+      }
+    `,
+    "my photo.png": imageFixtures.bun,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    for (const color of ["green", "purple", "orange"]) {
+      await dev.write(
+        "child.css",
+        `
+          body {
+            color: ${color};
+            background-image: url(./my%20photo.png);
+          }
+        `,
+      );
+      await c.style("body").color.expect.toBe(color);
+    }
+    await c.hardReload();
+    await c.style("body").color.expect.toBe("orange");
+    const backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+  },
+});
+// A record that an onResolve plugin declines is resolved at another call site.
+devTest("asset referenced in css by a percent-encoded url that a plugin declines", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "declines",
+        setup(build) {
+          build.onResolve({ filter: /photo\\.png$/ }, () => undefined);
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      body {
+        background-image: url(./my%20photo.png);
+      }
+    `,
+    "my photo.png": imageFixtures.bun,
+    "other photo.png": imageFixtures.bun2,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    let backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          background-image: url(./other%20photo.png);
+        }
+      `,
+    );
+    backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          background-image: url(./missing%20photo.png);
+        }
+      `,
+      {
+        errors: ['styles.css:2:21: error: Could not resolve: "./missing%20photo.png"'],
+      },
+    );
+    await dev.write("missing photo.png", imageFixtures.bun);
+    backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+  },
+});
 devTest("syntax error crash", {
   files: {
     "styles.css": `

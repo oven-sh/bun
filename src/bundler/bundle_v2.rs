@@ -2766,7 +2766,7 @@ pub mod bv2_impl {
             }
 
             let mut had_busted_dir_cache = false;
-            let resolve_result: _resolver::Result = loop {
+            let mut resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
                     source_dir,
@@ -2777,31 +2777,55 @@ pub mod bv2_impl {
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
+                            let importer_loader = self.graph.input_files.items_loader()
+                                [import_record.importer_source_index as usize];
+                            let decoded = _resolver::percent_decoded_css_url(
+                                self.arena(),
+                                importer_loader,
+                                &import_record.specifier,
+                                import_record.kind,
+                            );
+                            if let Some(decoded) = decoded
+                                // SAFETY: see `transpiler` note above.
+                                && let Ok(result) = unsafe { &mut *transpiler }.resolver.resolve(
+                                    source_dir,
+                                    decoded,
+                                    import_record.kind,
+                                )
+                            {
+                                break result;
+                            }
+                            let spellings =
+                                core::iter::once(&*import_record.specifier).chain(decoded);
                             if let Some(dev) = &self.dev_server {
                                 if !had_busted_dir_cache {
                                     // Only re-query if we previously had something cached.
-                                    // SAFETY: see `transpiler` note above.
-                                    if unsafe { &mut *transpiler }
-                                        .resolver
-                                        .bust_dir_cache_from_specifier(
-                                            &import_record.source_file,
-                                            &import_record.specifier,
-                                        )
-                                    {
+                                    let mut busted = false;
+                                    for spelling in spellings.clone() {
+                                        // SAFETY: see `transpiler` note above.
+                                        busted |= unsafe { &mut *transpiler }
+                                            .resolver
+                                            .bust_dir_cache_from_specifier(
+                                                &import_record.source_file,
+                                                spelling,
+                                            );
+                                    }
+                                    if busted {
                                         had_busted_dir_cache = true;
                                         continue;
                                     }
                                 }
 
                                 // Tell Bake's Dev Server to wait for the file to be imported.
-                                dev.track_resolution_failure(
-                                    &import_record.source_file,
-                                    &import_record.specifier,
-                                    target.bake_graph(),
-                                    self.graph.input_files.items_loader()
-                                        [import_record.importer_source_index as usize],
-                                )
-                                .expect("oom");
+                                for spelling in spellings {
+                                    dev.track_resolution_failure(
+                                        &import_record.source_file,
+                                        spelling,
+                                        target.bake_graph(),
+                                        importer_loader,
+                                    )
+                                    .expect("oom");
+                                }
 
                                 // Turn this into an invalid AST, so that incremental mode skips it when printing.
                                 // SAFETY: truncating to len 0 never exposes uninitialized elements.
@@ -2916,7 +2940,6 @@ pub mod bv2_impl {
                     }
                 }
             };
-            let mut resolve_result = resolve_result;
 
             let out_source_index: Option<Index>;
 
@@ -6962,7 +6985,7 @@ pub mod bv2_impl {
                 }
 
                 let mut had_busted_dir_cache = false;
-                let resolve_result: _resolver::Result = 'inner: loop {
+                let mut resolve_result: _resolver::Result = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
                         import_record.path.text,
@@ -6970,6 +6993,62 @@ pub mod bv2_impl {
                     ) {
                         Ok(r) => break r,
                         Err(err) => {
+                            // Only perform directory busting when hot-reloading is enabled
+                            if err == _resolver::Error::ModuleNotFound {
+                                let decoded = _resolver::percent_decoded_css_url(
+                                    self.arena(),
+                                    loader,
+                                    import_record.path.text,
+                                    import_record.kind,
+                                );
+                                if let Some(decoded) = decoded
+                                    && let Ok(result) = transpiler.resolver.resolve(
+                                        source_dir,
+                                        decoded,
+                                        import_record.kind,
+                                    )
+                                {
+                                    break 'inner result;
+                                }
+                                let spellings =
+                                    core::iter::once(import_record.path.text).chain(decoded);
+                                if self.bun_watcher.is_some() {
+                                    if !had_busted_dir_cache {
+                                        bun_core::scoped_log!(
+                                            watcher,
+                                            "busting dir cache {} -> {}",
+                                            bstr::BStr::new(&source.path.text),
+                                            bstr::BStr::new(&import_record.path.text)
+                                        );
+                                        // Only re-query if we previously had something cached.
+                                        let mut busted = false;
+                                        for spelling in spellings.clone() {
+                                            busted |=
+                                                transpiler.resolver.bust_dir_cache_from_specifier(
+                                                    source.path.text,
+                                                    spelling,
+                                                );
+                                        }
+                                        if busted {
+                                            had_busted_dir_cache = true;
+                                            continue 'inner;
+                                        }
+                                    }
+                                    if let Some(dev) = self.dev_server {
+                                        // Tell DevServer about the resolution failure.
+                                        for spelling in spellings {
+                                            dev.track_resolution_failure(
+                                                source.path.text,
+                                                spelling,
+                                                ctx.target.bake_graph(), // use the source file target not the altered one
+                                                loader,
+                                            )
+                                            .expect("oom");
+                                        }
+                                    }
+                                }
+                            }
+
                             // borrowck — `log_for_resolution_failures` returns
                             // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
                             // deref (DevServer vtable or `transpiler.log`). Detach via
@@ -6983,38 +7062,6 @@ pub mod bv2_impl {
                                     ),
                                 )
                             };
-
-                            // Only perform directory busting when hot-reloading is enabled
-                            if err == _resolver::Error::ModuleNotFound {
-                                if self.bun_watcher.is_some() {
-                                    if !had_busted_dir_cache {
-                                        bun_core::scoped_log!(
-                                            watcher,
-                                            "busting dir cache {} -> {}",
-                                            bstr::BStr::new(&source.path.text),
-                                            bstr::BStr::new(&import_record.path.text)
-                                        );
-                                        // Only re-query if we previously had something cached.
-                                        if transpiler.resolver.bust_dir_cache_from_specifier(
-                                            source.path.text,
-                                            import_record.path.text,
-                                        ) {
-                                            had_busted_dir_cache = true;
-                                            continue 'inner;
-                                        }
-                                    }
-                                    if let Some(dev) = self.dev_server {
-                                        // Tell DevServer about the resolution failure.
-                                        dev.track_resolution_failure(
-                                            source.path.text,
-                                            import_record.path.text,
-                                            ctx.target.bake_graph(), // use the source file target not the altered one
-                                            loader,
-                                        )
-                                        .expect("oom");
-                                    }
-                                }
-                            }
 
                             // Disable failing packages from being printed.
                             // This may cause broken code to write.
@@ -7155,7 +7202,6 @@ pub mod bv2_impl {
                         }
                     }
                 };
-                let mut resolve_result = resolve_result;
                 // if there were errors, lets go ahead and collect them all
                 if last_error.is_some() {
                     continue;

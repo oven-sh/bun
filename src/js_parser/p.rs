@@ -648,6 +648,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
 
+    /// `(inner_class_ref, class name)` of each enclosing class whose body
+    /// reads the class through `inner_class_ref`. A write to the name targets
+    /// the class's own binding, which throws as the immutable binding does.
+    pub(crate) decorated_class_names: List<'a, (Ref, Ref)>,
+
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
     // The old "var" statements are turned into regular assignments instead. This
@@ -9795,6 +9800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            decorated_class_names: BumpVec::new_in(arena),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),

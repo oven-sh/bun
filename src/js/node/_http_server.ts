@@ -482,8 +482,8 @@ function setupConnectionsTracking(this: any) {
 // A connection that the native listener parses keeps its timing on the socket
 // handle. A connection that is served from JS keeps it in its parser.
 function checkConnections(this: Server) {
-  // As in Node, a value that is not a finite number at or above 0 turns its timeout off, and the two values are
-  // swapped when headersTimeout is the larger: https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L1187-L1196
+  // Like the native handle, a value that is no finite number above 0 turns its timeout off. Like Node, the two values
+  // are swapped when headersTimeout is the larger: https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L1187-L1196
   let headersTimeout = this.headersTimeout;
   let requestTimeout = this.requestTimeout;
   if (!NumberIsFinite(headersTimeout) || headersTimeout < 0) headersTimeout = 0;

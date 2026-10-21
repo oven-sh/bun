@@ -140,23 +140,21 @@ pub(super) fn stored_addr_from_sockaddr(ptr: *const c_void) -> StoredAddr {
     StoredAddr::from_raw(ptr.cast(), len)
 }
 
-fn conn_peer_addr(conn: *mut lsquic::lsquic_conn) -> Option<StoredAddr> {
+fn conn_peer_addr(conn: *mut lsquic::lsquic_conn) -> StoredAddr {
     let mut local: *const c_void = null();
     let mut peer: *const c_void = null();
     // SAFETY: `conn` is live for the duration of the callback that passed it.
-    if unsafe {
+    let rc = unsafe {
         lsquic::lsquic_conn_get_sockaddr(
             conn,
             core::ptr::from_mut(&mut local),
             core::ptr::from_mut(&mut peer),
         )
-    } == 0
-        && !peer.is_null()
-    {
-        Some(stored_addr_from_sockaddr(peer))
-    } else {
-        None
-    }
+    };
+    // It only hands out pointers into the conn's current path
+    // (vendor/lsquic/src/liblsquic/lsquic_conn.c), so it has no failure case.
+    debug_assert_eq!(rc, 0);
+    stored_addr_from_sockaddr(peer)
 }
 
 struct ProvisionalSession {
@@ -1726,11 +1724,12 @@ impl QuicEndpoint {
         let (session, _handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             endpoint_handle,
             null_mut(),
             true,
             self.application(true),
+            peer_stored,
         )?;
         let applied = self.apply_server_session_options(global, session);
         self.sessions.with_mut(|v| v.push(session));
@@ -1819,9 +1818,7 @@ impl QuicEndpoint {
         let endpoint_handle = self.this_value.get().get();
         let peer = conn_peer_addr(conn);
         let provisional = self.provisional.with_mut(|v| {
-            let idx = peer
-                .as_ref()
-                .and_then(|peer| v.iter().position(|p| p.peer.decode() == peer.decode()));
+            let idx = v.iter().position(|p| p.peer.decode() == peer.decode());
             idx.map(|i| v.remove(i).session)
         });
         if let Some(session) = provisional {
@@ -1860,7 +1857,7 @@ impl QuicEndpoint {
             self.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
             return null_mut();
         }
-        let peer_decoded = peer.as_ref().and_then(StoredAddr::decode);
+        let peer_decoded = peer.decode();
         let was_dead = peer_decoded.is_some()
             && self
                 .dead_provisional_peers
@@ -1887,11 +1884,12 @@ impl QuicEndpoint {
         match QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             endpoint_handle,
             conn,
             true,
             self.application(true),
+            peer,
         ) {
             Ok((session, _handle)) => {
                 if let Err(err) = self.apply_server_session_options(global, session) {
@@ -1945,6 +1943,11 @@ impl QuicEndpoint {
         } else {
             session::Application::Default
         }
+    }
+
+    /// The bound address; unset until `ensure_bound` succeeds.
+    pub(super) fn local_addr(&self) -> StoredAddr {
+        self.local_addr.get()
     }
 
     pub(super) fn drive_engines_once(&self) {
@@ -2365,11 +2368,12 @@ impl QuicEndpoint {
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             frame.this(),
             null_mut(),
             false,
             self.application(false),
+            remote,
         )?;
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
         let sni = config.servername.as_ref();
@@ -2416,11 +2420,10 @@ impl QuicEndpoint {
             unsafe { (*session).teardown(global) };
             return Ok(JSValue::UNDEFINED);
         }
-        // SAFETY: `conn` is live; out-params are stack slots.
+        // SAFETY: `conn` is live.
         unsafe {
             lsquic::lsquic_conn_set_ctx(conn, session.cast());
             (*session).conn.set(conn);
-            (*session).cache_sockaddrs(conn);
             // `conn` is set above, so teardown clears the conn's ctx and the
             // late callbacks no-op instead of reaching an unrooted session.
             if let Err(e) = (*session).apply_options(global, options) {
@@ -2456,11 +2459,12 @@ impl QuicEndpoint {
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             this_value,
             null_mut(),
             false,
             session::Application::None,
+            remote,
         )?;
         let mut dcid = [0u8; VERNEG_PROBE_CID_LEN];
         let mut scid = [0u8; VERNEG_PROBE_CID_LEN];
@@ -2481,10 +2485,7 @@ impl QuicEndpoint {
         probe[off..off + VERNEG_PROBE_CID_LEN].copy_from_slice(&scid);
         // SAFETY: `session` was just created and is kept alive by its JS
         // wrapper (`handle`).
-        unsafe {
-            (*session).verneg.set(Some((version, min_version)));
-            (*session).remote_addr.set(remote);
-        }
+        unsafe { (*session).verneg.set(Some((version, min_version))) };
         self.pending_verneg
             .with_mut(|v| v.push((session, scid, now_ns())));
         // A probe has no engine, so nothing else would ever arm the timer that

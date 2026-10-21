@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 
 // The calls each launch below makes. `programArgs` holds what Node v26.3.0 returns from them for
@@ -72,7 +73,7 @@ async function run(cmd: string[], options: { cwd: string; stdin?: Buffer; env?: 
 const printed = (stdout: string) => ({ stdout, stderr: "", signalCode: null, exitCode: 0 });
 
 describe("parseArgs default args when eval code is the program", () => {
-  // Node has no `-e=`, `-p=` or `--print=`. They get what the other spellings get.
+  // `-e=<code>`, `-p=<code>` and `--print=<code>` are bun's spellings. They get what the other spellings get.
   const spellings: [name: string, flags: (code: string) => string[]][] = [
     ["-e <code>", code => ["-e", `process.stdout.write(${code})`]],
     ["--eval <code>", code => ["--eval", `process.stdout.write(${code})`]],
@@ -216,7 +217,7 @@ describe.skipIf(isDebug)("parseArgs default args under --interactive", () => {
 
 // Node keeps `--eval` per thread: a Worker has the value of the thread that made it, or the one
 // in its own `execArgv`. Every expected value is what Node v26.3.0 returns in a `worker_threads`
-// Worker with the same `argv` and `execArgv`, but for the rows that say Node rejects them.
+// Worker with the same `argv` and `execArgv`, but for the rows that Node rejects.
 describe("parseArgs default args in a Worker", () => {
   const files = {
     "worker.cjs": `
@@ -230,76 +231,100 @@ describe("parseArgs default args in a Worker", () => {
     `,
     "preload.cjs": "",
   };
-  // Prints what parseArgs returns in a Worker that is given `options`.
-  const startWorker = (options: { execArgv?: string[] }, more = "", file = "./worker.cjs") =>
-    `const worker = new Worker('${file}', { argv: ['zzz', 'yyy'], ...${JSON.stringify(options)}${more} });` +
-    " worker.onmessage = event => console.log(JSON.stringify(event.data));" +
-    " worker.onerror = event => { console.error(event.message); process.exitCode = 1; };";
-  const slicedAt1 = JSON.stringify(["worker.cjs", "zzz", "yyy"]);
-  const slicedAt2 = JSON.stringify(["zzz", "yyy"]);
-  const execArgvs: [execArgv: string[] | undefined, stdout: string][] = [
-    [undefined, slicedAt2],
+  const slicedAt1 = ["worker.cjs", "zzz", "yyy"];
+  const slicedAt2 = ["zzz", "yyy"];
+  const ownExecArgv: [execArgv: string[], positionals: string[]][] = [
     [[], slicedAt2],
     [["--eval", "1"], slicedAt1],
     [["--eval=1"], slicedAt1],
     [["-e", "1"], slicedAt1],
     [["-pe", "1"], slicedAt1],
     [["-p", "1"], slicedAt1],
+    [["--print", "1"], slicedAt1],
     [["-p"], slicedAt2],
     [["--eval", ""], slicedAt2],
-    // A print flag takes the next token as its code only when that token is not a flag and not empty.
+    [["-e", "\u0000"], slicedAt1],
+    // A print flag only prints before an empty token, `-`, `--` or an option, and `--print=<x>` is `--print`.
+    [["-p", ""], slicedAt2],
+    [["-p", "-"], slicedAt2],
+    [["-p", "--"], slicedAt2],
     [["-p", "--no-addons"], slicedAt2],
+    [["-p", "--conditions=x"], slicedAt2],
+    [["-p", "-r", "node:path"], slicedAt2],
+    [["-p", "-pe", ""], slicedAt2],
+    [["-p", "1", "-e", ""], slicedAt2],
     [["--eval=1", "-p", ""], slicedAt1],
-    // A token after another flag is that flag's value, and the code of an eval flag is not a flag.
+    [["--print=1"], slicedAt2],
+    [["--print=1", "x"], slicedAt1],
+    [["-e", "1", "--print="], slicedAt1],
+    // A token after a flag that takes a value is that value. The last eval flag wins.
     [["-r", "node:path", "-e", "1"], slicedAt1],
+    [["--unhandled-rejections", "strict", "-e", "1"], slicedAt1],
     [["-C", "x", "-e", "1"], slicedAt1],
+    [["--conditions=\u2603", "-e", "1"], slicedAt1],
+    [["--enable-source-maps", "-e", "1", "x", "-e", ""], slicedAt1],
     [["-e", "", "-e", "1"], slicedAt1],
     [["-e", "1", "-e", ""], slicedAt2],
-    [["-e", "\u0000"], slicedAt1],
     // The flags end at a token that is not a flag and not a value, and at `--`.
     [["x", "-e", "1"], slicedAt2],
+    [["script.js", "-e", "1"], slicedAt2],
+    [["\u2603.js", "-e", "1"], slicedAt2],
     [["-", "-e", "1"], slicedAt2],
     [["--no-addons", "x", "-e", "1"], slicedAt2],
+    [["-c", "x", "-e", "1"], slicedAt2],
     [["--conditions=x", "x", "-e", "1"], slicedAt2],
+    [["-r", "node:path", "x", "-e", "1"], slicedAt2],
     [["--", "-e", "1"], slicedAt2],
-    // Node rejects the next four. They are read as bun's CLI reads them.
+    // Node rejects the next six. They are read as bun's CLI reads them.
     [["-e=1"], slicedAt1],
     [["-p=1"], slicedAt1],
+    [["-e", "1", "--eval="], slicedAt2],
     [["-e", "-1"], slicedAt1],
     [["-p", "-1"], slicedAt1],
+    [["-e", "1", "-e"], slicedAt2],
   ];
 
+  // The Worker's own `execArgv` decides, so the program can be this test.
   test.each(
-    execArgvs.map(([execArgv, stdout]): [name: string, execArgv: string[] | undefined, stdout: string] => [
-      execArgv ? `execArgv ${JSON.stringify(execArgv)}` : "no execArgv",
+    ownExecArgv.map(([execArgv, positionals]): [name: string, execArgv: string[], positionals: string[]] => [
+      JSON.stringify(execArgv),
       execArgv,
-      stdout,
+      positionals,
     ]),
-  )("with a file as the program and %s", async (_, execArgv, stdout) => {
-    using dir = tempDir("parse-args-worker", { ...files, "parent.cjs": startWorker({ execArgv }) });
-    expect(await run(["parent.cjs"], { cwd: String(dir) })).toEqual(printed(stdout));
+  )("with execArgv %s", async (_, execArgv, positionals) => {
+    using dir = tempDir("parse-args-worker", files);
+    const options = { argv: ["zzz", "yyy"], execArgv } as Bun.WorkerOptions;
+    const worker = new Worker(join(String(dir), "worker.cjs"), options);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = event => reject(new Error(event.message));
+      expect(await promise).toEqual(positionals);
+    } finally {
+      worker.terminate();
+    }
   });
 
-  const passOn = ", execArgv: process.execArgv";
-  const evalParents: [name: string, cmd: string[], stdout: string][] = [
-    ["-e <code>", ["-e", startWorker({})], slicedAt1],
-    ["--eval=<code>", [`--eval=${startWorker({})}`], slicedAt1],
-    ["--eval=<code> and execArgv []", [`--eval=${startWorker({ execArgv: [] })}`], slicedAt2],
-    ["-pe <code>", ["-pe", `${startWorker({})} void 0`], `${slicedAt1}\nundefined`],
-    // A Worker that is given `process.execArgv` gets what a Worker that inherits it gets.
+  // Prints what parseArgs returns in a Worker that is given `options`.
+  const startWorker = (options: { execArgv?: string[] }, more = "", file = "./worker.cjs") =>
+    `const worker = new Worker('${file}', { argv: ['zzz', 'yyy'], ...${JSON.stringify(options)}${more} });` +
+    " worker.onmessage = event => console.log(JSON.stringify(event.data));" +
+    " worker.onerror = event => { console.error(event.message); process.exitCode = 1; };";
+  const [printsAt1, printsAt2] = [JSON.stringify(slicedAt1), JSON.stringify(slicedAt2)];
+  const programs: [name: string, cmd: string[], stdout: string][] = [
+    ["a file", ["parent.cjs"], printsAt2],
+    ["-e <code>", ["-e", startWorker({})], printsAt1],
+    ["--eval=<code>", [`--eval=${startWorker({})}`], printsAt1],
+    ["--eval=<code> and execArgv []", [`--eval=${startWorker({ execArgv: [] })}`], printsAt2],
+    ["-pe <code>", ["-pe", `${startWorker({})} void 0`], `${printsAt1}\nundefined`],
     [
       "-r <file> -e <code> and execArgv: process.execArgv",
-      ["-r", "./preload.cjs", "-e", startWorker({}, passOn)],
-      slicedAt1,
-    ],
-    [
-      "--print=<code> and execArgv: process.execArgv",
-      [`--print=${startWorker({}, passOn)} void 0`],
-      `${slicedAt1}\nundefined`,
+      ["-r", "./preload.cjs", "-e", startWorker({}, ", execArgv: process.execArgv")],
+      printsAt1,
     ],
   ];
-  test.each(evalParents)("with bun %s as the program", async (_, cmd, stdout) => {
-    using dir = tempDir("parse-args-worker", files);
+  test.each(programs)("with bun %s as the program", async (_, cmd, stdout) => {
+    using dir = tempDir("parse-args-worker", { ...files, "parent.cjs": startWorker({}) });
     expect(await run(cmd, { cwd: String(dir) })).toEqual(printed(stdout));
   });
 
@@ -307,13 +332,13 @@ describe("parseArgs default args in a Worker", () => {
   test('made by a Worker with execArgv ["-e","1"], with a file as the program', async () => {
     const parent = startWorker({ execArgv: ["-e", "1"] }, "", "./relay.cjs");
     using dir = tempDir("parse-args-worker", { ...files, "parent.cjs": parent });
-    expect(await run(["parent.cjs"], { cwd: String(dir) })).toEqual(printed(slicedAt1));
+    expect(await run(["parent.cjs"], { cwd: String(dir) })).toEqual(printed(printsAt1));
   });
 
   test('made by a Worker with execArgv ["--no-addons"], with bun -e <code> as the program', async () => {
     using dir = tempDir("parse-args-worker", files);
     const cmd = ["-e", startWorker({ execArgv: ["--no-addons"] }, "", "./relay.cjs")];
-    expect(await run(cmd, { cwd: String(dir) })).toEqual(printed(slicedAt2));
+    expect(await run(cmd, { cwd: String(dir) })).toEqual(printed(printsAt2));
   });
 });
 

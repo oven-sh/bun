@@ -306,43 +306,10 @@ mod _impl {
 
             // A set of execArgv args consume an extra argument, so we do not want to
             // confuse these with script names.
-            // Build the set lazily at runtime from the `AUTO_PARAMS` table:
-            // `--long` / `-s` for every param with a value.
-            static MAP: std::sync::LazyLock<bun_collections::StringSet> =
-                std::sync::LazyLock::new(|| {
-                    let mut set = bun_collections::StringSet::new();
-                    for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                        // An optional value is only ever written `--name=value`.
-                        if param.takes_value != bun_clap::Values::None
-                            && param.takes_value != bun_clap::Values::OneOptional
-                        {
-                            if let Some(name) = param.names.long {
-                                let mut k = Vec::with_capacity(2 + name.len());
-                                k.extend_from_slice(b"--");
-                                k.extend_from_slice(name);
-                                bun_core::handle_oom(set.insert(&k));
-                            }
-                            if let Some(name) = param.names.short {
-                                bun_core::handle_oom(set.insert(&[b'-', name]));
-                            }
-                        }
-                    }
-                    // Node's whole-token aliases are not params, so they never
-                    // land above; an alias takes a value iff its target does.
-                    for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
-                        if set.contains(to) {
-                            bun_core::handle_oom(set.insert(from));
-                        }
-                    }
-                    set
-                });
-
-            if let Some(p) = prev {
-                if MAP.contains(p) {
-                    args.push(BunString::clone_utf8(arg));
-                    prev = Some(arg);
-                    continue;
-                }
+            if prev.is_some_and(|prev| crate::cli::arguments::takes_value(prev) == Some(true)) {
+                args.push(BunString::clone_utf8(arg));
+                prev = Some(arg);
+                continue;
             }
 
             // we hit the script name

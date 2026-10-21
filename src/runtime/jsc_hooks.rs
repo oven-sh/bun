@@ -1601,19 +1601,26 @@ unsafe fn parse_worker_exec_argv_flags(
     Some(flags)
 }
 
-/// Whether `--eval` has a value as Node's parser reads `tokens`: a token after a flag can be that flag's value.
+/// Whether `--eval` has a value in `tokens`. The walk follows Node's option parser, with bun's CLI table for the flags that take a value.
 fn exec_argv_has_eval_string<'a>(
     tokens: impl Iterator<Item = &'a bun_core::WTFStringImplStruct>,
 ) -> bool {
-    // Node's parser stops at a lone `-`, so it is not a flag.
-    let is_flag = |token: &bun_core::WTFStringImplStruct| {
-        token.length() > 1
-            && if token.is_8bit() {
-                token.latin1_slice().first() == Some(&b'-')
-            } else {
-                token.utf16_slice().first() == Some(&u16::from(b'-'))
-            }
+    fn name_and_value(flag: &[u8]) -> (&[u8], Option<&[u8]>) {
+        match bun_core::strings::split_once_char(flag, b'=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (flag, None),
+        }
+    }
+    let starts_with_dash = |token: &bun_core::WTFStringImplStruct| {
+        if token.is_8bit() {
+            token.latin1_slice().first() == Some(&b'-')
+        } else {
+            token.utf16_slice().first() == Some(&u16::from(b'-'))
+        }
     };
+    // Node's parser stops at a lone `-`, so it is not a flag.
+    let is_flag =
+        |token: &bun_core::WTFStringImplStruct| token.length() > 1 && starts_with_dash(token);
     let mut tokens = tokens.peekable();
     let mut has_eval_string = false;
     let mut value_may_follow = false;
@@ -1630,30 +1637,30 @@ fn exec_argv_has_eval_string<'a>(
             break;
         }
         value_may_follow = false;
-        let with_code = [b"--eval=".as_slice(), b"--print=", b"-e=", b"-p="];
-        if let Some(code) = with_code
-            .iter()
-            .find_map(|prefix| flag.strip_prefix(*prefix))
-        {
-            has_eval_string = !code.is_empty();
-        } else if matches!(flag, b"-e" | b"--eval" | b"-pe") {
+        match name_and_value(flag) {
+            // `-e=<code>` and `-p=<code>` are bun's spellings. Node rejects them.
+            (b"--eval" | b"-e" | b"-p", Some(code)) => has_eval_string = !code.is_empty(),
             // Node rejects a code that starts with `-`. Bun's CLI takes it, so it is the code here too.
-            if let Some(code) = tokens.next() {
-                has_eval_string = code.length() != 0;
+            (b"--eval" | b"-e" | b"-pe", None) => {
+                has_eval_string = tokens.next().is_some_and(|code| code.length() != 0);
             }
-        } else if matches!(flag, b"-p" | b"--print") {
-            // In Node a `-p` before another option only prints. Bun's CLI takes any other token as the code.
-            let is_option = |next: &bun_core::WTFStringImplStruct| {
-                let next = next.to_utf8();
-                *next == *b"--" || crate::cli::arguments::takes_value(&next).is_some()
-            };
-            has_eval_string |= tokens
-                .next_if(|next| next.length() != 0 && !(is_flag(next) && is_option(next)))
-                .is_some();
-        } else {
-            let has_value = bun_core::strings::contains_char(flag, b'=');
-            value_may_follow =
-                !has_value && crate::cli::arguments::takes_value(flag) != Some(false);
+            // As in Node, `--print=<x>` is `--print`, and a print flag only prints before `-`, `--` or an option. Bun's CLI takes a token like `-1` as the code.
+            (b"--print", _) | (b"-p", None) => {
+                let is_code = |next: &bun_core::WTFStringImplStruct| {
+                    if !starts_with_dash(next) {
+                        return next.length() != 0;
+                    }
+                    let next = next.to_utf8();
+                    let (name, _) = name_and_value(&next);
+                    !matches!(name, b"-" | b"--")
+                        && crate::cli::arguments::takes_value(name).is_none()
+                };
+                has_eval_string |= tokens.next_if(|next| is_code(next)).is_some();
+            }
+            (_, Some(_)) => {}
+            (name, None) => {
+                value_may_follow = crate::cli::arguments::takes_value(name) != Some(false);
+            }
         }
     }
     has_eval_string

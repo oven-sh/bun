@@ -6,6 +6,7 @@
 
 use bun_core::{Global, UnwrapOrOom, env_var};
 
+use super::arguments::values_of;
 use super::check_command::working_directory;
 
 /// The kind of thing `bun <command>` runs.
@@ -30,12 +31,6 @@ impl Unparsable {
         );
         Global::exit(2);
     }
-}
-
-/// What the flag of `bun` takes that `is_it` says yes to. `None`: there is no such flag.
-fn values_of(is_it: &dyn Fn(&bun_clap::Names) -> bool) -> Option<&'static bun_clap::Values> {
-    let mut flags = super::arguments::AUTO_PARAMS.iter();
-    flags.find(|it| is_it(&it.names)).map(|it| &it.takes_value)
 }
 
 /// Where the first of `shorts`, the letters of a chain like `-be`, is that takes a value: the rest of the chain, as in

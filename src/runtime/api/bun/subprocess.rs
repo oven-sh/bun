@@ -995,6 +995,12 @@ impl Subprocess<'_> {
                 #[cfg(windows)]
                 term.unref_after_inline_child_exit();
             }
+        } else {
+            // Linux only: kqueue can report a fast child's exit inside `Bun.spawn()`, and Windows has no synchronous read.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if let Some(terminal) = self.terminal.get() {
+                bun_ptr::BackRef::from(terminal).read_pending();
+            }
         }
 
         let mut stdin: Option<NonNull<FileSink>> = if matches!(self.stdin.get(), Writable::Pipe(_))

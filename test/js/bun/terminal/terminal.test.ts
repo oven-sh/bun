@@ -1494,11 +1494,246 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     await proc.exited;
     expect(proc.exitCode).toBe(0);
 
-    // PTY data is delivered asynchronously and may arrive after the child exits;
-    // wait for the data callback rather than assuming it already fired.
-    await gotData;
+    // Only Linux reads the pty before `exited` settles. Elsewhere the output
+    // may arrive after the child exits; wait for the data callback there.
+    if (!isLinux) await gotData;
     const output = Buffer.concat(dataChunks).toString();
     expect(output).toContain("hello");
+  });
+
+  // On Linux, Subprocess::on_process_exit reads the pty of a terminal the caller created before `exited` settles, so
+  // `data` already has what the child wrote. The children below are `echo`: each test starts tens of them, and a
+  // `bun -e` child takes about a second on a debug build. Not on macOS and FreeBSD: the read is Linux only.
+  test.skipIf(!isLinux)("existing terminal: a child's output reaches data before exited and onExit", async () => {
+    const children = 40;
+    let output = "";
+    await using terminal = new Bun.Terminal({
+      data(_t, chunk) {
+        output += Buffer.from(chunk).toString();
+      },
+    });
+    const late = { atExited: [] as string[], inOnExit: [] as string[] };
+    const allOnExitRan = Promise.withResolvers<void>();
+    let onExitCount = 0;
+    for (let i = 0; i < children; i++) {
+      const marker = `line-${i}-end`;
+      const proc = Bun.spawn(["echo", marker], {
+        terminal,
+        onExit() {
+          if (!output.includes(marker)) late.inOnExit.push(marker);
+          if (++onExitCount === children) allOnExitRan.resolve();
+        },
+      });
+      await proc.exited;
+      if (!output.includes(marker)) late.atExited.push(marker);
+    }
+    await allOnExitRan.promise;
+    expect(late).toEqual({ atExited: [], inOnExit: [] });
+  });
+
+  // The "Reusable Terminal" example of docs/runtime/child-process.mdx: the
+  // terminal is closed right after the last child's `exited`.
+  test.skipIf(!isLinux)(
+    "existing terminal: the last child's output survives close() or dispose right after exited",
+    async () => {
+      const delivered: string[] = [];
+      const expected: string[] = [];
+      for (let i = 0; i < 30; i++) {
+        let output = "";
+        const terminal = new Bun.Terminal({
+          cols: 80,
+          rows: 24,
+          data(_t, chunk) {
+            output += Buffer.from(chunk).toString();
+          },
+        });
+        try {
+          await Bun.spawn(["echo", `first-${i}`], { terminal }).exited;
+          await Bun.spawn(["echo", `second-${i}`], { terminal }).exited;
+          if (i % 2 === 0) terminal.close();
+          else await terminal[Symbol.asyncDispose]();
+        } finally {
+          terminal.close();
+        }
+        delivered.push(output.replaceAll("\r\n", "\n"));
+        expected.push(`first-${i}\nsecond-${i}\n`);
+      }
+      expect(delivered).toEqual(expected);
+    },
+  );
+
+  // A pty read returns at most 4095 bytes, so these lines take more than one read at child exit.
+  test.skipIf(!isLinux).each([4096, 8000])(
+    "existing terminal: a %d-byte line reaches data before exited",
+    async size => {
+      const rounds = 20;
+      const line = Buffer.alloc(size, "x").toString();
+      let bytes = 0;
+      await using terminal = new Bun.Terminal({
+        data(_t, chunk) {
+          bytes += chunk.length;
+        },
+      });
+      const atExited: number[] = [];
+      for (let i = 0; i < rounds; i++) {
+        bytes = 0;
+        await Bun.spawn(["echo", line], { terminal }).exited;
+        atExited.push(bytes);
+      }
+      expect(atExited).toEqual(Array.from({ length: rounds }, () => size + "\r\n".length));
+    },
+  );
+
+  // The waiter thread reports exits where bun cannot open a pidfd. Both variables are needed to force it, and it only
+  // exists on Linux: the child confirms that the thread runs.
+  test.skipIf(!isLinux)("existing terminal: output reaches data before exited with the waiter thread", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { readdirSync, readFileSync } from "node:fs";
+          let output = "";
+          const terminal = new Bun.Terminal({
+            data(_t, chunk) { output += Buffer.from(chunk).toString(); },
+          });
+          const late = [];
+          for (let i = 0; i < 40; i++) {
+            const marker = "line-" + i + "-end";
+            await Bun.spawn(["echo", marker], { terminal }).exited;
+            if (!output.includes(marker)) late.push(marker);
+          }
+          terminal.close();
+          // A thread can exit between the listing and the read of its name.
+          const waiterThread = readdirSync("/proc/self/task").some(task => {
+            try {
+              return readFileSync("/proc/self/task/" + task + "/comm", "utf8").trim() === "Waitpid";
+            } catch {
+              return false;
+            }
+          });
+          console.log(JSON.stringify({ late, waiterThread }));
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ late: [], waiterThread: true }) + "\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // After unref() nothing keeps the loop alive once the last `exited` settles,
+  // and no close() runs: the script prints only what `data` has received by then.
+  test.skipIf(!isLinux)("existing terminal: unref() then script end still delivers the output", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let output = "";
+          const terminal = new Bun.Terminal({
+            data(_t, chunk) {
+              output += Buffer.from(chunk).toString();
+              process.stdout.write(chunk);
+            },
+          });
+          terminal.unref();
+          const late = [];
+          for (let i = 0; i < 20; i++) {
+            const marker = "line-" + i + "-end";
+            await Bun.spawn(["echo", marker], { terminal }).exited;
+            if (!output.includes(marker)) late.push(marker);
+          }
+          process.stdout.write("late: " + JSON.stringify(late));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: Array.from({ length: 20 }, (_, i) => `line-${i}-end\r\n`).join("") + "late: []",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // The fixture puts the bytes in the pty after the child has exited, so the read at child exit is what delivers them
+  // before `exited`. Its `close` mode closes the terminal from `data`, its `throw` mode throws. With the waiter thread
+  // the poll can also deliver first, so the count of rounds that the exit read served is not fixed there.
+  test.skipIf(!isLinux).each([
+    ["the exit event of a pidfd", {}],
+    ["the waiter thread", { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" }],
+  ])("existing terminal: the read at child exit delivers, and data may close or throw, with %s", async (_, env) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "terminal-exit-read-fixture.ts")],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let report: unknown = stdout;
+    try {
+      report = JSON.parse(stdout);
+    } catch {}
+    const rounds = 10;
+    const waiterThread = (report as { waiterThread?: unknown })?.waiterThread === true;
+    const inExitRead = waiterThread ? expect.any(Number) : rounds;
+    expect({ report, stderr, exitCode }).toEqual({
+      report: {
+        rounds,
+        waiterThread: "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD" in env ? true : expect.any(Boolean),
+        plain: { late: 0, inExitRead, closedAtExited: 0, exitCallbacks: rounds, reportedAtExited: 0 },
+        close: { late: 0, inExitRead, closedAtExited: rounds, exitCallbacks: rounds, reportedAtExited: 0 },
+        throw: { late: 0, inExitRead, closedAtExited: 0, exitCallbacks: rounds, reportedAtExited: rounds },
+      },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // on_process_exit reaches a terminal it does not own through the Subprocess, whose wrapper keeps the terminal's
+  // wrapper alive. Here the caller has closed the terminal and dropped it while the child still runs.
+  test.skipIf(!isLinux)("existing terminal: a child that outlives a closed terminal reports its exit", async () => {
+    const ready = Promise.withResolvers<void>();
+    let output = "";
+    let terminal: Bun.Terminal | undefined = new Bun.Terminal({
+      data(_t, chunk) {
+        output += Buffer.from(chunk).toString();
+        if (output.includes("ready")) ready.resolve();
+      },
+    });
+    const weak = new WeakRef(terminal);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("SIGTERM", () => process.exit(7));
+           process.stdout.write("ready");
+           setInterval(() => {}, 1000);`,
+        ],
+        env: bunEnv,
+        terminal,
+      });
+      await ready.promise;
+      terminal.close();
+      terminal = undefined;
+      // A turn of the loop: until then the WeakRef itself keeps its target alive.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      Bun.gc(true);
+      const alive = weak.deref() !== undefined;
+      proc.kill("SIGTERM");
+      expect({ alive, exitCode: await proc.exited }).toEqual({ alive: true, exitCode: 7 });
+    } finally {
+      terminal?.close();
+    }
   });
 
   // An inline terminal must not keep the event loop alive after its subprocess

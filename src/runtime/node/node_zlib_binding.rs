@@ -11,8 +11,7 @@ use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
-    WorkPoolTask,
+    self as jsc, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
 };
 use bun_threading::work_pool::WorkPool;
 
@@ -222,27 +221,15 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         Ok(())
     }
 
+    /// `arguments` is `[flush, in, in_off, in_len, out, out_off, out_len]`.
     pub(crate) fn write(
         this: &T,
+        this_value: JSValue,
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = callframe.arguments_undef::<7>();
-        let arguments = args.slice();
-
-        if arguments.len() != 7 {
-            return Err(global_this
-                .err(
-                    ErrorCode::MISSING_ARGS,
-                    format_args!("write(flush, in, in_off, in_len, out, out_off, out_len)"),
-                )
-                .throw());
-        }
-
+        arguments: &[JSValue; 7],
+    ) -> JsResult<()> {
         let in_off: u32;
         let in_len: u32;
-
-        let this_value = callframe.this();
 
         if arguments[0].is_undefined() {
             return Err(global_this
@@ -411,7 +398,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.ticket().set(Some(vm.ticket()));
         WorkPool::schedule(this.task().as_ptr());
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     // Safe fn: coerces to the `WorkPoolTask.callback` field type at the
@@ -583,7 +570,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
 
         if this.pending_close().get() {
-            Self::close_internal(&this);
+            Self::close(&this);
         }
 
         this.poll_ref().with_mut(|p| p.unref(vm));
@@ -592,23 +579,13 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         unsafe { T::deref(this_ptr) };
     }
 
+    /// `arguments` is as for [`write`](Self::write).
     pub(crate) fn write_sync(
         this: &T,
+        this_value: JSValue,
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = callframe.arguments_undef::<7>();
-        let arguments = args.slice();
-
-        if arguments.len() != 7 {
-            return Err(global_this
-                .err(
-                    ErrorCode::MISSING_ARGS,
-                    format_args!("writeSync(flush, in, in_off, in_len, out, out_off, out_len)"),
-                )
-                .throw());
-        }
-
+        arguments: &[JSValue; 7],
+    ) -> JsResult<()> {
         let in_off: u32;
         let in_len: u32;
         let in_: Option<&[u8]>;
@@ -709,21 +686,20 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             s.set_buffers(in_, out);
             s.set_flush(i32::try_from(flush).expect("int cast"));
         });
-        let this_value = callframe.this();
 
         this.stream().with_mut(|s| s.do_work());
         if Self::check_error(this, global_this, this_value) {
             this.flush_write_result(global_this, this_value);
             this.write_in_progress().set(false);
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn reset(
         this: &T,
+        this_value: JSValue,
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<()> {
         // reset() destroys and re-creates the brotli/zstd encoder state (or
         // mutates the z_stream). Doing so while an async write is running on
         // the threadpool would be a use-after-free / data race, so node throws
@@ -735,8 +711,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 ))),
             );
         }
-        Self::reset_internal(this, global_this, callframe.this());
-        Ok(JSValue::UNDEFINED)
+        Self::reset_internal(this, global_this, this_value);
+        Ok(())
     }
 
     fn reset_internal(this: &T, global_this: &JSGlobalObject, this_value: JSValue) {
@@ -751,16 +727,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
     }
 
-    pub(crate) fn close(
-        this: &T,
-        _global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::close_internal(this);
-        Ok(JSValue::UNDEFINED)
-    }
-
-    fn close_internal(this: &T) {
+    pub(crate) fn close(this: &T) {
         if this.write_in_progress().get() {
             this.pending_close().set(true);
             return;
@@ -773,7 +740,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 
     pub(crate) fn set_on_error(
-        _this: &T,
         this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
@@ -787,11 +753,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
     }
 
-    pub(crate) fn get_on_error(
-        _this: &T,
-        this_value: JSValue,
-        _global: &JSGlobalObject,
-    ) -> JSValue {
+    pub(crate) fn get_on_error(this_value: JSValue) -> JSValue {
         T::error_callback_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
@@ -821,7 +783,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // Clear write_in_progress *before* invoking the onerror callback.
         // The callback may re-enter write(), which sets write_in_progress=true
         // and schedules a WorkPool task. If we cleared the flag after the
-        // callback, we would clobber that state and closeInternal()/resetInternal()
+        // callback, we would clobber that state and close()/resetInternal()
         // below could free the native zlib/brotli/zstd state while a task is
         // still queued, leading to a use-after-free when the worker thread
         // runs doWork().
@@ -867,98 +829,113 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
 
         if this.pending_close().get() {
-            Self::close_internal(this);
+            Self::close(this);
         }
     }
 }
 
-/// Expose the [`CompressionStream<T>`] mixin entry points as inherent
-/// associated fns on `T` so the per-class C-ABI thunks emitted by
-/// `generated_classes.rs` (which call `T::write(&mut *this, …)` etc.) resolve.
+/// The members that the classes of `node_zlib_binding.bind.ts` share: the [`CompressionStream<T>`] mixin's.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __compression_stream_mixin_reexports {
     ($native:ty) => {
         impl $native {
-            // R-2: `this: &Self` — see CompressionStreamImpl note above.
             #[inline]
             pub(crate) fn write(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                &self,
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
+                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
+                flush: ::bun_jsc::bindgen::JsLocal<'_>,
+                input: ::bun_jsc::bindgen::JsLocal<'_>,
+                input_offset: ::bun_jsc::bindgen::JsLocal<'_>,
+                input_length: ::bun_jsc::bindgen::JsLocal<'_>,
+                output: ::bun_jsc::bindgen::JsLocal<'_>,
+                output_offset: ::bun_jsc::bindgen::JsLocal<'_>,
+                output_length: ::bun_jsc::bindgen::JsLocal<'_>,
+            ) -> ::bun_jsc::JsResult<()> {
                 $crate::node::node_zlib_binding::CompressionStream::<Self>::write(
-                    this, global, frame,
+                    self,
+                    this_value.to_js(),
+                    cx.global(),
+                    &[
+                        flush.to_js(),
+                        input.to_js(),
+                        input_offset.to_js(),
+                        input_length.to_js(),
+                        output.to_js(),
+                        output_offset.to_js(),
+                        output_length.to_js(),
+                    ],
                 )
             }
             #[inline]
             pub(crate) fn write_sync(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                &self,
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
+                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
+                flush: ::bun_jsc::bindgen::JsLocal<'_>,
+                input: ::bun_jsc::bindgen::JsLocal<'_>,
+                input_offset: ::bun_jsc::bindgen::JsLocal<'_>,
+                input_length: ::bun_jsc::bindgen::JsLocal<'_>,
+                output: ::bun_jsc::bindgen::JsLocal<'_>,
+                output_offset: ::bun_jsc::bindgen::JsLocal<'_>,
+                output_length: ::bun_jsc::bindgen::JsLocal<'_>,
+            ) -> ::bun_jsc::JsResult<()> {
                 $crate::node::node_zlib_binding::CompressionStream::<Self>::write_sync(
-                    this, global, frame,
+                    self,
+                    this_value.to_js(),
+                    cx.global(),
+                    &[
+                        flush.to_js(),
+                        input.to_js(),
+                        input_offset.to_js(),
+                        input_length.to_js(),
+                        output.to_js(),
+                        output_offset.to_js(),
+                        output_length.to_js(),
+                    ],
                 )
             }
             #[inline]
             pub(crate) fn reset(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                &self,
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
+                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
+            ) -> ::bun_jsc::JsResult<()> {
                 $crate::node::node_zlib_binding::CompressionStream::<Self>::reset(
-                    this, global, frame,
+                    self,
+                    this_value.to_js(),
+                    cx.global(),
                 )
             }
             #[inline]
-            pub(crate) fn close(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::close(
-                    this, global, frame,
-                )
+            pub(crate) fn close(&self) {
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::close(self)
             }
             #[inline]
             pub(crate) fn set_on_error(
-                this: &Self,
-                this_value: ::bun_jsc::JSValue,
-                global: &::bun_jsc::JSGlobalObject,
-                value: ::bun_jsc::JSValue,
+                &self,
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
+                cx: &mut ::bun_jsc::bindgen::JsScope<'_>,
+                value: ::bun_jsc::bindgen::JsLocal<'_>,
             ) {
                 $crate::node::node_zlib_binding::CompressionStream::<Self>::set_on_error(
-                    this, this_value, global, value,
+                    this_value.to_js(),
+                    cx.global(),
+                    value.to_js(),
                 )
             }
             #[inline]
             pub(crate) fn get_on_error(
-                this: &Self,
-                this_value: ::bun_jsc::JSValue,
-                global: &::bun_jsc::JSGlobalObject,
+                &self,
+                this_value: ::bun_jsc::bindgen::JsWrapper<'_, Self>,
             ) -> ::bun_jsc::JSValue {
                 $crate::node::node_zlib_binding::CompressionStream::<Self>::get_on_error(
-                    this, this_value, global,
+                    this_value.to_js(),
                 )
             }
         }
     };
-}
-
-// The per-class `JS*` codegen submodules collapse into the generic
-// `jsc::codegen::js::get_constructor::<T>` helper (see src/jsc/lib.rs `pub mod codegen`).
-#[inline]
-pub(crate) fn native_zlib(global: &JSGlobalObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::node::zlib::native_zlib::NativeZlib>(global)
-}
-#[inline]
-pub(crate) fn native_brotli(global: &JSGlobalObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::node::zlib::native_brotli::NativeBrotli>(global)
-}
-#[inline]
-pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::node::zlib::native_zstd::NativeZstd>(global)
 }
 
 /// Implements [`CompressionContext`] for a `Context` type and
@@ -970,21 +947,22 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
 /// `write_in_progress`, `pending_close`, `closed`, `task`,
 /// `ref_count`), so the macro can stamp the impls uniformly.
 ///
-/// `$type_name` is the C++-side class name (matches `.classes.ts`); the macro
-/// emits a `pub mod js { … }` with the cached-property accessors
-/// (`writeCallback` / `errorCallback` / …) wired to the
-/// `${TypeName}Prototype__${prop}{Get,Set}CachedValue` extern symbols.
+/// `$js` is the class's generated module, which has the accessors of its internal fields.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __impl_compression_stream {
-    ($native:ident, $ctx:ty, $type_name:literal) => {
+    ($native:ident, $ctx:ty, $js:ident) => {
         impl ::bun_event_loop::Taskable for $native {
             const TAG: ::bun_event_loop::TaskTag = ::bun_event_loop::task_tag::$native;
             /// An async write whose completion will not run: unpin, unref, drop
             /// the write's ref — no callbacks.
             unsafe fn release_unrun(this: *mut Self) {
                 // SAFETY: fn contract — the stream the pool posted (write's ref held).
-                unsafe { $crate::node::node_zlib_binding::CompressionStream::<$native>::release_unrun(this) }
+                unsafe {
+                    $crate::node::node_zlib_binding::CompressionStream::<$native>::release_unrun(
+                        this,
+                    )
+                }
             }
             /// The write always completes (its buffers are unpinned); the callbacks it reports to carry
             /// the async context of the script that set them.
@@ -993,38 +971,92 @@ macro_rules! __impl_compression_stream {
             }
         }
 
-        /// `T.js.*` — cached-property accessors emitted by
-        /// `generate-classes.ts` for the `values:` list in `zlib.classes.ts`.
-        #[allow(unused)]
-        pub(crate) mod js {
-            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, pendingInput, pendingOutput, writeResult);
-        }
+        use $crate::generated_bindgen::node_zlib_binding::$js as js;
 
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
-            #[inline] fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { Self::set_buffers(self, in_, out) }
-            #[inline] fn set_flush(&mut self, flush: i32) { Self::set_flush(self, flush) }
-            #[inline] fn flush_value_is_valid(flush: u32) -> bool { Self::flush_value_is_valid(flush) }
-            #[inline] fn do_work(&mut self) { Self::do_work(self) }
-            #[inline] fn reset(&mut self) -> $crate::node::node_zlib_binding::Error { Self::reset(self) }
-            #[inline] fn close(&mut self) { Self::close(self) }
-            #[inline] fn get_error_info(&mut self) -> $crate::node::node_zlib_binding::Error { Self::get_error_info(self) }
-            #[inline] fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32) { Self::update_write_result(self, avail_in, avail_out) }
+            #[inline]
+            fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
+                Self::set_buffers(self, in_, out)
+            }
+            #[inline]
+            fn set_flush(&mut self, flush: i32) {
+                Self::set_flush(self, flush)
+            }
+            #[inline]
+            fn flush_value_is_valid(flush: u32) -> bool {
+                Self::flush_value_is_valid(flush)
+            }
+            #[inline]
+            fn do_work(&mut self) {
+                Self::do_work(self)
+            }
+            #[inline]
+            fn reset(&mut self) -> $crate::node::node_zlib_binding::Error {
+                Self::reset(self)
+            }
+            #[inline]
+            fn close(&mut self) {
+                Self::close(self)
+            }
+            #[inline]
+            fn get_error_info(&mut self) -> $crate::node::node_zlib_binding::Error {
+                Self::get_error_info(self)
+            }
+            #[inline]
+            fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32) {
+                Self::update_write_result(self, avail_in, avail_out)
+            }
         }
 
         impl $crate::node::node_zlib_binding::CompressionStreamImpl for $native {
             type Stream = $ctx;
 
-            #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
-            #[inline] fn ticket(&self) -> &::core::cell::Cell<Option<::bun_jsc::Ticket>> { &self.ticket }
-            #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
-            #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
-            #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
-            #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
-            #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
-            #[inline] fn pinned_buffers(&self) -> &::core::cell::Cell<u8> { &self.pinned_buffers }
-            #[inline] fn input_copy(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::InputCopy> { &self.input_copy }
-            #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
-            #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
+            #[inline]
+            fn global_this(&self) -> &::bun_jsc::JSGlobalObject {
+                self.global_this.get()
+            }
+            #[inline]
+            fn ticket(&self) -> &::core::cell::Cell<Option<::bun_jsc::Ticket>> {
+                &self.ticket
+            }
+            #[inline]
+            fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> {
+                &self.stream
+            }
+            #[inline]
+            fn poll_ref(
+                &self,
+            ) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> {
+                &self.poll_ref
+            }
+            #[inline]
+            fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> {
+                &self.this_value
+            }
+            #[inline]
+            fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> {
+                &self.task
+            }
+            #[inline]
+            fn write_in_progress(&self) -> &::core::cell::Cell<bool> {
+                &self.write_in_progress
+            }
+            #[inline]
+            fn pinned_buffers(&self) -> &::core::cell::Cell<u8> {
+                &self.pinned_buffers
+            }
+            #[inline]
+            fn input_copy(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::InputCopy> {
+                &self.input_copy
+            }
+            #[inline]
+            fn pending_close(&self) -> &::core::cell::Cell<bool> {
+                &self.pending_close
+            }
+            #[inline]
+            fn closed(&self) -> &::core::cell::Cell<bool> {
+                &self.closed
+            }
 
             #[inline]
             unsafe fn from_task(task: *mut ::bun_jsc::WorkPoolTask) -> *mut Self {
@@ -1034,28 +1066,58 @@ macro_rules! __impl_compression_stream {
                 unsafe { ::bun_core::from_field_ptr!(Self, task, task) }
             }
 
-            #[inline] fn write_result_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+            #[inline]
+            fn write_result_get_cached(
+                this_value: ::bun_jsc::JSValue,
+            ) -> Option<::bun_jsc::JSValue> {
                 js::write_result_get_cached(this_value)
             }
-            #[inline] fn write_callback_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+            #[inline]
+            fn write_callback_get_cached(
+                this_value: ::bun_jsc::JSValue,
+            ) -> Option<::bun_jsc::JSValue> {
                 js::write_callback_get_cached(this_value)
             }
-            #[inline] fn error_callback_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+            #[inline]
+            fn error_callback_get_cached(
+                this_value: ::bun_jsc::JSValue,
+            ) -> Option<::bun_jsc::JSValue> {
                 js::error_callback_get_cached(this_value)
             }
-            #[inline] fn error_callback_set_cached(this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, cb: ::bun_jsc::JSValue) {
+            #[inline]
+            fn error_callback_set_cached(
+                this_value: ::bun_jsc::JSValue,
+                global: &::bun_jsc::JSGlobalObject,
+                cb: ::bun_jsc::JSValue,
+            ) {
                 js::error_callback_set_cached(this_value, global, cb)
             }
-            #[inline] fn pending_input_set_cached(this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, value: ::bun_jsc::JSValue) {
+            #[inline]
+            fn pending_input_set_cached(
+                this_value: ::bun_jsc::JSValue,
+                global: &::bun_jsc::JSGlobalObject,
+                value: ::bun_jsc::JSValue,
+            ) {
                 js::pending_input_set_cached(this_value, global, value)
             }
-            #[inline] fn pending_output_set_cached(this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, value: ::bun_jsc::JSValue) {
+            #[inline]
+            fn pending_output_set_cached(
+                this_value: ::bun_jsc::JSValue,
+                global: &::bun_jsc::JSGlobalObject,
+                value: ::bun_jsc::JSValue,
+            ) {
                 js::pending_output_set_cached(this_value, global, value)
             }
-            #[inline] fn pending_input_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+            #[inline]
+            fn pending_input_get_cached(
+                this_value: ::bun_jsc::JSValue,
+            ) -> Option<::bun_jsc::JSValue> {
                 js::pending_input_get_cached(this_value)
             }
-            #[inline] fn pending_output_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+            #[inline]
+            fn pending_output_get_cached(
+                this_value: ::bun_jsc::JSValue,
+            ) -> Option<::bun_jsc::JSValue> {
                 js::pending_output_get_cached(this_value)
             }
         }

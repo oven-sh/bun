@@ -54,26 +54,22 @@ impl Default for Context {
     }
 }
 
-// ─── JsClass payload + host fns + Context method bodies ───────────────────
+// ─── the class + Context method bodies ────────────────────────────────────
 
 mod _impl {
     use super::*;
     use core::cell::Cell;
     use core::ffi::c_uint;
 
-    use bun_jsc::{
-        CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, RangeErrorOptions,
-        StrongOptional, WorkPoolTask,
-    };
+    use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+    use bun_jsc::{ErrorCode, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
+    use bun_ptr::RefPtr;
 
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
-    // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
-    // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
-    #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     pub(crate) struct NativeBrotli {
         pub(crate) ref_count: Cell<u32>,
@@ -109,45 +105,15 @@ mod _impl {
     // fns on `CompressionStream::<NativeBrotli>` (see node_zlib_binding.rs).
 
     impl NativeBrotli {
-        // No `#[bun_jsc::host_fn]` — the free-fn shim it emits calls
-        // a bare `constructor(...)` which cannot resolve inside an `impl` block.
-        // The `#[bun_jsc::JsClass]` derive already emits the construct shim that
-        // calls `<Self>::constructor(__g, __f)`.
-        pub(crate) fn constructor(
-            global_this: &JSGlobalObject,
-            callframe: &CallFrame,
-        ) -> JsResult<Box<Self>> {
-            let arguments = callframe.arguments_undef::<1>();
-
-            let mode = arguments.ptr[0];
-            if !mode.is_number() {
-                return Err(global_this.throw_invalid_argument_type_value("mode", "number", mode));
-            }
-            let mode_double = mode.as_number();
-            if mode_double % 1.0 != 0.0 {
-                return Err(global_this.throw_invalid_argument_type_value("mode", "integer", mode));
-            }
-            let mode_int: i64 = mode_double as i64;
-            if mode_int < 8 || mode_int > 9 {
-                return Err(global_this.throw_range_error(
-                    mode_int,
-                    RangeErrorOptions {
-                        field_name: b"mode",
-                        min: 8,
-                        max: 9,
-                        ..Default::default()
-                    },
-                ));
-            }
-
-            let mode = bun_zlib::NodeMode::from_int(mode_int as u8);
+        pub(crate) fn constructor(cx: &mut JsScope<'_>, mode: u8) -> *mut Self {
+            let mode = bun_zlib::NodeMode::from_int(mode);
             let stream = Context {
                 mode,
                 ..Default::default()
             };
-            Ok(Box::new(Self {
+            RefPtr::new(Self {
                 ref_count: Cell::new(1),
-                global_this: bun_ptr::BackRef::new(global_this),
+                global_this: bun_ptr::BackRef::new(cx.global()),
                 ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
@@ -163,7 +129,8 @@ mod _impl {
                     callback: noop_task_callback,
                 }),
                 estimated_external_size: Self::external_size_for(mode),
-            }))
+            })
+            .into_raw()
         }
 
         /// Per-mode external-allocation footprint, fixed at construction.
@@ -180,32 +147,27 @@ mod _impl {
         /// Called from any thread (concurrent GC marking). Reads only the
         /// immutable `estimated_external_size` field, never `self.stream`.
         pub(crate) fn estimated_size(&self) -> usize {
-            core::mem::size_of::<Self>() + self.estimated_external_size
+            self.estimated_external_size
         }
 
-        #[bun_jsc::host_fn(method)]
         pub(crate) fn init(
             &self,
-            global_this: &JSGlobalObject,
-            callframe: &CallFrame,
-        ) -> JsResult<JSValue> {
-            let arguments = callframe.arguments_undef::<4>();
-            let this_value = callframe.this();
-            if arguments.len != 3 && arguments.len != 4 {
-                return Err(global_this
-                    .err(
-                        ErrorCode::MISSING_ARGS,
-                        format_args!("init(params, writeResult, writeCallback[, dictionary])"),
-                    )
-                    .throw());
-            }
+            this_value: JsWrapper<'_, Self>,
+            cx: &mut JsScope<'_>,
+            params: JsLocal<'_>,
+            write_result: JsLocal<'_>,
+            write_callback: JsLocal<'_>,
+            dictionary: JsLocal<'_>,
+        ) -> JsResult<bool> {
+            let global_this = cx.global();
+            let this_value = this_value.to_js();
             // Racing an in-flight async write would alias `&mut Context`
             // across threads; a closed `Context` cannot be re-initialized.
             CompressionStream::<Self>::throw_unless_idle(self, global_this)?;
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = arguments.ptr[1];
+            let write_result_value = write_result.to_js();
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
                 return Err(global_this.throw_invalid_argument_type_value(
                     "writeResult",
@@ -229,13 +191,16 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_callback =
-                validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
+            let write_callback = validators::validate_function(
+                global_this,
+                "writeCallback",
+                write_callback.to_js(),
+            )?;
 
             // Validate `params` before any native state is initialized so the
             // error path needs no cleanup. `as_u32` reinterprets the view's
             // bytes, so the element type must actually be Uint32Array.
-            let params_value = arguments.ptr[0];
+            let params_value = params.to_js();
             let Some(mut params_buf) = params_value.as_array_buffer(global_this) else {
                 return Err(global_this.throw_invalid_argument_type_value(
                     "params",
@@ -254,10 +219,10 @@ mod _impl {
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
             let dictionary_buf;
-            let dictionary = if arguments.ptr[3].is_undefined() {
+            let dictionary = if dictionary.is_undefined() {
                 None
             } else {
-                let dictionary_value = arguments.ptr[3];
+                let dictionary_value = dictionary.to_js();
                 dictionary_buf = match dictionary_value.as_array_buffer(global_this) {
                     Some(buf) => buf,
                     None => {
@@ -282,7 +247,7 @@ mod _impl {
             let mut err = self.stream.with_mut(|s| s.init(dictionary));
             if err.is_error() {
                 CompressionStream::<Self>::emit_error(self, global_this, this_value, err);
-                return Ok(JSValue::FALSE);
+                return Ok(false);
             }
 
             let params_ = params_buf.as_u32();
@@ -301,20 +266,14 @@ mod _impl {
                     // The Context is torn down (`mode` is `NONE`); reject any
                     // further operation the way `close()` does.
                     self.closed.set(true);
-                    return Ok(JSValue::FALSE);
+                    return Ok(false);
                 }
             }
-            Ok(JSValue::TRUE)
+            Ok(true)
         }
 
-        #[bun_jsc::host_fn(method)]
-        pub(crate) fn params(
-            &self,
-            _global_this: &JSGlobalObject,
-            _callframe: &CallFrame,
-        ) -> JsResult<JSValue> {
+        pub(crate) fn params(&self) {
             // intentionally left empty
-            Ok(JSValue::UNDEFINED)
         }
     }
 
@@ -684,7 +643,7 @@ mod _impl {
     // Stamps `impl CompressionContext for Context`, `impl Taskable`/
     // `CompressionStreamImpl for NativeBrotli`, and `pub mod js { … }` (the
     // `NativeBrotliPrototype__*CachedValue` accessors).
-    crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli");
+    crate::__impl_compression_stream!(NativeBrotli, Context, js_NativeBrotli);
 
     fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
         // Node builds these as `"ERR_" + <brotli enum suffix>` where the suffix

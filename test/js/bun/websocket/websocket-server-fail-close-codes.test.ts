@@ -323,12 +323,7 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
   }, 30_000);
   afterAll(() => proc?.kill());
 
-  const rejected: [
-    name: string,
-    headers: Record<string, string> | undefined,
-    send: (client: RawClient) => void,
-    error?: object,
-  ][] = [
+  const rejected: [name: string, headers: Record<string, string> | undefined, send: (client: RawClient) => void][] = [
     // Fails to grow the fragment buffer.
     ["a message larger than the cap", undefined, client => client.binary(tooBig)],
     [
@@ -360,19 +355,18 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
       deflate,
       client => client.binary(deflated(full.length + 1024), { rsv1: true }),
     ],
-    // Fails to allocate the message handler's copy, which the `error` handler hears about first. One non-ASCII
-    // character makes the string 16-bit. An 8-bit string of exactly the cap is over it by the string's header.
+  ];
+
+  // Fails to allocate the message handler's copy. One non-ASCII character makes the string 16-bit. An 8-bit
+  // string of exactly the cap is over it by the string's header.
+  const copyRejected: [name: string, send: (client: RawClient) => void][] = [
     [
       "a text message whose UTF-16 copy is over the cap",
-      undefined,
       client => client.text("\u00e9" + Buffer.alloc(3 * MiB - 2, "a").toString("latin1")),
-      copyFailed,
     ],
     [
       "a text message whose 8-bit copy is over the cap",
-      undefined,
       client => client.text(Buffer.alloc(full.length, "a").toString("latin1")),
-      copyFailed,
     ],
   ];
 
@@ -387,12 +381,20 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
   }
 
   describe.each(["ws", "wss"] as const)("%s", scheme => {
-    test.each(rejected)("%s fails that connection with 1011", async (_name, headers, send, error) => {
+    test.each(rejected)("%s fails that connection with 1011", async (_name, headers, send) => {
       using client = await connect(scheme, headers);
       send(client);
       expect(await client.remainingFrames()).toEqual([failed]);
-      if (error) expect(await nextEvent()).toEqual(error);
       expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+      await expectStillServing(scheme);
+    });
+
+    // The `error` handler is called with the failed copy before the connection is closed.
+    test.each(copyRejected)("%s fails that connection with 1011", async (_name, send) => {
+      using client = await connect(scheme);
+      send(client);
+      expect(await client.remainingFrames()).toEqual([failed]);
+      expect([await nextEvent(), await nextEvent()]).toEqual([copyFailed, { close: 1006, reason: diagnostic }]);
       await expectStillServing(scheme);
     });
   });

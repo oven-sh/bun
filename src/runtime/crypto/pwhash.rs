@@ -104,6 +104,7 @@ pub(crate) mod argon2 {
             E::DecodingFail | E::IncorrectType | E::IncorrectVersion => {
                 crate::Error::InvalidEncoding
             }
+            E::MemoryAllocationFailed => crate::Error::Alloc(bun_alloc::AllocError),
             E::OutputTooShort
             | E::OutputTooLong
             | E::PwdTooShort

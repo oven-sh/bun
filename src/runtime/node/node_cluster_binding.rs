@@ -223,8 +223,8 @@ pub(crate) fn handle_internal_message_primary(
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
-        if !p.is_undefined() {
-            let ack = p.to_int32();
+        if p.is_int32() {
+            let ack = p.as_int32();
             let entry = ipc_data.internal_msg_queue.with_mut(|q| {
                 let cb = q.callbacks.get(&ack).and_then(|s| s.get());
                 if q.callbacks.contains_key(&ack) {
@@ -315,10 +315,9 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let port = arguments[2].to_int32();
         let flags = arguments[3].to_int32();
 
-        if address_type.is_string() || address_type.to_int32() == -1 {
+        if address_type.is_string() || (address_type.is_int32() && address_type.as_int32() == -1) {
             return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::NOTSUP));
         }
-        let atype = address_type.to_int32();
 
         let host_owned: Vec<u8> = if address.is_string() {
             let mut v = address.to_js_string_view(global)?.to_owned_slice();
@@ -332,7 +331,6 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         } else {
             Some(b"0.0.0.0\0")
         };
-        let _ = atype;
 
         let options: core::ffi::c_int = if flags & 1 != 0 {
             bun_uws::LIBUS_SOCKET_IPV6_ONLY
@@ -414,8 +412,11 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             } else {
                 4
             };
+        } else if address_type.is_int32() {
+            atype = address_type.as_int32();
         } else {
-            atype = address_type.to_int32();
+            // Node compares addressType with ===, so anything that isn't 6 or -1 means IPv4.
+            atype = 4;
         }
 
         fn last_neg_errno() -> JSValue {
@@ -715,13 +716,24 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
     }
 }
 
-pub(crate) fn cluster_validate_fd(fd: f64) -> i32 {
+/// Returns 0 if `fd` is an unconnected socket of the wanted type, or a negative errno.
+pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
     #[cfg(not(windows))]
     {
-        let fd = fd as i32;
+        let number = fd;
+        let fd = number as i32;
+        // Reject a fractional fd like 3.5 instead of truncating it.
+        if f64::from(fd) != number {
+            return -bun_sys::UV_E::INVAL;
+        }
         if fd < 0 {
             return -bun_sys::UV_E::BADF;
         }
+        let wanted = if want_dgram {
+            libc::SOCK_DGRAM
+        } else {
+            libc::SOCK_STREAM
+        };
         let mut ty: libc::c_int = 0;
         let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
         // SAFETY: plain getsockopt on a caller-supplied fd; out-params are
@@ -735,7 +747,7 @@ pub(crate) fn cluster_validate_fd(fd: f64) -> i32 {
             )
         };
         // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
-        if rc != 0 || (ty != libc::SOCK_STREAM && ty != libc::SOCK_DGRAM) {
+        if rc != 0 || ty != wanted {
             return -bun_sys::UV_E::INVAL;
         }
         if ty == libc::SOCK_STREAM {
@@ -754,7 +766,7 @@ pub(crate) fn cluster_validate_fd(fd: f64) -> i32 {
     }
     #[cfg(windows)]
     {
-        let _ = fd;
+        let _ = (fd, want_dgram);
         -bun_sys::UV_E::INVAL
     }
 }

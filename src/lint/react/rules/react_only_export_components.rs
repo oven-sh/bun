@@ -80,7 +80,7 @@ impl Rule for OnlyExportComponents {
         {
             return None;
         }
-        // Something is imported from it: `import "react"` does not count.
+        // A bare `import "react"` doesn't count. Something has to be imported from it.
         let imports_from_react = |it: Import| {
             it.spec().is("react")
                 && (it.default().is_some() || it.namespace().is_some() || !it.named().is_empty())
@@ -122,7 +122,7 @@ impl ExportAnalysis {
     }
 }
 
-/// `e` of `e as T` and `e satisfies T`. One of them only.
+/// Unwraps one `e as T` or `e satisfies T`. Nested ones stay.
 fn skip_ts_expression(exp: Expr<'_>) -> Expr<'_> {
     match exp.tag() {
         ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies if !exp.is_parenthesized() => {
@@ -215,7 +215,7 @@ impl OnlyExportComponents {
         } else {
             NO_EXPORT
         };
-        // What is in an `export`.
+        // Caches whether a node is inside an `export`.
         let mut exported = AncestorMemo::default();
         let mut is_exported = |node: Node<'a>| {
             let is_export = |node: Node| {
@@ -226,13 +226,14 @@ impl OnlyExportComponents {
                 .find(node, |child, _| is_export(child).then_some(()))
                 .is_some()
         };
-        // Where the declaration or the function starts, and the name. oxlint goes through the nodes.
+        // Start of the declaration or function, and the name's span. Sorted by start, because oxlint reports in node
+        // order.
         let mut local_components: Vec<(u32, Span)> = Vec::new();
         for declaration in file.stmts_of_kind(StmtTag::Var) {
             let StmtKind::Var(declarators) = declaration.kind() else {
                 continue;
             };
-            // The first of a declaration.
+            // Only the first component of a declaration is reported.
             let is_component = |it: &VarDecl| {
                 it.pat()
                     .as_ident()
@@ -281,11 +282,11 @@ impl OnlyExportComponents {
         })
     }
 
-    /// `{ Root, Label: () => <a /> }`: every property is a component.
+    /// True if every property is a component, e.g. `{ Root, Label: () => <a /> }`.
     fn is_compound_component<'a>(&self, properties: List<'a, Prop<'a>>) -> bool {
         !properties.is_empty()
             && properties.iter().all(|property| {
-                // A function without a name gets that of the property.
+                // An anonymous function takes the property's name.
                 let has_component_name = matches!(property.key().map(Key::kind),
                     Some(KeyKind::Ident(name) | KeyKind::String(name)) if is_react_component_name(name.bytes()));
                 matches!(property.kind(), PropKind::Init | PropKind::Shorthand | PropKind::Method)
@@ -320,7 +321,7 @@ impl OnlyExportComponents {
                     }
                     ExprKind::Call(call) => {
                         let callee = call.callee();
-                        // What these two are called with is the component.
+                        // For these two, the first argument is the component.
                         let validate_argument = match plain(callee).map(Expr::kind) {
                             Some(ExprKind::Ident(name)) => name.is_any(&["memo", "forwardRef"]),
                             Some(ExprKind::Dot { name, .. }) => {
@@ -455,7 +456,7 @@ impl OnlyExportComponents {
         }
     }
 
-    /// `file`: where `local_name` is declared. An object that it is declared with counts.
+    /// `file` is the file that declares `local_name`. Its initializer only counts if it's an object literal.
     fn classify_export_reference<'a>(
         &self,
         file: Option<&'a File<'a>>,
@@ -553,7 +554,7 @@ impl OnlyExportComponents {
                 .is_some_and(|it| self.is_callee_hoc(it.callee()) && !it.args().is_empty())
     }
 
-    /// `memo`, `React.memo`, `memo.a`, `connect(..)`, and what is called or taken from the result of calling one of
+    /// `memo`, `React.memo`, `memo.a`, `connect(..)`, and any call or member access on the result of calling one of
     /// them.
     fn is_callee_hoc(&self, callee: Expr) -> bool {
         let mut callee = callee;

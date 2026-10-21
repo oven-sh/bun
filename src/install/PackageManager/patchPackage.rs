@@ -1561,7 +1561,9 @@ fn copy_cache_entry(
         }
     };
 
-    FileCopier::init(cached_package_folder.fd, src_path, dest_subpath, &[])?.copy()?;
+    FileCopier::init(cached_package_folder.fd, src_path, dest_subpath, &[])?
+        .copy()
+        .map_err(sys::Error::from)?;
     Ok(())
 }
 

@@ -1,3 +1,4 @@
+use super::LinkError;
 use bun_alloc::AllocError;
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
@@ -23,8 +24,8 @@ pub(crate) struct Hardlinker {
     pub(crate) walker: Walker,
 }
 
-fn name_too_long() -> sys::Error {
-    sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::link)
+fn name_too_long() -> LinkError {
+    LinkError::Other(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::link))
 }
 
 impl Hardlinker {
@@ -50,7 +51,7 @@ impl Hardlinker {
         })
     }
 
-    pub(crate) fn link(&mut self) -> sys::Result<()> {
+    pub(crate) fn link(&mut self) -> Result<(), LinkError> {
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(
                 "Hardlinking {} to {}",
@@ -73,7 +74,12 @@ impl Hardlinker {
             let (dest_cwd_off, dest_cwd_len) = {
                 let dest_cwd: &[u16] = match sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
                     Ok(s) => &*s,
-                    Err(_) => return Err(sys::Error::from_code(sys::E::ACCES, sys::Tag::link)),
+                    Err(_) => {
+                        return Err(LinkError::Link(sys::Error::from_code(
+                            sys::E::ACCES,
+                            sys::Tag::link,
+                        )));
+                    }
                 };
                 // SAFETY: `dest_cwd` is a sub-slice of `cwd_buf` by contract of
                 // `get_fd_path_w` (it returns `&mut out_buffer[off..]`).
@@ -95,7 +101,7 @@ impl Hardlinker {
                 let src_saved_len = self.src.len();
                 let dest_saved_len = self.dest.len();
 
-                let result: sys::Result<()> = 'body: {
+                let result: Result<(), LinkError> = 'body: {
                     if self.src.append(entry.path.as_slice()).is_err()
                         || self.dest.append(entry.path.as_slice()).is_err()
                     {
@@ -105,6 +111,7 @@ impl Hardlinker {
                     match entry.kind {
                         EntryKind::Directory => {
                             sys::make_path::make_path::<u16>(&sys::Dir::cwd(), self.dest.slice())
+                                .map_err(|err| LinkError::destination(err, self.dest.slice()))
                         }
                         EntryKind::File => {
                             let mut destfile_path_buf = bun_paths::w_path_buffer_pool::get();
@@ -189,17 +196,19 @@ impl Hardlinker {
                                         );
                                     }
                                     let Some(dest_parent) = self.dest.dirname() else {
-                                        break 'body Err(link_err1);
+                                        break 'body Err(LinkError::Link(link_err1));
                                     };
 
-                                    let _ = sys::make_path::make_path::<u16>(
+                                    if let Err(err) = sys::make_path::make_path::<u16>(
                                         &sys::Dir::cwd(),
                                         dest_parent,
-                                    );
+                                    ) {
+                                        break 'body Err(LinkError::destination(err, dest_parent));
+                                    }
                                 }
-                                _ => break 'body Err(link_err1),
+                                _ => break 'body Err(LinkError::Link(link_err1)),
                             }
-                            sys::link_w(self.src.slice_z(), destfile_path)
+                            sys::link_w(self.src.slice_z(), destfile_path).map_err(LinkError::Link)
                         }
                         _ => Ok(()),
                     }
@@ -223,13 +232,15 @@ impl Hardlinker {
                 // truncation runs on every exit.
                 let dest_saved_len = self.dest.len();
 
-                let result: sys::Result<()> = 'body: {
+                let result: Result<(), LinkError> = 'body: {
                     if self.dest.append(entry.path.as_bytes()).is_err() {
                         break 'body Err(name_too_long());
                     }
 
                     match entry.kind {
-                        EntryKind::Directory => Fd::cwd().make_path(self.dest.slice()),
+                        EntryKind::Directory => Fd::cwd()
+                            .make_path(self.dest.slice())
+                            .map_err(|err| LinkError::destination(err, self.dest.slice())),
                         EntryKind::File => {
                             let (dir, name) = (entry.dir, entry.basename);
                             let Err(link_err1) =
@@ -243,13 +254,16 @@ impl Hardlinker {
                                 }
                                 sys::E::ENOENT => {
                                     let Some(dest_parent) = self.dest.dirname() else {
-                                        break 'body Err(link_err1);
+                                        break 'body Err(LinkError::Link(link_err1));
                                     };
-                                    let _ = Fd::cwd().make_path(dest_parent);
+                                    if let Err(err) = Fd::cwd().make_path(dest_parent) {
+                                        break 'body Err(LinkError::destination(err, dest_parent));
+                                    }
                                 }
-                                _ => break 'body Err(link_err1),
+                                _ => break 'body Err(LinkError::Link(link_err1)),
                             }
                             sys::linkat(dir, name, Fd::cwd(), self.dest.slice_z())
+                                .map_err(LinkError::Link)
                         }
                         _ => Ok(()),
                     }

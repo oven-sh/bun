@@ -58,6 +58,56 @@ use crate::{
 use installer::{CompleteState, PatchInfo, Step, TaskError, Which};
 use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColumns as _};
 
+/// Why `Hardlinker`, `FileCopier` or `FileCloner` could not put a package's files at the destination.
+pub(crate) enum LinkError {
+    /// A directory of the destination could not be made, which no other backend can do either.
+    /// The error is a `mkdir_error`.
+    Destination(sys::Error),
+    /// The link or the clone itself failed. The caller knows which errnos another backend avoids.
+    Link(sys::Error),
+    Other(sys::Error),
+}
+
+/// The error of a `mkdir -p dir` that failed, for a message that names the directory. On Windows
+/// the error of a `mkdir` has the tag of `open` and no path.
+pub(crate) fn mkdir_error(mut err: sys::Error, dir: &[u8]) -> sys::Error {
+    err.syscall = sys::Tag::mkdir;
+    if err.path.is_empty() {
+        err.path = dir.into();
+    }
+    err
+}
+
+impl LinkError {
+    pub(crate) fn destination(err: sys::Error, dir: &[paths::OSPathChar]) -> LinkError {
+        #[cfg(windows)]
+        let mut buf = paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let dir = paths::string_paths::from_w_path(&mut buf[..], dir).as_bytes();
+        LinkError::Destination(mkdir_error(err, dir))
+    }
+
+    pub(crate) fn sys(&self) -> &sys::Error {
+        match self {
+            LinkError::Destination(err) | LinkError::Link(err) | LinkError::Other(err) => err,
+        }
+    }
+}
+
+impl From<sys::Error> for LinkError {
+    fn from(err: sys::Error) -> LinkError {
+        LinkError::Other(err)
+    }
+}
+
+impl From<LinkError> for sys::Error {
+    fn from(err: LinkError) -> sys::Error {
+        match err {
+            LinkError::Destination(err) | LinkError::Link(err) | LinkError::Other(err) => err,
+        }
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Inner helper types (hoisted from fn body — Rust does not allow local
 // struct decls that borrow outer locals via closures the same way).
@@ -2091,7 +2141,23 @@ pub(crate) fn install_isolated_packages(
         let node_modules_path = paths::path_literal!("node_modules");
         let bun_modules_path = paths::path_literal!("node_modules/.bun");
 
-        let is_new_node_modules = sys::mkdirat(Fd::cwd(), node_modules_path, 0o755).is_ok();
+        let is_new_node_modules = match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
+            Ok(()) => true,
+            Err(err) => {
+                // It is usually there (EEXIST). If it is not, nothing below can work without it.
+                if err.get_errno() != sys::E::EEXIST
+                    && !sys::directory_exists_at(Fd::cwd(), node_modules_path).unwrap_or(false)
+                {
+                    Output::err(
+                        err,
+                        "could not create the <b>\"node_modules\"<r> directory",
+                        (),
+                    );
+                    Global::exit(1);
+                }
+                false
+            }
+        };
         // 'node_modules' itself may be a link.
         if !is_new_node_modules
             && let Err(err) = crate::prune::remove_planted_links(

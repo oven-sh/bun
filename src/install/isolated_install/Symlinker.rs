@@ -1,3 +1,4 @@
+use super::mkdir_error;
 use bun_core::strings;
 use bun_paths;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
@@ -83,7 +84,9 @@ impl Symlinker {
                         let Some(dest_parent) = self.dest.dirname() else {
                             return Err(symlink_err1);
                         };
-                        let _ = Fd::cwd().make_path(dest_parent);
+                        Fd::cwd()
+                            .make_path(dest_parent)
+                            .map_err(|err| mkdir_error(err, dest_parent))?;
                     }
                     Errno::EEXIST if !self.is_behind_link => {
                         let _ = Fd::cwd().delete_tree(self.dest.slice_z());
@@ -109,7 +112,9 @@ impl Symlinker {
                                         .is_err_and(|err| err.get_errno() == Errno::ENOENT)
                                         && let Some(dest_parent) = self.dest.dirname()
                                     {
-                                        let _ = Fd::cwd().make_path(dest_parent);
+                                        Fd::cwd()
+                                            .make_path(dest_parent)
+                                            .map_err(|err| mkdir_error(err, dest_parent))?;
                                         linked = self.symlink();
                                     }
                                     match linked {

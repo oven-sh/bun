@@ -1,3 +1,4 @@
+use super::LinkError;
 use bun_paths::path_options::{Kind, PathSeparators};
 use bun_paths::{AutoRelPath, Path};
 use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
@@ -24,7 +25,7 @@ impl FileCloner<'_> {
         )
     }
 
-    pub(crate) fn clone(&mut self) -> sys::Result<()> {
+    pub(crate) fn clone(&mut self) -> Result<(), LinkError> {
         match self.clonefileat() {
             Ok(()) => Ok(()),
             Err(err) => match err.get_errno() {
@@ -37,17 +38,19 @@ impl FileCloner<'_> {
                     // into a per-process staging directory or a project-local
                     // path, never into a published shared directory.
                     let _ = Fd::cwd().delete_tree(self.dest_subpath.slice());
-                    self.clonefileat()
+                    self.clonefileat().map_err(LinkError::Link)
                 }
 
                 Errno::ENOENT => {
                     let Some(parent_dest_dir) = self.dest_subpath.dirname() else {
-                        return Err(err);
+                        return Err(LinkError::Link(err));
                     };
-                    let _ = Fd::cwd().make_path(parent_dest_dir);
-                    self.clonefileat()
+                    Fd::cwd()
+                        .make_path(parent_dest_dir)
+                        .map_err(|err| LinkError::destination(err, parent_dest_dir))?;
+                    self.clonefileat().map_err(LinkError::Link)
                 }
-                _ => Err(err),
+                _ => Err(LinkError::Link(err)),
             },
         }
     }

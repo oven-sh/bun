@@ -24,8 +24,9 @@ import {
   normalizeBunSnapshot,
   readdirSorted,
   tempDir,
+  unprivilegedSpawnOptions,
 } from "harness";
-import { isAbsolute, join, relative, resolve, sep } from "path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { TestRegistry } from "registry";
 import { wyhash11 } from "./wyhash11.js";
 
@@ -1199,6 +1200,48 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
       expect(stderr).toContain("error overwriting folder in node_modules: EFBIG");
       expect(state()).toEqual(before);
       expect(exitCode).toBe(1);
+    },
+  );
+
+  // The copy is made next to the folder that it replaces, in a directory without write permission here.
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.serial.skipIf(isWindows).each([
+    ["hoisted", false],
+    ["isolated", false],
+    ["isolated", true],
+  ] as const)(
+    "bun patch when the directory of the copy cannot be created (%s linker, globalStore = %p)",
+    async (linker, globalStore) => {
+      await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } }, { linker, globalStore });
+      const { dir, env } = project;
+      const folder = join(dir, "node_modules", "no-deps");
+      // `bun patch` replaces the link to a global store entry, and otherwise the folder that the link leads to.
+      const parent = linker === "hoisted" || globalStore ? dirname(folder) : dirname(realpathSync(folder));
+      const state = () => ({ kind: kind(folder), tree: tree(join(dir, "node_modules")) });
+      const before = state();
+
+      using unprivileged = unprivilegedSpawnOptions(dir);
+      const mode = statSync(parent).mode & 0o7777;
+      chmodSync(parent, mode & ~0o222);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "patch", "no-deps"],
+          cwd: dir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr.split("\n").filter(line => line.startsWith("error:"))).toEqual([
+          "error: error overwriting folder in node_modules: EACCES",
+        ]);
+        expect(stdout).not.toContain("To patch");
+        expect(state()).toEqual(before);
+        expect(exitCode).toBe(1);
+      } finally {
+        chmodSync(parent, mode);
+      }
     },
   );
 

@@ -38,6 +38,7 @@ use super::hardlinker::Hardlinker;
 use super::store::{self, Store};
 use super::store::{EntryColumns as _, NodeColumns as _};
 use super::symlinker::{self, Symlinker};
+use super::{LinkError, mkdir_error};
 use crate::bun_fs;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
@@ -454,6 +455,32 @@ impl<'a> Installer<'a> {
         Ok(())
     }
 
+    /// Says once where the global store is and how to install without it, after an entry of the
+    /// store could not be written.
+    fn note_global_store(&self, entry_id: StoreEntryId) {
+        if !self.entry_uses_global_store(entry_id) {
+            return;
+        }
+        let Some(store) = self.global_store_path else {
+            return;
+        };
+        let store = bun_core::fmt::quote(store.as_bytes());
+        bun_core::run_once! {{
+            // The variable overrides bunfig.toml.
+            if self.manager().env().get(b"BUN_INSTALL_GLOBAL_STORE").is_some() {
+                bun_core::note!(
+                    "the global store is {}. set <b>BUN_INSTALL_GLOBAL_STORE=0<r> to install without it",
+                    store,
+                );
+            } else {
+                bun_core::note!(
+                    "the global store is {}. set <b>globalStore = false<r> under <b>[install]<r> in bunfig.toml to install without it",
+                    store,
+                );
+            }
+        }}
+    }
+
     /// Called from main thread
     pub(crate) fn on_task_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
         self.set_step(entry_id, Step::Done);
@@ -466,16 +493,34 @@ impl<'a> Installer<'a> {
         let pkg = (&pkg_name, &pkg_res_fmt);
 
         match err {
-            TaskError::LinkPackage(err) => {
-                Output::err(err.clone(), "failed to link package: {}@{}", pkg);
-            }
-            TaskError::SymlinkDependencies(err) => {
-                Output::err(
+            TaskError::LinkPackage(err) => match uncreated_directory(err) {
+                Some(directory) => {
+                    Output::err(
+                        err.clone(),
+                        "failed to link package: {}@{}: cannot create {}",
+                        (&pkg_name, &pkg_res_fmt, directory),
+                    );
+                    if matches!(
+                        err.get_errno(),
+                        sys::Errno::EACCES | sys::Errno::EPERM | sys::Errno::EROFS
+                    ) {
+                        self.note_global_store(entry_id);
+                    }
+                }
+                None => Output::err(err.clone(), "failed to link package: {}@{}", pkg),
+            },
+            TaskError::SymlinkDependencies(err) => match uncreated_directory(err) {
+                Some(directory) => Output::err(
+                    err.clone(),
+                    "failed to symlink dependencies for package: {}@{}: cannot create {}",
+                    (&pkg_name, &pkg_res_fmt, directory),
+                ),
+                None => Output::err(
                     err.clone(),
                     "failed to symlink dependencies for package: {}@{}",
                     pkg,
-                );
-            }
+                ),
+            },
             TaskError::Patching(patch_log) => {
                 Output::err_generic("failed to patch package: {}@{}", pkg);
                 let _ = patch_log.print(std::ptr::from_mut(Output::error_writer()));
@@ -1039,6 +1084,12 @@ pub enum TaskError {
     },
 }
 
+impl From<LinkError> for TaskError {
+    fn from(err: LinkError) -> TaskError {
+        TaskError::LinkPackage(err.into())
+    }
+}
+
 type TaskResult<T> = core::result::Result<T, TaskError>;
 
 #[repr(u8)]
@@ -1146,9 +1197,7 @@ impl Task {
             match step {
                 Step::LinkPackage => {
                     if pkg_res.tag == ResolutionTag::Folder {
-                        self.left_out_links = installer
-                            .link_folder(entry_id)
-                            .map_err(TaskError::LinkPackage)?;
+                        self.left_out_links = installer.link_folder(entry_id)?;
                     } else {
                         made_entry = installer.link_cached_package(entry_id)?;
                     }
@@ -1580,7 +1629,10 @@ impl<'a> Installer<'a> {
 
     /// Runs `Step::LinkPackage` for a folder dependency, on a task thread. Returns the warnings to
     /// store in `Task::left_out_links`.
-    fn link_folder(&self, entry_id: StoreEntryId) -> sys::Result<Vec<Box<[u8]>>> {
+    fn link_folder(
+        &self,
+        entry_id: StoreEntryId,
+    ) -> core::result::Result<Vec<Box<[u8]>>, LinkError> {
         let skip_dirnames: &[&paths::OSPathSlice] = &[bun_paths::os_path_literal!("node_modules")];
         let path: &[u8] = self.lockfile().str(self.resolution(entry_id).folder());
         // The folder isn't in the cache, so whether it's on another device is checked for each
@@ -1594,25 +1646,34 @@ impl<'a> Installer<'a> {
         // what it no longer has from the old copy, and any symlink that they would write through.
         let mut copy = AutoPath::init();
         self.append_store_path(&mut copy, entry_id)?;
-        if let (Ok(src), Ok(dest)) = (sys::Dir::open(path), sys::Dir::open(copy.slice())) {
-            crate::prune::remove_entries_missing_from(&src, &dest);
-        }
+        let has_copy = match sys::Dir::open(copy.slice()) {
+            Ok(dest) => {
+                if let Ok(src) = sys::Dir::open(path) {
+                    crate::prune::remove_entries_missing_from(&src, &dest);
+                }
+                true
+            }
+            Err(_) => false,
+        };
 
         let hardlinked = {
             let mut src = OsAutoAbsPath::init_top_level_dir_long_path();
             src.try_append_join(path).map_err(name_too_long)?;
             let mut dest = OsAutoPath::init();
             self.append_store_path(&mut dest, entry_id)?;
+            if !has_copy {
+                make_destination(dest.slice())?;
+            }
 
             let mut hardlinker =
                 bun_core::handle_oom(Hardlinker::init(folder_dir, src, dest, skip_dirnames));
             match hardlinker.link() {
                 Ok(()) => true,
-                Err(err) if needs_copy(&err) => false,
+                Err(LinkError::Link(err)) if needs_copy(&err) => false,
                 Err(err) => {
                     print_link_error(
                         "hardlink package folder",
-                        &err,
+                        err.sys(),
                         &os_path(hardlinker.src.slice()),
                         hardlinker.dest.slice(),
                     );
@@ -1649,16 +1710,16 @@ impl<'a> Installer<'a> {
                 };
 
                 if src_path_len == 0 {
-                    return Err(sys::Error::from_win32(
+                    return Err(LinkError::Other(sys::Error::from_win32(
                         sys::windows::Win32Error::get(),
                         sys::Tag::copyfile,
-                    ));
+                    )));
                 }
                 if src_path_len as usize >= cap {
-                    return Err(sys::Error::from_code(
+                    return Err(LinkError::Other(sys::Error::from_code(
                         sys::E::ENAMETOOLONG,
                         sys::Tag::copyfile,
-                    ));
+                    )));
                 }
 
                 src_path.set_length(src_path_len as usize);
@@ -1672,7 +1733,7 @@ impl<'a> Installer<'a> {
             if let Err(err) = file_copier.copy() {
                 print_link_error(
                     "copy package",
-                    &err,
+                    err.sys(),
                     &os_path(file_copier.src_path.slice()),
                     file_copier.dest_subpath.slice(),
                 );
@@ -1755,7 +1816,7 @@ impl<'a> Installer<'a> {
 
             let mut backend =
                 InstallMethod::from_u8(self.supported_backend.load(Ordering::Relaxed));
-            let linked: sys::Result<()> = 'backend: loop {
+            let linked: core::result::Result<(), LinkError> = 'backend: loop {
                 // Rebuilt per iteration; this only re-runs once on an EXDEV/OPNOTSUPP retry.
                 let mut dest_subpath = OsAutoPath::init();
                 if let Err(err) = if uses_global_store || link_in_place {
@@ -1763,7 +1824,7 @@ impl<'a> Installer<'a> {
                 } else {
                     self.append_local_staging_path(&mut dest_subpath, entry_id, staging)
                 } {
-                    break 'backend Err(err);
+                    break 'backend Err(err.into());
                 }
                 match backend {
                     InstallMethod::Clonefile => {
@@ -1791,7 +1852,10 @@ impl<'a> Installer<'a> {
                             let Err(err) = cloner.clone() else {
                                 break 'backend Ok(());
                             };
-                            backend = self.set_backend(match err.get_errno() {
+                            let LinkError::Link(refused) = &err else {
+                                break 'backend Err(err);
+                            };
+                            backend = self.set_backend(match refused.get_errno() {
                                 sys::Errno::EXDEV => InstallMethod::Copyfile,
                                 sys::Errno::EOPNOTSUPP => InstallMethod::Hardlink,
                                 _ => break 'backend Err(err),
@@ -1819,21 +1883,27 @@ impl<'a> Installer<'a> {
                         let mut src =
                             OsAutoAbsPath::from_long_path(cache_dir_path.slice()).assume_ok();
                         if let Err(err) = src.try_append_join(subpath.slice()) {
-                            break 'backend Err(name_too_long(err));
+                            break 'backend Err(name_too_long(err).into());
                         }
 
+                        // A staging directory is new. In place, the package's directory can exist.
+                        if !link_in_place && let Err(err) = make_destination(dest_subpath.slice()) {
+                            break 'backend Err(err);
+                        }
                         let mut hardlinker =
                             bun_core::handle_oom(Hardlinker::init(dir, src, dest_subpath, &[]));
                         let Err(err) = hardlinker.link() else {
                             break 'backend Ok(());
                         };
-                        if needs_copy(&err) {
+                        if let LinkError::Link(refused) = &err
+                            && needs_copy(refused)
+                        {
                             backend = self.set_backend(InstallMethod::Copyfile);
                             continue 'backend;
                         }
                         print_link_error(
                             "hardlink package",
-                            &err,
+                            err.sys(),
                             &bstr::BStr::new(subpath.slice()),
                             hardlinker.dest.slice(),
                         );
@@ -1855,7 +1925,7 @@ impl<'a> Installer<'a> {
 
                         let mut src = OsAutoAbsPath::from(cache_dir_path.slice()).assume_ok();
                         if let Err(err) = PathLike::append(&mut src, subpath.slice()) {
-                            break 'backend Err(err);
+                            break 'backend Err(err.into());
                         }
 
                         let mut file_copier =
@@ -1865,7 +1935,7 @@ impl<'a> Installer<'a> {
                         };
                         print_link_error(
                             "copy package",
-                            &err,
+                            err.sys(),
                             &bstr::BStr::new(subpath.slice()),
                             file_copier.dest_subpath.slice(),
                         );
@@ -1877,7 +1947,7 @@ impl<'a> Installer<'a> {
             if let Err(err) = linked {
                 if !uses_global_store
                     && !link_in_place
-                    && err.get_errno() == sys::Errno::ENAMETOOLONG
+                    && err.sys().get_errno() == sys::Errno::ENAMETOOLONG
                 {
                     // The staging name can be longer than the package's name.
                     link_in_place = true;
@@ -1887,7 +1957,7 @@ impl<'a> Installer<'a> {
                     // Whatever is at the final path counts as installed.
                     self.delete_store_copy(entry_id);
                 }
-                return Err(TaskError::LinkPackage(err));
+                return Err(err.into());
             }
 
             if uses_global_store
@@ -2768,7 +2838,9 @@ impl<'a> Installer<'a> {
                 sys::Errno::EEXIST => is_new = false,
                 sys::Errno::ENOENT => {
                     if let Some(parent) = dest.dirname() {
-                        let _ = Fd::cwd().make_path(parent);
+                        Fd::cwd()
+                            .make_path(parent)
+                            .map_err(|err| mkdir_error(err, parent))?;
                     }
                     return do_symlink(dest.slice_z(), target_abs.slice_z()).map(|()| is_new);
                 }
@@ -3014,6 +3086,18 @@ pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
         }
     }
     sys::unlink(path)
+}
+
+/// The directory that a failed `mkdir` names: see `mkdir_error`.
+fn uncreated_directory(err: &sys::Error) -> Option<bun_core::fmt::QuotedFormatter<'_>> {
+    (err.syscall == sys::Tag::mkdir).then(|| bun_core::fmt::quote(&err.path))
+}
+
+/// Makes the directory that `Hardlinker` links a package's files into, so that the first link does
+/// not fail for it.
+fn make_destination(dest: &[paths::OSPathChar]) -> core::result::Result<(), LinkError> {
+    sys::make_path::make_path::<paths::OSPathChar>(&sys::Dir::cwd(), dest)
+        .map_err(|err| LinkError::destination(err, dest))
 }
 
 /// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks

@@ -33,6 +33,7 @@ import {
   tempDir,
   toBeValidBin,
   toHaveBins,
+  unprivilegedSpawnOptions,
 } from "harness";
 import { createRequire } from "module";
 import { tmpdir } from "os";
@@ -8362,6 +8363,424 @@ describe.concurrent("global virtual store", () => {
     // and re-symlink, wiping the edits.
     expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
+  });
+});
+
+// A step of the isolated linker that cannot create a directory it needs: the global virtual store on an install cache
+// that the user can read and cannot write (a read-only mount, a cache that another user filled), or a directory of the
+// project. The install fails with the errno of that `mkdir` and names the directory. Only a link that the file system
+// refuses changes how the packages after it are linked.
+describe("a directory that the linker cannot create or read", () => {
+  const gvsBunfigOpts = { linker: "isolated", globalStore: true } as const;
+
+  /** Changes the mode of `dirs` until it is disposed. */
+  function withMode(change: (mode: number) => number, ...dirs: string[]): Disposable {
+    const modes = dirs.map(dir => [dir, statSync(dir).mode & 0o7777] as const);
+    for (const [dir, mode] of modes) chmodSync(dir, change(mode));
+    return {
+      [Symbol.dispose]() {
+        for (const [dir, mode] of modes) chmodSync(dir, mode);
+      },
+    };
+  }
+  const withoutWritePermission = (...dirs: string[]) => withMode(mode => mode & ~0o222, ...dirs);
+
+  /** Removes packages from the cache, so that the next install links them after a download. */
+  function removeFromCache(cache: string, ...names: string[]) {
+    for (const entry of readdirSync(cache)) {
+      if (names.some(name => entry === name || entry.startsWith(name + "@"))) {
+        rmSync(join(cache, entry), { recursive: true });
+      }
+    }
+  }
+
+  /**
+   * Runs `bun install --frozen-lockfile`. `problems` are the lines of stderr that report something, sorted, without
+   * what differs between two runs (the hash of a store entry and the suffix of its staging directory).
+   */
+  async function install(packageDir: string, args: string[] = [], options: { uid?: number; gid?: number } = {}) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile", ...args],
+      cwd: packageDir,
+      env: installEnv(packageDir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      ...options,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const problems = stderr
+      .split(/\r?\n/)
+      .filter(line => /^(E[A-Z0-9]+|error|warn|note):/.test(line))
+      .map(line => line.replace(/-[0-9a-f]{16}\.tmp-[0-9a-f]+/, "-<hash>.tmp-<suffix>"))
+      .sort();
+    return { stdout, problems, exitCode };
+  }
+
+  /** `install` as a user that file permissions apply to. Root can write anything, so as root it is another user. */
+  async function installUnprivileged(packageDir: string, ...args: string[]) {
+    using unprivileged = unprivilegedSpawnOptions(packageDir);
+    return await install(packageDir, args, unprivileged);
+  }
+
+  const storeNote = (links: string, remedy = "globalStore = false under [install] in bunfig.toml") =>
+    `note: the global store is ${JSON.stringify(links)}. set ${remedy} to install without it`;
+
+  /** A project whose dependencies are in the cache. `store` says whether the global store has their entries too. */
+  async function projectWithCachedDependencies(manifest: object, { store }: { store: boolean }) {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+    await write(packageJson, JSON.stringify(manifest));
+    await runBunInstall({ ...installEnv(packageDir), BUN_INSTALL_GLOBAL_STORE: store ? "1" : "0" }, packageDir);
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const cache = join(packageDir, ".bun-cache");
+    return { packageDir, cache, links: join(cache, "links") };
+  }
+
+  // No permission is taken away here, so this also runs on Windows. There the errno of a `mkdir` below a file and
+  // the directory that the error names are not the same as on POSIX. The backend is named because a clone, the
+  // default on macOS, fails before any `mkdir`.
+  test.concurrent("a file where the global virtual store belongs", async () => {
+    const { packageDir, links } = await projectWithCachedDependencies(
+      { name: "gvs-file-in-the-way", dependencies: { "no-deps": "1.0.0" } },
+      { store: false },
+    );
+    writeFileSync(links, "not a directory");
+
+    const { stdout, problems, exitCode } = await install(packageDir, ["--backend=hardlink"]);
+    if (isWindows) {
+      expect(problems).toEqual([
+        expect.stringMatching(/: failed to link package: no-deps@1\.0\.0: cannot create ".+" \(mkdir\)$/),
+      ]);
+    } else {
+      const directory = join(links, "no-deps@1.0.0-<hash>.tmp-<suffix>", "node_modules", "no-deps");
+      expect(problems).toEqual([
+        `ENOTDIR: Not a directory: failed to link package: no-deps@1.0.0: cannot create ${JSON.stringify(directory)} (mkdir)`,
+      ]);
+    }
+    expect(stdout).toContain("Failed to install 1 package");
+    expect(exitCode).toBe(1);
+    expect(readFileSync(links, "utf8")).toBe("not a directory");
+  });
+
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  describe.skipIf(isWindows)("without write permission", () => {
+    describe("in the global virtual store", () => {
+      test.serial("a cache without the store's directory", async () => {
+        const { packageDir, cache, links } = await projectWithCachedDependencies(
+          { name: "gvs-unwritable-cache", dependencies: { "no-deps": "1.0.0", "@scoped/no-deps": "1.0.0" } },
+          { store: false },
+        );
+        expect(existsSync(links)).toBe(false);
+
+        using _ = withoutWritePermission(cache);
+        const { stdout, problems, exitCode } = await installUnprivileged(packageDir);
+        expect(problems).toEqual([
+          `EACCES: Permission denied: failed to link package: @scoped/no-deps@1.0.0: cannot create ${JSON.stringify(links)} (mkdir)`,
+          `EACCES: Permission denied: failed to link package: no-deps@1.0.0: cannot create ${JSON.stringify(links)} (mkdir)`,
+          storeNote(links),
+        ]);
+        expect(stdout).toContain("Failed to install 2 packages");
+        expect(exitCode).toBe(1);
+        expect(existsSync(links)).toBe(false);
+      });
+
+      // `no-deps` and `a-dep` are trusted, so they are linked into the project. They are not in the cache, so they
+      // are linked after the package of the store failed.
+      test.serial.each(["hardlink", "copyfile"])(
+        "a store directory that cannot be written (--backend=%s)",
+        async backend => {
+          const { packageDir, cache, links } = await projectWithCachedDependencies(
+            {
+              name: "gvs-unwritable-links",
+              dependencies: { lodash: "4.17.21", "no-deps": "1.0.0", "a-dep": "1.0.1" },
+              trustedDependencies: ["no-deps", "a-dep"],
+            },
+            { store: false },
+          );
+          removeFromCache(cache, "no-deps", "a-dep");
+          mkdirSync(links);
+
+          using _ = withoutWritePermission(links);
+          const { stdout, problems, exitCode } = await installUnprivileged(packageDir, `--backend=${backend}`);
+          expect(problems).toEqual([
+            `EACCES: Permission denied: failed to link package: lodash@4.17.21: cannot create ${JSON.stringify(join(links, "lodash@4.17.21-<hash>.tmp-<suffix>"))} (mkdir)`,
+            storeNote(links),
+          ]);
+          expect(stdout).toContain("Failed to install 1 package");
+          expect(exitCode).toBe(1);
+          expect(readdirSync(links)).toEqual([]);
+
+          // The store's failure does not change how the other packages are linked.
+          const isHardlinked = ["no-deps@1.0.0/node_modules/no-deps", "a-dep@1.0.1/node_modules/a-dep"].map(
+            entry => statSync(join(packageDir, "node_modules", ".bun", entry, "package.json")).nlink > 1,
+          );
+          expect(isHardlinked).toEqual(backend === "hardlink" ? [true, true] : [false, false]);
+        },
+      );
+
+      test.serial("a complete store", async () => {
+        const { packageDir, cache, links } = await projectWithCachedDependencies(
+          { name: "gvs-read-only-store", dependencies: { "no-deps": "1.0.0" } },
+          { store: true },
+        );
+        const entries = readdirSync(links);
+        expect(entries).toEqual([expect.stringMatching(/^no-deps@1\.0\.0-[0-9a-f]{16}$/)]);
+
+        using _ = withoutWritePermission(cache, links);
+        // Every entry is there, so nothing has to be written.
+        const first = await installUnprivileged(packageDir);
+        expect(first).toMatchObject({ problems: [], exitCode: 0 });
+        expect(readlinkSync(join(packageDir, "node_modules", ".bun", "no-deps@1.0.0"))).toBe(join(links, entries[0]));
+        const second = await installUnprivileged(packageDir);
+        expect(second.stdout).toContain("(no changes)");
+        expect(second).toMatchObject({ problems: [], exitCode: 0 });
+
+        // `--force` builds every entry again.
+        const forced = await installUnprivileged(packageDir, "--force");
+        expect(forced.problems).toEqual([
+          `EACCES: Permission denied: failed to link package: no-deps@1.0.0: cannot create ${JSON.stringify(join(links, "no-deps@1.0.0-<hash>.tmp-<suffix>"))} (mkdir)`,
+          storeNote(links),
+        ]);
+        expect(forced.stdout).toContain("Failed to install 1 package");
+        expect(forced.exitCode).toBe(1);
+        expect(readdirSync(links)).toEqual(entries);
+      });
+
+      // The variable wins over bunfig.toml, so the note names the variable.
+      test.serial("a store that BUN_INSTALL_GLOBAL_STORE turned on", async () => {
+        const { packageDir, cache, links } = await projectWithCachedDependencies(
+          { name: "gvs-unwritable-cache-env", dependencies: { "no-deps": "1.0.0" } },
+          { store: false },
+        );
+        await registry.writeBunfig(packageDir, { linker: "isolated", globalStore: false });
+
+        using _ = withoutWritePermission(cache);
+        using unprivileged = unprivilegedSpawnOptions(packageDir);
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--frozen-lockfile"],
+          cwd: packageDir,
+          env: { ...installEnv(packageDir), BUN_INSTALL_GLOBAL_STORE: "1" },
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr.split("\n").filter(line => line.startsWith("note:"))).toEqual([
+          storeNote(links, "BUN_INSTALL_GLOBAL_STORE=0"),
+        ]);
+        expect(exitCode).toBe(1);
+      });
+    });
+
+    describe.each(["isolated", "hoisted"] as const)("the project's directory (%s)", linker => {
+      async function project() {
+        const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+        await write(packageJson, JSON.stringify({ name: "read-only-project", dependencies: { "no-deps": "1.0.0" } }));
+        await runBunInstall(installEnv(packageDir), packageDir);
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        return packageDir;
+      }
+
+      test.serial("without node_modules", async () => {
+        const packageDir = await project();
+
+        using _ = withoutWritePermission(packageDir);
+        const { problems, exitCode } = await installUnprivileged(packageDir);
+        expect(problems).toEqual([`EACCES: Permission denied: could not create the "node_modules" directory (mkdir)`]);
+        expect(exitCode).toBe(1);
+      });
+
+      test.serial("with a node_modules that can be written", async () => {
+        const packageDir = await project();
+        mkdirSync(join(packageDir, "node_modules"));
+
+        using _ = withoutWritePermission(packageDir);
+        const { problems, exitCode } = await installUnprivileged(packageDir);
+        expect(problems).toEqual([]);
+        expect(existsSync(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    test.serial("the project's store, for a package from the cache and for a folder", async () => {
+      using dir = tempDir("isolated-read-only-store", {
+        "package.json": JSON.stringify({
+          name: "read-only-store",
+          dependencies: { "a-dep": "1.0.1", "@scoped/no-deps": "1.0.0", folder: "file:./folder" },
+        }),
+        "folder/package.json": JSON.stringify({ name: "folder", version: "1.0.0" }),
+        "folder/index.js": "module.exports = 1;",
+      });
+      const packageDir = String(dir);
+      await registry.writeBunfig(packageDir, { linker: "isolated" });
+      await runBunInstall(installEnv(packageDir), packageDir);
+
+      const store = join(packageDir, "node_modules", ".bun");
+      const entries = ["@scoped+no-deps@1.0.0", "a-dep@1.0.1", "folder@file+folder"];
+      expect(readdirSync(store).sort()).toEqual([...entries, "node_modules"]);
+      for (const entry of entries) rmSync(join(store, entry), { recursive: true });
+
+      using _ = withoutWritePermission(store);
+      const { stdout, problems, exitCode } = await installUnprivileged(packageDir);
+      expect(problems).toEqual([
+        `EACCES: Permission denied: failed to link package: @scoped/no-deps@1.0.0: cannot create "node_modules/.bun/@scoped+no-deps@1.0.0" (mkdir)`,
+        `EACCES: Permission denied: failed to link package: a-dep@1.0.1: cannot create "node_modules/.bun/a-dep@1.0.1" (mkdir)`,
+        `EACCES: Permission denied: failed to link package: folder@folder: cannot create "node_modules/.bun/folder@file+folder" (mkdir)`,
+      ]);
+      expect(stdout).toContain("Failed to install 3 packages");
+      expect(exitCode).toBe(1);
+    });
+
+    // `lib` has no file, so that the new directory is the first thing in it that cannot be written. A copy of the
+    // folder would leave an empty directory out.
+    test.serial("a directory inside the copy of a folder", async () => {
+      using dir = tempDir("isolated-read-only-folder-copy", {
+        "package.json": JSON.stringify({ name: "read-only-folder-copy", dependencies: { folder: "file:./folder" } }),
+        "folder/package.json": JSON.stringify({ name: "folder", version: "1.0.0" }),
+      });
+      const packageDir = String(dir);
+      mkdirSync(join(packageDir, "folder", "lib"));
+      await registry.writeBunfig(packageDir, { linker: "isolated" });
+      await runBunInstall(installEnv(packageDir), packageDir);
+      const copy = join("node_modules", ".bun", "folder@file+folder", "node_modules", "folder");
+      expect(readdirSync(join(packageDir, copy, "lib"))).toEqual([]);
+      mkdirSync(join(packageDir, "folder", "lib", "new"));
+
+      using _ = withoutWritePermission(join(packageDir, copy, "lib"));
+      const { stdout, problems, exitCode } = await installUnprivileged(packageDir);
+      expect(problems).toEqual([
+        `EACCES: Permission denied: failed to link package: folder@folder: cannot create ${JSON.stringify(join(copy, "lib", "new"))} (mkdir)`,
+      ]);
+      expect(stdout).toContain("Failed to install 1 package");
+      expect(exitCode).toBe(1);
+    });
+
+    // A package that is copied creates its directories as it reaches a file inside them.
+    test.serial("a directory inside a package that is copied", async () => {
+      const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+      await write(
+        packageJson,
+        JSON.stringify({ name: "read-only-copied-package", dependencies: { lodash: "4.17.21" } }),
+      );
+      await runBunInstall(installEnv(packageDir), packageDir);
+      const lodash = join("node_modules", ".bun", "lodash@4.17.21", "node_modules", "lodash");
+      rmSync(join(packageDir, lodash, "fp"), { recursive: true });
+
+      using _ = withoutWritePermission(join(packageDir, lodash), join(packageDir, dirname(lodash)));
+      const { stdout, problems, exitCode } = await installUnprivileged(packageDir, "--force", "--backend=copyfile");
+      expect(problems).toEqual([
+        `EACCES: Permission denied: failed to link package: lodash@4.17.21: cannot create ${JSON.stringify(join(lodash, "fp"))} (mkdir)`,
+      ]);
+      expect(stdout).toContain("Failed to install 1 package");
+      expect(exitCode).toBe(1);
+    });
+
+    test.serial("the scope directory of a dependency link in a store entry", async () => {
+      const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+      await write(
+        packageJson,
+        JSON.stringify({ name: "read-only-entry", dependencies: { "two-range-deps": "1.0.0" } }),
+      );
+      await runBunInstall(installEnv(packageDir), packageDir);
+      const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules");
+      expect(readdirSync(entry).sort()).toEqual(["@types", "no-deps", "two-range-deps"]);
+      // Without its package.json the package is linked again, and so are its dependencies. The hardlink backend
+      // links into the directory that the package has. A clone has to replace that directory, and it cannot here.
+      rmSync(join(entry, "@types"), { recursive: true });
+      rmSync(join(entry, "two-range-deps", "package.json"));
+
+      using _ = withoutWritePermission(entry);
+      const { stdout, problems, exitCode } = await installUnprivileged(packageDir, "--backend=hardlink");
+      expect(problems).toEqual([
+        `EACCES: Permission denied: failed to symlink dependencies for package: two-range-deps@1.0.0: cannot create ${JSON.stringify(join(realpathSync(entry), "@types"))} (mkdir)`,
+      ]);
+      expect(stdout).toContain("Failed to install 1 package");
+      expect(exitCode).toBe(1);
+    });
+
+    test.serial("the node_modules of a workspace", async () => {
+      using dir = tempDir("isolated-read-only-workspace", {
+        "package.json": JSON.stringify({ name: "read-only-workspace", workspaces: ["packages/*"] }),
+        "packages/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      });
+      const packageDir = String(dir);
+      await registry.writeBunfig(packageDir, { linker: "isolated" });
+      await runBunInstall(installEnv(packageDir), packageDir);
+      const workspace = join(packageDir, "packages", "a");
+      rmSync(join(workspace, "node_modules"), { recursive: true });
+
+      using _ = withoutWritePermission(workspace);
+      const { stdout, problems, exitCode } = await installUnprivileged(packageDir);
+      expect(problems).toEqual([
+        `EACCES: Permission denied: failed to symlink dependencies for package: a@workspace:packages/a: cannot create ${JSON.stringify(join(realpathSync(workspace), "node_modules"))} (mkdir)`,
+      ]);
+      expect(stdout).toContain("Failed to install 1 package");
+      expect(exitCode).toBe(1);
+    });
+
+    // Both linkers link the commands of a dependency with the same code.
+    test.serial.each([
+      {
+        linker: "isolated",
+        problem: "EACCES: failed to link binaries of dependency what-bin@1.0.0 for package: read-only-node-modules@",
+      },
+      { linker: "hoisted", problem: "error: failed to link what-bin: EACCES" },
+    ] as const)("node_modules/.bin ($linker)", async ({ linker, problem }) => {
+      const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(
+        packageJson,
+        JSON.stringify({ name: "read-only-node-modules", dependencies: { "what-bin": "1.0.0" } }),
+      );
+      await runBunInstall(installEnv(packageDir), packageDir);
+      const nodeModules = join(packageDir, "node_modules");
+      rmSync(join(nodeModules, ".bin"), { recursive: true });
+
+      using _ = withoutWritePermission(nodeModules);
+      const { problems, exitCode } = await installUnprivileged(packageDir);
+      expect(problems).toEqual([problem]);
+      expect(exitCode).toBe(1);
+      expect(existsSync(join(nodeModules, ".bin"))).toBe(false);
+    });
+  });
+
+  // The walk of the cached `basic-1` fails at a directory that cannot be read. No link was refused, so the install
+  // keeps its backend. `no-deps` and `a-dep` are not in the cache, so they are linked after `basic-1` failed.
+  // A clone does not walk the package.
+  test.serial.skipIf(isWindows)("a directory of a cached package that cannot be read", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "unreadable-cached-package",
+        dependencies: { "basic-1": "1.0.0", "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      }),
+    );
+    await runBunInstall(installEnv(packageDir), packageDir);
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const cache = join(packageDir, ".bun-cache");
+    removeFromCache(cache, "no-deps", "a-dep");
+    const unreadable = join(
+      cache,
+      readdirSync(cache).find(entry => entry.startsWith("basic-1@"))!,
+      "unreadable",
+    );
+    mkdirSync(unreadable);
+
+    using _ = withMode(() => 0, unreadable);
+    const { stdout, problems, exitCode } = await installUnprivileged(packageDir, "--backend=hardlink");
+    expect(problems).toEqual(["EACCES: Permission denied: failed to link package: basic-1@1.0.0 (open)"]);
+    expect(stdout).toContain("Failed to install 1 package");
+    expect(exitCode).toBe(1);
+
+    const isHardlinked = ["no-deps@1.0.0/node_modules/no-deps", "a-dep@1.0.1/node_modules/a-dep"].map(
+      entry => statSync(join(packageDir, "node_modules", ".bun", entry, "package.json")).nlink > 1,
+    );
+    expect(isHardlinked).toEqual([true, true]);
   });
 });
 

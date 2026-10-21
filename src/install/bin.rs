@@ -1246,8 +1246,9 @@ impl<'a> Linker<'a> {
 
                 let node_modules_path_save = self.node_modules_path.len();
                 let _ = self.node_modules_path.append(b".bin");
-                let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
+                let made = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                 self.node_modules_path.set_length(node_modules_path_save);
+                made?;
 
                 open_bunx_file()?
             }
@@ -1333,8 +1334,9 @@ impl<'a> Linker<'a> {
         if !global && matches!(&result, Err(err) if err.get_errno() == sys::Errno::ENOENT) {
             let node_modules_path_save = self.node_modules_path.len();
             let _ = self.node_modules_path.append(b".bin");
-            let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
+            let made = sys::Dir::cwd().make_path(self.node_modules_path.slice());
             self.node_modules_path.set_length(node_modules_path_save);
+            made?;
 
             result = sys::symlink_running_executable(rel_target, abs_dest);
         }

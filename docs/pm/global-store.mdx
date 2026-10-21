@@ -152,6 +152,23 @@ Each unique `(package, version, resolved-dependency-set)` triple gets one direct
 
 Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Each process builds the entire entry (package files, dependency symlinks, bin links) under a private `<entry>.tmp-<random>/` staging directory. As the final step, it renames that directory into place. The loser of the rename sees `EEXIST` and discards its identical staging tree. A writer that crashes mid-build leaves only an unreferenced staging directory that the next install ignores. A published entry is therefore always complete; there is no separate completeness sentinel.
 
+### A store that you cannot write
+
+Bun builds each new entry inside `<cache>/links/`, so an install that adds an entry needs write access to that directory. A read-only mount does not give it. Neither does a cache that another user filled.
+
+For an entry that the store already holds, Bun writes nothing to `<cache>/links/`. It creates the symlink in `node_modules/.bun/`.
+
+When an entry is missing and Bun cannot create its directory, the install fails. The error gives the cause and the directory:
+
+```txt
+EACCES: Permission denied: failed to link package: react@18.3.1: cannot create "<cache>/links/react@18.3.1-<hash>.tmp-<id>" (mkdir)
+note: the global store is "<cache>/links". set globalStore = false under [install] in bunfig.toml to install without it
+```
+
+The directory is `<cache>/links` when the store does not exist yet. The note names `BUN_INSTALL_GLOBAL_STORE=0` when that variable turned the store on.
+
+With either setting, Bun builds every package in `node_modules/.bun/` and leaves `<cache>/links/` alone.
+
 ## Related documentation
 
 - [Package manager > Isolated installs](/pm/isolated-installs) — The linker the global store builds on

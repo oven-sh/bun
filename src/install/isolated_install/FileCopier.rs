@@ -1,10 +1,13 @@
 #[cfg(windows)]
 use core::ptr;
 
+use super::{LinkError, mkdir_error};
 use bun_alloc::AllocError;
 use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
 use bun_paths::{self, OSPathChar, OSPathSlice};
-use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
+#[cfg(windows)]
+use bun_sys as sys;
+use bun_sys::{Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
 // The path-builder types here use the OS path unit: u8 on POSIX,
 // u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
@@ -48,8 +51,8 @@ impl FileCopier {
     // `Walker` owns its resources and drops automatically, so no explicit
     // `Drop` impl is needed.
 
-    pub(crate) fn copy(&mut self) -> sys::Result<()> {
-        // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
+    pub(crate) fn copy(&mut self) -> Result<(), LinkError> {
+        // `open_at` and `make_path` are u8-only; on Windows the OS-unit path is u16 so
         // narrow it via the same infallible `from_w_path` transcode that
         // `bun_sys::make_path_w` uses. Don't synthesise EINVAL on
         // conversion — store paths are built from UTF-8 package names and are
@@ -63,27 +66,16 @@ impl FileCopier {
                 .as_bytes();
         #[cfg(not(windows))]
         let dest_subpath_u8: &[u8] = self.dest_subpath.slice_z().as_bytes();
-        let dest_dir = match bun_sys::make_path::make_open_path(
-            &Dir::cwd(),
-            dest_subpath_u8,
-            Default::default(),
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
-                let errno: E = match e.get_errno() {
-                    E::EACCES => E::EPERM,
-                    other => other,
-                };
-                #[cfg(windows)]
-                let errno = if errno == E::ENOTDIR {
-                    E::ENOENT
-                } else {
-                    errno
-                };
-
-                return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
+        let cwd = Dir::cwd();
+        let dest_dir = match cwd.open_at(dest_subpath_u8) {
+            Ok(dir) => dir,
+            Err(err) if err.get_errno() == E::ENOENT => {
+                if let Err(err) = cwd.make_path(dest_subpath_u8) {
+                    return Err(LinkError::Destination(mkdir_error(err, dest_subpath_u8)));
+                }
+                cwd.open_at(dest_subpath_u8)?
             }
+            Err(err) => return Err(err.into()),
         };
 
         #[cfg(not(windows))]
@@ -106,10 +98,11 @@ impl FileCopier {
                 let appended = self.src_path.append(entry.path.as_slice()).is_ok()
                     && self.dest_subpath.append(entry.path.as_slice()).is_ok();
 
-                let result: sys::Result<()> = match entry.kind {
-                    _ if !appended => {
-                        sys::Result::Err(sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile))
-                    }
+                let result: Result<(), LinkError> = match entry.kind {
+                    _ if !appended => Err(LinkError::Other(sys::Error::from_code(
+                        E::ENAMETOOLONG,
+                        sys::Tag::copyfile,
+                    ))),
                     EntryKind::Directory => {
                         // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
                         if unsafe {
@@ -122,8 +115,11 @@ impl FileCopier {
                         {
                             // Also taken when the directory exists, a success for make_path.
                             bun_sys::make_path::make_path::<u16>(&dest_dir, entry.path.as_slice())
+                                .map_err(|err| {
+                                    LinkError::destination(err, self.dest_subpath.slice())
+                                })
                         } else {
-                            sys::Result::Ok(())
+                            Ok(())
                         }
                     }
                     EntryKind::File => {
@@ -131,7 +127,7 @@ impl FileCopier {
                             self.src_path.slice_z(),
                             self.dest_subpath.slice_z(),
                         ) {
-                            sys::Result::Ok(()) => sys::Result::Ok(()),
+                            sys::Result::Ok(()) => Ok(()),
                             sys::Result::Err(first_err) => {
                                 // Retry after creating the parent directory.
                                 // For root-level files (`index.js`,
@@ -144,16 +140,22 @@ impl FileCopier {
                                 // global-store entry be renamed into place
                                 // with files missing.
                                 match bun_paths::Dirname::dirname::<u16>(entry.path.as_slice()) {
-                                    None => sys::Result::Err(first_err),
+                                    None => Err(first_err.into()),
                                     Some(entry_dirname) => {
-                                        let _ = bun_sys::make_path::make_path::<u16>(
+                                        match bun_sys::make_path::make_path::<u16>(
                                             &dest_dir,
                                             entry_dirname,
-                                        );
-                                        bun_sys::copy_file::copy_file(
-                                            self.src_path.slice_z(),
-                                            self.dest_subpath.slice_z(),
-                                        )
+                                        ) {
+                                            Ok(()) => bun_sys::copy_file::copy_file(
+                                                self.src_path.slice_z(),
+                                                self.dest_subpath.slice_z(),
+                                            )
+                                            .map_err(LinkError::Other),
+                                            Err(err) => Err(LinkError::destination(
+                                                err,
+                                                self.dest_subpath.dirname().unwrap_or_default(),
+                                            )),
+                                        }
                                     }
                                 }
                             }
@@ -181,11 +183,16 @@ impl FileCopier {
                     Err(_) => {
                         if let Some(entry_dirname) =
                             bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
-                        {
-                            let _ = bun_sys::make_path::make_path::<OSPathChar>(
+                            && let Err(err) = bun_sys::make_path::make_path::<OSPathChar>(
                                 &dest_dir,
                                 entry_dirname,
-                            );
+                            )
+                        {
+                            // `err` names the directory from `dest_dir`.
+                            let _ = self.dest_subpath.append(&err.path[..]);
+                            return Err(LinkError::Destination(
+                                err.with_path(self.dest_subpath.slice()),
+                            ));
                         }
 
                         dest_dir.create_file_z(entry.path, Default::default())?
@@ -209,6 +216,6 @@ impl FileCopier {
             }
         }
 
-        sys::Result::Ok(())
+        Ok(())
     }
 }

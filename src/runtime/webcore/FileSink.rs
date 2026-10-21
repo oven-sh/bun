@@ -47,8 +47,6 @@ pub struct FileSink {
     pub(crate) pollable: Cell<bool>,
     pub(crate) nonblocking: Cell<bool>,
     pub(crate) force_sync: Cell<bool>,
-    #[cfg(unix)]
-    pub(crate) is_tty: Cell<bool>,
 
     pub(crate) is_socket: Cell<bool>,
     pub(crate) fd: Cell<Fd>,
@@ -746,7 +744,6 @@ impl FileSink {
         #[cfg(unix)]
         if is_tty_out {
             // TTY writes are synchronous, as in Node.
-            self.is_tty.set(true);
             self.force_sync.set(true);
             // SAFETY(JsCell): single-field write; does not call into JS.
             self.writer.with_mut(|w| w.force_sync = true);
@@ -816,7 +813,7 @@ impl FileSink {
                             .get_poll()
                             .unwrap()
                             .set_flag(bun_io::FilePollFlag::Socket);
-                    } else if self.is_tty.get() {
+                    } else if is_tty_out {
                         self.writer
                             .get()
                             .get_poll()
@@ -1623,8 +1620,6 @@ impl FileSink {
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
-            #[cfg(unix)]
-            is_tty: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
             auto_flusher: JsCell::new(AutoFlusher::default()),

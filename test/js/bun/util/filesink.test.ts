@@ -1539,6 +1539,19 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
   });
 
+  it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a regular file", async () => {
+    const result = await run(`
+      const target = join(dir, "target.txt");
+      const writer = Bun.file("/dev/ptmx").writer();
+      writer.start({ path: target });
+      writer.write("short");
+      await writer.end();
+      const out = { target: read(target) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ target: "short", closed: "all" });
+  });
+
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {
     // On Windows the first chunk is in flight and the second waits in the writer's queue.
     const result = await run(`

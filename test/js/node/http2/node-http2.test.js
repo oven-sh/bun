@@ -6565,6 +6565,34 @@ it.skipIf(!isLinux)("a TLS session closes without an error when its write finds 
   }
 });
 
+it.skipIf(!isLinux)("a session reports ECONNRESET when its read finds the connection reset", async () => {
+  for (const secure of [false, true]) {
+    const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("hello");
+    });
+    const sessionError = once(server, "sessionError");
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    socket.on("error", () => {});
+    const client = http2.connect(`${secure ? "https" : "http"}://localhost`, {
+      createConnection: () =>
+        secure ? tls.connect({ socket, ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" }) : socket,
+    });
+    client.on("error", () => {});
+    const req = client.request({ ":path": "/" });
+    req.resume();
+    await once(req, "close");
+    // After this round trip the server has nothing left to write.
+    await new Promise(resolve => client.ping(resolve));
+    socket.resetAndDestroy();
+    const [err] = await sessionError;
+    expect(err.code).toBe("ECONNRESET");
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 it("pushStream() reports ERR_HTTP2_OUT_OF_STREAMS through its callback", async () => {
   const server = http2.createServer();
   const pushed = Promise.withResolvers();

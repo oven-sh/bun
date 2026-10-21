@@ -11,6 +11,14 @@ declare module "bun" {
   interface Socket {
     $write(data: string | BufferSource, encoding?: string): boolean | number;
     $end(data?: string | BufferSource, encoding?: string): boolean;
+    /** close(), then `callback(...args)` as an immediate in the async context the handle was made in. */
+    $close<Args extends unknown[]>(callback: (...args: Args) => void, ...args: Args): void;
+    /** terminate(), then as `$close`. */
+    $terminate<Args extends unknown[]>(callback: (...args: Args) => void, ...args: Args): void;
+    /** `callback(...args)` in the async context the handle was made in. */
+    $runInAsyncContext<Args extends unknown[], Result>(callback: (...args: Args) => Result, ...args: Args): Result;
+    /** The handle goes on in the async context of the caller. Plain TCP handles only. */
+    $asyncReset?(): void;
   }
 }
 
@@ -616,6 +624,9 @@ interface ObjectConstructor {
 
 /** gets a property on an object */
 declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
+
+/** `Object.getPrototypeOf(obj)`, as the `op_get_prototype_of` bytecode. */
+declare function $getPrototypeOf(obj: unknown): any;
 
 /**
  * Gets a private property on an object.

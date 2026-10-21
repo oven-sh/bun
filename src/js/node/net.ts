@@ -44,6 +44,7 @@ const { validateFunction, validateNumber, validatePort, validateBoolean, validat
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const {
   kArmHandshakeTimeout,
+  kAsyncResetHandle,
   kDestroyOnRead,
   kPreHandshakeWrite,
   kSecureConnectDone,
@@ -269,6 +270,31 @@ function lazyBlockList() {
   return (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
 }
 const newDetachedSocket = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
+// A handle keeps the async context it is made in, and its close callback runs there (closeHandle). Set once a handle was
+// made, or a server began to listen, with an async context current. Until then no handle has a context but the caller's
+// (none), and no socket asks one to enter it.
+let handleContexts = false;
+function noteHandleContext() {
+  if (!handleContexts && $getInternalField($asyncContext, 0) !== undefined) handleContexts = true;
+}
+function handleContextCanDiffer() {
+  return handleContexts || $getInternalField($asyncContext, 0) !== undefined;
+}
+function newSocketHandle(tls: boolean) {
+  noteHandleContext();
+  return newDetachedSocket(tls);
+}
+// process.nextTick(callback, a, b) with `context` as the async context (undefined: none).
+function nextTickInContext(context, callback, a, b) {
+  const current = $getInternalField($asyncContext, 0);
+  if (current === context) return process.nextTick(callback, a, b);
+  $putInternalField($asyncContext, 0, context);
+  try {
+    process.nextTick(callback, a, b);
+  } finally {
+    $putInternalField($asyncContext, 0, current);
+  }
+}
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
 const addServerName = $bindgen("Listener.bind.ts", "addServerName");
@@ -296,6 +322,8 @@ const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // binding to the constructor.
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
 const kReinitializeHandle = Symbol("kReinitializeHandle");
+// On a net.Server that began to listen inside a Bun.ModuleGraph: the frame that entered the graph's context.
+const kGraphFrame = Symbol("kGraphFrame");
 
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
@@ -457,6 +485,9 @@ function detachSocket(self) {
 function destroyNT(self, err) {
   self.destroy(err);
 }
+function destroySocket(self) {
+  self.destroy();
+}
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
   if (self[kupgraded] !== connection) return;
@@ -517,6 +548,7 @@ function attachTLSEngine(self, connection, options) {
 }
 function adoptTLSPair(self, connection, pair) {
   if (!pair) throw new Error("Invalid socket");
+  noteHandleContext();
   const raw = (connection._handle = pair[0]);
   raw[kAdoptedTLSRaw] = self;
   self.once("end", self[kCloseRawConnection]);
@@ -2288,9 +2320,16 @@ Socket.prototype[kCloseRawConnection] = function () {
   // Only a destroy the connection's owner started counts as it closing under this socket.
   if (!connection.destroyed) connection.removeListener("close", this[kOnUpgradedClose]);
   connection.connecting = false;
+  const handle = connection._handle;
   connection._handle = null;
   connection.unref();
-  connection.destroy();
+  // Its handle closed with this socket's: 'close' runs where that handle's close callback does (closeHandle). An
+  // accepted socket has its server's rule (_destroy), and its server's 'close' follows whoever closes the last socket.
+  if (handle != null && connection._server == null && handle.$runInAsyncContext !== undefined && handleContextCanDiffer()) {
+    handle.$runInAsyncContext(destroySocket, connection);
+  } else {
+    connection.destroy();
+  }
 };
 
 Socket.prototype.connect = function connect(...args) {
@@ -2312,6 +2351,8 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd != null) {
+      // Node makes the handle of an fd in this call too.
+      this._handle ??= newSocketHandle(false);
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -2439,7 +2480,7 @@ Socket.prototype.connect = function connect(...args) {
   $debug("pipe", pipe, path);
 
   if (!this._handle) {
-    this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
+    this._handle = newSocketHandle(typeof this[bunTlsSymbol] === "function");
     initSocketHandle(this);
   }
 
@@ -2517,11 +2558,14 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // SO_LINGER{1,0} for a real reset on all platforms.
       const transport = unadoptedTransport(this);
       if (transport !== undefined) abortTransport(transport);
-      const err = this._handle.terminate();
-      setImmediate(() => {
-        $debug("emit close");
-        this.emit("close", isException);
-      });
+      let err;
+      // Node's handle.reset(callback): see closeHandle.
+      if (currentHandle.$terminate !== undefined) {
+        currentHandle.$terminate(emitClose, this, isException);
+      } else {
+        err = currentHandle.terminate();
+        setImmediate(emitClose, this, isException);
+      }
       if (err) this.emit("error", new ErrnoException(err, "reset"));
     } else if (this._closeAfterHandlingError) {
       // Enqueue closing the socket as a microtask, so that the socket can be
@@ -2532,7 +2576,12 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // Shared-fd TLS pair: defer the close two check-phase turns
       // (test-tls-socket-close); see closeAdoptedTLSRawNT.
       currentHandle.pause?.();
-      setImmediate(closeAdoptedTLSRawNT, this, currentHandle, isException);
+      // Both turns are the handle's, as the close they lead to is: an immediate of a Bun.ModuleGraph is dropped with it.
+      if (handleContextCanDiffer()) {
+        currentHandle.$runInAsyncContext(setImmediate, closeAdoptedTLSRawNT, this, currentHandle, isException);
+      } else {
+        setImmediate(closeAdoptedTLSRawNT, this, currentHandle, isException);
+      }
     } else {
       closeSocketHandle(this, currentHandle, isException);
     }
@@ -2551,7 +2600,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     const transport = transportToDestroy(this);
     if (transport !== undefined) abortTransport(transport);
     if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
-    else process.nextTick(emitCloseNT, this, err ? true : false);
+    // An accepted socket whose handle closed first: as closeHandle has it, in no async context but its server's graph.
+    else if (this._server != null && handleContextCanDiffer()) {
+      nextTickInContext(this._server[kGraphFrame], emitCloseNT, this, err ? true : false);
+    } else process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
   const server = this._server;
@@ -2718,6 +2770,15 @@ Socket.prototype._read = function _read(size) {
     socket?.resume?.();
     restorePausedHold(this, socket);
   }
+};
+
+// Node's asyncResetHandle() (lib/_http_agent.js): an http.Agent hands a kept-alive socket to its next request, and from
+// then on the close callback of the socket's handle runs in the async context of that request.
+Socket.prototype[kAsyncResetHandle] = function asyncResetHandle() {
+  const handle = this._handle;
+  if (handle == null || handle.$asyncReset === undefined || !handleContextCanDiffer()) return;
+  noteHandleContext();
+  handle.$asyncReset();
 };
 
 Socket.prototype._reset = function _reset() {
@@ -3445,7 +3506,7 @@ function internalConnectMultiple(context, canceled?) {
   const current = context.current++;
 
   if (current > 0) {
-    self[kReinitializeHandle](newDetachedSocket(typeof self[bunTlsSymbol] === "function"));
+    self[kReinitializeHandle](newSocketHandle(typeof self[bunTlsSymbol] === "function"));
   }
 
   const { localPort, port, _flags } = context;
@@ -4187,6 +4248,14 @@ Server.prototype[kRealListen] = function (
 
   this._handle[owner_symbol] = this;
   this._handle.onconnection = onconnection;
+  // The Bun.ModuleGraph this server listens in, if any: the 'close' of its connections stays that graph's (_destroy).
+  if ($getInternalField($asyncContext, 0) !== undefined) {
+    handleContexts = true;
+    const graphFrame = require("internal/async_context_frame").currentGraphFrame();
+    if (graphFrame !== undefined || this[kGraphFrame] !== undefined) this[kGraphFrame] = graphFrame;
+  } else if (this[kGraphFrame] !== undefined) {
+    this[kGraphFrame] = undefined;
+  }
 
   const addr = this.address();
   if (addr && typeof addr === "object") {
@@ -4507,15 +4576,48 @@ function onSocketHandleClosed() {}
 
 function closeSocketHandle(self, handle, isException, isCleanupPending = false) {
   $debug("closeSocketHandle", isException, isCleanupPending);
-  // Ahead of the setImmediate below: the transport's 'close' precedes this socket's.
+  // A TLS engine over a net.Socket has no handle of its own in node: its close callback is a 'close' listener of that
+  // socket, which runs where the socket's handle was made. Read ahead of the destroy below, which detaches that handle.
+  const stream = self[kupgraded];
+  const streamHandle = stream instanceof Socket ? stream._handle : null;
+  // Ahead of the immediate below: the transport's 'close' precedes this socket's.
   const transport = transportToDestroy(self);
   if (transport !== undefined) abortTransport(transport);
   // The owner of a wrapped socket destroyed it: the TLS socket goes first, so the close of their fd is nothing to report.
   handle[kAdoptedTLSRaw]?.destroy();
+  if (
+    streamHandle != null &&
+    // The raw half of an adopted fd: this socket's handle is the other half, with that context already.
+    streamHandle[kAdoptedTLSRaw] !== self &&
+    streamHandle.$runInAsyncContext !== undefined &&
+    handleContextCanDiffer()
+  ) {
+    streamHandle.$runInAsyncContext(closeHandle, self, handle, isException, isCleanupPending);
+  } else {
+    closeHandle(self, handle, isException, isCleanupPending);
+  }
+}
+
+// Node's handle.close(callback). Node runs the callback, which emits 'close', in the async context the handle was made
+// in: connect() for a client, none for an accepted socket, whoever destroyed the socket. The handle keeps that context
+// and queues the callback itself ($close).
+function closeHandle(self, handle, isException, isCleanupPending) {
+  if (handle.$close !== undefined && handle.close === $getPrototypeOf(handle).close) {
+    // Arguments instead of a closure, so no scope keeps the closed handle alive.
+    if (isCleanupPending) handle.$close(emitCloseAndDetachHandle, self, isException, handle);
+    else handle.$close(emitClose, self, isException);
+    return;
+  }
+  // Script replaced close(), or gave the socket a handle of its own: that close() is what runs, and 'close' follows it.
   handle.close(onSocketHandleClosed);
-  // Arguments instead of a closure, so no scope keeps the closed handle alive.
-  if (isCleanupPending) setImmediate(emitCloseAndDetachHandle, self, isException, handle);
-  else setImmediate(emitClose, self, isException);
+  if (handle.$runInAsyncContext !== undefined) {
+    if (isCleanupPending) handle.$runInAsyncContext(setImmediate, emitCloseAndDetachHandle, self, isException, handle);
+    else handle.$runInAsyncContext(setImmediate, emitClose, self, isException);
+  } else if (isCleanupPending) {
+    setImmediate(emitCloseAndDetachHandle, self, isException, handle);
+  } else {
+    setImmediate(emitClose, self, isException);
+  }
 }
 
 function emitClose(self, isException) {

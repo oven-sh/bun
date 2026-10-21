@@ -123,20 +123,19 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     RELEASE_AND_RETURN(scope, Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(arguments), JSValue::encode(num)));
 }
 
-// https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
-JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// setImmediate(callFrame->argument(first), ...the arguments after it).
+JSC::EncodedJSValue setImmediateFromCallFrame(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, unsigned first)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto argCount = callFrame->argumentCount();
-    if (argCount == 0) {
+    if (argCount <= first) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setImmediate requires 1 argument (a function)"_s);
         return {};
     }
 
-    auto job = callFrame->argument(0);
+    auto job = callFrame->uncheckedArgument(first);
 
     if (!job.isObject() || !job.getObject()->isCallable()) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setImmediate expects a function"_s);
@@ -144,17 +143,16 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
 
     JSC::JSValue arguments = jsUndefined();
-    switch (argCount) {
-    case 0:
+    switch (argCount - first) {
     case 1: {
         break;
     }
     case 2: {
-        arguments = callFrame->argument(1);
+        arguments = callFrame->uncheckedArgument(first + 1);
         break;
     }
     default: {
-        ArgList argumentsList = ArgList(callFrame, 1);
+        ArgList argumentsList = ArgList(callFrame, first + 1);
         auto* args = JSC::JSCellButterfly::tryCreateFromArgList(vm, argumentsList);
 
         if (!args) [[unlikely]] {
@@ -167,6 +165,13 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
 
     RELEASE_AND_RETURN(scope, Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments)));
+}
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
+JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return setImmediateFromCallFrame(globalObject, callFrame, 0);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,

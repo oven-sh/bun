@@ -41,6 +41,7 @@ using namespace JSC;
     macro(addAbortAlgorithmToSignal) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
+    macro(asyncReset) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
@@ -163,6 +164,7 @@ using namespace JSC;
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
+    macro(runInAsyncContext) \
     macro(runTail) \
     macro(sameSite) \
     macro(secure) \
@@ -180,6 +182,7 @@ using namespace JSC;
     macro(storage) \
     macro(stream) \
     macro(syscall) \
+    macro(terminate) \
     macro(text) \
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \

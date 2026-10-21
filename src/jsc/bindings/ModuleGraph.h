@@ -116,6 +116,10 @@ JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*);
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
 // The frame the running script's Bun.ModuleGraph context was entered with; null when it is in none.
 JSC::JSObject* currentModuleGraphFrame(Zig::GlobalObject*);
+// As above, for the async context `asyncContext` instead of the current one.
+JSC::JSObject* moduleGraphFrameOf(Zig::GlobalObject*, JSC::JSValue asyncContext);
+// Whether two async contexts are inside the same Bun.ModuleGraph's context, or both in none.
+bool areInSameModuleGraph(Zig::GlobalObject*, JSC::JSValue, JSC::JSValue);
 
 // ── What a graph's require() and import() use ────────────────────────────────────────
 // `graph` null: the global object's.

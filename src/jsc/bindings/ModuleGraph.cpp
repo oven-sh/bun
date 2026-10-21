@@ -313,11 +313,21 @@ JSModuleGraph* currentModuleGraph(Zig::GlobalObject* globalObject)
 
 JSObject* currentModuleGraphFrame(Zig::GlobalObject* globalObject)
 {
+    return moduleGraphFrameOf(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0));
+}
+
+JSObject* moduleGraphFrameOf(Zig::GlobalObject* globalObject, JSValue asyncContext)
+{
     if (!globalObject->hasModuleGraphs())
         return nullptr;
     JSObject* enteredWith = nullptr;
-    moduleGraphOfFrame(globalObject, globalObject->m_asyncContextData.get()->getInternalField(0), &enteredWith);
+    moduleGraphOfFrame(globalObject, asyncContext, &enteredWith);
     return enteredWith;
+}
+
+bool areInSameModuleGraph(Zig::GlobalObject* globalObject, JSValue first, JSValue second)
+{
+    return !globalObject->hasModuleGraphs() || moduleGraphOfFrame(globalObject, first) == moduleGraphOfFrame(globalObject, second);
 }
 
 // VirtualMachine::current_context (only asked once a graph has been made).

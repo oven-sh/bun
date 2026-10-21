@@ -8,13 +8,12 @@ function generate(ssl) {
     configurable: false,
     memoryCost: true,
     // Visited slot holding the shared JSSocketHandlers cell, so the callbacks
-    // stay alive as long as any socket that can still fire them. The duplex*
-    // slots carry the origin stream and the four native listener thunks for a
-    // TLSSocket driven by an upgraded Duplex (UpgradedDuplex); plain TCP
-    // sockets never populate them.
-    values: ssl
-      ? ["handlers", "duplexOrigin", "duplexOnData", "duplexOnEnd", "duplexOnWritable", "duplexOnClose"]
-      : ["handlers"],
+    // stay alive as long as any socket that can still fire them. `asyncContext`
+    // is for a node:net handle: the async context it was made in, which is
+    // where its close callback runs. `duplex` carries the origin stream and the
+    // four native listener thunks for a TLSSocket driven by an upgraded Duplex
+    // (UpgradedDuplex).
+    values: ssl ? ["handlers", "asyncContext", "duplex"] : ["handlers", "asyncContext"],
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",
@@ -240,17 +239,42 @@ function generate(ssl) {
         length: 2,
         privateSymbol: "end",
       },
+      // node:net's handle.close(callback) and handle.reset(callback): the
+      // callback is an immediate in the async context the handle was made in.
+      "closeWithCallback": {
+        fn: "closeWithCallback",
+        length: 1,
+        privateSymbol: "close",
+      },
+      "terminateWithCallback": {
+        fn: "terminateWithCallback",
+        length: 1,
+        privateSymbol: "terminate",
+      },
+      "runInAsyncContext": {
+        fn: "runInAsyncContext",
+        length: 1,
+        privateSymbol: "runInAsyncContext",
+      },
       getCertificate: {
         fn: "getCertificate",
         length: 0,
       },
-      ...(ssl ? sslOnly : {}),
+      ...(ssl ? sslOnly : tcpOnly),
     },
     refCounted: true,
     construct: true,
     klass: {},
   });
 }
+// A TLS socket's close callback is the one of the TCP handle under it, which node does not reset.
+const tcpOnly = {
+  "asyncReset": {
+    fn: "asyncReset",
+    length: 0,
+    privateSymbol: "asyncReset",
+  },
+} as const;
 const sslOnly = {
   getPeerX509Certificate: {
     fn: "getPeerX509Certificate",

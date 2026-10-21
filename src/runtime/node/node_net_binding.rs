@@ -94,6 +94,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
         let value = socket.to_js(global);
         socket.this_value.set(jsc::JsRef::init_weak(value));
+        NewSocket::<SSL>::capture_async_context(value, global);
         value
     }
 

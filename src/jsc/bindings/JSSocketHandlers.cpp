@@ -9,10 +9,16 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "BunClientData.h"
+#include "ZigGeneratedClasses.h"
 
 namespace Bun {
 
 using namespace JSC;
+
+// One wrapper per Bun.connect, Bun.listen and node:net socket. A value added to `values:` in
+// sockets.classes.ts must fit the cell the wrapper has (cells are multiples of 16 bytes).
+static_assert(sizeof(WebCore::JSTCPSocket) <= 96);
+static_assert(sizeof(WebCore::JSTLSSocket) <= 112);
 
 const JSC::ClassInfo JSSocketHandlers::s_info = { "SocketHandlers"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSocketHandlers) };
 

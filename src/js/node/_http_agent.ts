@@ -11,7 +11,7 @@ const {
 const { getLazy, kEmptyObject, once } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
-const { kDestroyOnRead } = require("internal/net/symbols");
+const { kAsyncResetHandle, kDestroyOnRead } = require("internal/net/symbols");
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
@@ -108,7 +108,7 @@ function Agent(options): void {
       const reqAsyncRes = req[kRequestAsyncResource];
       if (reqAsyncRes) {
         // Run request within the original async context.
-        reqAsyncRes.runInAsyncScope(setRequestSocket, undefined, this, req, socket);
+        reqAsyncRes.runInAsyncScope(setReusedRequestSocket, undefined, this, req, socket);
         req[kRequestAsyncResource] = null;
       } else {
         setRequestSocket(this, req, socket);
@@ -269,6 +269,7 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
 
   // Reusing a socket from the pool.
   if (socket) {
+    asyncResetHandle(socket);
     this.reuseSocket(socket, req);
     setRequestSocket(this, req, socket);
     this.sockets[name].push(socket);
@@ -584,6 +585,17 @@ Agent.prototype.destroy = function destroy() {
     }
   }
 };
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L618-L626
+function asyncResetHandle(socket) {
+  // Guard against an uninitialized or user supplied Socket.
+  socket[kAsyncResetHandle]?.();
+}
+
+function setReusedRequestSocket(agent, req, socket) {
+  asyncResetHandle(socket);
+  setRequestSocket(agent, req, socket);
+}
 
 function setRequestSocket(agent, req, socket) {
   req.onSocket(socket);

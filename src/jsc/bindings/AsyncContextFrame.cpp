@@ -3,6 +3,7 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "ModuleGraph.h"
+#include "node/NodeTimers.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 
 #if ASSERT_ENABLED
@@ -143,6 +144,85 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(value))
         return JSValue::encode(wrapper->callback.get());
     return stored;
+}
+
+// ─── The async context of a handle ───────────────────────────────────────────────────
+//
+// A node:net socket's handle keeps the async context it was made in, as node's HandleWrap does, and
+// what script hands it to call later (the close callback) runs there, whoever closes it. Each of
+// these is called by a host function of the handle, so script is on the stack.
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue AsyncContextFrame__current(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(0));
+}
+
+// The frame that entered the Bun.ModuleGraph context `stored` (what withAsyncContextIfNeeded() returned)
+// was handed over in; undefined when that was in no graph's.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue AsyncContextFrame__graphFrameOf(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue stored)
+{
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(JSValue::decode(stored))) {
+        if (auto* frame = Bun::moduleGraphFrameOf(defaultGlobalObject(globalObject), wrapper->context.get()))
+            return JSValue::encode(frame);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool AsyncContextFrame__isInCurrentModuleGraph(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue context)
+{
+    return Bun::areInSameModuleGraph(defaultGlobalObject(globalObject), JSValue::decode(context), globalObject->m_asyncContextData.get()->getInternalField(0));
+}
+
+namespace {
+// Unlike AsyncContextScope, undefined is a context to enter: none.
+class HandleAsyncContextScope {
+    WTF_MAKE_NONCOPYABLE(HandleAsyncContextScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    HandleAsyncContextScope(JSGlobalObject* globalObject, JSValue context)
+        : m_globalObject(globalObject)
+        , m_previous(globalObject->m_asyncContextData.get()->getInternalField(0))
+        , m_entered(m_previous != context)
+    {
+        if (m_entered)
+            globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, context);
+    }
+
+    ~HandleAsyncContextScope()
+    {
+        if (m_entered)
+            m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
+    }
+
+private:
+    JSGlobalObject* m_globalObject;
+    JSValue m_previous;
+    bool m_entered;
+};
+}
+
+// `callFrame->argument(first)(...the arguments after it)`, with `context` as the async context.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue AsyncContextFrame__callInContext(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue context, JSC::CallFrame* callFrame, unsigned first)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = callFrame->argument(first);
+    auto callData = JSC::getCallData(function);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Expected a function"_s);
+        return {};
+    }
+    HandleAsyncContextScope contextScope(globalObject, JSValue::decode(context));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, jsUndefined(), ArgList(callFrame, first + 1))));
+}
+
+// `setImmediate(callFrame->argument(first), ...the arguments after it)`, queued with `context` as the
+// async context: the immediate runs there, and belongs to the Bun.ModuleGraph that context is in.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue AsyncContextFrame__setImmediateInContext(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue context, JSC::CallFrame* callFrame, unsigned first)
+{
+    HandleAsyncContextScope contextScope(globalObject, JSValue::decode(context));
+    return Bun::setImmediateFromCallFrame(globalObject, callFrame, first);
 }
 
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                                                                   \

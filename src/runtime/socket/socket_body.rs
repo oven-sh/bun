@@ -570,6 +570,57 @@ impl<const SSL: bool> NewSocket<SSL> {
             js_TCPSocket::handlers_set_cached(this, global, value);
         }
     }
+    pub(crate) fn async_context_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        jsc::mark_binding!();
+        if SSL {
+            js_TLSSocket::async_context_set_cached(this, global, value);
+        } else {
+            js_TCPSocket::async_context_set_cached(this, global, value);
+        }
+    }
+    pub(crate) fn async_context_get_cached(this: JSValue) -> Option<JSValue> {
+        jsc::mark_binding!();
+        if SSL {
+            js_TLSSocket::async_context_get_cached(this)
+        } else {
+            js_TCPSocket::async_context_get_cached(this)
+        }
+    }
+
+    /// A node:net handle keeps the async context it is made in, as node's `HandleWrap` does:
+    /// `wrapper` is made in the one that is current. See [`handle_async_context`](Self::handle_async_context).
+    pub(crate) fn capture_async_context(wrapper: JSValue, global: &JSGlobalObject) {
+        let context = jsc::cpp::AsyncContextFrame__current(global);
+        if !context.is_undefined() {
+            Self::async_context_set_cached(wrapper, global, context);
+        } else if Self::async_context_get_cached(wrapper).is_some() {
+            Self::async_context_set_cached(wrapper, global, JSValue::ZERO);
+        }
+    }
+
+    /// The async context node's handle of this socket would have, which is where node runs the
+    /// handle's close callback, whoever closed it. `wrapper` is this socket's JS wrapper.
+    ///
+    /// - A socket node:net dials: the context of `connect()`, kept in the wrapper's `asyncContext`
+    ///   slot (empty: none).
+    /// - An accepted socket: node makes its handle from the event loop, so no `AsyncLocalStorage`
+    ///   store. The `Bun.ModuleGraph` is its listener's.
+    /// - Both halves of `upgradeTLS`: that of the handle they replace.
+    /// - A TLS engine over a stream ([`CALLER_ASYNC_CONTEXT`]): the caller's.
+    fn handle_async_context(&self, global: &JSGlobalObject, wrapper: JSValue) -> JSValue {
+        match Self::async_context_get_cached(wrapper) {
+            Some(context) if context == CALLER_ASYNC_CONTEXT => {
+                jsc::cpp::AsyncContextFrame__current(global)
+            }
+            Some(context) => context,
+            None => match self.handlers.get() {
+                Some(handlers) if handlers.mode == super::SocketMode::Server => {
+                    jsc::cpp::AsyncContextFrame__graphFrameOf(global, handlers.on_close())
+                }
+                _ => JSValue::UNDEFINED,
+            },
+        }
+    }
 
     /// Heap-allocates the socket; ownership passes to the intrusive refcount.
     /// The returned handle is live by construction.
@@ -3304,6 +3355,71 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// node:net's `_handle.close(callback)`: [`close`](Self::close), then `callback(...args)` as an
+    /// immediate in [the handle's async context](Self::handle_async_context).
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn close_with_callback(
+        this: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Self::close(this, global, callframe)?;
+        this.queue_close_callback(global, callframe)
+    }
+
+    /// node:net's `_handle.reset(callback)`: [`terminate`](Self::terminate), then as
+    /// [`close_with_callback`](Self::close_with_callback).
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn terminate_with_callback(
+        this: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Self::terminate(this, global, callframe)?;
+        this.queue_close_callback(global, callframe)
+    }
+
+    /// Queued at the call, not from the close dispatch: a handle that never connected, is still
+    /// connecting or closes behind its TLS spill has no dispatch to wait for.
+    fn queue_close_callback(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let context = self.handle_async_context(global, callframe.this());
+        jsc::cpp::AsyncContextFrame__setImmediateInContext(global, context, callframe, 0)?;
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// `callback(...args)` in [the handle's async context](Self::handle_async_context), for what
+    /// node:net schedules on the handle's behalf.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn run_in_async_context(
+        this: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let context = this.handle_async_context(global, callframe.this());
+        jsc::cpp::AsyncContextFrame__callInContext(global, context, callframe, 0)
+    }
+
+    /// node's `handle.asyncReset()`: the handle goes on in the async context of the caller, as when
+    /// an `http.Agent` hands a kept-alive socket to its next request. A caller inside another
+    /// `Bun.ModuleGraph` than the handle's leaves it alone: the socket stays its owner's.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn async_reset(
+        this: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let wrapper = callframe.this();
+        let context = this.handle_async_context(global, wrapper);
+        if jsc::cpp::AsyncContextFrame__isInCurrentModuleGraph(global, context) {
+            Self::capture_async_context(wrapper, global);
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn end(
         this: &Self,
@@ -3718,6 +3834,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         };
 
+        // Both halves go on in the async context of the handle they replace: node has one handle
+        // under a socket and the TLS socket that wraps it.
+        let async_context = this.handle_async_context(global, this.get_this_value(global));
+
         // Retire the original TCP wrapper before any TLS dispatch can run
         // back into JS — it must not see two live owners on one fd. Its
         // *Handlers are TRANSFERRED to the raw twin (the `[raw, tls]`
@@ -3793,6 +3913,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `raw` keeps the pre-upgrade `data` so its callbacks emit on the
         // original net.Socket, not the TLS one.
         TLSSocket::data_set_cached(raw_js_value, global, original_data);
+        if !async_context.is_undefined() {
+            TLSSocket::async_context_set_cached(raw_js_value, global, async_context);
+        }
+        // A TLS socket made inside another `Bun.ModuleGraph` than the socket it wraps is its maker's.
+        if !jsc::cpp::AsyncContextFrame__isInCurrentModuleGraph(global, async_context) {
+            TLSSocket::capture_async_context(tls_js_value, global);
+        } else if !async_context.is_undefined() {
+            TLSSocket::async_context_set_cached(tls_js_value, global, async_context);
+        }
 
         tls.mark_active();
         if was_reffed {
@@ -4194,6 +4323,10 @@ pub(crate) struct StoredVerifyError {
     pub code: Box<[u8]>,
     pub reason: Box<[u8]>,
 }
+
+/// In the `asyncContext` slot of a TLS engine over a stream. Such a socket has no handle of node's
+/// (`JSStreamSocket`), and its close callback is an immediate of whoever closes it.
+const CALLER_ASYNC_CONTEXT: JSValue = JSValue::NULL;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Flags
@@ -4869,6 +5002,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     let tls_ref = tls;
     let tls_js_value = tls_ref.get_this_value(global);
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
+    TLSSocket::async_context_set_cached(tls_js_value, global, CALLER_ASYNC_CONTEXT);
 
     let has_owned_ctx = owned_ctx.is_some();
 

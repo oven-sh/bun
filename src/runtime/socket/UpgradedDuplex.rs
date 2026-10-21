@@ -27,9 +27,9 @@ bun_output::declare_scope!(UpgradedDuplex, visible);
 
 pub(crate) struct UpgradedDuplex {
     pub wrapper: JsCell<Option<WrapperType>>,
-    /// The owning `JSTLSSocket` wrapper. Its `values:` slots root `origin` and
+    /// The owning `JSTLSSocket` wrapper. Its `duplex` slot roots `origin` and
     /// the four listener thunks; the `JSValue` fields below are read-side
-    /// shadows of those slots.
+    /// shadows of what it holds.
     pub js_wrapper: JSValue,
     pub origin: Cell<JSValue>, // any duplex
     // JSC_BORROW per LIFETIMES.tsv.
@@ -112,16 +112,13 @@ pub(crate) struct Handlers {
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
 
-/// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
-/// into the owning `JSTLSSocket` wrapper's visited `values:` slot (the GC
-/// root). All four `get_js_handlers` slots follow the identical
-/// `NewFunctionWithData(global, null, 0, fn, self)` → `ensureStillAlive` →
-/// `setFunctionData(self)` → store pattern.
+/// Lazily create-and-cache a JS host-function callback in `shadow`. The caller
+/// roots it ([`UpgradedDuplex::get_js_handlers`]). All four listeners follow
+/// the identical `NewFunctionWithData(global, null, 0, fn, self)` →
+/// `ensureStillAlive` → `setFunctionData(self)` → store pattern.
 #[inline]
 fn lazy_js_handler(
     shadow: &Cell<JSValue>,
-    js_wrapper: JSValue,
-    set_slot: fn(JSValue, &JSGlobalObject, JSValue),
     global: &JSGlobalObject,
     func: host_fn::JsHostFn,
     this_ptr: *mut c_void,
@@ -132,7 +129,6 @@ fn lazy_js_handler(
     let callback = host_fn::new_function_with_data(global, None, 0, func, this_ptr);
     callback.ensure_still_alive();
     host_fn::set_function_data(callback, Some(this_ptr));
-    set_slot(js_wrapper, global, callback);
     shadow.set(callback);
     callback
 }
@@ -442,7 +438,7 @@ impl UpgradedDuplex {
         origin: JSValue,
         handlers: Handlers,
     ) -> UpgradedDuplex {
-        js_TLSSocket::duplex_origin_set_cached(js_wrapper, global, origin);
+        js_TLSSocket::duplex_set_cached(js_wrapper, global, origin);
         UpgradedDuplex {
             vm: Some(global.bun_vm()),
             js_wrapper,
@@ -469,57 +465,24 @@ impl UpgradedDuplex {
     pub(crate) fn get_js_handlers(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let array = JSValue::create_empty_array(global, 4)?;
         array.ensure_still_alive();
+        // What the wrapper's `duplex` slot holds from here on: the stream, then its listeners.
+        let roots = JSValue::create_empty_array(global, 5)?;
+        roots.ensure_still_alive();
+        roots.put_index(global, 0, self.origin.get())?;
 
         let this_ptr = std::ptr::from_ref(self).cast_mut().cast::<c_void>();
-        let js_wrapper = self.js_wrapper;
-        array.put_index(
-            global,
-            0,
-            lazy_js_handler(
-                &self.on_data_callback,
-                js_wrapper,
-                js_TLSSocket::duplex_on_data_set_cached,
-                global,
-                __jsc_host_on_received_data,
-                this_ptr,
-            ),
-        )?;
-        array.put_index(
-            global,
-            1,
-            lazy_js_handler(
-                &self.on_end_callback,
-                js_wrapper,
-                js_TLSSocket::duplex_on_end_set_cached,
-                global,
-                __jsc_host_on_end,
-                this_ptr,
-            ),
-        )?;
-        array.put_index(
-            global,
-            2,
-            lazy_js_handler(
-                &self.on_writable_callback,
-                js_wrapper,
-                js_TLSSocket::duplex_on_writable_set_cached,
-                global,
-                __jsc_host_on_writable,
-                this_ptr,
-            ),
-        )?;
-        array.put_index(
-            global,
-            3,
-            lazy_js_handler(
-                &self.on_close_callback,
-                js_wrapper,
-                js_TLSSocket::duplex_on_close_set_cached,
-                global,
-                __jsc_host_on_close_js,
-                this_ptr,
-            ),
-        )?;
+        let listeners: [(&Cell<JSValue>, host_fn::JsHostFn); 4] = [
+            (&self.on_data_callback, __jsc_host_on_received_data),
+            (&self.on_end_callback, __jsc_host_on_end),
+            (&self.on_writable_callback, __jsc_host_on_writable),
+            (&self.on_close_callback, __jsc_host_on_close_js),
+        ];
+        for (index, (shadow, func)) in (0u32..).zip(listeners) {
+            let listener = lazy_js_handler(shadow, global, func, this_ptr);
+            array.put_index(global, index, listener)?;
+            roots.put_index(global, index + 1, listener)?;
+        }
+        js_TLSSocket::duplex_set_cached(self.js_wrapper, global, roots);
 
         Ok(array)
     }

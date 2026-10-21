@@ -1,5 +1,7 @@
 export default {
   kArmHandshakeTimeout: Symbol("kArmHandshakeTimeout"),
+  // net.Socket.prototype method: node's asyncResetHandle(socket) of lib/_http_agent.js.
+  kAsyncResetHandle: Symbol("kAsyncResetHandle"),
   // Set while a socket must receive nothing (an idle socket in an http.Agent
   // pool): the read path destroys the socket instead of delivering the bytes.
   kDestroyOnRead: Symbol("kDestroyOnRead"),

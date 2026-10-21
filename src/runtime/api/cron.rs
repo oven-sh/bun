@@ -22,6 +22,7 @@ use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
+use bun_jsc::bindgen::JsWrapper;
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction,
@@ -38,6 +39,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
     self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
 };
+use crate::generated_bindgen::cron::js_CronJob as js;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
 use bun_core::strings;
@@ -1367,7 +1369,7 @@ impl Drop for CronRemoveJob {
 // re-entry is Stacked-Borrows UB and an LLVM-level miscompile hazard. `&self`
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
-#[bun_jsc::JsClass(no_constructor)]
+/// `CronJob`, declared in `cron.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
 pub(crate) struct CronJob {
@@ -1418,13 +1420,6 @@ bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, cause| {
         vm_is_going,
     )
 });
-
-pub(crate) mod js {
-    // `jsc.Codegen.JSCronJob` cached-slot accessors. The C++ side is emitted by
-    // `src/codegen/generate-classes.ts` from `cron.classes.ts`; bind the extern
-    // contract via the proc-macro so the symbol names line up.
-    bun_jsc::codegen_cached_accessors!("CronJob"; callback, cron, pendingPromise);
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub(crate) enum ClearMode {
@@ -1756,33 +1751,21 @@ impl CronJob {
         Self::schedule_next(this, vm);
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn stop(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
-        Ok(frame.this())
+        this_value
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_ref(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_ref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         if !self.stopped.get() {
             self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         }
-        Ok(frame.this())
+        this_value
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(
-        &self,
-        _global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn do_unref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        Ok(frame.this())
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_cron(_this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED) // unreachable — register() pre-populates the cache via cronSetCached
+        this_value
     }
 
     pub(crate) fn register(
@@ -2175,7 +2158,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
             bun_sys::windows::libuv::Pipe,
         >()));
-    let cwd = FileSystem::get().top_level_dir;
+    let cwd = FileSystem::get().top_level_dir();
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,

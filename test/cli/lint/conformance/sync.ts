@@ -1,17 +1,17 @@
-// Collects the fixtures that the `extract-*.ts` scripts write, and what the cases with types need, in `bundle.zst`.
+// Packs the fixtures that the `extract-*.ts` scripts write, plus the files the typed cases need, into `bundle.zst`.
 //
 //   export ESLINT_DIR=.. TYPESCRIPT_ESLINT_DIR=.. REACT_DIR=.. ESLINT_PLUGIN_IMPORT_X_DIR=..
 //   export ESLINT_PLUGIN_N_DIR=.. OXC_DIR=..   # the checkouts that the fixtures were recorded with
-//   bun test/cli/lint/conformance/sync.ts [<fixtures>]        # `fixtures` next to this file, unless named
-//   bun test/cli/lint/conformance/sync.ts --more <name> <directory>   # `more/<name>/` is what `<directory>/<plugin>/<rule>.json` are
-//   bun test/cli/lint/conformance/sync.ts --oxlint <directory>        # `oxlint/` is what `extract-oxlint.ts` wrote to `<directory>`
+//   bun test/cli/lint/conformance/sync.ts [<fixtures>]                # default: `fixtures` next to this file
+//   bun test/cli/lint/conformance/sync.ts --more <name> <directory>   # replaces `more/<name>/` with `<directory>`
+//   bun test/cli/lint/conformance/sync.ts --oxlint <directory>        # replaces `oxlint/` with `<directory>`
 //   bun test/cli/lint/conformance/sync.ts --plugin <name> <fixtures>  # replaces `<name>/` with `<fixtures>/<name>/<rule>.json`
 //   bun test/cli/lint/conformance/sync.ts --extract <part of a path, or ""> <directory>
 //
 // Each of the first four leaves the rest of the bundle untouched.
 //
-// The suites of eslint-plugin-import, -react and -prettier are recorded with the published packages and come into the bundle
-// rule by rule, as a rule here does the same as the package's. None of these commands touches them: see `RECORDED`.
+// The eslint-plugin-import, -react and -prettier suites are recorded with the published packages. A rule's suite is
+// added to the bundle once the rule here passes all of it. Only `--plugin` replaces them. See `RECORDED`.
 import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,7 +20,7 @@ import { collect, extract, readBundle, writeBundle } from "../../format/bundle.t
 const here = import.meta.dir;
 const bundle = join(here, "bundle.zst");
 
-/** What the fixtures are from: the directory in `licenses/`, the variable with the checkout, and where `package.json` is in it. */
+/** The fixtures' sources: name in `licenses/`, variable with the checkout's path, directory of its `package.json`. */
 const SOURCES = [
   ["eslint", "ESLINT_DIR", "."],
   ["typescript-eslint", "TYPESCRIPT_ESLINT_DIR", "packages/eslint-plugin"],
@@ -31,7 +31,7 @@ const SOURCES = [
   ["tsgolint", "TSGOLINT_DIR", "."],
 ] as const;
 
-/** The packages that the project of typescript-eslint's tests finds types in, and from where each is resolved. */
+/** The packages that typescript-eslint's test project gets types from, and the directory each is resolved from. */
 const PACKAGES = [
   ["@types/node", "."],
   ["undici-types", "node_modules/@types/node"],
@@ -41,7 +41,7 @@ const PACKAGES = [
   ["@typescript-eslint/types", "packages/eslint-plugin"],
 ] as const;
 
-/** What is in the bundle rule by rule, with the projects that the cases are files of. */
+/** The suites that are added to the bundle rule by rule, and the projects their cases are linted in. */
 const RECORDED = ["import/", "import-project/", "react/", "prettier/", "prettier-project/", "json/", "markdown/"];
 
 function directoryOf(variable: string): string {
@@ -50,7 +50,7 @@ function directoryOf(variable: string): string {
   return directory;
 }
 
-/** The directory of `name`, as Node.js finds it from `from`. */
+/** Returns the directory of the package `name`, resolved from `from` the way Node.js does. */
 function resolvePackage(name: string, from: string): string {
   for (let directory = realpathSync(from); ; directory = join(directory, "..")) {
     if (existsSync(join(directory, "node_modules", name, "package.json")))
@@ -59,13 +59,13 @@ function resolvePackage(name: string, from: string): string {
   }
 }
 
-/** Nothing in the bundle names a file of this machine. `local`: directories of it. */
+/** Throws if a fixture contains a path under one of the `local` directories. The bundle must not have local paths. */
 function clean(files: Map<string, Uint8Array>, local: string[]) {
   local = local.flatMap(it => [it, realpathSync(it)]);
   for (const [path, bytes] of files) {
     if (!path.endsWith(".json")) continue;
     const text = Buffer.from(bytes).toString("latin1");
-    // What Node.js says about a module that it does not find.
+    // Node.js appends this to its "Cannot find module" message.
     const cleaned = text.replace(/\\nRequire stack:(?:[^"\\]|\\.)*/g, "");
     if (local.some(it => cleaned.includes(it))) throw new Error(`${path} has a path of this machine in it`);
     if (cleaned !== text) files.set(path, Buffer.from(cleaned, "latin1"));
@@ -76,7 +76,7 @@ function summary(files: Map<string, Uint8Array>) {
   return `${files.size} files, ${[...files.values()].reduce((sum, it) => sum + it.length, 0)} bytes`;
 }
 
-/** What is in the bundle now, if `keeps` says so of the path. */
+/** Returns the current bundle's files whose path passes `keeps`. */
 function kept(keeps: (path: string) => boolean): Map<string, Uint8Array> {
   return new Map(existsSync(bundle) ? [...readBundle(bundle)].filter(([path]) => keeps(path)) : []);
 }
@@ -100,12 +100,12 @@ if (first === "--extract" && rest.length === 2) {
   const files = kept(path => !path.startsWith("oxlint/") && !path.startsWith("oxlint-import-project/"));
   const found = new Map<string, Uint8Array>();
   for (const plugin of readdirSync(directory).sort()) {
-    // `bun lint` has no rule of these two.
+    // `bun lint` doesn't implement any rules from these two.
     if (plugin === "jsdoc" || plugin === "vue") continue;
     if (statSync(join(directory, plugin)).isDirectory()) collect(directory, plugin, found, () => false);
   }
   clean(found, [directory]);
-  // The files that the cases of `import` are next to are not tests.
+  // The project that the `import` cases are linted in isn't a set of tests, so it gets its own directory.
   for (const [path, bytes] of found)
     files.set(path.startsWith("import-project/") ? `oxlint-${path}` : `oxlint/${path}`, bytes);
   writeBundle(bundle, files);
@@ -134,7 +134,7 @@ if (first === "--extract" && rest.length === 2) {
   }
   for (const directory of ["typescript-eslint-project", "n-project"]) collect(fixtures, directory, files, () => false);
 
-  // What is not from one of `SOURCES` and `PACKAGES` stays as it is.
+  // Entries that aren't in `SOURCES` or `PACKAGES` are kept as they are.
   const version: Record<string, { version?: string; commit?: string }> = JSON.parse(
     readFileSync(join(here, "version.json"), "utf8"),
   );

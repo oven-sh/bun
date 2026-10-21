@@ -20,18 +20,18 @@ const OXLINT: Message = Message::new("", "named import {{imported_name}} not fou
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// `None`: oxlint, which asks its records.
+    /// `None` for oxlint, which uses its module records.
     maps: Option<ExportMaps<'a>>,
-    /// The specifier that was asked for last, and `ExportMapBuilder.get` of it unless that is ambiguous.
+    /// The last specifier looked up, with its `ExportMapBuilder.get` result, or `None` if that's ambiguous.
     last: Option<(Name<'a>, Option<ExportMap<'a>>)>,
     star_exports: StarExports<'a>,
 }
 
-/// How a name of another module is named.
+/// How the file refers to another module's export.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Taken {
+enum NameUse {
     Imported,
-    ExportedAgain,
+    Reexported,
 }
 
 impl Rule for Named {
@@ -46,7 +46,7 @@ impl Rule for Named {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().import_specs().export_specs();
         match file.language().is_oxlint {
-            // oxlint has no option, and takes an `export { a }` of what is imported for an `export { a } from "m"`.
+            // oxlint has no option, and treats an `export { a }` of an imported binding as `export { a } from "m"`.
             true => on.finish(),
             false if self.commonjs && file.mentions("require") => on.var_decls(),
             false => on,
@@ -57,7 +57,7 @@ impl Rule for Named {
         if !file.language().is_oxlint {
             return Some(State { maps: Some(ExportMaps::of(file)?), ..State::default() });
         }
-        // Before anything else: others ask what this file exports.
+        // `is_waiting_for_modules` has to run first, because it records this file's exports for the other files.
         if is_waiting_for_modules(file) || file.modules().is_none() || !file.is_javascript() {
             return None;
         }
@@ -78,11 +78,11 @@ impl Rule for Named {
         };
         for key in variable_imports.iter().filter_map(PatProp::key) {
             match key.kind() {
-                KeyKind::Ident(name) => check(name, key.inner_span(cx.file()), source, Taken::Imported, cx),
-                // It does not ask whether the key is computed.
+                KeyKind::Ident(name) => check(name, key.inner_span(cx.file()), source, NameUse::Imported, cx),
+                // Upstream doesn't check whether the key is computed.
                 KeyKind::Computed(e) => {
                     if let Some(name) = e.as_ident() {
-                        check(name, e.span(), source, Taken::Imported, cx);
+                        check(name, e.span(), source, NameUse::Imported, cx);
                     }
                 }
                 _ => {}
@@ -91,17 +91,17 @@ impl Rule for Named {
     }
 
     fn import_spec<'a>(&self, im: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint looks at JavaScript only.
+        // oxlint only runs this rule on JavaScript files, where nothing is type-only.
         if !im.is_type_only() && !im.import().is_type_only() {
-            check(im.imported().name(), im.imported().span(), im.import().spec(), Taken::Imported, cx);
+            check(im.imported().name(), im.imported().span(), im.import().spec(), NameUse::Imported, cx);
         }
     }
 
     fn export_spec<'a>(&self, im: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
         let node = im.export();
-        // Upstream asks an `ExportSpecifier` for its `importKind`: `export { type a } from "m"` is looked at.
+        // Upstream checks an `ExportSpecifier`'s `importKind`, so `export { type a } from "m"` isn't skipped.
         if let Some(source) = node.spec().filter(|_| node.has_from() && !node.is_type_only()) {
-            check(im.local().name(), im.local().span(), source, Taken::ExportedAgain, cx);
+            check(im.local().name(), im.local().span(), source, NameUse::Reexported, cx);
         }
     }
 
@@ -115,7 +115,7 @@ impl Rule for Named {
         let default_imports = default_imports.filter(|it| matches!(it.import_name, ImportImportName::Default(_)));
         let default_imports = default_imports.map(|it| (it.declaration.spec(), it.local_name().name()));
         let default_imports: FxHashSet<_> = default_imports.collect();
-        // Those that are made of an `import` and an `export { a }`.
+        // Entries made from an `import` plus an `export { a }`.
         let synthesized = module_record.indirect_export_entries.iter();
         let synthesized = synthesized.filter(|it| !it.statement_span.contains(it.span));
         for (module_request, import_name) in synthesized.map(|it| (it.module_request, it.import_name)) {
@@ -125,7 +125,7 @@ impl Rule for Named {
             let is_reexport_of_default_import = default_imports.contains(&(module_request.name, import_name.name))
                 && loaded_module(file, module_request.name).is_some_and(has_default_export);
             if !is_reexport_of_default_import {
-                check(import_name.name, import_name.span, module_request.name, Taken::ExportedAgain, cx);
+                check(import_name.name, import_name.span, module_request.name, NameUse::Reexported, cx);
             }
         }
     }
@@ -139,20 +139,20 @@ fn has_default_export(remote: Loaded) -> bool {
     remote.record.has_export_default || remote.exports(b"default")
 }
 
-/// `name`, which is written at `at`, is taken from the module `source`.
-fn check<'a>(name: Name<'a>, at: Span, source: Name<'a>, taken: Taken, cx: &mut Cx<'a, Named>) {
+/// Checks that the module `source` exports `name`, which is written at `at`.
+fn check<'a>(name: Name<'a>, at: Span, source: Name<'a>, name_use: NameUse, cx: &mut Cx<'a, Named>) {
     let file = cx.file();
     let Some(maps) = &cx.state.maps else {
         let Some(remote) = loaded_module(file, source) else {
             return;
         };
         let is_found = remote.exports(name.bytes())
-            || match taken {
-                Taken::Imported => {
+            || match name_use {
+                NameUse::Imported => {
                     name.is("default") && remote.record.has_export_default
                         || cx.state.star_exports.contains(remote, name.bytes())
                 }
-                Taken::ExportedAgain => name.is("default") && has_default_export(remote),
+                NameUse::Reexported => name.is("default") && has_default_export(remote),
             };
         if !is_found {
             cx.report(at, OXLINT).data("imported_name", debug(name.bytes())).data("module_name", debug(source.bytes()));
@@ -162,7 +162,7 @@ fn check<'a>(name: Name<'a>, at: Span, source: Name<'a>, taken: Taken, cx: &mut 
     let imports = match cx.state.last {
         Some((known, imports)) if known == source => imports,
         _ => {
-            // With errors it is ambiguous: they are never reported.
+            // A map with errors counts as ambiguous, so the errors are never reported.
             let imports = maps.get(source.bytes()).filter(|it| !it.is_ambiguous());
             cx.state.last = Some((source, imports));
             imports

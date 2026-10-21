@@ -5,8 +5,8 @@ use bun_lint_oxlint::ast_util::{is_global_reference, symbol_of};
 /// Disallow losing originally caught error when re-throwing custom errors.
 pub struct PreserveCaughtError {
     requires_catch_parameter: bool,
-    /// The names of the additional error classes, each with the index of the options among the
-    /// arguments of its constructor. Of two with the same name, the later one counts.
+    /// The names of the additional error classes, each with the index of the options argument in its constructor. If
+    /// two have the same name, the later one wins.
     error_class_names: Vec<(Box<[u8]>, usize)>,
 }
 
@@ -46,10 +46,10 @@ const BUILT_IN_ERROR_TYPES: &[&str] = &[
     "AggregateError",
 ];
 
-/// The ones that oxlint 1.87 knows.
+/// The ones oxlint 1.87 knows.
 const OXLINT_ERROR_TYPES: &[&str] = &["Error", "TypeError", "AggregateError"];
 
-/// What to pass for the arguments before the options.
+/// The values to pass for the arguments before the options.
 const AGGREGATE_ERROR_PLACEHOLDERS: &[&str] = &["[]", "\"\""];
 const ERROR_PLACEHOLDERS: &[&str] = &["\"\""];
 const NO_PLACEHOLDERS: &[&str] = &[];
@@ -64,12 +64,12 @@ enum Cause<'a> {
     },
 }
 
-/// ESLint's `getErrorCause`: the last `cause` counts. In oxlint's `has_cause_property` it is the first that is written
-/// as a name, only a spread before it can have one, a spread among the arguments can be after the options too, and what
-/// is not an object in braces has none.
+/// ESLint's `getErrorCause`: the last `cause` wins. oxlint's `has_cause_property` differs: the first `cause` with an
+/// identifier key wins, only a spread property before it makes the cause unknown, a spread argument does so even after
+/// the options, and options that aren't an object literal have no cause.
 fn get_error_cause<'a>(args: List<'a, Expr<'a>>, options_index: usize, is_oxlint: bool) -> Cause<'a> {
-    let looked_at = if is_oxlint { usize::MAX } else { options_index + 1 };
-    if args.iter().take(looked_at).any(|arg| arg.tag() == ExprTag::Spread) {
+    let checked_count = if is_oxlint { usize::MAX } else { options_index + 1 };
+    if args.iter().take(checked_count).any(|arg| arg.tag() == ExprTag::Spread) {
         return Cause::Unknown;
     }
     let Some(options) = args.get(options_index) else {
@@ -102,12 +102,12 @@ fn get_error_cause<'a>(args: List<'a, Expr<'a>>, options_index: usize, is_oxlint
     }
 }
 
-/// By a statement: the `try` statement in whose `catch` block it is, or `None` in a function in that
-/// block.
+/// Maps a statement to the `try` statement whose `catch` block contains it, or to `None` if a function comes in
+/// between.
 type ParentCatches<'a> = AncestorMemo<'a, Option<Stmt<'a>>>;
 
-/// ESLint's `findParentCatch`: the `try` statement in whose `catch` block `statement` is, outside of
-/// any function in that block, and the parameter of the `catch`.
+/// ESLint's `findParentCatch`: returns the `try` statement whose `catch` block contains `statement`, with no function
+/// in between, and the `catch` parameter.
 fn find_parent_catch<'a>(
     statement: Stmt<'a>,
     known: &mut ParentCatches<'a>,
@@ -130,8 +130,8 @@ fn find_parent_catch<'a>(
     }
 }
 
-/// ESLint's `findInsertionTokenAfterParens`: `first_token`, or the last of the closing parentheses
-/// that follow it, up to `last_token`.
+/// ESLint's `findInsertionTokenAfterParens`: returns `first_token`, or the last of the closing parentheses that follow
+/// it, up to `last_token`.
 fn find_insertion_token_after_parens<'a>(first_token: Token<'a>, last_token: Token<'a>, file: &'a File<'a>) -> Token<'a> {
     let mut token = first_token;
     while let Some(next) = file.token_after(token)
@@ -158,7 +158,7 @@ fn add_arguments_to_empty_call<'a>(fixer: Fixer<'a>, thrown: Expr<'a>, call: Cal
     Some(fixer.insert_after(insertion_token, [&b"("[..], arguments, b")"].concat()))
 }
 
-/// ESLint's `appendArguments`: after the last argument and the parentheses around it.
+/// ESLint's `appendArguments`: inserts after the last argument and the parentheses around it.
 fn append_arguments<'a>(fixer: Fixer<'a>, thrown: Expr<'a>, call: Call<'a>, arguments: &[u8]) -> Option<Fix> {
     let file = fixer.file();
     let last_argument_token = file.last_token(call.args().last()?)?;
@@ -168,9 +168,9 @@ fn append_arguments<'a>(fixer: Fixer<'a>, thrown: Expr<'a>, call: Call<'a>, argu
     Some(fixer.insert_after(insertion_token, arguments))
 }
 
-/// Adds `cause: caught` to the options of the error that `thrown`, which is `call`, constructs.
-/// `placeholders`: what to pass for the arguments before the options that are missing. If there are
-/// none, the signature is not known, and nothing is made up.
+/// Adds `cause: caught` to the options of the error that `thrown`, which is `call`, constructs. `placeholders` are the
+/// values to pass for any missing arguments before the options. If it's empty, the signature is unknown, and no
+/// arguments are made up.
 fn include_cause<'a>(
     fixer: Fixer<'a>,
     thrown: Expr<'a>,
@@ -213,10 +213,10 @@ fn include_cause<'a>(
     }
 }
 
-/// What ESLint suggests is a fix for oxlint 1.87, with its own text for `{}`, and none for `new Error` without
-/// parentheses and for more arguments than it knows. `param`: the parameter of the `catch`, which is part of the fix as
-/// it is, so that no other fix renames or removes it in the same pass.
-fn include_cause_as_oxlint<'a>(
+/// ESLint's suggestion is a fix in oxlint 1.87. It has its own text for `{}`, and there's no fix for `new Error`
+/// without parentheses or for more arguments than it knows. `param` is the `catch` parameter, which the fix rewrites
+/// unchanged so that no other fix renames or removes it in the same pass.
+fn oxlint_include_cause<'a>(
     fixer: Fixer<'a>,
     (thrown, call): (Expr<'a>, Call<'a>),
     is_aggregate_error: bool,
@@ -224,8 +224,8 @@ fn include_cause_as_oxlint<'a>(
 ) -> Option<[Fix; 2]> {
     let file = fixer.file();
     let args = call.args();
-    // What it comes after, and what is written before and after `cause: caught`.
-    let (place, before, after): (Span, &[u8], &[u8]) = match (args.len(), args.last()) {
+    // The span to insert after, and the text before and after `cause: caught`.
+    let (location, before, after): (Span, &[u8], &[u8]) = match (args.len(), args.last()) {
         (0, _) => {
             let (after_callee, last) = (file.last_token(call.callee())?, file.last_token(thrown)?);
             let open = file.tokens_between(after_callee, last).find(ast_utils::is_opening_paren_token)?;
@@ -243,7 +243,7 @@ fn include_cause_as_oxlint<'a>(
         _ => return None,
     };
     let text = [before, b"cause: ", caught.bytes(), after].concat();
-    Some([fixer.replace(param, file.slice(param)), fixer.insert_after(place, text)])
+    Some([fixer.replace(param, file.slice(param)), fixer.insert_after(location, text)])
 }
 
 impl PreserveCaughtError {
@@ -252,11 +252,11 @@ impl PreserveCaughtError {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // It does not look into parentheses.
+        // oxlint doesn't look into parentheses here.
         if is_oxlint && thrown.is_parenthesized() {
             return;
         }
-        // In an optional chain it is a `ChainExpression` that is thrown or called.
+        // In an optional chain it's a `ChainExpression` that's thrown or called.
         let call = match thrown.kind() {
             ExprKind::New(call) => call,
             ExprKind::Call(call) if call.chain() == Chain::No => call,
@@ -281,7 +281,7 @@ impl PreserveCaughtError {
         let Some((try_statement, param)) = find_parent_catch(statement, &mut cx.state) else {
             return;
         };
-        // For oxlint what only declares a type does not hide the class.
+        // For oxlint a type-only declaration doesn't shadow the class.
         let is_global = if is_oxlint { is_global_reference(callee) } else { ast_utils::is_global_reference(callee) };
         let (options_index, placeholders) =
             match (can_be_built_in && is_global, configured) {
@@ -294,7 +294,7 @@ impl PreserveCaughtError {
         let param_span = param.map_or_else(Span::default, |param| param.pat().span());
         let caught = match param.map(|param| param.pat().kind()) {
             Some(PatKind::Ident(name)) => name,
-            // oxlint goes on as with a name, which nothing is the value of, and points at the statement.
+            // oxlint continues as if the parameter were a name that no `cause` can match, and points at the statement.
             Some(_) if is_oxlint => {
                 if !matches!(get_error_cause(call.args(), options_index, true), Cause::Unknown) {
                     cx.report(statement, PARTIALLY_LOST_ERROR);
@@ -308,7 +308,7 @@ impl PreserveCaughtError {
                 return;
             }
             None => {
-                // oxlint says it of the `catch`, whatever is thrown in it.
+                // oxlint reports this at the `catch`, whatever is thrown in it.
                 if self.requires_catch_parameter && !is_oxlint {
                     cx.report(statement, MISSING_CATCH_ERROR_PARAM);
                 }
@@ -325,7 +325,7 @@ impl PreserveCaughtError {
                 });
                 match cx.language().is_oxlint {
                     true => report.fix(|fixer| {
-                        include_cause_as_oxlint(fixer, (thrown, call), options_index == 2, (caught, param_span))
+                        oxlint_include_cause(fixer, (thrown, call), options_index == 2, (caught, param_span))
                     }),
                     false => report.suggest(INCLUDE_CAUSE, |fixer| {
                         include_cause(fixer, thrown, call, options_index, placeholders, caught)
@@ -340,19 +340,19 @@ impl PreserveCaughtError {
         };
 
         let is_plain = matches!(property.kind(), PropKind::Init | PropKind::Shorthand);
-        // oxlint does not look into parentheses.
+        // oxlint doesn't look into parentheses.
         if !(is_plain && value.as_ident() == Some(caught) && !(is_oxlint && value.is_parenthesized())) {
             let value_span = property.func().map_or_else(|| value.span(), Func::span_from_params);
             // oxlint points at the statement.
-            let place = if cx.language().is_oxlint { statement.span() } else { value_span };
-            let report = cx.report(place, INCORRECT_CAUSE);
+            let location = if cx.language().is_oxlint { statement.span() } else { value_span };
+            let report = cx.report(location, INCORRECT_CAUSE);
             // With several definitions of `cause`, a suggestion could be confusing.
             let replace = |fixer: Fixer<'a>| match property.kind() {
                 PropKind::Init => fixer.replace(value, caught),
                 _ => fixer.replace(property, [&b"cause: "[..], caught.bytes()].concat()),
             };
             if cx.language().is_oxlint {
-                // It only knows the options of `Error` and `TypeError`.
+                // oxlint only handles the options of `Error` and `TypeError`.
                 if options_index == 1 && call.args().len() == 2 && !has_multiple_definitions {
                     report.fix(|fixer| [fixer.replace(param_span, fixer.file().slice(param_span)), replace(fixer)]);
                 }
@@ -362,7 +362,7 @@ impl PreserveCaughtError {
             return;
         }
 
-        // For oxlint what only declares a type hides nothing.
+        // For oxlint a type-only declaration doesn't shadow anything.
         if is_oxlint {
             if symbol_of(value) != param.and_then(|it| it.pat().symbol()) {
                 cx.report(statement, CAUGHT_ERROR_SHADOWED);

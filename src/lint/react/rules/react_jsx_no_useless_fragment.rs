@@ -38,7 +38,7 @@ impl Rule for JsxNoUselessFragment {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Pragmas<'a>> {
-        // oxlint reads no settings and no comment.
+        // oxlint doesn't read the settings or the pragma comment.
         if file.language().is_oxlint {
             return is_jsx(file).then_some(Pragmas { react: b"React", fragment: b"Fragment" });
         }
@@ -54,14 +54,14 @@ impl Rule for JsxNoUselessFragment {
             true => is_jsx_fragment(it),
             false => is_fragment(it, cx.state.react, cx.state.fragment),
         };
-        // oxlint leaves one with a `ref` alone too.
-        let is_kept = |name: Name| name.is("key") || (is_oxlint && name.is("ref"));
+        // oxlint also keeps a fragment that has a `ref`.
+        let requires_fragment = |name: Name| name.is("key") || (is_oxlint && name.is("ref"));
         if !jsx.is_fragment()
-            && (!is_fragment_element(jsx) || jsx.attrs().iter().filter_map(|it| it.key()?.name()).any(is_kept))
+            && (!is_fragment_element(jsx) || jsx.attrs().iter().filter_map(|it| it.key()?.name()).any(requires_fragment))
         {
             return;
         }
-        // The element or the fragment that it is a child of, without braces around it.
+        // The element or fragment it's a direct child of, with no braces in between.
         let parent = match e.parent() {
             Node::Expr(parent) if e.jsx_container_span().is_none() && !e.is_parenthesized() => match parent.kind() {
                 ExprKind::Jsx(parent) => Some(parent),
@@ -79,23 +79,23 @@ impl Rule for JsxNoUselessFragment {
                 };
                 children(file, jsx).next().is_some() && !children(file, jsx).any(is_nonspace_text_or_curly)
             }
-            // `Eeee` in `<Eeee><>foo</></Eeee>` may want an element.
+            // The `Eeee` in `<Eeee><>foo</></Eeee>` may require a single element.
             Some(parent) => {
-                // For oxlint that is every name with a letter that is not small.
+                // For oxlint that's any name with a letter that isn't lowercase.
                 let is_html = if is_oxlint { is_all_lowercase(parent) } else { is_child_of_html_element };
                 parent.is_fragment() || is_html || is_fragment_element(parent)
             }
         };
-        let report = |message: Message, of_oxlint: Message| {
+        let report = |message: Message, oxlint_message: Message| {
             let fix = |fixer: Fixer<'a>| {
                 let inside =
                     jsx.closing_span().map_or(&b""[..], |closing| file.slice(jsx.opening_span().between(closing)));
                 fixer.replace(e, trim_like_react(inside, is_oxlint))
             };
-            // oxlint points at the opening tag, and suggests what upstream fixes.
+            // oxlint reports the opening tag, and suggests what upstream fixes.
             match (is_oxlint, can_fix()) {
-                (true, true) => cx.report(jsx.opening_span(), of_oxlint).suggest(of_oxlint, fix),
-                (true, false) => cx.report(jsx.opening_span(), of_oxlint),
+                (true, true) => cx.report(jsx.opening_span(), oxlint_message).suggest(oxlint_message, fix),
+                (true, false) => cx.report(jsx.opening_span(), oxlint_message),
                 (false, true) => cx.report(e, message).fix(fix),
                 (false, false) => cx.report(e, message),
             };
@@ -111,7 +111,7 @@ impl Rule for JsxNoUselessFragment {
         };
         let mut non_padding_children = children(file, jsx).filter(|it| !is_padding(*it));
         let (first, has_more) = (non_padding_children.next(), non_padding_children.next().is_some());
-        // For oxlint a call in parentheses is none.
+        // In oxlint's AST a parenthesized call isn't a call.
         let is_call = |it: Child<'a>| {
             matches!(it, Child::ExpressionContainer(e)
                 if e.tag() == ExprTag::Call && !e.is_chain_root() && !(is_oxlint && e.is_parenthesized()))
@@ -129,12 +129,12 @@ impl Rule for JsxNoUselessFragment {
     }
 }
 
-/// `isOnlyWhitespace`. oxlint goes by Unicode's `White_Space`.
+/// `isOnlyWhitespace`. oxlint uses Unicode's `White_Space`.
 fn is_only_whitespace(text: &[u8], is_oxlint: bool) -> bool {
     if is_oxlint { strings::is_all_unicode_whitespace(text) } else { strings::is_all_js_whitespace(text) }
 }
 
-/// Blanks at the start and at the end go if there is a line break in them. oxlint knows the blanks of ASCII only.
+/// Trims leading and trailing whitespace that contains a line break. oxlint only trims ASCII whitespace.
 fn trim_like_react(text: &[u8], is_oxlint: bool) -> &[u8] {
     let has_line_break = |blanks: &[u8]| strings::contains_char(blanks, b'\n');
     let rest = if is_oxlint { text.trim_ascii_start() } else { strings::trim_js_whitespace_start(text) };
@@ -151,7 +151,7 @@ fn is_all_lowercase(jsx: Jsx) -> bool {
     })
 }
 
-/// `isChildOfHtmlElement`: its name is `/^[a-z]+$/`. For oxlint it starts with a small letter: `<a>`, `<a-b>`.
+/// `isChildOfHtmlElement`: the name matches `/^[a-z]+$/`. For oxlint it starts with a lowercase letter: `<a>`, `<a-b>`.
 fn is_html_element(jsx: Jsx, is_oxlint: bool) -> bool {
     if !is_oxlint {
         return match jsx.tag().map(Expr::kind) {
@@ -162,7 +162,7 @@ fn is_html_element(jsx: Jsx, is_oxlint: bool) -> bool {
     }
     get_identifier_name(jsx).is_some_and(|name| match name.bytes().first() {
         Some(first) if first.is_ascii() => first.is_ascii_lowercase(),
-        // Without a hyphen it is the name of a variable.
+        // Without a hyphen it's a variable's name.
         _ => {
             strings::contains_char(name.bytes(), b'-')
                 && strings::wtf8_first_codepoint(name.bytes()).and_then(char::from_u32).is_some_and(char::is_lowercase)

@@ -1,5 +1,7 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunExe } from "harness";
 import { join } from "node:path";
+import { checkGraph } from "../css-layer-order";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -2723,6 +2725,22 @@ c {
       onAfterBundle(api) {
         api.expectFile("/out.css").toBe(out + "\n");
       },
+    });
+  }
+
+  // Random "@import" graphs (css-layer-order.ts). The bundle must give `.t` the rule that the sources give it, and
+  // the same order of named layers. bun 1.4.3 is wrong on each of these, and 543 is still wrong.
+  for (const [seed, options, todo] of [
+    [1, {}, ""],
+    [3, {}, ""],
+    [10, { leadingStatements: false }, ""],
+    [26, { cycles: true }, ""],
+    [2, { emptyBlocks: true }, ""],
+    [2, { anonymous: true }, ""],
+    [543, {}, "the copy of f2.css under layer(v) is replaced by a list of its layers"],
+  ] as const) {
+    test.todoIf(!!todo)(`css/CSSAtLayerOrder: graph ${seed} ${JSON.stringify(options)}`, async () => {
+      expect(await checkGraph(bunExe(), seed, options)).toEqual({ seed, status: "ok", problems: [] });
     });
   }
 

@@ -201,6 +201,7 @@ fn other_tags(lockfile: &Lockfile) -> Vec<(PackageNameHash, Box<[u8]>)> {
         }
     }
     tags.sort_unstable();
+    tags.dedup();
     tags
 }
 

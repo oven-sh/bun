@@ -3071,7 +3071,9 @@ describe("backpressure", () => {
       }
     });
 
-    // Node.js completes the writes behind a waiting write in the async context of that write.
+    // Node.js gives the writes of a tick to the socket in the async context of the first of them, and completes the
+    // writes behind a waiting write in the context of that write. An end() in the same tick is a case of its own:
+    // Node.js then uses the context of the end() call.
     it("the callbacks of writes behind a write() that waits for the socket run in the async context of that write", async () => {
       const storage = new AsyncLocalStorage<string>();
       const stores: (string | undefined)[] = [];
@@ -3079,17 +3081,52 @@ describe("backpressure", () => {
       const connection = await storage.run("listen", netSocket, (req, res) => {
         res.setHeader("Content-Length", TOTAL);
         res.on("close", () => closed.resolve());
-        for (const store of ["first", "second", "third"]) {
-          storage.run(store, () => res.write(Buffer.alloc(TOTAL / 4, "a"), () => stores.push(storage.getStore())));
+        for (const store of ["first", "second", "third", "fourth"]) {
+          storage.run(store, () =>
+            res.write(Buffer.alloc(TOTAL / 4, "a"), () => {
+              if (stores.push(storage.getStore()) === 4) res.end();
+            }),
+          );
         }
-        res.end(Buffer.alloc(TOTAL / 4, "a"));
       });
       const client = await connection.connect();
       try {
         client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
         expect(await readBody(client)).toBe(TOTAL);
         await closed.promise;
-        expect(stores).toEqual(["first", "first", "first"]);
+        expect(stores).toEqual(["first", "first", "first", "first"]);
+      } finally {
+        client.destroy();
+        connection.close();
+      }
+    });
+
+    it("a write() that finds the socket idle again starts the async context of the callbacks behind it", async () => {
+      const storage = new AsyncLocalStorage<string>();
+      const stores: (string | undefined)[] = [];
+      const closed = Promise.withResolvers<void>();
+      const note = () => void stores.push(storage.getStore());
+      const connection = await storage.run("listen", netSocket, (req, res) => {
+        res.on("close", () => closed.resolve());
+        res.setHeader("Content-Length", 200);
+        storage.run("first", () =>
+          res.write(Buffer.alloc(100, "a"), () => {
+            note();
+            storage.run("second", () =>
+              res.write(Buffer.alloc(100, "a"), () => {
+                note();
+                res.end();
+              }),
+            );
+          }),
+        );
+      });
+      const client = await connection.connect();
+      try {
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        client.resume();
+        await closed.promise;
+        expect(stores).toEqual(["first", "second"]);
       } finally {
         client.destroy();
         connection.close();
@@ -3134,8 +3171,9 @@ describe("backpressure", () => {
     });
 
     // A stream of user code can forget the write that it holds when it is destroyed: readable-stream@3 and a
-    // duplexPair() side do. Node.js then never runs the callbacks. Bun fails them at the 'close' of the socket, as it
-    // does for the callbacks that its node:net forgets when the client resets the connection.
+    // duplexPair() side do. Node.js then runs no callback. Bun fails them at the 'close' of the socket, as it does for
+    // the callbacks that its node:net forgets when the client resets the connection. Each callback runs once, also
+    // when the socket completes the write after all.
     it("the write() callbacks that a destroyed socket forgot fail before 'close', and run once", async () => {
       class ForgetfulSocket extends Duplex {
         forgotten: (() => void)[] = [];
@@ -3145,6 +3183,7 @@ describe("backpressure", () => {
         }
       }
       const events: string[] = [];
+      const wrote = Promise.withResolvers<void>();
       const closed = Promise.withResolvers<void>();
       const server = http.createServer((req, res) => {
         res.on("close", () => {
@@ -3153,22 +3192,24 @@ describe("backpressure", () => {
         });
         res.write(CHUNK, writeCallback(events, "first"));
         res.write(CHUNK, writeCallback(events, "second"));
-        req.socket.destroy();
+        wrote.resolve();
       });
       const socket = new ForgetfulSocket();
       server.emit("connection", socket);
       socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await wrote.promise;
+      // The socket has a write in flight from the next turn on.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      socket.destroy();
       await closed.promise;
       const atClose = [...events];
-      // The socket remembers the write after all. In Node.js that is the first call of the callbacks.
       for (const callback of socket.forgotten) callback();
       await new Promise<void>(resolve => setImmediate(resolve));
-      const failedAtClose = ["first write callback: error", "second write callback: error", "close"];
-      expect({ atClose, events }).toEqual(
-        process.versions.bun
-          ? { atClose: failedAtClose, events: failedAtClose }
-          : { atClose: ["close"], events: ["close", "first write callback: done", "second write callback: error"] },
-      );
+      const failed = ["first write callback: error", "second write callback: error"];
+      expect({ atClose, callbacks: events.filter(event => event !== "close") }).toEqual({
+        atClose: process.versions.bun ? [...failed, "close"] : ["close"],
+        callbacks: failed,
+      });
     });
 
     // The remaining cases use the duplexPair() side: it takes less than one
@@ -5215,11 +5256,9 @@ describe("backpressure", () => {
       });
 
       // The response class writes before the server gives the response its socket.
-      // Node.js keeps the chunks of a corked chunked response apart from the socket. Its v26.3.0 then emits no 'drain'
-      // for a write() that returned false under the cork. Later versions do: https://github.com/nodejs/node/pull/64038
+      // Under res.cork() Node.js counts the chunks of a chunked response apart from the socket. A write() that returned
+      // false there gets its 'drain' after res.uncork() all the same.
       it("a chunked write() over the high water mark under res.cork() gets its 'drain' after res.uncork()", async () => {
-        const [major, minor] = process.versions.node.split(".").map(Number);
-        const emitsDrain = !!process.versions.bun || major > 26 || (major === 26 && minor >= 5);
         const events: string[] = [];
         const received = Promise.withResolvers<void>();
         let size = 0;
@@ -5244,10 +5283,7 @@ describe("backpressure", () => {
             if (done) break;
             if ((length += value.length) >= size) received.resolve();
           }
-          expect({ events, length }).toEqual({
-            events: emitsDrain ? ["write() returned false", "drain"] : ["write() returned false"],
-            length: size,
-          });
+          expect({ events, length }).toEqual({ events: ["write() returned false", "drain"], length: size });
         } finally {
           close();
         }

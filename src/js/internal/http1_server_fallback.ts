@@ -102,8 +102,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   // What waits until the socket holds none of the response's bytes, and its async context (native's onwritable slot).
   let onwritable: ((...args: unknown[]) => void) | null | undefined = null;
   let onwritableFrame;
-  // The completions of the socket that this response waits for: of the chunks whose callbacks it gave to the socket, and of the empty write of waitForSocket().
-  let awaiting = 0;
 
   function writeHeadToSocket(contentLength) {
     if (headWritten) return;
@@ -230,32 +228,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (!socket.writableEnded) accepted = socket.write(data, callback);
   }
 
-  // A Writable of user code (readable-stream@3) has no getter for the flag.
-  function socketNeedsDrain() {
-    return socket.writableNeedDrain ?? socket._writableState?.needDrain;
-  }
-
-  // A socket under its high water mark emits no 'drain'. The response refused the writes of a turn, as the socket of Node.js does under the cork of a tick, so the socket owes its 'drain' from here on. Not while a completion is on its way: that one answers.
-  function waitForSocket() {
-    if (awaiting !== 0 || socketNeedsDrain() || socket.writableEnded) return;
-    const state = socket._writableState;
-    if (state) {
-      state.needDrain = true;
-    } else {
-      // Not a Writable of node:stream. An empty write calls back behind every byte that the socket holds, like the one of end() below.
-      awaiting++;
-      socket.write("", "latin1", onSocketAnswered);
-    }
-  }
-
-  // What waits runs once the socket is empty, ahead of the callback of the chunk that emptied it, like the 'drain' of a Writable. An ended socket emits no 'drain': its 'finish' runs the write callbacks that wait.
-  function onSocketAnswered(err?) {
-    awaiting--;
-    if (err || !onwritable || socket.writableEnded) return;
-    if (socket.writableLength === 0) settleWaiting(onwritable);
-    else waitForSocket();
-  }
-
   // Gives the callback of a chunk to the socket, which runs it when it has written the chunk. The connection keeps it too, for failHeldCallbacks().
   function heldBySocket(callback) {
     const entry: HeldCallback = { callback, next: null };
@@ -267,13 +239,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       newest.next = entry;
     }
     held.newest = entry;
-    awaiting++;
     return err => {
       const frame = held.frame;
       const callback = takeHeldCallback(held, entry);
-      if (callback === null) return;
-      onSocketAnswered(err);
-      runHeldCallback(frame, callback, err);
+      if (callback !== null) runHeldCallback(frame, callback, err);
     };
   }
 
@@ -344,11 +313,13 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (this.ended) return;
       onwritable = callback;
       onwritableFrame = callback ? AsyncContextFrame.current() : undefined;
-      if (callback) waitForSocket();
+      // A socket under its high water mark emits no 'drain'. The response refused the writes of a turn, as the socket of Node.js does under the cork of a tick: like that socket, this one owes its 'drain' from here on.
+      const state = callback && socket._writableState;
+      if (state) state.needDrain = true;
     },
-    // What the socket holds: the response has the socket to itself until the bytes of end() have left. A socket that owes its 'drain' is not empty yet.
+    // What the socket holds: the response has the socket to itself until the bytes of end() have left. A socket that owes its 'drain' is not empty yet. readable-stream@3 has no getter for that flag.
     get bufferedAmount() {
-      return socket.writableLength || (socketNeedsDrain() ? 1 : 0);
+      return socket.writableLength || ((socket.writableNeedDrain ?? socket._writableState?.needDrain) ? 1 : 0);
     },
     // True while the socket can take a chunk: then write() gives it the callback of the chunk.
     get [kTakesWriteCallback]() {

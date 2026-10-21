@@ -51,6 +51,21 @@ Macros are import statements annotated with either:
 - `with { type: 'macro' }` — an import attribute, a Stage 4 ECMAScript proposal
 - `assert { type: 'macro' }` — an import assertion, an earlier incarnation of import attributes that has now been abandoned (but several browsers and runtimes already support it)
 
+Bun removes a macro import from the output and replaces each call of the macro with its result. The import has no value at runtime, so a use of it outside of a call, in code that can run, is a build error.
+
+```ts title="cli.tsx" icon="/icons/typescript.svg"
+import { random } from "./random.ts" with { type: "macro" };
+import { random as randomAtRuntime } from "./random.ts";
+
+console.log(random()); // Bun replaces this call with its result
+
+const alias = random; // error: "random" is a macro import and is not defined at runtime
+
+const atRuntime = randomAtRuntime; // a regular import has a value at runtime
+```
+
+To inline a constant, export a function that returns it and call that function. To use the same export at runtime, import it a second time under another name, without the attribute.
+
 ## Security considerations
 
 You must explicitly import a macro with `{ type: "macro" }` for it to run at bundle-time. These imports have no effect unless you call them, unlike regular JavaScript imports which may have side effects.
@@ -135,6 +150,8 @@ if (returnFalse()) {
   console.log("This code is eliminated");
 }
 ```
+
+Bun looks for a use of a macro import outside of a call after it folds constants. A reference in a branch that can never run, such as `if (false)`, is not an error. Bun folds more with `--minify-syntax` and less under the debugger, so a file can build with one command and fail with another. The commands that keep dead code (`bun test --coverage`, `bun -p` and `bun repl`) do not look for the use.
 
 ## Serializability
 

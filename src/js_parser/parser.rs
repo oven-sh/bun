@@ -665,7 +665,7 @@ pub struct MacroRefData<'a> {
     pub(crate) name: Option<&'a [u8]>,
 }
 
-type MacroRefs<'a> = ArrayHashMap<Ref, MacroRefData<'a>>;
+pub(crate) type MacroRefs<'a> = ArrayHashMap<Ref, MacroRefData<'a>>;
 
 pub(crate) enum Substitution {
     Success(Expr),

@@ -1,5 +1,4 @@
 //! Core AST node payload types and arena-slice helpers.
-#![allow(non_snake_case)]
 
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -699,6 +698,7 @@ pub struct Catch {
 pub struct Finally {
     pub loc: crate::Loc,
     pub stmts: StmtNodeList,
+    pub body_loc: crate::Loc,
 }
 
 pub struct Case {

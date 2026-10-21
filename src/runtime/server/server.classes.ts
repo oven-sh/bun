@@ -104,6 +104,7 @@ function generate(name) {
       "wsOnError",
       "wsOnPing",
       "wsOnPong",
+      "wsPackageHandlers",
     ],
   });
 }
@@ -112,126 +113,6 @@ export default [
   generate(`DebugHTTPServer`),
   generate(`HTTPSServer`),
   generate(`DebugHTTPSServer`),
-
-  define({
-    name: "NodeHTTPResponse",
-    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
-    sharedThis: true,
-    JSType: "0b11101110",
-    proto: {
-      writeHead: {
-        fn: "writeHead",
-        length: 3,
-      },
-      writeContinue: {
-        fn: "writeContinue",
-      },
-      writeInformational: {
-        fn: "writeInformational",
-        length: 1,
-      },
-      write: {
-        fn: "write",
-        length: 3,
-      },
-      end: {
-        fn: "end",
-        length: 2,
-      },
-      getBytesWritten: {
-        fn: "getBytesWritten",
-        length: 0,
-      },
-      flushHeaders: {
-        fn: "flushHeaders",
-        length: 0,
-      },
-      cork: {
-        fn: "cork",
-        length: 1,
-      },
-      ref: {
-        fn: "jsRef",
-      },
-      unref: {
-        fn: "jsUnref",
-      },
-      abort: {
-        fn: "abort",
-        length: 0,
-      },
-      pause: {
-        fn: "doPause",
-        length: 0,
-        passThis: true,
-      },
-      pauseReads: {
-        fn: "pauseSocketReads",
-        length: 0,
-      },
-      drainRequestBody: {
-        fn: "drainRequestBody",
-        length: 0,
-      },
-      takeRequestTrailers: {
-        fn: "takeRequestTrailers",
-        length: 0,
-      },
-      takeRawHeaders: {
-        fn: "takeRawHeaders",
-        length: 0,
-      },
-      writeHeadAndEnd: {
-        fn: "writeHeadAndEnd",
-        length: 8,
-      },
-      resume: {
-        fn: "doResume",
-        length: 0,
-      },
-      bufferedAmount: {
-        getter: "getBufferedAmount",
-      },
-      aborted: {
-        getter: "getAborted",
-      },
-      flags: {
-        getter: "getFlags",
-      },
-      finished: {
-        getter: "getFinished",
-      },
-      hasBody: {
-        getter: "getHasBody",
-      },
-      ondata: {
-        getter: "getOnData",
-        setter: "setOnData",
-        this: true,
-      },
-      onabort: {
-        getter: "getOnAbort",
-        setter: "setOnAbort",
-        this: true,
-      },
-      hasCustomOnData: {
-        getter: "getHasCustomOnData",
-        setter: "setHasCustomOnData",
-      },
-      upgraded: {
-        getter: "getUpgraded",
-      },
-      onwritable: {
-        getter: "getOnWritable",
-        setter: "setOnWritable",
-        this: true,
-      },
-    },
-    klass: {},
-    refCounted: true,
-    noConstructor: true,
-    values: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
-  }),
 
   define({
     name: "ServerWebSocket",
@@ -252,44 +133,18 @@ export default [
       sendText: {
         fn: "sendText",
         length: 2,
-        // ASSERTION FAILED: m_data[index].lockCount
-        // /Users/jarred/actions-runner/_work/WebKit/WebKit/Source/JavaScriptCore/dfg/DFGRegisterBank.h(204) : void JSC::DFG::RegisterBank<JSC::GPRInfo>::unlock(RegID) [BankInfo = JSC::GPRInfo]
-        // 1   0x102740124 WTFCrash
-        // 3   0x103076bac JSC::MacroAssemblerARM64::add64(JSC::AbstractMacroAssembler<JSC::ARM64Assembler>::TrustedImm64, JSC::ARM64Registers::RegisterID, JSC::ARM64Registers::RegisterID)
-        // 4   0x10309a2d0 JSC::DFG::SpeculativeJIT::compileCallDOM(JSC::DFG::Node*)::$_0::operator()(JSC::DFG::Edge) const
-        // DOMJIT: {
-        //   returns: "int",
-        //   args: ["JSString", "bool"],
-        // },
       },
       sendBinary: {
         fn: "sendBinary",
         length: 2,
-        // ASSERTION FAILED: m_data[index].lockCount
-        // /Users/jarred/actions-runner/_work/WebKit/WebKit/Source/JavaScriptCore/dfg/DFGRegisterBank.h(204) : void JSC::DFG::RegisterBank<JSC::GPRInfo>::unlock(RegID) [BankInfo = JSC::GPRInfo]
-        // 1   0x102740124 WTFCrash
-        // 3   0x103076bac JSC::MacroAssemblerARM64::add64(JSC::AbstractMacroAssembler<JSC::ARM64Assembler>::TrustedImm64, JSC::ARM64Registers::RegisterID, JSC::ARM64Registers::RegisterID)
-        // 4   0x10309a2d0 JSC::DFG::SpeculativeJIT::compileCallDOM(JSC::DFG::Node*)::$_0::operator()(JSC::DFG::Edge) const
-        // DOMJIT: {
-        //   returns: "int",
-        //   args: ["JSUint8Array", "bool"],
-        // },
       },
       publishText: {
         fn: "publishText",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSString", "JSString"],
-        },
       },
       publishBinary: {
         fn: "publishBinary",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSString", "JSUint8Array"],
-        },
       },
       ping: {
         fn: "ping",
@@ -317,6 +172,17 @@ export default [
       getBufferedAmount: {
         fn: "getBufferedAmount",
         length: 0,
+      },
+      pause: {
+        fn: "pause",
+        length: 0,
+      },
+      resume: {
+        fn: "resume",
+        length: 0,
+      },
+      isPaused: {
+        getter: "getIsPaused",
       },
       binaryType: {
         getter: "getBinaryType",
@@ -358,18 +224,5 @@ export default [
     construct: true,
     klass: {},
     values: ["server"],
-  }),
-
-  define({
-    name: "HTMLBundle",
-    noConstructor: true,
-    refCounted: true,
-    proto: {
-      index: {
-        getter: "getIndex",
-        cache: true,
-      },
-    },
-    klass: {},
   }),
 ];

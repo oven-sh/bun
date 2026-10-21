@@ -327,14 +327,16 @@ impl Expansion {
                 &mut expanded[..],
                 lexer_output.contains_nested,
             ) {
-                if matches!(e, braces::ParserError::TooManyBraces) {
-                    let msg = "too many braces in brace expansion".to_string();
-                    me.state =
-                        ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-                    return;
-                }
-                // An unexpected token from brace expansion is a parser bug.
-                panic!("unexpected error from Braces.expand: {e:?}");
+                let msg = match e {
+                    braces::ParserError::TooManyBraces => "too many braces in brace expansion",
+                    // The word has more than `u16::MAX` brace tokens.
+                    braces::ParserError::UnexpectedToken => {
+                        "unexpected token while expanding braces"
+                    }
+                    braces::ParserError::OutOfMemory => bun_core::out_of_memory(),
+                };
+                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().into())));
+                return;
             }
             drop(arena);
             expanded
@@ -390,12 +392,20 @@ impl Expansion {
                 b'*' | b'?' | b'[' | b']' | b'{' | b'}' | b',' => {
                     pattern.extend_from_slice(&[b'[', b, b']']);
                 }
+                // The shell has no literal atom for `(` in a word, so here it is always data. It only means something to the
+                // matcher after one of these, as the start of an extglob group, and without a group `)` and `|` are plain
+                // characters. Any other `(` stays bare, so that `Dropbox (Personal)` is still a literal component, which
+                // the walker opens by name: that follows a symlink, and ignores case where the file system does.
+                b'(' if matches!(pattern.last(), Some(b'?' | b'*' | b'+' | b'@' | b'!')) => {
+                    pattern.extend_from_slice(b"[(]");
+                }
                 // `[!]`/`[^]` would be a negated class, so `!` cannot use the
                 // class wrapper. Only a `!` at the start of a path component
                 // (the same split `build_pattern_components` performs) can act
                 // as pattern syntax — the matcher's negation loop — so wrap
                 // that one in a one-branch brace group whose sole branch is
                 // the literal `!`. Every other `!` already matches literally
+                // (a `(` after it is wrapped, so it can't start `!(`)
                 // and is emitted bare: wrapping each one costs a brace-stack
                 // slot per byte, and a run of more than 10 interpolated `!`
                 // would overflow the matcher's bounded brace stack and turn
@@ -613,7 +623,7 @@ impl Expansion {
         }
         // SAFETY: single trampoline frame; the child script's env (and its
         // parent buffer in the `Borrowed` case) has no other live borrow.
-        let stdout = unsafe {
+        let mut stdout = unsafe {
             interp
                 .as_script_mut(child)
                 .base
@@ -621,6 +631,11 @@ impl Expansion {
                 .buffered_stdout_mut()
         }
         .clone();
+        // Like bash and dash, drop NUL bytes before trimming and field splitting.
+        let had_nul = bun_core::strings::contains_char(&stdout, 0);
+        if had_nul {
+            stdout.retain(|&b| b != 0);
+        }
 
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command).
@@ -644,6 +659,10 @@ impl Expansion {
                     hi -= 1;
                 }
                 me.current_out.extend_from_slice(&stdout[..hi]);
+                // A quoted substitution that printed only NUL bytes expands to one empty word.
+                if had_nul && me.cmd_subst_quoted {
+                    me.has_quoted_empty = true;
+                }
             } else {
                 Self::post_subshell_expansion(me, stdout);
             }

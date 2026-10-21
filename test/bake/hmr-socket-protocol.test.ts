@@ -12,9 +12,16 @@
 //     On a release build that assert is compiled out and the second
 //     `start_async_bundle` overwrites the in-flight `CurrentBundle`, freeing
 //     the arena its parse tasks are still reading: a multi-thread segfault.
+//   - "s" (Subscribe) with a topic set that drops a topic kept the uWS
+//     subscription for that topic, so the socket still received its frames.
+//     A hot update that only such a socket received reached
+//     `put_or_increment_ref_count`'s `debug_assert!(ref_count > 0)`.
+//   - "s" with topic `M` arms a timer. Its handler left the fired timer marked
+//     active, so closing the socket removed it from the timer heap a second time:
+//     `assert!(self.root == v)`, or a different timer dropped on a canary build.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -339,3 +346,153 @@ test.concurrent("releasing a testing batch while another bundle is in flight def
   expect(reloaded.status).toBe(200);
   expect(proc.killed).toBe(false);
 });
+
+test.concurrent("a subscribe frame that drops a topic stops delivery of that topic", async () => {
+  // The socket subscribes to each topic set in turn. Topic `h` delivers hot
+  // updates (`u`). Topic `r` delivers an `r` frame when a bundle finishes.
+  //
+  // Each step requests a page that is not bundled yet. The request starts one
+  // bundle, and the response arrives after the dev server published the
+  // frames of that bundle.
+  //
+  // Each page has a script of its own, so each bundle has a source map that
+  // the dev server has not stored yet. Only a new source map can reach the
+  // assert.
+  const steps = [
+    { topics: "hr", page: "/a" },
+    { topics: "r", page: "/b" },
+    { topics: "", page: "/c" },
+    { topics: "hr", page: "/d" },
+  ];
+  const pageWith = (script: string) => indexHtml.replace("./entry.ts", script);
+  using dir = tempDir("hmr-socket-resubscribe", {
+    "index.html": indexHtml,
+    "other.html": indexHtml,
+    "entry.ts": `console.log("entry");`,
+    "a.html": pageWith("./a.ts"),
+    "b.html": pageWith("./b.ts"),
+    "c.html": pageWith("./c.ts"),
+    "d.html": pageWith("./d.ts"),
+    "a.ts": `console.log("a");`,
+    "b.ts": `console.log("b");`,
+    "c.ts": `console.log("c");`,
+    "d.ts": `console.log("d");`,
+    "server.ts": /* ts */ `
+      import index from "./index.html";
+      import other from "./other.html";
+      import a from "./a.html";
+      import b from "./b.html";
+      import c from "./c.html";
+      import d from "./d.html";
+      const server = Bun.serve({
+        port: 0,
+        development: { hmr: true, console: false },
+        routes: { "/": index, "/other": other, "/a": a, "/b": b, "/c": c, "/d": d },
+        fetch() { return new Response("fallback"); },
+      });
+      console.log("PORT=" + server.port);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const dev = watchDevServer(proc);
+  const port = await dev.port;
+
+  // A process exit and a socket close reject `failed` at once.
+  const failed = Promise.withResolvers<never>();
+  failed.promise.catch(() => {});
+  proc.exited.then(() => failed.reject(new Error("dev server exited")));
+  /** Awaits `promise`. Its failure, a process exit, or a socket close rejects with the dev server's stderr. */
+  async function orFail<T>(promise: Promise<T>) {
+    try {
+      return await Promise.race([promise, failed.promise]);
+    } catch (e) {
+      throw new Error(`${(e as Error).message}\n--- dev server stderr ---\n${dev.stderr()}`, { cause: e });
+    }
+  }
+
+  // The ids of the frames that the server published to the socket since its
+  // last SetUrl reply.
+  let published: string[] = [];
+  const replies: ((published: string[]) => void)[] = [];
+  using hmr = await connectHmr(
+    port,
+    id => {
+      if (id === "V") return;
+      if (id !== "n") return void published.push(id);
+      replies.shift()?.(published);
+      published = [];
+    },
+    err => failed.reject(err),
+  );
+
+  // The server answers SetUrl (`n` plus a route) on the same socket, and only
+  // when the route changes, so the round trips alternate between two routes.
+  // The reply arrives after each frame that the server published to the
+  // socket before it handled the SetUrl frame.
+  let route = "/";
+  function roundTrip() {
+    route = route === "/" ? "/other" : "/";
+    const reply = new Promise<string[]>(resolve => replies.push(resolve));
+    hmr.ws.send("n" + route);
+    return orFail(reply);
+  }
+
+  const delivered: { topics: string; ids: string[] }[] = [];
+  for (const { topics, page } of steps) {
+    hmr.ws.send("s" + topics);
+    // Frames that arrive before this reply belong to the previous topic set.
+    await roundTrip();
+    await orFail(fetch(`http://127.0.0.1:${port}${page}`).then(response => response.text()));
+    delivered.push({ topics, ids: [...new Set(await roundTrip())].sort() });
+  }
+  expect(delivered).toEqual([
+    { topics: "hr", ids: ["r", "u"] },
+    { topics: "r", ids: ["r"] },
+    { topics: "", ids: [] },
+    { topics: "hr", ids: ["r", "u"] },
+  ]);
+});
+
+// Only canary and debug builds have the memory visualizer topic.
+test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
+  "the memory visualizer topic sends a frame every second until the socket closes",
+  async () => {
+    using dir = tempDir("hmr-socket-memory-visualizer", {
+      "index.html": indexHtml,
+      "entry.ts": `console.log("entry");`,
+      "server.ts": serverTs,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const dev = watchDevServer(proc);
+    const port = await dev.port;
+
+    // Subscribing sends the first frame. The timer sends the rest.
+    let frames = 0;
+    const third = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const hmr = await connectHmr(
+      port,
+      id => void (id === "M" && ++frames === 3 && third.resolve()),
+      err => (third.reject(err), closed.resolve()),
+    );
+    hmr.ws.send("sM");
+    await third.promise;
+    hmr.ws.close();
+    await closed.promise;
+
+    const res = await fetch(`http://127.0.0.1:${port}/fallback`);
+    expect(await res.text(), dev.stderr()).toBe("fallback");
+  },
+);

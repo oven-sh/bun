@@ -133,7 +133,7 @@ struct WorkerVmInit {
 
 enum EntryOutcome {
     Continue,
-    /// The entry module rejected and no handler took it: the worker exits.
+    /// The entry module rejected, and either no handler caught it or the handler stopped the worker.
     Stop,
 }
 
@@ -285,6 +285,7 @@ impl WebWorker {
         name_str: &BunString,
         specifier_str: &BunString,
         error_message: &mut BunString,
+        error_is_invalid_exec_argv: &mut bool,
         _parent_context_id: u32,
         this_context_id: u32,
         mini: bool,
@@ -362,6 +363,16 @@ impl WebWorker {
                 ))
             };
             if let Some(flags) = parsed {
+                if let Some(invalid) = flags.invalid {
+                    use bun_core::WTFStringImplExt as _;
+                    // SAFETY: an index into the same slice, whose strings the caller keeps alive.
+                    let arg = unsafe { &**exec_argv_ptr.add(invalid) }.to_owned_slice_z();
+                    let mut message = b"Initiated Worker with invalid execArgv flags: ".to_vec();
+                    message.extend_from_slice(arg.as_bytes());
+                    *error_message = BunString::clone_utf8(&message);
+                    *error_is_invalid_exec_argv = true;
+                    return core::ptr::null_mut();
+                }
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
                 let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
@@ -873,6 +884,11 @@ impl WebWorker {
         // so buffered postMessageToThread deliveries drain and the sender's
         // Atomics.waitAsync settles. WebWorker__entrySettled re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
+        // The hook runs JS, which can request termination. If it did, stop before the start sequence's GC.
+        if self.has_requested_terminate() {
+            self.flush_logs(vm);
+            return self.shutdown();
+        }
 
         // The entry's evaluation outcome is checked once now and then after every
         // loop turn: a rejection (immediate, or a top-level await rejecting
@@ -897,7 +913,7 @@ impl WebWorker {
                     (*promise).result(vm.jsc_vm()),
                     is_rejection,
                 );
-                if handled {
+                if handled && !self.has_requested_terminate() {
                     EntryOutcome::Continue
                 } else {
                     EntryOutcome::Stop
@@ -905,8 +921,8 @@ impl WebWorker {
             }
         };
         if let EntryOutcome::Stop = observe_entry(vm) {
-            // exit_code is already 1 from uncaught_exception; re-setting it here
-            // would clobber a process.on('exit') change to process.exitCode.
+            // exit_code is already set (1, or the handler's process.exit() code). Setting it again
+            // here would clobber a process.on('exit') change to process.exitCode.
             return self.shutdown();
         }
         // A still-pending entry promise is an unsettled top-level await: as in
@@ -1008,45 +1024,13 @@ impl WebWorker {
         drop(self.vm_handle.lock().take());
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
 
-        // ---- 2. User exit handlers -----------------------------------------
+        // ---- 2–5. User exit handlers; stop, forbid script, wait, ~VM, loops, destroy
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; no other thread holds a pointer to it (they
-            // only ever held its handle) — `&mut` is exclusive.
-            let vm = unsafe { &mut *vm_ptr };
-            vm.is_shutting_down = true;
-            vm.on_exit();
-            exit_code = i32::from(vm.exit_handler.exit_code);
-            log!(
-                "[{}] shutdown: exit handlers done",
-                self.execution_context_id
-            );
-
-            // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
-            // SAFETY: this thread's VM; sole owner.
-            unsafe { VirtualMachine::teardown(vm_ptr, crate::virtual_machine::Teardown::Worker) };
-
-            // `destroy()` deinits the fields; reclaim the storage `init` put on
-            // the global heap (worker `init_worker` always passes `log: None`,
-            // so the log box is VM-owned here).
-            // SAFETY: sole owner; nothing past this point dereferences the VM.
-            unsafe {
-                let console = core::mem::replace(&mut (*vm_ptr).console, core::ptr::null_mut());
-                if !console.is_null() {
-                    bun_core::heap::destroy(console);
-                }
-                if let Some(log) = (*vm_ptr).log.take() {
-                    bun_core::heap::destroy(log.as_ptr());
-                }
-                virtual_machine::VMHolder::set_vm(None);
-                // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
-                // `init`, NOT `Box::new` — dealloc the raw storage directly so
-                // field `Drop`s do not re-run on already-`deinit`'d state.
-                std::alloc::dealloc(
-                    vm_ptr.cast::<u8>(),
-                    core::alloc::Layout::new::<VirtualMachine>(),
-                );
-            }
+            // SAFETY: this thread's VM, whose API lock `thread_main` took; no other
+            // thread holds a pointer to it (they only ever held its handle);
+            // `init_worker` always passes `log: None`.
+            exit_code = i32::from(unsafe { VirtualMachine::exit_and_free(vm_ptr) });
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",
@@ -1158,7 +1142,7 @@ impl WebWorker {
 
 fn on_unhandled_rejection(
     vm: &mut VirtualMachine,
-    global_object: &JSGlobalObject,
+    _: &JSGlobalObject,
     error_instance_or_exception: JSValue,
 ) {
     // Prevent recursion
@@ -1171,6 +1155,9 @@ fn on_unhandled_rejection(
     if !vm.script_allowed() {
         return;
     }
+
+    // The realm that raised the error may be a node:vm context.
+    let global_object = vm.global();
 
     let mut error_instance = error_instance_or_exception
         .to_error()

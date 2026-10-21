@@ -70,12 +70,8 @@ pub enum Error {
     MissingShell,
     #[error("NotFound")]
     NotFound,
-    #[error("InvalidRoot")]
-    InvalidRoot,
     #[error("EmptyKey")]
     EmptyKey,
-    #[error("ExpectedObject")]
-    ExpectedObject,
     #[error("FormatFailed")]
     FormatFailed,
     #[error("SelfExePathFailed")]
@@ -100,8 +96,6 @@ pub enum Error {
     UpgradeFailedBecauseOfMissingExecutableDir,
     #[error("NoBinFound")]
     NoBinFound,
-    #[error("NeedToInstall")]
-    NeedToInstall,
     #[error("PathTooLong")]
     PathTooLong,
     #[error("AssertionError")]
@@ -116,8 +110,6 @@ pub enum Error {
     CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
     #[error("UnableToEncode")]
     UnableToEncode,
     #[error("InvalidHeaderName")]
@@ -342,7 +334,6 @@ impl From<Error> for bun_uws_sys::Error {
 }
 
 impl Error {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
             Self::SnapshotFailed => "SnapshotFailed",
@@ -380,9 +371,7 @@ impl Error {
             Self::UnrecognizedCommand => "UnrecognizedCommand",
             Self::MissingShell => "MissingShell",
             Self::NotFound => "NotFound",
-            Self::InvalidRoot => "InvalidRoot",
             Self::EmptyKey => "EmptyKey",
-            Self::ExpectedObject => "ExpectedObject",
             Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",
             Self::SpawnFailed => "SpawnFailed",
@@ -397,7 +386,6 @@ impl Error {
                 "UpgradeFailedBecauseOfMissingExecutableDir"
             }
             Self::NoBinFound => "NoBinFound",
-            Self::NeedToInstall => "NeedToInstall",
             Self::PathTooLong => "PathTooLong",
             Self::AssertionError => "AssertionError",
             Self::ModuleNotFound => "ModuleNotFound",
@@ -405,7 +393,6 @@ impl Error {
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
-            Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",

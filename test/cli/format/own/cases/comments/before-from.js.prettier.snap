@@ -1,0 +1,53 @@
+------------------
+{ printWidth: 80 }
+------------------
+import { a /* comment */ } from "a";
+
+import {
+  b, // comment
+} from "b";
+
+import {
+  c,
+  // comment
+} from "c";
+
+export { d /* comment */ } from "d";
+
+import e /* comment */ from "e";
+
+import f from "f"; // comment
+
+import g from // comment
+"g";
+
+import * as h from /* comment */
+"h";
+
+-------------------
+{ printWidth: 100 }
+-------------------
+import { a /* comment */ } from "a";
+
+import {
+  b, // comment
+} from "b";
+
+import {
+  c,
+  // comment
+} from "c";
+
+export { d /* comment */ } from "d";
+
+import e /* comment */ from "e";
+
+import f from "f"; // comment
+
+import g from // comment
+"g";
+
+import * as h from /* comment */
+"h";
+
+===================== End =====================

@@ -419,7 +419,7 @@ private:
 
 class Ec final {
 public:
-    static int GetCurveIdFromName(const char* name);
+    static int GetCurveIdFromName(WTF::StringView name);
 };
 
 // A managed pointer to a buffer of data. When destroyed the underlying
@@ -988,7 +988,7 @@ public:
     };
     CheckMatch checkHost(const std::span<const char> host,
         int flags,
-        DataPointer* peerName = nullptr) const;
+        WTF::String* peerName = nullptr) const;
     CheckMatch checkEmail(const std::span<const char> email, int flags) const;
     CheckMatch checkIp(const char* ip, int flags) const;
 

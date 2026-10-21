@@ -78,6 +78,7 @@ enum ExceptionCode : uint8_t {
     InvalidURLError,
     CryptoOperationFailedError,
     EVENT_RECURSION,
+    WORKER_INVALID_EXEC_ARGV,
 };
 
 } // namespace WebCore

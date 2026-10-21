@@ -40,7 +40,7 @@ function rawH2Server(): net.Server {
     let buf = Buffer.alloc(0);
     let pre = false;
     s.on("error", () => {});
-    s.on("data", d => {
+    s.on("data", (d: Buffer) => {
       buf = Buffer.concat([buf, d]);
       if (!pre) {
         if (buf.length < PREFACE.length) return;
@@ -216,7 +216,7 @@ async function closeIn(site: Site, code: number, defer: boolean): Promise<string
   const ignoreErrors = (stream: http2.Http2Stream) => stream.on("error", () => {});
 
   const server = http2.createServer();
-  server.on("stream", stream => {
+  server.on("stream", (stream: http2.ServerHttp2Stream) => {
     switch (site) {
       case "server 'stream'":
       case "server 'stream', request open":
@@ -321,6 +321,38 @@ for (const [site, table] of [
     });
   }
 }
+
+// request() rejects invalid headers one tick later, so the user's close() or destroy() runs first.
+describe("closing a request before its invalid headers are rejected keeps rstCode 0 and doesn't emit 'error'", () => {
+  const invalidHeaders = {
+    "a :path with a space": { ":path": "/a b" },
+    "content-length on a DELETE": { ":method": "DELETE", "content-length": "1" },
+  };
+  const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+  for (const [name, headers] of Object.entries(invalidHeaders)) {
+    for (const call of ["close", "destroy"] as const) {
+      test(`${call}() with ${name}`, async () => {
+        const server = http2.createServer();
+        const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+        try {
+          await new Promise(resolve => client.on("connect", resolve));
+          const events: string[] = [];
+          const req = client.request(headers);
+          req.on("close", () => events.push("close:" + req.rstCode));
+          req[call]();
+          // close() waits for 'ready' and then queues the RST_STREAM with setImmediate.
+          await nextTurn();
+          await nextTurn();
+          assert.deepStrictEqual(events, ["close:0"]);
+        } finally {
+          client.destroy();
+          server.close();
+        }
+      });
+    }
+  }
+});
 
 if (typeof Bun !== "undefined") {
   const node = Bun.which("node");

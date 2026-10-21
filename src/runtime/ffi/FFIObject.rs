@@ -30,7 +30,6 @@ unsafe extern "C" fn noop_bytes_deallocator(_ptr: *mut c_void, _ctx: *mut c_void
 
 /// Unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
 /// this passes the caller's deallocator through so FFI bytes are only freed when asked.
-#[allow(non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
     global: &JSGlobalObject,
@@ -61,7 +60,6 @@ fn create_buffer_with_ctx(
 }
 
 // ── Put helpers from ZigGeneratedCode.cpp; each installs a host fn over its `*__slowpath` export ──
-#[allow(non_snake_case)]
 unsafe extern "C" {
     fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);
     fn Reader__u8__put(global: *mut JSGlobalObject, value: JSValue);
@@ -266,11 +264,22 @@ pub(crate) mod reader {
         };
         let mut addr = base;
         if let Some(off_value) = arguments.get(1) {
-            let off = off_value.to_int32();
-            if off < 0 {
-                addr = addr.saturating_sub(off.unsigned_abs() as usize);
-            } else {
-                addr = addr.saturating_add(off as usize);
+            if off_value.is_number() {
+                if !off_value.as_number().is_finite() {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "byteOffset must be a finite number"
+                    )));
+                }
+                let off = off_value.to_int64();
+                if off < 0 {
+                    addr = addr
+                        .saturating_sub(usize::try_from(off.unsigned_abs()).unwrap_or(usize::MAX));
+                } else {
+                    addr = addr.saturating_add(usize::try_from(off).unwrap_or(usize::MAX));
+                }
+            } else if !off_value.is_empty_or_undefined_or_null() {
+                return Err(global_object
+                    .throw_invalid_arguments(format_args!("Expected number for byteOffset")));
             }
         }
         if addr == 0 {

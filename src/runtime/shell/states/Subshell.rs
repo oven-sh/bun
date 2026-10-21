@@ -51,7 +51,6 @@ impl Subshell {
     /// state for the duration of this call.
     // Caller (Interpreter::spawn_expr) holds the parent env as a raw pointer;
     // the safety contract is documented above and at the call site.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn init_dupe_shell_state(
         interp: &Interpreter,
         parent_shell: *mut ShellExecEnv,

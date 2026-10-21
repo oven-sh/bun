@@ -423,7 +423,8 @@ public:
             return;
         }
 
-        if (mustDeferFinalizers() && inGC()) {
+        // A collection's end phase can run on the collector thread; an addon's finalizer only ever runs on the JS thread.
+        if (inGC() && (mustDeferFinalizers() || WTF::Thread::mayBeGCThread())) {
             Bun__napi_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
@@ -467,7 +468,7 @@ public:
     // gcUnprotect()s the previous one. NapiEnv outlives its owning global —
     // GC-enqueued NapiFinalizerTasks hold a Ref<NapiEnv> and run on the event
     // loop *after* the swap. Finalizer.run opens a NapiHandleScope via
-    // env->globalObject(), which would write m_currentNapiHandleScopeImpl on
+    // env->globalObject(), which would write m_currentHandleScopeImpl on
     // the now-dead old global and trip a write barrier on an unmarked cell
     // (debug: `ASSERT(isMarked(cell))` in Heap::addToRememberedSet; release:
     // segfault when the marker later walks it). The isolation swap calls this
@@ -699,8 +700,8 @@ public:
 };
 
 // If a module registered itself by calling napi_module_register in a static constructor, run this
-// to run the module's entrypoint.
-void executePendingNapiModule(Zig::GlobalObject* globalObject);
+// to run the module's entrypoint with moduleObject as `module`. Throws on failure.
+void executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* moduleObject);
 
 }
 
@@ -720,7 +721,7 @@ static inline Zig::GlobalObject* toJS(napi_env val)
 static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
 {
     if (val.isCell()) {
-        if (auto* scope = globalObject->m_currentNapiHandleScopeImpl.get()) {
+        if (auto* scope = globalObject->m_currentHandleScopeImpl.get()) {
             scope->append(val);
         }
     }

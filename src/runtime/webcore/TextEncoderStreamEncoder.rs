@@ -73,10 +73,10 @@ impl TextEncoderStreamEncoder {
             let result = unsafe {
                 bun_core::vec::fill_spare(buffer, 0, |spare| {
                     let r = strings::copy_latin1_into_utf8(spare, remain);
-                    (r.written as usize, r)
+                    (r.written, r)
                 })
             };
-            remain = &remain[result.read as usize..];
+            remain = &remain[result.read..];
 
             if result.written == 0 && result.read == 0 {
                 buffer.try_reserve(2).map_err(|_| AllocError)?;
@@ -226,7 +226,6 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__createForStream() -> *mut Tex
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__destroyForStream(
     this: *mut TextEncoderStreamEncoder,
 ) {
@@ -241,7 +240,6 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__destroyForStream(
 /// `chunk` (user JS — may throw), then encode. Returns a fresh `Uint8Array`
 /// on success, or `JSValue::zero` with the exception pending on `global`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
@@ -263,7 +261,6 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeForStream(
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__flushForStream(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
@@ -284,7 +281,6 @@ const SCRATCH_CAP: usize = 64 * 1024;
 /// `undefined` for an empty output, or `JSValue::zero` with the exception
 /// pending on `global`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
@@ -336,7 +332,6 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
 
 /// Native-sink flush step; see `TextEncoderStreamEncoder__encodeIntoSink` for the return contract.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,

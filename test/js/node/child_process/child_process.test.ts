@@ -6,16 +6,30 @@ import {
   bunExe,
   isLinux,
   isPosix,
+  isRoot,
   isWindows,
   nodeExe,
   runBunInstall,
   shellExe,
   tempDir,
+  tls as tlsCert,
   tmpdirSync,
 } from "harness";
-import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
+import {
+  ChildProcess,
+  exec,
+  execFile,
+  execFileSync,
+  execSync,
+  fork,
+  spawn,
+  spawnSync,
+  type StdioOptions,
+} from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import net from "node:net";
 import os from "node:os";
+import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -330,7 +344,7 @@ describe("spawn()", () => {
       ["inherit", ["inherit", "ignore", "ignore"]],
       ["fd 0", [0, "ignore", "ignore"]],
     ] as const)("spawn stdio[0]=%s", async (_, stdio) => {
-      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: stdio as any });
+      const child: ChildProcess = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: stdio as any });
       await once(child, "close");
       expect(child.stdin).toBe(null);
       expect(child.stdout).toBe(null);
@@ -374,6 +388,53 @@ describe("spawn()", () => {
       });
     });
     expect(result.trim()).toBe("hello");
+  });
+
+  // The child does not read stdin until the parent tells it to over IPC, so
+  // every write past the pipe buffer sits in the parent's sink when end() runs.
+  it("stdin.end(cb) and 'finish' wait for the backlog to drain", async () => {
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `let n = 0;
+         process.on("message", () => {
+           process.stdin.on("data", d => { n += d.length; });
+           process.stdin.on("end", () => { process.stdout.write(String(n)); process.disconnect(); });
+         });`,
+      ],
+      { env: bunEnv, stdio: ["pipe", "pipe", "pipe", "ipc"] },
+    );
+    const collect = (stream: NodeJS.ReadableStream) =>
+      new Promise<string>(resolve => {
+        let out = "";
+        stream.on("data", d => (out += d));
+        stream.on("end", () => resolve(out));
+      });
+    const stdout = collect(child.stdout!);
+    const stderr = collect(child.stderr!);
+    const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
+
+    // Node emits no 'drain' once end() has been called.
+    const order: string[] = [];
+    const chunk = Buffer.alloc(256 * 1024, 1);
+    for (let i = 0; i < 3; i++) child.stdin!.write(chunk);
+    child.stdin!.write(chunk, () => order.push("write"));
+    child.stdin!.on("drain", () => order.push("drain"));
+    child.stdin!.on("finish", () => order.push("finish"));
+    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<void>();
+    child.stdin!.end(() => {
+      order.push("end");
+      onEnd();
+    });
+    child.on("exit", code => reject(new Error(`child exited with ${code} before end(cb) ran`)));
+    child.send("go");
+
+    await ended;
+    expect(await stderr).toBe("");
+    expect(await stdout).toBe(String(4 * chunk.length));
+    expect(order).toEqual(["write", "end", "finish"]);
+    expect(await exited).toBe(0);
   });
 
   it("should allow us to timeout hanging processes", async () => {
@@ -591,6 +652,74 @@ describe("spawn()", () => {
       expect(stdout).toBe("ok\n");
       expect(status).toBe(0);
     });
+
+    describe("a socket as a stdio entry", () => {
+      // Both ends of an established loopback connection: the socket `connect` returns and the one `server`
+      // accepts for it.
+      async function bothEnds(server: net.Server, connect: (port: number) => net.Socket) {
+        const secure = server instanceof tls.Server;
+        const sockets: net.Socket[] = [];
+        const ends = {
+          sockets,
+          [Symbol.dispose]() {
+            for (const socket of sockets) socket.destroy();
+            server.close();
+          },
+        };
+        try {
+          server.listen(0, "127.0.0.1");
+          await once(server, "listening");
+          const connected = connect((server.address() as net.AddressInfo).port);
+          sockets.push(connected);
+          const [[accepted]] = await Promise.all([
+            once(server, secure ? "secureConnection" : "connection"),
+            once(connected, secure ? "secureConnect" : "connect"),
+          ]);
+          sockets.push(accepted);
+          return ends;
+        } catch (error) {
+          ends[Symbol.dispose]();
+          throw error;
+        }
+      }
+
+      // The descriptor under a TLS session carries TLS records: a child that reads it gets ciphertext, and
+      // what a child writes to it reaches the peer as a broken record. Node throws the same error.
+      // The message names the socket's class and nothing more: an inspected TLSSocket reaches the key and
+      // the passphrase of its server or of its connect options.
+      it("rejects a tls.TLSSocket", async () => {
+        using ends = await bothEnds(tls.createServer(tlsCert), port =>
+          tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }),
+        );
+        const rejection = expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "The argument 'stdio' is invalid. Received '[TLSSocket]'",
+        });
+        for (const socket of ends.sockets) {
+          for (const stdio of [
+            [socket, "ignore", "ignore"],
+            ["ignore", socket, "ignore"],
+          ] satisfies StdioOptions[]) {
+            const options = { env: bunEnv, stdio };
+            expect(() => spawn(bunExe(), ["-e", ""], options)).toThrow(rejection);
+            expect(() => spawnSync(bunExe(), ["-e", ""], options)).toThrow(rejection);
+          }
+        }
+      });
+
+      // Windows cannot give a child a socket as stdio: node throws ENOTSUP, Bun throws EBADF.
+      it.skipIf(isWindows)("accepts a net.Socket", async () => {
+        using ends = await bothEnds(net.createServer(), port => net.connect(port, "127.0.0.1"));
+        const closed = ends.sockets.map(socket =>
+          once(spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [socket, "ignore", "inherit"] }), "close"),
+        );
+        expect(await Promise.all(closed)).toEqual([
+          [0, null],
+          [0, null],
+        ]);
+      });
+    });
   });
 
   it.skipIf(isWindows)(
@@ -721,7 +850,7 @@ describe("spawnSync()", () => {
     // /proc/self/stat field 5 is pgrp; parse after the last ')' since comm may contain spaces.
     const pgrp = (stat: string) => stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2];
     const childPgid = (detached: boolean) =>
-      pgrp(spawnSync("cat", ["/proc/self/stat"], { detached, encoding: "utf8" }).stdout);
+      pgrp(spawnSync("cat", ["/proc/self/stat"], { detached, encoding: "utf8" } as { encoding: "utf8" }).stdout);
     const parentPgid = pgrp(fs.readFileSync("/proc/self/stat", "utf8"));
 
     expect(parentPgid).toMatch(/^\d+$/);
@@ -923,14 +1052,14 @@ describe.skipIf(!isLinux)("an exit signal with no name is reported as node repor
 
   it.concurrent.each([40, 64])("spawnSync: signal after signal %d", signal => {
     const { status, signal: reported } = spawnSync("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
-    expect({ status, signal: reported }).toEqual({ status: null, signal: "" });
+    expect({ status, signal: reported as string | null }).toEqual({ status: null, signal: "" });
   });
 });
 
 it("spawnSync(does-not-exist)", () => {
   const x = spawnSync("does-not-exist");
-  expect(x.error?.code).toEqual("ENOENT");
-  expect(x.error.path).toEqual("does-not-exist");
+  expect((x.error as NodeJS.ErrnoException | undefined)?.code).toEqual("ENOENT");
+  expect((x.error as NodeJS.ErrnoException).path).toEqual("does-not-exist");
   // The rest of the result is what node returns when the process could not be spawned.
   expect({
     status: x.status,
@@ -939,7 +1068,7 @@ it("spawnSync(does-not-exist)", () => {
     pid: x.pid,
     stdout: x.stdout,
     stderr: x.stderr,
-  }).toEqual({
+  }).toEqual<unknown>({
     status: null,
     signal: null,
     output: null,
@@ -966,8 +1095,8 @@ it.if(!isWindows)("spawn with an fd number at Darwin OPEN_MAX in stdio reports E
   expect({
     status: r.status ?? null,
     stdout: r.stdout?.toString() ?? null,
-    error: r.error?.code ?? null,
-  }).toEqual({ status: null, stdout: null, error: "EBADF" });
+    error: (r.error as NodeJS.ErrnoException | undefined)?.code ?? null,
+  }).toEqual<unknown>({ status: null, stdout: null, error: "EBADF" });
 
   // Async spawn throws synchronously: EBADF is not in node's delayed-error
   // list (EACCES/EAGAIN/EMFILE/ENFILE/ENOENT), so node throws here too.
@@ -1193,7 +1322,6 @@ done
 });
 
 describe("uid/gid options", () => {
-  const isRoot = process.getuid?.() === 0;
   // 65534 is "nobody" on every Linux distro and on macOS.
   const NOBODY = 65534;
 
@@ -1241,9 +1369,9 @@ describe("uid/gid options", () => {
     expect(thrown?.syscall).toBe("spawn");
 
     const r = spawnSync("id", [], { uid: 0, encoding: "utf8" });
-    expect(r.error?.code).toBe("EPERM");
-    expect(r.error?.errno).toBe(-1);
-    expect(r.error?.syscall).toBe("spawnSync id");
+    expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe("EPERM");
+    expect((r.error as NodeJS.ErrnoException | undefined)?.errno).toBe(-1);
+    expect((r.error as NodeJS.ErrnoException | undefined)?.syscall).toBe("spawnSync id");
     expect(r.stdout == null).toBe(true);
   });
 
@@ -1288,7 +1416,7 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
     expect(thrown?.code).toBe("ENOTSUP");
 
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
-    expect(r.error?.code).toBe("ENOTSUP");
+    expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe("ENOTSUP");
   });
 });
 
@@ -1342,6 +1470,31 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
     await once(c, "close");
     expect(c.exitCode).toBe(0);
   });
+});
+
+// The stderr pipe closes without any data before JS touches child.stderr, so the exit path creates its stream
+// without a native handle.
+it.skipIf(!isPosix)("emits 'close' when an unread stdio pipe closed without any data", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { spawn } = require("child_process");
+      const c = spawn("/bin/sh", ["-c", "echo hello"], { stdio: ["inherit", "pipe"] });
+      c.stdout.on("data", d => process.stdout.write("OUT:" + d));
+      c.on("close", () => {
+        c.stderr.unref();
+        c.stderr.ref();
+        console.log("closed", c.stderr.readableEnded, c.stderr.destroyed);
+      });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("OUT:hello\nclosed true true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // child.stdout.pause() must stop the native reader so the kernel pipe fills

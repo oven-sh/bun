@@ -2252,7 +2252,10 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
-  setImmediate(rstNextTick.bind(session, this.id, code));
+  const id = this.id;
+  // A request rejected by request() emits 'ready' without an id. The peer never saw it, so skip the RST_STREAM.
+  if (typeof id !== "number") return;
+  setImmediate(rstNextTick.bind(session, id, code));
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
@@ -3069,7 +3072,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   if (statOptions.offset <= 0) {
     statOptions.offset = 0;
   }
-  if (statOptions.length <= 0) {
+  if (statOptions.length < 0) {
     if (stat.isFile()) {
       statOptions.length = stat.size;
     } else {
@@ -3094,6 +3097,18 @@ function doSendFileFD(options, fd, headers, err, stat) {
       statOptions.length < 0
         ? stat.size - +statOptions.offset
         : Math.min(stat.size - +statOptions.offset, statOptions.length);
+    // Validate here because nothing can catch a throw from fs.createReadStream inside this fstat callback.
+    let rangeError;
+    if (!Number.isInteger(statOptions.offset) || statOptions.offset > stat.size) {
+      rangeError = $ERR_OUT_OF_RANGE("options.offset", `>= 0 && <= ${stat.size}`, statOptions.offset);
+    } else if (!Number.isInteger(statOptions.length)) {
+      rangeError = $ERR_OUT_OF_RANGE("options.length", "an integer", statOptions.length);
+    }
+    if (rangeError) {
+      if (ownsFd) tryClose(fd);
+      this.destroy(rangeError);
+      return;
+    }
     // remove content-length header
     for (let i in headers) {
       if (i?.toLowerCase() === HTTP2_HEADER_CONTENT_LENGTH) {
@@ -3119,6 +3134,13 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // The file is piped to the native stream directly below; its completion runs the regular
   // _final (END_STREAM / wantTrailers) logic returned here.
   const finishNativeStream = closeWritableForFileResponse(this);
+
+  if (statOptions.length === 0) {
+    // The file is empty or the offset is at the end.
+    if (ownsFd) tryClose(fd);
+    finishNativeStream(() => {});
+    return;
+  }
 
   const stream = this;
   const fileStream = fs.createReadStream(null, {
@@ -3757,9 +3779,14 @@ function scheduleDestroyIfNotDestroyed(target) {
     setImmediate(destroyIfNotDestroyedNT, target);
   }
 }
-function rejectNoPayloadContentLengthNT(req) {
+// Like node's onStreamClose, a stream that user code already closed keeps its code and doesn't emit 'error'.
+function rejectRequestNT(session, req) {
+  if (req.closed) {
+    req.destroy();
+    return;
+  }
   req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
-  req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
+  emitStreamErrorNT(session, req, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
 }
 
 // node's onStreamClose for NO_ERROR: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L607-L626
@@ -6276,8 +6303,7 @@ class ClientHttp2Session extends Http2Session {
               const req = new ClientHttp2Stream(undefined, this, headers);
               req.authority = authority;
               req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-              req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
-              process.nextTick(emitStreamErrorNT, this, req, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
+              process.nextTick(rejectRequestNT, this, req);
               process.nextTick(emitEventNT, req, "ready");
               return req;
             }
@@ -6292,7 +6318,7 @@ class ClientHttp2Session extends Http2Session {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-        process.nextTick(rejectNoPayloadContentLengthNT, req);
+        process.nextTick(rejectRequestNT, this, req);
         process.nextTick(emitEventNT, req, "ready");
         return req;
       }
@@ -6713,9 +6739,7 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
       break;
     }
     default:
-      // args.unshift(err, event);
-      // ReflectApply(net.Server.prototype[EventEmitter.captureRejectionSymbol], this, args);
-      break;
+      net.Server.prototype[EventEmitter.captureRejectionSymbol]!.$call(this, err, event, ...args);
   }
 };
 
@@ -6741,6 +6765,7 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
   declare maxHeaderSize: number | undefined;
   declare insecureHTTPParser: boolean | undefined;
   declare httpValidation: string | undefined;
+  declare joinDuplicateHeaders: boolean | undefined;
   timeout = 0;
   [kSessions] = new SafeSet();
   constructor(options, onRequestHandler) {
@@ -6762,8 +6787,11 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
       this.requestTimeout = http1Options.requestTimeout ?? 300000;
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
+      const joinDuplicateHeaders = http1Options.joinDuplicateHeaders;
+      if (joinDuplicateHeaders !== undefined) validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
+      this.joinDuplicateHeaders = joinDuplicateHeaders;
       // connectionListenerHTTP1 reads these off the server when initializing
-      // the per-connection parser, matching Node's storeHTTP1Options.
+      // the per-connection parser, matching Node's storeHTTPOptions.
       this.maxHeaderSize = http1Options.maxHeaderSize;
       this.insecureHTTPParser = http1Options.insecureHTTPParser;
       this.httpValidation = http1Options.httpValidation;

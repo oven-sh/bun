@@ -11,23 +11,6 @@ interface PropertyAttribute {
   name?: string;
 }
 
-/**
- * Specifies what happens when a method is called with `this` set to a value that is not an instance
- * of the class.
- */
-export const InvalidThisBehavior = {
-  /**
-   * Default. Throws a `TypeError`.
-   */
-  Throw: 0,
-  /**
-   * Do not call the native implementation; return `undefined`. Some Node.js methods are supposed to
-   * work like this.
-   */
-  NoOp: 1,
-} as const;
-export type InvalidThisBehavior = (typeof InvalidThisBehavior)[keyof typeof InvalidThisBehavior];
-
 export type Field =
   | ({
       getter: string;
@@ -56,12 +39,6 @@ export type Field =
        */
       length?: number;
       passThis?: boolean;
-      invalidThisBehavior?: InvalidThisBehavior;
-      DOMJIT?: {
-        returns: string;
-        args?: [string, string] | [string, string, string] | [string] | [];
-        pure?: boolean;
-      };
     } & PropertyAttribute)
   | { internal: true }
   | {
@@ -267,21 +244,7 @@ export function define(
     estimatedSize,
     structuredClone,
     values,
-    klass: Object.fromEntries(
-      Object.entries(klass)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => {
-          v["DOMJIT"] = undefined;
-          return [k, v];
-        }),
-    ),
-    proto: Object.fromEntries(
-      Object.entries(proto)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => {
-          v["DOMJIT"] = undefined;
-          return [k, v];
-        }),
-    ),
+    klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
+    proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),
   });
 }

@@ -4,7 +4,6 @@
 // Pinned nightly — enable the structural-match subset directly instead of the
 // `PlatformT` sealed-trait workaround.
 #![feature(adt_const_params)]
-#![allow(incomplete_features)]
 
 pub mod error;
 pub use error::{Error, Result};
@@ -201,6 +200,13 @@ pub fn is_absolute(p: &[u8]) -> bool {
     bun_core::path_sep::is_absolute_native(p)
 }
 
+/// Like [`is_absolute`], but on Windows the path must also start with a drive letter or a UNC root,
+/// because what `\dir` refers to depends on the current drive.
+pub fn is_fully_qualified(p: &[u8]) -> bool {
+    is_absolute(p)
+        && !(cfg!(windows) && bun_core::strings::is_windows_absolute_path_missing_drive_letter(p))
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // CANONICAL ALREADY EXISTS — no new primitive. Two entry points cover all
 // legitimate callers:
@@ -332,13 +338,13 @@ pub mod path_buffer_pool;
 // or out-param redesign. The `_buf`-suffixed fns (explicit `&mut [u8]` param)
 // compile; the convenience wrappers don't yet. Gate the module; expose Platform.
 pub mod resolve_path;
-pub use resolve_path::{Platform, PlatformT, platform};
+pub use resolve_path::{Platform, platform};
 pub mod component_iterator;
 pub use component_iterator::{
     Component, ComponentIterator, MakePathStep, PathFormat, make_path_with,
 };
 pub mod classify;
-pub use classify::{RelPathFacts, classify_rel_t};
+pub use classify::classify_rel_t;
 // Crate-root re-exports for the path-mutation helpers so `#[cfg(windows)]`
 // install paths can call
 // `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
@@ -347,7 +353,6 @@ pub use resolve_path::{
     dirname_w, is_drive_letter, is_drive_letter_t, is_sep_any, is_sep_any_t, is_sep_native,
     is_sep_native_t, join_abs_string_buf, join_abs_string_buf_z, path_to_posix_buf,
     relative_to_common_path_buf, slashes_to_posix_in_place, slashes_to_windows_in_place,
-    windows_volume_name_len,
 };
 // Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
@@ -359,38 +364,6 @@ pub use path::{
     AbsPath, AutoAbsPath, AutoAbsPathChecked, AutoRelPath, Path, PathUnit, RelPath,
     options as path_options,
 };
-
-/// Generic surface for the `buf` parameter on path-builder helpers
-/// (`appendStorePath`, `appendGlobalStoreEntryPath`, etc.). Callers pass
-/// `Path<U, KIND, SEP, CHECK>` for arbitrary const params, so expose the
-/// three operations the helpers need behind a trait and blanket-impl it for
-/// every monomorphisation.
-pub trait PathLike {
-    fn clear(&mut self);
-    fn append(&mut self, bytes: &[u8]);
-    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>);
-}
-// Bound to `CheckLength::ASSUME` only. This prevents check-mode callers from
-// silently swallowing `MaxPathExceeded` through the duck-typed surface; they
-// must use `Path::append`/`?` directly.
-impl<U: PathUnit, const KIND: u8, const SEP: u8> PathLike
-    for path::Path<U, KIND, SEP, { path::options::CheckLength::ASSUME }>
-{
-    #[inline]
-    fn clear(&mut self) {
-        path::Path::clear(self)
-    }
-    #[inline]
-    fn append(&mut self, bytes: &[u8]) {
-        use path::options::AssumeOk as _;
-        path::Path::append(self, bytes).assume_ok()
-    }
-    #[inline]
-    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
-        use path::options::AssumeOk as _;
-        path::Path::append_fmt(self, args).assume_ok()
-    }
-}
 
 /// Width-generic dirname
 /// (POSIX `/` on Unix, disk-designator-aware on Windows). Backed by
@@ -426,7 +399,7 @@ pub fn dirname(p: &[u8]) -> Option<&[u8]> {
 }
 #[path = "EnvPath.rs"]
 pub mod env_path;
-pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
+pub use env_path::EnvPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from
@@ -436,8 +409,7 @@ pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     /// `\??\` — NT object-manager prefix (UTF-16).
-    pub(crate) const NT_OBJECT_PREFIX: [u16; 4] =
-        ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
+    pub const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
     /// `\??\UNC\` — NT object-manager UNC prefix (UTF-16).
     pub(crate) const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
         '\\' as u16,
@@ -574,6 +546,12 @@ pub mod fs {
             } else {
                 d
             }
+        }
+
+        /// The directory the process started in; `process.chdir()` does not move it.
+        #[inline]
+        pub fn initial_top_level_dir(&self) -> &[u8] {
+            self.top_level_dir.as_slice()
         }
 
         /// Writes `.<hex(hash^nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns

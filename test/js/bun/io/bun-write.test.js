@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -15,6 +16,7 @@ import { once } from "node:events";
 import http from "node:http";
 import { finished } from "node:stream/promises";
 import path, { join } from "path";
+import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -561,6 +563,47 @@ const IS_UV_FS_COPYFILE_DISABLED =
     });
     expect(exitCode).toBe(0);
   });
+
+  // The first read that has to wait for a pipe starts the IO thread, which needs its own descriptors.
+  // TODO: times out on macOS.
+  it.skipIf(isWindows || isMacOS)(
+    "Bun.file(fifo).text() rejects with EMFILE when out of descriptors, and works afterwards",
+    async () => {
+      using dir = tempDir("bun-file-fifo-emfile", {});
+      const fifo = join(String(dir), "fifo");
+      expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+      const script = `
+      const fs = require("node:fs");
+      const fifo = process.argv[1];
+      const writer = fs.openSync(fifo, fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+      const held = [];
+      try {
+        for (;;) held.push(fs.openSync("/dev/null", "r"));
+      } catch {}
+      // Free one descriptor so the read can open the fifo.
+      fs.closeSync(held.pop());
+      console.log(await Bun.file(fifo).text().catch(e => e.code));
+      for (const fd of held) fs.closeSync(fd);
+      const countFds = () => fs.readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      const before = countFds();
+      const text = Bun.file(fifo).text();
+      // The fifo drops its bytes if the writer closes before the read has opened it.
+      while (countFds() < before + 2) await Bun.sleep(1);
+      fs.writeSync(writer, "hello");
+      fs.closeSync(writer);
+      console.log(await text);
+    `;
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'ulimit -n 64 && exec "$0" -e "$1" "$2"', bunExe(), script, fifo],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("EMFILE\nhello\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it("Bun.file(0) survives GC", async () => {
     for (let i = 0; i < 10; i++) {
@@ -1142,6 +1185,26 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(stream.locked).toBe(true);
     });
 
+    // Only an Error was taken for a failure. With anything else the promise stayed pending.
+    it.each([[42], ["boom"], [{ code: "E" }], [undefined]])(
+      "a direct stream whose pull() throws %p rejects with that",
+      async thrown => {
+        using dir = tempDir("bun-write-direct-pull-throws", {});
+        const stream = new ReadableStream({
+          type: "direct",
+          pull() {
+            throw thrown;
+          },
+        });
+        expect(
+          await Bun.write(join(String(dir), "out.txt"), stream).then(
+            () => ({ resolved: true }),
+            rejected => ({ rejected }),
+          ),
+        ).toEqual({ rejected: thrown });
+      },
+    );
+
     it("a stream whose source fails rejects with that error", async () => {
       using dir = tempDir("bun-write-stream-reject", {});
       const nextTask = () => new Promise(resolve => setImmediate(resolve));
@@ -1324,6 +1387,104 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(exitCode).toBe(0);
     });
 
+    // `program | head -n 1`: the reader of the pipe leaves, the next write fails, and the sink
+    // hands that error to the body. setInterval() of node:timers/promises gives an iterator with
+    // return() and no throw(). A leaked interval is the only thing that can keep the child alive:
+    // it exits by itself once the body is closed with return(). The unref'd timer only ends a
+    // child that did not.
+    it.each([
+      // A small write is buffered. Its failure comes back when the sink closes.
+      ["small lines", `"tick\\n"`],
+      // A large write goes straight to the pipe and fails at once.
+      ["64 KiB lines", `Buffer.alloc(64 * 1024, "x").toString() + "\\n"`],
+    ])(
+      "Bun.write(Bun.stdout, new Response(asyncIterable)) closes the iterable when the reader of the pipe leaves: %s",
+      async (_, line) => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `import { setInterval as every } from "node:timers/promises";
+             setTimeout(() => process.exit(1), 30_000).unref();
+             await Bun.write(Bun.stdout, new Response(every(1, ${line}))).then(() => {}, () => {});
+             console.error("reached the end");`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const reader = proc.stdout.getReader();
+        await reader.read();
+        await reader.cancel();
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("reached the end\n");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // 8 MiB doesn't fit in the pipe and nobody reads it, so the write stays parked and the child
+    // waits in its poll of stdout. That poll is where it learns the reader left. The sink rejects
+    // the parked promise from that callback, and the JS that runs next closes the sink and drops
+    // the last refs on it while the pipe writer inside it is still on the stack (ASAN:
+    // heap-use-after-free). On Windows a write to stdout blocks, so "parked" would never print.
+    // setImmediate() runs on a later turn of the loop, once the sink has the chunk.
+    it.skipIf(isWindows).each([
+      [
+        "an async iterable's write",
+        `(async function* () {
+           try {
+             setImmediate(() => console.error("parked"));
+             yield Buffer.alloc(8 * 1024 * 1024, "x");
+           } finally {
+             console.error("closed");
+           }
+         })()`,
+        "parked\nclosed\nEPIPE\n",
+      ],
+      [
+        "a direct stream's flush()",
+        `new ReadableStream({
+           type: "direct",
+           async pull(controller) {
+             controller.write(Buffer.alloc(8 * 1024 * 1024, "x"));
+             setImmediate(() => console.error("parked"));
+             await controller.flush();
+           },
+         })`,
+        "parked\nEPIPE\n",
+      ],
+    ])(
+      "Bun.write(Bun.stdout, response) rejects with EPIPE when the reader of the pipe leaves while %s is parked",
+      async (_, body, expected) => {
+        // The read end is held open and never read. `proc.stdout.cancel()` starts a read first, which can drain it all.
+        using dir = tempDir("bun-write-epipe", {});
+        const fifo = join(String(dir), "fifo");
+        expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+        const held = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const stdout = fs.openSync(fifo, "w");
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `await Bun.write(Bun.stdout, new Response(${body})).catch(e => console.error(e.code));`,
+          ],
+          env: bunEnv,
+          stdout,
+          stderr: "pipe",
+        });
+        fs.closeSync(stdout);
+        const decoder = new TextDecoder();
+        let stderr = "";
+        for await (const chunk of proc.stderr) {
+          const wasParked = stderr.includes("parked\n");
+          stderr += decoder.decode(chunk, { stream: true });
+          if (!wasParked && stderr.includes("parked\n")) fs.closeSync(held);
+        }
+        expect(stderr).toBe(expected);
+        expect(await proc.exited).toBe(0);
+      },
+    );
+
     // /dev/full: every write fails with ENOSPC.
     it.skipIf(process.platform !== "linux")("rejects with the write error, for each kind of body", async () => {
       await using server = await origin();
@@ -1343,6 +1504,51 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         await expect(Bun.write("/dev/full", res)).rejects.toThrow(expect.objectContaining({ code: "ENOSPC" }));
       }
     });
+
+    // The write error also closes an async-iterable body: return(), and nothing is thrown into it.
+    // The body has an end, so a body that was not closed fails on its calls and does not run for ever.
+    describe.skipIf(process.platform !== "linux").each(asyncIterableBodyShapes)(
+      "a write that fails with ENOSPC closes %s with return()",
+      (_, make) => {
+        it.each([
+          // A small write is buffered. Its failure comes back when the sink closes.
+          ["chunks of 6 bytes", "chunk\n"],
+          // A large write goes straight to the file and fails at once.
+          ["chunks of 64 KiB", Buffer.alloc(64 * 1024, "x")],
+        ])("%s", async (_, chunk) => {
+          const shape = make({ chunk, count: 100 });
+          await expect(Bun.write("/dev/full", new Response(shape.body))).rejects.toThrow(
+            expect.objectContaining({ code: "ENOSPC" }),
+          );
+          expect(await settledBody(shape)).toEqual(shape.expected);
+        });
+      },
+    );
+
+    // The body ends in the same tick as its only chunk, so the only write is the flush at its end.
+    it.skipIf(process.platform !== "linux").each([
+      ["next() and return()", false],
+      ["next(), return() and throw()", true],
+    ])(
+      "a flush at the end of the body that fails with ENOSPC closes an iterator with %s with return()",
+      async (_, withThrow) => {
+        const calls = [];
+        let given = 0;
+        const iterator = {
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+          next: async () => (given++ === 0 ? { done: false, value: "chunk\n" } : { done: true, value: undefined }),
+          return: async () => (calls.push("return"), { done: true, value: undefined }),
+        };
+        if (withThrow) iterator.throw = async () => (calls.push("throw"), { done: true, value: undefined });
+        await expect(Bun.write("/dev/full", new Response(iterator))).rejects.toThrow(
+          expect.objectContaining({ code: "ENOSPC" }),
+        );
+        for (let turn = 0; turn < 50 && !calls.length; turn++) await new Promise(resolve => setImmediate(resolve));
+        expect(calls).toEqual(["return"]);
+      },
+    );
 
     // https://github.com/oven-sh/bun/issues/31681: these wrote "[object ReadableStream]".
     it("a bare ReadableStream: res.body, a JS stream, file.write(stream)", async () => {
@@ -1408,6 +1614,30 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       await expect(Bun.write(join(String(dir), "out.bin"), res)).rejects.toThrow(
         expect.objectContaining({ code: "ECONNRESET" }),
       );
+    });
+
+    it("rejects a body that a pending text() waits for, and text() still resolves", async () => {
+      using dir = tempDir("bun-write-response-pending-text", {});
+      const sendBody = Promise.withResolvers();
+      using listener = Bun.listen({
+        port: 0,
+        hostname: "127.0.0.1",
+        socket: {
+          async data(socket) {
+            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n");
+            socket.flush();
+            await sendBody.promise;
+            socket.end("hello");
+          },
+        },
+      });
+      const res = await fetch(`http://127.0.0.1:${listener.port}/`);
+      const text = res.text();
+      await expect(Bun.write(join(String(dir), "out.txt"), res)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      sendBody.resolve();
+      expect(await text).toBe("hello");
     });
 
     it("rejects a body that was already used, and createPath: false into a missing directory", async () => {

@@ -162,6 +162,18 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
+/// Compares like [`HashTable`] keys, which are ASCII case-insensitive on Windows.
+fn is_ipc_channel_key(key: &[u8]) -> bool {
+    const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
+    KEYS.iter().any(|&k| {
+        if cfg!(windows) {
+            strings::eql_case_insensitive_ascii(key, k, true)
+        } else {
+            strings::eql(key, k)
+        }
+    })
+}
+
 impl Loader {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
     /// or a literal empty-quote pair left over from shell `export FOO=""` /
@@ -555,6 +567,20 @@ impl Loader {
         })
     }
 
+    /// Clones the loader for a macro VM. The clone remembers which files `self` loaded, so it only
+    /// reads the ones `self` skipped.
+    pub fn clone_loaded(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: self.default_files_loaded,
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: self.quiet,
+            did_load_process: self.did_load_process,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
     pub fn load_process(&mut self) -> Result<(), AllocError> {
         if self.did_load_process {
             return Ok(());
@@ -569,6 +595,11 @@ impl Loader {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
+                    // Child processes don't inherit the IPC fd. `bun run` passes the fd on and
+                    // adds these variables back.
+                    if is_ipc_channel_key(key) {
+                        continue;
+                    }
                     self.map.put(key, value)?;
                 }
             } else {
@@ -1453,6 +1484,31 @@ impl Map {
         Ok(Map {
             map: self.map.clone()?,
         })
+    }
+
+    /// The process's own (no `.env`), minus `git rev-parse --local-env-vars` except `GIT_CONFIG*`.
+    pub fn for_git_child() -> Result<Map, AllocError> {
+        const REPOSITORY_VARS: &[&[u8]] = &[
+            b"GIT_DIR",
+            b"GIT_WORK_TREE",
+            b"GIT_IMPLICIT_WORK_TREE",
+            b"GIT_INDEX_FILE",
+            b"GIT_NAMESPACE",
+            b"GIT_OBJECT_DIRECTORY",
+            b"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            b"GIT_COMMON_DIR",
+            b"GIT_PREFIX",
+            b"GIT_GRAFT_FILE",
+            b"GIT_SHALLOW_FILE",
+            b"GIT_NO_REPLACE_OBJECTS",
+            b"GIT_REPLACE_REF_BASE",
+        ];
+        let mut loader = Loader::init();
+        loader.load_process()?;
+        for key in REPOSITORY_VARS {
+            loader.map.remove(key);
+        }
+        Ok(loader.map)
     }
 }
 

@@ -50,6 +50,17 @@ impl Hardlinker {
         })
     }
 
+    /// Removes the destination, and with it the links that a failed `link` left there.
+    pub(crate) fn delete_dest(&self) {
+        #[cfg(windows)]
+        let mut buf = bun_paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let dest = bun_core::convert_utf16_to_utf8_in_buffer(&mut buf[..], self.dest.slice());
+        #[cfg(not(windows))]
+        let dest = self.dest.slice();
+        let _ = Fd::cwd().delete_tree(dest);
+    }
+
     pub(crate) fn link(&mut self) -> sys::Result<()> {
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(

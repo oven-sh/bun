@@ -432,35 +432,37 @@ describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend, a link that the fi
 
   // A link count that one file reached alone. The two files that were linked before it become
   // copies too, and nothing is written into the cache through those links.
-  test.concurrent("EMLINK after two links copies the whole package, hoisted linker", async () => {
-    using dir = tempDir("hardlink-partial-EMLINK", {
-      "package.json": JSON.stringify({
-        name: "hardlink-fallback-test",
-        dependencies: { pkg: "file:./pkg.tgz" },
-      }),
-    });
-    await Bun.write(join(String(dir), "pkg.tgz"), await tarball("pkg", packageFiles));
+  for (const linker of ["hoisted", "isolated"]) {
+    test.concurrent(`EMLINK after two links copies the whole package, ${linker} linker`, async () => {
+      using dir = tempDir(`hardlink-partial-EMLINK-${linker}`, {
+        "package.json": JSON.stringify({
+          name: "hardlink-fallback-test",
+          dependencies: { pkg: "file:./pkg.tgz" },
+        }),
+      });
+      await Bun.write(join(String(dir), "pkg.tgz"), await tarball("pkg", packageFiles));
 
-    expect((await install(String(dir), "hoisted")).exitCode).toBe(0);
-    rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
-    const cached = cachedPackage(join(String(dir), "cache"), "pkg");
-    const written = () => filesOf(cached).map(file => statSync(join(cached, file), { bigint: true }).mtimeNs);
-    const before = written();
+      expect((await install(String(dir), linker)).exitCode).toBe(0);
+      rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+      const cached = cachedPackage(join(String(dir), "cache"), "pkg");
+      const written = () => filesOf(cached).map(file => statSync(join(cached, file), { bigint: true }).mtimeNs);
+      const before = written();
 
-    const { stdout, stderr, exitCode } = await install(String(dir), "hoisted", {
-      LINK_SHIM_ERRNO: EMLINK,
-      LINK_SHIM_AT: 3,
+      const { stdout, stderr, exitCode } = await install(String(dir), linker, {
+        LINK_SHIM_ERRNO: EMLINK,
+        LINK_SHIM_AT: 3,
+      });
+      expect(stderr).not.toContain("EMLINK");
+      expect(stdout).toContain("1 package installed");
+      const counts = Object.fromEntries(
+        [".bun-tag", "package.json", ...Object.keys(packageFiles)].sort().map(file => [file, 1]),
+      );
+      expect(linkCounts(join(String(dir), "node_modules", "pkg"))).toEqual(counts);
+      expect(linkCounts(cached)).toEqual(counts);
+      expect(written()).toEqual(before);
+      expect(exitCode).toBe(0);
     });
-    expect(stderr).not.toContain("EMLINK");
-    expect(stdout).toContain("1 package installed");
-    const counts = Object.fromEntries(
-      [".bun-tag", "package.json", ...Object.keys(packageFiles)].sort().map(file => [file, 1]),
-    );
-    expect(linkCounts(join(String(dir), "node_modules", "pkg"))).toEqual(counts);
-    expect(linkCounts(cached)).toEqual(counts);
-    expect(written()).toEqual(before);
-    expect(exitCode).toBe(0);
-  });
+  }
 });
 
 // The same fallback on macOS, where the kernel reports ENOTSUP (45) and EOPNOTSUPP is another
@@ -479,7 +481,7 @@ static int refused_linkat(int olddirfd, const char *oldpath, int newdirfd, const
   if (log) {
     int fd = open(log, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (fd >= 0) {
-      write(fd, "refused\n", 8);
+      write(fd, "refused\\n", 8);
       close(fd);
     }
   }
@@ -555,7 +557,7 @@ __attribute__((used, section("__DATA,__interpose"))) static const struct {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("ENOTSUP");
+      expect(stderr).not.toContain(name);
       expect(stdout).toContain("1 package installed");
       // The shim saw a link, so the copy is the fallback and not the backend that was asked for.
       expect(readFileSync(join(String(dir), "links.log"), "utf8")).toContain("refused");
@@ -566,52 +568,68 @@ __attribute__((used, section("__DATA,__interpose"))) static const struct {
 });
 
 // No injection: NTFS refuses one more link to a file that has 1023 of them.
-test.skipIf(!isWindows)("a package at the NTFS link limit is copied, isolated linker", async () => {
-  using dir = tempDir("hardlink-ntfs-limit", {
-    "package.json": JSON.stringify({
-      name: "hardlink-fallback-test",
-      dependencies: { pkg: "file:./pkg.tgz" },
-    }),
-  });
-  await Bun.write(join(String(dir), "pkg.tgz"), await tarball("pkg", packageFiles));
-  const install = async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--linker", "isolated"],
-      cwd: String(dir),
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
-      stdout: "pipe",
-      stderr: "pipe",
+describe.skipIf(!isWindows)("hardlink backend at the NTFS link limit, isolated linker", () => {
+  const cases: [name: string, isFull: (file: string) => boolean][] = [
+    // As the installs of many projects leave a package.
+    ["every file", () => true],
+    // NTFS lists a directory by name, so the other files are linked before this one is refused.
+    ["only package.json", file => file === "package.json"],
+  ];
+  for (const [name, isFull] of cases) {
+    test.concurrent(`a package with ${name} at the limit is copied`, async () => {
+      using dir = tempDir("hardlink-ntfs-limit", {
+        "package.json": JSON.stringify({
+          name: "hardlink-fallback-test",
+          dependencies: { pkg: "file:./pkg.tgz" },
+        }),
+      });
+      await Bun.write(join(String(dir), "pkg.tgz"), await tarball("pkg", packageFiles));
+      const install = async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--linker", "isolated"],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+
+      expect((await install()).exitCode).toBe(0);
+      rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+
+      const cached = cachedPackage(join(String(dir), "cache"), "pkg");
+      mkdirSync(join(String(dir), "links"));
+      const files = filesOf(cached);
+      files.filter(isFull).forEach((file, f) => {
+        for (let i = 0; i < 1100; i++) {
+          try {
+            linkSync(join(cached, file), join(String(dir), "links", `${f}-${i}`));
+          } catch {
+            break;
+          }
+        }
+      });
+      // The loop stopped at the limit of NTFS (1023 more links to a file), not at some other error.
+      const before = linkCounts(cached);
+      const limit = before["package.json"];
+      expect([1023, 1024]).toContain(limit);
+      expect(before).toEqual(
+        Object.fromEntries(files.map(file => [file.replaceAll("\\", "/"), isFull(file) ? limit : 1])),
+      );
+
+      const { stdout, stderr, exitCode } = await install();
+      expect(stderr).not.toContain("failed to link");
+      expect(stdout).toContain("1 package installed");
+      expect(linkCounts(join(String(dir), "node_modules", "pkg"))).toEqual(
+        Object.fromEntries(files.map(file => [file.replaceAll("\\", "/"), 1])),
+      );
+      // The install left no link to a file of the cache.
+      expect(linkCounts(cached)).toEqual(before);
+      expect(exitCode).toBe(0);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  };
-
-  expect((await install()).exitCode).toBe(0);
-  rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
-
-  // Every file of the package, as the installs of many projects leave them.
-  const cached = cachedPackage(join(String(dir), "cache"), "pkg");
-  mkdirSync(join(String(dir), "links"));
-  const files = filesOf(cached);
-  files.forEach((file, f) => {
-    for (let i = 0; i < 1100; i++) {
-      try {
-        linkSync(join(cached, file), join(String(dir), "links", `${f}-${i}`));
-      } catch {
-        break;
-      }
-    }
-  });
-  // The loop stopped at the limit of NTFS (1023 more links to a file), not at some other error.
-  const atLimit = Object.values(linkCounts(cached));
-  expect(atLimit).toEqual(files.map(() => atLimit[0]));
-  expect([1023, 1024]).toContain(atLimit[0]);
-
-  const { stdout, stderr, exitCode } = await install();
-  expect(stderr).not.toContain("failed to link");
-  expect(stdout).toContain("1 package installed");
-  expect(Object.values(linkCounts(join(String(dir), "node_modules", "pkg")))).toEqual(files.map(() => 1));
-  expect(exitCode).toBe(0);
+  }
 });
 
 // This is what the kernel does for a file system without symlinks: the path is looked up first.

@@ -1828,23 +1828,23 @@ impl<'a> Installer<'a> {
                             break 'backend Ok(());
                         };
                         match link_refusal(&err) {
-                            LinkRefusal::Fail => {}
-                            LinkRefusal::CopyPackage => {
-                                backend = InstallMethod::Copyfile;
-                                continue 'backend;
+                            LinkRefusal::Fail => {
+                                print_link_error(
+                                    "hardlink package",
+                                    &err,
+                                    &bstr::BStr::new(subpath.slice()),
+                                    hardlinker.dest.slice(),
+                                );
+                                break 'backend Err(err);
                             }
+                            LinkRefusal::CopyPackage => backend = InstallMethod::Copyfile,
                             LinkRefusal::CopyEveryPackage => {
                                 backend = self.set_backend(InstallMethod::Copyfile);
-                                continue 'backend;
                             }
                         }
-                        print_link_error(
-                            "hardlink package",
-                            &err,
-                            &bstr::BStr::new(subpath.slice()),
-                            hardlinker.dest.slice(),
-                        );
-                        break 'backend Err(err);
+                        // The copy must not write into a file that is still a link to the cache.
+                        hardlinker.delete_dest();
+                        continue 'backend;
                     }
 
                     _ => {

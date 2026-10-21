@@ -1460,7 +1460,7 @@ impl Layers {
 
 impl CssImportOrder {
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
-        // TODO: conditions, condition_import_records
+        // Not an identity: it leaves the conditions out, and the names `x.y, z` and `x, yz` hash alike. `css_chunk_key` compares on a hit.
 
         // core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 tag instead.
         let tag: u8 = match &self.kind {

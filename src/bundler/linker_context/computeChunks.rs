@@ -17,7 +17,7 @@ use crate::{BundleV2, Chunk, Index, IndexInt, LinkerContext};
 use super::find_all_imported_parts_in_js_order::find_all_imported_parts_in_js_order;
 use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
 use super::find_imported_files_in_css_order::{
-    CssImportChainTooDeep, find_imported_files_in_css_order,
+    CssImportChainTooDeep, css_import_orders_are_equal, find_imported_files_in_css_order,
 };
 use super::merge_small_chunks::merge_small_chunks;
 
@@ -49,6 +49,23 @@ fn css_order_or_log(
     })
 }
 
+/// The key of the CSS chunk that has this import order, or else a free key.
+fn css_chunk_key(
+    css_chunks: &ArrayHashMap<u64, Chunk>,
+    mut key: u64,
+    order: &[chunk::CssImportOrder],
+) -> u64 {
+    while let Some(existing) = css_chunks.get(&key) {
+        if let chunk::Content::Css(css) = &existing.content
+            && css_import_orders_are_equal(css.imports_in_chunk_in_order.slice(), order)
+        {
+            break;
+        }
+        key = key.wrapping_add(1);
+    }
+    key
+}
+
 #[inline(never)]
 pub(crate) fn compute_chunks(
     this: &mut LinkerContext,
@@ -65,7 +82,7 @@ pub(crate) fn compute_chunks(
     let mut js_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     js_chunks.reserve(this.graph.entry_points.len());
 
-    // Key is the hash of the CSS order. This deduplicates identical CSS files.
+    // Key is the hash of the CSS order, or the next free key when a chunk with another order has that hash. This deduplicates identical CSS files.
     let mut css_chunks: ArrayHashMap<u64, Chunk> = ArrayHashMap::new();
     let mut js_chunks_with_css: usize = 0;
 
@@ -180,7 +197,8 @@ pub(crate) fn compute_chunks(
                 }
                 hasher.final_()
             };
-            let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
+            let css_chunk_entry =
+                css_chunks.get_or_put(css_chunk_key(&css_chunks, hash_to_use, order.slice()))?;
             if !css_chunk_entry.found_existing {
                 // const css_chunk_entry = try js_chunks.getOrPut();
                 let order_len = order.len() as usize;
@@ -260,7 +278,11 @@ pub(crate) fn compute_chunks(
                     hasher.final_()
                 };
 
-                let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
+                let css_chunk_entry = css_chunks.get_or_put(css_chunk_key(
+                    &css_chunks,
+                    hash_to_use,
+                    order.slice(),
+                ))?;
 
                 if let chunk::Content::Javascript(js) = &mut js_chunk_entry.value_ptr.content {
                     js.css_chunks = Box::<[u32]>::from(

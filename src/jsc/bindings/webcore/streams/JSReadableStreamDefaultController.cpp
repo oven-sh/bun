@@ -321,6 +321,10 @@ JSValue JSReadableStreamDefaultController::dequeueChunkForRead(JSGlobalObject* g
         RETURN_IF_EXCEPTION(scope, {});
         if (!chunk)
             return {};
+        // User code inside the copy can read the rest of the queue (which closes the stream)
+        // or cancel the branch. The bookkeeping below is for a stream that is still readable.
+        if (m_stream->m_state != ReadableStreamState::Readable)
+            return chunk;
     }
     if (m_closeRequested && m_queue.isEmpty()) {
         readableStreamDefaultControllerClearAlgorithms(this);
@@ -343,6 +347,10 @@ void JSReadableStreamDefaultController::pullSteps(JSGlobalObject* globalObject, 
         JSValue chunk = dequeueChunkForRead(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         if (!chunk) {
+            // The copy failed (the branch is errored), or user code inside the copy closed the
+            // branch first and the error was a no-op.
+            if (stream->m_state == ReadableStreamState::Closed)
+                RELEASE_AND_RETURN(scope, readRequest->closeSteps(globalObject));
             ASSERT(stream->m_state == ReadableStreamState::Errored);
             JSValue storedError = stream->m_storedError.get();
             RELEASE_AND_RETURN(scope, readRequest->errorSteps(globalObject, storedError ? storedError : jsUndefined()));

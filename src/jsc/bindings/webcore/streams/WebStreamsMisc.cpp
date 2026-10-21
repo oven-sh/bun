@@ -227,7 +227,9 @@ JSUint8Array* cloneAsUint8Array(JSGlobalObject* globalObject, JSArrayBufferView*
 }
 
 // spec StructuredClone(v) for a default-tee chunk. A view copies only the bytes it covers
-// (a body chunk is often a narrow window into a larger read buffer) and keeps its type.
+// (a body chunk is often a narrow window into a larger read buffer) and keeps its structure,
+// so a Buffer or a Uint8Array subclass stays one. Any other object gets the generic
+// structured clone: a class instance comes back a plain object, a function or a Proxy throws.
 JSValue structuredCloneStreamChunk(JSGlobalObject* globalObject, JSValue chunk)
 {
     auto& vm = getVM(globalObject);
@@ -246,9 +248,8 @@ JSValue structuredCloneStreamChunk(JSGlobalObject* globalObject, JSValue chunk)
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        TypedArrayType type = typedArrayType(view->type());
-        Structure* structure = globalObject->typedArrayStructure(type, false);
-        switch (type) {
+        Structure* structure = view->structure();
+        switch (typedArrayType(view->type())) {
 #define CLONE_TYPED_ARRAY(name) \
     case Type##name:            \
         RELEASE_AND_RETURN(scope, JS##name##Array::create(globalObject, structure, WTF::move(copy), 0, byteLength / elementSize(Type##name)));
@@ -267,7 +268,7 @@ JSValue structuredCloneStreamChunk(JSGlobalObject* globalObject, JSValue chunk)
             WebCore::throwDataCloneError(*globalObject, scope);
             return {};
         }
-        if (!buffer->isShared()) {
+        if (!buffer->isShared() && !buffer->isResizableOrGrowableShared()) {
             RefPtr<ArrayBuffer> copy = ArrayBuffer::tryCreate(buffer->span());
             if (!copy) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);

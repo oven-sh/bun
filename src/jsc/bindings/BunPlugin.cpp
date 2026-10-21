@@ -32,6 +32,7 @@
 #include "isBuiltinModule.h"
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
+#include "StringSizeLimit.h"
 
 namespace Zig {
 
@@ -50,7 +51,7 @@ static void throwInvalidNamespace(JSC::JSGlobalObject* globalObject, JSC::ThrowS
 {
     // `namespaceString` comes from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
     auto message = tryMakeString("namespace \""_s, namespaceString, "\" can only contain ASCII letters, digits, \"_\", \"-\", \"@\" and \"/\""_s);
-    if (!message) [[unlikely]] {
+    if (!message || Bun::exceedsStringLimit(message.length())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return;
     }

@@ -1,5 +1,6 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
@@ -1986,6 +1987,31 @@ describe("namespace characters", () => {
       build: expected("TypeError"),
       success: true,
     });
+  });
+
+  // The message quotes the namespace. With the synthetic allocation limit, a namespace of 1 MiB makes it too long.
+  it("Bun.plugin throws a RangeError for a refused namespace that is too long to quote", () => {
+    const namespace = Buffer.alloc(1024 * 1024, "!").toString();
+    const thrown: string[] = [];
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024);
+    try {
+      plugin({
+        name: "namespace characters",
+        setup(build) {
+          for (const hook of hooks) {
+            try {
+              build[hook]({ filter: neverMatches, namespace }, () => undefined);
+              thrown.push(`${hook}: accepted`);
+            } catch (error: any) {
+              thrown.push(`${hook}: ${error.name}: ${error.message}`);
+            }
+          }
+        },
+      });
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
+    expect(thrown).toEqual(["onLoad: RangeError: Out of memory", "onResolve: RangeError: Out of memory"]);
   });
 });
 

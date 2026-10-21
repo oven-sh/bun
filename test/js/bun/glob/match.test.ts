@@ -2459,8 +2459,8 @@ describe("Glob.match", () => {
     ["a/*(**|b)/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
     ["a/+(**|b)/*", ["a/x", "a/x/", "a/b/z"], ["a/", "a"]],
     ["!a/{**,b}/*", ["a/", "a"], ["a/x", "a/x/"]],
-    // `!(a)` matches what `*` matches and `@(a)` doesn't.
-    ["*/!(x/**)/*", ["a/x/", "a/y/", "a/y/f"], ["a/x/f", "a/x"]],
+    // Not inside `!(a)`, where it would make the pattern match more.
+    ["*/!(x/**)/*", ["a/y/", "a/y/f"], ["a/x/", "a/x/f", "a/x"]],
     // Only a pattern that ends with `/*`. Before any other tail, and with the `/*` inside a group, `a/` matches as it does
     // with the `**` written out: `a/**/**`, `a/**/*{,c}`, and `{a/**/*,b}` below.
     ["a/{**,b?}/**", ["a/", "a/x", "a/bc/x"], ["a"]],

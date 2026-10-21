@@ -617,6 +617,77 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
     stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
+  expect(stdout).toBe(
+    JSON.stringify({ opened: 16, delivered: Array.from({ length: 16 }, (_, id) => id), closedBeforeSent: [] }) + "\n",
+  );
   expect(exitCode).toBe(0);
 }, 30_000);
+
+test("a stream that reuses a destroyed stream's allocation doesn't get its queued response headers", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      join(import.meta.dir, "quic-stream-recycled-headers-fixture.ts"),
+      join(keysDir, "agent1-key.pem"),
+      join(keysDir, "agent1-cert.pem"),
+    ],
+    // ASAN only reuses a freed block right away when its quarantine is off.
+    env: withoutAsanQuarantine(bunEnv),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(JSON.stringify(Array.from({ length: 16 }, (_, id) => ["/fresh/" + id])) + "\n");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// A stream opened above the peer's stream limit waits for the peer's next
+// grant. When it is destroyed while it waits, the grant goes to the stream
+// that waits behind it.
+test("a stream destroyed before it opens leaves the next grant to the stream queued behind it", async () => {
+  const received: string[] = [];
+  const gotThird = Promise.withResolvers<void>();
+  await using server = await listen(
+    serverSession => {
+      serverSession.closed.catch(() => {});
+      serverSession.onstream = stream => {
+        stream.closed.catch(() => {});
+        (async () => {
+          const chunks: Uint8Array[] = [];
+          for await (const batch of stream) chunks.push(...batch);
+          const body = Buffer.concat(chunks).toString();
+          received.push(body);
+          stream.writer.endSync();
+          if (body === "third") gotThird.resolve();
+        })().catch(() => {});
+      };
+    },
+    {
+      alpn: ["echo"],
+      sni: { "*": { keys: [key], certs: [cert] } },
+      transportParams: { maxIdleTimeout: 5, initialMaxStreamsBidi: 1 },
+    },
+  );
+
+  const client = await connect(server.address!, {
+    alpn: "echo",
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+  } as SessionOptions);
+  client.closed.catch(() => {});
+  await client.opened;
+
+  const [first, second, third] = await Promise.all(
+    ["first", "second", "third"].map(body => client.createBidirectionalStream({ body: Buffer.from(body) })),
+  );
+  for (const stream of [first, second, third]) stream.closed.catch(() => {});
+  expect([second.pending, third.pending]).toEqual([true, true]);
+
+  second.destroy();
+  // The server answers the first stream with a FIN, then grants one more stream.
+  for await (const _ of first);
+  await gotThird.promise;
+  expect(received).toEqual(["first", "third"]);
+  client.close();
+});

@@ -2349,12 +2349,11 @@ fn clean_lockfile(
     Ok(before_clean)
 }
 
-/// Returns the rows that resolve to a version that their `overrides` rule does not allow, each
+/// Returns the rows that resolve to a package that their `overrides` rule does not allow, each
 /// with the package it resolves to.
 #[inline(never)]
 fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let names = lockfile.packages.items_name();
     let resolutions = lockfile.packages.items_resolution();
     (lockfile.buffers.dependencies.iter())
         .zip(lockfile.buffers.resolutions.iter())
@@ -2365,44 +2364,218 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
                 && !dependency.behavior.is_bundled()
                 && !dependency.behavior.is_optional_peer()
                 && (package_id as usize) < resolutions.len()
-                && resolutions[package_id as usize].tag == ResolutionTag::Npm
-                && (lockfile.overrides)
-                    .rule_for(lockfile, row as DependencyID, dependency)
-                    .is_some()
-                && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
-                    .is_some_and(|version| {
-                        version.try_npm().is_some_and(|npm| {
-                            // Under another name the row follows an `npm:` alias, not the rule.
-                            npm.name.slice(buf) == names[package_id as usize].slice(buf)
-                                // An empty range and `*` resolve to `latest`, even if that is a
-                                // prerelease, which no range accepts.
-                                && !npm.version.is_empty()
-                                && !crate::npm::is_any_version_range(version.literal.slice(buf))
-                                && !npm.version.satisfies(
-                                    resolutions[package_id as usize].npm().version,
-                                    buf,
-                                    buf,
-                                )
-                        })
-                    })
+                // A folder, a link and a workspace are not compared with a rule.
+                && resolutions[package_id as usize].can_enqueue_install_task()
+                && crate::dedupe::rule_target(lockfile, row as DependencyID, dependency)
+                    .is_some_and(|asked| serves(lockfile, asked, package_id) == Serves::No)
         })
         .map(|(row, (_, &package_id))| (row as DependencyID, package_id))
         .collect()
 }
 
-/// Returns true if yarn would accept the locked version of `row`: it satisfies the `resolutions`
-/// rule that yarn applies to `row`, or `row`'s own range if yarn applies no rule to it.
+/// Whether a package of the lockfile is the one that a version asks for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Serves {
+    Yes,
+    No,
+    /// The lockfile does not say. A lockfile that was migrated has the kind of package that the
+    /// dependent declares, and a repository has more than one URL.
+    Unknown,
+}
+
+impl From<bool> for Serves {
+    fn from(serves: bool) -> Self {
+        if serves { Serves::Yes } else { Serves::No }
+    }
+}
+
+/// Compares what a lockfile copies from the version that it resolved: the range, the URL or the
+/// path of a tarball, and the repository. Not the ref: the lockfile has the commit it was at.
+fn serves(
+    lockfile: &Lockfile,
+    asked: &crate::dependency::Version,
+    package_id: PackageID,
+) -> Serves {
+    use crate::dependency::tarball::Uri;
+    use DependencyVersionTag as Asked;
+    use ResolutionTag as Locked;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let locked = &lockfile.packages.items_resolution()[package_id as usize];
+    match (asked.tag, locked.tag) {
+        (Asked::Npm, Locked::Npm) => {
+            let npm = asked.npm();
+            // Under another name the row follows an `npm:` alias, not the rule.
+            let name = lockfile.packages.items_name()[package_id as usize];
+            (npm.name.slice(buf) != name.slice(buf)
+                // An empty range and `*` resolve to `latest`, even if that is a prerelease, which
+                // no range accepts.
+                || npm.version.is_empty()
+                || crate::npm::is_any_version_range(asked.literal.slice(buf))
+                || npm.version.satisfies(locked.npm().version, buf, buf))
+            .into()
+        }
+        // Unless another dependency holds the package: see `shares_held_package`.
+        (Asked::Npm | Asked::DistTag, Locked::LocalTarball | Locked::Git | Locked::Github) => {
+            Serves::No
+        }
+        (Asked::Tarball, _) => match (&asked.tarball().uri, locked.tag) {
+            (Uri::Remote(url), Locked::RemoteTarball) => {
+                is_same_url(url.slice(buf), locked.remote_tarball().slice(buf)).into()
+            }
+            // npm's lockfile has a version for a tarball, and its migration keeps the version.
+            (Uri::Remote(url), Locked::Npm) => {
+                let url = url.slice(buf);
+                if is_same_url(url, locked.npm().url.slice(buf)) {
+                    Serves::Yes
+                } else if lockfile::bun_lock::url_is_under_registry(
+                    url,
+                    crate::npm::registry::DEFAULT_URL.as_bytes(),
+                ) {
+                    // bun.lock leaves such a URL out, and reads the configured registry's back.
+                    Serves::Unknown
+                } else {
+                    Serves::No
+                }
+            }
+            (Uri::Local(path), Locked::LocalTarball) => {
+                is_same_project_path(path.slice(buf), locked.local_tarball().slice(buf))
+            }
+            (Uri::Remote(_), Locked::LocalTarball)
+            | (Uri::Local(_), Locked::Npm | Locked::RemoteTarball | Locked::Git | Locked::Github) => {
+                Serves::No
+            }
+            // pnpm's lockfile has the tarball that GitHub serves for a repository, and its
+            // migration has the repository.
+            _ => Serves::Unknown,
+        },
+        (Asked::Git | Asked::Github, Locked::Git | Locked::Github) => {
+            is_same_repository(buf, asked, locked)
+        }
+        (Asked::Git | Asked::Github, Locked::Npm | Locked::LocalTarball) => Serves::No,
+        // yarn's lockfile has the tarball that a host serves for a repository, and a registry
+        // tarball is migrated as a tarball if the dependent declares one.
+        _ => Serves::Unknown,
+    }
+}
+
+/// Whether two URLs name one tarball. What follows a `#` is not sent to a server, and the
+/// migration of yarn.lock, which has a checksum there, leaves it out.
+fn is_same_url(asked: &[u8], locked: &[u8]) -> bool {
+    fn without_fragment(url: &[u8]) -> &[u8] {
+        strings::index_of_char_usize(url, b'#').map_or(url, |at| &url[..at])
+    }
+    without_fragment(asked) == without_fragment(locked)
+}
+
+/// Whether two paths of a lockfile, which are relative to the project, name one file.
+fn is_same_project_path(asked: &[u8], locked: &[u8]) -> Serves {
+    if asked == locked {
+        return Serves::Yes;
+    }
+    // Another lockfile has `dir/b.tgz` for `./dir/b.tgz`.
+    match (
+        lockfile::join_top_level_dir(&[asked]),
+        lockfile::join_top_level_dir(&[locked]),
+    ) {
+        (Some(asked), Some(locked)) => (asked.slice() == locked.slice()).into(),
+        _ => Serves::Unknown,
+    }
+}
+
+/// Whether a git or GitHub package is from the repository that `asked` names.
+fn is_same_repository(
+    buf: &[u8],
+    asked: &crate::dependency::Version,
+    locked: &Resolution,
+) -> Serves {
+    let asked_is_github = asked.tag == DependencyVersionTag::Github;
+    let locked_is_github = locked.tag == ResolutionTag::Github;
+    let asked = if asked_is_github {
+        asked.github()
+    } else {
+        asked.git()
+    };
+    let locked = locked.repository();
+    let is_copy = match (asked_is_github, locked_is_github) {
+        (true, true) => {
+            asked.owner.eql(locked.owner, buf, buf) && asked.repo.eql(locked.repo, buf, buf)
+        }
+        (false, false) => {
+            crate::repository::is_locked_as(asked.repo.slice(buf), locked.repo.slice(buf))
+        }
+        _ => false,
+    };
+    if is_copy {
+        return Serves::Yes;
+    }
+    is_same_hosted_repository(buf, (asked, asked_is_github), (locked, locked_is_github))
+}
+
+/// Compares what npm compares: the host, the owner and the name that hosted-git-info reads from
+/// each URL. A lockfile that was migrated has the URL that another package manager wrote.
+#[cold]
+#[inline(never)]
+fn is_same_hosted_repository(
+    buf: &[u8],
+    asked: (&crate::repository::Repository, bool),
+    locked: (&crate::repository::Repository, bool),
+) -> Serves {
+    use crate::hosted_git_info::HostedGitInfo;
+    let hosted = |(repository, is_github): (&crate::repository::Repository, bool)| {
+        let repo = repository.repo.slice(buf);
+        if is_github {
+            // A GitHub package that was migrated can have a URL as its owner and repository.
+            let url = [repository.owner.slice(buf), b"/", repo].concat();
+            return HostedGitInfo::from_url(&url).ok().flatten();
+        }
+        let url = crate::repository::scp_like_path(repo).unwrap_or(repo);
+        HostedGitInfo::from_url(url).ok().flatten()
+    };
+    // `None`: hosted-git-info does not know the host.
+    let (Some(asked), Some(locked)) = (hosted(asked), hosted(locked)) else {
+        return Serves::Unknown;
+    };
+    let is_same_name =
+        |asked: &[u8], locked: &[u8]| strings::eql_case_insensitive_ascii(asked, locked, true);
+    (asked.host_provider == locked.host_provider
+        && is_same_name(
+            asked.user().unwrap_or_default(),
+            locked.user().unwrap_or_default(),
+        )
+        && is_same_name(asked.project(), locked.project()))
+    .into()
+}
+
+/// Whether `row` can share its package with another dependency. npm gives a range the tarball or
+/// the repository that another dependency asks for, if its version is in the range. A lockfile
+/// has no version for such a package.
+fn shares_held_package(lockfile: &Lockfile, row: DependencyID, package_id: PackageID) -> bool {
+    lockfile.packages.items_resolution()[package_id as usize].tag != ResolutionTag::Npm
+        && crate::dedupe::rule_target(lockfile, row, &lockfile.buffers.dependencies[row as usize])
+            .is_some_and(|asked| {
+                matches!(
+                    asked.tag,
+                    DependencyVersionTag::Npm | DependencyVersionTag::DistTag
+                )
+            })
+}
+
+/// Returns true if yarn would accept the locked package of `row`: it serves the `resolutions`
+/// rule that yarn applies to `row`, or what `row` declares if yarn applies no rule to it.
 fn is_as_yarn_resolves(lockfile: &Lockfile, row: DependencyID, package_id: PackageID) -> bool {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependency = &lockfile.buffers.dependencies[row as usize];
     crate::dedupe::effective_version_as_yarn(lockfile, row, dependency).is_some_and(|version| {
+        let resolved = &lockfile.packages.items_resolution()[package_id as usize];
+        if resolved.tag != ResolutionTag::Npm {
+            return serves(lockfile, &version, package_id) != Serves::No;
+        }
         version.try_npm().is_some_and(|npm| {
-            let resolved = lockfile.packages.items_resolution()[package_id as usize].npm();
             npm.name.slice(buf) == lockfile.packages.items_name()[package_id as usize].slice(buf)
                 // `*` and an empty range resolve to `latest`, which can be a prerelease.
                 && (npm.version.is_empty()
                     || crate::npm::is_any_version_range(version.literal.slice(buf))
-                    || npm.version.satisfies(resolved.version, buf, buf))
+                    || npm.version.satisfies(resolved.npm().version, buf, buf))
         })
     })
 }
@@ -2445,8 +2618,12 @@ fn reresolve_rows_outside_overrides(
     outside.retain(|&(row, package_id)| {
         let dependency = &dependencies[row as usize];
         // A peer takes the version that is installed, and loading bun.lock binds an optional row
-        // that never resolved by its name. Both only move if their package does not stay anyway.
-        if dependency.behavior.is_peer() || dependency.behavior.is_optional() {
+        // that never resolved by its name. Like a row that can share its package, they only move
+        // if their package does not stay anyway.
+        if dependency.behavior.is_peer()
+            || dependency.behavior.is_optional()
+            || shares_held_package(lockfile, row, package_id)
+        {
             return !held.is_set(package_id as usize);
         }
         // If a package lists a name in two dependency groups, bun.lock records one version for
@@ -2483,12 +2660,17 @@ fn reresolve_rows_outside_overrides(
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
             );
+            let buf = lockfile.buffers.string_bytes.as_slice();
             bun_core::note!(
-                "{} has {}, {} in package.json wants {}",
+                "{} has {}@{}, {} in package.json wants {}",
                 lockfile_name,
-                bstr::BStr::new(&crate::dedupe::label(lockfile, first_package)),
+                bstr::BStr::new(lockfile.packages.items_name()[first_package as usize].slice(buf)),
+                bun_core::fmt::for_terminal(
+                    lockfile.packages.items_resolution()[first_package as usize]
+                        .fmt(buf, bun_core::fmt::PathSep::Posix)
+                ),
                 field.json_name(),
-                bun_core::fmt::for_terminal(wanted.fmt(lockfile.buffers.string_bytes.as_slice())),
+                bun_core::fmt::for_terminal(wanted.fmt(buf)),
             );
             bun_core::note!(
                 "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"

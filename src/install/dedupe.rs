@@ -712,7 +712,7 @@ pub(crate) fn effective_version(
     dep: &Dependency,
 ) -> Option<dependency::Version> {
     let rule = (lockfile.overrides).rule_for(lockfile, dep_id, dep);
-    version_under(lockfile, dep, rule)
+    version_under(lockfile, dep, rule).cloned()
 }
 
 /// Like `effective_version`, but picks the rule the way yarn does (`OverrideMap::rule_for_as_yarn`).
@@ -722,22 +722,32 @@ pub(crate) fn effective_version_as_yarn(
     dep: &Dependency,
 ) -> Option<dependency::Version> {
     let rule = (lockfile.overrides).rule_for_as_yarn(lockfile, dep_id, dep);
-    version_under(lockfile, dep, rule)
+    version_under(lockfile, dep, rule).cloned()
 }
 
-fn version_under(
-    lockfile: &Lockfile,
-    dep: &Dependency,
-    rule: Option<OverrideRule<'_>>,
-) -> Option<dependency::Version> {
-    let mut version = rule.map_or_else(|| dep.version.clone(), |rule| rule.version().clone());
-    if version.tag == DependencyVersionTag::Catalog {
-        version = lockfile
-            .catalogs
-            .get(lockfile, *version.catalog(), dep.name)?
-            .version;
+/// What the rule for `dep` asks for. `None`: no rule applies to it, or its catalog has no entry.
+pub(crate) fn rule_target<'a>(
+    lockfile: &'a Lockfile,
+    dep_id: DependencyID,
+    dep: &'a Dependency,
+) -> Option<&'a dependency::Version> {
+    let rule = (lockfile.overrides).rule_for(lockfile, dep_id, dep)?;
+    version_under(lockfile, dep, Some(rule))
+}
+
+fn version_under<'a>(
+    lockfile: &'a Lockfile,
+    dep: &'a Dependency,
+    rule: Option<OverrideRule<'a>>,
+) -> Option<&'a dependency::Version> {
+    let version = rule.map_or(&dep.version, OverrideRule::version);
+    if version.tag != DependencyVersionTag::Catalog {
+        return Some(version);
     }
-    Some(version)
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    (lockfile.catalogs)
+        .get_ref(buf, *version.catalog(), dep.name)
+        .map(|entry| &entry.version)
 }
 
 // `collapse_appended` skips bundled edges: sharing what ships in a tarball costs a download.

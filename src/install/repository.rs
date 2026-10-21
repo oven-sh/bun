@@ -88,17 +88,38 @@ fn shorthand_domain(host: &[u8]) -> Option<&'static [u8]> {
     hosted_git_info::HostProvider::from_shortcut(host, false).map(|provider| provider.domain())
 }
 
-/// The `repo` to record in the lockfile for `host:path`: `ssh://host:path`, which is what reading
-/// bun.lock's `git+ssh://host:path` gives back. A shorthand (`gitlab:user/repo`) becomes a URL.
-pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
+/// The pieces of `locked_scp_like`.
+fn locked_scp_like_parts(repo: &[u8]) -> Option<[&[u8]; 4]> {
     if !Dependency::is_scp_like_path(repo) {
         return None;
     }
     let host = &repo[..strings::index_of_char_usize(repo, b':').unwrap_or(0)];
     Some(match shorthand_domain(host) {
-        Some(_) => scp_like_to_url(b"ssh://git@", repo),
-        None => [b"ssh://".as_slice(), repo].concat(),
+        Some(_) => scp_like_url_parts(b"ssh://git@", repo),
+        None => [b"ssh://", repo, b"", b""],
     })
+}
+
+/// The `repo` to record in the lockfile for `host:path`: `ssh://host:path`, which is what reading
+/// bun.lock's `git+ssh://host:path` gives back. A shorthand (`gitlab:user/repo`) becomes a URL.
+pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
+    locked_scp_like_parts(repo).map(|parts| parts.concat())
+}
+
+/// Whether a lockfile has `locked` as the `repo` of the repository that a specifier names as
+/// `declared`. A lockfile from before `locked_scp_like` has `ssh://host:path` for a shorthand too.
+pub(crate) fn is_locked_as(declared: &[u8], locked: &[u8]) -> bool {
+    if declared == locked {
+        return true;
+    }
+    let Some(parts) = locked_scp_like_parts(declared) else {
+        return false;
+    };
+    let mut rest = Some(locked);
+    for part in parts {
+        rest = rest.and_then(|rest| rest.strip_prefix(part));
+    }
+    rest.is_some_and(<[u8]>::is_empty) || locked.strip_prefix(b"ssh://") == Some(declared)
 }
 
 /// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
@@ -282,7 +303,7 @@ impl RepositoryExt for Repository {
 
 /// Returns the `host:path` in `url`, which bun.lock writes as `ssh://host:path`. An `ssh://` URL
 /// that parses is a real URL instead: its colon comes before a port.
-fn scp_like_path(url: &[u8]) -> Option<&[u8]> {
+pub(crate) fn scp_like_path(url: &[u8]) -> Option<&[u8]> {
     let path = match url.strip_prefix(b"ssh://") {
         Some(_) if bun_url::whatwg::Parsed::from_utf8(url).is_some() => return None,
         Some(path) => path,
@@ -291,18 +312,24 @@ fn scp_like_path(url: &[u8]) -> Option<&[u8]> {
     Dependency::is_scp_like_path(path).then_some(path)
 }
 
-/// Turns `host:path` into `<prefix>host/path`. A shorthand host like `github` becomes its domain.
-fn scp_like_to_url(prefix: &[u8], url: &[u8]) -> Vec<u8> {
+/// The pieces of `<prefix>host/path` for `host:path`. A shorthand host like `github` becomes its
+/// domain.
+fn scp_like_url_parts<'a>(prefix: &'a [u8], url: &'a [u8]) -> [&'a [u8]; 4] {
     // The colons inside a bracketed host (`git@[::1]:path`) are part of the host.
     let bracket = match strings::index_of_any(url, b"[:") {
         Some(at) if url[at] == b'[' => strings::index_of_char_usize(url, b']').unwrap_or(0),
         _ => 0,
     };
     let Some(colon) = strings::index_of_char_pos(url, b':', bracket) else {
-        return [prefix, url].concat();
+        return [prefix, url, b"", b""];
     };
     let (host, path) = (&url[..colon], &url[colon + 1..]);
-    [prefix, shorthand_domain(host).unwrap_or(host), b"/", path].concat()
+    [prefix, shorthand_domain(host).unwrap_or(host), b"/", path]
+}
+
+/// Turns `host:path` into `<prefix>host/path`.
+fn scp_like_to_url(prefix: &[u8], url: &[u8]) -> Vec<u8> {
+    scp_like_url_parts(prefix, url).concat()
 }
 
 pub struct StorePathFormatter<'a> {

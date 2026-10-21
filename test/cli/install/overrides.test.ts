@@ -1830,6 +1830,455 @@ describe("a rule for a tarball or git dependency", () => {
     expect(stderr).toContain("note: error occurred while resolving b\n");
     expect(exitCode).toBe(1);
   });
+
+  type Spec = ReturnType<typeof at>;
+  // `file` is a tarball in the project, and the registry of these tests has `b@3.0.0`.
+  type Source = Kind | "github" | "registry" | "file";
+  const sources: Source[] = [...kinds, "github", "registry", "file"];
+
+  /** How a package.json names `id` as a `kind`. */
+  const specifier = (spec: Spec, kind: Source, id: Id) =>
+    kind === "registry"
+      ? id === "original"
+        ? "^3.0.0"
+        : "3.0.0"
+      : kind === "file"
+        ? `file:./${id}.tgz`
+        : spec[kind](id);
+
+  /** The entry that bun.lock has for `id` as a `kind`: `<name>@<resolution>`, what the package declares, and the rest. */
+  function entry(spec: Spec, kind: Source, id: Id, info: object = {}): unknown[] {
+    const name = packages[id].name;
+    switch (kind) {
+      case "tarball":
+        return [`${name}@${spec.tarball(id)}`, info];
+      case "file":
+        return [`${name}@./${id}.tgz`, info];
+      case "git":
+        return [`${name}@${spec.git(id).replace("#v1", `#${commits[id]}`)}`, info, commits[id]];
+      case "github": {
+        // The last field is the root folder of the archive that the server has for the repository.
+        const repository = spec.github(id).slice("github:".length, -"#v1".length);
+        return [`${name}@${spec.github(id)}`, info, `${repository.replace("/", "-")}-v1`];
+      }
+      case "registry":
+        // The manifest of this registry has no integrity, which bun.lock allows up to version 1.
+        return ["b@3.0.0", spec.tarball("registry-b"), info, ""];
+    }
+  }
+
+  /** A bun.lock for `packageJson` that has its rules, with `packages` as its entries. */
+  function lockWith(
+    { name: _, workspaces: __, overrides, resolutions, ...groups }: Record<string, any>,
+    packages: Record<string, unknown[]>,
+    { version = 2, rules = overrides ?? resolutions, members = {} } = {},
+  ) {
+    const workspaces = { "": { name: "foo", ...groups }, ...members };
+    if (Object.values(packages).some(entry => entry[3] === "")) version = 1;
+    return JSON.stringify(
+      { lockfileVersion: version, configVersion: 1, workspaces, overrides: rules, packages },
+      null,
+      2,
+    );
+  }
+
+  /** What a frozen install prints for an entry that its rule does not allow. */
+  const refusal = (dir: string, has: unknown, field: string, wants: string) =>
+    normalizeBunSnapshot(
+      `error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has ${has}, ${field} in package.json wants ${wants}\nnote: try re-running without --frozen-lockfile and commit the updated lockfile`,
+      dir,
+    );
+
+  /** A frozen install of `dir` names `has` and `wants`, and leaves bun.lock as it is. */
+  async function expectRefusal(
+    dir: string,
+    has: unknown,
+    wants: string,
+    { field = "overrides", env = {}, args = [] as string[] } = {},
+  ) {
+    const lock = await lockfile(dir);
+    const { stderr, exitCode } = await bunWith(env, dir, "install", "--frozen-lockfile", ...args);
+    expect(stderr).toBe(refusal(dir, has, field, wants));
+    expect({ exitCode, lock: await lockfile(dir) }).toEqual({ exitCode: 1, lock });
+  }
+
+  // A version of Bun that passed over the rule saved such a bun.lock, and so does a merge that takes the rule of one
+  // branch and the entry of the other. The entry is the package that `b` is declared as, and the rule names the fork.
+  describe("bun.lock has the package that a rule replaces", () => {
+    // A pair is here if bun.lock alone says that the entry is not what the rule names.
+    const decided: Partial<Record<Source, Source[]>> = {
+      tarball: ["tarball", "file"],
+      git: ["registry", "file"],
+      github: ["github", "registry", "file"],
+      registry: ["tarball", "git", "github", "file"],
+      file: ["tarball", "git", "github", "registry", "file"],
+    };
+    const pairs = sources.flatMap(from =>
+      (decided[from] ?? []).filter(to => sources.includes(to)).map(to => ({ from, to })),
+    );
+
+    test.concurrent.each(pairs)("a $from, and the rule names a $to: a frozen install fails", async ({ from, to }) => {
+      const spec = at();
+      const [declared, rule] = [specifier(spec, from, "original"), specifier(spec, to, "fork-bee")];
+      const packageJson = { name: "foo", dependencies: { b: declared }, overrides: { b: rule } };
+      const has = entry(spec, from, "original");
+      const dir = await project(packageJson, { "bun.lock": lockWith(packageJson, { b: has }) });
+
+      await expectRefusal(dir, has[0], rule, { env: spec.registry });
+    });
+
+    // Each kind is the entry of one pair, and the fork of another.
+    test.concurrent.each(
+      (
+        [
+          { from: "registry", to: "tarball" },
+          { from: "tarball", to: "file" },
+          { from: "file", to: "git" },
+          { from: "git", to: "registry" },
+          { from: "github", to: "github" },
+        ] as const
+      ).filter(({ from, to }) => sources.includes(from) && sources.includes(to)),
+    )("a $from, and the rule names a $to: bun install resolves b again", async ({ from, to }) => {
+      const spec = at();
+      const [declared, rule] = [specifier(spec, from, "original"), specifier(spec, to, "fork-bee")];
+      const packageJson = { name: "foo", dependencies: { b: declared }, overrides: { b: rule } };
+      // The registry of these tests has no integrity for `b`, so the bun.lock that gets it is of version 1.
+      const stale = lockWith(packageJson, { b: entry(spec, from, "original") }, { version: to === "registry" ? 1 : 2 });
+      const dir = await project(packageJson, { "bun.lock": stale });
+      if (to === "file") {
+        const fork = await githubTarball("package", { "package.json": JSON.stringify(packages["fork-bee"]) });
+        await write(join(dir, "fork-bee.tgz"), fork);
+      }
+
+      const { stderr, exitCode } = await bunWith(spec.registry, dir, "install");
+
+      expect(stderr).toBe("Saved lockfile");
+      expect({
+        installed: installed(dir, "b"),
+        locked: await locked(dir, "b"),
+        // The package that the rule replaces is not asked for.
+        replaced: fetched(spec, dir),
+        exitCode,
+      }).toEqual({
+        installed: to === "registry" ? "b@3.0.0" : "bee@2.0.0",
+        locked: entry(spec, to, "fork-bee")[0],
+        replaced: { original: 0, cloned: to === "git" ? 1 : 0 },
+        exitCode: 0,
+      });
+    });
+
+    type Declared = {
+      where: string;
+      /** package.json without its name, for `b` declared as `declared` and a rule that names `rule`. */
+      pkg: (spec: Spec, declared: string, rule: string) => Record<string, any>;
+      /** The entries of bun.lock next to the one for `b`. */
+      others?: (spec: Spec, declared: string) => Record<string, unknown[]>;
+      lock?: (rule: string, declared: string) => Parameters<typeof lockWith>[2];
+      files?: (declared: string) => Record<string, string>;
+      field?: "resolutions";
+    };
+    const a = (spec: Spec, group: string, declared: string, id = "a-tarball") => ({
+      a: [`a@${spec.tarball(id)}`, { [group]: { b: declared } }],
+    });
+
+    // The other places that declare `b`, and the other ways to write the rule. `b` is a tarball, and so is the fork.
+    test.concurrent.each<Declared>([
+      {
+        where: "a dependency of the package a",
+        pkg: (spec, _, rule) => ({ dependencies: { a: spec.tarball("a-tarball") }, overrides: { b: rule } }),
+        others: (spec, declared) => a(spec, "dependencies", declared),
+      },
+      {
+        where: "a peer of the package a",
+        pkg: (spec, _, rule) => ({ dependencies: { a: spec.tarball("a-peer-tarball") }, overrides: { b: rule } }),
+        others: (spec, declared) => a(spec, "peerDependencies", declared, "a-peer-tarball"),
+      },
+      {
+        where: "a dependency of the package a, under a rule for a alone",
+        pkg: (spec, _, rule) => ({ dependencies: { a: spec.tarball("a-tarball") }, overrides: { a: { b: rule } } }),
+        others: (spec, declared) => a(spec, "dependencies", declared),
+        lock: () => ({ version: 3 }),
+      },
+      {
+        where: "an optional dependency of the project",
+        pkg: (_, declared, rule) => ({ optionalDependencies: { b: declared }, overrides: { b: rule } }),
+      },
+      {
+        where: "a dependency of a workspace",
+        pkg: (_, __, rule) => ({ workspaces: ["packages/*"], overrides: { b: rule } }),
+        others: () => ({ w: ["w@workspace:packages/w"] }),
+        lock: (_, declared) => ({
+          members: { "packages/w": { name: "w", version: "1.0.0", dependencies: { b: declared } } },
+        }),
+        files: declared => ({
+          "packages/w/package.json": JSON.stringify({ name: "w", version: "1.0.0", dependencies: { b: declared } }),
+        }),
+      },
+      {
+        where: "a dependency of the project, under resolutions",
+        pkg: (_, declared, rule) => ({ dependencies: { b: declared }, resolutions: { b: rule } }),
+        field: "resolutions",
+      },
+      {
+        // yarn reads a key with a range in another way than Bun, and bun.lock can follow either reading.
+        where: "a dependency of the project, under resolutions that have a range in a key",
+        pkg: (_, declared, rule) => ({
+          dependencies: { b: declared },
+          resolutions: { b: rule, "no-deps@^1.0.0": "1.0.0" },
+        }),
+        lock: rule => ({ version: 3, rules: { b: rule, "no-deps@^1.0.0": { ".": "1.0.0" } } }),
+        field: "resolutions",
+      },
+    ])("$where: a frozen install fails", async ({ pkg, others, lock, files, field }) => {
+      const spec = at();
+      const [declared, rule] = [spec.tarball("original"), spec.tarball("fork-bee")];
+      const packageJson = { name: "foo", ...pkg(spec, declared, rule) };
+      const has = entry(spec, "tarball", "original");
+      const stale = lockWith(packageJson, { ...others?.(spec, declared), b: has }, lock?.(rule, declared));
+      const dir = await project(packageJson, { "bun.lock": stale, ...files?.(declared) });
+
+      await expectRefusal(dir, has[0], rule, { field });
+    });
+
+    // A peer takes the package that is installed. Here nothing else holds the package that the rule replaces.
+    test.concurrent("a peer of the package a: bun install resolves it again", async () => {
+      const spec = at();
+      const [declared, rule] = [spec.tarball("original"), spec.tarball("fork-bee")];
+      const packageJson = { name: "foo", dependencies: { a: spec.tarball("a-peer-tarball") }, overrides: { b: rule } };
+      const packages = {
+        ...a(spec, "peerDependencies", declared, "a-peer-tarball"),
+        b: entry(spec, "tarball", "original"),
+      };
+      const dir = await project(packageJson, { "bun.lock": lockWith(packageJson, packages) });
+
+      const { stderr, exitCode } = await bun(dir, "install");
+
+      expect(stderr).toBe("Saved lockfile");
+      expect({ a: loadedByA(dir), replaced: spec.requested("original"), exitCode }).toEqual({
+        a: "bee@2.0.0",
+        replaced: 0,
+        exitCode: 0,
+      });
+    });
+
+    const commit = "300f5f2ef713fa63cf319bb9df01813cfaf8e986";
+
+    // hosted-git-info knows these hosts, so two URLs say whether they are one repository. Nothing is installed, so
+    // nothing is asked of them.
+    test.concurrent.each([
+      { has: `git+ssh://git@github.com/org/b.git#${commit}`, rule: "git+ssh://git@github.com/org/fork.git#main" },
+      { has: `git+ssh://git@github.com/org/b.git#${commit}`, rule: "github:org/fork" },
+      { has: "github:org/b#300f5f2", rule: "git+ssh://git@github.com/org/fork.git#main" },
+      { has: `git+ssh://git@gitlab.com/org/b.git#${commit}`, rule: "gitlab:org/fork" },
+      { has: `git+ssh://git@github.com:org/b.git#${commit}`, rule: "git@bitbucket.org:org/b.git" },
+    ])("$has, and the rule names $rule: a frozen install fails", async ({ has, rule }) => {
+      const declared = has.slice(0, has.indexOf("#"));
+      const packageJson = { name: "foo", dependencies: { b: declared }, overrides: { b: rule } };
+      const resolved = has.startsWith("github:") ? "org-b-300f5f2" : commit;
+      const dir = await project(packageJson, { "bun.lock": lockWith(packageJson, { b: [`b@${has}`, {}, resolved] }) });
+
+      await expectRefusal(dir, `b@${has}`, rule, { args: ["--lockfile-only"] });
+    });
+
+    /** Adds the rule to package.json and to bun.lock, which keeps the packages that it has. */
+    async function recordRule(dir: string, rule: string) {
+      await editPackageJson(dir, pkg => (pkg.overrides = { b: rule }));
+      const section = `  "overrides": {\n    "b": ${JSON.stringify(rule)},\n  },\n`;
+      await write(join(dir, "bun.lock"), (await lockfile(dir)).replace('  "packages": {', `${section}  "packages": {`));
+    }
+
+    // `bun update` and `--force` download a tarball again, and the project's `b` is the fork before the check runs.
+    // The package `a` is in bun.lock with the integrity of its tarball, so its `b` stays what it was. It then takes
+    // the download of the fork, which is done. The lockfile was cleaned in between, which numbers the packages anew.
+    describe.each(["update", "install --force"])("bun %s", command => {
+      test.concurrent("the package a gets the tarball that the project's b was downloaded from", async () => {
+        const spec = at();
+        const dir = await project({
+          name: "foo",
+          dependencies: { a: spec.tarball("a-tarball"), b: spec.tarball("original") },
+        });
+        expect((await bun(dir, "install")).stderr).toBe("Saved lockfile");
+        await recordRule(dir, spec.tarball("fork-bee"));
+
+        const { exitCode } = await bun(dir, ...command.split(" "));
+
+        expect({
+          project: installed(dir, "b"),
+          a: loadedByA(dir),
+          locked: await locked(dir, "b"),
+          nested: await locked(dir, "a/b"),
+          // once, by the install before the rule
+          replaced: spec.requested("original"),
+          exitCode,
+        }).toEqual({
+          project: "bee@2.0.0",
+          a: "bee@2.0.0",
+          locked: entry(spec, "tarball", "fork-bee")[0],
+          nested: undefined,
+          replaced: 1,
+          exitCode: 0,
+        });
+      });
+    });
+
+    // The install drops `c`, so the packages after it in bun.lock have another number when the check runs.
+    test.concurrent("bun update after a dependency was taken out of package.json", async () => {
+      const spec = at();
+      const dependencies = { a: spec.tarball("a-tarball"), b: spec.tarball("original") };
+      const dir = await project({ name: "foo", dependencies: { ...dependencies, c: spec.tarball("registry-c") } });
+      expect((await bun(dir, "install")).stderr).toBe("Saved lockfile");
+      await editPackageJson(dir, pkg => (pkg.dependencies = dependencies));
+      await recordRule(dir, spec.tarball("fork-bee"));
+
+      const { exitCode } = await bun(dir, "update");
+
+      expect({ project: installed(dir, "b"), a: loadedByA(dir), c: installed(dir, "c"), exitCode }).toEqual({
+        project: "bee@2.0.0",
+        a: "bee@2.0.0",
+        c: "nothing",
+        exitCode: 0,
+      });
+    });
+
+    // The same for a repository that is checked out: `bun update` resolves the project's `bee` again, and the tarball
+    // package `z` has the registry's `b`, which the rule replaces with the repository of `bee`.
+    test.concurrent.skipIf(!kinds.includes("git"))(
+      "bun update: the package z gets the repository that the project's bee was checked out from",
+      async () => {
+        const spec = at();
+        const dir = await project({
+          name: "foo",
+          dependencies: { z: spec.tarball("z-tarball"), bee: spec.git("fork-bee") },
+        });
+        expect((await bunWith(spec.registry, dir, "install")).stderr).toBe("Saved lockfile");
+        expect(installed(dir, "b")).toBe("b@3.0.0");
+        await recordRule(dir, spec.git("fork-bee"));
+
+        const { exitCode } = await bunWith(spec.registry, dir, "update");
+
+        expect({ b: installed(dir, "b"), locked: await locked(dir, "b"), cloned: cloned(dir), exitCode }).toEqual({
+          b: "bee@2.0.0",
+          locked: entry(spec, "git", "fork-bee")[0],
+          cloned: 1,
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  // Another package manager writes a repository, a path and a registry package in its own way, and `bun pm migrate`
+  // keeps much of that. An older Bun wrote a repository in another way than this one. Each bun.lock here is what one
+  // of them saved for a rule that was followed, so a frozen install says nothing.
+  describe("bun.lock has the package that a rule names", () => {
+    const commit = "300f5f2ef713fa63cf319bb9df01813cfaf8e986";
+    const integrity = `sha512-${Buffer.alloc(64, 1).toString("base64")}`;
+    const git = (repository: string) => [`b@git+${repository}#${commit}`, {}, commit];
+
+    async function expectInStep(packageJson: object, lock: string) {
+      const dir = await project(packageJson, { "bun.lock": lock });
+      const { stderr, exitCode } = await bun(dir, "install", "--frozen-lockfile", "--lockfile-only");
+      expect({ stderr, exitCode, lock: await lockfile(dir) }).toEqual({ stderr: "", exitCode: 0, lock });
+    }
+
+    test.concurrent.each<{ title: string; declared?: string; rule: string; has: unknown[] }>([
+      {
+        title: "npm and pnpm: the GitHub package that the dependent declares, for a rule that is a git URL",
+        declared: "github:org/b#v1",
+        rule: `git+ssh://git@github.com/org/b.git#${commit}`,
+        has: [`b@github:org/b#${commit}`, {}, commit],
+      },
+      {
+        title: "npm: the git URL that the dependent declares, for a rule that is a GitHub repository",
+        declared: "git+ssh://git@github.com/org/b.git#v1",
+        rule: `github:org/b#${commit}`,
+        has: git("ssh://git@github.com/org/b.git"),
+      },
+      {
+        title: "npm: the ssh URL of GitLab, for a rule that is its https URL",
+        rule: "git+https://gitlab.com/org/b.git#main",
+        has: git("ssh://git@gitlab.com/org/b.git"),
+      },
+      {
+        title: "yarn berry: an https URL of GitHub, for a rule that is a GitHub repository",
+        rule: `github:org/b#${commit}`,
+        has: git("https://github.com/org/b.git"),
+      },
+      {
+        title: "yarn: the tarball that GitHub has for a commit, for a rule that is a GitHub repository",
+        rule: "org/b#v1",
+        has: [`b@https://codeload.github.com/org/b/tar.gz/${commit}`, {}],
+      },
+      {
+        title: "pnpm: a GitHub package, for a rule that is the tarball that GitHub has for a commit",
+        rule: `https://codeload.github.com/org/b/tar.gz/${commit}`,
+        has: [`b@github:org/b#${commit}`, {}, commit],
+      },
+      {
+        title: "a GitHub package whose owner is in another case than in the rule",
+        rule: "github:Org/B#v1",
+        has: ["b@github:org/b#300f5f2", {}, "org-b-300f5f2"],
+      },
+      {
+        title: "a repository on a host that hosted-git-info does not know, for a rule that is another URL of it",
+        rule: "git+https://git.example.com/org/b.git#main",
+        has: git("ssh://git@git.example.com/org/b.git"),
+      },
+      {
+        title: "npm: a registry package with the URL of the rule",
+        declared: "^1.0.0",
+        rule: "https://example.com/b-1.0.1.tgz",
+        has: ["b@1.0.1", "https://example.com/b-1.0.1.tgz", {}, integrity],
+      },
+      {
+        title: "npm: a registry package without its URL, for a rule that is a tarball of the default registry",
+        declared: "^1.0.0",
+        rule: "https://registry.npmjs.org/b/-/b-1.0.1.tgz",
+        has: ["b@1.0.1", "", {}, integrity],
+      },
+      {
+        title: "npm: the tarball of the registry, for a rule that is a version and a dependent that declares a tarball",
+        declared: "https://example.com/b-1.0.0.tgz",
+        rule: "1.0.0",
+        has: ["b@https://registry.npmjs.org/b/-/b-1.0.0.tgz", {}, integrity],
+      },
+      {
+        title: "yarn: a tarball without the checksum that yarn.lock has after #, for a rule that has a # of its own",
+        rule: "https://example.com/b-1.0.1.tgz#readme",
+        has: ["b@https://example.com/b-1.0.1.tgz", {}, integrity],
+      },
+      {
+        title: "npm: a path without ./, for a rule that is a tarball in the project",
+        declared: "^1.0.0",
+        rule: "file:./vendor/b-1.0.0.tgz",
+        has: ["b@vendor/b-1.0.0.tgz", {}, integrity],
+      },
+      {
+        title: "Bun: ssh:// before a host:path",
+        rule: "git@example.com:org/b.git#v1",
+        has: git("ssh://git@example.com:org/b.git"),
+      },
+      { title: "Bun: the URL of a shorthand", rule: "gitlab:org/b#v1", has: git("ssh://git@gitlab.com/org/b") },
+      { title: "an older Bun: ssh:// before a shorthand", rule: "gitlab:org/b#v1", has: git("ssh://gitlab:org/b") },
+    ])("$title", async ({ declared = "github:org/original", rule, has }) => {
+      const packageJson = { name: "foo", dependencies: { b: declared }, overrides: { b: rule } };
+      await expectInStep(packageJson, lockWith(packageJson, { b: has }));
+    });
+
+    // npm gives a range the tarball that another dependency asks for, if the version in it is in the range. This is
+    // what `bun pm migrate` writes for npm's package-lock.json: `a` declares `b@^0.9.0`, and the tarball is `b@1.0.0`.
+    test.concurrent("npm: the tarball that the project declares, for a rule that is a range", async () => {
+      const packageJson = {
+        name: "foo",
+        dependencies: { a: "file:./a-1.0.0.tgz", b: "file:./b-1.0.0.tgz" },
+        overrides: { a: { b: "^1.0.0" } },
+      };
+      const packages = {
+        a: ["a@a-1.0.0.tgz", { dependencies: { b: "^0.9.0" } }, integrity],
+        b: ["b@b-1.0.0.tgz", {}, integrity],
+      };
+      await expectInStep(packageJson, lockWith(packageJson, packages, { version: 3 }));
+    });
+  });
 });
 
 // `my-alias` asks for the package `no-deps`. A rule is for the name that a dependency is declared under, so the rule

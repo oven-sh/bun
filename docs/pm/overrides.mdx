@@ -60,11 +60,14 @@ Add `bar` to the `"overrides"` field in `package.json`. Bun defers to the specif
 
 Bun only reads overrides from the root `package.json`, not from workspace packages. Overrides apply to `peerDependencies` as well.
 
-Every install also checks the lockfile against the overrides whose value is a version or a range. If the lockfile has a version that such an override does not allow (after a merge, or a migration from another package manager), `bun install` resolves that package again, and `bun install --frozen-lockfile` fails and names it. The check leaves these entries as they are:
+Every install also checks the lockfile against the overrides whose value is a version, a range, a tarball, or a git or GitHub repository. If the lockfile has a package that such an override does not allow (after a merge, a migration from another package manager, or an install by a version of Bun that did not apply the override), `bun install` resolves that package again, and `bun install --frozen-lockfile` fails and names it. The check leaves these entries as they are:
 
 - a bundled dependency and an optional peer dependency
 - a peer or optional dependency that shares its version with a dependency the override does not apply to
 - a name that one `package.json` lists in two groups, when the override applies to only one of the two ranges
+- a tarball or a repository that a dependency under a version override shares with a dependency the override does not apply to
+- a repository that the override also names, whatever commit the lockfile has: the branch or tag of an override is not compared
+- an entry that can be the override's package written in another way: a tarball URL next to an override that is a repository or a version, a repository next to an override that is a tarball URL, and a repository on a host other than GitHub, GitLab, Bitbucket and SourceHut whose URL is not the override's
 
 ## `"resolutions"`
 

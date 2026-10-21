@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallow React to be incorrectly marked as unused
 pub struct JsxUsesReact;
 
-/// Each only if the file has the name in it, or in a `/* global */` comment.
+/// Each is only set if the file mentions the name, in code or in a `/* global */` comment.
 pub struct Pragmas<'a> {
     pragma: Option<Name<'a>>,
     fragment: Option<Name<'a>>,

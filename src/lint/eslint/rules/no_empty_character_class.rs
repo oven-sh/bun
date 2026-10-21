@@ -24,7 +24,7 @@ impl Rule for NoEmptyCharacterClass {
         if !strings::contains(pattern, b"[]") {
             return;
         }
-        let mode = regex::Mode::of_flags(literal.flags());
+        let mode = regex::Mode::from_flags(literal.flags());
         let Ok(ast) = regex::parse_pattern(pattern, mode, regex::Options::default()) else {
             return;
         };
@@ -32,13 +32,13 @@ impl Rule for NoEmptyCharacterClass {
             if let RegexKind::CharacterClass { negate: false, elements, .. } = node.kind()
                 && elements.is_empty()
             {
-                // oxlint points at the class.
+                // oxlint reports at the class.
                 let pattern_start = e.span().start + 1;
-                let place = match cx.language().is_oxlint {
+                let report_span = match cx.language().is_oxlint {
                     true => Span::new(pattern_start + node.start(), pattern_start + node.end()),
                     false => e.span(),
                 };
-                cx.report(place, UNEXPECTED).hint("[] in a regular expression matches nothing.");
+                cx.report(report_span, UNEXPECTED).hint("[] in a regular expression matches nothing.");
             }
         }
     }

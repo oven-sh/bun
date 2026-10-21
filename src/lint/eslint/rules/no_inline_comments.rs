@@ -11,7 +11,7 @@ const UNEXPECTED_INLINE_COMMENT: Message = Message::new(
     "Unexpected comment inline with code.",
 );
 
-/// oxlint's `is_directive_comment`: also `oxlint-disable`, and not `/* global a */` and `/* exported a */`.
+/// oxlint's `is_directive_comment`: it also accepts `oxlint-disable`, but not `/* global a */` or `/* exported a */`.
 fn is_directive_for_oxlint(comment: Token) -> bool {
     let value = strings::trim_js_whitespace(comment.comment_value());
     let after_name = value
@@ -24,7 +24,7 @@ fn is_directive_for_oxlint(comment: Token) -> bool {
     }
 }
 
-/// `text` up to the last thing on its last line. `None`: that line is blank.
+/// Returns `text` up to the last non-whitespace on its last line. `None` if that line is blank.
 fn up_to_last_on_line(mut text: &[u8]) -> Option<&[u8]> {
     while !text.is_empty() && strings::js_line_break_len_back(text) == 0 {
         match strings::js_whitespace_len_back(text) {
@@ -35,7 +35,7 @@ fn up_to_last_on_line(mut text: &[u8]) -> Option<&[u8]> {
     None
 }
 
-/// `text` from the first thing on its first line. `None`: that line is blank.
+/// Returns `text` from the first non-whitespace on its first line. `None` if that line is blank.
 fn from_first_on_line(mut text: &[u8]) -> Option<&[u8]> {
     while !text.is_empty() && strings::js_line_break_len(text) == 0 {
         match strings::js_whitespace_len(text) {
@@ -52,7 +52,7 @@ impl NoInlineComments {
         let head = text.get(..comment.start() as usize).unwrap_or_default();
         let before = up_to_last_on_line(head);
         let after = from_first_on_line(text.get(comment.end() as usize..).unwrap_or_default());
-        // For oxlint a byte order mark is something on the first line.
+        // For oxlint a byte order mark counts as code on the first line.
         let is_after_mark = cx.language().is_oxlint
             && cx.file().has_bom()
             && !strings::contains_js_line_break(head);
@@ -82,8 +82,10 @@ impl NoInlineComments {
         }
         let is_directive = match cx.language().is_oxlint {
             true => is_directive_for_oxlint(comment),
-            // Both tools' comments count there.
-            false if cx.language().stands_alone && is_directive_for_oxlint(comment) => true,
+            // Without a config, both tools' directive comments count.
+            false if cx.language().has_no_foreign_config && is_directive_for_oxlint(comment) => {
+                true
+            }
             false => ast_utils::is_directive_comment(&comment),
         };
         if is_directive {

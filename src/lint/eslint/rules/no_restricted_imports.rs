@@ -10,7 +10,7 @@ pub struct NoRestrictedImports {
     restrictions: Restrictions,
 }
 
-/// A message, and the same with `{{customMessage}}` after it.
+/// A message, and the same message followed by `{{customMessage}}`.
 type Messages = (Message, Message);
 
 const PATH: Messages = (
@@ -121,7 +121,7 @@ const EVERYTHING_WITH_ALLOWED_IMPORT_NAME_PATTERN: Messages = (
     ),
 );
 
-// ───────────────────────────── the options ─────────────────────────────
+// ───────────────────────────── options ─────────────────────────────
 
 /// `new RegExp(source, "u")`
 struct NamePattern {
@@ -163,31 +163,31 @@ impl NamePattern {
     }
 }
 
-/// `group` as oxlint 1.87 reads it: globs that are matched with the whole specifier, where ESLint has the patterns of a
-/// `.gitignore`. So `a/*` is not about `a/b/c`, `a` is not about `b/a/c`, and `!a/b/c` takes something out of `a/**`.
+/// `group` as oxlint 1.87 reads it: globs matched against the whole specifier, where ESLint uses `.gitignore` patterns.
+/// So `a/*` doesn't match `a/b/c`, `a` doesn't match `b/a/c`, and `!a/b/c` excludes a path from `a/**`.
 struct Globs {
-    /// Whether it starts with `!`, and the rest. One without a slash matches below every directory.
+    /// True if the pattern starts with `!`, and the rest of it. A pattern without a slash matches in any directory.
     patterns: Vec<(bool, Box<[u8]>)>,
     ignores_case: bool,
-    /// They are the strings in `patterns`, each of which oxlint takes for a group.
-    is_each_a_group: bool,
+    /// True if these are the strings in `patterns`. oxlint treats each string as its own group.
+    each_pattern_is_a_group: bool,
 }
 
 enum GlobResult {
     Found,
-    /// No group restricts the module, and the groups and regular expressions after this one are not looked at.
+    /// No group restricts the module, and the groups and regular expressions after this one are skipped.
     Whitelist,
     None,
 }
 
 impl Globs {
-    /// The strings in `patterns`.
-    fn of_strings(strings: &[&str]) -> Globs {
+    /// For the strings in `patterns`.
+    fn from_strings(strings: &[&str]) -> Globs {
         let ignores_case = true;
-        Globs { is_each_a_group: true, ..Globs::of_group(strings, ignores_case) }
+        Globs { each_pattern_is_a_group: true, ..Globs::from_group(strings, ignores_case) }
     }
 
-    fn of_group(group: &[&str], ignores_case: bool) -> Globs {
+    fn from_group(group: &[&str], ignores_case: bool) -> Globs {
         let pattern = |raw: &&str| {
             let (is_negated, rest) = match raw.as_bytes().strip_prefix(b"!") {
                 Some(rest) => (true, rest),
@@ -203,11 +203,11 @@ impl Globs {
         Globs {
             patterns: group.iter().map(pattern).collect(),
             ignores_case,
-            is_each_a_group: false,
+            each_pattern_is_a_group: false,
         }
     }
 
-    /// oxlint's `get_group_glob_result`: the last pattern that matches decides.
+    /// oxlint's `get_group_glob_result`: the last matching pattern wins.
     fn result(&self, source: &[u8]) -> GlobResult {
         let lowercase: SmallVec<[u8; 64]>;
         let source = match self.ignores_case && source.iter().any(u8::is_ascii_uppercase) {
@@ -221,7 +221,7 @@ impl Globs {
         for (is_negated, pattern) in &self.patterns {
             if bun_glob::pattern::fast_glob_match(pattern, source) {
                 result = if *is_negated { GlobResult::Whitelist } else { GlobResult::Found };
-                if *is_negated && self.is_each_a_group {
+                if *is_negated && self.each_pattern_is_a_group {
                     break;
                 }
             }
@@ -235,12 +235,12 @@ pub fn ignore_rules(group: &[&str], ignores_case: bool) -> IgnoreRules {
     IgnoreRules::from_lines(group.iter().map(|it| it.as_bytes()), IgnoreOptions { has_braces: false, ignores_case })
 }
 
-/// Which modules a restriction is about.
+/// Selects the modules a restriction applies to.
 enum Matcher {
     /// An element of `paths`.
     Path(Box<[u8]>),
-    /// `regex` of an element of `patterns`. And as oxlint has it, for which `caseSensitive` is about a `group` alone, if that is
-    /// another.
+    /// `regex` of an element of `patterns`. The second regex is oxlint's, if it differs: there `caseSensitive` only
+    /// affects a `group`.
     Regex(Box<Regex>, Option<Box<Regex>>),
     /// `group` of an element of `patterns`.
     Group(Box<IgnoreRules>, Globs),
@@ -259,7 +259,7 @@ struct Restriction {
     allow_type_imports: bool,
 }
 
-/// oxlint's `NameSpanAllowedResult`: what a restriction says about a name that is imported.
+/// oxlint's `NameSpanAllowedResult`: a restriction's verdict on an imported name.
 enum NameResult {
     Allowed,
     /// Nothing may be imported from the module.
@@ -267,19 +267,19 @@ enum NameResult {
     NameDisallowed,
 }
 
-/// What oxlint takes for the name that `import a = require("m")` imports.
+/// oxlint's stand-in for the name that `import a = require("m")` imports.
 const NAME_THAT_CANNOT_BE_USED: &[u8] = b"__<>import_name_that_cant_be_used<>__";
 
-/// With a configuration of oxlint.
+/// State that's only used under an oxlint config.
 #[derive(Default)]
 pub struct SideEffectImports<'a> {
-    /// The modules that an `import "m"` has been seen of. It looks at the first of each.
+    /// The modules already seen in an `import "m"`. oxlint only checks the first one for each module.
     modules: FxHashSet<&'a [u8]>,
-    /// [`Restrictions::check_what_is_exported_again`] has run.
+    /// True once [`Restrictions::check_reexported_imports`] has run.
     has_seen_exports: bool,
 }
 
-/// The elements of `paths`.
+/// Returns the elements of `paths`.
 pub fn restricted_paths<'o>(options: &Options<'o>) -> &'o [Json] {
     let first = options.object(0);
     match first.has("paths") || first.has("patterns") {
@@ -288,7 +288,7 @@ pub fn restricted_paths<'o>(options: &Options<'o>) -> &'o [Json] {
     }
 }
 
-/// The elements of `patterns`.
+/// Returns the elements of `patterns`.
 pub fn restricted_patterns<'o>(options: &Options<'o>) -> &'o [Json] {
     options.object(0).array("patterns")
 }
@@ -338,8 +338,8 @@ impl Restriction {
         }
     }
 
-    /// It is about some of the names of a module only.
-    fn is_about_names(&self) -> bool {
+    /// True if it restricts only some of a module's names.
+    fn restricts_names(&self) -> bool {
         self.import_names.is_some()
             || self.import_name_pattern.is_some()
             || self.allow_import_names.is_some()
@@ -349,12 +349,12 @@ impl Restriction {
 
 // ───────────────────────────── imports ─────────────────────────────
 
-/// How `import a = require("m")` is looked at.
+/// How `import a = require("m")` is treated.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Dialect {
-    /// It imports no name.
+    /// It doesn't import a name.
     Eslint,
-    /// As `import a from "m"`.
+    /// Like `import a from "m"`.
     TypeScript,
 }
 
@@ -366,9 +366,9 @@ pub const STATEMENTS: [StmtTag; 4] = [
     StmtTag::ImportEquals,
 ];
 
-/// The module that `statement` imports from.
+/// Returns the module that `statement` imports from.
 pub fn import_source<'a>(statement: Stmt<'a>, dialect: Dialect) -> Option<&'a [u8]> {
-    // oxlint takes it as it is.
+    // oxlint doesn't trim it.
     let is_oxlint = statement.file().language().is_oxlint;
     let trim = |it: &'a [u8]| if is_oxlint { it } else { strings::trim_js_whitespace(it) };
     match statement.kind() {
@@ -406,13 +406,13 @@ pub fn is_type_only(statement: Stmt) -> bool {
 
 #[derive(Copy, Clone)]
 struct Specifier<'a> {
-    /// The name in the other module. `*` for all of it.
+    /// The name in the other module, or `*` for the whole module.
     name: &'a [u8],
     span: Span,
     is_type_only: bool,
 }
 
-/// What a statement imports.
+/// The imports of one statement.
 struct Imported<'a> {
     node: Span,
     source: &'a [u8],
@@ -422,7 +422,7 @@ struct Imported<'a> {
 
 impl<'a> Imported<'a> {
     fn new(statement: Stmt<'a>, dialect: Dialect, source: &'a [u8]) -> Imported<'a> {
-        // What oxlint says about a `*`, it says about the statement, and what it says about `a as b`, about the `a`.
+        // oxlint reports a `*` at the statement, and `a as b` at the `a`.
         let is_oxlint = statement.file().language().is_oxlint;
         let mut specifiers = SmallVec::new();
         let mut add = |name: &'a [u8], span: Span, is_type_only: bool| {
@@ -462,7 +462,7 @@ impl<'a> Imported<'a> {
             }
             StmtKind::ImportEquals(import) => {
                 node = statement.span_without_export();
-                // What oxlint says about the name, it says about the module.
+                // oxlint reports the name at the module specifier.
                 if let Some(specifier) = statement.module_specifier_span().filter(|_| is_oxlint) {
                     add(NAME_THAT_CANNOT_BE_USED, specifier, false);
                 } else if dialect == Dialect::TypeScript {
@@ -482,7 +482,7 @@ impl<'a> Imported<'a> {
 
 // ───────────────────────────── reports ─────────────────────────────
 
-/// `new Intl.ListFormat("en-US").format(..)` of the names in quotes.
+/// `new Intl.ListFormat("en-US").format(..)` of the quoted names.
 fn format_import_names(names: &[Box<[u8]>]) -> Vec<u8> {
     let mut out = Vec::new();
     for (i, name) in names.iter().enumerate() {
@@ -511,8 +511,8 @@ fn includes(names: &[Box<[u8]>], name: &[u8]) -> bool {
 type ReportAt<'r, 'a> = &'r dyn Fn(Span, Message) -> Report<'a>;
 
 impl Restriction {
-    /// ESLint's `checkRestrictedPathAndReport` for one entry, and `reportPathForPatterns`.
-    /// `report_at`: [`Cx::report`] of the rule, of which there are two. This is compiled once.
+    /// ESLint's `checkRestrictedPathAndReport` for one entry, and `reportPathForPatterns`. `report_at` is the rule's
+    /// [`Cx::report`]. Two rules call this, and taking a `dyn Fn` compiles it only once.
     #[inline(never)]
     fn check<'a>(&self, report_at: ReportAt<'_, 'a>, is_oxlint: bool, imported: &Imported<'a>) {
         if self.allow_type_imports && imported.is_type_only {
@@ -526,12 +526,12 @@ impl Restriction {
             }
             .data("importSource", imported.source)
         };
-        // oxlint has the names with commas between them, and a pattern as it is in the configuration.
+        // oxlint joins the names with commas, and prints a pattern as written in the config.
         let list = |names: &[Box<[u8]>]| match is_oxlint {
             true => names.join(&b", "[..]),
             false => format_import_names(names),
         };
-        let written = |pattern: &NamePattern| match is_oxlint {
+        let pattern_text = |pattern: &NamePattern| match is_oxlint {
             true => pattern.text.get(1..pattern.text.len().saturating_sub(2)).unwrap_or_default().to_vec(),
             false => pattern.text.clone(),
         };
@@ -541,18 +541,18 @@ impl Restriction {
         let allowed = self.allow_import_names.as_deref();
         let allowed_pattern = self.allow_import_name_pattern.as_ref();
 
-        let is_about_all = match is_oxlint {
+        let restricts_whole_module = match is_oxlint {
             true => imported.specifiers.is_empty(),
-            false => !self.is_about_names(),
+            false => !self.restricts_names(),
         };
-        if is_about_all {
+        if restricts_whole_module {
             report(imported.node, if is_path { PATH } else { PATTERNS });
             return;
         }
         if is_oxlint {
-            // It goes through what the statement imports, and each is restricted with all the others, by its name, or
-            // not. A `*` always is.
-            let mut has_said_it_of_all = false;
+            // For each specifier, either the whole module is restricted, or this name is, or nothing is. A `*` is
+            // always restricted.
+            let mut has_reported_module = false;
             for specifier in &imported.specifiers {
                 let name = specifier.name;
                 if self.allow_type_imports && specifier.is_type_only {
@@ -565,10 +565,10 @@ impl Restriction {
                             .data("isOrAre", is_or_are(names));
                     } else if let Some(pattern) = restricted_pattern {
                         report(imported.node, PATTERN_AND_EVERYTHING_WITH_REGEX_IMPORT_NAME)
-                            .data("importNames", written(pattern));
+                            .data("importNames", pattern_text(pattern));
                     } else if let Some(pattern) = allowed_pattern {
                         report(imported.node, EVERYTHING_WITH_ALLOWED_IMPORT_NAME_PATTERN)
-                            .data("allowedImportNamePattern", written(pattern));
+                            .data("allowedImportNamePattern", pattern_text(pattern));
                     } else if let Some(names) = allowed {
                         report(imported.node, EVERYTHING_WITH_ALLOW_IMPORT_NAMES)
                             .data("allowedImportNames", list(names))
@@ -578,27 +578,27 @@ impl Restriction {
                     }
                     continue;
                 }
-                let shown = if name == NAME_THAT_CANNOT_BE_USED { imported.source } else { name };
+                let display_name = if name == NAME_THAT_CANNOT_BE_USED { imported.source } else { name };
                 match self.is_name_allowed_by_oxlint(name) {
                     NameResult::Allowed => {}
                     NameResult::GeneralDisallowed => {
-                        if !std::mem::replace(&mut has_said_it_of_all, true) {
+                        if !std::mem::replace(&mut has_reported_module, true) {
                             report(imported.node, if is_path { PATH } else { PATTERNS });
                         }
                     }
                     NameResult::NameDisallowed => {
                         if let Some(names) = allowed {
                             report(specifier.span, ALLOWED_IMPORT_NAME)
-                                .data("importName", shown)
+                                .data("importName", display_name)
                                 .data("allowedImportNames", list(names))
                                 .data("isOrAre", is_or_are(names));
                         } else if let Some(pattern) = allowed_pattern {
                             report(specifier.span, ALLOWED_IMPORT_NAME_PATTERN)
-                                .data("importName", shown)
-                                .data("allowedImportNamePattern", written(pattern));
+                                .data("importName", display_name)
+                                .data("allowedImportNamePattern", pattern_text(pattern));
                         } else {
                             report(specifier.span, if is_path { IMPORT_NAME } else { PATTERN_AND_IMPORT_NAME })
-                                .data("importName", shown);
+                                .data("importName", display_name);
                         }
                     }
                 }
@@ -610,7 +610,7 @@ impl Restriction {
         for specifier in &imported.specifiers {
             let name = specifier.name;
             if name == b"*" {
-                // Only the first of `import { "*" as a, "*" as b } from "m"`.
+                // Report only the first of `import { "*" as a, "*" as b } from "m"`.
                 if std::mem::replace(&mut has_seen_everything, true) {
                     continue;
                 }
@@ -624,10 +624,10 @@ impl Restriction {
                         .data("isOrAre", is_or_are(names));
                 } else if let Some(pattern) = allowed_pattern {
                     report(specifier.span, EVERYTHING_WITH_ALLOWED_IMPORT_NAME_PATTERN)
-                        .data("allowedImportNamePattern", written(pattern));
+                        .data("allowedImportNamePattern", pattern_text(pattern));
                 } else if let Some(pattern) = restricted_pattern {
                     report(specifier.span, PATTERN_AND_EVERYTHING_WITH_REGEX_IMPORT_NAME)
-                        .data("importNames", written(pattern));
+                        .data("importNames", pattern_text(pattern));
                 }
                 continue;
             }
@@ -650,13 +650,13 @@ impl Restriction {
             } else if let Some(pattern) = allowed_pattern.filter(|it| !it.regex.test(name)) {
                 report(specifier.span, ALLOWED_IMPORT_NAME_PATTERN)
                     .data("importName", name)
-                    .data("allowedImportNamePattern", written(pattern));
+                    .data("allowedImportNamePattern", pattern_text(pattern));
             }
         }
     }
 }
 
-/// The options of the rule: `paths`, then `patterns`.
+/// The rule's options: `paths`, then `patterns`.
 pub struct Restrictions {
     all: Vec<Restriction>,
 }
@@ -666,7 +666,7 @@ impl Restrictions {
         let mut all = Vec::new();
         for path in restricted_paths(options) {
             let object = Object::of(Some(path));
-            // The schema lets `[{}]` through, whose `name` upstream takes as a key: `undefined`.
+            // The schema accepts `[{}]`. Upstream uses its missing `name` as a key, so the key is `undefined`.
             let name = path.as_str().or_else(|| object.get("name")?.as_str()).unwrap_or(b"undefined");
             all.push(Restriction::new(Matcher::Path(name.into()), object));
         }
@@ -676,7 +676,7 @@ impl Restrictions {
             let strings = patterns.iter().filter_map(|it| std::str::from_utf8(it.as_str()?).ok());
             let group: Vec<&str> = strings.collect();
             let ignore = Box::new(ignore_rules(&group, true));
-            let matcher = Matcher::Group(ignore, Globs::of_strings(&group));
+            let matcher = Matcher::Group(ignore, Globs::from_strings(&group));
             all.push(Restriction::new(matcher, Object::default()));
             return Restrictions { all };
         }
@@ -686,13 +686,13 @@ impl Restrictions {
             let matcher = match object.str("regex") {
                 Some(regex) => {
                     let with = |flags| Regex::new(regex, flags).ok().map(Box::new);
-                    let as_written = if is_case_sensitive { None } else { with("u") };
-                    with(if is_case_sensitive { "u" } else { "iu" }).map(|it| Matcher::Regex(it, as_written))
+                    let oxlint_regex = if is_case_sensitive { None } else { with("u") };
+                    with(if is_case_sensitive { "u" } else { "iu" }).map(|it| Matcher::Regex(it, oxlint_regex))
                 }
                 None => object.has("group").then(|| {
                     let group = object.strings("group");
                     let ignore = Box::new(ignore_rules(&group, !is_case_sensitive));
-                    Matcher::Group(ignore, Globs::of_group(&group, !is_case_sensitive))
+                    Matcher::Group(ignore, Globs::from_group(&group, !is_case_sensitive))
                 }),
             };
             if let Some(matcher) = matcher {
@@ -702,7 +702,6 @@ impl Restrictions {
         Restrictions { all }
     }
 
-    /// Nothing is restricted.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.all.is_empty()
@@ -718,11 +717,11 @@ impl Restrictions {
         let is_oxlint = cx.language().is_oxlint;
         let Some(source) = import_source(statement, dialect) else {
             if is_oxlint && statement.tag() == StmtTag::ExportNamed {
-                self.check_what_is_exported_again(cx, dialect);
+                self.check_reexported_imports(cx, dialect);
             }
             return;
         };
-        let applying = self.applying_to(source, is_oxlint);
+        let applying = self.restrictions_for(source, is_oxlint);
         if applying.is_empty() {
             return;
         }
@@ -733,30 +732,31 @@ impl Restrictions {
             }
             return;
         }
-        // oxlint's `report_side_effects`. It says nothing about `export {} from "m"`. A restriction of some names does
-        // not hold, but for a `group`, and of these only the last. That it is `import type {} from "m"` is not looked at.
+        // oxlint's `report_side_effects`. It doesn't report `export {} from "m"`. A restriction on some names doesn't
+        // apply unless it has a `group`, and only the last `group` restriction applies. `import type {} from "m"` is
+        // treated like `import {} from "m"`.
         if statement.tag() != StmtTag::Import || !cx.state.modules.insert(source) {
             return;
         }
         let imported = Imported { is_type_only: false, ..imported };
         let last_group = applying.iter().rposition(|it| matches!(it.matcher, Matcher::Group(..)));
         for (i, restriction) in applying.iter().enumerate() {
-            let holds = match restriction.matcher {
+            let is_in_effect = match restriction.matcher {
                 Matcher::Path(_) => restriction.import_names.is_none(),
                 Matcher::Regex(..) => restriction.import_names.is_none() && restriction.import_name_pattern.is_none(),
                 Matcher::Group(..) => Some(i) == last_group,
             };
-            if holds {
+            if is_in_effect {
                 restriction.check(&|at, message| cx.report(at, message), is_oxlint, &imported);
             }
         }
     }
 
-    /// oxlint goes through the entries of its module record, where `export { a }` of a name that is imported is an indirect
-    /// export, as in the specification: it has the module and the name of the `import`, and in oxlint its place too. So
-    /// an `import` of which a name is exported again is reported as if it also were `export { a } from "m"`. For all
-    /// such statements of the file, at the first of them.
-    fn check_what_is_exported_again<'a, R: Rule<State<'a> = SideEffectImports<'a>>>(
+    /// oxlint walks its module record, where `export { a }` of an imported name is an indirect export, as in the
+    /// specification: the entry has the `import`'s module and name, and in oxlint its span too. So an `import` with a
+    /// re-exported name is reported as if it were also `export { a } from "m"`. This runs once, at the file's first
+    /// `export { .. }` statement, and handles all of them.
+    fn check_reexported_imports<'a, R: Rule<State<'a> = SideEffectImports<'a>>>(
         &self,
         cx: &mut Cx<'a, R>,
         dialect: Dialect,
@@ -765,7 +765,8 @@ impl Restrictions {
             return;
         }
         let file = cx.file();
-        // By the name here, the first of each. `None`: `* as a`, which is a local export there.
+        // Keyed by local name, and the first import of a name wins. `None` is `* as a`, which oxlint records as a local
+        // export.
         let mut entries: FxHashMap<&'a [u8], Option<(Stmt<'a>, Specifier<'a>)>> = FxHashMap::default();
         for statement in file.body() {
             let Some(import) = statement.as_import() else {
@@ -775,7 +776,7 @@ impl Restrictions {
                 let specifier = |it: Ident<'a>| Specifier { name: it.bytes(), span: it.span(), is_type_only };
                 entries.entry(local.bytes()).or_insert_with(|| imported.map(|it| (statement, specifier(it))));
             };
-            // It takes the name here for the name there.
+            // oxlint uses the local name as the imported name.
             if let Some(default) = import.default() {
                 add(default, Some(default), import.is_type_only());
             }
@@ -786,9 +787,9 @@ impl Restrictions {
                 add(it.local(), Some(it.imported()), import.is_type_only() || it.is_type_only());
             }
         }
-        let mut again: Vec<Imported<'a>> = Vec::new();
-        // Where each `import` is in `again`, by where it starts.
-        let mut places: FxHashMap<u32, usize> = FxHashMap::default();
+        let mut reexporting_imports: Vec<Imported<'a>> = Vec::new();
+        // Maps an `import`'s start offset to its index in `reexporting_imports`.
+        let mut import_indexes: FxHashMap<u32, usize> = FxHashMap::default();
         for statement in file.body() {
             let Some(export) = statement.as_export_named() else {
                 continue;
@@ -800,25 +801,25 @@ impl Restrictions {
                 let Some(source) = import_source(import, dialect) else {
                     continue;
                 };
-                let at = *places.entry(import.span().start).or_insert(again.len());
-                if at == again.len() {
+                let at = *import_indexes.entry(import.span().start).or_insert(reexporting_imports.len());
+                if at == reexporting_imports.len() {
                     let specifiers = SmallVec::new();
-                    again.push(Imported { node: import.span(), source, is_type_only: false, specifiers });
+                    reexporting_imports.push(Imported { node: import.span(), source, is_type_only: false, specifiers });
                 }
-                if let Some(imported) = again.get_mut(at) {
+                if let Some(imported) = reexporting_imports.get_mut(at) {
                     imported.specifiers.push(specifier);
                 }
             }
         }
-        for imported in &again {
-            for restriction in self.applying_to(imported.source, true) {
+        for imported in &reexporting_imports {
+            for restriction in self.restrictions_for(imported.source, true) {
                 restriction.check(&|at, message| cx.report(at, message), true, imported);
             }
         }
     }
 
-    /// The restrictions that are about the module `source`.
-    fn applying_to(&self, source: &[u8], is_oxlint: bool) -> SmallVec<[&Restriction; 4]> {
+    /// Returns the restrictions that apply to the module `source`.
+    fn restrictions_for(&self, source: &[u8], is_oxlint: bool) -> SmallVec<[&Restriction; 4]> {
         let mut found: SmallVec<[&Restriction; 4]> = SmallVec::new();
         for restriction in &self.all {
             let applies = match &restriction.matcher {
@@ -830,7 +831,7 @@ impl Restrictions {
                         break;
                     }
                 },
-                Matcher::Regex(_, Some(as_written)) if is_oxlint => as_written.test(source),
+                Matcher::Regex(_, Some(oxlint_regex)) if is_oxlint => oxlint_regex.test(source),
                 _ => restriction.applies_to(source),
             };
             if applies {
@@ -840,7 +841,7 @@ impl Restrictions {
         found
     }
 
-    /// What oxlint does with `import("m")`: as with `import "m"`, without the restrictions that are about names.
+    /// oxlint checks `import("m")` like `import "m"`, but skips the restrictions on names.
     pub fn check_import_call<'a, R: Rule>(&self, cx: &Cx<'a, R>, call: Expr<'a>) {
         let Some(args) = call.as_import_call() else {
             return;
@@ -855,8 +856,8 @@ impl Restrictions {
             specifiers: SmallVec::new(),
         };
         let is_oxlint = cx.language().is_oxlint;
-        for restriction in self.applying_to(imported.source, is_oxlint) {
-            if !restriction.is_about_names() {
+        for restriction in self.restrictions_for(imported.source, is_oxlint) {
+            if !restriction.restricts_names() {
                 restriction.check(&|at, message| cx.report(at, message), is_oxlint, &imported);
             }
         }

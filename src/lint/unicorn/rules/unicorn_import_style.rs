@@ -13,14 +13,14 @@ const UNASSIGNED: StyleSet = 8;
 
 struct ModuleStylesOverride {
     module_name: Box<[u8]>,
-    /// The styles that it says something about, and those of them that it allows. `None`: `false`, the module is not
-    /// looked at.
+    /// The styles the override mentions, and the ones among them that it allows. `None` is `false`: the module isn't
+    /// checked.
     styles: Option<(StyleSet, StyleSet)>,
 }
 
 /// Enforce specific import styles per module.
 pub struct ImportStyle {
-    /// The last for a module counts.
+    /// The last entry for a module wins.
     styles: Vec<ModuleStylesOverride>,
     extend_default_styles: bool,
     check_import: bool,
@@ -52,9 +52,9 @@ impl Rule for ImportStyle {
                         ("default", DEFAULT_STYLE),
                         ("unassigned", UNASSIGNED),
                     ];
-                    Some(all.into_iter().fold((0, 0), |(said, allowed), (key, style)| match value.bool(key) {
-                        Some(is_allowed) => (said | style, if is_allowed { allowed | style } else { allowed }),
-                        None => (said, allowed),
+                    Some(all.into_iter().fold((0, 0), |(mentioned, allowed), (key, style)| match value.bool(key) {
+                        Some(is_allowed) => (mentioned | style, if is_allowed { allowed | style } else { allowed }),
+                        None => (mentioned, allowed),
                     }))
                 }
                 _ => return None,
@@ -176,7 +176,7 @@ impl ImportStyle {
         let Some(mut allowed_styles) = self.allowed_styles(module_name) else {
             return;
         };
-        // `const path = require("path")` is what a default import is in CommonJS.
+        // `const path = require("path")` is CommonJS's equivalent of a default import.
         if is_require && allowed_styles & DEFAULT_STYLE != 0 {
             allowed_styles |= NAMESPACE;
         }
@@ -196,8 +196,8 @@ impl ImportStyle {
         };
         let allowed_styles = match self.styles.iter().rev().find(|it| *it.module_name == *module_name) {
             Some(style_override) => {
-                let (said, allowed) = style_override.styles?;
-                (base.unwrap_or(0) & !said) | allowed
+                let (mentioned, allowed) = style_override.styles?;
+                (base.unwrap_or(0) & !mentioned) | allowed
             }
             None => base?,
         };
@@ -277,13 +277,13 @@ fn to_js_string(expr: Expr, out: &mut Vec<u8>) -> bool {
     true
 }
 
-/// The `"a"` of `require("a")`.
+/// The `"a"` in `require("a")`.
 fn get_require_module_name(call_expr: Call<'_>) -> Option<Cow<'_, [u8]>> {
     let argument = call_expr.args().first().filter(|it| call_expr.args().len() == 1 && it.tag() != ExprTag::Spread)?;
     get_inner_expression(call_expr.callee()).is_ident("require").then(|| get_module_name(argument))?
 }
 
-/// `const a = await import("b")`, which is looked at as a declaration.
+/// `const a = await import("b")`, which is checked as a declaration.
 fn is_assigned_dynamic_import(e: Expr) -> bool {
     matches!(plain(e).map(Expr::parent), Some(Node::Expr(await_expr)) if await_expr.tag() == ExprTag::Await
         && matches!(plain(await_expr).map(Expr::parent), Some(Node::VarDecl(_))))

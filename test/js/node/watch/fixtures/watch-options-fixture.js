@@ -1,12 +1,11 @@
 // Prints what fs.watch, fs.promises.watch and fs.watchFile do with values of their boolean options.
 // It uses only node APIs: fs.watch.test.ts runs it under bun and under node and compares the outputs.
+// The arguments are an empty directory to watch, the section to run, and the arguments of the section.
 "use strict";
-const { spawn } = require("node:child_process");
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "watch-options-"));
+const dir = process.argv[2];
 
 const values = ["undefined", "null", "true", "false", "0", "1", "NaN", '""', '"yes"', "{}"];
 const evaluate = source => (0, eval)(`(${source})`);
@@ -28,7 +27,8 @@ function watch(options, target = dir) {
 async function promisesWatch(options, filename = dir) {
   const controller = new AbortController();
   try {
-    const iterator = fs.promises.watch(filename, { signal: controller.signal, ...options })[Symbol.asyncIterator]();
+    if (typeof options === "object") options = { signal: controller.signal, ...options };
+    const iterator = fs.promises.watch(filename, options)[Symbol.asyncIterator]();
     const next = iterator.next();
     controller.abort();
     await next;
@@ -53,34 +53,28 @@ function watchFileStats(options, name) {
   });
 }
 
-// One child per watcher. Its script calls probe() when the watcher is open. An unref'd timer does not
-// keep the process alive, so it runs only if the watcher does. The delay is long: a timer that is
-// already due runs at the end of the loop iteration that set it, even when nothing else is alive.
-function keepsAlive(body) {
-  const script = `
-    const fs = require("node:fs");
-    const dir = ${JSON.stringify(dir)};
-    const missing = ${JSON.stringify(path.join(dir, "missing"))};
-    function probe(close) {
-      setTimeout(() => {
-        console.log("alive");
-        close();
-      }, 500).unref();
-    }
-    ${body}
-  `;
-  return new Promise(resolve => {
-    const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", chunk => (stdout += chunk));
-    child.stderr.on("data", chunk => (stderr += chunk));
-    child.on("close", code => {
-      if (code !== 0 || stderr !== "") resolve(`fails with exit code ${code}: ${stderr.trim().split("\n")[0]}`);
-      else resolve(stdout.includes("alive") ? "keeps the process alive" : "lets the process exit");
-    });
-  });
+// Opens the watcher that `row` is the source of, and returns the function that closes it.
+// A row can use `dir`, `file` (a path that does not exist), `signal` and `listener`.
+function open(row, i) {
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const file = path.join(dir, `missing-${i}`);
+  const listener = () => {};
+  const opened = eval(row);
+  if (row.startsWith("fs.watchFile(")) return () => fs.unwatchFile(file);
+  if (!row.startsWith("fs.promises.watch(")) return () => opened.close();
+  // Node opens the native watcher on the first next(). If node rejects the options there, nothing is open.
+  opened[Symbol.asyncIterator]()
+    .next()
+    .catch(() => {});
+  return () => controller.abort();
 }
+
+// For the order sections: only the code and the name are printed. The rest of some of these messages is not node's.
+const subject = outcome =>
+  outcome.replace(/^(throws \w+)(?:: The "([\w.]+)" (?:argument|property))?.*$/, (_, code, name) =>
+    name ? `${code} about ${name}` : code,
+  );
 
 const sections = {
   async "fs.watch"() {
@@ -96,23 +90,31 @@ const sections = {
   },
 
   // Which error wins, off macOS and Windows: only node's non-native recursive watcher validates in fs.watch.
-  // Only the code and the name are printed. The rest of some of these messages is not node's.
-  async "order"() {
-    const subject = outcome =>
-      outcome.replace(/^(throws \w+)(?:: The "([\w.]+)" (?:argument|property))?.*$/, (_, code, name) =>
-        name ? `${code} about ${name}` : code,
-      );
+  async "fs.watch order"() {
     const rows = [
       ['fs.watch(123, { recursive: "yes" })', () => watch({ recursive: "yes" }, 123)],
       ['fs.watch(dir, { recursive: "yes", encoding: "bogus" })', () => watch({ recursive: "yes", encoding: "bogus" })],
       ['fs.watch(dir, { recursive: "yes", signal: "bad" })', () => watch({ recursive: "yes", signal: "bad" })],
       ['fs.watch(dir, { recursive: "yes", persistent: "x" })', () => watch({ recursive: "yes", persistent: "x" })],
       ['fs.watch(dir, { recursive: "yes", ignore: 123 })', () => watch({ recursive: "yes", ignore: 123 })],
+    ];
+    for (const [label, run] of rows) console.log(label, subject(run()));
+  },
+
+  // Which error wins. Node has one order off macOS and Windows and another order on them.
+  async "fs.promises.watch order"() {
+    const rows = [
       [
         'fs.promises.watch(dir, { recursive: "yes", persistent: "x" })',
         () => promisesWatch({ recursive: "yes", persistent: "x" }),
       ],
       ["fs.promises.watch(pathWithNul, { persistent: 1 })", () => promisesWatch({ persistent: 1 }, dir + "\0")],
+      ["fs.promises.watch(pathWithNul, { recursive: 0 })", () => promisesWatch({ recursive: 0 }, dir + "\0")],
+      [
+        "fs.promises.watch(pathWithNul, { recursive: true, persistent: 1 })",
+        () => promisesWatch({ recursive: true, persistent: 1 }, dir + "\0"),
+      ],
+      ["fs.promises.watch(pathWithNul, 1)", () => promisesWatch(1, dir + "\0")],
     ];
     for (const [label, run] of rows) console.log(label, subject(await run()));
   },
@@ -134,80 +136,44 @@ const sections = {
       "fs.promises.watch(dir, { persistent: 1, ignore: 123 })",
       await promisesWatch({ persistent: 1, ignore: 123 }),
     );
-    let nonObject = "watches";
-    try {
-      await fs.promises.watch(dir, 1)[Symbol.asyncIterator]().next();
-    } catch (e) {
-      nonObject = thrown(e);
-    }
-    console.log("fs.promises.watch(dir, 1)", nonObject);
+    console.log("fs.promises.watch(dir, 1)", await promisesWatch(1));
   },
 
   async "fs.watchFile"() {
     const options = [...values.map(v => `{ bigint: ${v} }`), "Object.create({ bigint: true })"];
     const outcomes = await Promise.all(options.map((source, i) => watchFileStats(evaluate(source), `missing-${i}`)));
-    options.forEach((source, i) => console.log(`fs.watchFile(path, ${source})`, outcomes[i]));
+    options.forEach((source, i) => console.log(`fs.watchFile(file, ${source}, listener)`, outcomes[i]));
   },
 
-  async "fs.watch keep-alive"() {
-    const cases = [
-      "fs.watch(dir)",
-      "fs.watch(dir, { persistent: true })",
-      "fs.watch(dir, { persistent: false })",
-      "fs.watch(dir, { persistent: null })",
-      'fs.watch(dir, { persistent: "" })',
-      "fs.watch(dir, { persistent: 0 })",
-      "fs.watch(dir, { persistent: 1 })",
-      "fs.watch(dir, { recursive: true, persistent: null })",
-      "fs.watch(dir, { persistent: false }).ref()",
-    ];
-    const outcomes = await Promise.all(
-      cases.map(open => keepsAlive(`const watcher = ${open}; probe(() => watcher.close());`)),
-    );
-    cases.forEach((open, i) => console.log(open, outcomes[i]));
-  },
-
-  // Node opens the native watcher on the first next().
-  async "fs.promises.watch keep-alive"() {
-    const cases = [
-      "{}",
-      "{ persistent: false }",
-      "{ recursive: true }",
-      "{ persistent: false, recursive: true }",
-      "{ recursive: true, persistent: null }",
-    ];
-    const outcomes = await Promise.all(
-      cases.map(options =>
-        keepsAlive(`
-          const controller = new AbortController();
-          const watcher = fs.promises.watch(dir, { ...${options}, signal: controller.signal });
-          watcher[Symbol.asyncIterator]().next().catch(() => {});
-          probe(() => controller.abort());
-        `),
-      ),
-    );
-    cases.forEach((options, i) => console.log(`fs.promises.watch(dir, ${options})`, outcomes[i]));
-  },
-
-  // The first stat keeps the process alive by itself. The listener runs when it is done: the path does not exist.
-  async "fs.watchFile keep-alive"() {
-    const cases = [
-      "{}",
-      "{ persistent: undefined }",
-      "{ persistent: true }",
-      "{ persistent: false }",
-      "{ persistent: null }",
-      "{ persistent: 0 }",
-      "{ persistent: 1 }",
-      "Object.create({ persistent: false })",
-    ];
-    const outcomes = await Promise.all(
-      cases.map(options =>
-        keepsAlive(`fs.watchFile(missing, ${options}, () => probe(() => fs.unwatchFile(missing)));`),
-      ),
-    );
-    cases.forEach((options, i) => console.log(`fs.watchFile(path, ${options})`, outcomes[i]));
+  // The arguments are the rows that keep the process alive, "--", and the rows that let it exit.
+  // An unref'd timer does not keep the process alive, so it runs only while an open watcher does.
+  async "keep-alive"(rows) {
+    const keeps = rows.slice(0, rows.indexOf("--"));
+    const exits = rows.slice(keeps.length + 1);
+    // One watcher is open at a time: each row printed is a watcher that kept the process alive by itself.
+    (function next(i) {
+      if (i === keeps.length) return openTheRest();
+      const close = open(keeps[i], i);
+      setTimeout(() => {
+        console.log(keeps[i]);
+        close();
+        next(i + 1);
+      }, 50).unref();
+    })(0);
+    // Then all the other watchers are open, and the process has to exit with no more rows printed.
+    // If one keeps it alive, the timer closes them in order: the last row printed is one that did.
+    function openTheRest() {
+      const closers = exits.map((row, i) => open(row, keeps.length + i));
+      (function closeNext(i, delay) {
+        if (i === exits.length) return;
+        setTimeout(() => {
+          console.log(exits[i]);
+          closers[i]();
+          closeNext(i + 1, 50);
+        }, delay).unref();
+      })(0, 2000);
+    }
   },
 };
 
-sections[process.argv[2]]().finally(() => fs.rmSync(dir, { recursive: true, force: true }));
+sections[process.argv[3]](process.argv.slice(4));

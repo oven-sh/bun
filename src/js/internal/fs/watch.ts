@@ -1,7 +1,10 @@
 // fs.watch is lazily loaded so the FSWatcher class is only set up when it is used.
 const EventEmitter = require("node:events");
 const { basename } = require("node:path");
-const { getIgnoringObjectPrototype } = require("internal/shared");
+
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectHasOwn = Object.hasOwn;
+const ObjectPrototype = Object.prototype;
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
@@ -61,6 +64,16 @@ function createIgnoreMatcher(ignore) {
     }
     return false;
   };
+}
+
+// Reads an option as native did: a property of Object.prototype does not count, and a Proxy answers for itself.
+function getWatchOption(options, key) {
+  if (!(key in ObjectPrototype)) return options[key];
+  let current = options;
+  do {
+    if ($isProxyObject(current) || ObjectHasOwn(current, key)) return options[key];
+    current = ObjectGetPrototypeOf(current);
+  } while (current !== null && current !== ObjectPrototype);
 }
 
 // Node checks encoding, signal and path first: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2511-L2528
@@ -165,11 +178,11 @@ class FSWatcher extends EventEmitter {
       options = undefined;
     } else if (options) {
       if (typeof options !== "object") throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], options);
-      persistent = getIgnoringObjectPrototype(options, "persistent");
-      recursive = getIgnoringObjectPrototype(options, "recursive");
-      encoding = getIgnoringObjectPrototype(options, "encoding");
-      signal = getIgnoringObjectPrototype(options, "signal");
-      verbose = getIgnoringObjectPrototype(options, "verbose");
+      persistent = getWatchOption(options, "persistent");
+      recursive = getWatchOption(options, "recursive");
+      encoding = getWatchOption(options, "encoding");
+      signal = getWatchOption(options, "signal");
+      verbose = getWatchOption(options, "verbose");
     }
     // Unlike node, null and "" mean not given, as before: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2516
     if (persistent == null || persistent === "") persistent = true;
@@ -302,4 +315,4 @@ function watch(path, options, listener) {
   return new FSWatcher(path, options, listener);
 }
 
-export default { watch, createIgnoreMatcher };
+export default { watch, createIgnoreMatcher, getWatchOption };

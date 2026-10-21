@@ -16,6 +16,7 @@ import {
 } from "harness";
 import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
+import vm from "node:vm";
 import path from "path";
 
 import { describe, expect, mock, test } from "bun:test";
@@ -1339,7 +1340,8 @@ describe("immediately closing", () => {
 
 // Node has a different rule for the boolean options of each watch API. The fixture prints what a runtime does with
 // each value, and bun has to print what node prints.
-describe.concurrent("boolean options of fs.watch, fs.promises.watch and fs.watchFile", () => {
+// Not concurrent: a debug build needs seconds to start the processes of all the tests at once.
+describe("boolean options of fs.watch, fs.promises.watch and fs.watchFile", () => {
   const fixture = path.join(import.meta.dir, "fixtures", "watch-options-fixture.js");
   // macOS and Windows never use node's non-native recursive watcher, the only part of fs.watch that validates.
   const hasNonNativeRecursiveWatcher = !isMacOS && !isWindows;
@@ -1381,14 +1383,19 @@ fs.watch(dir, 123) throws ERR_INVALID_ARG_TYPE: The "options" argument must be o
 fs.watch(dir, "buffer") watches
 fs.watch(dir, null) watches
 `,
-    "order": `
+    "fs.watch order": `
 fs.watch(123, { recursive: "yes" }) throws ERR_INVALID_ARG_TYPE about path
 fs.watch(dir, { recursive: "yes", encoding: "bogus" }) throws ERR_INVALID_ARG_VALUE
 fs.watch(dir, { recursive: "yes", signal: "bad" }) throws ERR_INVALID_ARG_TYPE about options.signal
 fs.watch(dir, { recursive: "yes", persistent: "x" }) throws ERR_INVALID_ARG_TYPE about options.recursive
 fs.watch(dir, { recursive: "yes", ignore: 123 }) throws ERR_INVALID_ARG_TYPE about options.recursive
+`,
+    "fs.promises.watch order": `
 fs.promises.watch(dir, { recursive: "yes", persistent: "x" }) throws ERR_INVALID_ARG_TYPE about options.recursive
 fs.promises.watch(pathWithNul, { persistent: 1 }) throws ERR_INVALID_ARG_VALUE
+fs.promises.watch(pathWithNul, { recursive: 0 }) throws ERR_INVALID_ARG_TYPE about options.recursive
+fs.promises.watch(pathWithNul, { recursive: true, persistent: 1 }) throws ERR_INVALID_ARG_TYPE about options.persistent
+fs.promises.watch(pathWithNul, 1) throws ERR_INVALID_ARG_TYPE about options
 `,
     "fs.promises.watch": `
 fs.promises.watch(dir, { persistent: undefined }) watches
@@ -1426,50 +1433,64 @@ fs.promises.watch(dir, { persistent: 1, ignore: 123 }) throws ERR_INVALID_ARG_TY
 fs.promises.watch(dir, 1) throws ERR_INVALID_ARG_TYPE: The "options" argument must be of type object. Received type number (1)
 `,
     "fs.watchFile": `
-fs.watchFile(path, { bigint: undefined }) gives Stats
-fs.watchFile(path, { bigint: null }) gives Stats
-fs.watchFile(path, { bigint: true }) gives BigIntStats
-fs.watchFile(path, { bigint: false }) gives Stats
-fs.watchFile(path, { bigint: 0 }) gives Stats
-fs.watchFile(path, { bigint: 1 }) gives Stats
-fs.watchFile(path, { bigint: NaN }) gives Stats
-fs.watchFile(path, { bigint: "" }) gives Stats
-fs.watchFile(path, { bigint: "yes" }) gives Stats
-fs.watchFile(path, { bigint: {} }) gives Stats
-fs.watchFile(path, Object.create({ bigint: true })) gives Stats
+fs.watchFile(file, { bigint: undefined }, listener) gives Stats
+fs.watchFile(file, { bigint: null }, listener) gives Stats
+fs.watchFile(file, { bigint: true }, listener) gives BigIntStats
+fs.watchFile(file, { bigint: false }, listener) gives Stats
+fs.watchFile(file, { bigint: 0 }, listener) gives Stats
+fs.watchFile(file, { bigint: 1 }, listener) gives Stats
+fs.watchFile(file, { bigint: NaN }, listener) gives Stats
+fs.watchFile(file, { bigint: "" }, listener) gives Stats
+fs.watchFile(file, { bigint: "yes" }, listener) gives Stats
+fs.watchFile(file, { bigint: {} }, listener) gives Stats
+fs.watchFile(file, Object.create({ bigint: true }), listener) gives Stats
 `,
+    // Whether the watcher keeps a process alive. A row is the source of the call, as the fixture runs it.
+    // It is an argument of the fixture, so it has no double quote: a Windows command line has to escape one.
     "fs.watch keep-alive": `
 fs.watch(dir) keeps the process alive
 fs.watch(dir, { persistent: true }) keeps the process alive
 fs.watch(dir, { persistent: false }) lets the process exit
 fs.watch(dir, { persistent: null }) lets the process exit
-fs.watch(dir, { persistent: "" }) lets the process exit
+fs.watch(dir, { persistent: '' }) lets the process exit
 fs.watch(dir, { persistent: 0 }) lets the process exit
 fs.watch(dir, { persistent: 1 }) lets the process exit
 fs.watch(dir, { recursive: true, persistent: null }) lets the process exit
 fs.watch(dir, { persistent: false }).ref() keeps the process alive
 `,
     "fs.promises.watch keep-alive": `
-fs.promises.watch(dir, {}) keeps the process alive
-fs.promises.watch(dir, { persistent: false }) lets the process exit
-fs.promises.watch(dir, { recursive: true }) keeps the process alive
-fs.promises.watch(dir, { persistent: false, recursive: true }) lets the process exit
-fs.promises.watch(dir, { recursive: true, persistent: null }) lets the process exit
+fs.promises.watch(dir, { signal }) keeps the process alive
+fs.promises.watch(dir, { signal, persistent: false }) lets the process exit
+fs.promises.watch(dir, { signal, recursive: true }) keeps the process alive
+fs.promises.watch(dir, { signal, persistent: false, recursive: true }) lets the process exit
+fs.promises.watch(dir, { signal, recursive: true, persistent: null }) lets the process exit
 `,
     "fs.watchFile keep-alive": `
-fs.watchFile(path, {}) keeps the process alive
-fs.watchFile(path, { persistent: undefined }) lets the process exit
-fs.watchFile(path, { persistent: true }) keeps the process alive
-fs.watchFile(path, { persistent: false }) lets the process exit
-fs.watchFile(path, { persistent: null }) lets the process exit
-fs.watchFile(path, { persistent: 0 }) lets the process exit
-fs.watchFile(path, { persistent: 1 }) keeps the process alive
-fs.watchFile(path, Object.create({ persistent: false })) keeps the process alive
+fs.watchFile(file, {}, listener) keeps the process alive
+fs.watchFile(file, { persistent: undefined }, listener) lets the process exit
+fs.watchFile(file, { persistent: true }, listener) keeps the process alive
+fs.watchFile(file, { persistent: false }, listener) lets the process exit
+fs.watchFile(file, { persistent: null }, listener) lets the process exit
+fs.watchFile(file, { persistent: 0 }, listener) lets the process exit
+fs.watchFile(file, { persistent: 1 }, listener) keeps the process alive
+fs.watchFile(file, Object.create({ persistent: false }), listener) keeps the process alive
 `,
   };
 
-  // Bun keeps what main does with an input that main accepts. Each row here is a difference from node, whose
-  // outcome is in `nodeOutput`. Delete a row to make bun follow node there.
+  // On macOS and Windows node v26.3.0 checks the path first, and `persistent` before `recursive`:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L378-L393
+  const onMacOSAndWindows: Partial<Record<keyof typeof nodeOutput, Record<string, string>>> = {
+    "fs.promises.watch order": {
+      'fs.promises.watch(dir, { recursive: "yes", persistent: "x" })':
+        "throws ERR_INVALID_ARG_TYPE about options.persistent",
+      "fs.promises.watch(pathWithNul, { recursive: 0 })": "throws ERR_INVALID_ARG_VALUE",
+      "fs.promises.watch(pathWithNul, { recursive: true, persistent: 1 })": "throws ERR_INVALID_ARG_VALUE",
+      "fs.promises.watch(pathWithNul, 1)": "throws ERR_INVALID_ARG_VALUE",
+    },
+  };
+
+  // Bun keeps what main does with an input that main accepts. Each row here is a difference from node on at
+  // least one platform. Node's outcome is in `nodeOutput`. Delete a row to make bun follow node there.
   const keptFromMain: Partial<Record<keyof typeof nodeOutput, Record<string, string>>> = {
     "fs.watch": {
       'fs.watch(dir, { recursive: true, persistent: "" })': "watches",
@@ -1483,24 +1504,31 @@ fs.watchFile(path, Object.create({ persistent: false })) keeps the process alive
       'fs.promises.watch(dir, { recursive: true, persistent: "" })': "watches",
     },
     "fs.watchFile": {
-      "fs.watchFile(path, Object.create({ bigint: true }))": "gives BigIntStats",
+      "fs.watchFile(file, Object.create({ bigint: true }), listener)": "gives BigIntStats",
     },
     "fs.watch keep-alive": {
       "fs.watch(dir, { persistent: null })": "keeps the process alive",
-      'fs.watch(dir, { persistent: "" })': "keeps the process alive",
+      "fs.watch(dir, { persistent: '' })": "keeps the process alive",
       "fs.watch(dir, { recursive: true, persistent: null })": "keeps the process alive",
     },
     "fs.promises.watch keep-alive": {
-      "fs.promises.watch(dir, { recursive: true, persistent: null })": "keeps the process alive",
+      "fs.promises.watch(dir, { signal, recursive: true, persistent: null })": "keeps the process alive",
     },
     "fs.watchFile keep-alive": {
-      "fs.watchFile(path, { persistent: undefined })": "keeps the process alive",
-      "fs.watchFile(path, Object.create({ persistent: false }))": "lets the process exit",
+      "fs.watchFile(file, { persistent: undefined }, listener)": "keeps the process alive",
+      "fs.watchFile(file, Object.create({ persistent: false }), listener)": "lets the process exit",
     },
   };
 
   function expectedOutput(section: keyof typeof nodeOutput, runtime: "bun" | "node") {
     let lines = nodeOutput[section].trimStart().split("\n");
+    const replaceRows = (rows: Record<string, string> = {}) => {
+      for (const [row, outcome] of Object.entries(rows)) {
+        const index = lines.findIndex(line => line.startsWith(row + " "));
+        expect(index).not.toBe(-1);
+        lines[index] = `${row} ${outcome}`;
+      }
+    };
     if (!hasNonNativeRecursiveWatcher) {
       // The native watcher takes any value. The generator of fs.promises.watch does not take a null `persistent`.
       lines = lines.map(line =>
@@ -1511,14 +1539,9 @@ fs.watchFile(path, Object.create({ persistent: false })) keeps the process alive
             '$1 throws ERR_INVALID_ARG_TYPE: The "options.persistent" property must be of type boolean. Received null',
           ),
       );
+      replaceRows(onMacOSAndWindows[section]);
     }
-    if (runtime === "bun") {
-      for (const [row, outcome] of Object.entries(keptFromMain[section] ?? {})) {
-        const index = lines.findIndex(line => line.startsWith(row + " "));
-        expect(index).not.toBe(-1);
-        lines[index] = `${row} ${outcome}`;
-      }
-    }
+    if (runtime === "bun") replaceRows(keptFromMain[section]);
     return lines.join("\n");
   }
 
@@ -1531,30 +1554,54 @@ fs.watchFile(path, Object.create({ persistent: false })) keeps the process alive
     return stdout.toString().trim() === process.versions.node ? exe : null;
   })();
 
+  async function run(exe: string, ...args: string[]) {
+    using dir = tempDir("watch-options", {});
+    await using proc = Bun.spawn({
+      cmd: [exe, fixture, String(dir), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
   for (const [runtime, exe] of [
     ["bun", bunExe()],
     ["node", node],
   ] as const) {
     for (const section of Object.keys(nodeOutput) as (keyof typeof nodeOutput)[]) {
-      // Only node's non-native recursive watcher has an order of checks to follow.
-      test.skipIf(!exe || (section === "order" && !hasNonNativeRecursiveWatcher))(
+      // In fs.watch only node's non-native recursive watcher has an order of checks to follow.
+      test.skipIf(!exe || (section === "fs.watch order" && !hasNonNativeRecursiveWatcher))(
         `${section} (${runtime})`,
         async () => {
-          await using proc = Bun.spawn({ cmd: [exe!, fixture, section], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect({ stdout, stderr, exitCode }).toEqual({
-            stdout: expectedOutput(section, runtime),
+          const expected = expectedOutput(section, runtime);
+          if (!section.endsWith(" keep-alive")) {
+            expect(await run(exe!, section)).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+            return;
+          }
+          // The fixture opens the watchers that keep it alive, one at a time, and prints each one that does.
+          // Then it opens all the other watchers at once, and has to exit with nothing more printed.
+          const rows = (outcome: string) =>
+            expected
+              .split("\n")
+              .filter(line => line.endsWith(` ${outcome}`))
+              .map(line => line.slice(0, -outcome.length - 1));
+          const keeps = rows("keeps the process alive");
+          const exits = rows("lets the process exit");
+          expect(keeps.length + exits.length).toBe(expected.trimEnd().split("\n").length);
+          expect(await run(exe!, "keep-alive", ...keeps, "--", ...exits)).toEqual({
+            stdout: keeps.map(row => row + "\n").join(""),
             stderr: "",
             exitCode: 0,
           });
         },
-        // A keep-alive section starts a process for each row, and a debug build needs seconds to start them.
-        isDebug || isASAN ? 30_000 : undefined,
       );
     }
   }
 
-  // The native lookups that these options had stopped at Object.prototype. The lookups in JS still do.
+  // The native lookups that these options had stopped at Object.prototype, and asked a Proxy. The lookups in JS
+  // do the same.
   test("an inherited option counts, unless it is inherited from Object.prototype", () => {
     class Accessor {
       get encoding() {
@@ -1568,6 +1615,11 @@ fs.watchFile(path, Object.create({ persistent: false })) keeps the process alive
       "Object.create": () => Object.create({ encoding: "bogus", persistent: 1 }),
       "class accessor": () => new Accessor(),
       "non-enumerable": () => Object.defineProperties({}, { encoding: { value: "bogus" }, persistent: { value: 1 } }),
+      "Proxy get trap": () =>
+        new Proxy({}, { get: (_, key) => ({ __proto__: null, encoding: "bogus", persistent: 1 })[key] }),
+      // Object.hasOwn() does not find these options on this object, and a get does.
+      "vm context global": () =>
+        vm.runInContext("this", vm.createContext(Object.create({ encoding: "bogus", persistent: 1 }))),
     };
     const code = (run: () => FSWatcher | AsyncIterable<unknown>) => {
       try {
@@ -1591,6 +1643,10 @@ fs.watchFile(path, Object.create({ persistent: false })) keeps the process alive
       "fs.promises.watch class accessor": "ERR_INVALID_ARG_TYPE",
       "fs.watch non-enumerable": "ERR_INVALID_ARG_VALUE",
       "fs.promises.watch non-enumerable": "ERR_INVALID_ARG_TYPE",
+      "fs.watch Proxy get trap": "ERR_INVALID_ARG_VALUE",
+      "fs.promises.watch Proxy get trap": "ERR_INVALID_ARG_TYPE",
+      "fs.watch vm context global": "ERR_INVALID_ARG_VALUE",
+      "fs.promises.watch vm context global": "ERR_INVALID_ARG_TYPE",
     });
 
     const notRead = {};
@@ -1613,6 +1669,14 @@ fs.watchFile(path, Object.create({ persistent: false })) keeps the process alive
       "fs.promises.watch encoding": "watches",
       "fs.watch signal": "watches",
     });
+
+    // A Proxy answers for itself, also when Object.prototype has the key.
+    Object.prototype["encoding"] = "utf8";
+    try {
+      expect(code(() => fs.watch(testDir, inherited["Proxy get trap"]()))).toBe("ERR_INVALID_ARG_VALUE");
+    } finally {
+      delete Object.prototype["encoding"];
+    }
   });
 
   // Off macOS and Windows a truthy `recursive` other than `true` throws before it reaches the native watcher.

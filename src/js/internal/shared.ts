@@ -1,7 +1,4 @@
 const ObjectFreeze = Object.freeze;
-const ObjectGetPrototypeOf = Object.getPrototypeOf;
-const ObjectHasOwn = Object.hasOwn;
-const ObjectPrototype = Object.prototype;
 
 class NotImplementedError extends Error {
   code: string;
@@ -242,14 +239,6 @@ function getLazy<T>(initializer: () => T) {
   };
 }
 
-// Returns `object[key]` if it's an own property or inherited from a class, but not from Object.prototype.
-function getIgnoringObjectPrototype<T extends object, K extends keyof T>(object: T, key: K): T[K] | undefined {
-  for (let current: object | null = object; current !== null; current = ObjectGetPrototypeOf(current)) {
-    if (current === ObjectPrototype) return undefined;
-    if (ObjectHasOwn(current, key)) return object[key];
-  }
-}
-
 // ─── Node-style performance-entry observation ────────────────────────────────
 // For entry types the native (WebCore) PerformanceObserver does not implement
 // ('net', 'dns', ...). Mirrors lib/internal/perf/observe.js: producers check
@@ -448,7 +437,6 @@ export default {
   guardCallback,
   isInsideNodeModules,
   resistStopPropagation,
-  getIgnoringObjectPrototype,
 
   hasObserver,
   startPerf,

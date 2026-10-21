@@ -237,7 +237,7 @@ pub(crate) fn perform_security_scan_after_resolution(
         seeds,
         command_ctx,
         original_cwd,
-        true,
+        PackageJson::Parsed,
     )
 }
 
@@ -257,8 +257,16 @@ pub fn perform_security_scan_for_all(
         &[],
         command_ctx,
         original_cwd,
-        false,
+        PackageJson::NotParsed,
     )
+}
+
+/// Whether the command has parsed package.json, which is where Bun looks for the workspaces that
+/// are behind a symlink.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PackageJson {
+    Parsed,
+    NotParsed,
 }
 
 fn scan_installing_scanner_if_needed(
@@ -268,7 +276,7 @@ fn scan_installing_scanner_if_needed(
     seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
-    parsed_package_json: bool,
+    package_json: PackageJson,
 ) -> Result<Option<SecurityScanResults>, Error> {
     match attempt_security_scan(
         manager,
@@ -283,7 +291,7 @@ fn scan_installing_scanner_if_needed(
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
             // The linkers ask which workspaces are behind a symlink. `bun pm scan` parses no
             // package.json, so nothing has looked yet.
-            if !parsed_package_json {
+            if package_json == PackageJson::NotParsed {
                 manager.lockfile.look_at_members(None);
             }
             let log_level = manager.options.log_level;

@@ -1,6 +1,7 @@
+import { memfd_create } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { gcTick, isLinux } from "harness";
-import { readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { closeSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 
 test("Blob.arrayBuffer copy-on-write is not shared", async () => {
   // 8 MB is the threshold for copy-on-write without --smol.
@@ -117,12 +118,14 @@ describe("two reads of one large Blob body are not shared with each other", () =
     ["bytes()", body => body.bytes()],
   ];
 
-  // Bun reads an array body as the parts of a Blob. No Blob object refers to
-  // those bytes, so the body and its clone are their only owners.
+  // Bun reads an array body as the parts of a Blob, and a DataView body as one
+  // part. No Blob object refers to those bytes, so the body and its clone are
+  // their only owners.
   const parts = () => [source()] as unknown as BodyInit;
   const bodies: [string, () => Body][] = [
     ["new Response([bytes])", () => new Response(parts())],
     ["new Request(url, { body: [bytes] })", () => new Request("http://localhost/", { method: "POST", body: parts() })],
+    ["new Response(new DataView(buffer))", () => new Response(new DataView(source().buffer))],
   ];
 
   describe.each(bodies)("%s", (_, makeBody) => {
@@ -213,22 +216,34 @@ describe("two reads of one large Blob body are not shared with each other", () =
     return { response, memfd: created[0] };
   }
 
-  // Only Linux keeps a large Blob in a memfd, and a sandbox can refuse the
-  // memfd or hide /proc. The cases below read the mappings, so they need both.
-  const memfdInUse =
+  // The kernel gives this process a memfd, and /proc shows where it is mapped.
+  // The cases below then require a large body to use one: the byte cases above
+  // pass without a memfd, because a heap copy cannot share.
+  const memfdAvailable =
     isLinux &&
+    !process.env.BUN_FEATURE_FLAG_DISABLE_MEMFD &&
     (() => {
       try {
-        const before = new Set(blobMemfds());
-        const probe = new Blob([source()]);
-        const created = blobMemfds().filter(name => !before.has(name));
-        return probe.size === size && created.length === 1 && mappingsOf(created[0]).length === 1;
+        const fd = memfd_create(4096);
+        try {
+          const link = readlinkSync(`/proc/self/fd/${fd}`);
+          return link.startsWith("/memfd:") && readFileSync("/proc/self/maps", "utf8").length > 0;
+        } finally {
+          closeSync(fd);
+        }
       } catch {
         return false;
       }
     })();
 
-  describe.skipIf(!memfdInUse)("the mappings of the memfd", () => {
+  describe.skipIf(!memfdAvailable)("the mappings of the memfd", () => {
+    test.each(bodies)("%s keeps its bytes in a memfd", (_, makeBody) => {
+      const before = new Set(blobMemfds());
+      const body = makeBody();
+      expect(blobMemfds().filter(name => !before.has(name))).toHaveLength(1);
+      expect(body.bodyUsed).toBe(false);
+    });
+
     test("the only owner gets the Blob's own map", async () => {
       const { response, memfd } = bodyInMemfd();
       const mine = await response.bytes();
@@ -240,7 +255,9 @@ describe("two reads of one large Blob body are not shared with each other", () =
       const { response, memfd } = bodyInMemfd();
       const kept = await response.clone().bytes();
       const mine = await response.bytes();
-      expect(mappingsOf(memfd)).toEqual(["rw-p", "rw-p", "rw-s"]);
+      // The body was the last owner, so the Blob's own map and the memfd went with it.
+      expect(mappingsOf(memfd)).toEqual(["rw-p", "rw-p"]);
+      expect(blobMemfds()).not.toContain(memfd);
       expect([kept.length, mine.length]).toEqual([size, size]);
     });
 
@@ -255,7 +272,22 @@ describe("two reads of one large Blob body are not shared with each other", () =
       expect(mine.length).toBe(size);
     });
 
-    test("the memfd is closed after every copy was collected", async () => {
+    test("a copy that outlives its Blob keeps its own map and not the memfd", async () => {
+      let kept!: Uint8Array;
+      const memfd = await afterCollected(async track => {
+        const before = new Set(blobMemfds());
+        const blob = track(new Blob([source()]));
+        const created = blobMemfds().filter(name => !before.has(name));
+        expect(created).toHaveLength(1);
+        kept = await blob.bytes();
+        return created[0];
+      });
+      expect(blobMemfds()).not.toContain(memfd);
+      expect(mappingsOf(memfd)).toEqual(["rw-p"]);
+      expect(kept.length).toBe(size);
+    });
+
+    test("nothing maps the memfd after every copy was collected", async () => {
       const memfd = await afterCollected(async track => {
         const body = bodyInMemfd();
         track(await body.response.clone().bytes());

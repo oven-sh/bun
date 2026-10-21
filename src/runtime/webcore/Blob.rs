@@ -44,6 +44,18 @@ pub(crate) mod read_file;
 #[path = "blob/write_file.rs"]
 pub(crate) mod write_file;
 
+/// The store count comes first: with one owner left, nobody else can make a copy.
+fn owns_bytes_alone(store: &Store) -> bool {
+    if !store.has_one_ref() {
+        return false;
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::has_copies(store) {
+        return false;
+    }
+    true
+}
+
 /// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
 /// callback to `ArrayBuffer::to_js_with_context`; the `ctx` is a raw `Store*`
 /// produced by `RefPtr<Store>::into_raw()`.
@@ -2783,22 +2795,14 @@ impl BlobExt for Blob {
                                 let byte_offset = (buf.cast::<u8>() as usize)
                                     .saturating_sub(allocated.as_ptr() as usize);
                                 if let Some(result) = LinuxMemFdAllocator::copy_on_write_js(
-                                    store,
+                                    bytes,
                                     global,
                                     byte_offset,
                                     buf_len,
                                     TYPED_ARRAY_VIEW,
                                 ) {
-                                    let result = result?;
-                                    debug!(
-                                        "toArrayBuffer COW clone({}, {}) = {}",
-                                        byte_offset,
-                                        buf_len,
-                                        (result != JSValue::ZERO) as u8
-                                    );
-                                    if result != JSValue::ZERO {
-                                        return Ok(result);
-                                    }
+                                    debug!("toArrayBuffer COW clone({}, {})", byte_offset, buf_len);
+                                    return result;
                                 }
                             }
                         }
@@ -2808,7 +2812,7 @@ impl BlobExt for Blob {
                 jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
             }
             Lifetime::Transfer => {
-                if self.store().is_some_and(|s| !s.has_one_ref()) {
+                if self.store().is_some_and(|s| !owns_bytes_alone(s)) {
                     // SAFETY: same `buf` contract as the caller; the `Clone` arm only reads it.
                     let copied = unsafe {
                         self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(

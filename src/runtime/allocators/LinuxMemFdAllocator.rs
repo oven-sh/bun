@@ -44,7 +44,33 @@ pub(crate) struct LinuxMemFdAllocator {
 
 impl Drop for LinuxMemFdAllocator {
     fn drop(&mut self) {
-        self.fd.close();
+        // `free` closes the fd with the store's view. This is `create`'s error path.
+        if self.fd.is_valid() {
+            self.fd.close();
+        }
+    }
+}
+
+/// One copy-on-write mapping of the memfd, owned by a JS buffer.
+struct CopyOnWrite {
+    base: *mut u8,
+    len: usize,
+    /// What `LinuxMemFdAllocator::has_copies` counts.
+    _memfd: bun_ptr::RefPtr<LinuxMemFdAllocator>,
+}
+
+impl CopyOnWrite {
+    extern "C" fn release(_bytes: *mut c_void, this: *mut c_void) {
+        // SAFETY: `this` is the `Box<Self>` that `copy_on_write_js` handed to JSC, which calls this once.
+        drop(unsafe { bun_core::heap::take(this.cast::<Self>()) });
+    }
+}
+
+impl Drop for CopyOnWrite {
+    fn drop(&mut self) {
+        if let Err(err) = sys::munmap(self.base, self.len) {
+            bun_core::debug_warn!("Failed to munmap memfd: {}", err);
+        }
     }
 }
 
@@ -136,36 +162,54 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    /// The buffer holds a `store` ref until JS frees it, so `has_one_ref()` counts every copy.
+    /// `None` when `bytes` is not in a memfd or the kernel refuses the mapping.
     pub(crate) fn copy_on_write_js(
-        store: &bun_ptr::RefPtr<Store>,
+        bytes: &BlobStoreBytes,
         global: &JSGlobalObject,
         byte_offset: usize,
         byte_length: usize,
         ty: JSType,
     ) -> Option<JsResult<JSValue>> {
-        let Data::Bytes(bytes) = &store.data else {
-            return None;
-        };
         let this = Self::from(bytes.allocator())?;
-        // SAFETY: `bytes` holds a ref on `*this` through its allocator, and
-        // `store` keeps `bytes` alive across this call.
+        let len = bytes.allocated_slice().len();
+        debug_assert!(byte_offset <= len && byte_length <= len - byte_offset);
+        // SAFETY: `bytes` holds a ref on `*this` through its allocator.
         let fd = unsafe { (*this).fd };
-        let total_size = bytes.allocated_slice().len();
-        // SAFETY: the deallocator releases exactly the one `Store` ref that
-        // `into_raw` hands over, and `Store::deref` is sound on any thread.
+        let base = sys::mmap(
+            core::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE,
+            fd,
+            0,
+        )
+        .ok()?;
+        let copy = Box::new(CopyOnWrite {
+            base,
+            len,
+            // SAFETY: `this` is live, see above.
+            _memfd: unsafe { bun_ptr::RefPtr::init_ref(this) },
+        });
+        // SAFETY: the range is inside the `len` bytes mapped at `base`. JSC owns
+        // `copy` from here and frees it through `CopyOnWrite::release`, also on failure.
         Some(unsafe {
-            jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                fd.native() as i64,
+            let view = core::slice::from_raw_parts_mut(base.add(byte_offset), byte_length);
+            jsc::ArrayBuffer::from_bytes(view, ty).to_js_with_context(
                 global,
-                byte_offset,
-                byte_length,
-                total_size,
-                ty,
-                crate::webcore::blob::blob_store_array_buffer_deallocator,
-                store.clone().into_raw().cast::<c_void>(),
+                bun_core::heap::into_raw(copy).cast::<c_void>(),
+                Some(CopyOnWrite::release),
             )
         })
+    }
+
+    /// Exact only for the store's last owner: read `Store::has_one_ref()` first.
+    pub(crate) fn has_copies(store: &Store) -> bool {
+        let Data::Bytes(bytes) = &store.data else {
+            return false;
+        };
+        // SAFETY: `bytes` holds a ref on the allocator through its vtable pointer.
+        Self::from(bytes.allocator())
+            .is_some_and(|this| !unsafe { &(*this).ref_count }.has_one_ref())
     }
 
     pub(crate) fn should_use(bytes: &[u8]) -> bool {
@@ -283,6 +327,9 @@ mod allocator_interface {
                 bun_core::debug_warn!("Failed to munmap memfd: {}", err);
             }
         }
+        // SAFETY: we hold one ref. `copy_on_write_js` is the only reader of `fd`,
+        // and it reads through the `Bytes` that is freed here.
+        unsafe { core::mem::replace(&mut (*this).fd, Fd::INVALID).close() };
         // SAFETY: caller contract — `this` is the Box-allocated `*mut Self` and
         // we hold one ref. No live `&Self` exists (we never materialized one).
         unsafe { LinuxMemFdAllocator::deref(this) };

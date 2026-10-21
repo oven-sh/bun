@@ -1297,10 +1297,18 @@ pub(crate) struct VectorArrayBuffer {
     /// The collected elements, in order. Rooted (and their backing stores
     /// pinned), along with `value`, from `from_js(.., pin: true)` until drop.
     pub(crate) views: Vec<JSValue>,
-    /// The index of each pinned element over a non-shared `WebAssembly.Memory`, and the native
-    /// bytes its iovec points to. A pin doesn't stop `grow()` from freeing the memory's block.
-    wasm: Vec<(usize, Option<PinnedArrayBuffer>)>,
+    /// The pinned elements over a non-shared `WebAssembly.Memory`. A pin doesn't stop `grow()`
+    /// from freeing the memory's block.
+    wasm: Vec<WasmElement>,
     pinned: bool,
+}
+
+struct WasmElement {
+    /// Its position in `buffers`.
+    index: usize,
+    view: JSValue,
+    /// The native bytes its iovec points to.
+    native: Option<PinnedArrayBuffer>,
 }
 
 impl Drop for VectorArrayBuffer {
@@ -1352,7 +1360,11 @@ unsafe extern "C" fn append_buffer_span(
         unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
     };
     if is_wasm_memory {
-        out.wasm.push((out.views.len(), None));
+        out.wasm.push(WasmElement {
+            index: out.buffers.len(),
+            view: element,
+            native: None,
+        });
     }
     out.buffers.push(bun_sys::platform_iovec_create(slice));
     out.views.push(element);
@@ -1407,23 +1419,23 @@ impl VectorArrayBuffer {
         }
         match status {
             0 => {
-                for (index, native) in &mut out.wasm {
-                    let view = out.views[*index];
+                for element in &mut out.wasm {
                     let pinned = if read {
-                        PinnedArrayBuffer::root(global_object, view).map(|mut pinned| {
+                        PinnedArrayBuffer::root(global_object, element.view).map(|mut pinned| {
                             let len = pinned.byte_len;
                             pinned.write_to_scratch_if_wasm(0, len);
                             pinned
                         })
                     } else {
-                        PinnedArrayBuffer::root_read_only(global_object, view)
+                        PinnedArrayBuffer::root_read_only(global_object, element.view)
                     };
                     let Some(pinned) = pinned else {
                         return Err(global_object.throw_out_of_memory());
                     };
                     let mut bytes: jsc::ArrayBuffer = *pinned;
-                    out.buffers[*index] = bun_sys::platform_iovec_create(bytes.byte_slice_mut());
-                    *native = Some(pinned);
+                    out.buffers[element.index] =
+                        bun_sys::platform_iovec_create(bytes.byte_slice_mut());
+                    element.native = Some(pinned);
                 }
                 Ok(out)
             }
@@ -1440,13 +1452,13 @@ impl VectorArrayBuffer {
     /// See [`PinnedArrayBuffer::write_back`].
     pub(crate) fn write_back(&mut self, bytes_read: usize) {
         let (mut start, mut counted) = (0, 0);
-        for (index, native) in &mut self.wasm {
-            start += self.buffers[counted..*index]
+        for element in &mut self.wasm {
+            start += self.buffers[counted..element.index]
                 .iter()
                 .map(bun_sys::platform_iovec_len)
                 .sum::<usize>();
-            counted = *index;
-            if let Some(pinned) = native {
+            counted = element.index;
+            if let Some(pinned) = &mut element.native {
                 pinned.write_back(bytes_read.saturating_sub(start));
             }
         }

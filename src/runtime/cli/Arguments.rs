@@ -282,10 +282,10 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
     parse_param!(
-        "--no-addons                       Throw an error if process.dlopen or bun:ffi cc() is called, and disable export condition \"node-addons\""
+        "--no-addons                       Throw an error if process.dlopen is called, disable bun:ffi, and disable export condition \"node-addons\""
     ),
     parse_param!(
-        "--no-ffi-cc                       Throw an error if bun:ffi cc() is called (disables the C compiler)"
+        "--no-ffi-cc                       Disable bun:ffi: dlopen(), cc(), JSCallback and every other FFI function throw an error"
     ),
     // No help text, which hides it: the name is wider than the column `bun --help` prints names in.
     parse_param!("--disallow-code-generation-from-strings <STR>?"),
@@ -1113,13 +1113,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if args.flag(b"--no-addons") {
-            // used for disabling process.dlopen and bun:ffi cc(), and
+            // used for disabling process.dlopen and bun:ffi, and
             // for disabling export condition "node-addons"
             opts.allow_addons = Some(false);
         }
 
         if args.flag(b"--no-ffi-cc") {
-            opts.allow_ffi_cc = Some(false);
+            opts.allow_ffi = Some(false);
         }
 
         if let Some(value) = args.option(b"--disallow-code-generation-from-strings") {

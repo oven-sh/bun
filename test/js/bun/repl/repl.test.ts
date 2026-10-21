@@ -489,6 +489,71 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    describe("history of .editor mode", () => {
+      // In these inputs "\x04" is Ctrl+D: it ends the mode and evaluates the entered lines as one input.
+      const banner = "// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)";
+      // The REPL echoes one "\n" per entered line.
+      const squeeze = (outputs: string[]) => outputs.map(output => output.replace(/\n+/g, "\n"));
+
+      test("the evaluated input is one entry", async () => {
+        using dir = tempDir("repl-editor-history", {});
+        const filePath = path.join(String(dir), "saved.js");
+        const { outputs, stderr, exitCode } = await runRepl([
+          "1 + 1",
+          ".editor",
+          "let a = 7",
+          "a * 6",
+          "\x04.history",
+          `.save ${filePath}`,
+          ".exit",
+        ]);
+        expect(squeeze(outputs)).toEqual([
+          "2",
+          `${banner}\n42`,
+          "Command History:\n     1  1 + 1\n     2  let a = 7\na * 6",
+          `Session saved to ${filePath}`,
+        ]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        expect(await Bun.file(filePath).text()).toBe("1 + 1\nlet a = 7\na * 6\n");
+      });
+
+      test("the entry keeps its inner blank lines and drops the outer ones", async () => {
+        using dir = tempDir("repl-editor-history-trim", {});
+        const filePath = path.join(String(dir), "saved.js");
+        const { outputs, stderr, exitCode } = await runRepl([
+          ".editor",
+          "",
+          "let b = 1",
+          "",
+          "b + 1",
+          "",
+          `\x04.save ${filePath}`,
+          ".exit",
+        ]);
+        expect(squeeze(outputs)).toEqual([`${banner}\n2`, `Session saved to ${filePath}`]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        expect(await Bun.file(filePath).text()).toBe("let b = 1\n\nb + 1\n");
+      });
+
+      test("the entry is in the history file for the next session", async () => {
+        using dir = tempDir("repl-editor-history-file", {});
+        const home = String(dir);
+
+        const first = await runRepl([".editor", "7 * 6", "\x04.exit"], { home });
+        expect(squeeze(first.outputs)).toEqual([`${banner}\n42`]);
+        expect(first.stderr).toBe("");
+        expect(first.exitCode).toBe(0);
+        expect(await Bun.file(path.join(home, ".bun_repl_history")).text()).toBe("7 * 6\n");
+
+        const second = await runRepl([".history", ".exit"], { home });
+        expect(second.outputs).toEqual(["Command History:\n     1  7 * 6"]);
+        expect(second.stderr).toBe("");
+        expect(second.exitCode).toBe(0);
+      });
+    });
+
     test(".break cancels multiline input", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
         "function foo() {", // opens multiline
@@ -1718,6 +1783,49 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("__pending()\n");
       await waitFor("42");
       expect(allOutput()).not.toMatch(/editor mode/i);
+    });
+  });
+
+  describe("history of .editor mode", () => {
+    const atPromptAfter = (row: string) => (s: Screen) => s.rows.at(-1) === "> " && s.rows.at(-2) === row;
+
+    test("up arrow recalls the whole evaluated input", async () => {
+      await withTerminalRepl(async ({ send, waitForScreen }) => {
+        send("1 + 1\n");
+        await waitForScreen(atPromptAfter("2"));
+        send(".editor\n");
+        await waitForScreen(s => s.rows.at(-1) === "... ");
+        send("globalThis.runs = (globalThis.runs ?? 0) + 1\n");
+        send("runs * 10\n");
+        await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2) === "... runs * 10");
+        send("\x04"); // Ctrl+D
+        const ran = await waitForScreen(atPromptAfter("10"));
+
+        // Up, Enter runs both lines again. The last line alone would print 10.
+        send("\x1b[A\n");
+        const screen = await waitForScreen(
+          s => s.rows.length > ran.rows.length && s.rows.at(-1) === "> " && /^\d+$/.test(s.rows.at(-2) ?? ""),
+        );
+        expect(screen.rows.at(-2)).toBe("20");
+      });
+    });
+
+    test("input cancelled with Ctrl+C is not an entry", async () => {
+      await withTerminalRepl(async ({ send, waitForScreen }) => {
+        send("1 + 1\n");
+        await waitForScreen(atPromptAfter("2"));
+        send(".editor\n");
+        await waitForScreen(s => s.rows.at(-1) === "... ");
+        send("3 + 3\n");
+        await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2) === "... 3 + 3");
+        send("\x03"); // Ctrl+C
+        await waitForScreen(atPromptAfter("// Editor mode cancelled"));
+
+        // Up redraws the prompt with a whole entry.
+        send("\x1b[A");
+        const screen = await waitForScreen(s => /^> \d \+ \d$/.test(s.rows.at(-1) ?? ""));
+        expect(screen.rows.at(-1)).toBe("> 1 + 1");
+      });
     });
   });
 

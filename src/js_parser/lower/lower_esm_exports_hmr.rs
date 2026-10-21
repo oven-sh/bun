@@ -366,10 +366,8 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
                         ..Default::default()
                     });
-                    // `ImportScanner` just pushed this statement's own record, which a merge retires.
-                    let star_record = p.export_star_import_records.last_mut().unwrap();
-                    debug_assert_eq!(*star_record, st.import_record_index);
-                    *star_record = deduped.import_record_index;
+                    p.export_star_import_records
+                        .push(deduped.import_record_index);
                 }
                 return Ok(());
             }

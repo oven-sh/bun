@@ -1409,18 +1409,10 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
   },
 });
 
-// HMR lowering merges every statement of one import path into the first one
-// and retires the import record of each later statement. A retired record is
-// never resolved. `export *` needs every export of its target, and the barrel
-// pass finds that target through `export_star_import_records`: the list has to
-// name the record that the merged statement uses. When it named the retired
-// record, the target was requested for `a` only and deferred b.js.
-// - The two "star first" modules are controls: there the record of `export *`
-//   is the one that survives.
-// - leaf-three parses, and defers b.js, before wrap-late.ts asks for all of it:
-//   wrap-late.ts is three imports away and starts with a large comment (a
-//   Buffer, because the harness passes string contents through dedent()).
-const mergedBarrel = (name: string, index: string, files: Record<string, string>) => ({
+// HMR lowering merges the statements of one import path into the first one. The
+// import record of each later statement is never resolved.
+const abBarrel = `export { a } from './a.js'; export { b } from './b.js';`;
+const abPackage = (name: string, index: string) => ({
   [`node_modules/${name}/package.json`]: JSON.stringify({
     name,
     version: "1.0.0",
@@ -1428,79 +1420,44 @@ const mergedBarrel = (name: string, index: string, files: Record<string, string>
     sideEffects: false,
   }),
   [`node_modules/${name}/index.js`]: index,
-  ...Object.fromEntries(Object.entries(files).map(([file, code]) => [`node_modules/${name}/${file}`, code])),
+  [`node_modules/${name}/inner.js`]: abBarrel,
+  [`node_modules/${name}/a.js`]: `export const a = "A";`,
+  [`node_modules/${name}/b.js`]: `export function b() {}`,
 });
-const leafBarrel = (name: string) =>
-  mergedBarrel(name, `export { a } from './a.js'; export { b } from './b.js';`, {
-    "a.js": `export const a = "A";`,
-    "b.js": `export function b() {}`,
-  });
 
-devTest("barrel optimization: an export star merged into another statement of the same path", {
+devTest("barrel optimization: export star after another statement of the same path", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     "index.ts": `
       import { b as b1 } from 'named-first';
       import { b as b2 } from 'star-first';
-      import { b as b3 } from './wrap-import-first';
-      import { b as b4 } from './wrap-star-first';
-      import { a } from 'leaf-three';
-      import { b as b5 } from './hop1';
-      console.log('got: ' + [typeof b1, typeof b2, typeof b3, typeof b4, typeof b5].join(' ') + ' ' + a);
+      import { b as b3 } from 'star-twice';
+      import { b as b4 } from './import-first';
+      import { a as importLate } from 'parsed-first';
+      const { b: b5 } = await importLate();
+      console.log('got: ' + [b1, b2, b3, b4, b5].map(b => typeof b).join(' '));
     `,
-    "wrap-import-first.ts": `
-      import { a } from 'leaf-one';
-      export * from 'leaf-one';
+    ...abPackage("named-first", `export { a } from './inner.js'; export * from './inner.js';`),
+    ...abPackage("star-first", `export * from './inner.js'; export { a } from './inner.js';`),
+    ...abPackage("star-twice", `import './inner.js'; export * from './inner.js'; export * from './inner.js';`),
+    "import-first.ts": `
+      import { a } from 'leaf';
+      export * from 'leaf';
       export const own = a;
     `,
-    "wrap-star-first.ts": `
-      export * from 'leaf-two';
-      import { a } from 'leaf-two';
+    ...abPackage("leaf", abBarrel),
+    // parsed-first has deferred b.js by the time its a.js leads to late.ts.
+    ...abPackage("parsed-first", abBarrel),
+    "node_modules/parsed-first/a.js": `export const a = () => import('../../late');`,
+    "late.ts": `
+      import { a } from 'parsed-first';
+      export * from 'parsed-first';
       export const own = a;
     `,
-    "hop1.ts": `export { b } from './hop2';`,
-    "hop2.ts": `export { b } from './hop3';`,
-    "hop3.ts": `export { b } from './wrap-late';`,
-    "wrap-late.ts": Buffer.from(
-      "// " +
-        Buffer.alloc(4_000_000, "x").toString() +
-        `
-      import { a } from 'leaf-three';
-      export * from 'leaf-three';
-      export const own = a;
-    `,
-    ),
-    ...mergedBarrel(
-      "named-first",
-      `
-        export { a } from './inner.js';
-        export * from './inner.js';
-      `,
-      {
-        "inner.js": `export { a } from './a.js'; export { b } from './b.js';`,
-        "a.js": `export const a = "A";`,
-        "b.js": `export function b() {}`,
-      },
-    ),
-    ...mergedBarrel(
-      "star-first",
-      `
-        export * from './inner.js';
-        export { a } from './inner.js';
-      `,
-      {
-        "inner.js": `export { a } from './a.js'; export { b } from './b.js';`,
-        "a.js": `export const a = "A";`,
-        "b.js": `export function b() {}`,
-      },
-    ),
-    ...leafBarrel("leaf-one"),
-    ...leafBarrel("leaf-two"),
-    ...leafBarrel("leaf-three"),
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("got: function function function function function A");
+    await c.expectMessage("got: function function function function function");
   },
 });
 

@@ -91,6 +91,10 @@ pub(crate) mod js_fns {
                 signature
             )));
         };
+        // The runner calls every registered callback on the main thread's VM.
+        if global_this.bun_vm().worker_ref().is_some() {
+            return Err(global_this.throw(format_args!("Cannot use {} in a Worker.", signature)));
+        }
         Ok(&mut runner.bun_test_root)
     }
 

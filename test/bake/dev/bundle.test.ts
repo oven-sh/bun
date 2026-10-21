@@ -2,6 +2,7 @@
 import { expect } from "bun:test";
 import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
@@ -410,6 +411,24 @@ devTest('a "use client" module with a @jsxRuntime pragma keeps its client refere
     await dev.fetch("/").equals(references);
   },
 });
+for (const count of [4, 9]) {
+  const ids = Array.from({ length: count }, (_, i) => i);
+  devTest(`a page that imports ${count} "use client" modules`, {
+    framework: minimalFramework,
+    files: {
+      ...Object.fromEntries(ids.map(i => [`components/c${i}.ts`, `"use client";\nexport default function C${i}() {}`])),
+      "routes/index.ts": `
+        ${ids.map(i => `import c${i} from "../components/c${i}";`).join("\n")}
+        export default function () {
+          return Response.json([${ids.map(i => `c${i}`).join(", ")}].map(ref => ref.file.replaceAll("\\\\", "/")));
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals(ids.map(i => `components/c${i}.ts`));
+    },
+  });
+}
 devTest("repairing a missing import in a framework without server components", {
   framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes },
   files: {
@@ -1566,6 +1585,85 @@ devTest("a route whose import throws on load throws that error again on the next
     await dev.fetch("/sync-body").equals("sync-body: fixed");
     await dev.write("sync-import-dep.ts", `export const value = "fixed";`);
     await dev.fetch("/sync-import").equals("sync-import: fixed");
+  },
+});
+devTest("a route module that throws when a save reloads it is reported and recovers", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function () {
+        return new Response("index v1");
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other v1");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index v1");
+    await dev.fetch("/other").equals("other v1");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write(
+        "routes/index.ts",
+        `
+          throw new Error("thrown at module scope");
+          export default function () {
+            return new Response("index v2");
+          }
+        `,
+      );
+      await dev.patch("routes/other.ts", { find: "v1", replace: "v2" });
+    }
+    const failed = await dev.fetch("/");
+    expect(await failed.text()).toContain("thrown at module scope");
+    expect(failed.status).toBe(500);
+    await dev.fetch("/other").equals("other v2");
+    await dev.write(
+      "routes/index.ts",
+      `
+        export default function () {
+          return new Response("index v3");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("index v3");
+  },
+});
+devTest("a route loads after a request for it was answered with 413", {
+  files: {
+    "routes/about.ts": `
+      export default function () {
+        return new Response("about");
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other");
+      }
+    `,
+    "bun.app.ts": `
+      export default {
+        maxRequestBodySize: 1024,
+        app: { framework: ${JSON.stringify(minimalFramework)} },
+      };
+    `,
+  },
+  async test(dev) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(dev.port, "localhost", () => {
+      socket.write("POST /about HTTP/1.1\r\nHost: localhost\r\nContent-Length: 999999\r\n\r\n");
+    });
+    let data = "";
+    socket.on("data", chunk => (data += chunk));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(data.split("\r\n")[0]));
+    expect(await promise).toBe("HTTP/1.1 413 Request Entity Too Large");
+
+    await dev.fetch("/other").equals("other");
+    await dev.fetch("/about").equals("about");
   },
 });
 // "loop" is a symlink to itself, so kqueue can't open the directory to watch it.

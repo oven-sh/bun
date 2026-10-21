@@ -39,6 +39,11 @@ impl ReplaceableExport {
     pub fn is_replace(&self) -> bool {
         matches!(self, Self::Replace(_))
     }
+
+    #[inline]
+    pub fn injects_default(&self) -> bool {
+        matches!(self, Self::Inject { name, .. } if **name == *crate::ClauseItem::DEFAULT_ALIAS)
+    }
 }
 
 /// Newtype (not a bare alias) so we can hang `get_ptr` (which borrows

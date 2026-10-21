@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import assert from "node:assert";
 import { totalmem } from "node:os";
 import { join } from "node:path";
+import { types } from "node:util";
 import {
   compileFunction,
   constants,
@@ -2165,6 +2167,115 @@ describe("DONT_CONTEXTIFY", () => {
       globalThis: Brand.has(runInContext("globalThis", ctx)),
     }).toEqual({ handle: true, this: true, globalThis: true });
   });
+
+  test("an accessor on the global gets the global as `this` when a script uses the bare name", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const receivers: unknown[] = [];
+    const accessor = {
+      get() {
+        receivers.push(this);
+      },
+      set() {
+        receivers.push(this);
+      },
+    };
+    Object.defineProperty(ctx, "own", accessor);
+    Object.setPrototypeOf(ctx, Object.defineProperty({}, "inherited", accessor));
+
+    runInContext("own = 1; own; inherited = 1; inherited; globalThis.own = 1; globalThis.own", ctx);
+    expect(receivers.map(receiver => receiver === ctx)).toEqual([true, true, true, true, true, true]);
+  });
+
+  test("scripts run when the global's prototype chain has a Proxy", () => {
+    // jsdom 30 puts such a Proxy between Window.prototype and EventTarget.prototype.
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const prototype = Object.create(new Proxy({ behindProxy: 1 }, {}));
+    Object.setPrototypeOf(ctx, prototype);
+    expect(Object.getPrototypeOf(ctx)).toBe(prototype);
+    expect(runInContext("assigned = 2; [behindProxy, globalThis.behindProxy, typeof missing]", ctx)).toEqual([
+      1,
+      1,
+      "undefined",
+    ]);
+    expect(Object.getOwnPropertyDescriptor(ctx, "assigned")?.value).toBe(2);
+
+    Object.setPrototypeOf(ctx, null);
+    expect(Object.getPrototypeOf(ctx)).toBe(null);
+    expect(runInContext("typeof behindProxy", ctx)).toBe("undefined");
+  });
+
+  test("a name that isn't defined throws when the global's prototype chain has a Proxy", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    Object.setPrototypeOf(ctx, Object.create(new Proxy({}, {})));
+    expect(runInContext("try { missing; 'did not throw' } catch (e) { e.name }", ctx)).toBe("ReferenceError");
+    expect(runInContext("typeof missing", ctx)).toBe("undefined");
+  });
+
+  test("scripts run when a Proxy goes under the global's prototype later", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const prototype = { beforeProxy: 1 };
+    Object.setPrototypeOf(ctx, prototype);
+    Object.setPrototypeOf(prototype, new Proxy({ behindProxy: 2 }, {}));
+    expect(runInContext("[beforeProxy, behindProxy]", ctx)).toEqual([1, 2]);
+  });
+
+  test("a global cannot be in its own prototype chain", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const cyclic = "cyclic __proto__ value";
+    const expectCycle = (object: object, prototype: object) =>
+      expect(() => void Object.setPrototypeOf(object, prototype)).toThrow(cyclic);
+    expectCycle(ctx, ctx);
+    expectCycle(ctx, Object.create(ctx));
+    expect(() => runInContext("Object.setPrototypeOf(globalThis, globalThis); 0", ctx)).toThrow(cyclic);
+    expect(() => runInContext("globalThis.__proto__ = globalThis; 0", ctx)).toThrow(cyclic);
+    expect(Reflect.setPrototypeOf(ctx, ctx)).toBe(false);
+
+    const prototype = { inherited: 1 };
+    Object.setPrototypeOf(ctx, prototype);
+    expectCycle(prototype, ctx);
+    expect(runInContext("[inherited, typeof missing]", ctx)).toEqual([1, "undefined"]);
+
+    expectCycle(globalThis, globalThis);
+  });
+
+  test("the context is not a Proxy, and deepEquals and inspect read its properties", () => {
+    const make = () => {
+      const ctx = createContext(constants.DONT_CONTEXTIFY);
+      runInContext("var a = 1; globalThis.b = 2", ctx);
+      return ctx;
+    };
+    const ctx = make();
+    expect(types.isProxy(ctx)).toBe(false);
+    expect(types.isProxy(globalThis)).toBe(false);
+    expect(Bun.deepEquals(ctx, make())).toBe(true);
+    expect(Bun.deepEquals(ctx, createContext(constants.DONT_CONTEXTIFY))).toBe(false);
+    expect(() => assert.deepEqual(ctx, { a: 1, b: 2 })).not.toThrow();
+    expect(Bun.inspect(ctx)).toContain("a: 1,\n  b: 2,");
+  });
+});
+
+test("a store reaches the sandbox when the global inherits from the global of another context", () => {
+  const sandbox = createContext({});
+  Object.setPrototypeOf(runInContext("globalThis", sandbox), runInNewContext("globalThis"));
+  runInContext("a = 1; s = Symbol.iterator; z = 2", sandbox);
+  expect(Object.keys(sandbox)).toEqual(["a", "s", "z"]);
+});
+
+test.concurrent("a sandbox that inherits from the global of its own context", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const sandbox = vm.createContext({});
+    Object.setPrototypeOf(sandbox, vm.runInContext("globalThis", sandbox));
+    try {
+      vm.runInContext("typeof missing", sandbox);
+    } catch (e) {
+      console.log(e.name);
+    }`;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("RangeError\n");
+  expect(exitCode).toBe(0);
 });
 
 describe("defineProperty errors use vm-realm global", () => {
@@ -2554,6 +2665,54 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
   });
+});
+
+test("node:vm SourceTextModule link() with other modules after a link() that failed", async () => {
+  const fixture = `
+    import vm from "node:vm";
+    const context = vm.createContext({});
+    const mk = (identifier, source) => new vm.SourceTextModule(source, { identifier, context });
+
+    // a and b1 are a cycle that does not link. The next link() gives a another module for "b".
+    {
+      const a = mk("a", 'import * as ns from "b"; export const read = () => Object.keys(ns) + " v=" + ns.v;');
+      const b1 = mk("b1", 'import "a"; import { missing } from "c"; export var v = "b1";');
+      const b2 = mk("b2", 'import "a"; export var v = "b2"; export var only2;');
+      const c = mk("c", "export var y = 1;");
+      await b1.link(specifier => ({ a, b: b1, c })[specifier]).catch(error => console.log(error.name));
+      await a.link(specifier => ({ a, b: b2, c })[specifier]);
+      await a.evaluate();
+      console.log(a.namespace.read());
+    }
+
+    // e links inside the link() of bad, which fails. The linker makes a new module for "dep" on every call.
+    {
+      const e = mk("e", 'export { value } from "dep";');
+      const bad = mk("bad", 'import { value, missing } from "e";');
+      const good = mk("good", 'import { value } from "e"; export const read = () => value;');
+      let made = 0;
+      const dep = n => new vm.SyntheticModule(["value"], function () { this.setExport("value", "dep#" + n); }, { context });
+      const linker = specifier => (specifier === "e" ? e : dep(++made));
+      await bad.link(linker).catch(error => console.log(error.name));
+      await good.link(linker);
+      await good.evaluate();
+      Bun.gc(true);
+      console.log(good.namespace.read());
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("SyntaxError\nonly2,v v=b2\nSyntaxError\ndep#1\n");
+  expect(exitCode).toBe(0);
 });
 
 test("node:vm Object.defineProperty on the context global when the sandbox is an uncacheable dictionary holding an accessor for a built-in", async () => {

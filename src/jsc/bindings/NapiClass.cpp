@@ -63,7 +63,8 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     }
 
     NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
-    Bun::NapiHandleScope handleScope(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    // napi_* calls root their results through the env's global. After NapiEnv::retargetGlobalObject that is not the callee's.
+    Bun::NapiHandleScope handleScope(napi->env()->globalObject());
 
     JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
     napi_set_last_error(napi->env(), napi_ok);

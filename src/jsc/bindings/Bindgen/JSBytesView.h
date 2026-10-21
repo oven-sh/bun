@@ -15,7 +15,7 @@ bool isSharedBuffer(JSC::JSValue);
 // A copy of the bytes, which `copy` holds, or the bytes themselves if there are none. Allocating it can throw.
 std::span<const uint8_t> copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t>, WTF::MallocSpan<uint8_t>& copy);
 
-// Whether it is a Blob. Throws for one whose bytes are not in memory: a file.
+// Whether it holds a Blob: a Blob, or a `Bun.build()` output. Throws for one whose bytes are not in memory: a file.
 bool checkInMemoryBlob(JSC::JSGlobalObject&, JSC::JSValue);
 
 // The bytes of a Blob or a buffer where they are, which only JavaScript and a thread that writes a shared buffer change.

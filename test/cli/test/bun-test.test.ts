@@ -2227,3 +2227,40 @@ test("reports a bunfig [test] root longer than the path buffer like a missing di
   expect(stderr).toContain(root);
   expect(exitCode).toBe(1);
 });
+
+test("hooks throw in a Worker", async () => {
+  using dir = tempDir("bun-test-hooks-in-worker", {
+    "hooks.test.ts": `
+      import { afterAll, afterEach, onTestFinished, test } from "bun:test";
+      import { isMainThread, parentPort, Worker } from "node:worker_threads";
+      if (isMainThread) {
+        test("starts a Worker", async () => {
+          const worker = new Worker(import.meta.filename);
+          worker.on("message", console.log);
+          await new Promise(resolve => worker.once("exit", resolve));
+        });
+      } else {
+        for (const hook of [afterEach, afterAll, onTestFinished]) {
+          try {
+            hook(() => {});
+          } catch (e) {
+            parentPort.postMessage(e.message);
+          }
+        }
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "hooks.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain(
+    "Cannot use afterEach() in a Worker.\nCannot use afterAll() in a Worker.\nCannot use onTestFinished() in a Worker.\n",
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});

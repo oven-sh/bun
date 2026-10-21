@@ -220,6 +220,8 @@ pub enum ReactiveTerminal {
         block: ReactiveBlock,
         handler_binding: Option<Place>,
         handler: ReactiveBlock,
+        handler_loc: Option<SourceLocation>,
+        handler_body_loc: Option<SourceLocation>,
         id: EvaluationOrder,
         loc: Option<SourceLocation>,
     },
@@ -229,6 +231,7 @@ pub enum ReactiveTerminal {
 pub struct ReactiveSwitchCase {
     pub test: Option<Place>,
     pub block: Option<ReactiveBlock>,
+    pub loc: Option<SourceLocation>,
 }
 
 // =============================================================================

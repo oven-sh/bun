@@ -118,7 +118,7 @@ pub struct ExternWithValue<T: Copy> {
 }
 
 unsafe extern "C" {
-    /// `value` is a `BufferSource` or a `Blob` whose bytes are in memory.
+    /// `value` is a `BufferSource`, or holds a `Blob` whose bytes are in memory.
     pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBuffer(value: JSValue) -> ExternBytes;
     /// As above. Always sets `is_shared`.
     pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(

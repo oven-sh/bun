@@ -1,8 +1,9 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
-import { runWithError } from "harness";
+import { runWithError, tempDir } from "harness";
 import { BlockList, SocketAddress } from "node:net";
+import { join } from "node:path";
 import vm from "node:vm";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
@@ -1488,6 +1489,39 @@ describe("a string or a buffer, as bytes", () => {
       }
     }
     expect(bindgen.bytesOfRefusingUndefined(new Blob(["abc"]))).toEqual(utf8("[object Blob]"));
+  });
+
+  it('from: "blob" takes an output of Bun.build() as the Blob that it holds', async () => {
+    using dir = tempDir("bindgen-build-output", { "entry.js": `console.log("abc");` });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const inMemory = (await Bun.build({ entrypoints })).outputs[0];
+    const written = (await Bun.build({ entrypoints, outdir: join(String(dir), "out") })).outputs[0];
+    const code = [...new Uint8Array(await inMemory.arrayBuffer())];
+    expect(code.length).toBeGreaterThan(0);
+    const fileBlob = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "File blob cannot be used here",
+    });
+    for (const f of [bindgen.bytesOfBufferOrBlob, bindgen.bytesOfOrToString]) {
+      expect(f(inMemory)).toEqual(code);
+      expect(() => f(written)).toThrow(fileBlob);
+    }
+    expect(bindgen.bytesBeforeAndAfterCallback(inMemory, () => Bun.gc(true))).toEqual([code, code]);
+    expect(bindgen.stringAsIsOrBytes(inMemory)).toEqual([0, ...code]);
+    expect(() => bindgen.stringAsIsOrBytes(written)).toThrow(fileBlob);
+    expect(bindgen.bytesOfRefusingUndefined(inMemory)).toEqual(utf8("[object BuildArtifact]"));
+  });
+
+  it('from: "blob" does not take a value that holds no Blob', () => {
+    // A Response and a URL have the cell type of a Blob.
+    for (const [value, text] of [
+      [new Response("abc"), "[object Response]"],
+      [new URL("http://example.com/path"), "http://example.com/path"],
+    ] as const) {
+      expect(bindgen.bytesOfOrToString(value)).toEqual(utf8(text));
+      expect(() => bindgen.bytesOfBufferOrBlob(value)).toThrow(refusal("an ArrayBuffer, ArrayBufferView or Blob"));
+    }
   });
 
   it("from: takes only what it lists, without converting anything else", () => {

@@ -646,6 +646,9 @@ impl QuicSession {
     pub(super) fn is_server(&self) -> bool {
         self.is_server.get()
     }
+    pub(super) fn is_http3(&self) -> bool {
+        self.with_state(|s| s.application_type == Application::Http3 as u8)
+    }
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
     }

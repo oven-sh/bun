@@ -274,7 +274,9 @@ impl QuicStream {
         } else {
             s.want_read(true);
         }
-        if want_write || self.outbound.get().started {
+        if self.only_fin_pending() {
+            self.drain_outbound();
+        } else if want_write || self.outbound.get().started {
             s.want_write(true);
         }
     }
@@ -550,8 +552,22 @@ impl QuicStream {
         }
     }
 
+    /// lsquic gives a write event only to a stream that has flow-control
+    /// credit. A FIN with no data queued before it takes none, so it is sent
+    /// without a write event. An HTTP/3 stream keeps the write event: its FIN
+    /// has to follow the header block, which JS can hand over later in the
+    /// same turn, and its first send limit is never 0.
+    fn only_fin_pending(&self) -> bool {
+        let out = self.outbound.get();
+        out.end == PendingEnd::Fin
+            && out.data.is_empty()
+            && !self.session_ref().is_some_and(QuicSession::is_http3)
+    }
+
     fn kick_write(&self) {
-        if let Some(s) = self.ls() {
+        if self.only_fin_pending() {
+            self.drain_outbound();
+        } else if let Some(s) = self.ls() {
             s.want_write(true);
         }
         if let Some(session) = self.session_ref() {

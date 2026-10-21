@@ -173,24 +173,44 @@ impl NapiEnv {
         Self::set_last_error(Some(self), NapiStatus::cannot_run_js)
     }
 
-    /// Runs `completion` (an addon's `complete` or `call_js`) in `context`, the one whose script
-    /// asked for the work: what the callback opens is that context's. Once the context has
-    /// stopped the callback still runs, since it owns memory only it can free, but functions
-    /// that would run script answer it as they do in a VM that is stopping.
-    pub(crate) fn complete_in_context(
+    /// Runs `callback` in `context`, then `before_leaving` with its result, still in that
+    /// context. While `callback` runs, functions that would run script answer the addon as they
+    /// do in a VM that is stopping if `context` has stopped.
+    fn in_context_then<R, T>(
         &self,
         context: bun_jsc::ContextId,
-        completion: impl FnOnce(),
-    ) {
+        callback: impl FnOnce() -> R,
+        before_leaving: impl FnOnce(R) -> T,
+    ) -> T {
         let vm = self.to_js().bun_vm();
         let stopped = !vm.is_context_live(context);
         let _context = vm.enter_context(context);
         // SAFETY: `self` is a live C++-owned napi_env; JS thread.
         let previous =
             unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), stopped) };
-        completion();
+        let result = callback();
         // SAFETY: as above; the env outlives its completions (the caller holds a ref).
         unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), previous) };
+        before_leaving(result)
+    }
+
+    /// Runs `run` in `context`: what it opens, settles or throws there is that context's.
+    fn in_context<R>(&self, context: bun_jsc::ContextId, run: impl FnOnce() -> R) -> R {
+        self.in_context_then(context, run, |result| result)
+    }
+
+    /// Runs `completion` (an addon's `complete` or `call_js`) in `context`, the one whose script
+    /// asked for the work: what the callback opens is that context's, and so is what it leaves
+    /// pending, which is thrown (the `Err`) before the context is left. Once the context has
+    /// stopped the callback still runs, since it owns memory only it can free, but functions
+    /// that would run script answer it as they do in a VM that is stopping.
+    pub(crate) fn complete_in_context(
+        &self,
+        global: &JSGlobalObject,
+        context: bun_jsc::ContextId,
+        completion: impl FnOnce(),
+    ) -> JsResult<()> {
+        self.in_context_then(context, completion, |()| self.surface_exception(global))
     }
 
     /// Node's `NAPI_PREAMBLE` entry check (napi.h `NapiEnv::entryStatus`). `Err` is the status Node
@@ -1713,7 +1733,7 @@ fn conclude_deferred(
         return env.ok();
     }
     let mut status = env.ok();
-    env.complete_in_context(context, || {
+    env.in_context(context, || {
         if let Err(refused) = env.entry_status() {
             status = refused;
             return;
@@ -2068,10 +2088,9 @@ impl napi_async_work {
             };
 
         let data = self.data;
-        env_ref.complete_in_context(self.context, || complete(env, status as napi_status, data));
-
-        // SAFETY: env is valid for the duration of this call.
-        unsafe { &*env }.surface_exception(global)
+        env_ref.complete_in_context(global, self.context, || {
+            complete(env, status as napi_status, data)
+        })
     }
 }
 
@@ -2926,7 +2945,10 @@ impl ThreadSafeFunction {
                     return Ok(());
                 }
 
-                js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
+                // A function made outside any async context carries none of its own.
+                env.in_context(self.context, || {
+                    js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
+                })
             }
             TsfnCallback::C {
                 js: cb_js,
@@ -2939,10 +2961,9 @@ impl ThreadSafeFunction {
                     None => napi_value(0),
                 };
                 let ctx = self.ctx;
-                env.complete_in_context(self.context, || {
+                env.complete_in_context(global_object, self.context, || {
                     napi_threadsafe_function_call_js(env.as_mut_ptr(), js, ctx, task)
-                });
-                env.surface_exception(global_object)
+                })
             }
         }
     }

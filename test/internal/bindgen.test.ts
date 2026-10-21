@@ -223,12 +223,26 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { value: { getter: b.any } } })).toThrow('takes capability: "heap"');
   expect(() => b.class({ rustPath: "T", internalFields: ["a", "a"] })).toThrow("two internal fields are both a");
   const constructible = { rustPath: "T", construct: {} };
-  for (const extra of [{ cache: true }, { setter: true }]) {
-    // @ts-expect-error
-    expect(() => b.class({ ...constructible, static: { x: { getter: b.u32, ...extra } } })).toThrow(
-      "x: a static getter has no cache and no setter",
-    );
-  }
+  // @ts-expect-error
+  expect(() => b.class({ ...constructible, static: { x: { getter: b.u32, cache: true } } })).toThrow(
+    "x: a static getter has no cache",
+  );
+  // @ts-expect-error
+  expect(() => b.class({ ...constructible, static: { x: { value: "x" } } })).toThrow(
+    "x: a value is a property of the prototype",
+  );
+  expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.u32, writable: true } } })).toThrow(
+    "x: writable is for a cached getter",
+  );
+  expect(() =>
+    b.class({ rustPath: "T", proto: { x: { getter: b.u32, cache: true, writable: true, setter: true } } }),
+  ).toThrow("x: writable stores the value itself, so there is no setter to call");
+  expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.u32, cache: true, setter: true } } })).toThrow(
+    "x: the setter of a cached getter takes passThis, to replace the cached value",
+  );
+  expect(() => b.class({ rustPath: "T", proto: { "@@dispose": { enumerable: true } } })).toThrow(
+    "@@dispose: enumerable and configurable are for a string key",
+  );
   // @ts-expect-error
   expect(() => b.class({ ...constructible, static: { x: { builtin: true, length: 0 } } })).toThrow(
     "x: a builtin is a property of the prototype",
@@ -2046,6 +2060,71 @@ describe("classes", () => {
     Bun.gc(true);
     Bun.gc(true);
     expect(TestCounter.alive()).toBeLessThan(count);
+  });
+
+  describe("properties", () => {
+    const { TestProblem } = bindgen as any;
+    const attributes = (object: object, key: string) => {
+      const { enumerable, configurable } = Object.getOwnPropertyDescriptor(object, key)!;
+      return { enumerable, configurable };
+    };
+
+    it("enumerable and configurable are the class's, unless the member has its own", () => {
+      const { prototype } = TestProblem;
+      expect(attributes(prototype, "message")).toEqual({ enumerable: false, configurable: true });
+      expect(attributes(prototype, "code")).toEqual({ enumerable: true, configurable: true });
+      expect(attributes(prototype, "sealedCode")).toEqual({ enumerable: false, configurable: false });
+      expect(attributes(prototype, "describe")).toEqual({ enumerable: false, configurable: false });
+      expect(Object.keys(prototype)).toEqual(["code", "name"]);
+    });
+
+    it("prototypeBase is what the prototype inherits from", () => {
+      expect(Object.getPrototypeOf(TestProblem.prototype)).toBe(Error.prototype);
+      const problem = new TestProblem(4);
+      expect(problem).toBeInstanceOf(Error);
+      expect(String(problem)).toBe("TestProblem: problem 4");
+    });
+
+    it("a value is a read-only string", () => {
+      expect(Object.getOwnPropertyDescriptor(TestProblem.prototype, "name")).toEqual({
+        value: "TestProblem",
+        writable: false,
+        enumerable: true,
+        configurable: true,
+      });
+    });
+
+    it("assigning to a writable cached getter replaces the value", () => {
+      const problem = new TestProblem(4);
+      expect(problem.message).toBe("problem 4");
+      const replacement = { toString: () => "replaced" };
+      problem.message = replacement;
+      expect(problem.message).toBe(replacement);
+      expect(new TestProblem(5).message).toBe("problem 5");
+      const untouched = new TestProblem(6);
+      untouched.message = undefined;
+      expect(untouched.message).toBeUndefined();
+      expect(() => Reflect.set(TestProblem.prototype, "message", 1, {})).toThrow(TypeError);
+    });
+
+    it("the setter of a cached getter stores what the getter returns next", () => {
+      const problem = new TestProblem(4);
+      expect(problem.detail).toBe(4);
+      problem.detail = 10;
+      expect(problem.detail).toBe(20);
+    });
+
+    it("a static getter can have a setter", () => {
+      expect(TestProblem.level).toBe(0);
+      try {
+        TestProblem.level = 3;
+        expect(TestProblem.level).toBe(3);
+        expect(() => (TestProblem.level = Symbol())).toThrow(TypeError);
+        expect(TestProblem.level).toBe(3);
+      } finally {
+        TestProblem.level = 0;
+      }
+    });
   });
 
   describe("refCounted", () => {

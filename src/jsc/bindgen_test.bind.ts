@@ -297,6 +297,28 @@ export const TestToken = b.class({
 });
 export const makeToken = b.fn({ args: { id: b.u32 }, returns: TestToken, capability: "heap" });
 
+/** Property attributes, a prototype that is an `Error`'s, and the kinds of assignable property. */
+export const TestProblem = b.class({
+  rustPath: "crate::bindgen_test::TestProblem",
+  construct: { args: { code: b.i32 } },
+  prototypeBase: "Error",
+  enumerable: false,
+  proto: {
+    name: { value: "TestProblem" },
+    code: { getter: b.i32, enumerable: true },
+    sealedCode: { getter: b.i32, configurable: false },
+    describe: { returns: b.string.utf8, configurable: false },
+    /** Computed once. Assigning replaces it without calling Rust. */
+    message: { getter: b.string.utf8, cache: true, writable: true },
+    /** Computed once. Assigning a number stores its double. */
+    detail: { getter: b.any, setter: true, cache: true, capability: "heap", passThis: true },
+  },
+  static: {
+    /** One for the process. */
+    level: { getter: b.i32, setter: true },
+  },
+});
+
 export const integerOrBigInt = b.fn({ args: { value: b.u32.allowBigInt }, returns: b.u32 });
 export const looseInteger = b.fn({ args: { value: b.u16.loose }, returns: b.u16 });
 export const looseIntegerOrBigInt = b.fn({ args: { value: b.u16.loose.allowBigInt }, returns: b.u16 });

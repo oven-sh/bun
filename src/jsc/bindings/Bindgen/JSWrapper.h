@@ -61,8 +61,8 @@ private:
 // `new` on a class that only native code makes.
 JSC_DECLARE_HOST_FUNCTION(illegalConstructor);
 
-// A plain object with the properties of the table.
-JSC::JSObject* createClassPrototype(JSC::VM&, JSC::JSGlobalObject*, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>);
+// A plain object with the properties of the table, that inherits from `base`.
+JSC::JSObject* createClassPrototype(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* base, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>);
 
 JSC::Structure* structureForClass(JSC::JSGlobalObject*, unsigned classIndex);
 JSC::JSObject* constructorForClass(JSC::JSGlobalObject*, unsigned classIndex);

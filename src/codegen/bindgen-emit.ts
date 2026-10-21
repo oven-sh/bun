@@ -30,6 +30,7 @@ import {
   Signature,
   snakeCase,
   StringType,
+  StringValue,
   type Type,
   UnionType,
   UnitType,
@@ -660,12 +661,14 @@ const methodSymbolName = (type: ClassType, method: Method) =>
 const getterSymbolName = (type: ClassType, getter: Getter) =>
   `Bun__Bindgen__${type.name}${getter.isStatic ? "Class" : "Prototype"}Getter__${getter.name}`;
 const setterSymbolName = (type: ClassType, getter: Getter) =>
-  `Bun__Bindgen__${type.name}PrototypeSetter__${getter.name}`;
+  `Bun__Bindgen__${type.name}${getter.isStatic ? "Class" : "Prototype"}Setter__${getter.name}`;
 
 const classSymbols = (type: ClassType) => [
   ...type.methods.map(method => methodSymbolName(type, method)),
-  ...type.getters.flatMap(getter => [getterSymbolName(type, getter), setterSymbolName(type, getter)]),
-  ...type.staticGetters.map(getter => getterSymbolName(type, getter)),
+  ...[...type.getters, ...type.staticGetters].flatMap(getter => [
+    getterSymbolName(type, getter),
+    setterSymbolName(type, getter),
+  ]),
   classSymbolName(type, "construct"),
   classSymbolName(type, "finalize"),
 ];
@@ -675,8 +678,8 @@ const methodHostFunctionName = (type: ClassType, fn: FunctionDefinition) =>
   `js${type.name}${isStaticFunction(fn) ? "Constructor" : "Prototype"}Function_${memberIdentifier(fn.name)}`;
 const getterHostFunctionName = (type: ClassType, getter: { name: string; isStatic?: boolean }) =>
   `js${type.name}${getter.isStatic ? "Constructor" : "Prototype"}Getter_${getter.name}`;
-const setterHostFunctionName = (type: ClassType, getter: { name: string }) =>
-  `js${type.name}PrototypeSetter_${getter.name}`;
+const setterHostFunctionName = (type: ClassType, getter: { name: string; isStatic?: boolean }) =>
+  `js${type.name}${getter.isStatic ? "Constructor" : "Prototype"}Setter_${getter.name}`;
 
 /** The cell: JSDestructibleObject | the internal fields | the pointer to the struct of a refCounted class, or the struct itself. */
 function cppHeaderForClass(type: ClassType): string {
@@ -836,7 +839,7 @@ JSC_DEFINE_CUSTOM_GETTER(${get}, (JSC::JSGlobalObject * globalObject, JSC::Encod
 {
     return ${symbol}(globalObject);
 }
-`;
+${getter.hasSetter ? cppSetter(type, getter) : ""}`;
 }
 
 const cppSetterPrologue = (type: ClassType) => `${cppPrologue}
@@ -846,9 +849,20 @@ const cppSetterPrologue = (type: ClassType) => `${cppPrologue}
         return false;
     }`;
 
+/** Stores any value assigned to the property in its internal field. */
+const cppInternalFieldSetter = (type: ClassType, accessor: { name: string; internalField?: string }) => `
+static JSC_DECLARE_CUSTOM_SETTER(${setterHostFunctionName(type, accessor)});
+JSC_DEFINE_CUSTOM_SETTER(${setterHostFunctionName(type, accessor)}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName attributeName))
+{
+${cppSetterPrologue(type)}
+    thisObject->m_${accessor.internalField}.set(vm, thisObject, JSC::JSValue::decode(encodedValue));
+    return true;
+}
+`;
+
 function cppInternalFieldAccessor(type: ClassType, accessor: InternalFieldAccessor): string {
   const field = `thisObject->m_${accessor.internalField}`;
-  let text = `
+  return `
 static JSC_DECLARE_CUSTOM_GETTER(${getterHostFunctionName(type, accessor)});
 JSC_DEFINE_CUSTOM_GETTER(${getterHostFunctionName(type, accessor)}, (JSC::JSGlobalObject*, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
@@ -857,27 +871,38 @@ JSC_DEFINE_CUSTOM_GETTER(${getterHostFunctionName(type, accessor)}, (JSC::JSGlob
     JSC::JSValue value = ${field}.get();
     return JSC::JSValue::encode(value ? value : JSC::jsUndefined());
 }
-`;
-  if (accessor.hasSetter) {
-    text += `
-static JSC_DECLARE_CUSTOM_SETTER(${setterHostFunctionName(type, accessor)});
-JSC_DEFINE_CUSTOM_SETTER(${setterHostFunctionName(type, accessor)}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName attributeName))
+${accessor.hasSetter ? cppInternalFieldSetter(type, accessor) : ""}`;
+}
+
+/** The setter written in Rust. */
+function cppSetter(type: ClassType, getter: Getter): string {
+  assert(!isPassedByPointer(getter.type), `${type.name}.${getter.name}: a setter takes what fits two registers`);
+  const set = setterHostFunctionName(type, getter);
+  const setSymbol = setterSymbolName(type, getter);
+  const { holder, value } = cppHeldValue(getter.type, "assigned");
+  return `
+extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, ${getter.isStatic ? "" : "JSC::JSCell*, "}${externType(getter.type)});
+static JSC_DECLARE_CUSTOM_SETTER(${set});
+JSC_DEFINE_CUSTOM_SETTER(${set}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue${getter.isStatic ? "" : " thisValue"}, JSC::EncodedJSValue encodedValue, JSC::PropertyName${getter.isStatic ? "" : " attributeName"}))
 {
-${cppSetterPrologue(type)}
-    ${field}.set(vm, thisObject, JSC::JSValue::decode(encodedValue));
-    return true;
+${
+  getter.isStatic
+    ? cppPrologue
+    : `${cppSetterPrologue(type)}
+    JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };`
+}
+    ${holder} assigned { JSC::JSValue::decode(encodedValue) };
+    ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
+    ${cppDeclareConverted(getter.type, "value", value, "ctx", getter.name, "RETURN_IF_EXCEPTION(scope, false);").join("\n    ")}
+    RELEASE_AND_RETURN(scope, ${setSymbol}(globalObject, ${getter.isStatic ? "" : "thisObject, "}${toExtern("value")}));
 }
 `;
-  }
-  return text;
 }
 
 function cppGetter(type: ClassType, getter: Getter): string {
   const get = getterHostFunctionName(type, getter);
-  const set = setterHostFunctionName(type, getter);
   const getSymbol = getterSymbolName(type, getter);
-  const setSymbol = setterSymbolName(type, getter);
-  let text = `
+  return `
 extern "C" JSC::EncodedJSValue ${getSymbol}(JSC::JSGlobalObject*, JSC::JSCell*);
 static JSC_DECLARE_CUSTOM_GETTER(${get});
 JSC_DEFINE_CUSTOM_GETTER(${get}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -898,46 +923,31 @@ ${
     return JSC::JSValue::encode(result);`
 }
 }
-`;
-  if (getter.hasSetter) {
-    assert(!isPassedByPointer(getter.type), `${type.name}.${getter.name}: a setter takes what fits two registers`);
-    const { holder, value } = cppHeldValue(getter.type, "assigned");
-    text += `
-extern "C" bool ${setSymbol}(JSC::JSGlobalObject*, JSC::JSCell*, ${externType(getter.type)});
-static JSC_DECLARE_CUSTOM_SETTER(${set});
-JSC_DEFINE_CUSTOM_SETTER(${set}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName attributeName))
-{
-${cppSetterPrologue(type)}
-    JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
-    ${holder} assigned { JSC::JSValue::decode(encodedValue) };
-    ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} }`)}
-    ${cppDeclareConverted(getter.type, "value", value, "ctx", getter.name, "RETURN_IF_EXCEPTION(scope, false);").join("\n    ")}
-    RELEASE_AND_RETURN(scope, ${setSymbol}(globalObject, thisObject, ${toExtern("value")}));
-}
-`;
-  }
-  return text;
+${getter.hasSetter ? cppSetter(type, getter) : getter.writable ? cppInternalFieldSetter(type, getter) : ""}`;
 }
 
 function cppSourceForClass(type: ClassType): string {
   const { name } = type;
-  const dontDelete = type.configurable ? "" : " | JSC::PropertyAttribute::DontDelete";
+  const attributesOf = (member: { enumerable: boolean | undefined; configurable: boolean | undefined }) =>
+    `${(member.enumerable ?? type.enumerable) ? "" : " | JSC::PropertyAttribute::DontEnum"}${(member.configurable ?? type.configurable) ? "" : " | JSC::PropertyAttribute::DontDelete"}`;
   const row = (key: string, attributes: string, value: string) =>
     `    { ${asciiLiteral(key)}, static_cast<unsigned>(${attributes}), JSC::NoIntrinsic, { ${value} } },`;
   const privateSymbol = (fn: FunctionDefinition) => (fn.signatures[0] as Method).privateSymbol;
   const methodRow = (fn: FunctionDefinition) =>
     row(
       fn.name,
-      `JSC::PropertyAttribute::Function${dontDelete}`,
+      `JSC::PropertyAttribute::Function${attributesOf(fn.signatures[0] as Method)}`,
       `JSC::HashTableValue::NativeFunctionType, ${methodHostFunctionName(type, fn)}, ${fn.length}`,
     );
   // DOMAttribute has JSC check the receiver, which a static getter does not look at.
-  const getterRow = (getter: Getter | InternalFieldAccessor) =>
-    row(
+  const getterRow = (getter: Getter | InternalFieldAccessor) => {
+    const assignable = getter.hasSetter || (getter instanceof Getter && getter.writable);
+    return row(
       getter.name,
-      `${getter.hasSetter ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${getter instanceof Getter && getter.isStatic ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${dontDelete}`,
-      `JSC::HashTableValue::GetterSetterType, ${getterHostFunctionName(type, getter)}, ${getter.hasSetter ? setterHostFunctionName(type, getter) : "0"}`,
+      `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${getter instanceof Getter && getter.isStatic ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${attributesOf(getter)}`,
+      `JSC::HashTableValue::GetterSetterType, ${getterHostFunctionName(type, getter)}, ${assignable ? setterHostFunctionName(type, getter) : "0"}`,
     );
+  };
   const builtinRow = (builtin: Builtin) =>
     row(
       builtin.name,
@@ -947,6 +957,7 @@ function cppSourceForClass(type: ClassType): string {
   /** In the order the schema has them, which `for-in` shows. */
   const rowsOf = (members: readonly ClassMember[]) =>
     members
+      .filter((member): member is Exclude<ClassMember, StringValue> => !(member instanceof StringValue))
       .filter(
         member => !(member instanceof FunctionDefinition && (privateSymbol(member) || wellKnownSymbol(member.name))),
       )
@@ -1002,7 +1013,7 @@ void Bun::Bindgen::Generated::setup${name}ClassStructure(JSC::LazyClassStructure
 {
     JSC::VM& vm = init.vm;
     JSC::JSGlobalObject* globalObject = init.global;
-    JSC::JSObject* prototype = Bun::Bindgen::createClassPrototype(vm, globalObject, ${type.cpp}::info(), ${span(`JS${name}PrototypeTableValues`, prototypeRows)});
+    JSC::JSObject* prototype = Bun::Bindgen::createClassPrototype(vm, globalObject, globalObject->${type.prototypeBase === "Error" ? "errorPrototype" : "objectPrototype"}(), ${type.cpp}::info(), ${span(`JS${name}PrototypeTableValues`, prototypeRows)});
 ${
   privateFunctions.length > 0
     ? `    auto& names = WebCore::builtinNames(vm);
@@ -1018,6 +1029,11 @@ ${privateFunctions
     .map(
       fn =>
         `    prototype->putDirectWithoutTransition(vm, vm.propertyNames->${wellKnownSymbol(fn.name)}Symbol, JSC::JSFunction::create(vm, globalObject, ${fn.length}, ${asciiLiteral((fn.signatures[0] as Method).functionName ?? `[Symbol.${wellKnownSymbol(fn.name)}]`)}, ${methodHostFunctionName(type, fn)}, JSC::ImplementationVisibility::Public), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));\n`,
+    )
+    .join("")}${type.stringValues
+    .map(
+      ({ name, value }) =>
+        `    prototype->putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, ${asciiLiteral(name)}), JSC::jsString(vm, WTF::String(${asciiLiteral(value)})), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));\n`,
     )
     .join("")}    Bun::putToStringTagWithoutTransition(vm, prototype, ${type.cpp}::info());
     init.setPrototype(prototype);
@@ -1533,7 +1549,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
     const set = `${rustPath}::${getter.setterRustName}(${[...leading(getter.setterReceiver, getter.passThis, getter.setterCapability), "value"].join(", ")})`;
     thunks += rustThunk(
       setterSymbolName(type, getter),
-      ["this: *mut core::ffi::c_void", `value: ${getter.type.rustExternType(scope)}`],
+      [...(getter.isStatic ? [] : ["this: *mut core::ffi::c_void"]), `value: ${getter.type.rustExternType(scope)}`],
       "bool",
       `${takeThis(getter.setterReceiver, getter.passThis)}${rustTakeArguments([{ name: "value", type: getter.type }], scope)}let result = ${infallible(set, getter.throws, unit)};
 !bindgen::host_fn_return(cx, result, bindgen::to_js::undefined).is_empty()`,
@@ -1757,7 +1773,9 @@ export function dts(files: readonly SchemaFile[]): string {
       ? `    [Symbol.${wellKnownSymbol(fn.name)}]: ${overloadsType(fn)};`
       : member(fn.name, false, overloadsType(fn));
   const getterMember = (getter: Getter) =>
-    `    ${getter.hasSetter ? "" : "readonly "}${JSON.stringify(getter.name)}: ${getter.hasSetter ? getter.type.tsType : resultType(getter.type)};`;
+    getter.writable
+      ? member(getter.name, false, "any")
+      : `    ${getter.hasSetter ? "" : "readonly "}${JSON.stringify(getter.name)}: ${getter.hasSetter ? getter.type.tsType : resultType(getter.type)};`;
   const declarations = files.flatMap(file =>
     file.types.map(type => {
       if (type instanceof DictionaryType) {
@@ -1772,6 +1790,7 @@ ${[
     accessor => `    ${accessor.hasSetter ? "" : "readonly "}${JSON.stringify(accessor.name)}: any;`,
   ),
   ...type.builtins.map(builtin => member(builtin.name, false, "(...args: any[]) => any")),
+  ...type.stringValues.map(({ name, value }) => `    readonly ${JSON.stringify(name)}: ${JSON.stringify(value)};`),
 ].join("\n")}
   }${
     type.construct

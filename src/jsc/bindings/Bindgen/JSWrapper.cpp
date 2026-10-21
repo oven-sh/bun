@@ -63,9 +63,9 @@ JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObj
     return constructor;
 }
 
-JSObject* createClassPrototype(VM& vm, JSGlobalObject* globalObject, const ClassInfo* info, std::span<const HashTableValue> tableValues)
+JSObject* createClassPrototype(VM& vm, JSGlobalObject* globalObject, JSObject* base, const ClassInfo* info, std::span<const HashTableValue> tableValues)
 {
-    auto* structure = JSFinalObject::createStructure(vm, globalObject, globalObject->objectPrototype(), 0);
+    auto* structure = JSFinalObject::createStructure(vm, globalObject, base, 0);
     structure->setMayBePrototype(true);
     JSObject* prototype = JSFinalObject::create(vm, structure);
     Bun::reifyStaticPropertyTable(vm, info, tableValues, *prototype);

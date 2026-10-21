@@ -1,7 +1,7 @@
 //! This namespace is used to test binding generator
 
 use core::cell::{Cell, RefCell};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
     self, BufferSource, Callable, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _,
@@ -10,7 +10,7 @@ use crate::bindgen::{
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag,
     TestNames, TestOptions, TestOptionsEcho, TestOuter, TestTextOrBytes, TestValue, js_TestCounter,
-    js_TestRefCounted,
+    js_TestProblem, js_TestRefCounted,
 };
 use crate::{JSString, JSValue, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -642,6 +642,57 @@ impl TestToken {
 
 pub(crate) fn make_token<'a>(heap: &JsHeap<'a>, id: u32) -> JsWrapper<'a, TestToken> {
     TestToken { id }.into_js(heap)
+}
+
+pub(crate) struct TestProblem {
+    code: i32,
+}
+
+static PROBLEM_LEVEL: AtomicI32 = AtomicI32::new(0);
+
+impl TestProblem {
+    pub(crate) fn constructor(code: i32) -> Self {
+        Self { code }
+    }
+
+    pub(crate) fn get_code(&self) -> i32 {
+        self.code
+    }
+
+    pub(crate) fn get_sealed_code(&self) -> i32 {
+        self.code
+    }
+
+    pub(crate) fn describe(&self) -> Vec<u8> {
+        format!("problem {}", self.code).into_bytes()
+    }
+
+    pub(crate) fn get_message(&self) -> Vec<u8> {
+        self.describe()
+    }
+
+    pub(crate) fn get_detail<'a>(&self, _: JsWrapper<'a, Self>, heap: &JsHeap<'a>) -> JsLocal<'a> {
+        JsLocal::new(heap, JSValue::js_number_from_int32(self.code))
+    }
+
+    pub(crate) fn set_detail<'a>(
+        &mut self,
+        this_value: JsWrapper<'a, Self>,
+        heap: &JsHeap<'a>,
+        value: JsLocal<'a>,
+    ) {
+        let doubled = JSValue::js_number(value.to_js().as_number() * 2.0);
+        // SAFETY: storing a value runs no JavaScript.
+        js_TestProblem::detail_set_cached(this_value.to_js(), unsafe { heap.global() }, doubled);
+    }
+
+    pub(crate) fn get_level() -> i32 {
+        PROBLEM_LEVEL.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn set_level(value: i32) {
+        PROBLEM_LEVEL.store(value, Ordering::SeqCst);
+    }
 }
 
 pub(crate) fn integer_or_big_int(value: u32) -> u32 {

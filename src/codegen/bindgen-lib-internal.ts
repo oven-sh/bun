@@ -1908,8 +1908,14 @@ export class FunctionDefinition {
 
 // ───────────────────────────── classes ─────────────────────────────
 
+/** Each defaults to the class's. */
+export interface PropertyAttributes {
+  enumerable?: boolean;
+  configurable?: boolean;
+}
+
 /** A native function. */
-export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
+export interface FunctionField extends Omit<SignatureOptions, "rustPath">, PropertyAttributes {
   /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
   mutates?: boolean;
   /** Also pass the wrapper, `this_value: JsWrapper<'a, Self>`. A method whose receiver is the wrapper already has it. */
@@ -1924,12 +1930,14 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   name?: string;
 }
 
-export interface GetterField {
+export interface GetterField extends PropertyAttributes {
   getter: Type;
   /** Also generate a setter, which takes `&mut self` (the wrapper with `capability: "js"`, `&self` in a `refCounted` class). Its `capability` is the getter's unless it names its own. */
   setter?: true | { capability: Capability };
   /** Returns an internal field, and computes it while that is empty. `true` declares one of the getter's name, a string names one declared elsewhere. */
   cache?: true | string;
+  /** With `cache`: any value assigned to the property replaces the cached one, without calling Rust. */
+  writable?: true;
   capability?: Capability;
   throws?: boolean;
   /** As a function's. */
@@ -1939,7 +1947,7 @@ export interface GetterField {
 }
 
 /** An accessor that reads an internal field in C++, without calling Rust. With `setter: true` it also stores any value assigned to it. */
-export interface InternalFieldField {
+export interface InternalFieldField extends PropertyAttributes {
   internalField: string;
   setter?: true;
 }
@@ -1950,11 +1958,17 @@ export interface BuiltinField {
   length: number;
 }
 
+/** A read-only string. */
+export interface ValueField {
+  value: string;
+}
+
 /** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. */
-export type Field = FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField;
+export type Field =
+  FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | ValueField;
 export type StaticField =
   | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol" | "name">
-  | Omit<GetterField, "setter" | "cache" | "passThis">;
+  | Omit<GetterField, "cache" | "writable" | "passThis">;
 
 export interface ClassOptions {
   /** Path of the Rust struct. The members are its own methods. */
@@ -1973,6 +1987,10 @@ export interface ClassOptions {
   internalFields?: readonly string[];
   /** `false`: native properties are non-configurable. */
   configurable?: boolean;
+  /** `false`: native properties are non-enumerable. */
+  enumerable?: boolean;
+  /** The prototype inherits from `Error.prototype` instead of `Object.prototype`. */
+  prototypeBase?: "Error";
 }
 
 /** The property's name without a leading `_` or `@@`, for use in generated identifiers. */
@@ -1998,6 +2016,8 @@ export class Method extends Signature {
   readonly invalidThis: "throw" | "undefined";
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
+  readonly enumerable: boolean | undefined;
+  readonly configurable: boolean | undefined;
   constructor(name: string, options: FunctionField, isStatic = false, refCounted = false) {
     super(options, !isStatic && (!!options.passThis || (!refCounted && options.capability === "js")));
     this.name = name;
@@ -2015,6 +2035,12 @@ export class Method extends Signature {
     assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: an @@ key has no privateSymbol`);
     this.functionName = options.name;
     assert(this.functionName === undefined || wellKnownSymbol(name), `${name}: name is only for an @@ key`);
+    this.enumerable = options.enumerable;
+    this.configurable = options.configurable;
+    assert(
+      !((this.privateSymbol || wellKnownSymbol(name)) && (this.enumerable ?? this.configurable) !== undefined),
+      `${name}: enumerable and configurable are for a string key`,
+    );
   }
 }
 
@@ -2023,7 +2049,9 @@ export class Getter {
   readonly type: Type;
   readonly capability: Capability;
   readonly throws: boolean;
+  /** Has a setter written in Rust. */
   readonly hasSetter: boolean;
+  readonly writable: boolean;
   readonly internalField: string | undefined;
   readonly declaresInternalField: boolean;
   readonly isStatic: boolean;
@@ -2033,6 +2061,8 @@ export class Getter {
   readonly setterReceiver: Receiver;
   readonly passThis: boolean;
   readonly setterCapability: Capability;
+  readonly enumerable: boolean | undefined;
+  readonly configurable: boolean | undefined;
   constructor(name: string, options: GetterField, isStatic = false, refCounted = false) {
     this.name = name;
     this.isStatic = isStatic;
@@ -2048,15 +2078,26 @@ export class Getter {
     assert(!(this.passThis && isStatic), `${name}: a static getter has no passThis`);
     this.throws = options.throws ?? false;
     this.hasSetter = !!options.setter;
-    assert(!(options.cache && options.setter), `${name}: a cached getter has no setter`);
+    this.writable = !!options.writable;
+    assert(!this.writable || options.cache, `${name}: writable is for a cached getter`);
+    assert(
+      !(this.writable && this.hasSetter),
+      `${name}: writable stores the value itself, so there is no setter to call`,
+    );
+    assert(
+      !(options.cache && this.hasSetter && !this.passThis),
+      `${name}: the setter of a cached getter takes passThis, to replace the cached value`,
+    );
     if (this.hasSetter) refuseResultType(name, this.type);
-    assert(!(isStatic && (options.cache || options.setter)), `${name}: a static getter has no cache and no setter`);
+    assert(!(isStatic && options.cache), `${name}: a static getter has no cache`);
     assert(
       !this.type.holdsJSValue || this.capability !== "none" || this.passThis,
       `${name}: returning a JS value takes capability: "heap" or "js"`,
     );
     this.internalField = options.cache === true ? name : options.cache;
     this.declaresInternalField = options.cache === true;
+    this.enumerable = options.enumerable;
+    this.configurable = options.configurable;
   }
 }
 
@@ -2064,10 +2105,14 @@ export class InternalFieldAccessor {
   readonly name: string;
   readonly internalField: string;
   readonly hasSetter: boolean;
+  readonly enumerable: boolean | undefined;
+  readonly configurable: boolean | undefined;
   constructor(name: string, options: InternalFieldField) {
     this.name = name;
     this.internalField = options.internalField;
     this.hasSetter = options.setter ?? false;
+    this.enumerable = options.enumerable;
+    this.configurable = options.configurable;
   }
 }
 
@@ -2080,7 +2125,16 @@ export class Builtin {
   }
 }
 
-export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | Builtin;
+export class StringValue {
+  readonly name: string;
+  readonly value: string;
+  constructor(name: string, value: string) {
+    this.name = name;
+    this.value = value;
+  }
+}
+
+export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | Builtin | StringValue;
 
 /** Stands for the class being declared, in its own signatures. */
 class SelfType extends Type {
@@ -2117,12 +2171,15 @@ export class ClassType extends NamedType {
   readonly staticFunctions: readonly FunctionDefinition[];
   readonly staticGetters: readonly Getter[];
   readonly builtins: readonly Builtin[];
+  readonly stringValues: readonly StringValue[];
   /** The properties of the prototype and of the constructor, as written. */
   readonly protoMembers: readonly ClassMember[];
   readonly staticMembers: readonly ClassMember[];
   /** The schema's, then those of `cache: true` getters. */
   readonly internalFields: readonly string[];
   readonly configurable: boolean;
+  readonly enumerable: boolean;
+  readonly prototypeBase: "Error" | undefined;
   /** Index in `AdditionsToGlobalObject::m_classes`. Set by the generator. */
   classIndex = -1;
   constructor(options: ClassOptions) {
@@ -2147,12 +2204,17 @@ export class ClassType extends NamedType {
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
         assert(
-          !wellKnownSymbol(name) || !("builtin" in field || "internalField" in field || "getter" in field),
+          !wellKnownSymbol(name) ||
+            !("builtin" in field || "internalField" in field || "getter" in field || "value" in field),
           `${name}: only a function has an @@ key`,
         );
         if ("builtin" in field) {
           assert(!isStatic, `${name}: a builtin is a property of the prototype`);
           return new Builtin(name, field.length);
+        }
+        if ("value" in field) {
+          assert(!isStatic, `${name}: a value is a property of the prototype`);
+          return new StringValue(name, field.value);
         }
         if ("internalField" in field) {
           assert(!isStatic, `${name}: an internalField accessor is a property of the prototype`);
@@ -2163,7 +2225,7 @@ export class ClassType extends NamedType {
           return new Getter(name, { ...field, getter: own(field.getter) }, isStatic, this.refCounted);
         }
         const overloads: readonly FunctionField[] = Array.isArray(field) ? field : [field];
-        for (const key of ["privateSymbol", "invalidThis", "name"] as const)
+        for (const key of ["privateSymbol", "invalidThis", "name", "enumerable", "configurable"] as const)
           assert(
             overloads.every(overload => overload[key] === overloads[0]?.[key]),
             `${name}: its overloads have one ${key}`,
@@ -2181,6 +2243,7 @@ export class ClassType extends NamedType {
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
     this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
     this.builtins = this.protoMembers.filter(member => member instanceof Builtin);
+    this.stringValues = this.protoMembers.filter(member => member instanceof StringValue);
     this.staticFunctions = this.staticMembers.filter(member => member instanceof FunctionDefinition);
     this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
     const { getters } = this;
@@ -2210,6 +2273,8 @@ export class ClassType extends NamedType {
     );
     assertDistinct(this.internalFields.map(snakeCase), "internal fields");
     this.configurable = options.configurable ?? true;
+    this.enumerable = options.enumerable ?? true;
+    this.prototypeBase = options.prototypeBase;
     for (const method of this.methods) {
       assert(
         method.receiver !== "mut" || !method.args.some(arg => arg.type === this),

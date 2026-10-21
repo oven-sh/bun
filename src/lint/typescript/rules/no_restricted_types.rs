@@ -3,14 +3,14 @@ use bun_lint::prelude::*;
 
 /// Disallow certain types.
 pub struct NoRestrictedTypes {
-    /// By name without whitespace, sorted.
+    /// Keyed by name without whitespace. Sorted.
     banned: Vec<(Vec<u8>, Ban)>,
-    /// The length of the longest of the names.
+    /// The length of the longest name.
     longest: usize,
 }
 
 struct Ban {
-    /// Empty, or with a space before it.
+    /// Empty, or starts with a space.
     custom_message: Vec<u8>,
     fix_with: Option<Vec<u8>>,
     suggest: Vec<Vec<u8>>,
@@ -64,7 +64,7 @@ impl NoRestrictedTypes {
             .data("name", name.to_vec())
             .data("customMessage", ban.custom_message.clone());
         if cx.language().is_oxlint {
-            // Without the blank before it.
+            // Without the leading space.
             report = report.help_with(|| match ban.custom_message.get(1..) {
                 Some(message) => std::str::from_utf8(message).unwrap_or_default().to_owned(),
                 None => "This type is restricted from being used.".to_owned(),
@@ -84,7 +84,7 @@ impl NoRestrictedTypes {
     }
 
     fn check(&self, at: Span, cx: &Cx<'_, Self>) {
-        // What has more characters that are no spaces than the longest name is none of them.
+        // Text with more non-space characters than the longest name can't match any name.
         let text = cx.slice(at);
         if text.len() <= self.longest || text.iter().filter(|it| it.is_ascii_graphic()).nth(self.longest).is_none() {
             self.check_named(at, &strings::without_js_whitespace(text), cx);
@@ -121,7 +121,7 @@ impl Rule for NoRestrictedTypes {
         let mut banned: Vec<(Vec<u8>, Ban)> = Vec::new();
         for (name, value) in options.object(0).object("types").entries() {
             let name = strings::without_js_whitespace(name).into_owned();
-            // A later entry replaces an earlier one of the same name.
+            // A later entry replaces an earlier one with the same name.
             banned.retain(|it| it.0 != name);
             let ban = match value {
                 Json::Bool(true) => Ban {

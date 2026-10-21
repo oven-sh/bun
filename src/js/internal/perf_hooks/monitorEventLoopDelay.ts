@@ -5,8 +5,8 @@ const { validateObject, validateInteger } = require("internal/validators");
 const cppMonitorEventLoopDelay = $newCppFunction(
   "JSNodePerformanceHooksHistogramPrototype.cpp",
   "jsFunction_monitorEventLoopDelay",
-  1,
-) as (resolution: number) => import("node:perf_hooks").RecordableHistogram;
+  0,
+) as () => import("node:perf_hooks").RecordableHistogram;
 
 const cppEnableEventLoopDelay = $newCppFunction(
   "JSNodePerformanceHooksHistogramPrototype.cpp",
@@ -59,7 +59,7 @@ function monitorEventLoopDelay(options?: { resolution?: number }) {
   }
 
   if (!eventLoopDelayHistogram) {
-    eventLoopDelayHistogram = cppMonitorEventLoopDelay(resolution);
+    eventLoopDelayHistogram = cppMonitorEventLoopDelay();
     $putByValDirect(eventLoopDelayHistogram, "enable", enable);
     $putByValDirect(eventLoopDelayHistogram, "disable", disable);
     $putByValDirect(eventLoopDelayHistogram, Symbol.dispose, disable);

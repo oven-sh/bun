@@ -17,7 +17,7 @@ const PREFER_TERNARY: Message = Message::new("", "Prefer ternary expressions ove
 impl Rule for PreferTernary {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-ternary", Kind::Suggestion);
     const ON: On = On::new().stmts(&[StmtTag::If]);
-    /// Where the line feeds of the file are.
+    /// The offsets of the file's line feeds.
     type State<'a> = OnceCell<Vec<u32>>;
 
     fn new(options: &Options) -> Self {
@@ -36,7 +36,8 @@ impl Rule for PreferTernary {
         if !is_mergeable(consequent, alternate) || is_ternary_expression(test) || is_else_if_branch(if_statement) {
             return;
         }
-        // What is long is not read: an `if` can be in a function that another `if` returns.
+        // A long span isn't scanned, because an `if` can be in a function that another `if`
+        // returns, which would make this quadratic.
         let is_single_line = |span: Span| match span.len() {
             ..=256 => !strings::contains_char(cx.slice(span), b'\n'),
             _ => {
@@ -71,11 +72,11 @@ fn line_feeds(text: &[u8]) -> Vec<u32> {
 #[derive(Copy, Clone)]
 enum BodyNode<'a> {
     Statement(Stmt<'a>),
-    /// Of an expression statement, without `as T` and the like.
+    /// An expression statement's expression, without `as T` and the like.
     Expression(Expr<'a>),
 }
 
-/// What a branch does: the only statement in its braces that is not empty.
+/// A branch's body: the only non-empty statement in its braces.
 fn get_node_body_statement(statement: Stmt<'_>) -> BodyNode<'_> {
     let mut statement = statement;
     loop {
@@ -102,7 +103,8 @@ fn is_ternary_expression(expression: Expr) -> bool {
     get_inner_expression(expression).tag() == ExprTag::Cond
 }
 
-/// Both return, throw, yield, await, or assign to the same, and not a ternary expression.
+/// True if both return, throw, yield, await or assign to the same target, and neither value is a
+/// ternary expression.
 fn is_mergeable<'a>(consequent: BodyNode<'a>, alternate: BodyNode<'a>) -> bool {
     let is_ternary = |it: Option<Expr>| it.is_some_and(is_ternary_expression);
     match (consequent, alternate) {
@@ -168,7 +170,7 @@ fn is_same_assignment_target<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
         if !left.is_parenthesized() && !right.is_parenthesized() && is_same_expression(left, right))
 }
 
-/// Also of `a["b" + "c"]`.
+/// Also handles `a["b" + "c"]`.
 fn member_static_property_name(member: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     match (static_property_name(member), member.kind()) {
         (Some(name), _) => Some(Cow::Borrowed(name.bytes())),

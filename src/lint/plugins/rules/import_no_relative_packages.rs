@@ -38,7 +38,7 @@ impl Rule for NoRelativePackages {
         let (Some(modules), Some(types)) = (file.modules(), ImportTypes::of(file)) else {
             return;
         };
-        // The `package.json` that is closest to the file, and `contextPkg`.
+        // The path of the `package.json` closest to the file, and `contextPkg`.
         let context = OnceCell::new();
         for visited in self.visitor.visit(file) {
             let import_path = visited.specifier;
@@ -55,14 +55,14 @@ impl Rule for NoRelativePackages {
             let Some(context_pkg) = context_pkg else {
                 return;
             };
-            // Both are in one package: nothing has to be read.
+            // Both files are in the same package, so there's nothing to read.
             if pkg_up(modules, resolved_import) == *closest {
                 continue;
             }
             let Some(import_pkg) = find_named_package(modules, resolved_import) else {
                 continue;
             };
-            // At a name that is no string `path.join` throws.
+            // `path.join` throws if the name isn't a string.
             let Some(name) = import_pkg.name.filter(|it| context_pkg.name.as_ref() != Some(it)) else {
                 continue;
             };

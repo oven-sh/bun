@@ -21,9 +21,8 @@
 #include "WebSocketProtocol.h"
 #include "AsyncSocketData.h"
 #include "PerMessageDeflate.h"
+#include "ReceiveBuffer.h"
 #include "TopicTree.h"
-
-#include <string>
 
 namespace uWS {
 
@@ -33,7 +32,7 @@ struct WebSocketData : AsyncSocketData<false>, WebSocketState<true> {
     template <bool, typename> friend struct WebSocketContextData;
     template <bool, bool, typename> friend struct WebSocket;
 private:
-    std::string fragmentBuffer;
+    ReceiveBuffer fragmentBuffer;
     unsigned int controlTipLength = 0;
     bool isShuttingDown = 0;
     /* Set together with isShuttingDown, except in a wsPackage context: there isShuttingDown waits for the peer's close frame */

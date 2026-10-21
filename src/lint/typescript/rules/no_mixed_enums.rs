@@ -14,12 +14,12 @@ enum AllowedType {
     Unknown,
 }
 
-/// By a variable, [`get_type_from_imported`] of the first of its declarations that has one: an enum that is declared
-/// many times has as many declarations to go through for each of them.
+/// Caches, per variable, [`get_type_from_imported`] of its first declaration that has one. Otherwise an enum that's
+/// declared many times would walk all of its declarations once per declaration.
 #[derive(Default)]
 pub struct State<'a>(IdMap<Symbol<'a>, Option<AllowedType>>);
 
-/// Whether it is in quotes, and one name of upstream's `getModuleName`.
+/// Returns whether the name is quoted, and one name of upstream's `getModuleName`.
 fn name_part<'a>(module: Module<'a>) -> (bool, &'a [u8]) {
     match module.name() {
         ModuleName::Ident(name) => (false, name.bytes()),
@@ -30,9 +30,9 @@ fn name_part<'a>(module: Module<'a>) -> (bool, &'a [u8]) {
 
 /// `getModuleName(a.id) === getModuleName(b.id)`
 fn have_same_module_name<'a>(a: Module<'a>, b: Module<'a>) -> bool {
-    // Upstream takes the first name as it is written, with its escapes.
-    let written = |module: Module<'a>| module.stmt().file().slice(module.name_span());
-    if name_part(a) != name_part(b) || !name_part(a).0 && written(a) != written(b) {
+    // Upstream takes the first name as written, escapes included.
+    let name_source = |module: Module<'a>| module.stmt().file().slice(module.name_span());
+    if name_part(a) != name_part(b) || !name_part(a).0 && name_source(a) != name_source(b) {
         return false;
     }
     let (mut a, mut b) = (a.nested(), b.nested());
@@ -135,7 +135,7 @@ fn get_desired_type_for_definition<'a>(
         }
     }
 
-    // Several declarations in the file, also across the declarations of a namespace.
+    // Several declarations in the file, possibly spread across a namespace's declarations.
     let start = statement.span().start;
     let mut previous_sibling = None;
     any_enclosing_scope(statement, &mut |enclosing| {
@@ -151,8 +151,8 @@ fn get_desired_type_for_definition<'a>(
     get_member_type(previous_sibling.unwrap_or(first))
 }
 
-/// tsgolint's `getMemberType`: only a numeric or a string literal is decided by its kind, and a type that is neither
-/// `StringLike` nor `NumberLike` itself is unknown.
+/// tsgolint's `getMemberType`: only a numeric or string literal is classified by its syntax, and a type that isn't
+/// `StringLike` or `NumberLike` itself is unknown.
 fn tsgolint_get_member_type(member: TsNode) -> AllowedType {
     let Some(initializer) = member.initializer() else {
         return AllowedType::Number;
@@ -173,8 +173,8 @@ fn tsgolint_get_member_type(member: TsNode) -> AllowedType {
     }
 }
 
-/// tsgolint's `getDesiredTypeForDefinition`: `symbol.Declarations[0].Members()[0]` of the symbol of the name, which
-/// fails where that is not an enum with a member.
+/// tsgolint's `getDesiredTypeForDefinition`: `symbol.Declarations[0].Members()[0]` of the name's symbol, which fails if
+/// that isn't an enum with a member.
 fn tsgolint_get_desired_type_for_definition(node: Enum) -> AllowedType {
     let declaration = NameOf(node).ts_symbol().and_then(|symbol| symbol.declarations().next());
     let first = declaration

@@ -273,17 +273,6 @@ impl<const SSL: bool> App<SSL> {
         thunk::zst::<H>()(this, AnyRequest::H1(req), resp)
     }
 
-    pub fn domain(&mut self, pattern: &ZStr) {
-        // SAFETY: pattern is NUL-terminated; self is a valid app.
-        unsafe {
-            c::uws_app_domain(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr().cast(),
-            )
-        }
-    }
-
     pub fn on_client_error(
         &mut self,
         handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
@@ -633,7 +622,6 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub(crate) fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
         pub(crate) fn uws_app_listen_with_config(
             ssl: i32,
             app: *mut uws_app_t,

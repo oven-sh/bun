@@ -65,7 +65,7 @@ impl Rule for SwitchCaseBraces {
         cx.report(span, MISSING_BRACES)
             .called_with(case.parent())
             .fix(|fixer| {
-                // The closing brace is under the `case`, if that starts its line.
+                // The closing brace lines up with the `case`, if that starts its line.
                 let code = match get_preceding_indent_str(file.text(), case_span.start) {
                     Some(indent) => [b"\n", indent, b"}"].concat(),
                     None => b"}".to_vec(),

@@ -14,9 +14,9 @@ const REJECT: Message = Message::new("", "Expected throw instead of Promise.reje
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The function that something is in.
+    /// Caches a node's enclosing function.
     functions: AncestorMemo<'a, Func<'a>>,
-    /// Whether something is in a call of a method of a promise.
+    /// Caches whether a node is inside a promise method call.
     promises: AncestorMemo<'a, ()>,
 }
 
@@ -41,11 +41,11 @@ impl Rule for NoReturnWrap {
         let Some(message) = e.as_call().and_then(|it| self.check_for_resolve_reject(it)) else {
             return;
         };
-        // What is in parentheses, and an optional chain, is not a call for oxlint.
+        // In oxlint's AST a parenthesized expression or an optional chain isn't a call.
         if e.is_parenthesized() || e.chain() != Chain::No {
             return;
         }
-        // It is what a function expression or an arrow function returns ..
+        // It has to be what a function expression or an arrow function returns ..
         let func = match e.parent() {
             Node::Func(func) => Some(func),
             Node::Stmt(parent) if parent.tag() == StmtTag::Return => cx
@@ -60,7 +60,7 @@ impl Rule for NoReturnWrap {
         else {
             return;
         };
-        // .. that is an argument of a call of a method of a promise, or of a call in one.
+        // .. and that function has to be an argument of a promise method call, or of a call inside one.
         let Some(call_expr) = call_with_callback(callback) else {
             return;
         };
@@ -79,14 +79,14 @@ impl Rule for NoReturnWrap {
                 .find(Node::Expr(call_expr), is_inside_promise_cb)
                 .is_some()
         {
-            // oxlint's rule is called with the call that has the callback.
+            // oxlint runs the rule on the call that takes the callback.
             cx.report(e, message).called_with(call_expr);
         }
     }
 }
 
 impl NoReturnWrap {
-    /// The message, if the global `Promise.resolve` or `Promise.reject` is called.
+    /// Returns the message if the call is to the global `Promise.resolve` or `Promise.reject`.
     fn check_for_resolve_reject(&self, call_expr: Call) -> Option<Message> {
         let callee = call_expr.callee();
         let message = match callee.member_name()?.bytes() {
@@ -100,14 +100,14 @@ impl NoReturnWrap {
     }
 }
 
-/// The call that `e` is an argument of.
+/// Returns the call that `e` is an argument of.
 fn call_with_argument(e: Expr<'_>) -> Option<Expr<'_>> {
     e.parent()
         .as_expr()
         .filter(|it| it.as_call().is_some_and(|call| call.callee() != e))
 }
 
-/// What is around `e` and the `as T`, `!` .. after it.
+/// Returns the expression around `e` and any `as T`, `!` .. that follow it.
 fn outer_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     let mut parent = e.parent().as_expr()?;
     while matches!(
@@ -123,7 +123,7 @@ fn outer_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     Some(parent)
 }
 
-/// The `object.name(..)` of `object`, and whether it is `object.bind(this)`.
+/// Returns the `object.name(..)` call on `object`, and whether it's `object.bind(this)`.
 fn method_call_on(object: Expr<'_>) -> Option<(Expr<'_>, bool)> {
     let member = outer_expression(object)
         .filter(|it| it.tag() == ExprTag::Dot && !it.is_private_member())?;
@@ -141,7 +141,7 @@ fn method_call_on(object: Expr<'_>) -> Option<(Expr<'_>, bool)> {
     ))
 }
 
-/// The call that has `callback`, `callback.bind(this)` or `callback.a().bind(this)` as an argument.
+/// Returns the call that takes `callback`, `callback.bind(this)` or `callback.a().bind(this)` as an argument.
 fn call_with_callback(callback: Expr<'_>) -> Option<Expr<'_>> {
     if let Some(call_expr) = call_with_argument(callback) {
         return Some(call_expr);
@@ -151,7 +151,7 @@ fn call_with_callback(callback: Expr<'_>) -> Option<Expr<'_>> {
     if is_bound && let Some(call_expr) = call_with_argument(first) {
         return Some(call_expr);
     }
-    // There only parentheses can be around the function.
+    // In that last form only parentheses are allowed around the function.
     if !callback
         .parent()
         .as_expr()

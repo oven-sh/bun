@@ -2028,19 +2028,44 @@ describe.concurrent("REPL history file", () => {
     });
   });
 
+  // A line for the REPL that puts something else in the place of the history
+  // file. The session has read a regular file by then, so only the open in
+  // `save` meets what is there now.
+  const replaceHistoryFile = (historyPath: string, replacement: string) =>
+    `require("node:fs").rmSync(${JSON.stringify(historyPath)}); ${replacement}; "replaced"`;
+
   // Skipped on Windows: FIFOs do not exist in its filesystem namespace.
-  test.skipIf(isWindows)("a FIFO at the history path hangs neither startup nor exit", async () => {
+  test.skipIf(isWindows)("a FIFO at the history path does not hang the startup", async () => {
     using dir = tempDir("repl-history-fifo", {});
     const historyPath = path.join(String(dir), ".bun_repl_history");
     mkfifo(historyPath);
 
     // Nothing ever opens the other end of the FIFO: a blocking open() while
-    // loading history at startup, or while saving the `1 + 1` entry at exit,
-    // hangs the REPL until the test times out.
+    // loading history at startup hangs the REPL until the test times out.
     const { outputs, stderr, exitCode } = await runRepl(["1 + 1", ".exit"], { home: String(dir) });
 
     expect({ outputs, stderr, exitCode, stillFifo: statSync(historyPath).isFIFO() }).toEqual({
       outputs: ["2"],
+      stderr: "",
+      exitCode: 0,
+      stillFifo: true,
+    });
+  });
+
+  // Skipped on Windows: FIFOs do not exist in its filesystem namespace.
+  test.skipIf(isWindows)("a FIFO that takes the place of the history file does not hang the exit", async () => {
+    using dir = tempDir("repl-history-fifo-late", { ".bun_repl_history": "old_entry\n" });
+    const historyPath = path.join(String(dir), ".bun_repl_history");
+    const makeFifo = `require("node:child_process").execFileSync("mkfifo", [${JSON.stringify(historyPath)}])`;
+
+    // Nothing ever opens the other end of the FIFO: a blocking open() while
+    // saving at exit hangs the REPL until the test times out.
+    const { outputs, stderr, exitCode } = await runRepl([replaceHistoryFile(historyPath, makeFifo), ".exit"], {
+      home: String(dir),
+    });
+
+    expect({ outputs, stderr, exitCode, stillFifo: statSync(historyPath).isFIFO() }).toEqual({
+      outputs: ['"replaced"'],
       stderr: "",
       exitCode: 0,
       stillFifo: true,
@@ -2096,6 +2121,25 @@ describe.concurrent("REPL history file", () => {
 
     expect({ outputs, stderr, exitCode, mode: statSync(device).mode & 0o777 }).toEqual({
       outputs: ["2"],
+      stderr: "",
+      exitCode: 0,
+      mode: 0o666,
+    });
+  });
+
+  test.skipIf(!canMakeDevices)("a device that takes the place of the history file keeps its mode", async () => {
+    using dir = tempDir("repl-history-device-late", { ".bun_repl_history": "old_entry\n" });
+    const historyPath = path.join(String(dir), ".bun_repl_history");
+    const device = path.join(String(dir), "null");
+    expect(makeNullDevice(device)).toBe(true);
+    const makeSymlink = `require("node:fs").symlinkSync("null", ${JSON.stringify(historyPath)})`;
+
+    const { outputs, stderr, exitCode } = await runRepl([replaceHistoryFile(historyPath, makeSymlink), ".exit"], {
+      home: String(dir),
+    });
+
+    expect({ outputs, stderr, exitCode, mode: statSync(device).mode & 0o777 }).toEqual({
+      outputs: ['"replaced"'],
       stderr: "",
       exitCode: 0,
       mode: 0o666,

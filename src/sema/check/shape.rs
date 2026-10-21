@@ -7596,7 +7596,8 @@ impl<'p, 's> Checker<'p, 's> {
             SmallVec::<[TypeId; 4]>::new(),
             SmallVec::<[TypeId; 4]>::new(),
         );
-        if let TypeData::Intersection(members) = self.data(ty) {
+        let is_mapping_of_same_object_type = self.is_mapping_of_same_object_type(ty);
+        if !is_mapping_of_same_object_type && let TypeData::Intersection(members) = self.data(ty) {
             let mut has_union = false;
             for &member in members.iter() {
                 if self.is_instantiable(member) {
@@ -7653,7 +7654,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // `isNeverReducedProperty`
-        let is_never = self.has_property_in_several_members(ty)
+        let is_never = !is_mapping_of_same_object_type
+            && self.has_property_in_several_members(ty)
             && match self.may_have_never_reduced_property(ty, false) {
                 NeverReduced::No => false,
                 NeverReduced::Yes => true,
@@ -7671,6 +7673,21 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Err(_) => is_never,
         }
+    }
+
+    /// `isMappingOfSameObjectType` of the members of the intersection `ty`.
+    fn is_mapping_of_same_object_type(&mut self, ty: TypeId) -> bool {
+        let TypeData::Intersection(members) = self.data(ty) else {
+            return false;
+        };
+        let Some((&first, rest)) = members.split_first() else {
+            return false;
+        };
+        let Some(first) = self.mapped_modifiers_type(first) else {
+            return false;
+        };
+        self.is_object_type(first)
+            && (rest.iter()).all(|&member| self.mapped_modifiers_type(member) == Some(first))
     }
 
     /// `getReducedType(getApparentType(ty))` for an intersection `ty` whose properties

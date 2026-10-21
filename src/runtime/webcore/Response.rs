@@ -299,7 +299,11 @@ impl BodyMixin for Response {
     }
     #[inline]
     fn build_fetch_headers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        self.get_or_create_headers(global_object).map(|_| ())
+        if self.init.get().headers.is_none() {
+            self.get_or_create_headers(global_object)?;
+            self.init_mut().headers_unseen = true;
+        }
+        Ok(())
     }
     #[inline]
     fn get_form_data_encoding(
@@ -401,6 +405,12 @@ impl Response {
             Some(headers) => headers.clone_this(global),
             None => Ok(None),
         }
+    }
+
+    /// See [`Init::headers_unseen`].
+    #[inline]
+    pub(crate) fn headers_unseen(&self) -> bool {
+        self.init.get().headers_unseen
     }
 
     #[inline]
@@ -607,6 +617,7 @@ impl Response {
     }
 
     pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        this.init_mut().headers_unseen = false;
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
@@ -1188,6 +1199,8 @@ impl Response {
 // the fields' own drop glue releases `headers` and `status_text`.
 pub(crate) struct Init {
     pub(crate) headers: Option<HeadersRef>,
+    /// A body reader built `headers`: the script neither gave the list nor read it, so `Bun.serve` treats a sliced file as if there were none.
+    pub(crate) headers_unseen: bool,
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
@@ -1197,6 +1210,7 @@ impl Default for Init {
     fn default() -> Self {
         Self {
             headers: None,
+            headers_unseen: false,
             status_code: 0,
             status_text: BunString::EMPTY,
             method: Method::GET,
@@ -1215,6 +1229,7 @@ impl Init {
         };
         Ok(Init {
             headers,
+            headers_unseen: self.headers_unseen,
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,

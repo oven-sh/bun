@@ -2120,4 +2120,23 @@ describe("the Content-Type a body gives does not depend on what is read first", 
     // A stream gives no type: https://fetch.spec.whatwg.org/#concept-bodyinit-extract
     expect(new Response(response(body()).body).headers.get("content-type")).toBeNull();
   });
+
+  test.each([
+    [
+      ".body was read",
+      (p: Response) => {
+        void p.body;
+        return p;
+      },
+    ],
+    ["new Response(p.body, p)", (p: Response) => new Response(p.body, p)],
+  ])("Bun.serve still sends a slice of a Bun.file as a 206 (%s)", async (_, use) => {
+    using server = Bun.serve({ port: 0, fetch: () => use(response(file(import.meta.path).slice(2, 6))) });
+    const served = await fetch(server.url);
+    expect({
+      status: served.status,
+      contentRange: served.headers.get("content-range"),
+      text: await served.text(),
+    }).toEqual({ status: 206, contentRange: "bytes 2-5/*", text: "port" });
+  });
 });

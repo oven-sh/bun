@@ -1499,7 +1499,7 @@ describe("ES Decorators", () => {
     test.concurrent("the class body names the class a class decorator returns", async () => {
       // The spec initializes the inner class binding with the decorated class,
       // after the class decorators run and before the static fields and
-      // static blocks. Babel, esbuild and tsc do the same.
+      // static blocks. Babel and tsc do the same.
       const { stdout, stderr, exitCode } = await runDecorator(`
         const replace = (cls) => class extends cls {};
         let thunk;
@@ -1583,9 +1583,16 @@ describe("ES Decorators", () => {
         made.push(make(), make());
         console.log(seen[0] !== seen[1], seen[0].self() === seen[0], seen[1].self() === seen[1]);
         console.log(made[0] !== made[1], made[0].self() === made[0], made[1].self() === made[1]);
+        // Neither position has a statement list of its own to declare the binding in.
+        for (const dec of [replace, () => {}]) {
+          function param(K = @dec class P { static self = () => P; }) { return K; }
+          class Outer { field = @dec class F { static self = () => F; }; }
+          const classes = [param(), param(), new Outer().field, new Outer().field];
+          console.log(new Set(classes).size, ...classes.map(c => c.self() === c));
+        }
       `);
       expect(stderr).toBe("");
-      expect(stdout).toBe("true true true\ntrue true true\n");
+      expect(stdout).toBe("true true true\ntrue true true\n4 true true true true\n4 true true true true\n");
       expect(exitCode).toBe(0);
     });
 

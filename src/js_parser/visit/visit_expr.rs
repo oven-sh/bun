@@ -200,20 +200,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         e_.ref_ = result.r#ref;
         e_.set_must_keep_due_to_with_stmt(result.is_inside_with_scope);
 
-        // A write to the name of a class with lowered class decorators goes to
-        // the class's own immutable binding, not to `inner_class_ref`.
-        if in_.assign_target != js_ast::AssignTarget::None
-            && let Some(&(_, name_ref)) = p
+        // Handle assigning to a constant
+        if in_.assign_target != js_ast::AssignTarget::None {
+            // A write to the name of a class with lowered class decorators goes to
+            // the class's own immutable binding, not to `inner_class_ref`.
+            if let Some(&(inner_ref, name_ref)) = p
                 .decorated_class_names
                 .iter()
                 .find(|(inner, _)| *inner == result.r#ref)
-        {
-            e_.ref_ = name_ref;
-            p.record_usage(name_ref);
-        }
+            {
+                p.ignore_usage(inner_ref);
+                p.record_usage(name_ref);
+                e_.ref_ = name_ref;
+            }
 
-        // Handle assigning to a constant
-        if in_.assign_target != js_ast::AssignTarget::None {
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
             {
                 // TODO: silence this for runtime transpiler

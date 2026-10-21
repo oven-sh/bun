@@ -1037,11 +1037,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .slice();
             let body_ref =
                 if class.should_lower_standard_decorators && class.ts_decorators.len_u32() > 0 {
-                    let inner_name =
-                    bun_alloc::arena_format!(in self.arena, "_{}", bstr::BStr::new(original_name))
-                        .into_bump_str()
-                        .as_bytes();
-                    let inner_ref = self.generate_temp_var(inner_name);
+                    let name = bstr::BStr::new(original_name);
+                    let inner_name = bun_alloc::arena_format!(in self.arena, "_{name}");
+                    let inner_ref = self.generate_temp_var(inner_name.into_bump_str().as_bytes());
                     class.inner_class_ref = inner_ref;
                     self.decorated_class_names.push((inner_ref, name_ref));
                     // The name of a class expression is declared nowhere else:

@@ -56,7 +56,7 @@ mode: center
     </Step>
 
     <Step title="Configure database connection">
-    	Set `DATABASE_URL` in the `.env` file to the connection string of a PostgreSQL 15 or newer database. If you do not have one, `bunx create-db` creates a [Prisma Postgres](https://www.prisma.io/postgres) database without an account and prints its connection string; change `sslmode=require` to `sslmode=verify-full` so the `pg` driver does not print a security warning on every connection.
+    	Set `DATABASE_URL` in the `.env` file to the connection string of a PostgreSQL 15 or newer database. If you do not have one, `bunx create-db` creates a [Prisma Postgres](https://www.prisma.io/postgres) database without an account and prints its connection string and a claim URL. The database and its data are deleted after 24 hours unless you open the claim URL, so claim it if you want to keep it. Change `sslmode=require` to `sslmode=verify-full` so the `pg` driver does not print a security warning on every connection.
 
     	```ini .env icon="settings"
     	DATABASE_URL="postgres://USER:PASSWORD@db.prisma.io:5432/postgres?sslmode=verify-full"

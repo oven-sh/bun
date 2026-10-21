@@ -50,6 +50,7 @@ const server = Bun.serve({
 });
 
 const closed = Promise.withResolvers<void>();
+let received = "";
 const client = await Bun.connect({
   hostname: "127.0.0.1",
   port: server.port!,
@@ -59,7 +60,10 @@ const client = await Bun.connect({
       socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
     },
     data(socket, data) {
-      if (data.includes("chunk-a")) socket.end();
+      // The chunk can arrive in more than one read.
+      const seen = received.includes("chunk-a");
+      received += data.toString("latin1");
+      if (!seen && received.includes("chunk-a")) socket.end();
     },
     error() {},
     close() {

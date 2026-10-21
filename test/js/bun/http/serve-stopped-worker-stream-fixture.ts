@@ -29,8 +29,16 @@ if (Bun.isMainThread) {
   });
   await closed.promise;
 
-  const [head, ...afterHead] = Buffer.concat(chunks).toString("latin1").split("\r\n\r\n");
-  console.log(JSON.stringify({ statusLine: head.split("\r\n")[0], afterHead: afterHead.join("\r\n\r\n") }));
+  const wire = Buffer.concat(chunks).toString("latin1");
+  const endOfHead = wire.indexOf("\r\n\r\n");
+  console.log(
+    JSON.stringify({
+      statusLine: wire.split("\r\n")[0],
+      // The response is complete: it declares no body, and its header section ends.
+      contentLength: /\r\ncontent-length: (\d+)\r\n/i.exec(wire)?.[1],
+      afterHead: endOfHead === -1 ? null : wire.slice(endOfHead + 4),
+    }),
+  );
 } else {
   const server = Bun.serve({
     port: 0,

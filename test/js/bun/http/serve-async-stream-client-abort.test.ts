@@ -136,6 +136,6 @@ test.concurrent("a direct stream of a terminated worker does not write behind th
   const { stdout, stderr, exitCode, signalCode } = await runFixture("serve-stopped-worker-stream-fixture.ts");
 
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ statusLine: "HTTP/1.1 200 OK", afterHead: "" });
+  expect(JSON.parse(stdout)).toEqual({ statusLine: "HTTP/1.1 200 OK", contentLength: "0", afterHead: "" });
   expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
 });

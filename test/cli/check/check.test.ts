@@ -20606,13 +20606,13 @@ export async function wrong() {
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(50,13): error TS2339: Property 'nope' does not exist on type '{ get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & { ...; }; login: { ...; } & { ...; }; search: { ...; } & { ...; }; users: ((params: { ...; }) => { ...; ...'.
+        "a.ts(50,13): error TS2339: Property 'nope' does not exist on type '{ get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & ...; login: ... & ...; search: ... & ...; users: ... & ... 1 more ... & ...; v1: ... & ...; }'.
         a.ts(53,21): error TS2353: Object literal may only specify known properties, and 'ident' does not exist in type '{ id: string | number; }'.
-        a.ts(58,28): error TS2339: Property 'get' does not exist on type '((params: { kind: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<...> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & { ...; }; '~path': string; } & { ...; }) & {} & { ...; }'.
+        a.ts(58,28): error TS2339: Property 'get' does not exist on type '((params: { kind: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<...> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & ...; '~path': string; } & ...) & ... & ...'.
         a.ts(60,9): error TS2322: Type 'string | null' is not assignable to type 'number'.
           Type 'null' is not assignable to type 'number'.
         a.ts(62,9): error TS2322: Type 'string' is not assignable to type 'boolean'.
-        a.ts(66,19): error TS2339: Property 'put' does not exist on type '((params: { id: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & { ...; }; delete: ((body?: unknown, options?: { ...; } | undefine...'."
+        a.ts(66,19): error TS2339: Property 'put' does not exist on type '((params: { id: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & ...; delete: ... & ...; '~path': string; profile: ... & ...; } & ...'."
       `);
       expect(exitCode).toBe(1);
     });

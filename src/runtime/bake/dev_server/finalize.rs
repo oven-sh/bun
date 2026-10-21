@@ -68,11 +68,27 @@ impl<'a> HotUpdateContext<'a> {
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
     bv2.deinit_without_freeing_arena();
+    let script_requests = match &mut dev.current_bundle {
+        Some(current_bundle) => ::core::mem::take(&mut current_bundle.script_requests),
+        None => Vec::new(),
+    };
     // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
     dev.current_bundle = None;
     dev.log.clear_and_free();
 
     let _ = dev.assets.reindex_if_needed(); // not fatal
+
+    // Answer these before `start_next_bundle_if_present` below, or they'd wait for that bundle too.
+    for deferred in script_requests {
+        if let Some(ResponseAndMethod { response, method }) = deferred.response.take() {
+            dev.serve_client_script(
+                deferred.route_bundle_index,
+                deferred.generation,
+                response,
+                method,
+            );
+        }
+    }
 
     // Signal for testing framework where it is in synchronization
     if matches!(
@@ -118,7 +134,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
     }
 }
 
-fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
+pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
     if !current_bundle.requests.first.is_null() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
@@ -129,8 +145,7 @@ fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
         // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
         // initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
-        req.abort();
-        req.deref_();
+        req.abort_and_deref();
     }
 }
 
@@ -253,6 +268,7 @@ pub(super) fn finalize_bundle(
     let mut gts_storage = GraphTraceState {
         server_bits: DynamicBitSet::default(),
         client_bits: DynamicBitSet::default(),
+        failures: Vec::new(),
     };
     let mut ctx = HotUpdateContext {
         import_records,
@@ -279,6 +295,39 @@ pub(super) fn finalize_bundle(
         .zip(js_chunk.compile_results_for_chunk.iter())
     {
         let index = part_range.source_index;
+        // Report a part that failed to print as its file's failure, like a parse error.
+        if let bundler::CompileResult::Javascript {
+            result: bun_js_printer::PrintResult::Err(err),
+            ..
+        } = compile_result
+        {
+            let source = &ctx.sources[index.get() as usize];
+            let mut log = Log::init();
+            match err {
+                bun_js_printer::Error::StackOverflow => log.add_error(
+                    Some(source),
+                    bun_ast::Loc::EMPTY,
+                    "Maximum call stack size exceeded while generating code for this file",
+                ),
+                err => log.add_error_fmt(
+                    Some(source),
+                    bun_ast::Loc::EMPTY,
+                    format_args!("Failed to generate code for this file ({})", err.name()),
+                ),
+            }
+            let graph = targets[index.get() as usize].bake_graph();
+            let key = incremental_graph::InsertFailureKey::AbsPath(
+                source.path.key_for_incremental_graph(),
+                graph,
+            );
+            match graph {
+                bake::Graph::Client => dev.client_graph.insert_failure(key, &log)?,
+                bake::Graph::Server | bake::Graph::Ssr => {
+                    dev.server_graph.insert_failure(key, &log)?
+                }
+            }
+            continue;
+        }
         let source_map: bun_sourcemap::Chunk = match compile_result.source_map_chunk() {
             Some(c) => c.clone(),
             None => 'brk: {
@@ -343,6 +392,54 @@ pub(super) fn finalize_bundle(
         debug_assert!(matches!(chunk.content, bundler::chunk::Content::Css(_)));
 
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
+
+        // Report a chunk that failed to print as its entry point's failure. The next
+        // good build's `receive_chunk` clears it.
+        let entry_source = &ctx.sources[index.get() as usize];
+        let mut log = Log::init();
+        for compile_result in chunk.compile_results_for_chunk.iter() {
+            let (err, err_source_index) = match compile_result {
+                bundler::CompileResult::Css {
+                    result: Err(err),
+                    source_index,
+                    ..
+                } => (err, *source_index),
+                _ => continue,
+            };
+            let err_source = if err_source_index != bun_ast::Index::INVALID.get() {
+                &ctx.sources[err_source_index as usize]
+            } else {
+                entry_source
+            };
+            log.add_error_fmt(
+                Some(err_source),
+                bun_ast::Loc::EMPTY,
+                format_args!("Failed to generate CSS for this file ({})", err.name()),
+            );
+        }
+        if log.errors > 0 {
+            let entry_key = entry_source.path.key_for_incremental_graph();
+            dev.client_graph.insert_failure(
+                incremental_graph::InsertFailureKey::AbsPath(entry_key, bake::Graph::Client),
+                &log,
+            )?;
+            let file_index = dev
+                .client_graph
+                .get_file_index(entry_key)
+                .expect("insert_failure registered the entry");
+            // Pass 2 needs the index to diff the `@import` edges. Editing an imported
+            // file follows those edges to rebundle this chunk.
+            *ctx.get_cached_index(bake::Side::Client, index) =
+                CachedFileIndex::from(Some(file_index));
+            dev.client_graph
+                .restore_failed_css_root(file_index, hash(entry_key));
+            // This lets a server route's trace reach the failed client file.
+            if metadata.imported_on_server {
+                dev.server_graph
+                    .insert_css_file_on_server(&mut ctx, index, entry_key)?;
+            }
+            continue;
+        }
 
         // Note: `IntermediateOutput::code` takes `&mut self` (a field of
         // `*chunk`) plus `chunk: &Chunk` and `chunks: &[Chunk]`; borrowck still
@@ -500,7 +597,23 @@ pub(super) fn finalize_bundle(
     // Pass 2, update the graph's edges by performing import diffing on each
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
-    for part_range in js_chunk.content.javascript().parts_in_chunk_in_order.iter() {
+    for (part_range, compile_result) in js_chunk
+        .content
+        .javascript()
+        .parts_in_chunk_in_order
+        .iter()
+        .zip(js_chunk.compile_results_for_chunk.iter())
+    {
+        // Pass 1 didn't resolve a file index for a part that failed to print.
+        if matches!(
+            compile_result,
+            bundler::CompileResult::Javascript {
+                result: bun_js_printer::PrintResult::Err(_),
+                ..
+            }
+        ) {
+            continue;
+        }
         match targets[part_range.source_index.get() as usize].bake_graph() {
             bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
                 &mut ctx,
@@ -742,12 +855,13 @@ pub(super) fn finalize_bundle(
         dev.incremental_result.html_routes_soft_affected.clear();
         ctx.gts.clear();
 
-        for index in &dev.incremental_result.client_components_affected {
+        // `trace_dependencies` appends to this list.
+        for index in ::core::mem::take(&mut dev.incremental_result.client_components_affected) {
             dev.server_graph.trace_dependencies(
-                *index,
+                index,
                 ctx.gts,
                 incremental_graph::TraceDependencyGoal::NoStop,
-                *index,
+                index,
             )?;
         }
 
@@ -776,6 +890,28 @@ pub(super) fn finalize_bundle(
         let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
             dev.route_bundles[bundled_route_index].invalidate_client_bundle(&mut dev.source_maps);
+        }
+    }
+
+    // The browser bundle of a route of a `clientPages` router holds its page and layouts, so an
+    // edit to them makes the cached bundle stale: the next page load must not hydrate with it.
+    {
+        let mut stale = DynamicBitSet::init_empty(dev.route_bundles.len())?;
+        for request in &dev.incremental_result.framework_routes_affected {
+            let route = dev.router.route_ptr(request.route_index());
+            if !dev.router.type_ptr_const(route.r#type).client_pages {
+                continue;
+            }
+            if let Some(id) = route.bundle {
+                stale.set(id.get() as usize);
+            }
+            if request.should_recurse_when_visiting() {
+                mark_all_route_children(&dev.router, &mut [&mut stale], request.route_index());
+            }
+        }
+        let mut it = stale.iterator::<true, true>();
+        while let Some(i) = it.next() {
+            dev.route_bundles[i].invalidate_client_bundle(&mut dev.source_maps);
         }
     }
 
@@ -843,14 +979,27 @@ pub(super) fn finalize_bundle(
     w_int!(i32, -1);
 
     let css_chunks = &*css_chunks_mut;
+    // If a chunk failed to print, the page keeps its last good stylesheet.
+    let css_chunk_printed = |chunk: &bundler::chunk::Chunk| {
+        !chunk
+            .compile_results_for_chunk
+            .iter()
+            .any(|compile_result| {
+                matches!(
+                    compile_result,
+                    bundler::CompileResult::Css { result: Err(_), .. }
+                )
+            })
+    };
+    let printed_css_count = css_chunks.iter().filter(|c| css_chunk_printed(c)).count();
     if will_hear_hot_update {
-        if dev.client_graph.current_chunk_len > 0 || !css_chunks.is_empty() {
+        if dev.client_graph.current_chunk_len > 0 || printed_css_count > 0 {
             // Send CSS mutations
             dev.assets.reindex_if_needed()?;
-            w_int!(u32, u32::try_from(css_chunks.len()).expect("int cast"));
+            w_int!(u32, u32::try_from(printed_css_count).expect("int cast"));
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
-            for chunk in css_chunks {
+            for chunk in css_chunks.iter().filter(|c| css_chunk_printed(c)) {
                 let key = sources[chunk.entry_point.source_index() as usize]
                     .path
                     .key_for_incremental_graph();

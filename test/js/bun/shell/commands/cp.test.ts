@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,177 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// Runs in a child process because the cp builtin must be enabled explicitly on POSIX.
+test("operands longer than the path buffers fail with ENAMETOOLONG", async () => {
+  using dir = tempDir("cp-long-operands", {
+    "f": "source",
+    "target": {},
+    "fixture.ts": /* ts */ `
+      import { $ } from "bun";
+      import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      $.nothrow();
+      const cwd = process.cwd();
+      // Longer than the path buffer on every platform.
+      const over = Buffer.alloc(100_000, "a").toString();
+      const placeholders: [string, string][] = [[over, "<over>"], [cwd, "<cwd>"]];
+
+      async function cp(...args: string[]) {
+        const { exitCode, stderr } = await $\`cp \${args}\`.quiet();
+        let message = stderr.toString();
+        for (const [value, placeholder] of placeholders) message = message.replaceAll(value, placeholder);
+        return { exitCode, stderr: message };
+      }
+
+      const results: Record<string, unknown> = {};
+      results.longSource = await cp(over, "target");
+      results.longTarget = await cp("f", over);
+      results.longSourceAmongOthers = { ...(await cp("f", over, "target")), otherCopied: existsSync("target/f") };
+
+      // Copying into a directory appends the basename. Overflowing that join needs an existing directory
+      // just below the limit, which Windows can't create.
+      if (process.platform !== "win32") {
+        const PATH_MAX = process.platform === "linux" ? 4096 : 1024;
+        const segment = Buffer.alloc(200, "d").toString();
+        let deep = join(cwd, segment);
+        while (join(deep, segment).length + 2 < PATH_MAX) deep = join(deep, segment);
+        mkdirSync(deep, { recursive: true });
+        placeholders.unshift([deep, "<deep>"]);
+
+        // \`deep/name\` is PATH_MAX bytes, one more than the OS accepts.
+        const length = PATH_MAX - deep.length - 1;
+        const file = Buffer.alloc(length, "t").toString();
+        const folder = Buffer.alloc(length, "u").toString();
+        placeholders.unshift([file, "<file>"], [folder, "<folder>"]);
+        writeFileSync(file, "one past");
+        mkdirSync(folder);
+        results.intoDeepDir = await cp(file, deep);
+        results.recursiveIntoDeepDir = await cp("-R", folder, deep);
+      }
+
+      console.log(JSON.stringify(results));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  const tooLong = (path: string) => ({ exitCode: 1, stderr: `cp: File name too long: ${p(path)}\n` });
+  expect(JSON.parse(stdout)).toEqual({
+    longSource: tooLong("<cwd>/<over>"),
+    longTarget: tooLong("<cwd>/<over>"),
+    longSourceAmongOthers: { ...tooLong("<cwd>/<over>"), otherCopied: true },
+    ...(isWindows ? {} : { intoDeepDir: tooLong("<deep>/<file>"), recursiveIntoDeepDir: tooLong("<deep>/<folder>") }),
+  });
+  expect(exitCode).toBe(0);
+});
+
+// The child force-enables the builtin, so these also run on POSIX.
+describe.concurrent("bunshell cp src/dest validation", () => {
+  async function cp(cwd: string, command: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = await Bun.$\`${command}\`.nothrow().quiet(); process.stdout.write(r.stderr); process.exit(r.exitCode);`,
+      ],
+      cwd,
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  const tree = { d: { f: "hi", sub: {} }, e: { g: "there" } };
+  const list = (dir: unknown, sub: string) => readdirSync(join(String(dir), sub)).sort();
+
+  test("cp -R dir dir/sub fails and still copies the other sources", async () => {
+    using dir = tempDir("cp-self", tree);
+    expect(await cp(String(dir), "cp -R e d d/sub")).toEqual({
+      stderr: `cp: cannot copy a directory, 'd', into itself, 'd/sub${sep}d'\n`,
+      exitCode: 1,
+    });
+    expect(list(dir, "d/sub")).toEqual(["e"]);
+  });
+
+  test.each(["cp -R d .", "cp -Rn d .", "cp d/f d", "cp -n d/f d", "cp -n d/f d/f"])(
+    "%s copies nothing and exits 0",
+    async command => {
+      using dir = tempDir("cp-self", tree);
+      expect(await cp(String(dir), command)).toEqual({ stderr: "", exitCode: 0 });
+      expect(list(dir, "d")).toEqual(["f", "sub"]);
+      expect(readFileSync(join(String(dir), "d", "f"), "utf8")).toBe("hi");
+    },
+  );
+
+  test("-n does not overwrite an existing destination", async () => {
+    using dir = tempDir("cp-n", { ...tree, old: "old", out: { d: { f: "old" }, old: {} } });
+    const read = (...path: string[]) => readFileSync(join(String(dir), ...path), "utf8");
+    const silent = { stderr: "", exitCode: 0 };
+
+    expect(await cp(String(dir), "cp -n d/f old")).toEqual(silent);
+    expect(read("old")).toBe("old");
+    // `out/old` is a directory.
+    expect(await cp(String(dir), "cp -n old out")).toEqual(silent);
+    expect(list(dir, "out/old")).toEqual([]);
+
+    // `out/d/f` exists, `out/d/sub` and `out/e` do not.
+    expect(await cp(String(dir), "cp -Rn d e out")).toEqual(silent);
+    expect(read("out", "d", "f")).toBe("old");
+    expect(list(dir, "out/d")).toEqual(["f", "sub"]);
+    expect(read("out", "e", "g")).toBe("there");
+
+    expect(await cp(String(dir), "cp -n d/f fresh")).toEqual(silent);
+    expect(read("fresh")).toBe("hi");
+  });
+
+  // Directory symlinks need extra privileges on Windows.
+  test.skipIf(isWindows)("cp -R dir link-to-dir fails", async () => {
+    using dir = tempDir("cp-self", tree);
+    symlinkSync("d", join(String(dir), "link"));
+    expect(await cp(String(dir), "cp -R d link")).toEqual({
+      stderr: `cp: cannot copy a directory, 'd', into itself, 'link/d'\n`,
+      exitCode: 1,
+    });
+    expect(list(dir, "d")).toEqual(["f", "sub"]);
+  });
+
+  test("copies to a sibling whose name starts with the source's name", async () => {
+    using dir = tempDir("cp-self", tree);
+    expect(await cp(String(dir), "cp -R d d2")).toEqual({ stderr: "", exitCode: 0 });
+    expect(list(dir, "d2")).toEqual(["f", "sub"]);
+  });
+
+  // The path is too long for macOS (PATH_MAX is 1024), and Windows fails to create it.
+  test.skipIf(isMacOS || isWindows)("copies a very deep tree", async () => {
+    const depth = 800;
+    using dir = tempDir("cp-self", {});
+    const levels = [""];
+    for (let i = 0; i < depth; i++) levels.push(join(levels[i], "a"));
+    const at = (root: string, level: number) => join(String(dir), root, levels[level]);
+    mkdirSync(at("deep", depth), { recursive: true });
+    writeFileSync(join(at("deep", depth), "leaf"), "leaf");
+    try {
+      expect(await cp(String(dir), "cp -R deep out")).toEqual({ stderr: "", exitCode: 0 });
+      expect(readFileSync(join(at("out", depth), "leaf"), "utf8")).toBe("leaf");
+    } finally {
+      // Delete bottom-up so disposing `dir` doesn't have to walk a tree this deep.
+      for (const root of ["deep", "out"]) {
+        for (let i = depth; i >= 0; i--) rmSync(at(root, i), { recursive: true, force: true });
+      }
+    }
   });
 });
 

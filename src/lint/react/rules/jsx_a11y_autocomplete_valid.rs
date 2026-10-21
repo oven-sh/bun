@@ -20,7 +20,7 @@ static VALID_AUTOCOMPLETE_VALUES: [&str; 49] = [
     "tel-national", "transaction-amount", "transaction-currency", "url", "username", "webauthn",
 ];
 
-/// What can follow `billing` and `shipping`.
+/// True for the values that can follow `billing` and `shipping`.
 fn is_part_of_address(value: &[u8]) -> bool {
     matches!(value, b"country" | b"country-name" | b"postal-code" | b"street-address")
         || value.starts_with(b"address-l") && contains_name(&VALID_AUTOCOMPLETE_VALUES, value)

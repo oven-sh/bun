@@ -122,15 +122,15 @@ private:
         return true;
     }
 
-    /* Frees what is buffered of the message and fails this connection. Returns true, like handleFragment() on breakage. */
+    /* Frees the partially buffered message and fails the connection. Returns true, like handleFragment() on breakage. */
     __attribute__((noinline)) static bool failOutOfMemory(void *s) {
         ((WebSocketData *) us_socket_ext((us_socket_t *) s))->fragmentBuffer.release();
         ((WebSocket<SSL, isServer, USERDATA> *) s)->failOutOfMemory();
         return true;
     }
 
-    /* Whether the message handler closed the connection or began its shutdown. A shutdown reads nothing more,
-     * so the fragment buffer goes back at once: the handler may have failed the connection for lack of memory. */
+    /* Returns true if the message handler closed the connection or started shutting it down. A connection that's
+     * shutting down doesn't read anymore, so free its fragment buffer right away. */
     static bool stoppedByHandler(void *s) {
         if (us_socket_is_closed((us_socket_t *) s)) {
             return true;
@@ -177,14 +177,10 @@ private:
                     }
                 }
             } else {
-                /* Ask for the whole frame up front first time, but at most 16 MiB: the peer controls that length.
-                 * A compressed message is padded in place, so the padding is asked for here too.
-                 * A refusal fails the connection here, before it holds memory for a message it cannot finish. */
+                /* Reserve the whole frame up front the first time, capped at 16 MiB because the peer controls the
+                 * length. If that fails, the buffer grows as bytes arrive. */
                 if (!webSocketData->fragmentBuffer.length()) {
-                    size_t padding = webSocketData->compressionStatus == WebSocketData::CompressionStatus::COMPRESSED_FRAME ? 9 : 0;
-                    if (!webSocketData->fragmentBuffer.tryReserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024) + padding)) {
-                        return failOutOfMemory(s);
-                    }
+                    (void) webSocketData->fragmentBuffer.tryReserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024));
                 }
                 /* Fragments forming a big message are not caught until appending them */
                 if (refusePayloadLength(length + webSocketData->fragmentBuffer.length(), webSocketState, s)) {

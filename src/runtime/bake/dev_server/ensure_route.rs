@@ -24,7 +24,7 @@ impl RequestEnsureRouteBundledCtx {
         unsafe { &mut *self.dev }
     }
 
-    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
+    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<Deferral> {
         // Note: reshaped for borrowck — captured args before re-borrowing dev
         let route_bundle_index = self.route_bundle_index;
         let kind = self.kind;
@@ -41,15 +41,14 @@ impl RequestEnsureRouteBundledCtx {
             }
             BundleQueueType::NextBundle => &raw mut dev.next_bundle.requests,
         };
-        self.dev_mut().defer_request(
+        Ok(self.dev_mut().defer_request(
             // SAFETY: `requests_array` points into `*self.dev`, which outlives this call.
             unsafe { &mut *requests_array },
             route_bundle_index,
             kind,
             req,
             resp,
-        )?;
-        Ok(())
+        )?)
     }
 
     fn on_loaded(&mut self) -> JsResult<()> {
@@ -96,6 +95,13 @@ enum BundleQueueType {
     CurrentBundle,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Deferral {
+    Queued,
+    /// The response is already written (413, 400), so nothing waits for a bundle.
+    Answered,
+}
+
 pub(super) fn ensure_route_is_bundled(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
@@ -109,8 +115,10 @@ pub(super) fn ensure_route_is_bundled(
             route_bundle::State::Unqueued => {
                 // We already are bundling something, defer the request
                 if dev.current_bundle.is_some() {
+                    if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
+                        return Ok(());
+                    }
                     dev.next_bundle.route_queue.put(route_bundle_index, ())?;
-                    ctx.on_defer(BundleQueueType::NextBundle)?;
                     dev.route_bundle_ptr(route_bundle_index).server_state =
                         route_bundle::State::DeferredToNextBundle;
                     return Ok(());
@@ -130,16 +138,16 @@ pub(super) fn ensure_route_is_bundled(
                                 // `vm()` is the centralized JSC_BORROW accessor (one
                                 // `unsafe` site for the field); the borrow is dropped
                                 // before the assignment so no overlap with `&mut dev`.
-                                let has_tailwind = if let Some(serve_plugins) =
-                                    &dev.vm().transpiler.options.serve_plugins
-                                {
-                                    serve_plugins
-                                        .iter()
-                                        .find(|p| strings::includes(p, b"tailwind"))
-                                        .map(|_| Default::default())
-                                } else {
-                                    None
-                                };
+                                let vm = dev.vm();
+                                let has_tailwind = vm
+                                    .transpiler
+                                    .options
+                                    .serve_plugins
+                                    .iter()
+                                    .flatten()
+                                    .chain(vm.bake_config_plugin_names.iter())
+                                    .find(|p| strings::includes(p, b"tailwind"))
+                                    .map(|_| Default::default());
                                 dev.has_tailwind_plugin_hack = has_tailwind;
 
                                 let load_result: crate::server::GetOrStartLoadResult = dev
@@ -147,7 +155,7 @@ pub(super) fn ensure_route_is_bundled(
                                     .as_ref()
                                     .expect("infallible: server bound")
                                     .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer(dev),
+                                        crate::server::ServePluginsCallback::DevServer,
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
@@ -170,8 +178,10 @@ pub(super) fn ensure_route_is_bundled(
                             break 'plugin;
                         }
                         PluginState::Pending => {
+                            if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
+                                return Ok(());
+                            }
                             dev.next_bundle.route_queue.put(route_bundle_index, ())?;
-                            ctx.on_defer(BundleQueueType::NextBundle)?;
                             dev.route_bundle_ptr(route_bundle_index).server_state =
                                 route_bundle::State::DeferredToNextBundle;
                             return Ok(());
@@ -206,8 +216,11 @@ pub(super) fn ensure_route_is_bundled(
                     }
                 }
 
+                // A bundle moves a route out of `Bundling` only through the requests that wait for it.
+                if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
+                    return Ok(());
+                }
                 dev.next_bundle.route_queue.put(route_bundle_index, ())?;
-                ctx.on_defer(BundleQueueType::NextBundle)?;
                 dev.route_bundle_ptr(route_bundle_index).server_state =
                     route_bundle::State::Bundling;
 
@@ -282,7 +295,7 @@ impl DevServer {
         kind: deferred_request::HandlerKind,
         req: ReqOrSaved,
         resp: AnyResponse,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Deferral> {
         let deferred_slot = self.deferred_request_pool.claim();
         let deferred_node_ptr: *mut deferred_request::Node = deferred_slot.addr().as_ptr();
         // Precompute the data slot pointer (used inside the initializer for
@@ -338,10 +351,9 @@ impl DevServer {
                                     Some(method),
                                 )? {
                                 Some(saved) => saved,
-                                // Abort the deferral on failure.
                                 // `deferred_slot` drops here, releasing the
                                 // still-uninitialized slot without `drop_in_place`.
-                                None => return Ok(()),
+                                None => return Ok(Deferral::Answered),
                             }
                         }
                         _ => unreachable!(),
@@ -387,7 +399,7 @@ impl DevServer {
 
         // SAFETY: `deferred_ptr` was just initialized via `deferred_slot.write()`.
         unsafe { requests_array.prepend(&mut *deferred_ptr) };
-        Ok(())
+        Ok(Deferral::Queued)
     }
 }
 
@@ -403,13 +415,6 @@ fn check_route_failures(
     resp: AnyResponse,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
-    // Note: erase to a raw pointer so the deferred cleanup only fires on
-    // scope exit when no other borrow of `dev` is live.
-    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-    scopeguard::defer! {
-        // SAFETY: see Note above.
-        unsafe { (*dev_ptr).incremental_result.failures_added.clear() }
-    };
     let _lock_guard = dev.graph_safety_lock.guard();
     let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
     // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
@@ -421,7 +426,7 @@ fn check_route_failures(
         &mut gts,
         TraceImportGoal::FindErrors,
     )?;
-    if !dev.incremental_result.failures_added.is_empty() {
+    if !gts.failures.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
             // Cache bust EVERYTHING reachable
@@ -440,11 +445,7 @@ fn check_route_failures(
             return Ok(CheckResult::Rebuild);
         }
 
-        // SAFETY: `send_serialized_failures` does not mutate
-        // `incremental_result.failures_added`; reborrow through raw ptr to
-        // satisfy borrowck.
-        let failures = unsafe { &(*dev_ptr).incremental_result.failures_added };
-        dev.send_serialized_failures(resp, failures, None)?;
+        dev.send_serialized_failures(resp, &gts.failures, None)?;
         Ok(CheckResult::Stop)
     } else {
         // Failures are unreachable by this route, so it is OK to load.

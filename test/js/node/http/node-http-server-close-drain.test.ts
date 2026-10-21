@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
@@ -1010,4 +1010,47 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
     socket.destroy();
     server.closeAllConnections();
   }
+});
+
+// A reload under --hot keeps the native listener of an address, and so its kind.
+test("closeAllConnections() on a server that took the listener of a Bun.serve server under --hot", async () => {
+  using dir = tempDir("hot-bun-serve-to-node-http", {
+    "server.mjs": `
+      import { createServer } from "node:http";
+      import { once } from "node:events";
+      import { connect } from "node:net";
+      import { writeFileSync, readFileSync } from "node:fs";
+
+      globalThis.__reloads ??= 0;
+      if (globalThis.__reloads++ === 0) {
+        Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("Bun.serve") });
+        const self = new URL(import.meta.url);
+        writeFileSync(self, readFileSync(self, "utf8"));
+      } else {
+        let connections = 0;
+        const server = createServer((req, res) => res.end("node:http"));
+        server.on("connection", () => connections++);
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const socket = connect(server.address().port, "127.0.0.1");
+        socket.on("error", () => {});
+        socket.resume();
+        await once(socket, "connect");
+        socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        await once(socket, "close");
+        server.closeAllConnections();
+        console.log(connections);
+        process.exit(0);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "server.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("0\n");
+  expect(exitCode).toBe(0);
 });

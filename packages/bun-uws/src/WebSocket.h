@@ -331,7 +331,7 @@ private:
         return s;
     }
 
-    /* The close handler gets 1006, or -failure.kind in a wsPackage context. */
+    /* Calls the close handler with 1006, or with -failure.kind in a wsPackage context. */
     void emitFailure(const WebSocketFailure &failure, unsigned int detail) {
         if (!getContextData()->wsPackage) {
             emitClose(1006, failure.diagnostic);
@@ -373,15 +373,15 @@ public:
         }
     }
 
-    /* Fails the connection: a message it sent could not be buffered, or copied for its handler.
-     * Nothing here may need memory for this connection, or the refusal of that ends the process. */
+    /* Fails the connection because a received message couldn't be buffered or copied for its handler.
+     * Nothing here may allocate for this connection, because a failed allocation would abort the process. */
     void failOutOfMemory() {
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
         if (webSocketData->isShuttingDown) {
             return;
         }
 
-        /* Its queued publishes are dropped: sendCloseFrame() would write them first. */
+        /* Drop the queued publishes, because sendCloseFrame() would write them first. */
         getContextData()->topicTree->freeSubscriber(webSocketData->subscriber);
         webSocketData->subscriber = nullptr;
 
@@ -390,8 +390,8 @@ public:
             return;
         }
 
-        /* The unsent data goes back to the allocator now. A Close frame would hold it until the peer reads it,
-         * and may need a growth that ends the process. */
+        /* Sending a Close frame would grow the backpressure buffer, and would hold the unsent data until the peer
+         * reads it. Report the failure and close the socket, which frees that data now. */
         webSocketData->isShuttingDown = true;
         emitFailure(FAIL_OUT_OF_MEMORY, 0);
         closeSocket();

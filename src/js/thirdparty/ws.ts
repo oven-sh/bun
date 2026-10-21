@@ -1681,7 +1681,8 @@ const receiverErrors = {
   ],
   WS_ERR_UNSUPPORTED_MESSAGE_LENGTH: [RangeError, "Max payload size exceeded", false, 1009],
   Z_DATA_ERROR: [Error, "invalid compressed data", false, 1007],
-  // Not a ws code. It is the error ws on Node gets from `Buffer.allocUnsafe()` when a message cannot be allocated.
+  // Not an upstream ws code. Allocating a buffer for the message failed. On Node, ws gets this error from
+  // `Buffer.allocUnsafe()`.
   ERR_MEMORY_ALLOCATION_FAILED: [RangeError, "Failed to allocate memory", false, 1011],
 } as const;
 type ReceiverErrorCode = Exclude<keyof typeof receiverErrors, "__proto__">;

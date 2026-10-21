@@ -11,6 +11,12 @@
 #include <string>
 #include <thread>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 #include "utils.h"
 
 namespace napitests {
@@ -722,6 +728,42 @@ static napi_value test_napi_run_script(const Napi::CallbackInfo &info) {
   // info[0] is the GC callback
   (void)napi_run_script(info.Env(), info[1], &ret);
   return ret;
+}
+
+static napi_value
+test_napi_run_script_exception_value(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  // info[0] is the GC callback
+  napi_value script = info[1];
+
+  napi_value ret = nullptr;
+  napi_status run_status = napi_run_script(env, script, &ret);
+  bool pending = false;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &pending));
+  printf("run status=%d pending=%d\n", (int)run_status, (int)pending);
+
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+
+  napi_valuetype type = (napi_valuetype)99;
+  napi_status typeof_status = napi_typeof(env, exc, &type);
+  bool is_error = false;
+  NODE_API_CALL(env, napi_is_error(env, exc, &is_error));
+  printf("typeof status=%d type=%d is_error=%d\n", (int)typeof_status,
+         (int)type, (int)is_error);
+
+  if (type == napi_object) {
+    napi_value message = nullptr;
+    NODE_API_CALL(env,
+                  napi_get_named_property(env, exc, "message", &message));
+    char buf[128] = {0};
+    size_t len = 0;
+    NODE_API_CALL(env, napi_get_value_string_utf8(env, message, buf,
+                                                  sizeof buf, &len));
+    printf("message=%s\n", buf);
+  }
+
+  return exc;
 }
 
 static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
@@ -3216,6 +3258,40 @@ static napi_value make_ungated_calls_spinner(const Napi::CallbackInfo &info) {
   return spin;
 }
 
+// gated_calls_until_terminated(report: Int32Array on a SharedArrayBuffer):
+// makes a call that Node gates behind can_call_into_js() until
+// worker.terminate() has it refused. report[0] is set once the loop is about to
+// start. Then report[1] is the status of napi_throw and report[2] is whether an
+// exception is pending after it. node-addon-api calls napi_fatal_error if an
+// exception that it cannot clear is pending.
+static napi_value
+gated_calls_until_terminated(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  void *data;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, info[0], nullptr, nullptr,
+                                              &data, nullptr, nullptr));
+  auto *report = static_cast<std::atomic<int32_t> *>(data);
+  napi_value object, one, message, error;
+  NODE_API_CALL(env, napi_create_object(env, &object));
+  NODE_API_CALL(env, napi_create_int32(env, 1, &one));
+  NODE_API_CALL(env, napi_create_string_utf8(env, "refused", NAPI_AUTO_LENGTH,
+                                             &message));
+  NODE_API_CALL(env, napi_create_error(env, nullptr, message, &error));
+
+  report[0] = 1;
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(20);
+  while (napi_set_named_property(env, object, "k", one) == napi_ok &&
+         std::chrono::steady_clock::now() < deadline) {
+  }
+
+  report[1] = napi_throw(env, error);
+  bool pending = true;
+  napi_is_exception_pending(env, &pending);
+  report[2] = pending;
+  return nullptr;
+}
+
 // Leaves an exception pending on the engine itself, not just recorded by
 // napi_throw_error: Bun's napi_call_function raises the recorded exception
 // before refusing the call. Returns false if the setup failed (an error has
@@ -4067,6 +4143,132 @@ test_node_api_sharedarraybuffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Reserved but never committed, so it doesn't use any memory.
+static constexpr size_t kReservedBytes = (size_t{1} << 32) + 4096;
+
+static void *reserve_address_space() {
+#ifdef _WIN32
+  return VirtualAlloc(nullptr, kReservedBytes, MEM_RESERVE, PAGE_NOACCESS);
+#else
+  void *reserved = mmap(nullptr, kReservedBytes, PROT_NONE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  return reserved == MAP_FAILED ? nullptr : reserved;
+#endif
+}
+
+static void release_address_space(void *reserved) {
+#ifdef _WIN32
+  VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+  munmap(reserved, kReservedBytes);
+#endif
+}
+
+static std::atomic<int> reserved_finalize_count{0};
+
+static void finalize_reserved(napi_env, void *data, void *) {
+  reserved_finalize_count++;
+  release_address_space(data);
+}
+
+static void finalize_reserved_noenv(void *data, void *) {
+  reserved_finalize_count++;
+  release_address_space(data);
+}
+
+static std::string string_property(napi_env env, napi_value object,
+                                   const char *name) {
+  napi_value value;
+  char buf[256];
+  size_t len = 0;
+  if (napi_get_named_property(env, object, name, &value) != napi_ok ||
+      napi_get_value_string_utf8(env, value, buf, sizeof(buf), &len) !=
+          napi_ok) {
+    return "<none>";
+  }
+  return std::string(buf, len);
+}
+
+// Prints whether an exception is pending. If one is, clears it and prints its
+// constructor name and code.
+static void print_pending_exception(napi_env env) {
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  printf(" pending=%s", pending ? "true" : "false");
+  if (!pending) {
+    return;
+  }
+  napi_value exception;
+  napi_value constructor;
+  napi_get_and_clear_last_exception(env, &exception);
+  napi_get_named_property(env, exception, "constructor", &constructor);
+  printf(" error=%s code=%s", string_property(env, constructor, "name").c_str(),
+         string_property(env, exception, "code").c_str());
+}
+
+// test_external_buffer_length_limit(gc, length) calls each external buffer API
+// with `length` on a fresh reservation and prints one line per API.
+static napi_value
+test_external_buffer_length_limit(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  double length = 0;
+  NODE_API_CALL(env, napi_get_value_double(env, info[1], &length));
+
+  static const char *const names[] = {
+      "napi_create_external_arraybuffer",
+      "napi_create_external_buffer",
+      "node_api_create_external_sharedarraybuffer",
+  };
+  // Never dereferenced. A failed call must not write to *result.
+  const napi_value untouched =
+      reinterpret_cast<napi_value>(&reserved_finalize_count);
+
+  for (int api = 0; api < 3; api++) {
+    void *reserved = reserve_address_space();
+    if (reserved == nullptr) {
+      printf("FAIL: could not reserve %zu bytes of address space\n",
+             kReservedBytes);
+      return ok(env);
+    }
+    reserved_finalize_count = 0;
+    napi_value result = untouched;
+    napi_status status;
+    if (api == 0) {
+      status = napi_create_external_arraybuffer(
+          env, reserved, static_cast<size_t>(length), finalize_reserved,
+          nullptr, &result);
+    } else if (api == 1) {
+      status = napi_create_external_buffer(env, static_cast<size_t>(length),
+                                           reserved, finalize_reserved, nullptr,
+                                           &result);
+    } else {
+      status = node_api_create_external_sharedarraybuffer(
+          env, reserved, static_cast<size_t>(length), finalize_reserved_noenv,
+          nullptr, &result);
+    }
+
+    printf("%s: status=%d", names[api], static_cast<int>(status));
+    print_pending_exception(env);
+    printf(" finalized=%d result=%s", reserved_finalize_count.load(),
+           result == untouched ? "untouched" : "set");
+    if (status == napi_ok) {
+      napi_value byte_length_value;
+      double byte_length = -1;
+      NODE_API_CALL(env, napi_get_named_property(env, result, "byteLength",
+                                                 &byte_length_value));
+      NODE_API_CALL(
+          env, napi_get_value_double(env, byte_length_value, &byte_length));
+      printf(" byteLength=%.0f", byte_length);
+    } else if (reserved_finalize_count == 0) {
+      // The call failed and the finalizer didn't run, so the caller still owns
+      // the bytes.
+      release_address_space(reserved);
+    }
+    printf("\n");
+  }
+  return ok(env);
+}
+
 static void noop_tsfn_cb(napi_env, napi_value, void *, void *) {}
 
 // Each case below returns a different napi_status in Bun than in Node.js 26
@@ -4623,6 +4825,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_many_args);
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_exception_value);
   REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);
@@ -4660,6 +4863,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, external_for_transfer_stats);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
   REGISTER_FUNCTION(env, exports, make_ungated_calls_spinner);
+  REGISTER_FUNCTION(env, exports, gated_calls_until_terminated);
   REGISTER_FUNCTION(env, exports, test_ungated_calls_with_engine_exception);
   REGISTER_FUNCTION(env, exports, ungated_calls_through_timeout);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
@@ -4670,6 +4874,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_node_api_set_prototype);
   REGISTER_FUNCTION(env, exports, test_node_api_create_object_with_properties);
   REGISTER_FUNCTION(env, exports, test_node_api_sharedarraybuffer);
+  REGISTER_FUNCTION(env, exports, test_external_buffer_length_limit);
   REGISTER_FUNCTION(env, exports, test_napi_status_codes_node26);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_ran);

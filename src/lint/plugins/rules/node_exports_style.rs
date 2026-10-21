@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 
 /// Enforce either `module.exports` or `exports`.
 pub struct ExportsStyle {
-    /// `"exports"`, not `"module.exports"`.
+    /// True for `"exports"`, false for `"module.exports"`.
     prefers_exports: bool,
     allow_batch_assign: bool,
 }
@@ -40,21 +40,21 @@ impl Rule for ExportsStyle {
     }
 }
 
-/// The identifiers `name` that refer to nothing that the file declares.
+/// Returns the identifiers called `name` that don't refer to anything the file declares.
 fn global_references<'a>(name: &str, file: &'a File<'a>) -> impl Iterator<Item = Expr<'a>> {
     let is_on = !is_global_turned_off(file, name);
     let identifiers = is_on.then(|| file.unresolved_references_to(name.as_bytes())).into_iter().flatten().filter_map(Reference::expr);
-    // The `a` of `[a = 1] = b` is two references.
+    // The `a` in `[a = 1] = b` counts as two references.
     let mut previous = None;
     identifiers.filter(move |it| previous.replace(*it) != Some(*it))
 }
 
-/// The assignment that `node` is the left side of.
+/// Returns the assignment whose left side is `node`.
 fn assignment_to<'a>(node: Expr<'a>, memo: &mut AssignmentTargets<'a>) -> Option<Expr<'a>> {
     node.parent().as_expr().filter(|it| it.tag() == ExprTag::Assign && it.left() == Some(node) && !is_assignment_target(*it, memo))
 }
 
-/// `a = b = c` is `a = (b = c)`: the `a = ..` that an assignment is in.
+/// `a = b = c` is `a = (b = c)`. Returns the outermost `a = ..` that contains the assignment.
 fn outermost_assignment(assignment: Expr<'_>) -> Expr<'_> {
     let mut at = assignment;
     while !at.is_parenthesized()
@@ -65,7 +65,8 @@ fn outermost_assignment(assignment: Expr<'_>) -> Expr<'_> {
     at
 }
 
-/// `node`: `exports`, or `module.exports`. If it, or a property of it, is assigned to, the outermost of these assignments.
+/// `node`: `exports` or `module.exports`. If it or one of its properties is assigned to, returns the outermost of those
+/// assignments.
 fn top_assignment<'a>(node: Expr<'a>, memo: &mut AssignmentTargets<'a>) -> Option<Expr<'a>> {
     let mut at = node;
     while !at.is_parenthesized()

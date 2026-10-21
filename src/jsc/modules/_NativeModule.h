@@ -2,6 +2,7 @@
 #pragma once
 #include "JSBuffer.h"
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -113,7 +114,7 @@
     if (!value) {                                                              \
       auto *function = JSC::JSFunction::create(                                \
           vm, globalObject, 1, name.string(), ptr,                             \
-          JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, ptr);       \
+          JSC::ImplementationVisibility::Public, JSC::NoIntrinsic);            \
       /* Match `put`: only populate the shared object on first build; a       \
          user-deleted property on the cached object stays deleted. */         \
       if (!defaultObjectWasCached)                                             \
@@ -164,8 +165,9 @@ inline bool isBunDefinedGetter(JSC::JSObject *getter) {
 // when Bun's own code produces the value: a static table entry nothing has constructed yet or a
 // native accessor (see isBunDefinedGetter). Loading the module therefore does not construct the
 // object's lazy properties. A value already stored on the object, an accessor user code defined and
-// a property inherited from the prototype chain are read now. Returns the object, as the
-// LazySyntheticSourceGenerator contract wants, or nullptr if reading a property threw.
+// a property inherited from the prototype chain are read now. An inherited function is exported
+// bound to the object. Returns the object, as the LazySyntheticSourceGenerator contract wants, or
+// nullptr if reading a property threw.
 inline JSC::JSObject *exportObjectProperties(
     JSC::JSGlobalObject *globalObject, JSC::JSObject *object,
     const JSC::PropertyNameArrayBuilder &propertyNames,
@@ -197,8 +199,19 @@ inline JSC::JSObject *exportObjectProperties(
       value = JSC::JSValue();
     } else if (!value || value.isGetterSetter()) {
       // Inherited, or an accessor user code defined: read it here, outside of any link().
+      bool inherited = !value;
       value = object->get(globalObject, propertyName);
       RETURN_IF_EXCEPTION(scope, nullptr);
+      // An inherited method finds the object through `this`, which a call of the export does not pass.
+      if (inherited && value.isCallable()) {
+        JSC::JSValue length = asObject(value)->get(globalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        value = JSC::JSBoundFunction::create(
+            vm, globalObject, asObject(value), object, JSC::ArgList(), length.isNumber() ? length.asNumber() : 0,
+            JSC::jsString(vm, propertyName.string()),
+            JSC::makeSource(propertyName.string(), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+      }
     }
     exportNames.append(propertyName);
     exportValues.append(value);

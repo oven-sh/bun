@@ -9,8 +9,8 @@
 
 namespace uWS {
 
-/* Contiguous buffer for bytes a peer sends. The peer decides its size, so every growth can be refused:
- * tryReserve() and tryAppend() then return false with the contents untouched. */
+/* Contiguous buffer for bytes received from a peer. The peer controls the size, so tryReserve() and
+ * tryAppend() return false if allocation fails, without changing the contents. */
 struct ReceiveBuffer {
     ReceiveBuffer() = default;
     ReceiveBuffer(const ReceiveBuffer &) = delete;
@@ -20,7 +20,7 @@ struct ReceiveBuffer {
     size_t length() const { return len; }
     char *data() { return buf; }
 
-    /* Makes room for n bytes in total. */
+    /* Grows the capacity to at least n bytes. */
     [[nodiscard]] bool tryReserve(size_t n) {
         if (n <= cap) return true;
 
@@ -28,7 +28,7 @@ struct ReceiveBuffer {
         if (len) {
             grown = (char *) us_realloc(buf, n);
         } else {
-            /* Nothing to keep: a realloc that moves the block would copy its old bytes. */
+            /* The buffer is empty, so skip realloc, which could copy the stale bytes. */
             us_free(buf);
             buf = nullptr;
             cap = 0;
@@ -48,7 +48,7 @@ struct ReceiveBuffer {
         return true;
     }
 
-    /* Keeps the first n bytes, and the allocation. */
+    /* Shrinks the length to n bytes without freeing the allocation. */
     void truncate(size_t n) { len = n; }
 
     /* Empties the buffer and keeps the allocation for the next message. */
@@ -62,11 +62,14 @@ struct ReceiveBuffer {
     }
 
 private:
-    /* Makes room for n more bytes. Doubles, so a message is copied a constant number of times. It asks once:
-     * a buffer that is refused gives its memory back instead of holding it for a smaller request. */
+    /* Makes room for n more bytes. Doubles the capacity so appends are amortized O(1), and falls back to the
+     * exact size if the doubled allocation fails. */
     __attribute__((noinline)) bool tryGrow(size_t n) {
-        /* If cap * 2 wraps, len + n wins the max(). */
-        return n <= SIZE_MAX - len && tryReserve(std::max(len + n, cap * 2));
+        if (n > SIZE_MAX - len) return false;
+        size_t exact = len + n;
+        /* If cap * 2 overflows, max() picks exact. */
+        size_t doubled = std::max(exact, cap * 2);
+        return tryReserve(doubled) || (doubled != exact && tryReserve(exact));
     }
 
     char *buf = nullptr;

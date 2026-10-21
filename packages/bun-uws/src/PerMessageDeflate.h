@@ -192,8 +192,8 @@ struct DeflationStream {
 
 struct InflateResult {
     std::string_view data;
-    /* 0 on success, else the WebSocket close code: 1007 corrupt stream, 1009 over maxPayloadLength,
-     * 1011 the output did not fit in memory */
+    /* 0 on success, otherwise a WebSocket close code: 1007 (corrupt stream), 1009 (over maxPayloadLength)
+     * or 1011 (out of memory) */
     int closeCode;
 };
 
@@ -243,7 +243,7 @@ struct InflationStream {
         memcpy(tailLocation, tail, 4);
         compressed = {compressed.data(), compressed.length() + 4};
 
-        /* We clear this one here, could be done better. Keeps the allocation for the next message. */
+        /* We clear this one here, could be done better. clear() keeps the allocation for the next message. */
         zlibContext->dynamicInflationBuffer.clear();
 
         inflationStream.next_in = (Bytef *) compressed.data();
@@ -266,7 +266,7 @@ struct InflationStream {
                 break;
             }
 
-            /* break rather than return: the shared stream still has to be reset below */
+            /* Don't return here. The shared stream still has to be reset below. */
             if (!zlibContext->dynamicInflationBuffer.tryAppend(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out)) {
                 outOfMemory = true;
                 break;
@@ -282,7 +282,7 @@ struct InflationStream {
         memcpy(tailLocation, preTailBytes, 4);
 
         if (outOfMemory) {
-            /* Every connection on this loop shares the buffer, so hand its memory back. */
+            /* Every connection on this loop shares this buffer, so free it. */
             zlibContext->dynamicInflationBuffer.release();
             return {{}, 1011};
         }

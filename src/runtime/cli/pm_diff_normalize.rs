@@ -195,8 +195,8 @@ fn key_pair(
     Some((o, n, as_written))
 }
 
-/// Whether `old` and `shown` have the same comparison key, which makes them the same program apart
-/// from layout and the names of locals.
+/// Returns true if `old` and `shown` have the same comparison key, which makes them the same
+/// program apart from layout and the names of locals.
 ///
 /// `removed` lists the lines of `shown` (0-based, ascending) that the diff marks as removed. A name
 /// mismatch there is accepted, because such a line may still use a local's old name.
@@ -254,8 +254,8 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
     }
 }
 
-/// Whether `shown`, a re-print of the file `raw` that is displayed in its place, still parses as
-/// the same file. If `renamed` is set, the names of locals may differ.
+/// Returns true if `shown`, a re-print of the file `raw` that's displayed in its place, still
+/// parses as the same file. If `renamed` is set, the names of locals may differ.
 pub(crate) fn stands_for(
     path: &[u8],
     raw: &[u8],
@@ -294,18 +294,6 @@ impl StoreScope {
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
         StoreScope(bun_ast::StoreResetGuard::new())
-    }
-}
-
-struct ChunkCollector(Option<bun_sourcemap::Chunk>);
-impl bun_js_printer::OnSourceMapChunk for ChunkCollector {
-    fn on_source_map_chunk(
-        &mut self,
-        chunk: bun_sourcemap::Chunk,
-        _: &bun_ast::Source,
-    ) -> bun_js_printer::Result<()> {
-        self.0 = Some(chunk);
-        Ok(())
     }
 }
 
@@ -388,7 +376,7 @@ fn print_js<'a>(
         .map(|r| r.path.text.to_vec())
         .collect();
 
-    let mut collector = ChunkCollector(None);
+    let mut chunk = None;
     let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
     let sym_arena = *ast.symbols.allocator();
     let symbols = bun_ast::symbol::Map::init_with_one_list(
@@ -400,7 +388,7 @@ fn print_js<'a>(
         minify_syntax: options.minify_syntax,
         require_ref: Some(ast.require_ref),
         import_meta_ref: ast.import_meta_ref,
-        source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut collector)),
+        source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut chunk)),
         mangled_props: None,
         ..Default::default()
     };
@@ -416,7 +404,7 @@ fn print_js<'a>(
     let mut text = printer.ctx.get_written().to_vec();
 
     let mut map = Vec::new();
-    if let Some(chunk) = collector.0 {
+    if let Some(chunk) = chunk {
         let (printed, original) = (newline_lines(&text), newline_lines(source.contents()));
         let place = |lines: &Option<Vec<(u32, u32)>>, line: i32, col: i32| {
             let (line, col) = (line as u32, col.max(0) as u32);
@@ -425,14 +413,10 @@ fn print_js<'a>(
                 None => (line, col),
             }
         };
-        let printed_lines = printed
-            .as_ref()
-            .map_or_else(|| bun_core::strings::count_char(&text, b'\n') + 1, Vec::len);
         if let Ok(parsed) = bun_sourcemap::mapping::parse(
             chunk.buffer.list.as_slice(),
             None,
             1,
-            printed_lines,
             bun_sourcemap::mapping::ParseOptions {
                 allow_names: false,
                 sort: true,

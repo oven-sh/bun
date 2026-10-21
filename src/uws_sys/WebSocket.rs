@@ -92,7 +92,7 @@ impl AnyWebSocket {
         c::uws_ws_close(ssl, ws)
     }
 
-    /// Fails the connection with 1011: a message it sent could not be copied for its handler.
+    /// Closes the connection with 1011 after failing to allocate a copy of an incoming message.
     pub fn fail_out_of_memory(self) {
         let (ssl, ws) = self.split();
         c::uws_ws_fail_out_of_memory(ssl, ws)

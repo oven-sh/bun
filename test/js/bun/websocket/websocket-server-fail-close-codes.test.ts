@@ -244,29 +244,29 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
   });
 });
 
-// Memory for a received message is sized by the peer, so the allocator can refuse it. That
-// fails the one connection with 1011 and leaves the server serving. The messages below
-// are legal: each is under the default 16 MB maxPayloadLength.
-//
-// ASAN's per-allocation cap makes each refusal deterministic: which request is over the
-// cap is arithmetic. The clients run in this process, which is not capped. `Malloc=1`
-// puts WebKit's allocations on the same capped allocator, which is what the text rows need.
-describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () => {
+// ASAN's per-allocation cap makes each allocation failure deterministic. `Malloc=1` routes WebKit's
+// allocations through the same capped allocator, which the text case needs.
+describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
   const MiB = 1024 * 1024;
   const CAP_MB = 4;
   const diagnostic = "Received message that does not fit in memory";
   const failed = `close 1011 ${JSON.stringify(diagnostic)}`;
   const deflate = { "Sec-WebSocket-Extensions": "permessage-deflate" };
-  // What a refused message inflates from. A run of one byte compresses to a few KiB.
   const deflated = (size: number) => deflateRawSync(Buffer.alloc(size, 7));
   const tooBig = Buffer.alloc(CAP_MB * MiB + 2 * MiB);
-  // Fills a buffer to exactly the cap, so the next byte it has to hold is a growth over the cap.
+  // Fills a buffer to exactly the cap, so appending one more byte has to grow it past the cap.
   const full = Buffer.alloc(CAP_MB * MiB);
-  // A message that is delivered. The fixture answers with a hash of what its handler got, and
-  // the period is 37 bytes, so a growth that loses or moves bytes does not pass.
+  // For messages that are delivered. The fixture replies with a hash of what its handler received, and the
+  // 37-byte period isn't a power of two, so a growth that loses or moves bytes changes the reply.
   const patterned = (size: number) => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz+");
   const got = (message: Buffer) => `text "got ${message.length} ${Bun.hash(message)}"`;
   const intact = patterned(2 * MiB);
+  // What the `error` handler receives when the message handler's copy can't be allocated.
+  const copyFailed = {
+    error: "RangeError",
+    message: "Failed to allocate memory",
+    code: "ERR_MEMORY_ALLOCATION_FAILED",
+  };
 
   type Mode = "ws" | "wss" | "ws-package";
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
@@ -284,7 +284,8 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     }
   }
 
-  // The next line the fixture prints. A call of its `error` handler would be one: no row expects it.
+  // Returns the fixture's next output line. It prints one per close handler call, one per `error` handler call
+  // and one per `ws` 'error' event.
   async function nextEvent() {
     const { value, done } = await lines.next();
     if (done) throw new Error(`the server exited:\n${await stderr}`);
@@ -294,8 +295,7 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
   const connect = (mode: Mode, headers?: Record<string, string>) =>
     RawClient.upgrade(ports[mode], { headers, secure: mode === "wss" });
 
-  // One process serves every row: a refused message must leave it serving. It is a
-  // debug build under ASAN on some lanes, which takes seconds to start on a busy machine.
+  // All rows share one server process, because it has to keep serving after it rejects a message.
   beforeAll(async () => {
     proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "websocket-server-oom-fixture.ts")],
@@ -303,9 +303,7 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
         ...bunEnv,
         Malloc: "1",
         WS_OOM_TLS: JSON.stringify(cert),
-        // detect_leaks=0: natives owned only by a JSC cell are invisible to
-        // LeakSanitizer's reachability scan, and `Malloc=1` adds WebKit's own
-        // never-freed startup allocations.
+        // With `Malloc=1`, LeakSanitizer would report WebKit's never-freed startup allocations.
         ASAN_OPTIONS: [
           bunEnv.ASAN_OPTIONS,
           "allocator_may_return_null=1",
@@ -316,7 +314,7 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
           .join(":"),
       },
       stdout: "pipe",
-      // ASAN prints a warning for every refused allocation. Drained, and shown if the server dies.
+      // ASAN prints a warning for every failed allocation. stderr is drained and only shown if the server dies.
       stderr: "pipe",
     });
     stderr = proc.stderr.text();
@@ -325,16 +323,14 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
   }, 30_000);
   afterAll(() => proc?.kill());
 
-  const refusals: [name: string, headers: Record<string, string> | undefined, send: (client: RawClient) => void][] = [
-    // The fragment buffer: the reservation for the length that the header declares, and the
-    // growth for a later fragment. The reservation is refused at the header, so the
-    // connection does not wait for a payload that it cannot hold.
+  const rejected: [
+    name: string,
+    headers: Record<string, string> | undefined,
+    send: (client: RawClient) => void,
+    error?: object,
+  ][] = [
+    // Fails to grow the fragment buffer.
     ["a message larger than the cap", undefined, client => client.binary(tooBig)],
-    [
-      "the header alone of a message larger than the cap",
-      undefined,
-      client => client.write(client.frame(OP.binary, tooBig).subarray(0, 15)),
-    ],
     [
       "a fragmented message larger than the cap",
       undefined,
@@ -343,53 +339,44 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
         client.send(OP.continuation, Buffer.alloc(3 * MiB));
       },
     ],
-    // The fragment buffer also holds the 9 bytes of padding that a buffered compressed
-    // message is inflated with, and a control frame that is not whole in one read. The
-    // padding is reserved with the first frame, so a second frame has to take its room.
+    // The fragment buffer also stores inflate's 9 bytes of padding and control frames split across reads.
+    ["a compressed message with no room left for its padding", deflate, client => client.binary(full, { rsv1: true })],
     [
-      "a compressed message with no room left for its padding",
-      deflate,
-      client => {
-        client.binary(full.subarray(9), { rsv1: true, fin: false });
-        client.send(OP.continuation, full.subarray(0, 9));
-      },
-    ],
-    [
-      "a split control frame behind a fragment that fills the buffer",
+      "a split control frame after a fragment that fills the buffer",
       undefined,
       client => {
         client.binary(full, { fin: false });
         client.write(client.frame(OP.ping, Buffer.alloc(100)).subarray(0, 50));
       },
     ],
-    // The inflate buffer, which every connection of the loop shares: refused while the
-    // message inflates, and for the last chunk of a message that filled it exactly.
+    // Fails to grow the inflate buffer, which all connections on the loop share.
     [
       "a compressed message that inflates past the cap",
       deflate,
       client => client.binary(deflated(tooBig.length), { rsv1: true }),
     ],
     [
-      "a compressed message whose last inflated chunk does not fit",
+      "a compressed message whose last inflated chunk doesn't fit",
       deflate,
       client => client.binary(deflated(full.length + 1024), { rsv1: true }),
     ],
-    // The copy for the message handler. One non-ASCII character makes the string 16-bit, so
-    // its buffer is twice the size of the one the bytes already fit in. An 8-bit string of
-    // exactly the cap is over it by the header of the string.
+    // Fails to allocate the message handler's copy, which the `error` handler hears about first. One non-ASCII
+    // character makes the string 16-bit. An 8-bit string of exactly the cap is over it by the string's header.
     [
       "a text message whose UTF-16 copy is over the cap",
       undefined,
       client => client.text("\u00e9" + Buffer.alloc(3 * MiB - 2, "a").toString("latin1")),
+      copyFailed,
     ],
     [
       "a text message whose 8-bit copy is over the cap",
       undefined,
       client => client.text(Buffer.alloc(full.length, "a").toString("latin1")),
+      copyFailed,
     ],
   ];
 
-  // The server still serves, with the shared inflate buffer still usable.
+  // Checks that the server still accepts connections and the shared inflate buffer still works.
   async function expectStillServing(scheme: "ws" | "wss") {
     using client = await connect(scheme, deflate);
     client.binary(intact);
@@ -400,18 +387,29 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
   }
 
   describe.each(["ws", "wss"] as const)("%s", scheme => {
-    test.each(refusals)("%s fails that connection with 1011", async (_name, headers, send) => {
+    test.each(rejected)("%s fails that connection with 1011", async (_name, headers, send, error) => {
       using client = await connect(scheme, headers);
       send(client);
       expect(await client.remainingFrames()).toEqual([failed]);
+      if (error) expect(await nextEvent()).toEqual(error);
       expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
       await expectStillServing(scheme);
     });
   });
 
-  // The first frame reserves its padding too. Without that, the padding would need a block of
-  // twice the message, which is over the cap here.
-  test("a buffered compressed message has room for its padding", async () => {
+  // Appending 1 MiB to 2.5 MiB first tries to double to 5 MiB, which fails, then falls back to exactly 3.5 MiB.
+  test("delivers a message when only an exact-size allocation succeeds", async () => {
+    using client = await connect("ws");
+    const message = patterned(3.5 * MiB);
+    client.binary(message.subarray(0, 2.5 * MiB), { fin: false });
+    client.send(OP.continuation, message.subarray(2.5 * MiB));
+    client.close(1000);
+    expect(await client.remainingFrames()).toEqual([got(message), "close 1000"]);
+    expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+  });
+
+  // A buffered compressed message gets 9 bytes of padding appended before it is inflated in place.
+  test("delivers a buffered compressed message", async () => {
     using client = await connect("ws", deflate);
     const message = patterned(3 * MiB);
     client.binary(deflateRawSync(message, { level: 0 }), { rsv1: true });
@@ -420,16 +418,16 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
   });
 
-  // The ping waits behind the first fragment until its second half arrives. Then it is cut
-  // off again, and the message continues in the same buffer.
-  test("a ping that arrives in two reads inside a fragmented message leaves the message intact", async () => {
+  // The ping is stored after the first fragment until its second half arrives, then removed again, and the
+  // message continues in the same buffer.
+  test("delivers a fragmented message intact around a ping that arrives in two reads", async () => {
     using client = await connect("ws");
     using other = await connect("ws");
     const message = patterned(MiB);
     const ping = client.frame(OP.ping, "0123456789");
     client.binary(message.subarray(0, MiB / 2), { fin: false });
     client.write(ping.subarray(0, 10));
-    // Two round trips on another connection: the server has read the first half by now.
+    // After two round trips on another connection, the server has read the first half.
     expect([await other.roundTrip(), await other.roundTrip()]).toEqual([[], []]);
     client.write(ping.subarray(10));
     client.send(OP.continuation, message.subarray(MiB / 2));
@@ -441,9 +439,8 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
   });
 
-  // Nothing is unsent yet, so the Close frame is sent. It waits in the send buffer until the
-  // socket is writable.
-  test.skipIf(!fault.available())("a socket that cannot write yet still gets its Close frame", async () => {
+  // Nothing is unsent yet, so the Close frame is queued and goes out once the socket is writable.
+  test.skipIf(!fault.available())("still sends the Close frame to a socket that can't write yet", async () => {
     using client = await connect("ws");
     client.text("hold");
     client.binary(tooBig);
@@ -452,43 +449,40 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
     await expectStillServing("ws");
   });
 
-  describe("with unsent data", () => {
-    // The unsent data is freed at once. A Close frame would keep it until the peer reads it,
-    // and would have to be written behind it.
-    test.skipIf(!fault.available())("the connection closes without a Close frame", async () => {
-      using client = await connect("ws");
-      client.text("stall");
-      client.binary(tooBig);
-      expect(await client.remainingFrames()).toEqual([]);
-      expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
-      await expectStillServing("ws");
-    });
-
-    // It is a close, not a reset: what the kernel already took is not thrown away.
-    test("the frames that the kernel already took still arrive", async () => {
-      using client = await connect("ws", deflate);
-      client.socket.pause();
-      client.text("flood");
-      const { flooded } = await nextEvent();
-      expect(flooded).toBeGreaterThan(0);
-      client.binary(deflated(tooBig.length), { rsv1: true });
-      expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
-      client.socket.resume();
-      const frames = await client.remainingFrames();
-      await client.closed;
-      expect({ frames: frames.length, socketEvents: client.socketEvents }).toEqual({
-        frames: flooded,
-        socketEvents: ["end", "close"],
-      });
-      await expectStillServing("ws");
-    });
+  // A Close frame would be queued behind the 3 MiB, in a buffer that would have to grow for it.
+  test.skipIf(!fault.available())("closes the connection without a Close frame when data is still unsent", async () => {
+    using client = await connect("ws");
+    client.text("stall");
+    client.binary(tooBig);
+    expect(await client.remainingFrames()).toEqual([]);
+    expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+    await expectStillServing("ws");
   });
 
-  // failOutOfMemory() takes the socket out of its topics without writing what is queued for it.
-  // Every socket of the fixture is subscribed to one topic, and "publish" publishes to it.
+  // That close is not a reset, so the peer still receives what the kernel had already accepted.
+  test("delivers the frames the kernel already accepted when data is still unsent", async () => {
+    using client = await connect("ws", deflate);
+    client.socket.pause();
+    client.text("flood");
+    const { flooded } = await nextEvent();
+    expect(flooded).toBeGreaterThan(0);
+    client.binary(deflated(tooBig.length), { rsv1: true });
+    expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+    client.socket.resume();
+    const frames = await client.remainingFrames();
+    await client.closed;
+    expect({ frames: frames.length, socketEvents: client.socketEvents }).toEqual({
+      frames: flooded,
+      socketEvents: ["end", "close"],
+    });
+    await expectStillServing("ws");
+  });
+
+  // Failing the connection unsubscribes the socket without writing its queued publishes. Every socket in the
+  // fixture subscribes to one topic, and a "publish" message publishes to it.
   describe("a socket with a queued publish", () => {
-    // One write, so one read: the publish is still queued when the next frame is refused.
-    const publishThenRefused = (client: RawClient) =>
+    // Both frames go out in one write, so the publish is still queued when the second frame is rejected.
+    const publishThenRejected = (client: RawClient) =>
       client.write(
         Buffer.concat([
           client.frame(OP.text, "publish"),
@@ -496,7 +490,7 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
         ]),
       );
 
-    // The other subscriber got that publish, and the topic still works for the next one.
+    // The other subscriber received that publish, and the topic still works for the next one.
     async function expectTopicIntact(bystander: RawClient) {
       bystander.text("publish");
       bystander.close(1000);
@@ -504,27 +498,27 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
       expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
     }
 
-    test("gets the 1011 and not the publish", async () => {
+    test("gets the 1011 without the publish", async () => {
       using bystander = await connect("ws");
       using victim = await connect("ws", deflate);
-      publishThenRefused(victim);
+      publishThenRejected(victim);
       expect(await victim.remainingFrames()).toEqual([failed]);
       expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
       await expectTopicIntact(bystander);
     });
 
-    test.skipIf(!fault.available())("leaves its topics when it has unsent data too", async () => {
+    test.skipIf(!fault.available())("is also unsubscribed when data is still unsent", async () => {
       using bystander = await connect("ws");
       using victim = await connect("ws", deflate);
       victim.text("stall");
-      publishThenRefused(victim);
+      publishThenRejected(victim);
       expect(await victim.remainingFrames()).toEqual([]);
       expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
       await expectTopicIntact(bystander);
     });
   });
 
-  // The `ws` package's server sockets use the same parser. There the failure is an 'error' event.
+  // The `ws` package's server sockets use the same parser, but report the failure as an 'error' event.
   describe("the ws package", () => {
     const error = { error: "RangeError", message: "Failed to allocate memory", code: "ERR_MEMORY_ALLOCATION_FAILED" };
     const hi = Buffer.from("hi");
@@ -545,7 +539,7 @@ describe.skipIf(!isASAN)("a buffer for a received message that cannot grow", () 
       await expectStillServing();
     });
 
-    test.skipIf(!fault.available())("emits 'error' with unsent data too", async () => {
+    test.skipIf(!fault.available())("also emits 'error' when data is still unsent", async () => {
       using client = await connect("ws-package");
       client.text("stall");
       client.binary(tooBig);

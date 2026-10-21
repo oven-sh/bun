@@ -13,6 +13,7 @@ import {
   isLinux,
   isWindows,
   joinP,
+  MAX_PATH_BYTES,
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
@@ -670,9 +671,9 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  // The same in somebody else's manifest is not this project's error: the edge is left out, --verbose
-  // names the package, and the registry is not asked for `/` or `/@1.0.0`.
-  describe.each(["hoisted", "isolated"])("a dependency of a package that names no package, %s linker", linker => {
+  // If another package's manifest has such a dependency, it isn't this project's error. The dependency is skipped,
+  // `--verbose` prints the package's name, and the registry isn't asked for `/` or `/@1.0.0`.
+  describe.each(["hoisted", "isolated"])("a package's dependency with an empty package name, %s linker", linker => {
     async function install(ctx: TestContext, ...args: string[]) {
       await using proc = spawn({
         cmd: [bunExe(), "install", ...args],
@@ -1102,8 +1103,8 @@ describe.concurrent("bun-install", () => {
     return file(join(package_dir, "bun.lock")).text();
   }
 
-  // Where the links in node_modules/@repo point, relative to the project, whatever kind of link the linker made
-  // (relative symlinks here, junctions or symlinks on Windows depending on the linker).
+  // Returns where the links in node_modules/@repo point, relative to the project, for any kind of link (relative
+  // symlinks here, junctions or symlinks on Windows depending on the linker).
   async function repoLinks(package_dir: string) {
     const root = realpathSync(package_dir);
     const links: Record<string, string> = {};
@@ -1177,7 +1178,8 @@ describe.concurrent("bun-install", () => {
     const lockfile = await installRepoWorkspace(package_dir);
     expect(lockfile).toContain('"@repo/eslint-config-lol@workspace:packages/eslint-config"');
     expect(lockfile).not.toContain('"@repo/eslint-config@workspace:');
-    // toMatchObject: the link for the old name is currently left behind, which is not what this test is about.
+    // Uses toMatchObject because the link for the old name is currently left behind, which isn't what this test is
+    // about.
     expect(await repoLinks(package_dir)).toMatchObject({
       "@repo/eslint-config-lol": "packages/eslint-config",
       "@repo/typescript-config": "packages/typescript-config",
@@ -1391,8 +1393,8 @@ describe.concurrent("bun-install", () => {
     const manifestPath = "/no-deps";
     const tarballPath = "/no-deps/-/no-deps-1.0.0.tgz";
 
-    // One port that answers both schemes: a connection that opens with a TLS
-    // handshake record (0x16) is piped to `httpsPort`, any other to `httpPort`.
+    // Serves both schemes on one port. A connection that starts with a TLS handshake record (0x16) is piped to
+    // `httpsPort`, and any other connection to `httpPort`.
     async function serveBothSchemes(httpPort: number, httpsPort: number) {
       const server = createServer(client => {
         client.on("error", () => {});
@@ -4696,8 +4698,8 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  // Serves the versions in `registry` for each name, with one fixture tarball per name: the manifest
-  // decides the version. Every request is recorded in `urls`.
+  // Serves the versions in `registry` for each name, with one fixture tarball per name, so the manifest decides the
+  // version. Every request is recorded in `urls`.
   function aliasRegistry(ctx: TestContext, urls: string[], registry: Record<string, string[]>) {
     return async (request: Request) => {
       urls.push(request.url);
@@ -4811,9 +4813,9 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  // What the bounds let through is held to the version the alias resolved to: a plain "boba" that does not take it
-  // gets the registry package named boba. `requests` is what bun asked the registry for, `packages` is the `packages`
-  // section of bun.lock, name -> resolution.
+  // A range that passes the bounds check still has to accept the version that the alias resolved to. A plain "boba"
+  // that doesn't accept it gets the registry package named boba. `requests` is what Bun requested from the registry,
+  // and `packages` is the `packages` section of bun.lock as name -> resolution.
   it.each<{
     name: string;
     files: Record<string, object>;
@@ -4958,7 +4960,7 @@ describe.concurrent("bun-install", () => {
       packages: { "boba": "boba@1.3.0", "moo": "moo@workspace:moo" },
     },
     {
-      // a peer stays with the alias, and bun reports it as unmet
+      // A peer stays with the alias, and Bun reports it as unmet.
       name: "without a matching version still takes a peer of its name",
       files: {
         "package.json": { name: "foo", workspaces: ["moo"], optionalDependencies: { boba: "npm:baz@^1.0.0" } },
@@ -5500,7 +5502,8 @@ describe.concurrent("bun-install", () => {
       },
       holds: [{ early: "kept" }, { narrow: "gone" }],
       packages: { "early": "early@1.0.0", "kept": "kept@1.0.0", "narrow": "narrow@1.0.0" },
-      // What the registry answered is still printed: with another answer `early` might have kept its pick.
+      // The registry's response is still printed, because with a different response `early` might have kept its
+      // version.
       warnings: [/^warn: GET .*\/gone - 404$/, /^warn: No version matching "\^2\.0\.0" found for specifier "short"/],
     },
     {
@@ -5529,7 +5532,7 @@ describe.concurrent("bun-install", () => {
       },
     },
   ])("a fresh install resolves $name the same", ({ files, registry, holds, packages, warnings = [] }) => {
-    it.each(holds)("when the packuments arrive as in %j", async hold => {
+    it.each(holds)("when the manifests arrive in the order %j", async hold => {
       await withContext(defaultOpts, async ctx => {
         setContextHandler(ctx, heldRegistry(ctx, [], registry, hold));
         await writeProject(ctx, files);
@@ -5541,7 +5544,7 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it("does not download the version a range gives up for one that is already there", async () => {
+  it("does not download the version that a range would pick if it can share one that's already installed", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
       const registry = {
@@ -5636,7 +5639,7 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it("requests the manifests of dependencies with an empty version at once", async () => {
+  it("requests the manifests of dependencies with an empty version immediately", async () => {
     await withContext(defaultOpts, async ctx => {
       setContextHandler(ctx, heldRegistry(ctx, [], { holder: kept, kept, short }, { holder: "short" }));
       await writeProject(ctx, {
@@ -7420,7 +7423,7 @@ describe.concurrent("bun-install", () => {
       await rm(packageJsonPath);
       await mkdir(packageJsonPath);
     };
-    // What a writer that died between truncating and writing leaves behind.
+    // This is what a writer that died between truncating and writing leaves behind.
     const empty = (packageJsonPath: string) => writeFile(packageJsonPath, "");
     const fileIsEmpty = (path: string) =>
       [
@@ -7504,7 +7507,7 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  // Where "too deep" starts depends on the stack frames of the build, so each test walks the depths around it.
+  // The depth that counts as "too deep" depends on the build's stack frames, so each test tries the depths around it.
   describe.concurrent("package.json nested deeper than the stack has room for", () => {
     const depths = [250, 500, 1000, 2000, 4000, 8000, 9000, 10_000, 11_000, 12_000, 16_000, 32_000, 48_000, 64_000];
     const nested = {
@@ -7524,7 +7527,7 @@ describe.concurrent("bun-install", () => {
     for (const kind of ["objects", "arrays"] as const) {
       for (const [place, otherFiles, path, failure] of places) {
         it(`${kind} in ${place}: installed up to a depth, reported from there on`, async () => {
-          // One at a time: a debug build takes 250 MB per process.
+          // One at a time, because a debug build uses 250 MB per process.
           const outcomes: string[] = [];
           for (const depth of depths) {
             using dir = tempDir("deep-package-json", {
@@ -12431,8 +12434,7 @@ describe.concurrent.each(namesTheInstallerOwns)("a dependency named %p", key => 
         errors: err.split(/\r?\n/).filter(line => line.startsWith("error:")),
         // nothing is unpacked at the reserved path
         unpacked: await exists(join(ctx.package_dir, "node_modules", key, "package.json")),
-        // the install stops before the linker, so the good package beside the
-        // refused one is not laid out either
+        // The install stops before the linker, so the valid package next to the refused one isn't installed either.
         otherInstalled: await exists(join(ctx.package_dir, "node_modules", "bar", "package.json")),
         // and no lifecycle script runs
         postinstall: await exists(join(ctx.package_dir, "foo-postinstall.txt")),
@@ -12449,7 +12451,7 @@ describe.concurrent.each(namesTheInstallerOwns)("a dependency named %p", key => 
     });
   });
 
-  // No resolver sees a row that bun.lock already holds: the tree builder is what refuses it.
+  // The resolver never sees a dependency that bun.lock already has, so the tree builder has to refuse it.
   it.each(["hoisted", "isolated"])("in a bun.lock an older bun wrote is refused (%s linker)", async linker => {
     using dir = tempDir("lockfile-holds-refused-name", {
       "package.json": JSON.stringify({
@@ -12490,7 +12492,7 @@ describe.concurrent.each(namesTheInstallerOwns)("a dependency named %p", key => 
   });
 });
 
-it.concurrent("installs after package.json drops a name that bun.lock still holds", async () => {
+it.concurrent("installs after package.json drops a name that bun.lock still has", async () => {
   // bun.lock as an older bun wrote it, when the key `@src` was accepted. The
   // project has since renamed that dependency. The stale name is in the file
   // that is loaded, not in the graph that is installed.
@@ -12533,10 +12535,10 @@ it.concurrent("installs after package.json drops a name that bun.lock still hold
   }).toEqual({ errors: [], linked: true, lockfileHoldsStaleName: false, exitCode: 0 });
 });
 
-it.concurrent("refuses a registry package whose own name is an entry of the installer", async () => {
+it.concurrent("refuses a registry package whose own name is reserved by the installer", async () => {
   await withContext(defaultOpts, async ctx => {
     const urls: string[] = [];
-    // The alias is fine. The name the registry serves is the one that would become the cache folder.
+    // The alias is fine. The name that the registry serves is the one that would become the cache folder.
     setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
     await writeFile(
       join(ctx.package_dir, "package.json"),
@@ -12559,7 +12561,7 @@ it.concurrent("refuses a registry package whose own name is an entry of the inst
   });
 });
 
-it.concurrent("still installs an alias that names no entry of the installer", async () => {
+it.concurrent("still installs an alias that isn't reserved by the installer", async () => {
   await withContext(defaultOpts, async ctx => {
     const urls: string[] = [];
     setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
@@ -12677,7 +12679,7 @@ describe.concurrent("dependency names containing terminal control characters", (
   // registry serves it as an ordinary JSON string (`"ev\u001b]52;..."`), so it
   // reaches bun like any other dependency name.
   const controlName = "ev\x1b]52;c;aGkK\x07\x1b[2Jil";
-  // How bun reports it: with the control characters spelled out.
+  // Bun prints it with the control characters escaped.
   const escapedName = String.raw`ev\x1b]52;c;aGkK\x07\x1b[2Jil`;
   // Forces the progress line, which echoes the name of every manifest being
   // fetched, even though stderr is a pipe here.
@@ -12761,8 +12763,8 @@ describe.concurrent("dependency names containing terminal control characters", (
       setContextHandler(ctx, registry(ctx, urls));
       await writeFile(join(ctx.package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
 
-      // The alias of this dependency is the specifier until the tarball has
-      // been resolved: full of characters a folder name may not contain.
+      // Until the tarball is resolved, this dependency's alias is the specifier, which is full of characters that a
+      // folder name can't contain.
       const { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "add", `${ctx.registry_url}bar-0.0.2.tgz`],
         cwd: ctx.package_dir,
@@ -13210,7 +13212,7 @@ describe.concurrent("isolated linker: file: dependencies that point outside the 
         const { err, exitCode } = await install(projectDir);
 
         expect(err).toContain("refusing to install dependency loot with unsafe folder path");
-        // Nothing in the store is made from the outside directory.
+        // Nothing in the store comes from the outside directory.
         const store = await readdirSorted(join(projectDir, "node_modules", ".bun"));
         expect(store.filter(name => name.startsWith("loot@"))).toEqual([]);
         expect(exitCode).toBe(1);
@@ -13769,7 +13771,7 @@ describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path 
 
   it.each([
     ["exactly the buffer size, leaving no room for the NUL terminator", 0],
-    // The folder path alone fits; "/package.json" is what does not.
+    // The folder path alone fits, but it doesn't with "/package.json" appended.
     ['longer than the buffer by less than the appended "/package.json"', 8],
   ])("fails with ENAMETOOLONG when it is %s", async (_, extraBytes) => {
     using dir = tempDir("file-dep-path-buffer-overflow", {});
@@ -13777,6 +13779,26 @@ describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path 
     const { err, exitCode } = await installFolderDependency(String(dir), PATH_BUFFER_BYTES + extraBytes);
 
     expect(err).toContain("error: ENAMETOOLONG");
+    expect(exitCode).toBe(1);
+  });
+
+  it("fails when the absolute path fits and the path relative to the project does not", async () => {
+    using dir = tempDir("file-dep-relative-path-overflow", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        dependencies: { dep: "file:/" + Buffer.alloc(PATH_BUFFER_BYTES - 2, "d").toString() },
+      }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain('error: Dependency "dep" has an unsafe folder path');
     expect(exitCode).toBe(1);
   });
 });
@@ -13789,7 +13811,7 @@ describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path 
 // got whatever `x.tgz` the project directory held, and with `file:../x.tgz` or
 // an absolute path any tarball on the machine, installed under its name.
 describe.concurrent("file: tarballs declared by a package installed from the cache", () => {
-  // Copied to every path the declaring package names; installing it is the bug.
+  // Copied to every path that the declaring package refers to. If it gets installed, that's the bug.
   const planted = join(import.meta.dir, "baz-0.0.3.tgz");
   const plantedManifest = { name: "baz", version: "0.0.3", bin: { "baz-run": "index.js" } };
 
@@ -13849,8 +13871,8 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     return { err, out, exitCode };
   }
 
-  // What bun prints for an edge it refuses. `declarer` is how bun prints the
-  // declaring package, which depends on where it came from.
+  // Returns what Bun prints for a dependency that it refuses. `declarer` is how Bun prints the declaring package, which
+  // depends on where it came from.
   function refusal(name: string, spec: string, declarer: string) {
     return [
       `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarballs are only allowed in this project's package.json files`,
@@ -13881,8 +13903,8 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     expect(exitCode).toBe(1);
   }
 
-  // A local tarball is part of the project like a file: folder, so it may name
-  // other tarballs of the project. They are read relative to the project.
+  // A local tarball is part of the project, like a file: folder, so it can depend on other tarballs in the project.
+  // Their paths are relative to the project.
   it("installs the ones declared by a local tarball dependency", async () => {
     using dir = tempDir("local-tarballs-of-local-tarball-dep", {
       "project/package.json": rootPackageJson({ bar: "file:./bar.tgz" }),
@@ -13950,9 +13972,8 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     });
   });
 
-  // Peers are installed too, so the same refusal applies; unlike a regular
-  // dependency, an unresolved peer is not reported a second time as
-  // "failed to resolve".
+  // Peers are installed too, so they're refused the same way. Unlike a regular dependency, an unresolved peer isn't
+  // reported a second time as "failed to resolve".
   it("rejects the one a registry package declares as a peer dependency", async () => {
     await withContext(defaultOpts, async ctx => {
       using dir = tempDir("peer-local-tarball-of-registry-dep", {});
@@ -13968,9 +13989,8 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     });
   });
 
-  // The remedy the note describes: a tarball the root package.json itself depends
-  // on, under the same name, is the project's own, so a registry package asking
-  // for that exact dependency gets it too.
+  // This is the fix that the note describes. A tarball that the root package.json itself depends on under the same name
+  // belongs to the project, so a registry package that asks for that exact dependency gets it too.
   it("installs the one the root package.json declares as well", async () => {
     await withContext(defaultOpts, async ctx => {
       using dir = tempDir("root-declared-local-tarball-of-registry-dep", {});
@@ -13997,7 +14017,7 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     });
   });
 
-  // Only the identical dependency counts: neither the name nor the path alone.
+  // Only the identical dependency counts. The same name or the same path alone isn't enough.
   for (const [what, rootDependencies] of [
     ["another tarball under the same name", { inside: "file:./vendored.tgz" }],
     ["the same tarball under another name", { vendored: "file:./inside.tgz" }],
@@ -14029,9 +14049,9 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     });
   }
 
-  // A bundled dependency ships inside the declaring package, so the root cannot
-  // stand in for it and the note is left out.
-  it("rejects the one a registry package declares as bundled, without the root remedy", async () => {
+  // A bundled dependency ships inside the package that declares it, so adding it to the root wouldn't help, and the
+  // note is omitted.
+  it("rejects the one a registry package declares as bundled, without suggesting to add it to the root", async () => {
     await withContext(defaultOpts, async ctx => {
       using dir = tempDir("bundled-local-tarball-of-registry-dep", {});
       const root = String(dir);
@@ -14774,7 +14794,7 @@ async function expectIsEvenUsesVendoredIsOdd(projectDir: string) {
 }
 
 async function expectVendoredIsOddLinked(projectDir: string) {
-  // Folder dependencies are never hoisted: the rule's target is linked inside is-even.
+  // Folder dependencies are never hoisted, so the rule's target is linked inside is-even.
   expect(await readdirSorted(join(projectDir, "node_modules", "is-even", "node_modules"))).toEqual(["is-odd"]);
   expect(await readdirSorted(join(projectDir, "node_modules", "is-even", "node_modules", "is-odd"))).toEqual([
     "index.js",
@@ -14803,7 +14823,8 @@ it.concurrent("fails when a file: override for a registry package's dependency n
       savesLockfile: false,
     });
 
-    // Resolved like a root file: dependency: the missing folder fails the resolve, before anything is installed.
+    // It's resolved like a file: dependency of the root, so the missing folder fails during resolution, before anything
+    // is installed.
     expect(err).toContain('package.json not found for "file:./vendor/is-odd" dependency "is-odd"');
     expect(out).not.toContain("packages installed");
     expect(await exists(join(ctx.package_dir, "node_modules", "is-even", "node_modules", "is-odd"))).toBe(false);
@@ -15109,9 +15130,8 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
     });
   }
 
-  // The trust rule of the linkers is keyed on the package, not on the one
-  // dependency they place: `--production` drops the root's devDependency, and
-  // the only dependency left on the link is the peer dependency of `bar`.
+  // The linkers' trust rule is keyed on the package, not on the particular dependency that they place. `--production`
+  // drops the root's devDependency, so the only dependency left on the link is the peer dependency of `bar`.
   for (const linker of ["hoisted", "isolated"]) {
     it(`are still linked by the ${linker} linker when --production leaves only a registry package's peer dependency on a root-declared one`, async () => {
       await withContext(defaultOpts, async ctx => {
@@ -15144,7 +15164,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
     });
   }
 
-  // What stays allowed. A path is relative to the package.json that declares it.
+  // These are still allowed. A path is relative to the package.json that declares it.
   it("are still resolved when the root package.json or a workspace declares them", async () => {
     using dir = tempDir("escaping-links-of-root-and-workspace", {
       ...linkTargets(),
@@ -15299,8 +15319,8 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
     expect(exitCode).toBe(0);
   });
 
-  // The documented form: `link:<name>` is looked up in the global link dir that
-  // `bun link` populates, whoever declares it.
+  // The documented form: `link:<name>` is looked up in the global link directory that `bun link` populates, no matter
+  // which package declares it.
   it("do not affect a registry package linking a package by name", async () => {
     await withContext(defaultOpts, async ctx => {
       using dir = tempDir("named-link-of-registry-dep", {
@@ -16521,16 +16541,16 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
 // without a TTY; with colors enabled an emoji shares the buffer with the name,
 // so both color settings are covered.
 describe.concurrent("progress bar with a long name", () => {
-  // Names end at 255 bytes now, which always fitted: the two tests with this name only pin that
-  // the longest name is shown and reported whole.
+  // Names are now limited to 255 bytes, which always fit. The two tests with this name only check that the longest name
+  // is displayed and reported in full.
   const longName = Buffer.alloc(255, "a").toString();
   const progressEnvs = [
     ["NO_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: "1" }],
     ["FORCE_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: undefined, FORCE_COLOR: "1" }],
   ] as const;
 
-  // What still outgrows the buffer: a dependency that has no name yet is keyed by its specifier
-  // (`bun add <url>` writes that until the tarball tells the name), and a URL has no length limit.
+  // This can still be longer than the buffer. A dependency that has no name yet is keyed by its specifier (`bun add
+  // <url>` writes that until the tarball provides the name), and a URL has no length limit.
   it.each(progressEnvs)("tarball URL longer than the buffer, not named yet (%s)", async (_colors, progressEnv) => {
     const tarball = await new Bun.Archive(
       { "package/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
@@ -16712,7 +16732,8 @@ describe.concurrent("a relative --cwd is applied once", () => {
   });
 });
 
-// A skipped flag leaves its value behind: `bun install --env-file ci.env` installed and saved the package "ci.env".
+// A skipped flag used to leave its value behind: `bun install --env-file ci.env` installed and saved the package
+// "ci.env".
 describe.concurrent("a long flag the command does not have", () => {
   const PACKAGE_JSON = JSON.stringify({ name: "foo", version: "0.0.1" });
   const project = () =>
@@ -16759,10 +16780,9 @@ describe.concurrent("a long flag the command does not have", () => {
     expect((await readdirSorted(String(dir))).filter(name => !name.startsWith("."))).toEqual(["dep", "package.json"]);
   });
 
-  it("is an error although another command has it", async () => {
+  it("is an error even if another command has it", async () => {
     using dir = project();
     expect(await bunIn(String(dir), ["install", "--latest"])).toEqual(rejected("install", "--latest"));
-    expect(await bunIn(String(dir), ["add", "--recursive", "./dep"])).toEqual(rejected("add", "--recursive"));
   });
 
   it("is skipped when it comes from BUN_OPTIONS", async () => {
@@ -16797,7 +16817,7 @@ describe.concurrent("the flags of the runtime that take no value", () => {
     "--trace-exit",
     "--expose-internals",
   ];
-  // What some of these commands have themselves, with another meaning.
+  // Flags that some of these commands have themselves, with a different meaning.
   const taken = ["--help", "--silent", "--prefer-offline", "--no-env-file", "--check", "--interactive"];
   // These flags and --use-system-ca are mutually exclusive.
   const exclusive = ["--use-openssl-ca", "--use-bundled-ca"];
@@ -16833,7 +16853,7 @@ describe.concurrent("the flags of the runtime that take no value", () => {
     ["update", { dep: "./dep" }, []],
   ];
 
-  it.each(commands)("change nothing about bun %s", async (command, dependencies, args) => {
+  it.each(commands)("don't change what bun %s does", async (command, dependencies, args) => {
     const flags = await runtimeFlags();
     const plain = await outcome(dependencies, [command, ...args]);
     expect(plain.stderr).not.toContain("error:");
@@ -16913,7 +16933,7 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The value is taken in both forms: left behind, it would be the name of a package to add.
+  // The value is consumed in both forms. If it were left behind, it would be the name of a package to add.
   it.each([
     [["--no-optional"], ["--omit=optional"], ["dep", "dev"]],
     [["--ignore-optional"], ["--omit=optional"], ["dep", "dev"]],
@@ -16924,6 +16944,9 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     [["--package-lock-only"], ["--lockfile-only"], []],
     [["--immutable"], ["--frozen-lockfile"], ["dep", "dev", "opt"]],
     [["--shamefully-hoist"], ["--linker=hoisted"], ["dep", "dev", "opt"]],
+    [["--node-linker=hoisted"], ["--linker=hoisted"], ["dep", "dev", "opt"]],
+    [["--node-linker", "isolated"], ["--linker=isolated"], ["dep", "dev", "opt"]],
+    [["--install-strategy=linked"], ["--linker=isolated"], ["dep", "dev", "opt"]],
     [["--progress=false"], ["--no-progress"], ["dep", "dev", "opt"]],
     [["--progress", "false"], ["--no-progress"], ["dep", "dev", "opt"]],
     [["--loglevel=silent"], ["--silent"], ["dep", "dev", "opt"]],
@@ -16964,6 +16987,74 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["--loglevel=info"],
   ].flat();
 
+  // Flags with no Bun equivalent. `dep` is a folder that could be installed, so these also check that the value of a
+  // flag is skipped along with it.
+  const ignored = [
+    ["--ci"],
+    ["--yes"],
+    ["--no-color"],
+    ["--color=always"],
+    ["--no-package-lock"],
+    ["--no-lockfile"],
+    ["--pure-lockfile"],
+    ["--no-frozen-lockfile"],
+    ["--no-immutable"],
+    ["--check-files"],
+    ["--no-bin-links"],
+    ["--foreground-scripts"],
+    ["--strict-peer-dependencies"],
+    ["--no-strict-peer-dependencies"],
+    ["--prefer-dedupe"],
+    ["--strict-ssl=false"],
+    ["--include=dev"],
+    ["--include", "dep"],
+    ["--only=dev"],
+    ["--network-timeout=100000"],
+    ["--network-timeout", "dep"],
+    ["--fetch-retries", "dep"],
+    ["--reporter=append-only"],
+    ["--cache", "dep"],
+    ["--cache-folder=dep"],
+    ["--store-dir", "dep"],
+    ["--mutex", "dep"],
+    ["--install-strategy=nested"],
+    ["--loglevel=debug"],
+    ["--fund", "false"],
+    ["--yes", "true"],
+    // The next flag isn't this option's value.
+    ["--cache", "--no-progress"],
+    // Bun 1.4 ignored these too, so scripts that pass them keep working.
+    ["--prefix=dep"],
+    ["--prefix", "dep"],
+    ["--dir", "dep"],
+    ["--workspace=dep"],
+    ["--workspace", "dep"],
+    ["--ws"],
+    ["--workspace-root"],
+    ["--include-workspace-root"],
+    ["--save-catalog-name=tools"],
+    ["--lockfile-dir", "dep"],
+    ["--virtual-store-dir=dep"],
+    ["--tag=next"],
+    ["--userconfig=dep/.npmrc"],
+    ["--userconfig", "dep"],
+    ["--globalconfig=dep/.npmrc"],
+    ["--npmrc-auth-file=dep/.npmrc"],
+    ["--before=2026-01-01"],
+    ["--min-release-age", "7"],
+    ["--config.frozen-lockfile=true"],
+    ["--config.ignore-scripts=true"],
+    ["--allow-git=none"],
+    ["--legacy-peer-deps=true"],
+    ["--save-dev=false"],
+    ["--no-ignore-scripts"],
+    ["--no-offline"],
+    ["--no-save-peer"],
+    ["--no-cache-folder"],
+    // Unlike `--noproxy`, this one has no value, so the package after it still counts.
+    ["--no-proxy"],
+  ].flat();
+
   it.each([
     ["install", groups, []],
     ["ci", groups, []],
@@ -16971,7 +17062,7 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["remove", groups, ["dep"]],
     ["update", groups, []],
   ] as [string, object, string[]][])(
-    "what bun %s does anyway is not an error to ask for",
+    "a flag for something that bun %s already does isn't an error",
     async (command, pkg, args) => {
       const plain = await outcome([command, ...args], pkg, true);
       expect(plain.stderr).not.toContain("error:");
@@ -16979,29 +17070,10 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
 
       expect(await outcome([command, ...satisfied, ...args], pkg, true)).toEqual(plain);
       expect(await outcome([command, ...args, ...satisfied], pkg, true)).toEqual(plain);
+      expect(await outcome([command, ...ignored, ...args], pkg, true)).toEqual(plain);
+      expect(await outcome([command, ...args, ...ignored], pkg, true)).toEqual(plain);
     },
   );
-
-  it.each([
-    [["install", "--no-package-lock"], "install", "--no-package-lock", "--no-save"],
-    [["add", "--no-lockfile", "./dep"], "add", "--no-lockfile", "--no-save"],
-    [["install", "--pure-lockfile"], "install", "--pure-lockfile", "--no-save"],
-    [["ci", "--cache", "dep"], "install", "--cache", "--cache-dir"],
-    [["ci", "--cache=dep"], "install", "--cache", "--cache-dir"],
-    [["install", "--cache-folder", "dep"], "install", "--cache-folder", "--cache-dir"],
-    [["install", "--workspace=dep"], "install", "--workspace", "--filter"],
-    [["install", "--install-strategy=nested"], "install", "--install-strategy", "--linker"],
-    [["install", "--node-linker=hoisted"], "install", "--node-linker", "--linker"],
-  ])("bun %j is an error that names the closest flag", async (cmd, command, theirs, ours) => {
-    expect(await outcome(cmd, {})).toEqual({
-      stdout: "",
-      stderr: `error: bun ${command} has no ${theirs} flag.\nnote: Did you mean ${ours}?\n`,
-      exitCode: 1,
-      packageJson: { name: "foo", version: "0.0.1" },
-      files: ["dep", "dev", "opt", "package.json"],
-      installed: [],
-    });
-  });
 
   // They say where a new dependency is saved.
   it.each([
@@ -17015,7 +17087,7 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     for (const flag of flags) expect(await outcome([command, flag, ...args], groups, true)).toEqual(plain);
   });
 
-  // `bun update --dev` and `--production` choose what is updated. npm's flags of those names do not.
+  // `bun update --dev` and `--production` choose what gets updated. npm's flags with those names don't.
   it.each([
     [[], { a: "^1.1.0", b: "^1.1.0", exitCode: 0 }],
     [["--dev"], { a: "^1.0.0", b: "^1.1.0", exitCode: 0 }],
@@ -17065,21 +17137,10 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
   });
 
   it.each([
-    [["install", "--loglevel=loud"], "install", "--loglevel"],
-    [["install", "--loglevel", "dep"], "install", "--loglevel"],
-    [["install", "--audit"], "install", "--audit"],
-    [["install", "--no-bin-links"], "install", "--no-bin-links"],
     [["pm", "ls", "--no-audit"], "pm", "--no-audit"],
     [["link", "--no-fund"], "link", "--no-fund"],
-    // These ask for a default, but .npmrc, bunfig.toml or another flag can say the opposite.
-    ...["install", "add", "remove", "update"].flatMap(command => [
-      [[command, "--include=dev"], command, "--include"],
-      [[command, "--include", "dev"], command, "--include"],
-      [[command, "--include=optional"], command, "--include"],
-      [[command, "--include=peer"], command, "--include"],
-      [[command, "--no-frozen-lockfile"], command, "--no-frozen-lockfile"],
-    ]),
-    [["ci", "--no-frozen-lockfile"], "install", "--no-frozen-lockfile"],
+    [["install", "--frozen-lockfil"], "install", "--frozen-lockfil"],
+    [["install", "--no-ignore-script"], "install", "--no-ignore-script"],
   ] as [string[], string, string][])("bun %j is still an error", async (cmd, command, flag) => {
     const { stderr, packageJson, exitCode } = await outcome(cmd);
     expect(stderr).toBe(
@@ -17132,7 +17193,7 @@ describe.concurrent.each([
 
 describe.concurrent("deprecated versions", () => {
   type Versions = Record<string, Record<string, unknown>>;
-  // Manifests only: `--lockfile-only` resolves and downloads no tarball.
+  // Only manifests, because `--lockfile-only` resolves without downloading tarballs.
   function serveManifests(packages: Record<string, Versions>, tags?: Record<string, string>) {
     const requests: string[] = [];
     const server = Bun.serve({
@@ -17195,7 +17256,7 @@ describe.concurrent("deprecated versions", () => {
       "warn: deprecated hostile@1.0.0: a\\x1b[2Kb\\nwarn: c",
       "warn: deprecated old@1.1.0: use new",
     ]);
-    // bun.lock has the versions now: nothing is resolved
+    // bun.lock has the versions now, so nothing is resolved.
     expect(await resolve(String(dir), registry)).toEqual([]);
   });
 
@@ -17239,7 +17300,7 @@ describe.concurrent("deprecated versions", () => {
     expect(await resolve(String(dir), registry, "update")).toEqual(["warn: deprecated old@1.1.0: use new"]);
   });
 
-  it("--silent says nothing", async () => {
+  it("--silent prints nothing", async () => {
     using registry = serveManifests(packages);
     using dir = project({ dependencies: { old: "1.1.0", parent: "1.0.0" } });
     expect(
@@ -17257,7 +17318,8 @@ describe.concurrent("deprecated versions", () => {
       "warn: deprecated old@1.1.0: use new",
     ];
     expect((await resolve(String(dir), registry)).sort()).toEqual(first);
-    // The cache is written in the background: until both manifests are there, an install asks the registry again.
+    // The cache is written in the background. Until both manifests are in it, an install requests them from the
+    // registry again.
     for (let attempt = 0; ; attempt++) {
       const cached = (await readdirSorted(join(String(dir), ".cache"))).filter(name => name.endsWith(".npm"));
       if (cached.length === 2) break;
@@ -17292,10 +17354,11 @@ describe.concurrent("deprecated versions", () => {
   const D = { deprecated: "old" };
   const nightly = "4.6.0-nightly.1";
 
-  // What npm-pick-manifest 11.0.3 picks, except that it refuses a written `latest` that names no version.
+  // The expected values are what npm-pick-manifest 11.0.3 picks, except that it refuses an explicit `latest` that
+  // doesn't point to a version.
   it.each<[string, Versions, Record<string, string>, Record<string, string | null>]>([
     [
-      "the newest versions are stubs, as of @types/* once the package has its own types",
+      "the newest versions are stubs, like @types/* once the package ships its own types",
       { "0.5.3": {}, "2.0.2": D, "2.0.3": D },
       { latest: "2.0.3" },
       {
@@ -17427,7 +17490,7 @@ describe.concurrent("deprecated versions", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("a version in bun.lock stays when it gets deprecated, until bun update", async () => {
+  it("a version in bun.lock is kept when it gets deprecated, until bun update", async () => {
     const versions: Versions = { "1.0.0": {}, "1.1.0": {} };
     using registry = serveManifests({ dep: versions });
     using dir = project({ dependencies: { dep: "^1.0.0" } });
@@ -17489,8 +17552,8 @@ it.concurrent("a word that starts with ssh or http is not a URL", async () => {
   expect(exitCode).toBe(0);
 });
 
-// `npm publish` from a monorepo makes this shape (exrs@1.0.3, vellum@0.12.2): the path leaves the package, and the
-// tarball ships the copy in its node_modules. The copy is the dependency. The path is recorded and never followed.
+// `npm publish` from a monorepo creates this shape (exrs@1.0.3, vellum@0.12.2): the path leaves the package, and the
+// tarball ships the copy in its node_modules. That copy is the dependency. The path is recorded but never followed.
 describe.concurrent.each(["hoisted", "isolated"])(
   "a registry package's file: dependency with a path that leaves the package, %s linker",
   linker => {
@@ -17605,14 +17668,14 @@ describe.concurrent.each(["hoisted", "isolated"])(
             peerDependenciesMeta: { inner: { optional: true } },
           },
         },
-        // the root depends on this one, so mid@1.0.0 stays nested under "outer"
+        // The root depends on this one, so mid@1.0.0 stays nested under "outer".
         { json: { name: "mid", version: "2.0.0" } },
       );
       using dir = project(server.url.href, { outer: "1.0.0", mid: "2.0.0" });
       const cwd = join(String(dir), "project");
       const { stderr, exitCode } = await bunIn(cwd, ["install"]);
-      // Nothing is installed for the peer. In the hoisted tree the copy "outer" ships is next to mid@1.0.0 and serves
-      // it. In the store the folder is private to "outer", and the optional peer stays unlinked.
+      // Nothing is installed for the peer. In the hoisted tree, the copy that "outer" ships is next to mid@1.0.0, which
+      // loads it. In the store, the folder is private to "outer", and the optional peer stays unlinked.
       expect(errors(stderr)).toEqual([]);
       expect(outside(cwd)).toEqual([]);
       expect(exitCode).toBe(0);
@@ -17623,3 +17686,57 @@ describe.concurrent.each(["hoisted", "isolated"])(
     });
   },
 );
+
+// `overrides` and `resolutions` values are passed to the resolver unchanged.
+it.concurrent.each(["resolutions", "overrides"])(
+  'fails with ENAMETOOLONG for a file: path in root package.json "%s" that is longer than the path buffer',
+  async field => {
+    using dir = tempDir("override-file-dep-too-long", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { dep: "1.0.0" },
+        [field]: { dep: "file:./" + Buffer.alloc(MAX_PATH_BYTES + 1000, "a").toString() },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain("error: ENAMETOOLONG");
+    expect(err).toContain("failed to resolve");
+    expect(exitCode).toBe(1);
+  },
+);
+
+it.concurrent("doesn't install a bun.lock folder package whose path is longer than the path buffer", async () => {
+  using dir = tempDir("lockfile-folder-too-long", {
+    "package.json": JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { okpkg: "file:./okpkg" } }),
+    "okpkg/package.json": JSON.stringify({ name: "okpkg", version: "1.0.0" }),
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "foo", dependencies: { okpkg: "file:./okpkg" } } },
+      packages: { okpkg: [`okpkg@file:${Buffer.alloc(MAX_PATH_BYTES + 1000, "a").toString()}`, {}] },
+    }),
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--linker", "hoisted"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toContain("ENAMETOOLONG: folder path for package okpkg is too long");
+  expect(out).not.toContain("1 package installed");
+  expect(exitCode).toBe(1);
+});

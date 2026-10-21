@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 
 /// Enforce closing bracket location in JSX.
 pub struct JsxClosingBracketLocation {
-    /// `None` is `false`: anywhere.
+    /// `None` is `false`, which allows any location.
     non_empty: Option<Location>,
     self_closing: Option<Location>,
 }
@@ -21,7 +21,7 @@ const BRACKET_LOCATION: Message =
     Message::new("bracketLocation", "The closing bracket must be {{location}}{{details}}");
 
 impl Location {
-    fn of(option: &Json) -> Option<Location> {
+    fn from_option(option: &Json) -> Option<Location> {
         match option.as_str()? {
             b"after-props" => Some(Location::AfterProps),
             b"props-aligned" => Some(Location::PropsAligned),
@@ -53,11 +53,11 @@ impl Rule for JsxClosingBracketLocation {
         let (config, mut both) = (options.object(0), Some(Location::TagAligned));
         // `"tag-aligned"` is short for `{ location: "tag-aligned" }`.
         if let Some(location) = options.get(0).filter(|it| it.as_str().is_some()).or_else(|| config.get("location")) {
-            both = Location::of(location);
+            both = Location::from_option(location);
         }
         JsxClosingBracketLocation {
-            non_empty: config.get("nonEmpty").map_or(both, Location::of),
-            self_closing: config.get("selfClosing").map_or(both, Location::of),
+            non_empty: config.get("nonEmpty").map_or(both, Location::from_option),
+            self_closing: config.get("selfClosing").map_or(both, Location::from_option),
         }
     }
 
@@ -128,26 +128,26 @@ impl Rule for JsxClosingBracketLocation {
     }
 }
 
-/// Where the `>` of the opening element `node` is, or the `/` before it.
+/// Returns the offset of the opening element `node`'s `>`, or of the `/` before it.
 fn closing_bracket<'a>(file: &'a File<'a>, node: Span, is_self_closing: bool) -> u32 {
     let bracket = node.end.saturating_sub(1);
     if !is_self_closing {
         return bracket;
     }
     match file.text().get(..bracket as usize) {
-        // Not the end of a comment between the two.
+        // Make sure the `/` isn't the end of a comment between the two.
         Some([.., before, b'/']) if *before != b'*' => bracket - 1,
         _ => file.tokens_in(node).nth_back(1).map_or(bracket, Token::start),
     }
 }
 
-/// `/^\s*/.exec(line)[0]` for the line that `at` is in.
+/// `/^\s*/.exec(line)[0]` for the line that contains `at`.
 fn indentation<'a>(file: &'a File<'a>, at: u32) -> &'a [u8] {
     let whole = file.line_text(file.line_of(at));
     whole.get(..whole.len() - strings::trim_js_whitespace_start(whole).len()).unwrap_or_default()
 }
 
-/// `getIndentation`: spaces stand for what is before the column and is no whitespace.
+/// `getIndentation`: pads with spaces for the non-whitespace characters before the column.
 fn push_indentation(out: &mut Vec<u8>, indentation: &[u8], correct_column: u32) {
     let len = strings::wtf8_len_utf16(indentation);
     out.extend_from_slice(indentation);

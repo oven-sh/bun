@@ -3,7 +3,7 @@
 
 use bun_lint::options::Json;
 
-/// What kind of import it is, or where it is from. In the order of their priority.
+/// The kind of import, or where it comes from. In priority order.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) enum Selector {
     Type,
@@ -45,7 +45,7 @@ impl Selector {
     }
 }
 
-/// How an import is written. In the order of their priority.
+/// How an import is written. In priority order.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) enum Modifier {
     SideEffect,
@@ -105,13 +105,13 @@ impl GroupName {
     }
 }
 
-/// An element of `customGroups` that `groups` has.
+/// A `customGroups` element that `groups` refers to.
 #[derive(Debug)]
 struct CustomGroup {
     element_name_pattern: Vec<Vec<u8>>,
     selector: Option<Selector>,
     modifiers: u8,
-    /// Where it is in `groups`.
+    /// Its index in `groups`.
     group: usize,
 }
 
@@ -124,22 +124,21 @@ pub(crate) struct Options {
     pub(super) ignore_case: bool,
     pub(super) newlines_between: bool,
     pub(super) internal_pattern: Vec<Vec<u8>>,
-    /// For each boundary between two groups, what a `{ "newlinesBetween": .. }` there says.
-    /// Empty if there is none.
+    /// For each boundary between two groups, the value of a `{ "newlinesBetween": .. }` marker there. Empty if there
+    /// are none.
     pub(super) newline_boundary_overrides: Vec<Option<bool>>,
     custom_groups: Vec<CustomGroup>,
-    /// By priority: a selector, modifiers, and where it is in `groups`.
+    /// By priority: a selector, modifiers, and the index in `groups`.
     predefined_groups: Vec<(Selector, u8, usize)>,
     unknown_group: usize,
-    /// A group takes all imports with side effects, so they are moved there even though they are
-    /// not sorted.
+    /// A group matches all side-effect imports, so they're moved there even though they aren't sorted.
     pub(super) regroups_side_effect: bool,
     pub(super) regroups_side_effect_style: bool,
     /// Treat side-effect imports as barriers. oxfmt only keeps them at their index and lets other imports move past them.
     pub(super) stops_at_side_effects: bool,
 }
 
-/// `fast_glob::glob_match`: `bun_glob` is a port of the same `glob-match`.
+/// `fast_glob::glob_match`. `bun_glob` is a port of the same `glob-match`.
 fn glob_match(pattern: &[u8], source: &[u8]) -> bool {
     bun_glob::pattern::fast_glob_match(pattern, source)
 }
@@ -195,11 +194,11 @@ fn strings(value: &Json, name: &str) -> Result<Vec<Vec<u8>>, Vec<u8>> {
         .collect()
 }
 
-fn shown(name: &[u8]) -> &bstr::BStr {
+fn printable(name: &[u8]) -> &bstr::BStr {
     bstr::BStr::new(name)
 }
 
-/// `value`: as it is written in JSON. `None`: imports are left as they are.
+/// `value` is the raw JSON. Returns `None` if imports are left as they are.
 pub(crate) fn compile(
     value: &[u8],
     stops_at_side_effects: bool,
@@ -355,7 +354,7 @@ pub(crate) fn compile(
         {
             return Err(invalid(&format!(
                 "unknown group name `{}` in `groups`",
-                shown(name)
+                printable(name)
             )));
         }
     }
@@ -365,7 +364,7 @@ pub(crate) fn compile(
     {
         return Err(invalid(&format!(
             "`customGroups` name `{}` conflicts with a predefined group name; predefined names and `unknown` cannot be used as `groupName`",
-            shown(&definition.name)
+            printable(&definition.name)
         )));
     }
 

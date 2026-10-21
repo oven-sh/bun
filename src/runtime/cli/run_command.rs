@@ -437,6 +437,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         #[cfg(windows)]
         let ipc_fd: Option<bun_sys::Fd> = None; // TODO: implement on Windows
 
+        // `Loader::load_process` drops these, but a package script inherits `ipc_fd` and needs them.
+        #[cfg(not(windows))]
+        if ipc_fd.is_some() {
+            if let Some(fd_s) = bun_core::env_var::NODE_CHANNEL_FD.get() {
+                env.map.put(b"NODE_CHANNEL_FD", fd_s)?;
+            }
+            if let Some(mode) = bun_core::env_var::NODE_CHANNEL_SERIALIZATION_MODE.get() {
+                env.map.put(b"NODE_CHANNEL_SERIALIZATION_MODE", mode)?;
+            }
+        }
+
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
@@ -666,7 +677,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
@@ -952,12 +963,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        path_buf[..entry_path.len()].copy_from_slice(entry_path);
-        path_buf[entry_path.len()] = 0;
-        // SAFETY: NUL-terminated above; `path_buf` outlives the call.
-        let path_z = ZStr::from_buf(&path_buf[..], entry_path.len());
-        let src = sys::File::read_from(Fd::cwd(), path_z)?;
+        let src = sys::File::read_from(Fd::cwd(), entry_path)?;
 
         crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
@@ -1008,12 +1014,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `Run::start` does it then, once there is a file watcher.
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
         if is_checked && !watches {
-            let has_type_errors = match &main {
-                BootMain::File { path, loader } => {
-                    !Self::check_main(ctx, path, *loader, &ctx.passthrough, None)
-                }
-                BootMain::Bake => !crate::cli::check_command::check_project_before(None),
+            // `bun bake` always watches, so it checks in `Run::start`.
+            let BootMain::File { path, loader } = &main else {
+                unreachable!("bun bake always watches")
             };
+            let has_type_errors = !Self::check_main(ctx, path, *loader, &ctx.passthrough, None);
             if has_type_errors {
                 Global::exit(1);
             }
@@ -1509,6 +1514,13 @@ impl Run<'_> {
                         entry,
                     )
                 }
+                // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the
+                // kill signal's JS handlers run first, as in watch mode.
+                if entry.is_none() {
+                    bun_jsc::posix_signal_handle::set_watch_kill_signal(
+                        ctx.debug.watch_kill_signal,
+                    );
+                }
             }
             cli::command::HotReload::Watch => {
                 // SAFETY: `vm` is the boxed-and-leaked main-thread VM
@@ -1529,7 +1541,7 @@ impl Run<'_> {
         if entry == Some(b".".as_slice()) {
             // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
             // singleton (set in `Transpiler::init`).
-            let tld = unsafe { (*vm.transpiler.fs).top_level_dir };
+            let tld = unsafe { (*vm.transpiler.fs).top_level_dir() };
             if !tld.is_empty() {
                 entry = Some(tld);
             }
@@ -1623,6 +1635,8 @@ impl Run<'_> {
             vm.report_exception_in_hot_reloaded_module_if_needed();
             loop {
                 while vm.is_event_loop_alive() {
+                    // After an unhandled error, only immediates keep the loop alive.
+                    vm.timers_ran_after_error |= vm.unhandled_error_counter > 0;
                     vm.tick();
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
@@ -2602,7 +2616,12 @@ impl RunCommand {
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
+        crate::cli::script_or_command::note_file_or_executable(
+            env_loader,
+            target_name,
+            fs_top_level_dir,
+        );
         bun_core::scoped_log!(
             RUN_LOG,
             "Try resolve `{}` in `{}`",
@@ -2619,7 +2638,7 @@ impl RunCommand {
                         .get()
                         .unwrap_or(false);
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
-            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
@@ -2729,7 +2748,7 @@ impl RunCommand {
         {
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };
-            let top_level_dir = fs.top_level_dir;
+            let top_level_dir = fs.top_level_dir();
             let path = env_loader.get(b"PATH").unwrap_or(b"");
             let mut path_for_which = path;
             if bin_dirs_only {
@@ -2774,8 +2793,8 @@ impl RunCommand {
 
         // `bun bake` in a project with no `bake` script, file or binary of its own.
         if target_name == b"bake" && bun_core::FeatureFlags::bake() {
-            // These flags of `bun` mean the same after `bake` as before it: `bun bake --watch` is
-            // `bun --watch bake`.
+            // These flags of `bun` mean the same after `bake` as before it: `bun bake --check` is
+            // `bun --check bake`.
             let mut take_flag =
                 |flag: &[u8]| match ctx.passthrough.iter().position(|arg| &arg[..] == flag) {
                     Some(i) => {
@@ -2784,39 +2803,43 @@ impl RunCommand {
                     }
                     None => false,
                 };
-            let (check, hot, watch, no_clear_screen) = (
-                take_flag(b"--check"),
-                take_flag(b"--hot"),
-                take_flag(b"--watch"),
-                take_flag(b"--no-clear-screen"),
-            );
-            let hot_reload = ctx.debug.hot_reload;
-            if hot_reload == cli::command::HotReload::None {
-                // As in the argument parser, `--hot` wins over `--watch`.
-                if hot {
-                    ctx.debug.hot_reload = cli::command::HotReload::Hot;
-                } else if watch {
-                    ctx.debug.hot_reload = cli::command::HotReload::Watch;
-                    #[cfg(not(windows))]
-                    {
-                        bun_core::set_auto_reload_on_crash(true);
-                    }
-                }
+            let (check, no_clear_screen) = (take_flag(b"--check"), take_flag(b"--no-clear-screen"));
+            if check {
+                ctx.runtime_options.check = true;
             }
             if no_clear_screen {
                 ctx.debug.no_clear_screen = true;
             }
-            if check {
-                ctx.runtime_options.check = true;
+            if ctx.debug.watch_flag {
+                pretty_errorln!(
+                    "<r><red>error<r>: \"bun bake\" reloads app/server.ts on its own. Remove --watch."
+                );
+                Output::flush();
+                Global::exit(1);
             }
-            // Also when `--check` came before `bake` and `--hot` after it.
+            // `bun bake` reloads `app/server.ts` in place on a change, as `--hot` does. With
+            // `--check`, it starts again instead, to type check again.
+            ctx.debug.hot_reload = cli::command::HotReload::Hot;
             if ctx.runtime_options.check {
                 cli::watch_instead_of_hot_for_check(ctx);
             }
             // Flags before `bake` that only apply in watch mode, which may only be on now.
-            cli::apply_watch_mode_flags(ctx);
-            if hot_reload != ctx.debug.hot_reload {
-                cli::set_up_watch_restarts(ctx);
+            cli::apply_watch_mode_flags(ctx, true);
+            // A change to `bake.config.ts` starts `bun bake` again, also when it reloads in place
+            // otherwise. On Windows, that needs the watcher-manager parent in every mode.
+            #[cfg(windows)]
+            {
+                if !bun_sys::windows::is_watcher_child() {
+                    bun_sys::windows::become_watcher_manager();
+                } else if ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                    bun_core::set_auto_reload_on_crash(true);
+                }
+            }
+            // Before the type check: a first start with type errors never runs `internal/bake.ts`.
+            // Only `--check` restarts on every change. A restart for `bake.config.ts` is a first
+            // start: it watches no file yet that could fix an error at the start.
+            if ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                crate::bake::config::plugins::mark_restart();
             }
             Global::configure_allocator(core::Global::AllocatorConfiguration {
                 long_running: true,
@@ -2897,21 +2920,34 @@ impl RunCommand {
         let open_len: usize = if paths::is_absolute(target) {
             // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive
             // letter on Windows for `/abs` paths; then, on Windows only,
-            // `normalize_string` canonicalizes
+            // `normalize_string_buf` canonicalizes
             // separators. Both are no-ops on POSIX (`resolve_cwd` returns the
             // input slice untouched).
             let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::default();
-            let resolved = win_resolver
-                .resolve_cwd(target)
-                .unwrap_or_else(|_| panic!("Could not resolve path"));
-            #[cfg(windows)]
-            let resolved: &[u8] =
-                paths::resolve_path::normalize_string::<false, paths::platform::Windows>(resolved);
-            if resolved.len() >= MAX_PATH_BYTES {
+            let Ok(resolved) = win_resolver.resolve_cwd(target) else {
                 return false;
-            }
-            script_name_buf[..resolved.len()].copy_from_slice(resolved);
-            resolved.len()
+            };
+            #[cfg(windows)]
+            let len = {
+                // Normalizing a bare `\\server\share` adds a trailing separator, and the NUL needs one more byte.
+                if resolved.len() + 1 >= MAX_PATH_BYTES {
+                    return false;
+                }
+                paths::resolve_path::normalize_string_buf::<false, paths::platform::Windows, false>(
+                    resolved,
+                    script_name_buf.as_mut_slice(),
+                )
+                .len()
+            };
+            #[cfg(not(windows))]
+            let len = {
+                if resolved.len() >= MAX_PATH_BYTES {
+                    return false;
+                }
+                script_name_buf[..resolved.len()].copy_from_slice(resolved);
+                resolved.len()
+            };
+            len
         } else if !target.starts_with(b"..") && target[0] != b'~' {
             // open relative to cwd as-is
             if target.len() >= MAX_PATH_BYTES {
@@ -2927,11 +2963,13 @@ impl RunCommand {
             };
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = paths::SEP;
-            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                &cwd_buf[..cwd_len + 1],
-                &mut script_name_buf.0,
-                &[target],
-            );
+            let Some(joined) = paths::resolve_path::join_abs_string_buf_z_checked::<
+                paths::platform::Auto,
+            >(
+                &cwd_buf[..cwd_len + 1], &mut script_name_buf.0, &[target]
+            ) else {
+                return false;
+            };
             if joined.is_empty() {
                 return false;
             }
@@ -3146,10 +3184,8 @@ impl RunCommand {
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = b'/';
-            let mut out_buf = bun_paths::path_buffer_pool::get();
-            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Loose>(
+            let joined = paths::resolve_path::join_abs_string::<paths::platform::Loose>(
                 &cwd_buf[..cwd_len + 1],
-                &mut out_buf.0,
                 &[&filename],
             );
             joined.to_vec().into_boxed_slice()
@@ -3608,11 +3644,13 @@ impl RunCommand {
                 Ok(n) => &cwd_buf[..n],
                 Err(_) => break 'blk path,
             };
-            paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+            // If the absolute path is too long, the relative path can still be opened.
+            paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
                 cwd,
                 &mut base_buf.0,
                 &[path],
             )
+            .unwrap_or(path)
         };
         let dir = paths::resolve_path::dirname::<paths::platform::Auto>(abs_md_path);
         // When dirname returns empty (bare filename + getcwd failed), fall
@@ -3694,7 +3732,7 @@ impl RunCommand {
         this_transpiler.configure_linker();
 
         // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
         let Some(root_dir_info) = this_transpiler
             .resolver
             .read_dir_info(top_level_dir)

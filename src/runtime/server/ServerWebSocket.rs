@@ -735,14 +735,37 @@ impl ServerWebSocket {
         let _loop_guard = vm.enter_event_loop_scope();
 
         let data = match opcode {
-            // Not `create_utf8_for_js`, which crashes inside WTF when the allocation fails.
+            // `create_utf8_for_js` still crashes if the allocation for non-ASCII text under 64 KiB fails.
             Opcode::Text => StringJsc::into_js(BunString::clone_utf8(message), global_object),
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
         };
         let data = match data {
             Ok(data) => data,
-            Err(e) => return fail_refused_copy(global_object, ws, e),
+            Err(e) => {
+                // Copying the message for the handler failed. Close the connection instead of
+                // silently dropping a message.
+                let err_value = global_object.take_error(e);
+                if err_value.is_termination_exception() {
+                    return Err(e);
+                }
+                // Without an `error` handler, only the 1011 close reports the failure. An uncaught
+                // exception would exit the process.
+                let reported = if on_error.is_empty_or_undefined_or_null() {
+                    Ok(())
+                } else {
+                    self.handler().run_error_callback(
+                        on_error,
+                        global_object,
+                        self.js_value().unwrap_or(JSValue::UNDEFINED),
+                        err_value,
+                    )
+                };
+                if !self.is_closed() {
+                    ws.fail_out_of_memory();
+                }
+                return reported;
+            }
         };
         let arguments = [self.js_value().unwrap_or(JSValue::UNDEFINED), data];
 
@@ -828,7 +851,7 @@ impl ServerWebSocket {
             BinaryType::Blob => {
                 let mut bytes = Vec::new();
                 if bytes.try_reserve_exact(data.len()).is_err() {
-                    return Err(JsError::OutOfMemory);
+                    return Err(bun_jsc::JsError::OutOfMemory);
                 }
                 bytes.extend_from_slice(data);
                 let blob = Blob::new(Blob::init(bytes, global_this));
@@ -1563,7 +1586,15 @@ impl WebSocketHandler for WsPackageSocket {
                 let global = this.0.handler().global_object();
                 let buffer = match ArrayBuffer::create_buffer(global, message) {
                     Ok(buffer) => buffer,
-                    Err(e) => return fail_refused_copy(global, ws, e),
+                    Err(e) => {
+                        // Same as `ServerWebSocket::on_message`. `ws.ts` turns the close into the
+                        // socket's 'error' event.
+                        if global.take_error(e).is_termination_exception() {
+                            return Err(e);
+                        }
+                        ws.fail_out_of_memory();
+                        return Ok(());
+                    }
                 };
                 this.call(this.0.handler().on_message, |_| {
                     Ok([buffer, JSValue::js_boolean(opcode == Opcode::Binary)])
@@ -1607,15 +1638,6 @@ impl WebSocketHandler for WsPackageSocket {
         // SAFETY: per trait contract.
         unsafe { Self::dispatch(this, |this| this.on_close(code, message)) };
     }
-}
-
-/// A received message could not be copied for its handler. A connection cannot skip a message, so it fails with 1011.
-fn fail_refused_copy(global: &JSGlobalObject, ws: AnyWebSocket, e: JsError) -> JsResult<()> {
-    if global.take_error(e).is_termination_exception() {
-        return Err(e);
-    }
-    ws.fail_out_of_memory();
-    Ok(())
 }
 
 /// Calls `callback` inside `ws.cork()`, so everything it sends goes out in one write.

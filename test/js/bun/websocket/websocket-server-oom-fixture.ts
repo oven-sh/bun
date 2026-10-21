@@ -1,8 +1,5 @@
-// Servers for the "a buffer for a received message that cannot grow" tests in
-// websocket-server-fail-close-codes.test.ts. The parent caps every allocation in this
-// process (ASAN_OPTIONS=max_allocation_size_mb) and drives raw clients against the ports
-// printed first. Every later line of stdout is one JSON event: a close, a call of the
-// `error` handler, an 'error' of `ws`, or the answer to "flood".
+// Servers for websocket-server-fail-close-codes.test.ts, which caps every allocation in this process.
+// Prints the ports on the first line of stdout, then one JSON event per line.
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import type { ServerWebSocket } from "bun";
 import { once } from "node:events";
@@ -10,16 +7,17 @@ import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 
 const emit = (event: object) => console.log(JSON.stringify(event));
-// The answer to a delivered message names its bytes, not only how many there are.
+// The reply to a delivered message includes a hash, so the test checks the bytes and not only the length.
 const got = (message: string | Buffer) => `got ${message.length} ${Bun.hash(message)}`;
 
-// No write reaches the kernel until a socket closes. "stall" also leaves 3 MiB unsent on the socket.
+// Blocks every write until a socket closes.
 let stalled = false;
 function hold() {
   stalled = true;
   fault.set({ syscall: "send", action: "zero", repeat: -1 });
   fault.set({ syscall: "writev", action: "zero", repeat: -1 });
 }
+// Queues 3 MiB that can't be sent.
 function stall(send: (data: Buffer) => void) {
   hold();
   send(Buffer.alloc(3 * 1024 * 1024));
@@ -29,8 +27,8 @@ function unstall() {
   stalled = false;
 }
 
-// Sends frames until the kernel does not take one whole, which leaves the rest of that one unsent.
-// Not from the message handler: there a send only goes to the cork buffer.
+// Sends frames until the kernel doesn't take a whole one, which leaves the rest of that frame unsent.
+// Runs outside the message handler, where a send would only go to the cork buffer.
 function flood(ws: ServerWebSocket<unknown>) {
   const frame = Buffer.alloc(64 * 1024, 1);
   let whole = 0;
@@ -59,9 +57,8 @@ function serve(tls?: object) {
         if (message === "flood") return void setImmediate(flood, ws);
         ws.send(got(message));
       },
-      // A message that is refused is not a handler that threw, so nothing may arrive here.
-      error(error) {
-        emit({ error: String(error) });
+      error(error: NodeJS.ErrnoException) {
+        emit({ error: error.name, message: error.message, code: error.code });
       },
       close(ws, code, reason) {
         unstall();

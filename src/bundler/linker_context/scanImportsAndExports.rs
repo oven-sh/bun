@@ -1482,12 +1482,13 @@ enum ExportStarEntry {
 impl DependencyWrapper<'_> {
     /// See `LinkerContext::output_format_for`.
     fn output_format_for(&self, source_index: IndexInt) -> options::Format {
-        if self.browser_runtime.is_valid()
-            && self.targets[source_index as usize] == options::Target::Browser
+        let target = self.targets[source_index as usize];
+        if crate::linker_graph::runtime_index_for_target(self.browser_runtime, target)
+            == Index::RUNTIME
         {
-            Format::Esm
-        } else {
             self.output_format
+        } else {
+            Format::Esm
         }
     }
 
@@ -1585,9 +1586,7 @@ impl DependencyWrapper<'_> {
             flag.did_wrap_dependencies = true;
 
             // Never wrap the runtime files since they always come first
-            if source_index == Index::RUNTIME.get()
-                || (self.browser_runtime.is_valid() && source_index == self.browser_runtime.get())
-            {
+            if crate::linker_graph::is_runtime(self.browser_runtime, source_index) {
                 continue;
             }
 

@@ -388,7 +388,8 @@ pub(crate) fn post_process_js_chunk(
         ..Default::default()
     };
     // errdefer j.deinit() — deleted; StringJoiner has Drop
-    let output_format = c.options.output_format;
+    // The chunk's own format: the browser side of a server build is ESM.
+    let output_format = entry_output_format;
 
     let mut line_offset: SourceMap::LineColumnOffsetOptional =
         if c.options.source_maps != options::SourceMapOption::None {
@@ -509,7 +510,7 @@ pub(crate) fn post_process_js_chunk(
         }
     }
 
-    match c.options.output_format {
+    match output_format {
         options::OutputFormat::InternalBakeDev => {
             let start = get_hmr_runtime(if c.options.target.is_server_side() {
                 HmrRuntimeSide::Server

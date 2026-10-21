@@ -908,7 +908,10 @@ impl<'a> LinkerContext<'a> {
         } else {
             crate::options::Loader::Js
         };
-        chunk.content.is_javascript() && loader.is_javascript_like()
+        chunk.content.is_javascript()
+            && loader.is_javascript_like()
+            // Bytecode is for Bun. The browser side of a server build never runs in it.
+            && self.chunk_side(chunk) == crate::options::Side::Server
     }
 
     /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes

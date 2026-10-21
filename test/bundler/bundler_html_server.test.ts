@@ -59,10 +59,12 @@ function expectClientChunkToRunInBrowser(chunk: string) {
 }
 
 /** The server chunk still links the runtime of its own target and format. */
-function expectServerChunkToKeepServerRuntime(chunk: string, target: "bun" | "node", format: "esm" | "cjs") {
+function expectServerChunkToKeepServerRuntime(chunk: string, target: "bun" | "node", format: "esm" | "cjs" | "iife") {
   expect(chunk).not.toContain("Dynamic require of");
   if (format === "cjs") {
     expect(chunk).toContain("require(name)");
+  } else if (format === "iife") {
+    expect(chunk.startsWith("// @bun\n(() => {")).toBe(true);
   } else if (target === "bun") {
     expect(chunk).toContain("__require = import.meta.require");
   } else {
@@ -74,7 +76,8 @@ describe.concurrent("bundler", () => {
   // The client chunk of an HTML import is browser code whatever the server target and format are.
   // https://github.com/oven-sh/bun/issues/45227
   for (const target of ["bun", "node"] as const) {
-    for (const format of ["esm", "cjs"] as const) {
+    for (const format of ["esm", "cjs", "iife"] as const) {
+      if (format === "iife" && target === "node") continue;
       itBundled(`html-import/client-chunk-uses-browser-runtime-${target}-${format}`, {
         outdir: "out/",
         target,

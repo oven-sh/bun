@@ -3774,7 +3774,6 @@ pub mod bv2_impl {
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
             self.reserve_source_indexes_for_bake()?;
-            self.ensure_browser_runtime()?;
 
             let num_entry_points = data.files.count();
             self.graph.entry_points.reserve(num_entry_points);
@@ -3804,6 +3803,7 @@ pub mod bv2_impl {
                     continue;
                 };
             }
+            self.ensure_browser_runtime()?;
             Ok(())
         }
 
@@ -3858,9 +3858,10 @@ pub mod bv2_impl {
         }
 
         /// Adds the browser runtime once the build has a browser side: when the
-        /// client transpiler is created for an HTML import, or when a bake
-        /// production build starts with client entry points. Every browser file
-        /// is enqueued after this, so `runtime_source_index` never misses it.
+        /// client transpiler is created for an HTML import, or once a bake
+        /// production build has enqueued its entry points (they must take the
+        /// source indices right after the reserved ones). Import records resolve
+        /// later on the bundle thread, so `runtime_source_index` never misses it.
         pub(crate) fn ensure_browser_runtime(&mut self) -> Result<(), Error> {
             if self.has_browser_runtime() && !self.graph.browser_runtime.is_valid() {
                 self.graph.browser_runtime = self.enqueue_runtime(Target::Browser)?;

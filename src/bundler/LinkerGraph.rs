@@ -525,12 +525,29 @@ pub(crate) fn generate_symbol_import_and_use(
     Ok(())
 }
 
+/// See [`LinkerGraph::is_runtime`]. A free function for callers that hold
+/// split-borrowed columns instead of the graph.
+#[inline]
+pub(crate) fn is_runtime(browser_runtime: Index, source_index: index::Int) -> bool {
+    source_index == Index::RUNTIME.get()
+        || (browser_runtime.is_valid() && source_index == browser_runtime.get())
+}
+
+/// See [`LinkerGraph::runtime_index_for_target`].
+#[inline]
+pub(crate) fn runtime_index_for_target(browser_runtime: Index, target: bun_ast::Target) -> Index {
+    if browser_runtime.is_valid() && target == bun_ast::Target::Browser {
+        browser_runtime
+    } else {
+        Index::RUNTIME
+    }
+}
+
 impl<'a> LinkerGraph<'a> {
     /// Whether `source_index` is one of the `bun:runtime` modules.
     #[inline]
     pub(crate) fn is_runtime(&self, source_index: index::Int) -> bool {
-        source_index == Index::RUNTIME.get()
-            || (self.browser_runtime.is_valid() && source_index == self.browser_runtime.get())
+        is_runtime(self.browser_runtime, source_index)
     }
 
     /// Every `bun:runtime` module in the graph, the main one first.
@@ -556,11 +573,7 @@ impl<'a> LinkerGraph<'a> {
     /// See [`Self::runtime_index`].
     #[inline]
     pub(crate) fn runtime_index_for_target(&self, target: bun_ast::Target) -> Index {
-        if self.browser_runtime.is_valid() && target == bun_ast::Target::Browser {
-            self.browser_runtime
-        } else {
-            Index::RUNTIME
-        }
+        runtime_index_for_target(self.browser_runtime, target)
     }
 
     /// The symbol for the runtime export `name` that `source_index` links against.

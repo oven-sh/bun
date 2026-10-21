@@ -4,7 +4,7 @@
 // takes a small part of it in one write. The rest waits in the session. The end of the session must
 // not free it, and the FIN must not overtake it, whether the session's close() or the socket's own
 // end() sends that FIN.
-import { setSocketOptions, socketFaultInjection as fault } from "bun:internal-for-testing";
+import { socketFaultInjection as fault, setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isASAN, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";

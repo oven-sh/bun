@@ -328,11 +328,7 @@ fn open_entry_to_delete(dir: Fd, name: &[u8]) -> Maybe<Option<Fd>> {
     // Not elsewhere: there is no `openat2`, and an `rmdir` before each open is a cost to every delete.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     match openat2_no_xdev(dir, name, DELETE_TREE_OPEN) {
-        Some(Err(e)) if e.get_errno() == E::EXDEV => {
-            return Err(Error::from_code(E::EBUSY, Tag::unlink)
-                .with_fd(dir)
-                .with_path(name.as_bytes()));
-        }
+        Some(Err(e)) if e.get_errno() == E::EXDEV => return Err(mounted_on(dir, name)),
         Some(opened) => return opened.map(Some),
         // No `openat2`. Linux looks for a mount before it looks for entries, and after permissions.
         None => match unlinkat_with_flags(dir, name, AT_REMOVEDIR) {
@@ -343,12 +339,19 @@ fn open_entry_to_delete(dir: Fd, name: &[u8]) -> Maybe<Option<Fd>> {
                 E::ENOTEMPTY | E::EEXIST | E::ENOTDIR | E::EINVAL => {}
                 E::EBUSY => return Err(e),
                 // Not allowed, or what a file system such as sshfs says of one that has entries.
-                _ if is_mount_point(dir, name) => return Err(e),
+                _ if is_mount_point(dir, name) => return Err(mounted_on(dir, name)),
                 _ => {}
             },
         },
     }
     openat(dir, name, DELETE_TREE_OPEN, 0).map(Some)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn mounted_on(dir: Fd, name: &ZStr) -> Error {
+    Error::from_code(E::EBUSY, Tag::unlink)
+        .with_fd(dir)
+        .with_path(name.as_bytes())
 }
 
 /// For an `rmdir` that was refused before its own mount test.

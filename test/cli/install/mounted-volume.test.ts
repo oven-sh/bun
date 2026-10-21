@@ -159,6 +159,9 @@ const volumeRows: VolumeRow[] = [
   { ...hoisted, ...remove, ...busy, ...atThePackage, openat2: false },
   { ...hoisted, ...bump, where: "data/vol", refused: true },
   { ...hoisted, ...bump, where: "data/vol", refused: true, openat2: false },
+  // The error is that of a mount point, not the one that the parent gave for its removal.
+  { ...hoisted, ...dropped, ...busy, where: "data/vol", refused: true },
+  { ...hoisted, ...dropped, ...busy, where: "data/vol", refused: true, openat2: false },
 ];
 for (const row of volumeRows) {
   const { name = "no-deps", where = "vol", exitCode: expectedExitCode = 0 } = row;

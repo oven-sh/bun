@@ -79,9 +79,15 @@ pub struct FileSink {
     /// the fd.
     owner_hook: JsCell<OwnerHook>,
     owner_hook_later: DispatchOwnerHookTask,
-    /// `write_*` calls the writer accepted, and how many of them reached the fd.
-    writes_accepted: Cell<u64>,
+    /// With an owner hook: the encoded bytes every `write_*` call handed the writer, the end
+    /// offset of each chunk still waiting for the fd, and the count of chunks that reached it.
+    /// `bytes_accepted - buffered_len` is what left the buffer.
+    bytes_accepted: Cell<u64>,
+    chunk_ends: JsCell<std::collections::VecDeque<u64>>,
     writes_acked: Cell<u64>,
+    /// The owner killed the attached child itself. A flush that then fails drops the chunks
+    /// silently, as a `write(2)` that landed before the kill would have had them.
+    peer_killed: Cell<bool>,
 
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
     /// while an async operation is pending. This is set when endFromJS returns a
@@ -136,6 +142,21 @@ pub(crate) fn js_set_owner_hook(global: &JSGlobalObject, frame: &CallFrame) -> J
     this.owner_hook
         .set(OwnerHook::Weak(bun_jsc::Weak::create_passive(hook, global)));
     Ok(JSValue::TRUE)
+}
+
+/// `$newRustFunction("runtime/webcore/FileSink.rs", "jsSinkAckedWrites", 1)`: how many of the
+/// owner's chunks reached the fd, for the settle paths that do not come from the hook.
+pub(crate) fn js_sink_acked_writes(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let [sink_value] = frame.arguments_as_array::<1>();
+    let Some(this_ptr) = JSSink::from_js(sink_value) else {
+        return Err(global.throw_type_error(format_args!("Expected a FileSink")));
+    };
+    // SAFETY: `from_js` returned a live `*mut JSSink<FileSink>`; `sink` is its first field.
+    let this: &FileSink = unsafe { &(*this_ptr).sink };
+    Ok(JSValue::js_number(this.writes_acked.get() as f64))
 }
 
 /// The owner's hook. Weak while the sink owes it nothing, so the stream, its wrapper and the sink
@@ -466,7 +487,7 @@ impl FileSink {
                 return;
             };
             if err.is_none() {
-                (*this).writes_acked.set((*this).writes_accepted.get());
+                (*this).update_acked();
             }
             let acked = JSValue::js_number((*this).writes_acked.get() as f64);
             bun_core::scoped_log!(FileSink, "dispatchOwnerHook({})", err.is_some());
@@ -510,9 +531,29 @@ impl FileSink {
         }
     }
 
-    /// Every `write_*` call the writer accepted has reached the fd.
-    fn ack_writes(&self) {
-        self.writes_acked.set(self.writes_accepted.get());
+    /// Credits every chunk whose bytes have left the buffer. Not for a writer that reported an
+    /// error: it drops its buffer before the callback, which would credit the lost chunks.
+    fn update_acked(&self) {
+        if self.chunk_ends.get().is_empty() {
+            return;
+        }
+        let sent = self
+            .bytes_accepted
+            .get()
+            .saturating_sub(self.writer.get().buffered_len() as u64);
+        let mut acked = self.writes_acked.get();
+        self.chunk_ends.with_mut(|ends| {
+            while ends.front().is_some_and(|end| *end <= sent) {
+                ends.pop_front();
+                acked += 1;
+            }
+        });
+        self.writes_acked.set(acked);
+    }
+
+    /// The owner killed the attached child: see `peer_killed`.
+    pub(crate) fn attached_process_killed(&self) {
+        self.peer_killed.set(true);
     }
 
     /// Keeps a write error that no promise can carry. A piped stream takes its failure from
@@ -522,6 +563,17 @@ impl FileSink {
             return;
         }
         if !self.owner_hook.get().has() && self.error_reported.replace(true) {
+            return;
+        }
+        if self.peer_killed.get() && self.owner_hook.get().has() {
+            let dropped = self.chunk_ends.with_mut(|ends| {
+                let n = ends.len();
+                ends.clear();
+                n
+            });
+            self.writes_acked
+                .set(self.writes_acked.get() + dropped as u64);
+            self.dispatch_owner_hook_later();
             return;
         }
         if self.undelivered_error.get().is_none() {
@@ -620,10 +672,9 @@ impl FileSink {
 
                 FileSink::run_pending(this);
             }
-            if status != WriteStatus::Pending && !has_pending_data {
-                // The buffer is empty: every accepted write reached the fd. An inline write's
-                // own call is counted by `write_result` right after this.
-                (*this).ack_writes();
+            // `run_pending` above may have run JS that wrote again: re-read the buffer.
+            (*this).update_acked();
+            if status != WriteStatus::Pending && !(*this).writer.get().has_pending_data() {
                 (*this).dispatch_owner_hook_later();
             }
 
@@ -1143,6 +1194,8 @@ impl FileSink {
             if !(*this).writer.get().has_pending_data() {
                 (*this).update_ref(false);
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
+                // A flush from JS drained the buffer first: let the hook go.
+                (*this).dispatch_owner_hook_later();
                 return false;
             }
             // After `end()` the writable poll drains the tail and drops the ref.
@@ -1185,14 +1238,14 @@ impl FileSink {
                 WriteResult::Done(_) => {
                     (*this).update_ref(false);
                     (*this).run_pending_later();
-                    (*this).ack_writes();
+                    (*this).update_acked();
                     (*this).dispatch_owner_hook_later();
                 }
                 WriteResult::Wrote(amount_drained) => {
+                    (*this).update_acked();
                     if amount_drained == amount_buffered {
                         (*this).update_ref(false);
                         (*this).run_pending_later();
-                        (*this).ack_writes();
                         (*this).dispatch_owner_hook_later();
                         // `flush()`'s drain bypasses `on_write(Drained)`; resume the parked ByteStream here.
                         if (*this).source_pending_pull.replace(false) {
@@ -1202,6 +1255,7 @@ impl FileSink {
                     }
                 }
                 _ => {
+                    (*this).update_acked();
                     return true;
                 }
             }
@@ -1251,8 +1305,12 @@ impl FileSink {
         if had_buffered_data && !self.writer.get().has_pending_data() {
             self.update_ref(false);
         }
-        if !self.writer.get().has_pending_data() && !matches!(rc, WriteResult::Err(_)) {
-            self.ack_writes();
+        if !matches!(rc, WriteResult::Err(_)) {
+            self.update_acked();
+            if !self.writer.get().has_pending_data() {
+                // The owner settles its own queue after this call; the hook only needs unpinning.
+                self.dispatch_owner_hook_later();
+            }
         }
         let flushed = match rc {
             WriteResult::Done(written)
@@ -1396,7 +1454,9 @@ impl FileSink {
         if self.counting_stream_bytes() {
             self.count_stream_bytes(&rc, data.slice().len());
         }
-        self.write_result(rc, buffered_before, had_latched_error)
+        self.write_result(rc, buffered_before, had_latched_error, || {
+            data.slice().len() as u64
+        })
     }
 
     fn count_stream_bytes(&self, rc: &WriteResult, encoded_len: usize) {
@@ -1443,7 +1503,9 @@ impl FileSink {
                 bun_core::strings::element_length_latin1_into_utf8(data.slice()),
             );
         }
-        self.write_result(rc, buffered_before, had_latched_error)
+        self.write_result(rc, buffered_before, had_latched_error, || {
+            bun_core::strings::element_length_latin1_into_utf8(data.slice()) as u64
+        })
     }
 
     pub(crate) fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
@@ -1460,7 +1522,9 @@ impl FileSink {
                 bun_core::strings::element_length_utf16_into_utf8(data.slice16()),
             );
         }
-        self.write_result(rc, buffered_before, had_latched_error)
+        self.write_result(rc, buffered_before, had_latched_error, || {
+            bun_core::strings::element_length_utf16_into_utf8(data.slice16()) as u64
+        })
     }
 
     /// The source is done; `err` settles a piped stream. A failed ByteStream closes without a flush.
@@ -1814,6 +1878,7 @@ impl FileSink {
         rc: WriteResult,
         buffered_before: usize,
         had_latched_error: bool,
+        chunk_len: impl FnOnce() -> u64,
     ) -> streams::Writable {
         match rc {
             WriteResult::Done(_) => self.fail_owner_write_after_done(),
@@ -1823,9 +1888,24 @@ impl FileSink {
                 }
             }
             _ => {
-                self.writes_accepted.set(self.writes_accepted.get() + 1);
-                if !self.writer.get().has_pending_data() {
-                    self.ack_writes();
+                if let Some(global) = self
+                    .owner_hook
+                    .get()
+                    .has()
+                    .then(|| self.js_global())
+                    .flatten()
+                {
+                    let end = self.bytes_accepted.get() + chunk_len();
+                    self.bytes_accepted.set(end);
+                    self.chunk_ends.with_mut(|ends| ends.push_back(end));
+                    self.update_acked();
+                    if self.writer.get().has_pending_data() {
+                        // The hook must outlive the owner's references until the drain answers.
+                        self.owner_hook.with_mut(|h| h.pin(global));
+                    } else {
+                        // Complete on the spot (a writer that never calls `on_write`, too).
+                        self.dispatch_owner_hook_later();
+                    }
                 }
             }
         }
@@ -1941,8 +2021,10 @@ impl FileSink {
             error_reported: Cell::new(false),
             owner_hook: JsCell::new(OwnerHook::None),
             owner_hook_later: DispatchOwnerHookTask::default(),
-            writes_accepted: Cell::new(0),
+            bytes_accepted: Cell::new(0),
+            chunk_ends: JsCell::new(std::collections::VecDeque::new()),
             writes_acked: Cell::new(0),
+            peer_killed: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
         }

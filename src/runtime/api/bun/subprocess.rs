@@ -750,6 +750,19 @@ impl Subprocess<'_> {
         if self.has_exited() {
             return bun_sys::Result::Ok(());
         }
+        if sig.0 != 0 {
+            match self.stdin.get() {
+                Writable::Pipe(pipe) => pipe.attached_process_killed(),
+                // JS took the sink (`Writable::to_js`); the pointer is cleared with it.
+                _ => {
+                    if let Some(ptr) = self.weak_file_sink_stdin_ptr.get() {
+                        // SAFETY: `on_stdin_destroyed` clears the pointer before the sink
+                        // goes away, so it is live here.
+                        unsafe { (*ptr.as_ptr()).attached_process_killed() }
+                    }
+                }
+            }
+        }
         self.process_mut().kill(sig.0)
     }
 

@@ -1016,6 +1016,17 @@ describe("spawn()", () => {
         ["big:null", "small:null"],
       ],
       [
+        "an empty Uint8Array calls back",
+        `${catChild}${logEvents} stdin.write(new Uint8Array(0), e => { events.push("cb:" + code(e)); stdin.destroy(); });`,
+        ["cb:null"],
+      ],
+      [
+        "a write and a kill in the same tick: the callback gets null and there is no 'error'",
+        `const child = spawn("sleep", ["30"], { stdio: ["pipe", "ignore", "ignore"] }); const stdin = child.stdin; ${logEvents}
+         stdin.write("x", e => events.push("cb:" + code(e))); child.kill("SIGKILL");`,
+        ["cb:null"],
+      ],
+      [
         "a child killed after the flush: the callback gets null and there is no 'error'",
         `const child = spawn("sleep", ["30"], { stdio: ["pipe", "ignore", "ignore"] }); const stdin = child.stdin; ${logEvents}
          stdin.write("x", e => events.push("cb:" + code(e))); setImmediate(() => child.kill("SIGKILL"));`,
@@ -1034,6 +1045,32 @@ describe("spawn()", () => {
         stderr: "",
         exitCode: 0,
       });
+    });
+
+    it("chunks the child read before it closed stdin get null, the one that failed gets EPIPE", async () => {
+      // The child reads the first lines, closes its stdin, says so, and stays alive.
+      const child = spawn(
+        bunExe(),
+        [
+          "-e",
+          `const fs = require("fs"); fs.readSync(0, Buffer.alloc(16)); fs.closeSync(0); process.stdout.write("closed\\n"); setInterval(() => {}, 1e5);`,
+        ],
+        { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
+      );
+      try {
+        const events: string[] = [];
+        const code = (e: any) => (e ? e.code : null);
+        const closed = new Promise<void>(resolve => child.stdin!.on("close", resolve));
+        child.stdin!.on("error", e => events.push("error:" + code(e)));
+        child.stdin!.write("a\n", e => events.push("a:" + code(e)));
+        child.stdin!.write("b\n", e => events.push("b:" + code(e)));
+        await new Promise<void>(resolve => child.stdout!.once("data", () => resolve()));
+        child.stdin!.write(Buffer.alloc(4 << 20, 0x61), e => events.push("D:" + code(e)));
+        await closed;
+        expect(events).toEqual(["a:null", "b:null", "D:EPIPE", "error:EPIPE"]);
+      } finally {
+        child.kill("SIGKILL");
+      }
     });
 
     it("write callbacks keep their async context and 'error' fires under the failing write's", async () => {

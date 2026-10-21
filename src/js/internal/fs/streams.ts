@@ -64,6 +64,9 @@ const setSinkOwnerHook = $newRustFunction("runtime/webcore/FileSink.rs", "jsSetO
   sink: FileSink,
   hook: (err: Error | null, acked: number) => void,
 ) => boolean;
+const sinkAckedWrites = $newRustFunction("runtime/webcore/FileSink.rs", "jsSinkAckedWrites", 1) as (
+  sink: FileSink,
+) => number;
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 
 const {
@@ -682,13 +685,17 @@ function sinkWrite(stream: FSStream, sink: FileSink, data: any, cb: undefined | 
   }
   // An empty chunk never reaches the sink, so it is not counted. Its callback
   // waits behind the queued ones, or needs only the tick when there are none.
-  const seq = data.length === 0 ? stream[kWriteSeq]! : ++stream[kWriteSeq]!;
+  const empty = (data.byteLength ?? data.length) === 0;
+  const seq = empty ? stream[kWriteSeq]! : ++stream[kWriteSeq]!;
   if (hasCb) {
-    const queue = stream[kWriteCallbacks];
-    if (queue === undefined && data.length === 0) {
+    let queue = stream[kWriteCallbacks];
+    if (queue === undefined && empty) {
       process.nextTick(cb, null);
     } else {
-      (queue ?? (stream[kWriteCallbacks] = [])).push(cb, $getInternalField($asyncContext, 0), seq);
+      if (queue === undefined) queue = stream[kWriteCallbacks] = [];
+      $arrayPush(queue, cb);
+      $arrayPush(queue, $getInternalField($asyncContext, 0));
+      $arrayPush(queue, seq);
     }
   }
   if ($isPromise(result)) {
@@ -698,7 +705,7 @@ function sinkWrite(stream: FSStream, sink: FileSink, data: any, cb: undefined | 
     result.then(
       () => emitDrain(stream),
       err => {
-        settleWriteCallbacks(stream, err);
+        settleWriteCallbacks(stream, err, sinkAckedWrites(sink));
         require("internal/streams/destroy").errorOrDestroy(stream, err);
       },
     );
@@ -711,7 +718,7 @@ function sinkWrite(stream: FSStream, sink: FileSink, data: any, cb: undefined | 
 // error and how many chunks got through before it. As in node's onwriteError,
 // the callbacks get the error first, then the stream does, under the context
 // of the first write that failed.
-function onSinkSettled(stream: FSStream, err: Error | null, acked: number) {
+function onSinkSettled(stream: FSStream, err: unknown, acked: number) {
   const failingFrame = settleWriteCallbacks(stream, err, acked);
   if (err === null) return;
   const restore = $getInternalField($asyncContext, 0);
@@ -723,7 +730,7 @@ function onSinkSettled(stream: FSStream, err: Error | null, acked: number) {
 // Runs every queued write callback: with `err`, except the ones whose chunk
 // the sink wrote before the failure (write number at most `acked`). Returns
 // the async context of the first callback that got the error.
-function settleWriteCallbacks(stream: FSStream, err: Error | null, acked: number = -1) {
+function settleWriteCallbacks(stream: FSStream, err: unknown, acked: number) {
   const restore = $getInternalField($asyncContext, 0);
   let failingFrame = restore;
   const queue = stream[kWriteCallbacks];
@@ -760,22 +767,22 @@ function finalFast(this: FSStream, cb: (err?: any) => void) {
     if ($isPromise(maybePromise)) {
       maybePromise.then(
         () => {
-          settleWriteCallbacks(this, null);
+          settleWriteCallbacks(this, null, -1);
           cb(null);
         },
         err => {
-          settleWriteCallbacks(this, err);
+          settleWriteCallbacks(this, err, sinkAckedWrites(fileSink));
           cb(err);
         },
       );
       return;
     }
   } catch (err) {
-    settleWriteCallbacks(this, err);
+    settleWriteCallbacks(this, err, sinkAckedWrites(fileSink));
     cb(err);
     return;
   }
-  settleWriteCallbacks(this, null);
+  settleWriteCallbacks(this, null, -1);
   cb(null);
 }
 
@@ -863,7 +870,7 @@ writeStreamPrototype._destroy = function (err, cb) {
     // The queued write callbacks get the flush's outcome, not the reason for
     // the destroy: their chunks either reached the fd now or failed.
     let end;
-    let flushErr = null;
+    let flushErr: unknown = null;
     try {
       end = sink.end(err);
     } catch (e) {
@@ -874,17 +881,17 @@ writeStreamPrototype._destroy = function (err, cb) {
     if ($isPromise(end)) {
       end.then(
         () => {
-          settleWriteCallbacks(this, null);
+          settleWriteCallbacks(this, null, -1);
           cb(err);
         },
         e => {
-          settleWriteCallbacks(this, e);
+          settleWriteCallbacks(this, e, sinkAckedWrites(sink));
           cb(e);
         },
       );
       return;
     }
-    settleWriteCallbacks(this, flushErr);
+    settleWriteCallbacks(this, flushErr, sinkAckedWrites(sink));
   }
   // Usually for async IO it is safe to close a file descriptor
   // even when there are pending operations. However, due to platform

@@ -616,7 +616,8 @@ pub(crate) fn run_task(
         task_tag::FlushPendingFileSinkTask => unsafe {
             FlushPendingFileSinkTask::run_from_js_thread(cast_ptr!(FlushPendingFileSinkTask));
         },
-        // SAFETY: `cast_ptr!` yields the heap-allocated task; sole owner.
+        // SAFETY: `cast_ptr!` yields the `owner_hook_later` field of a live `FileSink`;
+        // `run_from_js_thread` recovers the sink and releases the ref the enqueue took.
         task_tag::DispatchOwnerHookFileSinkTask => unsafe {
             DispatchOwnerHookFileSinkTask::run_from_js_thread(cast_ptr!(
                 DispatchOwnerHookFileSinkTask

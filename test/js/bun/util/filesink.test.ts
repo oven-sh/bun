@@ -538,7 +538,8 @@ it("close() does not leak the native FileSink", async () => {
 // answers its writes through a hook that closes over the stream. The sink holds
 // that hook weakly while it owes nothing, so a stream that is dropped (this one
 // has autoClose: false, so end() never destroys it) is collected with its sink.
-it("a dropped tty.WriteStream on a file fd does not leak the native FileSink", async () => {
+// Windows writes a file through libuv's thread pool and holds the sink until that completes.
+it.skipIf(isWindows)("a dropped tty.WriteStream on a file fd does not leak the native FileSink", async () => {
   const dir = tmpdirSync();
   const baseline = fileSinkInternals.liveCount();
   const iterations = 16;

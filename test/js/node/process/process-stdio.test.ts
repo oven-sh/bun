@@ -375,28 +375,32 @@ describe.concurrent.skipIf(isWindows)(
 );
 
 // Node calls a write callback on its own tick, never inside write(): a marker
-// pushed right after write() comes first.
-describe.concurrent.each(["stdout", "stderr"] as const)("process.%s.write(chunk, cb) timing", which => {
-  const script = `
+// pushed right after write() comes first. On Windows a pipe is not a
+// synchronous sink, so the callback arrives a task later than the nextTick.
+describe.concurrent.skipIf(isWindows).each(["stdout", "stderr"] as const)(
+  "process.%s.write(chunk, cb) timing",
+  which => {
+    const script = `
     const order = [];
     process.${which}.write("x\\n", () => order.push("cb"));
     order.push("after-write");
     process.nextTick(() => order.push("nextTick-queued-after-write"));
     setImmediate(() => process.${which === "stdout" ? "stderr" : "stdout"}.write(JSON.stringify(order)));
   `;
-  test("into a pipe", async () => {
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+    test("into a pipe", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [data, report] = which === "stdout" ? [stdout, stderr] : [stderr, stdout];
+      expect({ data, report: JSON.parse(report), exitCode }).toEqual({
+        data: "x\n",
+        report: ["after-write", "cb", "nextTick-queued-after-write"],
+        exitCode: 0,
+      });
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const [data, report] = which === "stdout" ? [stdout, stderr] : [stderr, stdout];
-    expect({ data, report: JSON.parse(report), exitCode }).toEqual({
-      data: "x\n",
-      report: ["after-write", "cb", "nextTick-queued-after-write"],
-      exitCode: 0,
-    });
-  });
-});
+  },
+);

@@ -658,9 +658,10 @@ function startNameCheckInHandshake(self, socket) {
 function onClientHandshake(self, socket, success, verifyError) {
   if (!success && verifyError?.code === "ECONNRESET") {
     // The close that follows reports it: a clean one from its 'end' (onConnectEnd), a reset one as "read ECONNRESET".
-    // With a write that waits for this handshake, the clean close reports ERR_SOCKET_CLOSED and the reset close never
-    // calls that write back.
-    if (self[kwriteCallback] && !self.destroyed) onConnectEnd.$call(self);
+    // With a write that waits for this handshake, the clean close fails that write first, and the socket reports
+    // ERR_SOCKET_CLOSED. A standalone wrap (`new tls.TLSSocket(socket)`) has no onConnectEnd:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1811
+    if (self[kwriteCallback] && !self.destroyed && !self[kStandaloneWrap]) onConnectEnd.$call(self);
     return;
   }
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1081-L1090

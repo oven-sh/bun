@@ -242,6 +242,7 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
 
   // The connection learns that the kernel refused the send() of its ClientHello from the next writable event of its
   // socket. A close() ahead of that event used to get the handshake back as failed with no reason.
+  // Not on Windows, like the other send-fault suites: it was not run there.
   test.skipIf(!fault.available() || isWindows)(
     `${name}: close() of a connection whose ClientHello the kernel refused`,
     async () => {

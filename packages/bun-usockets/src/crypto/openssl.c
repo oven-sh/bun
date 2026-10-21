@@ -2452,7 +2452,13 @@ struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
 
 /* The read side delivers what the peer sent before it closes, unless the owner already let go. */
 static struct us_socket_t *ssl_close_after_rejected_send(struct us_socket_t *s, int send_error) {
-  if (!s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) return s;
+  if (!s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) {
+    /* A pause holds back data, and a first handshake that is still pending has none: a flight of it never left, so
+     * what the peer sent or the end behind that fails it. As for an error event (loop.c), its reads do not wait for
+     * the owner. A session keeps its pause: that read is data. */
+    if (s->ssl_handshake_state == HANDSHAKE_PENDING) us_socket_resume(s);
+    return s;
+  }
   if (s->ssl_handshake_state == HANDSHAKE_PENDING) {
     ssl_set_loop_data(s);
     ssl_trigger_handshake_econnreset(s);

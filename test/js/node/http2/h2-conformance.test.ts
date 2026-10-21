@@ -1287,16 +1287,26 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   });
 });
 
-// A stream nothing references any more can still survive a bounded number of collections: JSC scans
-// the machine stack conservatively and honors interior pointers, so a stale word left in a native
-// frame (seen on x64 as cell+0x84 in the microtask-drain frames; near-deterministic on aarch64) pins
-// one object until that slot is overwritten. The leaks these tests guard against retain every stream,
-// so they open many streams and tolerate a few stragglers instead of demanding exactly zero.
+// A stream nothing references any more can still survive collections, for two reasons that are not
+// leaks. The leaks these tests guard against retain every stream, so they open many streams and
+// tolerate a few stragglers instead of demanding exactly zero.
+//
+// The stack: JSC scans the machine stack conservatively and honors interior pointers, so a stale
+// word left in a native frame (seen on x64 as cell+0x84 in the microtask-drain frames;
+// near-deterministic on aarch64) pins one object until that slot is overwritten.
+//
+// The JIT: a compilation on another thread roots the arguments of the call that started it, `this`
+// included, until the main thread installs the compiled code at its next tier-up check. A debugging
+// heap snapshot lists such a stream as a root with the reason JITWorkList. A debug build needs
+// seconds to work through its compilations, so there more than GC_STRAGGLERS streams can stay
+// rooted like this for a dozen passes before they go, a group at a time.
 const GC_STRAGGLERS = 3;
 
 /**
- * Collects until every one of `refs` is gone, giving up after 50 passes or once the count has not
- * moved for 10 passes, and resolves to how many survived.
+ * Collects until no more than GC_STRAGGLERS of `refs` are left, giving up after 50 passes, or after
+ * 10 that collected nothing at all (the leak itself), and resolves to how many survived. A count
+ * that holds steady above GC_STRAGGLERS is no reason to stop: that is what streams rooted by a
+ * compilation look like.
  */
 async function liveCount(refs: WeakRef<object>[]): Promise<number> {
   const live = () => refs.filter(ref => ref.deref() !== undefined).length;
@@ -1304,12 +1314,11 @@ async function liveCount(refs: WeakRef<object>[]): Promise<number> {
   // destroy), and a WeakRef target survives the job that dereferenced it, so every pass gets a
   // fresh turn before collecting.
   let last = live();
-  for (let pass = 0, stuck = 0; pass < 50 && last > 0 && stuck < 10; pass++) {
+  for (let pass = 0; pass < 50 && last > GC_STRAGGLERS; pass++) {
+    if (pass === 10 && last === refs.length) break;
     await new Promise(resolve => setImmediate(resolve));
     await gcTick();
-    const now = live();
-    stuck = now === last ? stuck + 1 : 0;
-    last = now;
+    last = live();
   }
   return last;
 }

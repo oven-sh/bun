@@ -393,10 +393,23 @@ impl Checker<'_, '_> {
             return;
         };
         if let Some(text) = self.property_name_of_type(expr_type)
-            && self
-                .get_property_of_type(object_literal_type, text)
-                .is_some()
+            && let Some((prop, _)) = self.get_property_of_type(object_literal_type, text)
         {
+            if prop.flags.contains(PropFlags::PRIVATE) && self.may_mark_property(prop) {
+                // `rightIsThis`
+                let from_this = match self.bound(file).parent_of_expr(node) {
+                    Parent::Expr(assignment)
+                        if matches!(hir[assignment].kind,
+                        ExprKind::Assign { op: None, target, value } if target == node
+                            && matches!(hir[value].kind, ExprKind::This)
+                            && !is_parenthesized(hir, value)) =>
+                    {
+                        Some(assignment)
+                    }
+                    _ => None,
+                };
+                self.mark_property_as_referenced(file, object_literal_type, text, None, from_this);
+            }
             let name = (file, property.pos, self.end_of_prop_name(file, p));
             let at = Parent::Expr(node);
             self.check_property_accessibility_at_location(

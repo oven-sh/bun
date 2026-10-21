@@ -60,6 +60,27 @@ impl EntityNameLookup for Checker<'_, '_> {
     }
 }
 
+/// The lookups of `resolveEntityName` for a name that starts at `pos` of `file`.
+struct EntityNameAt<'a, 'p, 's> {
+    checker: &'a mut Checker<'p, 's>,
+    file: FileId,
+    pos: u32,
+}
+
+impl EntityNameLookup for EntityNameAt<'_, '_, '_> {
+    fn get_symbol(&mut self, table_symbol: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
+        self.checker.get_symbol(table_symbol, meaning)
+    }
+
+    fn resolve_alias(&mut self, alias: Sym) -> Option<Sym> {
+        EntityNameLookup::resolve_alias(self.checker, alias)
+    }
+
+    fn first_name_resolved(&mut self, found: Sym, meaning: SymFlags) {
+        (self.checker).symbol_referenced(self.file, self.pos, found, meaning);
+    }
+}
+
 #[derive(Copy, Clone)]
 enum WideningKind {
     FunctionReturn,
@@ -1290,7 +1311,23 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Sym> {
         let files = self.files();
         let texts: SmallVec<[Atom; 4]> = self.hir(file).texts(names).collect();
-        let found = files.resolve_entity_with(file, scope, &texts, meaning, !ignore_errors, self);
+        let first = names.iter().next();
+        let pos = first.map_or(0, |first| self.hir(file)[first].pos());
+        let mut symbols = EntityNameAt {
+            checker: self,
+            file,
+            pos,
+        };
+        let found =
+            files.resolve_entity_with(file, scope, &texts, meaning, !ignore_errors, &mut symbols);
+        // A name that doesn't resolve to a namespace is looked up again, as an alias.
+        if found.is_none()
+            && texts.len() > 1
+            && let Ok(None) = self.resolve(file, scope, texts[0], SymFlags::NAMESPACE, false)
+            && let Ok(Some(alias)) = self.resolve(file, scope, texts[0], SymFlags::ALIAS, false)
+        {
+            self.symbol_referenced(file, pos, alias, SymFlags::ALIAS);
+        }
         if found.is_none() && !ignore_errors {
             self.report_unresolved_entity_name(file, scope, names, meaning);
         }

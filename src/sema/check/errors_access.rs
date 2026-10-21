@@ -857,9 +857,9 @@ impl<'p> Checker<'p, '_> {
         let Some(name_text) = self.property_name_of_type(expr_type) else {
             return;
         };
-        if self.get_property_of_type(parent_type, name_text).is_none() {
+        let Some((property, _)) = self.get_property_of_type(parent_type, name_text) else {
             return;
-        }
+        };
         let initializer = bound.pat_parent[pattern.idx()].initializer(hir);
         let is_super = initializer.is_some() && matches!(hir[initializer].kind, ExprKind::Super);
         // `GetRootDeclaration`: the location the access is checked from.
@@ -868,6 +868,9 @@ impl<'p> Checker<'p, '_> {
             PatParent::Param(param) => Parent::ParamDefault(param),
             _ => return,
         };
+        if property.flags.contains(PropFlags::PRIVATE) && self.may_mark_property(property) {
+            self.mark_property_as_referenced(file, parent_type, name_text, None, None);
+        }
         let error_node = |c: &Self| (file, at_name, c.end_of_name_at(file, at_name));
         self.check_property_accessibility_at_location(
             file,
@@ -1406,18 +1409,6 @@ impl<'p> Checker<'p, '_> {
         if !is_super && !(parts.iter()).any(|p| p.flags.intersects(PropFlags::MAY_BE_OUT_OF_REACH))
         {
             return true;
-        }
-        // `markPropertyAsReferenced` comes before every `checkPropertyAccessibility`. Only an `a.b`
-        // can be a write-only access.
-        if error_node.is_some()
-            && first.flags.contains(PropFlags::PRIVATE)
-            && matches!(first.source, PropSource::Symbol(symbol) if symbol.file != file)
-        {
-            let node_for_check_write_only = match self.hir(file).data(location) {
-                NodeData::Expr(e) => Some(e),
-                _ => None,
-            };
-            self.mark_property_as_referenced(file, containing, name, node_for_check_write_only);
         }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
         // If those that have a declaration share it, its parent is used. If they all do, so are its modifiers.

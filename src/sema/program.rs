@@ -532,6 +532,9 @@ pub trait EntityNameLookup {
 
     /// `resolveAlias`. `None`: `unknownSymbol`.
     fn resolve_alias(&mut self, alias: Sym) -> Option<Sym>;
+
+    /// `SymbolReferenced`: `Resolve` has found `found` for the first name, looked up with `meaning`.
+    fn first_name_resolved(&mut self, _found: Sym, _meaning: SymFlags) {}
 }
 
 /// `filesByPath`
@@ -1992,34 +1995,42 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             return None;
         }
         let scope = self.bound(file).scope_to_resolve_from(scope, names[0]);
+        let namespace = SymFlags::NAMESPACE;
+        let meaning_of_first = if qualifiers.is_empty() {
+            meaning
+        } else {
+            namespace
+        };
         let lookup = &mut |_: SymbolTable, table_entry: Option<Sym>, meaning: SymFlags| {
             symbols.get_symbol(table_entry, meaning)
         };
-        if qualifiers.is_empty() {
-            let found = self.resolve_with(file, scope, last, meaning, reports_errors, lookup);
-            return found.unwrap_or(None);
-        }
-        let namespace = SymFlags::NAMESPACE;
         let first = self.resolve_with(
             file,
             scope,
-            qualifiers[0],
-            namespace,
+            names[0],
+            meaning_of_first,
             reports_errors,
             lookup,
         );
-        let first = match first.unwrap_or(None) {
+        let first = first.unwrap_or(None);
+        if let Some(found) = first {
+            symbols.first_name_resolved(found, meaning_of_first);
+        }
+        if qualifiers.is_empty() {
+            return first;
+        }
+        let first = match first {
             Some(found) => found,
             // `globalThis.A.B`
             None if qualifiers[0] == known::globalThis => match qualifiers.get(1) {
                 None => {
                     let table_entry = self.globals.get(last).copied();
-                    return lookup(SymbolTable::Globals, table_entry, meaning);
+                    return symbols.get_symbol(table_entry, meaning);
                 }
                 Some(&next) => {
                     qualifiers = &qualifiers[1..];
                     let table_entry = self.globals.get(next).copied();
-                    lookup(SymbolTable::Globals, table_entry, namespace)?
+                    symbols.get_symbol(table_entry, namespace)?
                 }
             },
             None => return None,

@@ -1239,6 +1239,11 @@ impl<'p, 's> Checker<'p, 's> {
                 let node = (file, start, self.end_inside_parentheses(file, e));
                 self.error_at(node, 2806, &[]);
             }
+            if (is_private || prop.is_some_and(|prop| prop.flags.contains(PropFlags::PRIVATE)))
+                && prop.is_none_or(|prop| self.may_mark_property(prop))
+            {
+                self.mark_property_as_referenced(file, left, name, Some(e), None);
+            }
             // Every `a.b` gets here. `check_property_accessibility_at_location` looks the property
             // up again and then starts with this same test. For an object type, which is its own
             // apparent type, it finds the same property, so the call is skipped.
@@ -1555,10 +1560,10 @@ impl<'p, 's> Checker<'p, 's> {
             None => TypeId::ERROR,
         };
         // `getPropertyTypeForIndexType`. Each member of a union of keys is a property name.
-        if self.p.files.options.no_unused_locals && !self.is_generic(key) {
+        if self.reports_unused() && !self.is_generic(key) {
             for &k in self.parts(key) {
                 if let Some(name) = self.property_name_of_type(k) {
-                    self.mark_property_as_referenced(file, receiver, name, Some(e));
+                    self.mark_property_as_referenced(file, receiver, name, Some(e), None);
                 }
             }
         }
@@ -1733,7 +1738,15 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::False => TypeId::FRESH_FALSE,
             ExprKind::Number(n) => self.number_literal(hir.numbers[n as usize], true),
             // `checkPrivateIdentifierExpression`
-            ExprKind::PrivateIdentifier(_) => TypeId::ANY,
+            ExprKind::PrivateIdentifier(name) => {
+                if let Some((_, m)) =
+                    self.lookup_symbol_for_private_identifier_declaration(file, e, name)
+                {
+                    let symbol = self.symbol_of_member(file, m);
+                    self.property_referenced(symbol);
+                }
+                TypeId::ANY
+            }
             ExprKind::String(s) => self.string_literal(s, true),
             ExprKind::BigInt(text) => self.fresh_bigint_literal(text, false),
             ExprKind::Regex => self.global_ref(known::RegExp, &[]),

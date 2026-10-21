@@ -99,7 +99,7 @@ use crate::program::{FileId, Files, Sym};
 use crate::session::{Arena, ArenaBox, Session};
 use crate::session::{ArenaVec, vec_from_iter_in};
 use crate::table::{At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNodeIndirect};
-use crate::table::{FileLocal, OfExpressions};
+use crate::table::{FileLocal, FourFlags, Frozen, OfExpressions};
 use crate::types::Prop;
 use crate::types::*;
 use crate::util::{FxHashMap, List};
@@ -163,7 +163,7 @@ macro_rules! buffered_fields {
         $each!(
             type_node_types fn_return_types pat_types literal_prop_types symbol_types
             circular_base_types circular_alias_targets circular_mapped_constraints circular_write_types
-            base_constructor_types symbol_reference_links mapped_types_with_errors declared_types shapes
+            base_constructor_types mapped_types_with_errors declared_types shapes
             distributed_intersections sig_params
             sig_type_params resolved_return_types call_signatures construct_signatures candidate_orders members
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
@@ -218,9 +218,9 @@ pub struct Program<'s> {
     serial_variances: Guarded<FxHashMap<Sym, &'s [u8]>>,
     /// See `commit`.
     commits: commit::Commits<'s>,
-    /// The union of all tasks' `Checker::referenced_properties`. The task that checks a declaration's
-    /// file doesn't see what other tasks have marked, so `finish_file` retracts what that task reported.
-    /// Being a union, it doesn't depend on task order. Tasks write to this set directly.
+    /// The private members marked by an access in a file other than the one that declares them, and checked no later
+    /// (`mark_property_as_referenced`). The task that checks the declaration's file may be past it when another task
+    /// marks one, so `finish_file` retracts what that task reported. Tasks write to this set directly.
     properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
@@ -312,9 +312,10 @@ pub struct Program<'s> {
     >,
     /// `resolvedBaseConstructorType` of each class.
     base_constructor_types: ByNode<Sym, TypeId, buffered!(base_constructor_types), &'s Session>,
-    /// `symbolReferenceLinks`: the symbols `Resolve` found when called with `isUse`, where the
-    /// caller records that. `check_unused` computes the rest.
-    symbol_reference_links: ByNode<Sym, (), buffered!(symbol_reference_links), &'s Session>,
+    /// `symbolReferenceLinks`: see `errors_unused::reference_kinds`. What a name resolves to doesn't depend on the
+    /// task that resolves it, so tasks write here directly. A task marks a node's symbol before it stores the node's
+    /// type. So the task that checks the file either finds that type and the mark, or makes the mark itself.
+    reference_kinds: ByNode<Sym, FourFlags, Frozen, &'s Session>,
     /// `GetGlobalDiagnostics`: errors that don't belong to a file, like
     /// `Cannot find global type 'Array'.` Each entry is the code and the message arguments.
     global_errors: bun_threading::Guarded<std::collections::BTreeSet<(u32, Vec<Vec<u8>>)>>,
@@ -567,6 +568,7 @@ impl<'s> Program<'s> {
             type_params,
             symbols,
         ] = std::array::from_fn(bases);
+        let all_symbols = Bases::new_in(counts.iter().map(|it| it.1[9]), &session);
         let mut types = TypeStore::new_in(session, files.atoms);
         let arena = session.arena();
         let auto_array_type =
@@ -616,7 +618,7 @@ impl<'s> Program<'s> {
             type_predicates_from_body: ByNodeIndirect::new_in(&fns, session),
             base_constructor_types: ByNode::new_in(&symbols, session),
             sink: sink::Sink::new_in(files.modules.len(), session.arena()),
-            symbol_reference_links: ByNode::new_in(&symbols, session),
+            reference_kinds: ByNode::new_in(&all_symbols, session),
             global_errors: Default::default(),
             mapped_types_with_errors: ById::new_in(session),
             initializer_is_undefined: ByNode::new_in(&params, session),
@@ -965,7 +967,6 @@ impl<'s> Program<'s> {
             awaiting: Vec::new(),
             last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
             synthetic_default_import_types: Default::default(),
-            referenced_properties: Default::default(),
             tracked_names: Vec::new(),
             unused_private_members: Vec::new(),
             widening_contexts: Vec::new(),
@@ -1835,9 +1836,6 @@ pub struct Checker<'p, 's> {
     /// `cachedTypes[CachedTypeKindSyntheticType]`, keyed by a module's type. True if the cached
     /// type has a synthetic `default`.
     synthetic_default_import_types: FxHashMap<TypeId, bool>,
-    /// `symbolReferenceLinks` of the private members marked by an access in a file other than the
-    /// one that declares them (`mark_property_as_referenced`).
-    referenced_properties: crate::util::FxHashSet<Sym>,
     /// `Resolve` with `isUse` in `trackComputedName` and `trackExistingEntityName`: the file and
     /// the scope it starts from, the name and the meaning. `check_unused` of that file resolves it
     /// again.

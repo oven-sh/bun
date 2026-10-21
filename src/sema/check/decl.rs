@@ -3991,12 +3991,7 @@ impl<'p, 's> Checker<'p, 's> {
         let alias = files.resolve_entity(file, scope, &names, SymFlags::ALIAS)?;
         // In `a.b` the first name is resolved as a namespace, as it was before.
         if names.len() == 1 {
-            // Written to the same buffer as `type_node_types[(file, node)]`, so one commit
-            // publishes both. A task that hits that entry sees the mark, and a task that misses it
-            // reaches this code itself.
-            for &part in files.parts(alias).iter() {
-                (self.p.symbol_reference_links).insert(&self.task, part, (), Stored::new());
-            }
+            self.symbol_referenced(file, hir[name.at(0)].pos(), alias, SymFlags::ALIAS);
         }
         Some(alias)
     }

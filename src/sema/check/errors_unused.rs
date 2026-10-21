@@ -1,7 +1,8 @@
 //! Unused declarations: 6133 6138 6192 6196 6198 6199 6205, under `noUnusedLocals` and `noUnusedParameters`.
 //!
-//! Mirrors `checkUnusedIdentifiers` and its callees in TypeScript 7.1's checker.go. They record references during
-//! checking. Here one pass over the file collects them.
+//! Mirrors `checkUnusedIdentifiers` and its callees in TypeScript 7.1's checker.go. A type reference and a property
+//! access mark the symbol they resolve to where they're resolved (`Program::reference_kinds`). The binder has resolved
+//! the identifiers, and a loop at the end of the file marks their symbols.
 
 use super::errors_enums_names::Location;
 use super::jsdoc::closing_bracket_after;
@@ -13,12 +14,21 @@ use crate::bind::{
 use crate::program::SymbolTable;
 use crate::util::SharedSort;
 
-/// The meanings a name was resolved with.
-const VALUE: u8 = 1;
-const TYPE: u8 = 2;
-const NAMESPACE: u8 = 4;
-const ALL: u8 = 7;
-const ALIAS: u8 = 8;
+/// `referenceKinds != 0`
+const REFERENCED: u8 = 1;
+/// `referenceKinds&SymbolFlagsVariable != 0`
+const AS_VARIABLE: u8 = 2;
+/// `referenceKinds&SymbolFlagsTypeParameter != 0`
+const AS_TYPE_PARAMETER: u8 = 4;
+
+/// `referenceKinds` after a reference with `meaning`, as far as `checkUnusedIdentifiers` tells meanings apart.
+#[inline]
+fn reference_kinds(meaning: SymFlags) -> u8 {
+    let as_variable = u8::from(meaning.intersects(SymFlags::VARIABLE)) * AS_VARIABLE;
+    let as_type_parameter =
+        u8::from(meaning.contains(SymFlags::TYPE_PARAMETER)) * AS_TYPE_PARAMETER;
+    REFERENCED | as_variable | as_type_parameter
+}
 
 /// True if `getTypeAtFlowNode`, for a property or element access at `flow`, reaches a node where it calls
 /// `isMatchingReference` or `getFlowReferenceKey`. For such a reference it doesn't go past the start of the function.
@@ -42,17 +52,41 @@ fn compares_references(bound: &Bound, mut flow: FlowId, depth: u32) -> bool {
     }
 }
 
+/// `lastSelfReferenceLocation`: true if `pos` is inside a function, class, interface, alias, enum or namespace
+/// declaration of `symbol`. A name there that resolves to `symbol` isn't a reference. Tests the declarations' spans
+/// instead of walking the ancestors.
+fn is_inside_declaration_of(hir: &hir::File, bound: &Bound, pos: u32, symbol: SymbolId) -> bool {
+    let declares_a_location = SymFlags::FUNCTION
+        | SymFlags::CLASS
+        | SymFlags::INTERFACE
+        | SymFlags::TYPE_ALIAS
+        | SymFlags::ENUM
+        | SymFlags::MODULE;
+    bound.symbol(symbol).flags.intersects(declares_a_location)
+        && bound.symbol(symbol).decls.iter().any(|&d| {
+            matches!(
+                d,
+                Decl::Fn(_)
+                    | Decl::Class(_)
+                    | Decl::Interface(_)
+                    | Decl::Alias(_)
+                    | Decl::Enum(_)
+                    | Decl::Module(_)
+            ) && matches!(hir.data(hir.node(d)), NodeData::Stmt(s)
+                    if (hir[s].loc.pos..hir[s].loc.end).contains(&pos))
+                // The local symbol of an exported declaration isn't the declaration's symbol.
+                && bound.symbol_of_declaration(d) == symbol
+        })
+}
+
 struct Unused<'a, 's> {
     files: &'a Files<'s>,
     file: FileId,
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
     atoms: crate::atom::Atoms<'a, 's>,
-    /// `symbolReferenceLinks`, indexed by symbol: the meanings it was referenced with.
+    /// `symbolReferenceLinks`, indexed by symbol: see `reference_kinds`.
     referenced: Vec<u8>,
-    /// Indexed by scope: the symbol of the function, class, interface, enum, alias or namespace declaration that owns
-    /// the scope.
-    owner_of_scope: Vec<SymbolId>,
     /// `Checker::never_checked` after `check_source_file`.
     never_checked: Vec<(u32, u32)>,
     /// The sorted starts of the parser's and the scanner's errors. Empty for a file that parses.
@@ -71,16 +105,23 @@ struct Use {
     is_self_reference: bool,
 }
 
-/// The result of `Checker::private_property_read`.
-enum PropertyRead {
-    /// The receiver's type didn't resolve.
-    Unresolved,
-    /// No class member is marked.
-    NotPrivate,
-    Private(Sym),
-}
-
 impl Checker<'_, '_> {
+    /// The end of `Resolve` with `isUse`: it has found `found` for the name at `pos` of `file`, looked up with
+    /// `meaning`. Only the file's own declarations are marked, because no other file reports them.
+    pub(super) fn symbol_referenced(&self, file: FileId, pos: u32, found: Sym, meaning: SymFlags) {
+        let kinds = reference_kinds(meaning);
+        let parts = self.files().parts(found);
+        let Some(&part) = parts.iter().find(|part| part.file == file) else {
+            return;
+        };
+        if self.p.reference_kinds.flags(part) & kinds == kinds {
+            return;
+        }
+        if !is_inside_declaration_of(self.hir(file), self.bound(file), pos, part.id) {
+            self.p.reference_kinds.add(part, kinds);
+        }
+    }
+
     pub(super) fn check_unused(&mut self, file: FileId) {
         let options = &self.p.files.options;
         let (locals, parameters) = (options.no_unused_locals, options.no_unused_parameters);
@@ -101,55 +142,52 @@ impl Checker<'_, '_> {
             hir,
             bound,
             atoms: self.atoms(),
-            referenced: vec![0; bound.symbols.len()],
-            owner_of_scope: vec![SymbolId::NONE; bound.scopes.len()],
+            referenced: self.p.reference_kinds.flags_in(file),
             never_checked: self.never_checked.borrow().clone(),
             syntax_errors,
             locals,
             parameters,
         };
-        for (i, s) in bound.scopes.iter().enumerate() {
-            u.owner_of_scope[i] = match s.kind {
-                ScopeKind::Fn(f) if hir[f].kind == FnKind::Decl => bound.fn_symbol[f.idx()],
-                ScopeKind::Class(c)
-                    if matches!(bound.class_owner[c.idx()], ClassOwner::Stmt(_)) =>
-                {
-                    bound.class_symbol[c.idx()]
-                }
-                ScopeKind::Interface(id) => bound.interface_symbol[id.idx()],
-                ScopeKind::Enum(e) => bound.enum_symbol[e.idx()],
-                ScopeKind::Module(m) => bound.module_symbol[m.idx()],
-                _ => SymbolId::NONE,
-            };
+        self.note_identifiers(file, &mut u);
+        u.note_exports();
+        let reported = self.reported.len();
+        self.report_unused_declarations(&u, &renamed);
+        if self.reported.len() == reported {
+            return;
         }
-        for (a, &scope) in bound.alias_scope.iter().enumerate() {
-            if scope.is_some() {
-                u.owner_of_scope[scope.idx()] = bound.alias_symbol[a];
+        // Something has no reference yet. The lookups that are rarely a symbol's only reference are collected now.
+        self.reported.truncate(reported);
+        self.unused_private_members.clear();
+        self.note_rare_references(file, &mut u);
+        self.report_unused_declarations(&u, &renamed);
+    }
+
+    fn report_unused_declarations(&mut self, u: &Unused, renamed: &[PatPropId]) {
+        self.check_unused_renamed_binding_elements(u, renamed);
+        if u.locals || u.parameters {
+            self.check_unused_identifiers(u);
+        }
+    }
+
+    /// The calls of `Resolve` with `isUse` that aren't part of resolving an identifier, a type reference or a property.
+    fn note_rare_references(&mut self, file: FileId, u: &mut Unused) {
+        let (hir, bound) = (u.hir, u.bound);
+        let index = self.exprs_by_kind(file);
+        // `containsArgumentsReference` also passes `getResolvedSymbol` a declaration's name, and such a name is never a
+        // write (`IsWriteOnlyAccess`).
+        for &(_, scope, local) in bound.names_resolved_for_arguments.iter() {
+            if local.is_some() {
+                let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+                u.note_name(scope, known::arguments, meaning);
             }
         }
-        let index = self.exprs_by_kind(file);
-        self.note_identifiers(file, &index, &mut u);
-        u.note_references();
-        self.note_module_references(file, &mut u);
-        self.note_unresolved_type_references(file, &mut u);
-        self.note_untyped_signature_parameters(file, &mut u);
+        u.note_default_exports();
+        self.note_module_references(file, u);
+        self.note_unresolved_type_references(file, u);
+        self.note_untyped_signature_parameters(file, u);
         for &(of, scope, name, meaning) in &self.tracked_names {
             if of == file {
-                let bit = if meaning == SymFlags::TYPE {
-                    TYPE
-                } else if meaning == SymFlags::NAMESPACE {
-                    NAMESPACE
-                } else {
-                    VALUE
-                };
-                u.note_name(scope, name, meaning, bit);
-            }
-        }
-        let links = &self.p.symbol_reference_links;
-        for (i, kinds) in u.referenced.iter_mut().enumerate() {
-            let id = SymbolId(i as u32);
-            if links.get(&self.task, &Sym { file, id }).is_some() {
-                *kinds |= ALIAS;
+                u.note_name(scope, name, meaning);
             }
         }
         // `Resolve` records the reference before `OnPropertyWithInvalidInitializer` makes it return nil, and the binder
@@ -164,31 +202,14 @@ impl Checker<'_, '_> {
                     && !u.is_unchecked(e)
                     && !u.is_write_only(e)
                 {
-                    u.note_name(scope, name, SymFlags::VALUE, VALUE);
+                    u.note_name(scope, name, SymFlags::VALUE);
                 }
             }
         }
-        self.note_entity_name_expressions(file, &index, &mut u);
-        self.note_jsdoc_links(file, &mut u);
+        self.note_entity_name_expressions(file, &index, u);
+        self.note_jsdoc_links(file, u);
         if !hir.jsx.is_empty() {
-            self.note_jsx_factories(file, &index, &mut u);
-        }
-        // `bindTypeParameter`: a class's type parameter and a member with the same name are one symbol.
-        let is_member = |symbol: &SymbolId| {
-            let symbol = bound.symbols.get(symbol.idx());
-            symbol.is_some_and(|it| it.flags.intersects(SymFlags::CLASS_MEMBER))
-        };
-        if locals || bound.type_param_symbol.iter().any(is_member) {
-            self.note_private_reads(file, &mut u);
-            let is_declared_here = |symbol: &&Sym| symbol.file == file;
-            let marked = self.referenced_properties.iter().filter(is_declared_here);
-            for symbol in marked.copied().collect::<Vec<Sym>>() {
-                self.note_property_symbol(&mut u, symbol);
-            }
-        }
-        self.check_unused_renamed_binding_elements(&u, &renamed);
-        if locals || parameters {
-            self.check_unused_identifiers(&u);
+            self.note_jsx_factories(file, &index, u);
         }
     }
 
@@ -227,23 +248,25 @@ impl Checker<'_, '_> {
     }
 
     /// `getResolvedSymbol` of every identifier that's checked: `Resolve` with `isUse`.
-    fn note_identifiers(&mut self, file: FileId, index: &ExprsByKind, u: &mut Unused) {
+    fn note_identifiers(&mut self, file: FileId, u: &mut Unused) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let index = self.exprs_by_kind(file);
         for &e in index.of(ExprTag::Ident) {
             let i = e.idx();
             let symbol = bound.symbol_of_expr(ExprId(i as u32));
             if symbol.is_none()
-                || u.referenced[symbol.idx()] & VALUE != 0
+                || u.referenced[symbol.idx()] & AS_VARIABLE != 0
                 || bound.is_unchecked(i)
                 || u.is_unchecked(e)
-                || u.is_write_only(e)
-                || u.is_inside_declaration_of(e, symbol)
+                || bound.symbol(symbol).flags.contains(SymFlags::ASSIGNED) && u.is_write_only(e)
+                || is_inside_declaration_of(hir, bound, hir[e].pos, symbol)
             {
                 continue;
             }
             // `checkVariableLikeDeclaration` only validates the alias that `const x = require("m")` declares. It
             // doesn't check the initializer, so it doesn't resolve the callee.
-            if let Parent::Expr(call) = bound.parent_of_expr(ExprId(i as u32))
+            if hir.is_js
+                && let Parent::Expr(call) = bound.parent_of_expr(ExprId(i as u32))
                 && call.is_some()
                 && let Parent::VarInit(d) = bound.parent_of_expr(call)
                 && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
@@ -252,17 +275,21 @@ impl Checker<'_, '_> {
                 continue;
             }
             if bound.symbol(symbol).flags.intersects(SymFlags::VALUE) {
-                u.referenced[symbol.idx()] |= VALUE;
+                u.referenced[symbol.idx()] |= reference_kinds(SymFlags::VALUE);
                 continue;
             }
-            // `getSymbol` finds an alias only if its target has the meaning. Otherwise the search continues in the
-            // outer scopes.
             let ExprKind::Ident(name) = hir[e].kind else {
                 continue;
             };
             let Ok(at) = bound.alias_idents.binary_search_by_key(&e, |alias| alias.0) else {
                 continue;
             };
+            // `getSymbol` finds an alias only if its target has the meaning. Otherwise the search continues in the
+            // outer scopes.
+            if (self.get_symbol(Some(self.files().sym(file, symbol)), SymFlags::VALUE)).is_some() {
+                u.referenced[symbol.idx()] |= reference_kinds(SymFlags::VALUE);
+                continue;
+            }
             let found = u.resolve_use_with(
                 bound.alias_idents[at].1,
                 name,
@@ -270,15 +297,7 @@ impl Checker<'_, '_> {
                 &mut |entry, meaning| self.get_symbol(entry, meaning),
             );
             if let Some(found) = found {
-                u.note_use(found, VALUE);
-            }
-        }
-        // `containsArgumentsReference` also passes it a declaration's name, and such a name is never a write
-        // (`IsWriteOnlyAccess`).
-        for &(_, scope, local) in bound.names_resolved_for_arguments.iter() {
-            if local.is_some() {
-                let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-                u.note_name(scope, known::arguments, meaning, VALUE);
+                u.note_use(found, SymFlags::VALUE);
             }
         }
     }
@@ -304,7 +323,7 @@ impl Checker<'_, '_> {
         let reported = self.reported.len();
         self.check_qualified_name(file, scope, names, meaning);
         if self.reported.drain(reported..).any(|d| d.code != 2724) {
-            u.note_name(scope, hir[names.at(0)].text, SymFlags::VALUE, VALUE);
+            u.note_name(scope, hir[names.at(0)].text, SymFlags::VALUE);
         }
     }
 
@@ -358,7 +377,7 @@ impl Checker<'_, '_> {
             let x = ImportEqualsId(i as u32);
             if self.modules_is_marked_as_referenced(file, aliases, x, &mut Vec::new()) {
                 let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-                u.note_name(scope, hir[names.at(0)].text, meaning, VALUE);
+                u.note_name(scope, hir[names.at(0)].text, meaning);
             }
         }
     }
@@ -395,7 +414,7 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            u.note_name(signature.scope, name, SymFlags::TYPE, TYPE);
+            u.note_name(signature.scope, name, SymFlags::TYPE);
         }
     }
 
@@ -610,11 +629,11 @@ impl Checker<'_, '_> {
                 },
                 meaning,
             ) {
-                u.referenced[found.symbol.idx()] |= ALL;
+                u.referenced[found.symbol.idx()] |= reference_kinds(SymFlags::all());
             }
             // `getJsxFactoryEntity`: a fragment uses both factories.
             if is_fragment {
-                u.note_name(scope, factory, meaning, VALUE);
+                u.note_name(scope, factory, meaning);
             }
         }
     }
@@ -666,355 +685,111 @@ impl Checker<'_, '_> {
                         continue;
                     }
                 }
-                u.note_name(scope, first, all, ALL);
+                u.note_name(scope, first, all);
             }
         }
     }
 
-    /// Records the reads of private members: every place where `markPropertyAsReferenced` is called.
-    fn note_private_reads(&mut self, file: FileId, u: &mut Unused) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // Only the file's private members are marked, so an access with any other name isn't resolved. A computed name
-        // isn't known in advance.
-        let private = hir
-            .members
-            .iter()
-            .filter(|m| m.flags.contains(Flags::PRIVATE) || matches!(m.key, PropKey::Private(_)));
-        let may_be_any = private.clone().any(|m| m.key.name().is_none());
-        let parameters = hir
-            .params
-            .iter()
-            .filter(|p| p.flags.contains(Flags::PRIVATE));
-        let names: crate::util::FxHashSet<Atom> = private
-            .filter_map(|m| m.key.name())
-            .chain(parameters.filter_map(|p| match hir[p.pat].kind {
-                PatKind::Ident(name) => Some(name),
-                _ => None,
-            }))
-            .collect();
-        if names.is_empty() && !may_be_any {
-            return;
-        }
-        let is_private = |name: Atom| may_be_any || names.contains(&name);
-        // The symbols that an access to each of `names` can mark, which are the ones that `note_members_named` marks.
-        // Once all of them are marked, another access with that name adds nothing. Neither does an access with any
-        // other name.
-        let mut marked_by_name: FxHashMap<Atom, smallvec::SmallVec<[SymbolId; 2]>> =
-            FxHashMap::default();
-        for (m, member) in hir.members.iter().enumerate() {
-            if let Some(name) = member.key.name().filter(|name| names.contains(name)) {
-                marked_by_name
-                    .entry(name)
-                    .or_default()
-                    .push(bound.member_symbol[m]);
-            }
-        }
-        for p in (0..hir.params.len() as u32).map(ParamId) {
-            if hir[p].flags.contains(Flags::PRIVATE)
-                && let PatKind::Ident(name) = hir[hir[p].pat].kind
-            {
-                let symbol = bound.symbol_of_declaration(Decl::ParameterProperty(p));
-                marked_by_name.entry(name).or_default().push(symbol);
-            }
-        }
-        let adds_nothing = |u: &Unused, name: Atom| {
-            !may_be_any
-                && marked_by_name.get(&name).is_none_or(|symbols| {
-                    let mut symbols = symbols.iter().filter(|symbol| symbol.is_some());
-                    symbols.all(|symbol| u.referenced[symbol.idx()] & ALL == ALL)
-                })
-        };
-        let index = self.exprs_by_kind(file);
-        let kinds = [
-            ExprTag::Dot,
-            ExprTag::Index,
-            ExprTag::Assign,
-            ExprTag::PrivateIdentifier,
-        ];
-        for &e in kinds.iter().flat_map(|&kind| index.of(kind)) {
-            let i = e.idx();
-            let is_skipped = match hir.exprs[i].kind {
-                ExprKind::Dot { name, .. } => adds_nothing(u, name),
-                ExprKind::Assign { op, .. } => op.is_some(),
-                _ => false,
-            };
-            if is_skipped || bound.is_unchecked(i) || u.is_unchecked(e) {
-                continue;
-            }
-            match hir.exprs[i].kind {
-                ExprKind::Dot { obj, name, .. } => {
-                    let receiver = self.type_of_expr(file, obj);
-                    let receiver = self.non_nullable(receiver);
-                    self.note_property(file, u, receiver, name, Some(e), None);
-                }
-                ExprKind::Index { obj, index, .. } => {
-                    let key = self.type_of_expr(file, index);
-                    // `shouldDeferIndexedAccessType`: no property is looked up for a generic key.
-                    if self.is_generic(key) {
-                        continue;
-                    }
-                    let receiver = self.type_of_expr(file, obj);
-                    let receiver = self.non_nullable(receiver);
-                    // `getIndexedAccessTypeOrUndefined`: each member of a union of keys is a property name.
-                    for &k in self.parts(key) {
-                        if let Some(name) = self.property_name_of_type(k).filter(|&n| is_private(n))
-                        {
-                            self.note_property(file, u, receiver, name, Some(e), None);
-                        }
-                    }
-                }
-                // `({ x } = o)`: `checkBinaryLikeExpression`
-                ExprKind::Assign {
-                    op: None,
-                    target,
-                    value,
-                } if matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_)) => {
-                    let source = self.type_of_expr(file, value);
-                    let from_this = (matches!(hir[value].kind, ExprKind::This)
-                        && !is_parenthesized(hir, value))
-                    .then_some(e);
-                    self.note_destructured(file, u, target, source, from_this);
-                }
-                // `checkPrivateIdentifierExpression`: a read, wherever the expression appears.
-                ExprKind::PrivateIdentifier(name) => {
-                    if let Some((_, m)) =
-                        self.lookup_symbol_for_private_identifier_declaration(file, e, name)
-                    {
-                        let symbol = self.symbol_of_member(file, m);
-                        self.note_property_symbol(u, symbol);
-                    }
-                }
-                _ => {}
-            }
-        }
-        // `for ({ x } of os)`: `checkForOfStatement`
-        for (i, s) in hir.stmts.iter().enumerate() {
-            if let StmtKind::ForOf {
-                left,
-                expr,
-                is_await,
-                ..
-            } = s.kind
-                && !matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None)
-                && !u.is_never_checked(s.start)
-                && let StmtKind::Expr(target) = hir[left].kind
-                && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
-            {
-                let visited = self.type_of_expr(file, expr);
-                let source = self.iterated_type(visited, is_await);
-                self.note_destructured(file, u, target, source, None);
-            }
-        }
-        // `const { x } = o`: `checkVariableLikeDeclaration`. `PropertyNameOrName` of every binding element is looked up
-        // in the destructured type, even for a rest element or an array pattern element.
-        let unchecked = self.unchecked_jsdoc_types(file);
-        for i in 0..hir.pats.len() {
-            if u.is_never_checked(hir.pats[i].pos)
-                || matches!(bound.pat_parent[i], PatParent::None)
-                || unchecked.contain(hir.pats[i].pos)
-            {
-                continue;
-            }
-            let mut read = Vec::new();
-            match hir.pats[i].kind {
-                PatKind::Object(props) => {
-                    for p in props.iter() {
-                        // "variable renaming in function type notation is confusing": it returns before it requests the
-                        // parent's type.
-                        if self.is_renamed_binding_element(file, p)
-                            && self.returns_before_type_of_symbol(file, hir[p].value)
-                        {
-                            continue;
-                        }
-                        let name = match (hir[p].key, hir[hir[p].value].kind) {
-                            (PropKey::None, PatKind::Ident(name)) => Some(name),
-                            (key, _) => self.member_name(file, key),
-                        };
-                        read.extend(name.filter(|&n| is_private(n)));
-                    }
-                }
-                PatKind::Array(elems) => {
-                    for element in elems.iter() {
-                        if let PatKind::Ident(name) = hir[hir[element].pat].kind
-                            && is_private(name)
-                        {
-                            read.push(name);
-                        }
-                    }
-                }
-                _ => {}
-            }
-            if !read.is_empty() {
-                let whole = self.type_of_pat(file, PatId(i as u32));
-                for name in read {
-                    self.note_property(file, u, whole, name, None, None);
-                }
-            }
-        }
-    }
-
-    /// `checkDestructuringAssignment`: `target`, the pattern of a destructuring assignment or a part of it, is assigned
-    /// `source`. `from_this` is the assignment, if `target` is its whole pattern and the right-hand side is `this`.
-    fn note_destructured(
-        &mut self,
-        file: FileId,
-        u: &mut Unused,
-        target: ExprId,
-        source: TypeId,
-        from_this: Option<ExprId>,
-    ) {
-        let hir = self.hir(file);
-        // True if `e` is a nested pattern, with or without a default.
-        let is_pattern = |e: ExprId| {
-            let e = match hir[e].kind {
-                ExprKind::Assign {
-                    op: None, target, ..
-                } => target,
-                _ => e,
-            };
-            matches!(hir[e].kind, ExprKind::Object(_) | ExprKind::Array(_))
-        };
-        match hir[target].kind {
-            // The default is assigned too, as an ordinary assignment.
-            ExprKind::Assign {
-                op: None, target, ..
-            } => {
-                let source = if self.p.files.options.strict_null_checks {
-                    self.without_undefined(source)
-                } else {
-                    source
-                };
-                self.note_destructured(file, u, target, source, None);
-            }
-            // `checkObjectLiteralDestructuringPropertyAssignment`
-            ExprKind::Object(props) => {
-                for p in props.iter() {
-                    if !matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) {
-                        continue;
-                    }
-                    let (key, pos) = (hir[p].key, hir[p].pos);
-                    let Some(name) = self.try_get_name_from_property_name(file, key, pos) else {
-                        continue;
-                    };
-                    self.note_property(file, u, source, name, None, from_this);
-                    if hir[p].value.is_some()
-                        && is_pattern(hir[p].value)
-                        && let Some(element) = self.type_of_property(source, name)
-                    {
-                        self.note_destructured(file, u, hir[p].value, element, None);
-                    }
-                }
-            }
-            // `checkArrayLiteralAssignment`
-            ExprKind::Array(items) => {
-                for (i, item) in hir.ids(items).enumerate() {
-                    let (item, is_rest) = match hir[item].kind {
-                        ExprKind::Spread(rest) => (rest, true),
-                        _ => (item, false),
-                    };
-                    if is_pattern(item) {
-                        let element = self.element_of_destructured(source, i, is_rest, None);
-                        self.note_destructured(file, u, item, element, None);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// `markPropertyAsReferenced` for the property `name` of `receiver`. `at` is the `a.b` or `a[b]` that accesses it,
-    /// if any. `from_this` is the assignment, for a property named in the pattern of `({ b } = this)`.
-    fn note_property(
-        &mut self,
-        file: FileId,
-        u: &mut Unused,
-        receiver: TypeId,
-        name: Atom,
-        at: Option<ExprId>,
-        from_this: Option<ExprId>,
-    ) {
-        let is_this_type = matches!(self.data(receiver), TypeData::ThisParam(_));
-        let receiver = self.apparent_type(receiver);
-        let symbol = match self.private_property_read(file, receiver, name, at) {
-            PropertyRead::Unresolved => return u.note_members_named(name),
-            PropertyRead::NotPrivate => return,
-            PropertyRead::Private(symbol) => symbol,
-        };
-        // A self-reference from inside any declaration of the member isn't a reference.
-        if (from_this.is_some() || at.is_some_and(|e| self.is_self_type_access(file, e, receiver)))
-            && let Some(inside) = at.or(from_this).and_then(|e| u.enclosing_member_fn(e))
-            && self.symbol_of_member(file, inside) == symbol
-            && (is_this_type || {
-                let members = self.members_of_symbol(symbol);
-                self.is_uninstantiated(file, &members)
-            })
-        {
-            return;
-        }
-        self.note_property_symbol(u, symbol);
-    }
-
-    /// `markPropertyAsReferenced` where it's called for a member declared in a file other than `file`: the property
-    /// `name` of `receiver` is accessed in `file`. `note_private_reads` collects the accesses in the declaration's
-    /// file. `at` is the same as for `note_property`. No declaration of the member contains the access, so
-    /// `isSelfTypeAccess` doesn't matter.
+    /// `markPropertyAsReferenced` for the property `name` of `receiver`, accessed in `file`. `at` is the `a.b` or `a[b]`
+    /// that accesses it, if any. `from_this` is the assignment, for a property named in the pattern of `({ b } = this)`.
     pub(super) fn mark_property_as_referenced(
         &mut self,
         file: FileId,
         receiver: TypeId,
         name: Atom,
         at: Option<ExprId>,
+        from_this: Option<ExprId>,
     ) {
-        let Some(visited) = self.task.file else {
-            return;
-        };
-        if !self.p.files.options.no_unused_locals {
+        if !self.reports_unused() {
             return;
         }
+        let is_this_type = matches!(self.data(receiver), TypeData::ThisParam(_));
         let receiver = self.apparent_type(receiver);
-        let PropertyRead::Private(symbol) = self.private_property_read(file, receiver, name, at)
-        else {
+        let Some(symbol) = self.private_property_read(file, receiver, name, at) else {
             return;
         };
-        // `checkUnusedClassMembers` runs at the end of the declaration's file.
         let files = self.files();
-        if symbol.file == file || files.rank_of_file(visited) > files.rank_of_file(symbol.file) {
+        if symbol.file != file {
+            // `checkUnusedClassMembers` runs at the end of the declaration's file.
+            let is_in_time =
+                |visited| files.rank_of_file(visited) <= files.rank_of_file(symbol.file);
+            if !self.task.file.is_some_and(is_in_time) {
+                return;
+            }
+            if self.p.reference_kinds.flags(symbol) == 0 {
+                self.p.properties_referenced_before.lock().insert(symbol);
+            }
+        } else if (files.flags(symbol)).intersects(SymFlags::METHOD | SymFlags::ACCESSOR)
+            && (from_this.is_some()
+                || at.is_some_and(|e| self.is_self_type_access(file, e, receiver)))
+            && let Some(inside) = at
+                .or(from_this)
+                .and_then(|e| self.enclosing_member_fn(file, e))
+            && self.symbol_of_member(file, inside) == symbol
+            && (is_this_type || {
+                let members = self.members_of_symbol(symbol);
+                self.is_uninstantiated(file, &members)
+            })
+        {
+            // A self-reference from inside any declaration of the member isn't a reference.
             return;
         }
-        if self.referenced_properties.insert(symbol) {
-            self.p.properties_referenced_before.lock().insert(symbol);
+        self.property_referenced(symbol);
+    }
+
+    /// `symbolReferenceLinks.Get(symbol).referenceKinds |= SymbolFlagsAll`
+    pub(super) fn property_referenced(&self, symbol: Sym) {
+        (self.p.reference_kinds).add(symbol, reference_kinds(SymFlags::all()));
+    }
+
+    pub(super) fn reports_unused(&self) -> bool {
+        let options = &self.p.files.options;
+        options.no_unused_locals || options.no_unused_parameters
+    }
+
+    /// False if `markPropertyAsReferenced(prop, ..)` marks nothing new.
+    pub(super) fn may_mark_property(&self, prop: &Prop) -> bool {
+        self.reports_unused()
+            && !matches!(prop.source, PropSource::Symbol(symbol)
+                if self.p.reference_kinds.flags(symbol) != 0)
+    }
+
+    /// The class method or accessor that directly contains `e`: `FindAncestor(e, IsFunctionLikeDeclaration)`, if that's
+    /// one.
+    fn enclosing_member_fn(&self, file: FileId, e: ExprId) -> Option<MemberId> {
+        let hir = self.hir(file);
+        let function = hir.find_ancestor(hir.parent(hir.node(e)), |n| {
+            hir.function_of(n).is_some() && hir.kind(n) != Kind::ClassStaticBlockDeclaration
+        });
+        match hir.data(function) {
+            NodeData::Member(m) => Some(m),
+            _ => None,
         }
     }
 
     /// The start of `markPropertyAsReferenced`, up to `isSelfTypeAccess`, for the property `name` of the apparent type
-    /// `receiver`, accessed in `file`. `at` is the same as for `note_property`.
+    /// `receiver`, accessed in `file`: the class member it goes on to mark. `at` is the same as for
+    /// `mark_property_as_referenced`.
     fn private_property_read(
         &mut self,
         file: FileId,
         receiver: TypeId,
         name: Atom,
         at: Option<ExprId>,
-    ) -> PropertyRead {
+    ) -> Option<Sym> {
         // `createUnionOrIntersectionProperty`: a private property must exist in every member of a union. If all members
         // have the same property, the result is the first member's property. Otherwise there's no property, or a
         // synthesized one, and that one is marked.
         let mut found: Option<(&Prop, MapperId)> = None;
         for &part in self.parts(receiver) {
             let part = self.apparent_type(part);
-            if part == TypeId::UNRESOLVED {
-                return PropertyRead::Unresolved;
-            }
-            let Some((mut prop, mut mapper)) = self.prop_ref(part, name) else {
-                return PropertyRead::NotPrivate;
-            };
+            let (mut prop, mut mapper) = self.prop_ref(part, name)?;
             if let PropSource::Intersected(_, list) = &prop.source {
-                let Some(first) = list.first() else {
-                    return PropertyRead::NotPrivate;
-                };
+                let first = list.first()?;
                 if list.iter().any(|other| {
                     !self.is_same_property(first, MapperId::IDENTITY, other, MapperId::IDENTITY)
                 }) {
-                    return PropertyRead::NotPrivate;
+                    return None;
                 }
                 (prop, mapper) = (first, MapperId::IDENTITY);
             }
@@ -1031,20 +806,17 @@ impl Checker<'_, '_> {
                     _ => false,
                 };
                 if !is_private {
-                    return PropertyRead::NotPrivate;
+                    return None;
                 }
                 found = Some((prop, mapper));
                 continue;
             };
             if !self.is_same_property(first.0, first.1, prop, mapper) {
-                return PropertyRead::NotPrivate;
+                return None;
             }
         }
-        let Some((prop, _)) = found else {
-            return PropertyRead::NotPrivate;
-        };
-        let PropSource::Symbol(symbol) = prop.source else {
-            return PropertyRead::NotPrivate;
+        let PropSource::Symbol(symbol) = found?.0.source else {
+            return None;
         };
         // A write-only access isn't a reference, unless the write calls a setter.
         if at.is_some_and(|e| self.bound(file).is_write_only_access(self.hir(file), e))
@@ -1052,22 +824,9 @@ impl Checker<'_, '_> {
                 .flags_of_property(symbol)
                 .contains(SymFlags::SET_ACCESSOR)
         {
-            return PropertyRead::NotPrivate;
+            return None;
         }
-        PropertyRead::Private(symbol)
-    }
-
-    /// `symbolReferenceLinks.Get(symbol).referenceKinds |= SymbolFlagsAll` for a property's symbol. The marks are on
-    /// the symbols the binder gave its declarations.
-    fn note_property_symbol(&mut self, u: &mut Unused, symbol: Sym) {
-        let file = u.file;
-        let declarations = self.declarations_of_property(symbol);
-        for &(_, declaration) in declarations.iter().filter(|it| it.0 == file) {
-            let own = u.bound.symbol_of_declaration(declaration);
-            if own.is_some() {
-                u.referenced[own.idx()] |= ALL;
-            }
-        }
+        Some(symbol)
     }
 
     /// True if `createUnionOrIntersectionProperty` treats the two as the same property: same declaration, same type.
@@ -1273,50 +1032,27 @@ pub(super) fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
 impl Unused<'_, '_> {
     // ───────────────────────────── references ─────────────────────────────
 
-    fn note_references(&mut self) {
+    /// `export { a }` references `a` with any meaning, past `checkGrammarModuleElementContext`.
+    fn note_exports(&mut self) {
         let (hir, bound) = (self.hir, self.bound);
-        for i in 0..hir.types.len() {
-            let scope = bound.type_scope[i];
-            let TypeNodeKind::Ref { name, .. } = hir.types[i].kind else {
-                continue;
-            };
-            if bound.is_unchecked_type(i) || self.is_never_checked(hir.types[i].pos) {
-                continue;
-            }
-            let Some(first) = hir.texts(name).next() else {
-                continue;
-            };
-            let (meaning, bit) = if name.len() == 1 {
-                (SymFlags::TYPE, TYPE)
-            } else {
-                (SymFlags::NAMESPACE, NAMESPACE)
-            };
-            if meaning == SymFlags::NAMESPACE {
-                self.note_namespace(scope, first);
-            } else {
-                self.note_name(scope, first, meaning, bit);
-            }
-        }
-        for (i, s) in hir.stmts.iter().enumerate() {
-            if matches!(bound.parent_of_stmt(StmtId(i as u32)), Parent::None) {
-                continue;
-            }
-            // `export { a }` references `a` with any meaning, past `checkGrammarModuleElementContext`.
-            if let StmtKind::ExportNamed(id) = s.kind
-                && !hir[id].has_module_specifier
+        for (i, export) in hir.exports.iter().enumerate() {
+            if !export.has_module_specifier
                 && matches!(
-                    bound.parent_of_stmt(StmtId(i as u32)),
+                    bound.parent_of_stmt(export.stmt),
                     Parent::File | Parent::Module(_)
                 )
             {
-                let scope = bound.export_scope[id.idx()];
-                for item in hir[id].items.iter() {
-                    self.note_name(scope, hir[item].local, SymFlags::all(), ALL);
+                for item in export.items.iter() {
+                    self.note_name(bound.export_scope[i], hir[item].local, SymFlags::all());
                 }
             }
         }
-        // `checkExportAssignment`: `export default I` and `export = I` reference `I` with any meaning, unless they're
-        // misplaced or in a namespace.
+    }
+
+    /// `checkExportAssignment`: `export default I` and `export = I` reference `I` with any meaning, unless they're
+    /// misplaced or in a namespace.
+    fn note_default_exports(&mut self) {
+        let (hir, bound) = (self.hir, self.bound);
         for &(e, scope) in bound.free_idents.iter().chain(&bound.alias_idents) {
             if let Parent::Stmt(s) = bound.parent_of_expr(e)
                 && matches!(
@@ -1330,28 +1066,8 @@ impl Unused<'_, '_> {
                     _ => false,
                 }
             {
-                self.note_name(scope, name, SymFlags::all(), ALL);
+                self.note_name(scope, name, SymFlags::all());
             }
-        }
-    }
-
-    /// Property access `.name` on a receiver whose type didn't resolve: conservatively marks every member of the file
-    /// with that name as referenced.
-    fn note_members_named(&mut self, name: Atom) {
-        let (hir, bound) = (self.hir, self.bound);
-        let members = (0..hir.members.len())
-            .filter(|&m| hir.members[m].key.name() == Some(name))
-            .map(|m| bound.member_symbol[m]);
-        let is_private_property_named = |p: &ParamId| {
-            hir[*p].flags.contains(Flags::PRIVATE)
-                && matches!(hir[hir[*p].pat].kind, PatKind::Ident(n) if n == name)
-        };
-        let properties = (0..hir.params.len() as u32)
-            .map(ParamId)
-            .filter(is_private_property_named)
-            .map(|p| bound.symbol_of_declaration(Decl::ParameterProperty(p)));
-        for symbol in members.chain(properties).filter(|symbol| symbol.is_some()) {
-            self.referenced[symbol.idx()] |= ALL;
         }
     }
 
@@ -1620,7 +1336,7 @@ impl Unused<'_, '_> {
         // `getSymbolOfPartOfRightHandSideOfImportEquals`
         self.note_namespace(scope, first);
         // `checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol`
-        self.note_name(scope, first, any, ALL);
+        self.note_name(scope, first, any);
         // `checkImportEqualsDeclaration`: "Target is a value symbol, check that it is not hidden by a local declaration
         // with the same name"
         let meaning = if names.len() == 1 {
@@ -1634,7 +1350,7 @@ impl Unused<'_, '_> {
             flags != SymFlags::all() && flags.intersects(SymFlags::VALUE)
         }) {
             let meaning = SymFlags::VALUE | SymFlags::NAMESPACE;
-            self.note_name(scope, first, meaning, VALUE | NAMESPACE);
+            self.note_name(scope, first, meaning);
         }
         target.is_none()
     }
@@ -1645,24 +1361,40 @@ impl Unused<'_, '_> {
     fn note_namespace(&mut self, scope: ScopeId, name: Atom) {
         let meaning = SymFlags::NAMESPACE;
         if let Some(found) = self.resolve_use(scope, name, meaning) {
-            self.note_use(found, NAMESPACE);
+            self.note_use(found, meaning);
         } else if (self.files.resolve_name(self.file, scope, name, meaning)).is_none() {
-            self.note_name(scope, name, SymFlags::ALIAS, ALIAS);
+            self.note_name(scope, name, SymFlags::ALIAS);
         }
     }
 
     /// `Resolve` with `isUse`. A name that doesn't resolve to a symbol declared in the file doesn't reference anything
     /// here.
-    fn note_name(&mut self, from: ScopeId, name: Atom, meaning: SymFlags, bit: u8) {
+    fn note_name(&mut self, from: ScopeId, name: Atom, meaning: SymFlags) {
         if let Some(found) = self.resolve_use(from, name, meaning) {
-            self.note_use(found, bit);
+            self.note_use(found, meaning);
         }
     }
 
     /// `symbol.isReferenced |= meaning`
-    fn note_use(&mut self, found: Use, bit: u8) {
+    fn note_use(&mut self, found: Use, meaning: SymFlags) {
         if !found.is_self_reference {
-            self.referenced[found.symbol.idx()] |= bit;
+            self.referenced[found.symbol.idx()] |= reference_kinds(meaning);
+        }
+    }
+
+    /// The symbol of the function, class, interface, enum, alias or namespace declaration that owns `scope`.
+    fn declaration_of_scope(&self, scope: ScopeId) -> SymbolId {
+        let (hir, bound) = (self.hir, self.bound);
+        match bound.scopes[scope.idx()].kind {
+            ScopeKind::Fn(f) if hir[f].kind == FnKind::Decl => bound.fn_symbol[f.idx()],
+            ScopeKind::Class(c) if matches!(bound.class_owner[c.idx()], ClassOwner::Stmt(_)) => {
+                bound.class_symbol[c.idx()]
+            }
+            ScopeKind::Interface(id) => bound.interface_symbol[id.idx()],
+            ScopeKind::TypeAlias(a) => bound.alias_symbol[a.idx()],
+            ScopeKind::Enum(e) => bound.enum_symbol[e.idx()],
+            ScopeKind::Module(m) => bound.module_symbol[m.idx()],
+            _ => SymbolId::NONE,
         }
     }
 
@@ -1712,8 +1444,9 @@ impl Unused<'_, '_> {
             {
                 break;
             }
-            if self.owner_of_scope[scope.idx()].is_some() {
-                inside = self.owner_of_scope[scope.idx()];
+            let declaration = self.declaration_of_scope(scope);
+            if declaration.is_some() {
+                inside = declaration;
             }
             scope = s.parent;
         }
@@ -1726,36 +1459,6 @@ impl Unused<'_, '_> {
     /// `IsWriteOnlyAccess`
     fn is_write_only(&self, e: ExprId) -> bool {
         self.bound.is_write_only_access(self.hir, e)
-    }
-
-    /// `isSelfReferenceLocation`: true if `e` is inside a function, class, enum or namespace declaration of `symbol`.
-    fn is_inside_declaration_of(&self, e: ExprId, symbol: SymbolId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        bound
-            .symbol(symbol)
-            .flags
-            .intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::ENUM | SymFlags::MODULE)
-            && bound.symbol(symbol).decls.iter().any(|&d| {
-                // Tests that the declaration's span contains `e`, instead of walking the ancestors.
-                matches!(
-                    d,
-                    Decl::Fn(_) | Decl::Class(_) | Decl::Enum(_) | Decl::Module(_)
-                ) && matches!(hir.data(hir.node(d)), NodeData::Stmt(s)
-                        if (hir[s].loc.pos..hir[s].loc.end).contains(&hir[e].pos))
-            })
-    }
-
-    /// The class method or accessor that directly contains `e`: `FindAncestor(e, IsFunctionLikeDeclaration)`, if that's
-    /// one.
-    fn enclosing_member_fn(&self, e: ExprId) -> Option<MemberId> {
-        let hir = self.hir;
-        let function = hir.find_ancestor(hir.parent(hir.node(e)), |n| {
-            hir.function_of(n).is_some() && hir.kind(n) != Kind::ClassStaticBlockDeclaration
-        });
-        match hir.data(function) {
-            NodeData::Member(m) => Some(m),
-            _ => None,
-        }
     }
 
     /// True if the checker never visits `e`, so that nothing in `e` counts as a reference.
@@ -1978,7 +1681,7 @@ impl Unused<'_, '_> {
             PatKind::Ident(name) => name,
         };
         let symbol = bound.pat_symbol[pat.idx()];
-        if symbol.is_some() && self.referenced[symbol.idx()] & VALUE != 0 {
+        if symbol.is_some() && self.referenced[symbol.idx()] & AS_VARIABLE != 0 {
             return false;
         }
         let excuses_underscore = match bound.pat_parent[pat.idx()] {
@@ -2011,7 +1714,7 @@ impl Unused<'_, '_> {
     fn is_unreferenced_type_parameter(&self, p: TypeParamId) -> bool {
         let symbol = self.bound.type_param_symbol[p.idx()];
         symbol.is_some()
-            && self.referenced[symbol.idx()] & TYPE == 0
+            && self.referenced[symbol.idx()] & AS_TYPE_PARAMETER == 0
             && !self.starts_with_underscore(self.hir[p].name)
     }
 }
@@ -2118,10 +1821,13 @@ impl Checker<'_, '_> {
             if name == known::empty || name.is_none() {
                 continue;
             }
-            let symbol = bound.symbol(local);
             let kinds = u.referenced[local.idx()];
+            if kinds & AS_VARIABLE != 0 {
+                continue;
+            }
+            let symbol = bound.symbol(local);
             if if symbol.flags.contains(SymFlags::TYPE_PARAMETER) {
-                !symbol.flags.intersects(SymFlags::VARIABLE) || kinds & VALUE != 0
+                !symbol.flags.intersects(SymFlags::VARIABLE)
             } else {
                 kinds != 0
                     || symbol.export_symbol.is_some()
@@ -2366,7 +2072,7 @@ impl Checker<'_, '_> {
                     {
                         continue;
                     }
-                    if !u.is_referenced(bound.member_symbol[i]) {
+                    if !u.is_referenced(symbol.id) {
                         let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
                         let name = hir.text.get(start as usize..end as usize);
                         let (at, name) = ((file, start, end), Arg::Bytes(name.unwrap_or_default()));

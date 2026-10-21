@@ -14760,6 +14760,97 @@ export function m(a = () => { const z = 1; yield z; }) { return a; }
       expect(exitCode).toBe(1);
     });
 
+    test("a name inside a declaration of the symbol it resolves to is no reference", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noUnusedLocals": true}}`,
+        "a.ts": `declare const dec: any;
+@dec((x: B) => x) class B {}
+@dec(() => C) class C {}
+interface Foo { x: typeof Foo }
+const Foo = 1;
+type Bar = typeof Bar;
+declare const Bar: number;
+class Baz { static s = Baz; }
+interface Baz { y: typeof Baz }
+// The function's symbol is the exported one. The parameter's type is the local interface.
+interface Props { a: number }
+export function Props(p: Props) { return p; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,25): error TS6196: 'B' is declared but never used.
+        a.ts(3,21): error TS6196: 'C' is declared but never used.
+        a.ts(4,11): error TS6196: 'Foo' is declared but never used.
+        a.ts(5,7): error TS6133: 'Foo' is declared but its value is never read.
+        a.ts(6,6): error TS6196: 'Bar' is declared but never used.
+        a.ts(8,7): error TS6196: 'Baz' is declared but never used.
+        a.ts(9,11): error TS6196: 'Baz' is declared but never used."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a type reference that's never resolved, or that finds no type, is no reference", async () => {
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noUnusedLocals": true}}`,
+        "a.ts": `import { value } from "./m";
+type Local = number;
+type Used = number;
+export declare const x: import("./missing").G<Local>;
+export declare const y: import("./m").G<Used>;
+export declare const z: value;
+`,
+        "m.ts": `export type G<T> = T;
+export const value = 1;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(1,10): error TS6133: 'value' is declared but its value is never read.
+        a.ts(2,6): error TS6196: 'Local' is declared but never used.
+        a.ts(4,32): error TS2307: Cannot find module './missing' or its corresponding type declarations.
+        a.ts(6,25): error TS2749: 'value' refers to a value, but is being used as a type here. Did you mean 'typeof value'?"
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a reference counts whichever file's check resolves it first", async () => {
+      // Every other file asks for types that are inferred from the only references to `Local`, `local` and the private members.
+      const users = Object.fromEntries(
+        Array.from({ length: 12 }, (_, i) => [
+          `u${i}.ts`,
+          `import { f, g, K } from "./a";\nexport const x${i} = [f().a, g()(undefined), new K(1).m(), new K(1).v];\n`,
+        ]),
+      );
+      using dir = project({
+        "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "noUnusedLocals": true}}`,
+        "a.ts": `type Local = { a: number };
+interface Other { b: number }
+const local = 1;
+type Unused = 1;
+export function f() { return { a: local } as Local; }
+export function g() { return (p?: Other) => p; }
+export class K {
+  private p = 1;
+  private unread = 1;
+  #h = 1;
+  constructor(private q: number) {}
+  private n() { return this.p + this.#h; }
+  m() { const { q } = this; return q + this.n(); }
+  get v() { return this["p"]; }
+}
+`,
+        ...users,
+      });
+      for (const { stdout, exitCode } of await Promise.all([1, 2, 8].map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe(
+          "a.ts(4,6): error TS6196: 'Unused' is declared but never used.\n" +
+            "a.ts(9,11): error TS6133: 'unread' is declared but its value is never read.",
+        );
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("checks what a misplaced statement, `yield` or type predicate contains", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "es2022", "module": "commonjs", "lib": ["es2022"], "types": []}}`,

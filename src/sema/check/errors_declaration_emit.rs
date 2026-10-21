@@ -6222,8 +6222,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `processEnding`
-    fn process_ending(&self, file_name: &[u8], allowed: &[Ending]) -> Vec<u8> {
+    /// `processEnding`. `file_name` is the specifier, a path to the file at `source_file_name`.
+    fn process_ending(
+        &self,
+        file_name: &[u8],
+        source_file_name: &[u8],
+        allowed: &[Ending],
+    ) -> Vec<u8> {
         let files = self.files();
         let extension = known_extension(file_name);
         if matches!(extension, b"" | b".json" | b".mjs" | b".cjs") {
@@ -6255,7 +6260,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(Ending::Minimal) | None => match no_extension.strip_suffix(b"/index") {
                 // `index` is preserved if a file has the same name as the directory. Only the program's files are
                 // known.
-                Some(directory)
+                Some(without_index)
                     if ![
                         b".ts".as_slice(),
                         b".tsx",
@@ -6271,9 +6276,12 @@ impl<'p, 's> Checker<'p, 's> {
                         b".json",
                     ]
                     .iter()
-                    .any(|extension| files.by_path.contains(&[directory, *extension].concat())) =>
+                    .any(|extension| {
+                        let directory = dirname::<Posix>(source_file_name);
+                        files.by_path.contains(&[directory, *extension].concat())
+                    }) =>
                 {
-                    directory.to_vec()
+                    without_index.to_vec()
                 }
                 _ => no_extension.to_vec(),
             },
@@ -6506,7 +6514,7 @@ impl<'p, 's> Checker<'p, 's> {
             package_directory.to_vec()
         } else {
             let allowed = self.allowed_endings(importing, prefers_js, ResolutionMode::None);
-            self.process_ending(path, &allowed)
+            self.process_ending(path, path, &allowed)
         };
         if !dirname::<Posix>(files.module(importing).file_name())
             .starts_with(&path[..top_level_node_modules])
@@ -6700,8 +6708,11 @@ impl<'p, 's> Checker<'p, 's> {
                 module_file_name,
                 files.is_case_sensitive,
             );
-            relative_path =
-                self.process_ending(&ensure_path_is_non_module_name(relative), allowed_endings);
+            relative_path = self.process_ending(
+                &ensure_path_is_non_module_name(relative),
+                module_file_name,
+                allowed_endings,
+            );
         }
         if options.paths.is_empty() && !options.resolve_package_json_imports {
             return relative_path;
@@ -6736,6 +6747,7 @@ impl<'p, 's> Checker<'p, 's> {
         if maybe_non_relative.is_empty() {
             maybe_non_relative = self.try_get_module_name_from_paths(
                 &relative_to_base_url,
+                module_file_name,
                 allowed_endings,
                 base_directory,
             );
@@ -6846,7 +6858,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         match shortest {
-            Some(shortest) => self.process_ending(&shortest, allowed_endings),
+            Some(shortest) => self.process_ending(&shortest, module_file_name, allowed_endings),
             None => Vec::new(),
         }
     }
@@ -6856,6 +6868,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn try_get_module_name_from_paths(
         &self,
         relative_to_base_url: &[u8],
+        file_name: &[u8],
         allowed_endings: &[Ending],
         base_directory: &[u8],
     ) -> Vec<u8> {
@@ -6866,7 +6879,7 @@ impl<'p, 's> Checker<'p, 's> {
                     relative_normalized::<Posix, true>(base_directory, &normalized).to_vec();
                 let mut candidates: Vec<Vec<u8>> = allowed_endings
                     .iter()
-                    .map(|&ending| self.process_ending(relative_to_base_url, &[ending]))
+                    .map(|&ending| self.process_ending(relative_to_base_url, file_name, &[ending]))
                     .collect();
                 // The extension is in the mapping, so the mapping resolves to the file itself.
                 if !known_extension(&pattern).is_empty() {

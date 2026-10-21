@@ -3714,6 +3714,21 @@ export const c: 1 = handler;
       );
     });
 
+    test("a generated declaration file keeps `/index` in a specifier if a file has the directory's name", async () => {
+      using dir = monorepo({
+        "packages/lib/src/box.ts": `export interface Box {\n  label: string;\n}\n`,
+        "packages/lib/src/box/index.ts": `export interface Box {\n  value: number;\n}\n`,
+        "packages/lib/src/make.ts": `import type { Box } from "./box/index";\nexport declare function make(): Box;\n`,
+        // The declaration file contains `import("./box/index").Box`. `import("./box")` is box.ts.
+        "packages/lib/src/index.ts": `import { make } from "./make";\nexport const made = make();\n`,
+        "packages/app/src/index.ts": `import { made } from "../../lib/src/index";\nexport const wrong: string = made.value;\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"packages/app/src/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
+    });
+
     describe("a referenced project written in JavaScript", () => {
       const library = {
         "packages/lib/tsconfig.json": JSON.stringify({

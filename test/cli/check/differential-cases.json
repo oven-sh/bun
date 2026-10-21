@@ -12431,6 +12431,60 @@
       "x.ts": "export const x = 1;\n"
     }
   },
+  "reference-to-the-file-itself-without-an-extension": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"src/a.ts\", \"src/d.d.ts\"] }\n",
+      "src/a.ts": "/// <reference path=\"a\" />\n/// <reference path=\"./a.ts\" />\n/// <reference path=\"../src/a\" />\n/// <reference path=\"b\" />\nconst sentinel: number = \"\";\n",
+      "src/b.ts": "var b = 1;\n",
+      "src/d.d.ts": "/// <reference path=\"d\" />\n/// <reference path=\"d.d.ts\" />\ndeclare var d: 1;\n"
+    }
+  },
+  "reference-to-the-file-itself-with-no-resolve": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noResolve\": true }, \"files\": [\"a.ts\"] }\n",
+      "a.ts": "/// <reference path=\"a\" />\n/// <reference path=\"./a.ts\" />\nconst sentinel: number = \"\";\n"
+    }
+  },
+  "import-of-a-module-that-the-script-declares": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\", \"declarations.d.ts\", \"augmentation.ts\"] }\n",
+      "a.ts": "fooGlobal; barGlobal; bazGlobal;\nconst sentinel: number = \"\";\n",
+      "declarations.d.ts": "declare module \"foo\" {\n  import _foo from \"foo\";\n  import {} from \"bar\";\n  export const declared: 1;\n}\ntype T = typeof import(\"foo\");\n",
+      "augmentation.ts": "import {} from \"baz\";\ndeclare module \"baz\" { export const more: 1; }\n",
+      "node_modules/foo/index.d.ts": "declare global { var fooGlobal: 1 }\nexport {};\n",
+      "node_modules/bar/index.d.ts": "declare global { var barGlobal: 1 }\nexport {};\n",
+      "node_modules/baz/index.d.ts": "declare global { var bazGlobal: 1 }\nexport {};\n"
+    }
+  },
+  "separator-after-a-file-name-in-exports-and-types": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\"] }\n",
+      "a.ts": "import { x as x1 } from \"e/f\";\nimport { x as x2 } from \"e/sub/a.d.ts/\";\nimport { x as x3 } from \"e/sub/a.d.ts\";\nimport { x as x4 } from \"t\";\nconst n: [0, 0, 0, 0] = [x1, x2, x3, x4];\nconst sentinel: number = \"\";\n",
+      "node_modules/e/package.json": "{ \"name\": \"e\", \"version\": \"1.0.0\", \"exports\": { \"./f\": \"./dist/a.d.ts/\", \"./sub/*\": \"./dist/*\" } }\n",
+      "node_modules/e/dist/a.d.ts": "export const x: \"e\";\n",
+      "node_modules/t/package.json": "{ \"name\": \"t\", \"version\": \"1.0.0\", \"types\": \"dist/a.d.ts/\" }\n",
+      "node_modules/t/dist/a.d.ts": "export const x: \"dist\";\n",
+      "node_modules/t/index.d.ts": "export const x: \"index\";\n"
+    }
+  },
+  "type-roots-and-names-with-dots-or-a-separator-at-the-end": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [\"../lib/decl\", \"dir/\", \"file\"], \"typeRoots\": [\"./typings\"], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\"] }\n",
+      "a.ts": "/// <reference types=\"dir/../dir\" />\nimport css from \"dir/./x.css\";\nimport { m } from \"file/\";\ndecl; dir; file;\nconst sentinel: number = \"\";\n",
+      "lib/decl/index.d.ts": "declare var decl: 1;\n",
+      "typings/dir/index.d.ts": "declare var dir: 1;\n",
+      "typings/dir/x.d.css.ts": "declare const css: string; export default css;\n",
+      "typings/file.d.ts": "declare var file: 1;\n"
+    }
+  },
+  "root-dirs-and-the-directory-of-a-root-itself": {
+    "files": {
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDirs\": [\"./one\", \"./two\"] }, \"files\": [\"one/a.ts\"] }\n",
+      "one/a.ts": "import { x } from \"./\";\nconst n: 0 = x;\nconst sentinel: number = \"\";\n",
+      "two/index.ts": "export declare const x: \"two/index\";\n",
+      "two.ts": "export declare const x: \"two\";\n"
+    }
+  },
   "59-L10": {
     "files": {
       "a.ts": "import { make, make2, make3 } from \"other\";\nexport const x = make();\nexport const x2 = make2();\nexport const x3 = make3();\nconst sentinel: number = \"\";\n",

@@ -1185,6 +1185,24 @@ it("getServername on a closed TLS socket should not crash", async () => {
   expect(await promise).toBeUndefined();
   expect(client.getServername()).toBeUndefined();
 });
+it("an optional argument of a TLS socket's method can be undefined", async () => {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+  const socket = await connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { rejectUnauthorized: false },
+    socket: { data() {}, handshake: () => resolve() },
+  });
+  try {
+    await promise;
+    expect(socket.getPeerCertificate(undefined)).toEqual(socket.getPeerCertificate());
+    expect(socket.exportKeyingMaterial(8, "label", undefined)).toEqual(socket.exportKeyingMaterial(8, "label"));
+  } finally {
+    socket.end();
+  }
+});
+
 it("exportKeyingMaterial with a context whose toPrimitive terminates the socket does not use-after-free", async () => {
   await using proc = Bun.spawn({
     cmd: [

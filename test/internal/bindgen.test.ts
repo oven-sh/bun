@@ -691,6 +691,7 @@ describe("enumerations", () => {
     expect(bindgen.nextColor("green")).toBe("blue");
     expect(bindgen.nextColor("lime")).toBe("blue");
     expect(bindgen.nextColor("blue")).toBe("red");
+    expect(bindgen.nextColor(new String("blue"))).toBe("red");
   });
 
   it("rejects anything else", () => {
@@ -2456,4 +2457,29 @@ describe("classes", () => {
       expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 12);
     });
   });
+});
+
+itAlways("the classes that can be disposed of", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response() });
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  using socket = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+  using udpSocket = await Bun.udpSocket({ hostname: "127.0.0.1" });
+  using session = new Bun.FetchSession();
+  await using subprocess = Bun.spawn({ cmd: [process.execPath, "--version"], stdout: "ignore" });
+  const prototypes = { terminal: Bun.Terminal.prototype };
+  for (const [name, object] of Object.entries({ server, listener, socket, udpSocket, session, subprocess })) {
+    prototypes[name] = Object.getPrototypeOf(object);
+  }
+  for (const [name, prototype] of Object.entries(prototypes)) {
+    const symbol = Symbol.dispose in prototype ? Symbol.dispose : Symbol.asyncDispose;
+    const { value, ...attributes } = Object.getOwnPropertyDescriptor(prototype, symbol)!;
+    expect({ class: name, name: value.name, length: value.length, ...attributes }).toEqual({
+      class: name,
+      name: `[${symbol.description}]`,
+      length: 0,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  }
 });

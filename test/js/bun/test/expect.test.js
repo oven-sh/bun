@@ -2514,6 +2514,10 @@ describe("expect()", () => {
     expect({ a: undefined }).toContainValue();
     expect(1).toBeCloseTo(1, undefined);
     expect().pass(undefined);
+    expect().not.fail(undefined);
+    for (const name of ["if", "skipIf", "todoIf", "failingIf", "concurrentIf", "serialIf"]) {
+      expect(test[name]()).toBeFunction();
+    }
 
     const results = [];
     expect.extend({

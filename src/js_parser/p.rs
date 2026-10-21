@@ -4495,8 +4495,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.macro_.refs.keys().iter().any(|r#ref| has_use(*r#ref)) {
             return;
         }
-        // `bun repl` runs its input at once, and for an input that does not transpile it prints the engine's error, not this one.
-        if self.options.repl_mode {
+        // With dead-code elimination off (`bun repl`, `bun -p`, `bun test --coverage`) the count has the code that never runs too.
+        if !self.options.features.dead_code_elimination {
             return;
         }
         if self.options.features.is_macro_runtime {

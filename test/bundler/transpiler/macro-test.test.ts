@@ -1382,17 +1382,33 @@ describe("a macro import that is used outside of a call", () => {
     expect(exitCode).toBe(1);
   });
 
-  // `bun repl` runs its input at once. For an input that does not transpile it prints the engine's error for the
-  // untranspiled source, so the check is off there: a reference that runs is the ReferenceError that it was.
-  test.concurrent("bun repl runs an input with a reference as before", async () => {
-    using dir = tempDir("macro-value-use", { "m.ts": macroFile });
-    const [dead, alias] = await Promise.all([
+  // With dead-code elimination off, the visit pass does not find dead code, so its count of uses is no proof of a
+  // reference that runs. The check is off there, and a reference that runs is the ReferenceError that it was.
+  test.concurrent("a command that keeps dead code does not look for the reference", async () => {
+    using dir = tempDir("macro-value-use", {
+      "m.ts": macroFile,
+      "dead.test.ts": [
+        `import { expect, test } from "bun:test";`,
+        named,
+        `if (false) console.log(m);`,
+        `test("dead", () => expect(m()).toBe(42));`,
+        ``,
+      ].join("\n"),
+    });
+    const [repl, alias, print, coverage] = await Promise.all([
       run(String(dir), "repl", "-e", `${named} if (false) console.log(m); console.log("dead", m());`),
       run(String(dir), "repl", "-e", `${named} const f = m; console.log("alias", f);`),
+      run(String(dir), "-p", `${named} if (false) console.log(m); "dead " + m()`),
+      run(String(dir), "test", "--coverage", "./dead.test.ts"),
     ]);
-    expect({ lines: dead.lines, stderr: dead.stderr }).toEqual({ lines: ["dead 42"], stderr: "" });
+    expect({ repl: repl.lines, print: print.lines, stderr: [repl.stderr, print.stderr] }).toEqual({
+      repl: ["dead 42"],
+      print: ["dead 42"],
+      stderr: ["", ""],
+    });
     expect(alias.stderr).toContain("ReferenceError: m is not defined");
-    expect([dead.exitCode, alias.exitCode]).toEqual([0, 1]);
+    expect(coverage.stderr).toContain(" 1 pass");
+    expect([repl.exitCode, alias.exitCode, print.exitCode, coverage.exitCode]).toEqual([0, 1, 0, 0]);
   });
 
   // The module format of the dev server moves each export into an object before the check.
@@ -1492,6 +1508,9 @@ describe("a macro import that is used outside of a call", () => {
     expect(errors(thrownBy(() => transpiler.transformSync(source)))).toEqual(expected);
     expect(errors(await transpiler.transform(source).catch(e => e))).toEqual(expected);
     expect(transpiler.scanImports(source)).toEqual([{ kind: "import-statement", path: "./m.ts" }]);
+    // A transpiler that keeps dead code does not look for the reference.
+    const keepsDeadCode = new Bun.Transpiler({ loader: "js", deadCodeElimination: false });
+    expect(keepsDeadCode.transformSync(source)).toContain("const f = m;");
   });
 
   // A type that is named like a macro import is not a reference to it. The metadata of a decorated member names the

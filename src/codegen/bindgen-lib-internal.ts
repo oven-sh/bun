@@ -106,16 +106,13 @@ export interface JSClass {
 
 type ValueKinds = readonly ValueKind[] | "any";
 
-const isSameKind = (a: ValueKind, b: ValueKind) =>
-  a === b || (a instanceof ClassRefType && b instanceof ClassRefType && a.cpp === b.cpp);
-
 const takes = (type: Type, kind: ValueKind | "other") =>
-  type.valueKinds === "any" || (kind !== "other" && type.valueKinds.some(own => isSameKind(own, kind)));
+  type.valueKinds === "any" || (kind !== "other" && type.valueKinds.includes(kind));
 
 const distinguishingKinds = (types: readonly Type[]): (ValueKind | "other")[] => [
   ...types
     .flatMap(type => (type.valueKinds === "any" ? [] : type.valueKinds))
-    .filter((kind, index, kinds) => kinds.findIndex(earlier => isSameKind(earlier, kind)) === index),
+    .filter((kind, index, kinds) => kinds.indexOf(kind) === index),
   "other",
 ];
 
@@ -1109,51 +1106,6 @@ export class RefType extends Type {
   }
   rustFromExtern(expr: string): string {
     return `bun_core::ExternalShared::<${this.pointee}>::adopt(${expr}.cast())`;
-  }
-}
-
-/** What an instance of a class of a `.classes.ts` file wraps, borrowed as `JSValue::as_class_ref` borrows it. */
-export class ClassRefType extends Type {
-  readonly tsType = "object";
-  readonly cpp: string;
-  readonly idlType: string;
-  readonly rustPath: string;
-  constructor(name: string) {
-    super();
-    this.cpp = `WebCore::JS${name}`;
-    this.idlType = `Bun::Bindgen::IDLWrappedInterface<${this.cpp}, std::to_array("${name}")>`;
-    this.rustPath = `crate::generated_classes::${name}`;
-  }
-  get valueKinds(): ValueKinds {
-    return [this];
-  }
-  get refuses() {
-    return "instances that wrap nothing";
-  }
-  /** The `&'a` is branded with the call, as a JS value is. */
-  get holdsJSValue(): boolean {
-    return true;
-  }
-  get borrowsCell(): boolean {
-    return true;
-  }
-  get nullRepresentation() {
-    return "pointer" as const;
-  }
-  getHeaders(out: Set<string>): void {
-    out.add("ZigGeneratedClasses.h");
-  }
-  layout(): Layout {
-    return { size: 8, align: 8 };
-  }
-  rustExternType(): string {
-    return "*mut core::ffi::c_void";
-  }
-  rustType(): string {
-    return `&'a ${this.rustPath}`;
-  }
-  rustFromExtern(expr: string): string {
-    return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
   }
 }
 

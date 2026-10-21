@@ -31,7 +31,6 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SymbolObject.h>
-#include "ZigGeneratedClasses.h"
 #include "JSKeyObject.h"
 
 #include "NodeUtilTypesModule.h"

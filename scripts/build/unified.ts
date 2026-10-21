@@ -200,8 +200,7 @@ export interface UnifiedSplit {
  *
  * `cxxSources` must be absolute paths (the glob output). Generated codegen
  * .cpp files should NOT be passed here — those are already large single TUs
- * (ZigGeneratedClasses.cpp etc.) and are added to the compile list separately
- * in bun.ts.
+ * and are added to the compile list separately in bun.ts.
  */
 export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[]): UnifiedSplit {
   const outDir = resolve(cfg.buildDir, "unified");

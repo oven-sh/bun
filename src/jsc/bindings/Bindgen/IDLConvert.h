@@ -258,10 +258,8 @@ struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bu
     template<Bun::IDLConversionContext Ctx>
     static std::optional<void*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
     {
-        if (auto* object = dynamicDowncast<JSClass>(value)) {
-            if (void* wrapped = object->wrapped())
-                return wrapped;
-        }
+        if (auto* object = dynamicDowncast<JSClass>(value))
+            return object->wrapped();
         return std::nullopt;
     }
 

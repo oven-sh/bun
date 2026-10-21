@@ -214,7 +214,7 @@ extern "C" void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possible
     scope.assertNoExceptionExceptTermination();
 }
 
-// The `lockedStream` slot (streams.classes.ts): the only way from a natively locked stream's source back to the stream.
+// The `lockedStream` slot (ReadableStream.bind.ts): the only way from a natively locked stream's source back to the stream.
 static WriteBarrier<Unknown>* lockedStreamSlot(JSCell* handle)
 {
     if (auto* bytesSource = dynamicDowncast<Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource>(handle))

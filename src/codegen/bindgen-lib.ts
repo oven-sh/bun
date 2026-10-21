@@ -9,7 +9,6 @@ import {
   BytesType,
   CallableType,
   type ClassOptions,
-  ClassRefType,
   ClassType,
   type DictionaryOptions,
   DictionaryType,
@@ -66,9 +65,6 @@ export const blob = new RefType(
   [{ cpp: "Bun::Bindgen::Generated::JSBlob" }],
   null,
 );
-
-/** An instance of the class `name` of a `.classes.ts` file, as a `&'a` of the Rust struct it wraps. */
-export const classRef = (name: string) => new ClassRefType(name);
 
 const null_ = new UnitType("null");
 

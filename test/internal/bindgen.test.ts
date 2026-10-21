@@ -94,16 +94,15 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.loose.allowBigInt.validateInteger()).toThrow(".validateInteger() refuses a BigInt");
   expect(b.u16.allowBigInt.loose.idlType).toBe(b.u16.loose.allowBigInt.idlType);
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
-  const instance = b.classRef("SocketAddress");
   const refCounted = b.class({ rustPath: "T", refCounted: true });
   const inline = b.class({ rustPath: "T" });
-  for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any }), refCounted, inline]) {
+  for (const type of [inline, inline.nullable, b.union({ inline, ignored: b.any }), refCounted]) {
     expect(() => b.dictionary({ type })).toThrow(
       "an instance that Rust takes as &T cannot be in an array or a dictionary",
     );
     expect(() => b.array(type)).toThrow("an instance that Rust takes as &T cannot be in an array or a dictionary");
   }
-  expect(() => b.union({ instance, again: b.classRef("SocketAddress") })).toThrow("again is never chosen");
+  expect(() => b.union({ inline, again: inline })).toThrow("again is never chosen");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
   expect(() => b.namespace({ f: b.fn({ args: { x: b.i32 } }) as any })).toThrow(
     "f: write what b.fn takes, without b.fn",

@@ -207,7 +207,6 @@ any other: nothing looks at how many there are, except a body that takes `b.any.
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
 | `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
-| `b.classRef(name)`                               | `&'a T`                          | an instance of a class of a `.classes.ts` file; see below     |
 | `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.any.variadic`                                 | `&'a [JsLocal<'a>]`              | this argument and every one after it; only the last argument  |
@@ -283,10 +282,9 @@ it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
 
-`b.classRef("TCPSocket")` is a `&'a` of the struct that class wraps, `crate::generated_classes::TCPSocket`.
+A [class](#classes) is a type too: import it from its `.bind.ts` file. As an argument it is a `&'a` of the struct.
 The argument's slot in the frame holds the instance, so it is only for an argument, alone or in
-`.nullable` or a union. In a function that can run JavaScript the struct must be one whose own
-methods take `&self`, since they can be called while the body holds the `&`.
+`.nullable` or a union.
 
 ### Dictionaries
 
@@ -351,9 +349,8 @@ reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
 **A value goes to the first alternative, in written order, that takes its kind.** That
 alternative then converts it, and reports what is wrong with it: `1.5` given to
 `b.union({ integer: b.i32, text: b.string })` "must be an integer", not "must be of type integer or string".
-The buffer types, `b.blob` and `b.classRef` refuse some values of their kinds (a shared buffer, a
-detached `Blob`, an instance that wraps nothing); those go on to the next alternative that takes the kind and does not
-refuse the same. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
+The buffer types refuse some values of their kinds (a shared buffer); those go on to the next alternative that takes
+the kind and does not refuse the same. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
 
 So the order only matters between alternatives that overlap, and one that takes every
 kind goes last. An alternative that can never be chosen is an error when the schema is

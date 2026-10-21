@@ -652,7 +652,7 @@ const cppExtern = (
 
 // ───────────────────────────── C++: classes ─────────────────────────────
 
-/** As generate-classes.ts spells them: the role is part of the type segment. */
+/** The role is part of the type segment. */
 const symbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}__${member}`;
 const classSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Class__${member}`;
 const protoSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Prototype__${member}`;
@@ -1723,7 +1723,6 @@ pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${ru
 `;
 }
 
-/** Gives the struct of a \`refCounted\` class what \`#[bun_jsc::JsClass]\` gives that of a \`.classes.ts\` class. */
 function rustForRefCounted(type: ClassType): string {
   const { name, rustPath } = type;
   return `
@@ -1771,7 +1770,7 @@ impl bun_jsc::JsClass for ${rustPath} {
 `;
 }
 
-/** `js_Name`, with the names generate-classes.ts gives its functions. */
+/** `js_Name` */
 function rustForModule(type: ClassType): string {
   const { name, rustPath } = type;
   if (!type.sharedThis && type.internalFields.length === 0 && !type.construct) return "";

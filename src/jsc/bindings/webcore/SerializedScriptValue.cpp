@@ -92,7 +92,6 @@
 #include "JSEnvironmentVariableMap.h"
 #include "blob.h"
 #include "GeneratedBlob.h"
-#include "ZigGeneratedClasses.h"
 #include "GeneratedBlockList.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"

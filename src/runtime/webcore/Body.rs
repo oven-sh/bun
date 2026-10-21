@@ -73,7 +73,7 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
 
 #[inline]
 fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
-    // `DOMFormData` is an opaque C++ type without a `#[bun_jsc::JsClass]` derive;
+    // `DOMFormData` is an opaque C++ type that does not implement `JsClass`;
     // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
     // `value.as_::<DOMFormData>()`.
     DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)

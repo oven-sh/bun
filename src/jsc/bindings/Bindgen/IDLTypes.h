@@ -150,7 +150,7 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     static JSClass* nullValue() { return nullptr; }
 };
 
-// An instance of a class of a `.classes.ts` file, as what it wraps. The caller's frame keeps the cell alive.
+// An instance of a `refCounted` class, as what it wraps. The caller's frame keeps the cell alive.
 template<typename JSClass, auto name>
 struct IDLWrappedInterface : WebCore::IDLType<void*> {
     using SequenceStorageType = void;

@@ -172,7 +172,6 @@
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
 #include "GeneratedBlob.h"
-#include "ZigGeneratedClasses.h"
 #include "GeneratedExpect.h"
 #include "JavaScriptCore/JSMapInlines.h"
 

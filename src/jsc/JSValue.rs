@@ -917,7 +917,7 @@ impl JSValue {
     /// Returns `Some(&T)` when `self` wraps a live `T` cell. The borrow is
     /// sound because JSC's conservative stack scanner keeps the cell alive
     /// while `self` (the encoded `JSValue`) is on the stack, and the
-    /// `#[JsClass]` payload is pinned at a stable address inside the GC cell
+    /// [`JsClass`] struct is pinned at a stable address inside the GC cell
     /// for its lifetime — so a `&T` derived from `from_js`'s pointer is valid
     /// for as long as the caller holds `self`.
     ///

@@ -613,10 +613,7 @@ fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
     Some(bucket)
 }
 
-// `#[bun_jsc::host_fn(getter|method)]` requires `Self` (impl-block
-// context). These are free fns on `*Blob` exported manually as `JSS3File__*`
-// (see the `exports` block below) and called as `s3_file::get_*` from `Blob::get_*`,
-// so the proc-macro shim is not used here — the raw ABI shim is hand-wired.
+// Exported as `JSS3File__*` (see the `exports` block below).
 fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     if let Some(name) = get_bucket_name(this) {
         return bun_string_jsc::create_utf8_for_js(global, name);

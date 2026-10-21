@@ -380,7 +380,7 @@ export function getJS2NativeRust() {
     `// function is a compile error in \`cargo check -p bun_runtime\`.`,
     `//`,
     `// Calling convention: \`jsc.conv\` is plain \`extern "C"\` on every target except`,
-    `// Windows-x64 (\`extern "sysv64"\`); see generated_classes.rs for the same note.`,
+    `// Windows-x64 (\`extern "sysv64"\`).`,
     ``,
     `#[allow(dead_code, unreachable_pub, unused)]`,
     `#[allow(unused_imports)] // emitted for thunk shapes that vary per build`,

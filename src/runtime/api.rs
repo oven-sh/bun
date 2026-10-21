@@ -19,10 +19,7 @@ pub(crate) use crate::socket::SocketAddress;
 pub(crate) use crate::crypto;
 
 // ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
-// Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
-// the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
-// depends on `bun_jsc`, so this is a plain downstream re-export — no cycle.
-// Exactly one Rust type backs each C++ `m_ctx` pointer.
+// Defined in `bun_jsc`.
 pub(crate) use bun_jsc::BuildMessage;
 pub(crate) use bun_jsc::ResolveMessage;
 
@@ -89,7 +86,6 @@ pub(crate) mod bun_process;
 #[path = "api/bun/spawn.rs"]
 pub(crate) mod bun_spawn;
 
-// JS-facing `Bun.Subprocess` payload (.classes.ts m_ctx).
 #[path = "api/bun/subprocess.rs"]
 pub(crate) mod bun_subprocess;
 

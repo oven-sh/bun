@@ -75,7 +75,6 @@ public:
     IsoSubspace* m_subspaceForJSNodePerformanceHooksHistogram { nullptr };
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
-#include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /*-- BUN --*/
 

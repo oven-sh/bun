@@ -171,8 +171,10 @@ it.concurrent("`%%` after the last argument collapses at every length of the res
     rests.push(text, text + "%%", "%" + text + "%%", "%" + text);
   }
   await using proc = spawn({
-    cmd: [bunExe(), "-e", `for (const rest of ${JSON.stringify(rests)}) console.log("%s" + rest, "x");`],
+    // The list goes through stdin, because it is longer than a command line can be on Windows.
+    cmd: [bunExe(), "-e", `for (const rest of await Bun.stdin.json()) console.log("%s" + rest, "x");`],
     env: bunEnv,
+    stdin: Buffer.from(JSON.stringify(rests)),
     stdout: "pipe",
     stderr: "pipe",
   });

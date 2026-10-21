@@ -1,13 +1,13 @@
 //! Aliases, module specifier resolution, and a few file-level checks:
 //! 2303; 18042 18043; 1205 1269 1288 1293 1448 1484 1485 2748 2865; 2866; 1272; 1379 1380; 2308;
-//! 1544; 6137 6142 7042 2846 5097 2876 2877 2878, 1471 1479 1541 1542; 7036; 1470 17013; 1006;
-//! 2578. `resolve_alias` reports 2303 and `check_target_of_alias_declaration` reports 1544. Both are called from here.
+//! 1544; 6137 6142 7042 2846 5097 2876 2877 2878, 1471 1479 1541 1542; 7036; 1470 17013; 2578.
+//! `resolve_alias` reports 2303 and `check_target_of_alias_declaration` reports 1544. Both are called from here.
 //!
 //! Mirrors `checkAliasSymbol`, `checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol`,
 //! `getExportsOfModuleWorker`, `getExternalModuleMember`, `resolveExternalModule`, `checkImportCallExpression`,
 //! `checkConstEnumAccess`, `checkNewTargetMetaProperty` and `checkImportMetaProperty` in TypeScript 7.0.2's checker.go,
-//! `getSourceFileFromReference` in its fileloader.go, `getBindAndCheckDiagnosticsWithChecker` and
-//! `GetIncludeProcessorDiagnostics` in its program.go, and `processCommentDirective` in its scanner.go.
+//! `getBindAndCheckDiagnosticsWithChecker` and `GetIncludeProcessorDiagnostics` in its program.go, and
+//! `processCommentDirective` in its scanner.go.
 //!
 //! Comment directives: `Directives` determines which directive suppresses a diagnostic, `expected_errors` creates the
 //! TS2578 for each `@ts-expect-error`, and `Program::finish_file` drops those whose directive was used.
@@ -20,7 +20,7 @@ use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
 use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
     ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
-    has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
+    has_ts_implementation_extension, is_declaration_file_name, path_is_relative,
     try_extract_ts_extension,
 };
 use crate::util::SharedSort;
@@ -121,25 +121,10 @@ impl Checker<'_, '_> {
         if hir.has_errors || hir.kind == FileKind::Json || hir.text.is_empty() {
             return;
         }
-        self.aliases_self_references(file);
         self.aliases_imports_hiding_global_values(file);
         self.aliases_decorator_metadata(file);
         self.aliases_export_star_conflicts(file);
         self.aliases_expressions(file);
-    }
-
-    /// `getSourceFileFromReference`: 1006
-    fn aliases_self_references(&mut self, file: FileId) {
-        let files = self.files();
-        let path = files.module(file).file_name();
-        for &(kind, value, start, _) in &self.hir(file).references {
-            if kind == ReferenceKind::Path
-                && join(dirname::<Posix>(path), self.atoms().bytes(value)) == path
-            {
-                let end = start + self.atoms().bytes(value).len() as u32;
-                self.error_at((file, start, end), 1006, &[]);
-            }
-        }
     }
 
     // ───────────────────────────── error ranges ─────────────────────────────

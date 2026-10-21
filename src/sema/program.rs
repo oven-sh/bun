@@ -2934,13 +2934,26 @@ fn referenced_path(reference_text: &[u8], from: &[u8]) -> Vec<u8> {
     join(dirname::<Posix>(from), reference_text)
 }
 
-/// `getSourceFileFromReference`: the file that a `/// <reference path>` in `from` resolves to,
+/// `resolveTripleslashPathReference`: the file that a `/// <reference path>` in `from` resolves to,
 /// where `name` is the referenced path; or else the error reported for it.
 fn referenced_file(
     host: &dyn Host,
     options: &Options,
     name: &[u8],
     from: &[u8],
+) -> Result<Vec<u8>, u32> {
+    let found = source_file_from_reference(host, options, name)?;
+    match is_same_path(&found, from, host.is_case_sensitive()) {
+        true => Err(1006),
+        false => Ok(found),
+    }
+}
+
+/// `getSourceFileFromReference`: the file at `name`, which may lack an extension, or else the error.
+fn source_file_from_reference(
+    host: &dyn Host,
+    options: &Options,
+    name: &[u8],
 ) -> Result<Vec<u8>, u32> {
     let allow_non_ts_extensions = host.script_kind(name).is_some();
     let is_case_sensitive = host.is_case_sensitive();
@@ -2953,9 +2966,6 @@ fn referenced_file(
         }
         if !host.is_file(name) {
             return Err(6053);
-        }
-        if is_same_path(name, from, is_case_sensitive) {
-            return Err(1006);
         }
         return Ok(name.to_vec());
     }
@@ -3406,7 +3416,7 @@ fn imports_helpers(options: &Options, hir: &File) -> bool {
 /// `addRootFileTask`: the file that's read for the root file `root`, or else the error. `Ok(None)`:
 /// a declaration file that hasn't been built.
 fn root_file_name(host: &dyn Host, options: &Options, root: &[u8]) -> Result<Option<Vec<u8>>, u32> {
-    let found = referenced_file(host, options, root, b"")?;
+    let found = source_file_from_reference(host, options, root)?;
     Ok(match options.parse_file_redirect(&found) {
         Some(output) => host.is_file(output).then(|| output.to_vec()),
         None => Some(found),

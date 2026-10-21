@@ -318,8 +318,10 @@ describe("Valkey: RESP line-terminated replies (>512KB)", () => {
 // JS. It runs in a child process, and only where that much memory is free: the
 // lanes with 16 GiB run database containers beside the tests, so their total
 // does not say it. Windows commits the whole capacity of the read buffer,
-// which takes more.
-describe.skipIf(isWindows || process.availableMemory() < 12 * 1024 ** 3)("Valkey: RESP reply larger than 4 GiB", () => {
+// which takes more. 4 GiB through a socket take 11 s on a release build and
+// 26 s on a debug build, so the test has its own timeout.
+const memoryForReplyOver4GiB = Math.min(process.availableMemory(), process.constrainedMemory() || Infinity);
+describe.skipIf(isWindows || memoryForReplyOver4GiB < 12 * 1024 ** 3)("Valkey: RESP reply larger than 4 GiB", () => {
   test("resolves, and so does the reply pipelined behind it", async () => {
     const megabyte = Buffer.alloc(1024 * 1024, "x");
     const bulkLength = 512 * megabyte.length; // the longest bulk string the client accepts

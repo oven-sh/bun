@@ -114,6 +114,12 @@ impl<C: WriterContext> NewWriter<C> {
         self.write(value)?;
         self.write(&[0u8])
     }
+
+    /// The bytes of one parameter. What no length describes is refused before it is copied.
+    pub fn bytes(self, value: &[u8]) -> Result<(), AnyPostgresError> {
+        int32(value.len())?;
+        self.write(value)
+    }
 }
 
 #[cfg(test)]
@@ -189,6 +195,24 @@ mod tests {
         offset.set(7 + 4 + LIMIT + 1);
         assert_eq!(length.write_excluding_self(), TOO_LONG);
         assert_eq!(patched.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_parameter_value_of_more_than_i32_max_bytes_is_not_written() {
+        // Zeroed and never read: `Counter` only takes the length.
+        let value = vec![0u8; LIMIT + 1];
+        let (offset, patched) = (Cell::new(0), RefCell::new(Vec::new()));
+        let writer = NewWriter {
+            wrapped: Counter {
+                offset: &offset,
+                patched: &patched,
+            },
+        };
+
+        assert_eq!(writer.bytes(&value[..LIMIT]), Ok(()));
+        assert_eq!(offset.replace(0), LIMIT);
+        assert_eq!(writer.bytes(&value), TOO_LONG);
+        assert_eq!(offset.get(), 0);
     }
 
     #[test]

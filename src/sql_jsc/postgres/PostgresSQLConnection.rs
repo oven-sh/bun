@@ -540,10 +540,6 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn fail(&self, message: &[u8], err: AnyPostgresError) {
-        self.fail_with_hint(message, None, err);
-    }
-
-    fn fail_with_hint(&self, message: &[u8], hint: Option<&[u8]>, err: AnyPostgresError) {
         debug!(
             "failed: {}: {}",
             bstr::BStr::new(message),
@@ -552,12 +548,7 @@ impl PostgresSQLConnection {
 
         let global_object = self.global();
 
-        self.fail_with_js_value(postgres_error_to_js_with_hint(
-            global_object,
-            Some(message),
-            hint,
-            err,
-        ));
+        self.fail_with_js_value(postgres_error_to_js(global_object, Some(message), err));
     }
 
     pub(crate) fn on_close(&self) {
@@ -1821,14 +1812,33 @@ impl PostgresSQLConnection {
 
     /// A message that was not written to its end is in the buffer: the stream cannot go on.
     fn fail_write(&self, err: AnyPostgresError) -> bool {
-        let hint: Option<&[u8]> = match err {
-            AnyPostgresError::InvalidMessageLength => Some(
-                b"The query or its parameters are longer than 2147483647 bytes, the limit of one PostgreSQL protocol message. Send the data in smaller parts.",
-            ),
-            _ => None,
-        };
-        self.fail_with_hint(b"Failed to write query", hint, err);
+        self.fail(b"Failed to write query", err);
         false
+    }
+
+    /// `err` ended the messages of `request`, which begin at `start` in the write buffer. What
+    /// the protocol cannot frame was not sent: it is taken out, and only that request rejects.
+    fn fail_request_write(
+        &self,
+        request: &PostgresSQLQuery,
+        start: usize,
+        err: AnyPostgresError,
+    ) -> bool {
+        if err != AnyPostgresError::InvalidMessageLength {
+            return self.fail_write(err);
+        }
+        self.write_buffer.with_mut(|buffer| {
+            buffer.byte_list.truncate(start);
+            buffer.byte_list.shrink_to_fit();
+        });
+        let error = postgres_error_to_js_with_hint(
+            self.global(),
+            Some(b"Failed to write query"),
+            Some(b"This query and its parameters do not fit in one PostgreSQL protocol message, which holds at most 2147483647 bytes. Send the data in smaller parts."),
+            err,
+        );
+        self.reject_unwritten(request, error);
+        true
     }
 
     fn note_request_bound(&self, request: &PostgresSQLQuery) {
@@ -1890,9 +1900,10 @@ impl PostgresSQLConnection {
             }
             let query = req.query.to_utf8();
             debug!("execute simple query: {}", bstr::BStr::new(query.slice()));
+            let start = self.write_buffer.get().byte_list.len();
             // Alone: a Sync elicits a second ReadyForQuery, a Flush stops the server's idle timers.
             if let Err(err) = protocol::write_query(query.slice(), &mut self.writer()) {
-                return self.fail_write(err);
+                return self.fail_request_write(&req, start, err);
             }
             self.count(&req, RequestCounter::Nonpipelinable);
             req.status.set(QueryStatus::Running);
@@ -1942,6 +1953,7 @@ impl PostgresSQLConnection {
                     ResultFormats::Decodable
                 };
                 req.update_flags(|f| f.formats = formats);
+                let start = self.write_buffer.get().byte_list.len();
                 if let Err(err) = if unnamed {
                     PostgresRequest::parse_and_bind_and_execute(
                         self.global(),
@@ -1961,7 +1973,7 @@ impl PostgresSQLConnection {
                         self.writer(),
                     )
                 } {
-                    return self.fail_write(err);
+                    return self.fail_request_write(&req, start, err);
                 }
                 self.note_request_bound(&req);
             }
@@ -1976,6 +1988,7 @@ impl PostgresSQLConnection {
                 }
                 self.close_evicted_statements();
                 let query = req.query.to_utf8();
+                let start = self.write_buffer.get().byte_list.len();
                 if let Err(err) = if describe_first {
                     PostgresRequest::parse_and_describe(
                         query.slice(),
@@ -1993,7 +2006,7 @@ impl PostgresSQLConnection {
                         self.writer(),
                     )
                 } {
-                    return self.fail_write(err);
+                    return self.fail_request_write(&req, start, err);
                 }
                 statement.status = StatementStatus::Parsing;
                 self.update_flags(|f| f.insert(ConnectionFlags::WAITING_TO_PREPARE));

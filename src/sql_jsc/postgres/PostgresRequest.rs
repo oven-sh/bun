@@ -227,7 +227,7 @@ fn write_bind<Context: WriterContext>(
             date::write_text(global, value, tag, writer)?;
         } else {
             let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
-            writer.write(str.to_utf8().slice())?;
+            writer.bytes(str.to_utf8().slice())?;
         }
         l.write_excluding_self()?;
 
@@ -264,7 +264,7 @@ fn write_binary_parameter<Context: WriterContext>(
             let Some(buffer) = value.as_array_buffer(global) else {
                 return Ok(false);
             };
-            writer.write(buffer.byte_slice())?;
+            writer.bytes(buffer.byte_slice())?;
         }
         types::Tag::timestamp | types::Tag::timestamptz if value.is_date() => {
             let Some(microseconds) = date::to_binary(value) else {

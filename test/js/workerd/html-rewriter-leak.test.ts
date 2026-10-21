@@ -738,32 +738,40 @@ describe("a read that waits on the pending output of a rewrite", () => {
   // A `node:vm` timeout is a termination that the VM survives. One that lands while the read
   // settles left the promise a root: the settle had taken it, and skipped the release.
   test("is not a GC root after a node:vm timeout cut its settle short", async () => {
-    const head = `<i>${Buffer.alloc(64 << 10, "a").toString()}</i>`;
-    // A direct stream: the read pulls the whole document, and settles, before text() returns.
-    const rewrite = (rest: string) =>
-      new HTMLRewriter().transform(
+    const numbers = (bytes: number) => Buffer.alloc(bytes, "1,").toString();
+    // transform() pulls a direct stream. The first chunk puts the output over its high-water mark, so the
+    // second waits for the read: json() rewrites it, runs `end`, and settles. The parse is most of that.
+    const rewrite = (kilobytes: number) => {
+      const at = { end: 0 };
+      const output = new HTMLRewriter().onDocument({ end: () => void (at.end = performance.now()) }).transform(
         new Response(
           new ReadableStream({
             type: "direct",
             pull(controller) {
-              controller.write(head);
-              controller.write(rest);
+              controller.write("[" + numbers(64 << 10));
+              controller.write(numbers(kilobytes << 10) + "1]");
               controller.end();
             },
           }),
         ),
       );
-    // Grow the document until a read takes long enough, twice in a row, for a timeout to land inside it.
-    let rest = "";
-    let milliseconds = 0;
-    for (let megabytes = 1; milliseconds < 40 && megabytes <= 256; megabytes *= 2) {
-      rest = `<i>${Buffer.alloc(megabytes << 20, "b").toString()}</i>`;
-      milliseconds = Infinity;
+      return { at, output };
+    };
+    // Grow the document until the settle takes long enough, twice in a row, for a timeout to land inside it.
+    let kilobytes = 64;
+    let rewritten = 0;
+    let settled = 0;
+    while (settled < 40 && kilobytes < 256 << 10) {
+      kilobytes *= 2;
+      rewritten = 0;
+      settled = Infinity;
       for (let sample = 0; sample < 2; sample++) {
-        const output = rewrite(rest);
+        const { at, output } = rewrite(kilobytes);
         const began = performance.now();
-        const read = output.text();
-        milliseconds = Math.min(milliseconds, performance.now() - began);
+        const read = output.json();
+        const returned = performance.now();
+        rewritten = Math.max(rewritten, at.end - began);
+        settled = Math.min(settled, returned - at.end);
         await read;
       }
     }
@@ -771,18 +779,22 @@ describe("a read that waits on the pending output of a rewrite", () => {
     const before = protectedCount("Promise");
     const runs: string[] = [];
     for (let i = 0; i < 4; i++) {
-      const output = ((globalThis as any).rewriteCutShort = rewrite(rest));
+      const cut = ((globalThis as any).rewriteCutShort = { ...rewrite(kilobytes), returned: false });
+      const began = performance.now();
       try {
-        vm.runInThisContext("rewriteCutShort.text()", { timeout: Math.max(1, Math.floor(milliseconds / 8)) });
+        vm.runInThisContext("rewriteCutShort.output.json(); rewriteCutShort.returned = true;", {
+          timeout: Math.ceil(rewritten + settled / 2),
+        });
         runs.push("returned");
       } catch (error: any) {
         if (error.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") throw error;
-        runs.push(output.bodyUsed ? "cut short in the read" : "cut short before the read");
+        // Between the call of `end` and the return of json() there is only the settle.
+        runs.push(`cut short ${cut.returned ? "after" : cut.at.end > began ? "in" : "before"} the settle`);
       } finally {
         delete (globalThis as any).rewriteCutShort;
       }
     }
-    expect(runs).toContain("cut short in the read");
+    expect(runs).toContain("cut short in the settle");
     Bun.gc(true);
     expect(protectedCount("Promise") - before).toBe(0);
   });

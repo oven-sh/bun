@@ -1020,6 +1020,11 @@ describe.concurrent("Bun REPL", () => {
           `${prefix}if (1) var flag = 1; function fromIf() { return flag }`,
           "flag = 2",
           "fromIf()",
+          // Without a function too.
+          `${prefix}if (1) var lone = 8`,
+          `${prefix}for (var head; !head; ) head = 9`,
+          `${prefix}if (1) enum Color { Red = 10 }`,
+          "[lone, head, Color.Red]",
           ".exit",
         ]);
         expect(outputs).toEqual([
@@ -1038,6 +1043,10 @@ describe.concurrent("Bun REPL", () => {
           "undefined",
           "2",
           "2",
+          "undefined",
+          "undefined",
+          "undefined",
+          "[ 8, 9, 10 ]",
         ]);
         expect(stderr).toBe("");
         expect(exitCode).toBe(0);

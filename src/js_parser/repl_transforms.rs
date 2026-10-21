@@ -167,8 +167,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         name: function.func.name.expect("infallible: name checked"),
                         loc: stmt.loc,
                     });
-                    // A declaration has no value, and no statement in front of it is the
-                    // value of the input.
+                    // A function declaration hides the value in front of it.
                     value_start = inner_stmts.len();
                 }
                 StmtData::SClass(mut class) => {
@@ -453,13 +452,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
         }
 
-        // A function declared in front of the wrapper is one binding of the Program, made before
-        // the input runs. It cannot read what only the wrapper has: a `var` that direct eval
-        // declares when it runs, or the `var`s in the `try` of a lowered `using`. And a strict
-        // Program keeps its declarations to itself under indirect eval. Such an input assigns
-        // its functions at the front of the wrapper instead.
         let mut front_stmts = BumpVec::<Stmt>::new_in(bump);
         if !functions.is_empty() {
+            // Direct eval and a lowered `using` declare inside the wrapper, and a strict Program hides its declarations from indirect eval.
             let in_wrapper = self.module_scope().contains_direct_eval
                 || self.will_wrap_module_in_try_catch_for_using
                 || self.module_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode;
@@ -544,8 +539,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Ok(())
     }
 
-    /// `export default` of a named function or class declares it like the plain statement.
-    /// Any other default export is evaluated as an expression.
+    /// A named function or class of `export default` is declared like the plain statement, any other value is an expression.
     fn repl_unwrap_export_default(
         &mut self,
         export_default: js_ast::StoreRef<S::ExportDefault>,
@@ -554,8 +548,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         if let js_ast::StmtOrExpr::Stmt(declaration) = export_default.value {
             match declaration.data {
                 StmtData::SFunction(mut func) => {
-                    // The visit pass names an anonymous function after the generated symbol
-                    // of the default export.
+                    // The visit pass gives an anonymous function the generated name of the default export.
                     let is_named = func.func.name.is_some_and(|name| {
                         self.symbols[name.ref_.inner_index() as usize].kind
                             != js_ast::symbol::Kind::Other
@@ -653,8 +646,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         )
     }
 
-    /// `function f() {}` -> `var f;` in front of the wrapper and `f = function() {}` inside.
-    /// The expression is anonymous: a function declaration has no binding of its name inside.
+    /// `function f() {}` -> `var f;` in front of the wrapper and `f = function() {}` inside, anonymous because a declaration has no binding of its own name.
     fn repl_assign_function<'bump>(
         &mut self,
         ReplFunction {
@@ -705,12 +697,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         ));
     }
 
-    /// The name of a top-level function is the session's, also under `minify.identifiers`.
-    /// The renamer reads the flag on the root of the link chain, so the chain is pinned up to
-    /// the part that an earlier declaration of the same name pinned.
+    /// Keeps the name of a top-level function under `minify.identifiers`: the renamer reads the flag on the root of the link chain.
     fn repl_pin_name(&mut self, mut ref_: bun_ast::Ref) {
         loop {
             let symbol = &mut self.symbols[ref_.inner_index() as usize];
+            // An earlier declaration of the same name pinned the rest of the chain.
             if symbol.must_not_be_renamed() {
                 return;
             }

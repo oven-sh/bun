@@ -225,6 +225,29 @@ function f() {
       );
     });
 
+    test("a `var` of a body without braces and of a `for` head is declared in front of the wrapper", () => {
+      expect(
+        transpiler.transformSync("if (1) var a = 1; for (var b; !b; ) b = 2; function f() { return a + b }; f()"),
+      ).toBe(
+        `var a;
+var b;
+function f() {
+  return a + b;
+}
+(() => {
+  if (1)
+    a = 1;
+  for (;!b; )
+    b = 2;
+  return {
+    __proto__: null,
+    value: f()
+  };
+})();
+`,
+      );
+    });
+
     test("a function is assigned inside the wrapper when direct eval can declare a `var` there", () => {
       expect(transpiler.transformSync(`eval("var q = 1"); function readQ() { return q }; readQ()`)).toBe(
         `var readQ;
@@ -289,9 +312,7 @@ function f() {
       expect(results[13]).toBe(prefix === "");
     });
 
-    // Each row is an input that declares a binding B beside a function, and what follows it.
-    // The same text runs as a plain script in a second context, and the two contexts have to
-    // answer the same. Every name is unique to its row, so all rows share the two contexts.
+    // Each input declares a binding beside a function. The same text runs as a plain script in a second context, and both must answer the same.
     test("an input with a function gives what the same text gives as a script", async () => {
       type Form = { stmt: (b: string) => string; script?: (b: string) => string; read?: (b: string) => string };
       const call = (b: string) => `${b}()`;
@@ -316,8 +337,7 @@ function f() {
         { stmt: b => `function ${b}() { return 1 }`, read: call },
         { stmt: b => `function* ${b}() { yield 1 }`, read: b => `[...${b}()][0]` },
       ];
-      // Only in front of a function that reads them: a script rejects these beside a
-      // function of the same name, or has no `export`.
+      // A script rejects these beside a function of the same name, or has no `export`.
       const readOnly: Form[] = [
         { stmt: b => `let ${b} = 1` },
         { stmt: b => `export var ${b} = 1`, script: b => `var ${b} = 1` },

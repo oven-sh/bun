@@ -222,6 +222,7 @@ pub(crate) mod expect {
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
+                call_to_json: true,
             };
             JestPrettyFormat::format(
                 MessageLevel::Debug,

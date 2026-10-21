@@ -96,11 +96,12 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
   const instance = b.classRef("SocketAddress");
   const refCounted = b.class({ rustPath: "T", refCounted: true });
-  for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any }), refCounted]) {
+  const inline = b.class({ rustPath: "T" });
+  for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any }), refCounted, inline]) {
     expect(() => b.dictionary({ type })).toThrow(
-      "b.classRef and a refCounted class cannot be in an array or a dictionary",
+      "an instance that Rust takes as &T cannot be in an array or a dictionary",
     );
-    expect(() => b.array(type)).toThrow("b.classRef and a refCounted class cannot be in an array or a dictionary");
+    expect(() => b.array(type)).toThrow("an instance that Rust takes as &T cannot be in an array or a dictionary");
   }
   expect(() => b.union({ instance, again: b.classRef("SocketAddress") })).toThrow("again is never chosen");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
@@ -191,7 +192,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "when: .asDate is a result",
   );
   expect(() => b.namespace({ f: {} }, { call: "g" })).toThrow("call: g is not one of its functions");
-  for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), b.class({ rustPath: "T" })]) {
+  const mutable = b.class({ rustPath: "T", proto: { f: { mutates: true } } });
+  for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), mutable]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");
   }
   expect(() => b.dictionary({ fooBar: b.bool, foo_bar: b.bool })).toThrow("two fields are both foo_bar");
@@ -240,6 +242,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.u32, cache: true, setter: true } } })).toThrow(
     "x: the setter of a cached getter takes passThis, to replace the cached value",
   );
+  expect(() => b.class({ rustPath: "T", call: {} })).toThrow("call is what the constructor object does without new");
   expect(() => b.class({ rustPath: "T", proto: { "@@dispose": { enumerable: true } } })).toThrow(
     "@@dispose: enumerable and configurable are for a string key",
   );
@@ -299,7 +302,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     b.class({ rustPath: "T", construct: {}, static: { x: { getter: b.i32, passThis: true } } }),
   ).toThrow("x: a static getter has no passThis");
   expect(() => b.class({ rustPath: "T", refCounted: true, proto: { x: { mutates: true } } })).toThrow(
-    "x: a refCounted class has no mutates",
+    "a refCounted class has no mutates",
   );
   expect(() => b.class({ rustPath: "T", finalize: true })).toThrow("finalize is only for a refCounted class");
   expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
@@ -633,6 +636,45 @@ describe("instances of a class of a .classes.ts file", () => {
   it("is one kind of value however many times the schema names the class", () => {
     expect(bindgen.portPlus(address, 2)).toBe(8082);
     expect(bindgen.portPlus(address, "abc")).toBe(8083);
+  });
+});
+
+describe("b.any.variadic", () => {
+  it("is the arguments from its position on", () => {
+    const object = {};
+    expect(bindgen.afterFirst(1, 2, object, undefined)).toEqual([2, object, undefined]);
+    expect(bindgen.afterFirst(1, object)[0]).toBe(object);
+    expect(bindgen.afterFirst(1)).toEqual([]);
+    expect(bindgen.afterFirst()).toEqual([]);
+    const many = Array.from({ length: 1000 }, (_, i) => i);
+    expect(bindgen.afterFirst(...many)).toEqual(many.slice(1));
+  });
+
+  it("does not count in length", () => {
+    expect(bindgen.afterFirst.length).toBe(1);
+    expect((bindgen as any).TestProblem.prototype.countArguments.length).toBe(0);
+  });
+
+  it("tells a missing argument from undefined", () => {
+    const problem = new (bindgen as any).TestProblem(0);
+    expect(problem.countArguments()).toBe(0);
+    expect(problem.countArguments(undefined)).toBe(1);
+    expect(problem.countArguments(undefined, undefined)).toBe(2);
+  });
+
+  it("is only the last argument", () => {
+    expect(() => b.fn({ args: { rest: b.any.variadic, last: b.any } })).toThrow(
+      "rest: .variadic is only for the last argument",
+    );
+    expect(() => b.dictionary({ rest: b.any.variadic })).toThrow("rest: .variadic is only for the last argument");
+    expect(() => b.union({ rest: b.any.variadic, other: b.null })).toThrow(
+      "rest: .variadic is only for the last argument",
+    );
+    expect(() => b.array(b.any.variadic)).toThrow("an array is a Vec, where the GC does not see JS values");
+    expect(() => b.any.variadic.optional).toThrow("any[] already takes undefined");
+    expect(() =>
+      b.fn({ returns: b.any.variadic, capability: "heap" }).signatures[0].returns.rustToJS("x", {} as any),
+    ).toThrow("any[] cannot be returned to JavaScript");
   });
 });
 
@@ -2112,6 +2154,22 @@ describe("classes", () => {
       expect(problem.detail).toBe(4);
       problem.detail = 10;
       expect(problem.detail).toBe(20);
+    });
+
+    it("call is what the class does without new", () => {
+      const problem = TestProblem(1, 2, 3);
+      expect(problem).toBeInstanceOf(TestProblem);
+      expect(problem.code).toBe(6);
+      expect(TestProblem().code).toBe(0);
+      expect(new TestProblem(4).code).toBe(4);
+      expect(() => (bindgen as any).TestCounter()).toThrow("TestCounter constructor cannot be invoked without 'new'");
+    });
+
+    it("Rust reaches the constructor, and the struct of an instance", () => {
+      expect(bindgen.problemConstructor()).toBe(TestProblem);
+      expect(bindgen.tokenIdFromJS(bindgen.makeToken(7))).toBe(7);
+      for (const value of [undefined, 7, {}, new TestProblem(7), Object.create(bindgen.makeToken(7))])
+        expect(bindgen.tokenIdFromJS(value)).toBeNull();
     });
 
     it("a static getter can have a setter", () => {

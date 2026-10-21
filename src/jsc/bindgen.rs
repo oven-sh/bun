@@ -657,6 +657,18 @@ pub unsafe trait JsPayload: Sized + 'static {
     }
 }
 
+/// A [`JsPayload`] with a member that takes `&mut self`. It is reached only through [`JsPayloads`].
+///
+/// # Safety
+/// Implemented by generated code only.
+pub unsafe trait JsMutablePayload: JsPayload {}
+
+#[doc(hidden)]
+#[inline]
+pub fn constructor_for_class(global: &JSGlobalObject, class_index: u32) -> JSValue {
+    extern_types::Bun__Bindgen__constructorForClass(global, class_index)
+}
+
 /// # Safety
 /// `this_value` is the JS object of a generated class that has an internal field at `offset`.
 #[doc(hidden)]
@@ -692,7 +704,7 @@ pub unsafe fn set_internal_field_at(
     }
 }
 
-/// The JS object that wraps a `T`. A payload is reached only through [`JsPayloads`].
+/// The JS object that wraps a `T`.
 #[repr(transparent)]
 pub struct JsWrapper<'a, T>(
     NonNull<c_void>,
@@ -769,6 +781,21 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         unsafe { self.0.as_ptr().byte_add(T::PAYLOAD_OFFSET).cast() }
     }
 
+    /// The payload's address, which does not change. It is valid while the wrapper is alive.
+    #[inline(always)]
+    pub fn as_ptr(self) -> NonNull<T> {
+        // SAFETY: inside the cell, which is not null.
+        unsafe { NonNull::new_unchecked(self.payload()) }
+    }
+
+    /// Keeps the wrapper, and so the payload, alive past the call.
+    #[inline]
+    pub fn to_strong(self, heap: &JsHeap<'a>) -> JsWrapperStrong<T> {
+        JsWrapperStrong(self.as_value().to_strong(heap), PhantomData)
+    }
+}
+
+impl<'a, T: JsMutablePayload> JsWrapper<'a, T> {
     /// Lends the payload. `f` cannot run JavaScript: that takes the `&mut JsScope` the `JsPayloads` is borrowed from.
     #[inline(always)]
     pub fn with<R>(self, _: &JsPayloads<'a>, f: impl FnOnce(&T) -> R) -> R {
@@ -785,12 +812,6 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         let result = f(unsafe { &mut *self.payload() });
         self.to_js().ensure_still_alive();
         result
-    }
-
-    /// Keeps the wrapper, and so the payload, alive past the call.
-    #[inline]
-    pub fn to_strong(self, heap: &JsHeap<'a>) -> JsWrapperStrong<T> {
-        JsWrapperStrong(self.as_value().to_strong(heap), PhantomData)
     }
 }
 

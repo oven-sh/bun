@@ -60,7 +60,7 @@ export const FileSystemRouter = b.class({
       throws: true,
     },
     origin: { getter: b.string.utf8.nullable, cache: true },
-    reload: { returns: b.self, capability: "js", throws: true },
+    reload: { returns: b.self, passThis: true, capability: "js", throws: true },
     routes: { getter: b.record(b.string.utf8), cache: true },
     style: { getter: RouterStyle, cache: true },
   },

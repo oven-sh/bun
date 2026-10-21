@@ -301,6 +301,8 @@ export const makeToken = b.fn({ args: { id: b.u32 }, returns: TestToken, capabil
 export const TestProblem = b.class({
   rustPath: "crate::bindgen_test::TestProblem",
   construct: { args: { code: b.i32 } },
+  /** An instance whose code is the sum. */
+  call: { args: { codes: b.any.variadic }, returns: b.self, capability: "heap" },
   prototypeBase: "Error",
   enumerable: false,
   proto: {
@@ -308,6 +310,7 @@ export const TestProblem = b.class({
     code: { getter: b.i32, enumerable: true },
     sealedCode: { getter: b.i32, configurable: false },
     describe: { returns: b.string.utf8, configurable: false },
+    countArguments: { args: { all: b.any.variadic }, returns: b.usize },
     /** Computed once. Assigning replaces it without calling Rust. */
     message: { getter: b.string.utf8, cache: true, writable: true },
     /** Computed once. Assigning a number stores its double. */
@@ -317,6 +320,17 @@ export const TestProblem = b.class({
     /** One for the process. */
     level: { getter: b.i32, setter: true },
   },
+});
+
+/** `token.id` read through `from_js`, or `null` if `token` is not an instance. */
+export const tokenIdFromJS = b.fn({ args: { token: b.any }, returns: b.u32.nullable });
+export const problemConstructor = b.fn({ returns: b.any, capability: "js" });
+/** The arguments after the first, as an array. */
+export const afterFirst = b.fn({
+  args: { first: b.any, rest: b.any.variadic },
+  returns: b.any,
+  capability: "heap",
+  throws: true,
 });
 
 export const integerOrBigInt = b.fn({ args: { value: b.u32.allowBigInt }, returns: b.u32 });

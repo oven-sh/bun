@@ -984,6 +984,10 @@ export class CallableType extends Type {
 export class AnyType extends Type {
   readonly idlType = "Bun::Bindgen::IDLRawAny";
   readonly tsType = "any";
+  /** This argument and every one after it. Only for the last argument. */
+  get variadic(): VariadicType {
+    return new VariadicType();
+  }
   get holdsJSValue(): boolean {
     return true;
   }
@@ -1017,6 +1021,36 @@ export class AnyType extends Type {
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value})`;
+  }
+}
+
+/** The arguments from one on, read where the caller's frame has them. */
+export class VariadicType extends Type {
+  readonly idlType = "Bun::Bindgen::IDLVariadicArguments";
+  readonly tsType = "any[]";
+  get holdsJSValue(): boolean {
+    return true;
+  }
+  get takesUndefined(): boolean {
+    return true;
+  }
+  get isOptional(): boolean {
+    return true;
+  }
+  get conversionThrows(): boolean {
+    return false;
+  }
+  layout(): Layout {
+    return { size: 16, align: 8 };
+  }
+  rustExternType(): string {
+    return "bindgen::extern_types::ExternArguments";
+  }
+  rustType(): string {
+    return "&'a [bindgen::JsLocal<'a>]";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get(heap)`;
   }
 }
 
@@ -1331,7 +1365,7 @@ export class ArrayType extends Type {
     assert(!element.passesValue, "b.bytes is only for an argument");
     assert(
       !element.borrowsCell,
-      "b.classRef and a refCounted class cannot be in an array or a dictionary: only an argument's slot in the frame keeps the instance alive",
+      "an instance that Rust takes as &T cannot be in an array or a dictionary: only an argument's slot in the frame keeps it alive",
     );
     assert(
       !element.borrowsHeap,
@@ -1563,10 +1597,13 @@ export class DictionaryType extends NamedType {
       this.members.map(member => member.fieldName),
       "fields",
     );
-    for (const { name, type } of this.members) assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
+    for (const { name, type } of this.members) {
+      assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
+      assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
+    }
     assert(
       !this.borrowsCell,
-      "b.classRef and a refCounted class cannot be in an array or a dictionary: only an argument's slot in the frame keeps the instance alive",
+      "an instance that Rust takes as &T cannot be in an array or a dictionary: only an argument's slot in the frame keeps it alive",
     );
     assert(
       !this.nonObjectAsEmpty || this.hasDefault,
@@ -1683,6 +1720,7 @@ export class UnionType extends NamedType {
       assert(!(type instanceof OptionalType), `${name}: add b.null as an alternative`);
       assert(!(type instanceof DefaultType), `${name}: put .default() on the union`);
       assert(!type.passesValue, `${name}: b.bytes is only for an argument`);
+      assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
       assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: an alternative is named in camelCase`);
       assert(name !== "tag", "tag: the generated struct has a member of that name");
       assert(!cppKeywords.has(name), `${name} is a C++ keyword, and JavaScript never sees the name: pick another`);
@@ -1812,6 +1850,8 @@ export class Signature {
       this.length === undefined || (Number.isInteger(this.length) && this.length >= 0),
       `length: ${this.length} is not a count`,
     );
+    for (const { name, type } of this.args.slice(0, -1))
+      assert(!(type instanceof VariadicType), `${name}: .variadic is only for the last argument`);
     for (const { name, type } of this.args) {
       refuseResultType(name, type);
       assert(
@@ -1916,7 +1956,7 @@ export interface PropertyAttributes {
 
 /** A native function. */
 export interface FunctionField extends Omit<SignatureOptions, "rustPath">, PropertyAttributes {
-  /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
+  /** `&mut self` instead of `&self`. Not with `capability: "js"`, which in a class that has such a member gets the wrapper. */
   mutates?: boolean;
   /** Also pass the wrapper, `this_value: JsWrapper<'a, Self>`. A method whose receiver is the wrapper already has it. */
   passThis?: boolean;
@@ -1932,7 +1972,7 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath">, Prope
 
 export interface GetterField extends PropertyAttributes {
   getter: Type;
-  /** Also generate a setter, which takes `&mut self` (the wrapper with `capability: "js"`, `&self` in a `refCounted` class). Its `capability` is the getter's unless it names its own. */
+  /** Also generate a setter. In a class that has a `mutates` member it takes `&mut self` (the wrapper with `capability: "js"`). Its `capability` is the getter's unless it names its own. */
   setter?: true | { capability: Capability };
   /** Returns an internal field, and computes it while that is empty. `true` declares one of the getter's name, a string names one declared elsewhere. */
   cache?: true | string;
@@ -1979,6 +2019,8 @@ export interface ClassOptions {
   finalize?: boolean;
   /** Absent: JavaScript cannot construct one, and there is no constructor object. `"illegal"`: there is one, and `new` on it throws `Illegal constructor`. */
   construct?: Omit<SignatureOptions, "rustPath" | "returns"> | "illegal";
+  /** `Name(..)` without `new`, which otherwise throws. The Rust function is `call`. */
+  call?: Omit<SignatureOptions, "rustPath">;
   /** Properties of the prototype. */
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
@@ -1999,8 +2041,8 @@ export const memberIdentifier = (name: string) => name.replace(/^(_+|@@)/, "");
 export const wellKnownSymbol = (name: string) => (name.startsWith("@@") ? name.slice(2) : undefined);
 
 type Receiver = "ref" | "mut" | "wrapper" | "static";
-const memberReceiver = (isStatic: boolean, refCounted: boolean, capability: Capability, mutates: boolean): Receiver =>
-  isStatic ? "static" : refCounted ? "ref" : capability === "js" ? "wrapper" : mutates ? "mut" : "ref";
+const memberReceiver = (isStatic: boolean, sharedThis: boolean, capability: Capability, mutates: boolean): Receiver =>
+  isStatic ? "static" : sharedThis ? "ref" : capability === "js" ? "wrapper" : mutates ? "mut" : "ref";
 
 function memberRustName(name: string): string {
   assert(/^[a-z_][a-z0-9_]*$/.test(name), `${name}: rustName is written in snake_case`);
@@ -2018,8 +2060,8 @@ export class Method extends Signature {
   readonly functionName: string | undefined;
   readonly enumerable: boolean | undefined;
   readonly configurable: boolean | undefined;
-  constructor(name: string, options: FunctionField, isStatic = false, refCounted = false) {
-    super(options, !isStatic && (!!options.passThis || (!refCounted && options.capability === "js")));
+  constructor(name: string, options: FunctionField, isStatic = false, sharedThis = false) {
+    super(options, !isStatic && (!!options.passThis || (!sharedThis && options.capability === "js")));
     this.name = name;
     this.rustName = memberRustName(options.rustName ?? snakeCase(memberIdentifier(name)));
     this.hasDefaultRustName = options.rustName === undefined;
@@ -2027,8 +2069,7 @@ export class Method extends Signature {
       !(options.mutates && this.capability === "js"),
       `${name}: a method that can run JavaScript gets the wrapper, not &mut self`,
     );
-    assert(!(options.mutates && refCounted), `${name}: a refCounted class has no mutates: every member takes &self`);
-    this.receiver = memberReceiver(isStatic, refCounted, this.capability, !!options.mutates);
+    this.receiver = memberReceiver(isStatic, sharedThis, this.capability, !!options.mutates);
     this.passThis = this.receiver !== "static" && this.receiver !== "wrapper" && !!options.passThis;
     this.invalidThis = options.invalidThis ?? "throw";
     this.privateSymbol = options.privateSymbol;
@@ -2063,7 +2104,7 @@ export class Getter {
   readonly setterCapability: Capability;
   readonly enumerable: boolean | undefined;
   readonly configurable: boolean | undefined;
-  constructor(name: string, options: GetterField, isStatic = false, refCounted = false) {
+  constructor(name: string, options: GetterField, isStatic = false, sharedThis = false) {
     this.name = name;
     this.isStatic = isStatic;
     const rustName = options.rustName ?? snakeCase(memberIdentifier(name));
@@ -2072,8 +2113,8 @@ export class Getter {
     this.type = options.getter;
     this.capability = options.capability ?? "none";
     this.setterCapability = typeof options.setter === "object" ? options.setter.capability : this.capability;
-    this.receiver = memberReceiver(isStatic, refCounted, this.capability, false);
-    this.setterReceiver = memberReceiver(isStatic, refCounted, this.setterCapability, true);
+    this.receiver = memberReceiver(isStatic, sharedThis, this.capability, false);
+    this.setterReceiver = memberReceiver(isStatic, sharedThis, this.setterCapability, true);
     this.passThis = !!options.passThis;
     assert(!(this.passThis && isStatic), `${name}: a static getter has no passThis`);
     this.throws = options.throws ?? false;
@@ -2157,12 +2198,15 @@ class SelfType extends Type {
 }
 export const selfType = new SelfType();
 
-/** As an argument or a result: the wrapper, `JsWrapper<'a, T>`. A `refCounted` class as an argument is `&'a T`. */
+/** As a result: the wrapper, `JsWrapper<'a, T>`. As an argument: `&'a T`, or the wrapper if the class has a `mutates` member. */
 export class ClassType extends NamedType {
   readonly rustPath: string;
   readonly refCounted: boolean;
+  /** No member has `mutates`, so every member takes `&self`. */
+  readonly sharedThis: boolean;
   readonly finalize: boolean;
   readonly construct: Signature | null;
+  readonly call: FunctionDefinition | null;
   readonly illegalConstructor: boolean;
   /** The native functions of the prototype. The signatures of each are `Method`s. */
   readonly functions: readonly FunctionDefinition[];
@@ -2188,6 +2232,10 @@ export class ClassType extends NamedType {
     this.refCounted = options.refCounted ?? false;
     this.finalize = options.finalize ?? false;
     assert(this.refCounted || !this.finalize, "finalize is only for a refCounted class: otherwise implement Drop");
+    this.sharedThis = !Object.values(options.proto ?? {})
+      .flat()
+      .some(field => "mutates" in field && field.mutates);
+    assert(this.sharedThis || !this.refCounted, "a refCounted class has no mutates: every member takes &self");
     const own = (type: Type): Type => {
       if (type === selfType) return this;
       return type instanceof OptionalType && type.inner === selfType ? new OptionalType(this, type.modifier) : type;
@@ -2222,7 +2270,7 @@ export class ClassType extends NamedType {
         }
         if ("getter" in field) {
           assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
-          return new Getter(name, { ...field, getter: own(field.getter) }, isStatic, this.refCounted);
+          return new Getter(name, { ...field, getter: own(field.getter) }, isStatic, this.sharedThis);
         }
         const overloads: readonly FunctionField[] = Array.isArray(field) ? field : [field];
         for (const key of ["privateSymbol", "invalidThis", "name", "enumerable", "configurable"] as const)
@@ -2232,13 +2280,15 @@ export class ClassType extends NamedType {
           );
         assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
         const fn = new FunctionDefinition(
-          overloads.map(overload => new Method(name, resolve(overload), isStatic, this.refCounted)),
+          overloads.map(overload => new Method(name, resolve(overload), isStatic, this.sharedThis)),
         );
         fn.name = name;
         return fn;
       });
     this.protoMembers = members(options.proto ?? {}, false);
     this.staticMembers = members(options.static ?? {}, true);
+    assert(this.construct || !options.call, "call is what the constructor object does without new");
+    this.call = options.call ? (members({ call: options.call }, true)[0] as FunctionDefinition) : null;
     this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
     this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
@@ -2284,7 +2334,9 @@ export class ClassType extends NamedType {
   }
   /** Every signature of the prototype's and the constructor's functions. */
   get methods(): readonly Method[] {
-    return [...this.functions, ...this.staticFunctions].flatMap(fn => fn.signatures as readonly Method[]);
+    return [...this.functions, ...this.staticFunctions, ...(this.call ? [this.call] : [])].flatMap(
+      fn => fn.signatures as readonly Method[],
+    );
   }
   get cpp(): string {
     return `Bun::Bindgen::Generated::JS${this.name}`;
@@ -2301,7 +2353,7 @@ export class ClassType extends NamedType {
     return true;
   }
   get borrowsCell(): boolean {
-    return this.refCounted;
+    return this.sharedThis;
   }
   get nullRepresentation() {
     return "pointer" as const;
@@ -2321,12 +2373,12 @@ export class ClassType extends NamedType {
     return "*mut core::ffi::c_void";
   }
   rustType(): string {
-    return this.refCounted ? `&'a ${this.rustPath}` : `bindgen::JsWrapper<'a, ${this.rustPath}>`;
+    return this.sharedThis ? `&'a ${this.rustPath}` : `bindgen::JsWrapper<'a, ${this.rustPath}>`;
   }
   rustFromExtern(expr: string): string {
-    return this.refCounted
-      ? `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`
-      : `bindgen::JsWrapper::<${this.rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}), heap)`;
+    if (this.refCounted) return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
+    const wrapper = `bindgen::JsWrapper::<${this.rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}), heap)`;
+    return this.sharedThis ? `${wrapper}.payload_ref()` : wrapper;
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value})`;

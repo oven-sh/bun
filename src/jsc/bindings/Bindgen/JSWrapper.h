@@ -52,11 +52,14 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, WTF::ASCIILiteral name, JSC::NativeFunction construct, unsigned length, std::span<const JSC::HashTableValue>, JSC::JSObject* prototype);
+    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, WTF::ASCIILiteral name, JSC::NativeFunction call, JSC::NativeFunction construct, unsigned length, std::span<const JSC::HashTableValue>, JSC::JSObject* prototype);
 
 private:
-    JSClassConstructor(JSC::VM&, JSC::Structure*, JSC::NativeFunction construct);
+    JSClassConstructor(JSC::VM&, JSC::Structure*, JSC::NativeFunction call, JSC::NativeFunction construct);
 };
+
+// A class called without `new`.
+JSC_DECLARE_HOST_FUNCTION(callJSClassConstructor);
 
 // `new` on a class that only native code makes.
 JSC_DECLARE_HOST_FUNCTION(illegalConstructor);
@@ -65,7 +68,11 @@ JSC_DECLARE_HOST_FUNCTION(illegalConstructor);
 JSC::JSObject* createClassPrototype(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* base, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>);
 
 JSC::Structure* structureForClass(JSC::JSGlobalObject*, unsigned classIndex);
+JSC::JSObject* prototypeForClass(JSC::JSGlobalObject*, unsigned classIndex);
 JSC::JSObject* constructorForClass(JSC::JSGlobalObject*, unsigned classIndex);
+template<typename T> JSC::Structure* structureForClass(JSC::JSGlobalObject* globalObject) { return structureForClass(globalObject, T::classIndex); }
+template<typename T> JSC::JSObject* prototypeForClass(JSC::JSGlobalObject* globalObject) { return prototypeForClass(globalObject, T::classIndex); }
+template<typename T> JSC::JSObject* constructorForClass(JSC::JSGlobalObject* globalObject) { return constructorForClass(globalObject, T::classIndex); }
 // The class's own, or one for `new.target` (a subclass, Reflect.construct). May throw.
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject*, JSC::CallFrame*, unsigned classIndex);
 

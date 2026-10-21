@@ -194,7 +194,7 @@ that is an integer in range, and nothing else. A failed strict or
 `.validateInteger` conversion, or a `.loose` one of an integer, throws
 `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE` naming the argument or the dictionary
 member; `.wrap`, `.enforceRange` and the other `.loose` conversions throw what WebIDL does. An argument that was not passed is `undefined` and is converted like
-any other: nothing looks at how many there are.
+any other: nothing looks at how many there are, except a body that takes `b.any.variadic`.
 
 | Schema                                           | Rust, as an argument             | Takes                                                         |
 | ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
@@ -211,12 +211,13 @@ any other: nothing looks at how many there are.
 | `b.classRef(name)`                               | `&'a T`                          | an instance of a class of a `.classes.ts` file; see below     |
 | `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
+| `b.any.variadic`                                 | `&'a [JsLocal<'a>]`              | this argument and every one after it; only the last argument  |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
-| `b.class(options)`                               | `JsWrapper<'a, T>`, `&'a T`      | an instance; the second with [`refCounted`](#refcounted)      |
+| `b.class(options)`                               | `&'a T`, `JsWrapper<'a, T>`      | an instance; the second if a member has `mutates`             |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported. It is used by
@@ -545,6 +546,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
 | `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
+| `call`           | `Name(..)` without `new`, which otherwise throws. It is `fn call(..)`, with no receiver.       |
 | `proto`          | properties of the prototype                                                                    |
 | `static`         | properties of the constructor: native functions and accessors without `cache`                  |
 | `internalFields` | JS values the object holds                                                                     |
@@ -597,14 +599,23 @@ table of the object that has the class:
     Glob    Bun::Bindgen::Generated::Glob::getGlobConstructor    DontDelete|PropertyCallback
 ```
 
+Rust gets it with `js_Glob::get_constructor(global)`. C++ that includes the generated header names the three
+objects of a class: `Bun::Bindgen::structureForClass<JSGlob>(globalObject)`, `prototypeForClass<JSGlob>` and
+`constructorForClass<JSGlob>`.
+
 ### The receiver
+
+Every member takes `&self`, a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
+`bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(value)` is the struct if `value`
+is an instance. `wrapper.as_ptr()` is the address of the struct, which never changes.
+
+A class with a `mutates: true` member is different, in all its members:
 
 | The method is                    | It receives                 |
 | -------------------------------- | --------------------------- |
 | `capability: "none"` or `"heap"` | `&self`                     |
-| …with `mutates: true`            | `&mut self`                 |
+| …with `mutates: true`, a setter  | `&mut self`                 |
 | `capability: "js"`               | `this: JsWrapper<'a, Self>` |
-| with [`refCounted`](#refcounted) | `&self`                     |
 
 A method that can run JavaScript can be re-entered, by a callback that calls
 another method of the same object. A `&mut self` held across that would be
@@ -679,9 +690,8 @@ impl CronJob {
 ```
 
 - The struct is intrusively refcounted: `bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`.
-- Every member takes `&self`, whatever its `capability`. Mutable state is in `Cell` and `JsCell`, and `mutates: true` is an error.
+- `mutates: true` is an error.
 - `construct` returns a `*mut Self`, whose ref the object takes over.
-- As an argument the class is a `&'a T`.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a
   field of its own.
 - `finalize` runs before the object's ref is dropped. `Drop` runs when the last ref is dropped, which can be much later.

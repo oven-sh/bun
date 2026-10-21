@@ -90,7 +90,7 @@ impl Drop for RefCountedString {
 pub(crate) struct FileSystemRouter {
     origin: Option<RefCountedString>,
     base_dir: RefCountedString,
-    router: Router::Router,
+    router: JsCell<Router::Router>,
     asset_prefix: Option<RefCountedString>,
 }
 
@@ -316,7 +316,7 @@ impl FileSystemRouter {
                 .filter(not_empty)
                 .map(&mut ref_counted)
                 .transpose()?,
-            router,
+            router: JsCell::new(router),
         })
     }
 
@@ -371,6 +371,7 @@ impl FileSystemRouter {
         let mut params_list = route_param::List::default();
         let Some(route) = self
             .router
+            .get()
             .routes
             .match_page_with_allocator(&url_path, &mut params_list)
         else {
@@ -408,28 +409,27 @@ impl FileSystemRouter {
     }
 
     pub(crate) fn reload<'a>(
-        this: JsWrapper<'a, Self>,
+        &self,
+        this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
-        let config = this.with(&cx.payloads, |this| this.router.config.clone());
+        let config = self.router.get().config.clone();
         let Some((router, _)) = load_router(cx.global(), config, Load::FromDisk)? else {
-            return Err(this.with(&cx.payloads, |this| {
-                cx.heap.error(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(&*this.router.config.dir)
-                ))
-            }));
+            return Err(cx.heap.error(format_args!(
+                "Unable to find directory: {}",
+                bstr::BStr::new(&*self.router.get().config.dir)
+            )));
         };
-        this.with_mut(&mut cx.payloads, |this| this.router = router);
-        js_FileSystemRouter::routes_set_cached(this.to_js(), cx.global(), JSValue::ZERO);
-        Ok(this)
+        self.router.set(router);
+        js_FileSystemRouter::routes_set_cached(this_value.to_js(), cx.global(), JSValue::ZERO);
+        Ok(this_value)
     }
 
     pub(crate) fn get_routes(
         &self,
     ) -> impl IntoIterator<Item = (impl AsRef<[u8]>, impl AsRef<[u8]>)> {
-        let names = self.router.get_names();
-        names.iter().zip(self.router.get_entry_points())
+        let router = self.router.get();
+        router.get_names().iter().zip(router.get_entry_points())
     }
 
     pub(crate) fn get_style(&self) -> RouterStyle {

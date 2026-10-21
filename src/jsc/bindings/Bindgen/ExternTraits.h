@@ -4,6 +4,7 @@
 #include <optional>
 #include <span>
 #include <utility>
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
@@ -149,6 +150,28 @@ template<> struct ExternTraits<JSBlobOrStringOrBuffer> {
         return ExternTraits<WTF::String>::convertToExtern(cppValue.takeString());
     }
 };
+
+struct ExternArguments {
+    const JSC::EncodedJSValue* data;
+    size_t length;
+};
+
+template<> struct ExternTraits<JSC::ArgList> {
+    using ExternType = ExternArguments;
+
+    static ExternType convertToExtern(JSC::ArgList&& cppValue)
+    {
+        return { cppValue.data(), cppValue.size() };
+    }
+};
+
+// `data()` is never null, which a Rust slice needs.
+inline JSC::ArgList variadicArguments(JSC::CallFrame* callFrame, unsigned start)
+{
+    JSC::ArgList arguments { callFrame };
+    unsigned skipped = std::min<unsigned>(start, arguments.size());
+    return { arguments.data() + skipped, static_cast<unsigned>(arguments.size()) - skipped };
+}
 
 // A converted argument and the argument itself.
 template<typename T>

@@ -2,7 +2,7 @@
 
 use core::ffi::{c_uint, c_void};
 
-use super::JsHeap;
+use super::{JsHeap, JsLocal};
 use crate::{JSGlobalObject, JSValue};
 
 /// `WTF::StringImpl*` carrying one ref, or null.
@@ -110,6 +110,23 @@ impl ExternBytes {
     }
 }
 
+/// Arguments in the caller's frame, which holds them until the host function returns.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExternArguments {
+    data: *const JSValue,
+    length: usize,
+}
+impl ExternArguments {
+    /// # Safety
+    /// The host function that passed this is the call `heap` belongs to.
+    #[inline(always)]
+    pub unsafe fn get<'a>(self, _: &JsHeap<'a>) -> &'a [JsLocal<'a>] {
+        // SAFETY: C++ never passes a null pointer, and `JsLocal` is a transparent `JSValue`.
+        unsafe { core::slice::from_raw_parts(self.data.cast(), self.length) }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternWithValue<T: Copy> {
@@ -153,6 +170,10 @@ unsafe extern "C" {
         key_length: usize,
         value: JSValue,
     ) -> bool;
+    pub(super) safe fn Bun__Bindgen__constructorForClass(
+        global: &JSGlobalObject,
+        class_index: u32,
+    ) -> JSValue;
     pub(super) fn Bun__Bindgen__setInternalField(
         global: *mut JSGlobalObject,
         cell: *mut c_void,

@@ -34,6 +34,7 @@ import {
   type Type,
   UnionType,
   UnitType,
+  VariadicType,
   type ValueKind,
   wellKnownSymbol,
 } from "./bindgen-lib-internal.ts";
@@ -603,6 +604,10 @@ function cppCallBody(
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
   const readLast: string[] = [];
   signature.args.forEach(({ name, type, expected }, i) => {
+    if (type instanceof VariadicType) {
+      lines.push(`auto converted${i} = Bun::Bindgen::variadicArguments(callFrame, ${i});`);
+      return;
+    }
     const { holder, value } = cppHeldValue(type, `argument${i}`);
     lines.push(`${holder} argument${i} = callFrame->argument(${i});`);
     let ctx = `ctx${i}`;
@@ -651,8 +656,13 @@ const cppExtern = (
 const symbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}__${member}`;
 const classSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Class__${member}`;
 const protoSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Prototype__${member}`;
+const nativeFunctions = (type: ClassType) => [
+  ...type.functions,
+  ...type.staticFunctions,
+  ...(type.call ? [type.call] : []),
+];
 const functionOf = (type: ClassType, method: Method) =>
-  [...type.functions, ...type.staticFunctions].find(fn => fn.signatures.includes(method))!;
+  nativeFunctions(type).find(fn => fn.signatures.includes(method))!;
 const methodSymbolName = (type: ClassType, method: Method) =>
   (method.receiver === "static" ? classSymbolName : protoSymbolName)(
     type,
@@ -692,6 +702,7 @@ namespace Bun::Bindgen::Generated {
 class JS${name} final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
+    static constexpr unsigned classIndex = ${type.classIndex};
 
     DECLARE_INFO;
 ${
@@ -977,7 +988,11 @@ function cppSourceForClass(type: ClassType): string {
   const symbolFunctions = type.functions.filter(fn => wellKnownSymbol(fn.name));
   const construct = type.construct;
   return `${cppSourceForCell(type)}
-${[...type.functions, ...type.staticFunctions].map(fn => cppMethod(type, fn)).join("")}${type.getters.map(getter => cppGetter(type, getter)).join("")}${type.internalFieldAccessors.map(accessor => cppInternalFieldAccessor(type, accessor)).join("")}${type.staticGetters.map(getter => cppStaticGetter(type, getter)).join("")}
+${nativeFunctions(type)
+  .map(fn => cppMethod(type, fn))
+  .join(
+    "",
+  )}${type.getters.map(getter => cppGetter(type, getter)).join("")}${type.internalFieldAccessors.map(accessor => cppInternalFieldAccessor(type, accessor)).join("")}${type.staticGetters.map(getter => cppStaticGetter(type, getter)).join("")}
 ${
   construct && !type.illegalConstructor
     ? `${
@@ -1040,7 +1055,7 @@ ${privateFunctions
     init.setStructure(${type.cpp}::createStructure(vm, globalObject, prototype));
 ${
   construct
-    ? `    init.setConstructor(Bun::Bindgen::JSClassConstructor::create(vm, globalObject, ${asciiLiteral(name)}, ${type.illegalConstructor ? "Bun::Bindgen::illegalConstructor" : `construct${name}`}, ${construct.length ?? construct.requiredCount}, ${span(`JS${name}ConstructorTableValues`, constructorRows)}, prototype));
+    ? `    init.setConstructor(Bun::Bindgen::JSClassConstructor::create(vm, globalObject, ${asciiLiteral(name)}, ${type.call ? methodHostFunctionName(type, type.call) : "Bun::Bindgen::callJSClassConstructor"}, ${type.illegalConstructor ? "Bun::Bindgen::illegalConstructor" : `construct${name}`}, ${construct.length ?? construct.requiredCount}, ${span(`JS${name}ConstructorTableValues`, constructorRows)}, prototype));
 `
     : ""
 }}
@@ -1058,7 +1073,7 @@ ${
 }`
 }
 ${
-  type.refCounted || type.internalFields.length > 0
+  type.sharedThis || type.internalFields.length > 0
     ? `
 extern "C" void* ${symbolName(type, "fromJS")}(JSC::EncodedJSValue value)
 {
@@ -1090,6 +1105,8 @@ ${cppConstructorSignature(type)}
 /** The fields follow the `JSC::JSDestructibleObject`, which is 24 bytes. */
 const offsetOfInternalField = (index: number) => 24 + 8 * index;
 const offsetOfPayload = (type: ClassType) => offsetOfInternalField(type.internalFields.length);
+/** A larger cell would not be in a `MarkedBlock`. C++ checks it against `MarkedSpace::largeCutoff`. */
+const maxCellSize = 8000;
 
 /** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument. */
 function cppHostFunction(
@@ -1194,6 +1211,7 @@ export function cppCounts(tables: Tables): string {
 namespace Bun::Bindgen::Counts {
 // At least 1: an array cannot be empty.
 inline constexpr unsigned numberOfClasses = ${Math.max(tables.classes.length, 1)};
+inline constexpr unsigned maxCellSize = ${maxCellSize};
 }
 `;
 }
@@ -1577,8 +1595,28 @@ unsafe impl bindgen::JsPayload for ${rustPath} {
         unsafe { ${symbolName(type, "create")}(global, structure) }
     }
 }
+${
+  type.sharedThis
+    ? `impl bun_jsc::JsClass for ${rustPath} {
+    #[inline]
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        bindgen::JsPayload::into_js_value(self, global)
+    }
+    #[inline]
+    fn from_js(value: JSValue) -> Option<*mut Self> {
+        js_${type.name}::from_js(value).map(core::ptr::NonNull::as_ptr)
+    }
+    #[inline]
+    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+        Self::from_js(value)
+    }
+}`
+    : `// SAFETY: a member takes \`&mut self\`, so no \`&${rustPath}\` is lent across JavaScript.
+unsafe impl bindgen::JsMutablePayload for ${rustPath} {}`
+}
 // A cell is at a multiple of 8, and so is the payload in it.
 const _: () = assert!(align_of::<${rustPath}>() <= 8);
+const _: () = assert!(${offsetOfPayload(type)} + size_of::<${rustPath}>() <= ${maxCellSize}, "too large to be stored in its JS object: box its largest field");
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${classSymbolName(type, "finalize")}(payload: *mut ${rustPath}) {
     // SAFETY: the sweeper calls this once, on an initialized payload nothing refers to.
@@ -1634,30 +1672,46 @@ impl bun_jsc::JsClass for ${rustPath} {
 /** `js_Name`, with the names generate-classes.ts gives its functions. */
 function rustForModule(type: ClassType): string {
   const { name, rustPath } = type;
-  if (!type.refCounted && type.internalFields.length === 0) return "";
+  if (!type.sharedThis && type.internalFields.length === 0 && !type.construct) return "";
   const fromJS = symbolName(type, "fromJS");
   const safety = `// SAFETY: \`this_value\` is an instance, which has ${type.internalFields.length} internal fields.`;
   return `
-unsafe extern "C" {
+${
+  type.sharedThis || type.internalFields.length > 0
+    ? `unsafe extern "C" {
     safe fn ${fromJS}(value: JSValue) -> *mut core::ffi::c_void;
+}`
+    : ""
 }
 pub mod js_${name} {
     use super::*;
 ${
-  type.refCounted
+  type.construct
     ? `    #[inline]
+    pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+        bindgen::constructor_for_class(global, ${type.classIndex})
+    }
+`
+    : ""
+}${
+    type.sharedThis
+      ? `    #[inline]
     pub fn from_js(value: JSValue) -> Option<core::ptr::NonNull<${rustPath}>> {
         core::ptr::NonNull::new(${fromJS}(value).cast())
     }
-    /// A new JS object that owns the caller's ref on \`this\`.
+`
+      : ""
+  }${
+    type.refCounted
+      ? `    /// A new JS object that owns the caller's ref on \`this\`.
     #[inline]
     pub fn to_js(this: *mut ${rustPath}, global: &JSGlobalObject) -> JSValue {
         // SAFETY: the ref becomes the object's.
         unsafe { ${symbolName(type, "create")}(global.as_mut_ptr(), this.cast()) }
     }
 `
-    : ""
-}${type.internalFields
+      : ""
+  }${type.internalFields
     .map((field, index) => {
       const id = snakeCase(field);
       const offset = offsetOfInternalField(index);
@@ -1759,7 +1813,11 @@ ${indent(
 export function dts(files: readonly SchemaFile[]): string {
   const parameters = (signature: Signature) =>
     signature.args
-      .map((arg, i) => `${arg.name}${i < signature.requiredCount ? "" : "?"}: ${arg.type.tsType}`)
+      .map((arg, i) =>
+        arg.type instanceof VariadicType
+          ? `...${arg.name}: ${arg.type.tsType}`
+          : `${arg.name}${i < signature.requiredCount ? "" : "?"}: ${arg.type.tsType}`,
+      )
       .join(", ");
   /** A result that is absent is `null`, never `undefined` too. */
   const resultType = (type: Type) =>
@@ -1797,6 +1855,7 @@ ${[
       ? `
   interface ${type.name}Constructor {
 ${[
+  ...(type.call ? type.call.signatures.map(call => `    (${parameters(call)}): ${resultType(call.returns)};`) : []),
   `    new (${parameters(type.construct)}): ${type.name};`,
   `    readonly prototype: ${type.name};`,
   ...type.staticFunctions.map(functionMember),

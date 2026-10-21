@@ -9,10 +9,10 @@ using namespace JSC;
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSClassConstructor, InternalFunction);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSClassConstructor);
+static_assert(Counts::maxCellSize <= MarkedSpace::largeCutoff);
 
 GCClient::IsoSubspace* createSubspaceForClass(VM& vm, unsigned classIndex, size_t cellSize)
 {
-    RELEASE_ASSERT(cellSize <= MarkedSpace::largeCutoff);
     return WebCore::subspaceForImplSlow(
         vm,
         WebCore::SubspaceForInit { static_cast<unsigned>(cellSize), JSDestructibleObject::numberOfLowerTierPreciseCells, WebCore::SubspaceForInit::CellType::Destructible, false },
@@ -31,7 +31,6 @@ void analyzeInternalField(JSCell* cell, HeapAnalyzer& analyzer, const WriteBarri
 
 const ClassInfo JSClassConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClassConstructor) };
 
-static JSC_DECLARE_HOST_FUNCTION(callJSClassConstructor);
 JSC_DEFINE_HOST_FUNCTION(callJSClassConstructor, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = getVM(globalObject);
@@ -46,15 +45,15 @@ JSC_DEFINE_HOST_FUNCTION(illegalConstructor, (JSGlobalObject * globalObject, Cal
     return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
 }
 
-JSClassConstructor::JSClassConstructor(VM& vm, Structure* structure, NativeFunction construct)
-    : Base(vm, structure, callJSClassConstructor, construct)
+JSClassConstructor::JSClassConstructor(VM& vm, Structure* structure, NativeFunction call, NativeFunction construct)
+    : Base(vm, structure, call, construct)
 {
 }
 
-JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction construct, unsigned length, std::span<const HashTableValue> tableValues, JSObject* prototype)
+JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction call, NativeFunction construct, unsigned length, std::span<const HashTableValue> tableValues, JSObject* prototype)
 {
     auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
-    auto* constructor = new (NotNull, allocateCell<JSClassConstructor>(vm)) JSClassConstructor(vm, structure, construct);
+    auto* constructor = new (NotNull, allocateCell<JSClassConstructor>(vm)) JSClassConstructor(vm, structure, call, construct);
     constructor->finishCreation(vm, length, name, PropertyAdditionMode::WithoutStructureTransition);
     // Reifying makes the structure a dictionary, even for no properties.
     if (!tableValues.empty())
@@ -76,6 +75,12 @@ Structure* structureForClass(JSGlobalObject* globalObject, unsigned classIndex)
 {
     auto* global = defaultGlobalObject(globalObject);
     return global->m_bindgenAdditions.m_classes[classIndex].get(global);
+}
+
+JSObject* prototypeForClass(JSGlobalObject* globalObject, unsigned classIndex)
+{
+    auto* global = defaultGlobalObject(globalObject);
+    return global->m_bindgenAdditions.m_classes[classIndex].prototype(global);
 }
 
 JSObject* constructorForClass(JSGlobalObject* globalObject, unsigned classIndex)
@@ -101,6 +106,11 @@ Structure* structureForNewTarget(JSGlobalObject* globalObject, CallFrame* callFr
     RELEASE_AND_RETURN(scope, InternalFunction::createSubclassStructure(globalObject, newTarget, structureForClass(functionGlobalObject, classIndex)));
 }
 
+}
+
+extern "C" JSC::EncodedJSValue Bun__Bindgen__constructorForClass(JSC::JSGlobalObject* globalObject, uint32_t classIndex)
+{
+    return JSC::JSValue::encode(Bun::Bindgen::constructorForClass(globalObject, classIndex));
 }
 
 extern "C" void Bun__Bindgen__setInternalField(JSC::JSGlobalObject* globalObject, JSC::JSCell* cell, uint32_t offset, JSC::EncodedJSValue value)

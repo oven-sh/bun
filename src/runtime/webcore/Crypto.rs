@@ -1,7 +1,5 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{
-    self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, StringOrJsBytes,
-};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsResult, StringJsc};
@@ -13,7 +11,7 @@ pub(crate) struct Crypto;
 
 impl Crypto {
     pub(crate) fn get_random_values<'a>(
-        _: JsWrapper<'a, Self>,
+        &self,
         cx: &mut JsScope<'a>,
         array: JsLocal<'a>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {

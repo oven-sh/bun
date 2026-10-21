@@ -1,6 +1,6 @@
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_glob::walk;
-use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SysErrorJsc as _,
@@ -442,11 +442,11 @@ impl Glob {
     }
 
     pub(crate) fn scan<'a>(
-        this: JsWrapper<'a, Self>,
+        &self,
         cx: &mut JsScope<'a>,
         options: Option<GlobScanArgument<'a>>,
     ) -> Result<JsLocal<'a>, ScanError<'a>> {
-        let walker = this.with(&cx.payloads, |glob| glob.make_glob_walker(options, "scan"))?;
+        let walker = self.make_glob_walker(options, "scan")?;
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
         Job::<WalkTask>::schedule(

@@ -116,10 +116,7 @@ pub(crate) fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a
             let count = counter.with(&cx.payloads, |counter| counter.count);
             format!("counter {count}").into_bytes()
         }
-        TestAnything::Token(token) => {
-            let id = token.with(&cx.payloads, |token| token.id);
-            format!("token {id}").into_bytes()
-        }
+        TestAnything::Token(token) => format!("token {}", token.id).into_bytes(),
         TestAnything::List(list) => format!("list {list:?}").into_bytes(),
         TestAnything::Options(options) => format!("options {}", options.count).into_bytes(),
     }
@@ -517,8 +514,8 @@ impl TestHolder {
         self.counter.get(heap)
     }
 
-    pub(crate) fn increment_counter<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> i32 {
-        let counter = this.with(&cx.payloads, |holder| holder.counter.get(&cx.heap));
+    pub(crate) fn increment_counter<'a>(&self, cx: &mut JsScope<'a>) -> i32 {
+        let counter = self.counter.get(&cx.heap);
         counter.with_mut(&mut cx.payloads, |counter| counter.increment(1))
     }
 }
@@ -644,6 +641,23 @@ pub(crate) fn make_token<'a>(heap: &JsHeap<'a>, id: u32) -> JsWrapper<'a, TestTo
     TestToken { id }.into_js(heap)
 }
 
+pub(crate) fn token_id_from_js(token: JsLocal<'_>) -> Option<u32> {
+    Some(token.to_js().as_class_ref::<TestToken>()?.id)
+}
+
+pub(crate) fn problem_constructor<'a>(cx: &mut JsScope<'a>) -> JsLocal<'a> {
+    let constructor = js_TestProblem::get_constructor(cx.global());
+    JsLocal::new(&cx.heap, constructor)
+}
+
+pub(crate) fn after_first<'a>(
+    heap: &JsHeap<'a>,
+    _: JsLocal<'a>,
+    rest: &'a [JsLocal<'a>],
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    bindgen::to_js::array(heap, rest.iter().copied(), bindgen::to_js::any)
+}
+
 pub(crate) struct TestProblem {
     code: i32,
 }
@@ -653,6 +667,11 @@ static PROBLEM_LEVEL: AtomicI32 = AtomicI32::new(0);
 impl TestProblem {
     pub(crate) fn constructor(code: i32) -> Self {
         Self { code }
+    }
+
+    pub(crate) fn call<'a>(heap: &JsHeap<'a>, codes: &[JsLocal<'a>]) -> JsWrapper<'a, Self> {
+        let code = codes.iter().map(|code| code.to_js().to_int32()).sum();
+        Self { code }.into_js(heap)
     }
 
     pub(crate) fn get_code(&self) -> i32 {
@@ -667,6 +686,10 @@ impl TestProblem {
         format!("problem {}", self.code).into_bytes()
     }
 
+    pub(crate) fn count_arguments(&self, all: &[JsLocal<'_>]) -> usize {
+        all.len()
+    }
+
     pub(crate) fn get_message(&self) -> Vec<u8> {
         self.describe()
     }
@@ -676,7 +699,7 @@ impl TestProblem {
     }
 
     pub(crate) fn set_detail<'a>(
-        &mut self,
+        &self,
         this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
         value: JsLocal<'a>,

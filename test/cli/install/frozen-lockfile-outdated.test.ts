@@ -3,7 +3,7 @@
 // adds a package, removes one, or changes a version.
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm } from "fs/promises";
+import { mkdir, rename, rm } from "fs/promises";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
@@ -340,6 +340,353 @@ describe.concurrent("--frozen-lockfile fails when", () => {
     expect(production.stderr).toContain(dependenciesNote());
     expect(await lockText(packageDir)).toBe(lock);
     expect(production.exitCode).toBe(1);
+  });
+});
+
+type Workspace = [name: string, path: string];
+const web: Workspace = ["web", "apps/web"];
+const one: Workspace = ["one", "packages/one"];
+const two: Workspace = ["two", "packages/two"];
+// A name of more than 8 bytes is in the string buffer of its lockfile, not in the package row.
+const three: Workspace = ["@acme/three", "packages/three"];
+const x: Workspace = ["x", "vendor/x"];
+// No package of this project is in the registry, so its installs print no progress.
+const workspaceRoot: PackageJson = { name: "root", version: "1.0.0", workspaces: ["packages/*", "apps/*"] };
+
+const writeWorkspace = (dir: string, [name, path]: Workspace, extra: PackageJson = {}) =>
+  write(join(dir, path, "package.json"), JSON.stringify({ name, version: "1.0.0", ...extra }));
+
+async function projectDir(files: Record<string, string>, lockfile: LockfileName = "bun.lock") {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted", saveTextLockfile: lockfile === "bun.lock" },
+    files,
+  });
+  return packageDir;
+}
+
+// `workspaceRoot` with `workspaces` on disk, installed once.
+async function installedWorkspaces(workspaces: Workspace[], lockfile: LockfileName = "bun.lock") {
+  const packageDir = await projectDir({ "package.json": JSON.stringify(workspaceRoot) }, lockfile);
+  await Promise.all(workspaces.map(workspace => writeWorkspace(packageDir, workspace)));
+  const { stderr, exitCode } = await bun(packageDir, "install");
+  expect(stderr).toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+  return { packageDir, lock: await lockText(packageDir, lockfile) };
+}
+
+const frozenHint = "note: try re-running without --frozen-lockfile and commit the updated lockfile";
+const counted = (workspaces: Workspace[]) => `${workspaces.length} workspace${workspaces.length === 1 ? "" : "s"}`;
+const listed = (workspaces: Workspace[]) => workspaces.map(([name, path]) => `"${name}" (${path})`).join(", ");
+const notInLockfileNote = (workspaces: Workspace[], lockfile = "bun.lock") =>
+  `note: ${counted(workspaces)} not in ${lockfile}: ${listed(workspaces)}`;
+const onlyInLockfileNote = (workspaces: Workspace[], lockfile = "bun.lock") =>
+  `note: ${counted(workspaces)} only in ${lockfile}: ${listed(workspaces)}`;
+const lines = (stderr: string) => stderr.split("\n").filter(Boolean);
+// Without the progress of an install that reaches the registry or migrates a lockfile.
+const diagnostics = (stderr: string) => lines(stderr).filter(line => /^(error|warn|note): /.test(line));
+
+// The project and the lockfile do not have the same workspaces. The error lists the workspaces that only one of the
+// two has as `"name" (path)`, in the order of the paths.
+describe.concurrent("--frozen-lockfile names the workspaces", () => {
+  const frozenCommands = [["install", "--frozen-lockfile"], ["ci"], ["install", "--production"]];
+
+  // A new folder that `packages/*` matches, a bun.lock that lost a workspace in a merge, or one from a bun that did
+  // not find the workspace.
+  test.each(["bun.lock", "bun.lockb"] as const)("that are not in %s", async lockfile => {
+    const { packageDir, lock } = await installedWorkspaces([one], lockfile);
+    await Promise.all([two, web, three].map(workspace => writeWorkspace(packageDir, workspace)));
+
+    for (const args of frozenCommands) {
+      const frozen = await bun(packageDir, ...args);
+
+      expect(lines(frozen.stderr)).toEqual([frozenError, notInLockfileNote([web, three, two], lockfile), frozenHint]);
+      expect(await lockText(packageDir, lockfile)).toBe(lock);
+      expect(frozen.exitCode).toBe(1);
+    }
+  });
+
+  // Their folders are still on disk, so the checkout is not a pruned one.
+  test.each(["bun.lock", "bun.lockb"] as const)("that are only in %s", async lockfile => {
+    const { packageDir, lock } = await installedWorkspaces([web, one, two, three], lockfile);
+    await writeRoot(packageDir, { ...workspaceRoot, workspaces: ["packages/one"] });
+
+    for (const args of frozenCommands) {
+      const frozen = await bun(packageDir, ...args);
+
+      expect(lines(frozen.stderr)).toEqual([frozenError, onlyInLockfileNote([web, three, two], lockfile), frozenHint]);
+      expect(await lockText(packageDir, lockfile)).toBe(lock);
+      expect(frozen.exitCode).toBe(1);
+    }
+  });
+
+  test("on both sides when a workspace has a new name", async () => {
+    const { packageDir } = await installedWorkspaces([one, two]);
+    const renamed: Workspace = ["deux", "packages/two"];
+    await writeWorkspace(packageDir, renamed);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(lines(frozen.stderr)).toEqual([
+      frozenError,
+      notInLockfileNote([renamed]),
+      onlyInLockfileNote([two]),
+      frozenHint,
+    ]);
+    expect(frozen.exitCode).toBe(1);
+  });
+
+  test("on both sides when a workspace has a new path", async () => {
+    const { packageDir } = await installedWorkspaces([one, two]);
+    const moved: Workspace = ["two", "apps/two"];
+    await mkdir(join(packageDir, "apps"));
+    await rename(join(packageDir, "packages", "two"), join(packageDir, "apps", "two"));
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(lines(frozen.stderr)).toEqual([
+      frozenError,
+      notInLockfileNote([moved]),
+      onlyInLockfileNote([two]),
+      frozenHint,
+    ]);
+    expect(frozen.exitCode).toBe(1);
+  });
+
+  test("up to five of them, and counts the others", async () => {
+    const { packageDir } = await installedWorkspaces([one]);
+    await Promise.all(
+      ["g", "b", "f", "a", "e", "c", "d"].map(name => writeWorkspace(packageDir, [name, `packages/${name}`])),
+    );
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(lines(frozen.stderr)).toEqual([
+      frozenError,
+      'note: 7 workspaces not in bun.lock: "a" (packages/a), "b" (packages/b), "c" (packages/c), "d" (packages/d), "e" (packages/e) and 2 more',
+      frozenHint,
+    ]);
+    expect(frozen.exitCode).toBe(1);
+  });
+
+  test("before the first dependency that changed", async () => {
+    const { packageDir } = await installed();
+    const extra: Workspace = ["extra", "packages/extra"];
+    await Promise.all([
+      writeWorkspace(packageDir, extra),
+      writeRoot(packageDir, { ...root, dependencies: { ...root.dependencies, "basic-1": "1.0.0" } }),
+    ]);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(diagnostics(frozen.stderr)).toEqual([
+      frozenError,
+      notInLockfileNote([extra]),
+      `${dependenciesNote()}: basic-1 was added`,
+      frozenHint,
+    ]);
+    expect(frozen.exitCode).toBe(1);
+  });
+
+  // `bun install --frozen-lockfile` reads the lockfile of another package manager when there is no bun.lock. npm has
+  // the workspaces in package.json, pnpm in pnpm-workspace.yaml.
+  const npmLock = (workspaces: Workspace[]) =>
+    JSON.stringify({
+      name: "root",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": { name: "root", version: "1.0.0", workspaces: ["packages/*"] },
+        ...Object.fromEntries(
+          workspaces.flatMap(([name, path]) => [
+            [`node_modules/${name}`, { resolved: path, link: true }],
+            [path, { name, version: "1.0.0" }],
+          ]),
+        ),
+      },
+    });
+  const pnpmLock = (workspaces: Workspace[]) =>
+    `lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\n${workspaces.map(([, path]) => `  ${path}: {}\n`).join("\n")}`;
+  const manifest = (workspaces?: string[]) => JSON.stringify({ name: "root", version: "1.0.0", workspaces });
+  const pnpmWorkspace = (pattern: string) => `packages:\n  - '${pattern}'\n`;
+
+  test.each([
+    ["package-lock.json", { "package.json": manifest(["packages/*"]), "package-lock.json": npmLock([one]) }],
+    [
+      "pnpm-lock.yaml",
+      {
+        "package.json": manifest(),
+        "pnpm-workspace.yaml": pnpmWorkspace("packages/*"),
+        "pnpm-lock.yaml": pnpmLock([one]),
+      },
+    ],
+  ] as const)("that are not in a %s", async (lockfile, files) => {
+    const packageDir = await projectDir(files);
+    await Promise.all([writeWorkspace(packageDir, one), writeWorkspace(packageDir, two)]);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(diagnostics(frozen.stderr)).toEqual([frozenError, notInLockfileNote([two], lockfile), frozenHint]);
+    expect(frozen.exitCode).toBe(1);
+  });
+
+  test.each([
+    ["package-lock.json", { "package.json": manifest(["packages/one"]), "package-lock.json": npmLock([one, two]) }],
+    [
+      "pnpm-lock.yaml",
+      {
+        "package.json": manifest(),
+        "pnpm-workspace.yaml": pnpmWorkspace("packages/one"),
+        "pnpm-lock.yaml": pnpmLock([one, two]),
+      },
+    ],
+  ] as const)("that are only in a %s", async (lockfile, files) => {
+    const packageDir = await projectDir(files);
+    await Promise.all([writeWorkspace(packageDir, one), writeWorkspace(packageDir, two)]);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(diagnostics(frozen.stderr)).toEqual([frozenError, onlyInLockfileNote([two], lockfile), frozenHint]);
+    expect(frozen.exitCode).toBe(1);
+  });
+
+  // A yarn.lock has its workspaces from package.json. The one that `bun install --yarn` writes has a `workspace:`
+  // entry for each, which the migration reads as a package at a path that does not exist.
+  test("but not for a yarn.lock", async () => {
+    const yarnRoot = { ...workspaceRoot, workspaces: ["packages/*"] };
+    const packageDir = await projectDir({ "package.json": JSON.stringify(yarnRoot) });
+    await Promise.all([
+      writeWorkspace(packageDir, one),
+      writeWorkspace(packageDir, two, { dependencies: { one: "workspace:*" } }),
+    ]);
+    const saved = await bun(packageDir, "install", "--yarn");
+    expect(saved.stderr).toContain("Saved yarn.lock");
+    expect(saved.exitCode).toBe(0);
+    await rm(join(packageDir, "bun.lock"));
+    await writeRoot(packageDir, { ...yarnRoot, dependencies: { "no-deps": "1.0.0" } });
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(diagnostics(frozen.stderr)).toEqual([
+      frozenError,
+      "note: dependencies in package.json changed since yarn.lock was saved: no-deps was added",
+      frozenHint,
+    ]);
+    expect(frozen.exitCode).toBe(1);
+  });
+
+  // 1-peer-dep-a has a peer on no-deps@1.0.0, which links the workspace. A frozen install keeps that link after the
+  // workspace leaves "workspaces", so it still has the workspace. The next plain install resolves the peer again.
+  test("but not one that a registry package still links", async () => {
+    const dependencies = { "1-peer-dep-a": "1.0.0" };
+    const packageDir = await projectDir({
+      "package.json": JSON.stringify({ ...workspaceRoot, workspaces: ["packages/*"], dependencies }),
+    });
+    const noDeps: Workspace = ["no-deps", "packages/no-deps"];
+    await Promise.all([writeWorkspace(packageDir, noDeps), writeWorkspace(packageDir, one)]);
+    const saved = await bun(packageDir, "install");
+    expect(saved.stderr).toContain("Saved lockfile");
+    expect(saved.exitCode).toBe(0);
+    await Promise.all([
+      writeRoot(packageDir, { ...workspaceRoot, workspaces: ["packages/one", "packages/two"], dependencies }),
+      writeWorkspace(packageDir, two),
+    ]);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(diagnostics(frozen.stderr)).toEqual([frozenError, notInLockfileNote([two]), frozenHint]);
+    expect(frozen.exitCode).toBe(1);
+  });
+
+  // `workspace:<path>` makes a workspace of a folder that "workspaces" does not match. bun.lock lists that one too.
+  test("but not the target of a workspace: path that both have", async () => {
+    const packageDir = await projectDir({
+      "package.json": JSON.stringify(workspaceRoot),
+      "vendor/x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+    });
+    await writeWorkspace(packageDir, one, { dependencies: { x: "workspace:../../vendor/x" } });
+    const saved = await bun(packageDir, "install");
+    expect(saved.stderr).toContain("Saved lockfile");
+    const lock = Bun.JSONC.parse(await lockText(packageDir)) as { workspaces: object };
+    expect(Object.keys(lock.workspaces)).toEqual(["", "packages/one", "vendor/x"]);
+    expect(saved.exitCode).toBe(0);
+
+    for (const args of frozenCommands) {
+      const frozen = await bun(packageDir, ...args);
+
+      expect(frozen.stderr).toBe("");
+      expect(frozen.exitCode).toBe(0);
+    }
+
+    await writeWorkspace(packageDir, two);
+
+    for (const args of frozenCommands) {
+      const frozen = await bun(packageDir, ...args);
+
+      expect(lines(frozen.stderr)).toEqual([frozenError, notInLockfileNote([two]), frozenHint]);
+      expect(frozen.exitCode).toBe(1);
+    }
+  });
+
+  test("and the target of a workspace: path that only one of them has", async () => {
+    const packageDir = await projectDir({
+      "package.json": JSON.stringify(workspaceRoot),
+      "vendor/x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+    });
+    await writeWorkspace(packageDir, one);
+    expect((await bun(packageDir, "install")).stderr).toContain("Saved lockfile");
+    await writeWorkspace(packageDir, one, { dependencies: { x: "workspace:../../vendor/x" } });
+
+    const added = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(lines(added.stderr)).toEqual([
+      frozenError,
+      notInLockfileNote([x]),
+      `${dependenciesNote()}: x was added in packages/one`,
+      frozenHint,
+    ]);
+    expect(added.exitCode).toBe(1);
+
+    expect((await bun(packageDir, "install")).stderr).toContain("Saved lockfile");
+    await writeWorkspace(packageDir, one);
+
+    const dropped = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(lines(dropped.stderr)).toEqual([
+      frozenError,
+      onlyInLockfileNote([x]),
+      `${dependenciesNote()}: x was removed in packages/one`,
+      frozenHint,
+    ]);
+    expect(dropped.exitCode).toBe(1);
+  });
+
+  // The install fails on the section, and does not compare the packages.
+  test("unless another section of package.json changed", async () => {
+    const { packageDir } = await installedWorkspaces([one]);
+    await Promise.all([
+      writeWorkspace(packageDir, two),
+      writeRoot(packageDir, { ...workspaceRoot, overrides: { "no-deps": "1.0.0" } }),
+    ]);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(lines(frozen.stderr)).toEqual([
+      frozenError,
+      "note: overrides in package.json changed since bun.lock was saved",
+      frozenHint,
+    ]);
+    expect(frozen.exitCode).toBe(1);
+  });
+
+  test("unless the install is --silent", async () => {
+    const { packageDir } = await installedWorkspaces([one]);
+    await writeWorkspace(packageDir, two);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile", "--silent");
+
+    expect(frozen.stderr).toBe("");
+    expect(frozen.exitCode).toBe(1);
   });
 });
 

@@ -837,15 +837,29 @@ pub fn install_with_manager(
                 }
             }
 
-            if changed_section.is_none() && manager.summary.first_change.is_some() {
+            // A changed section skips the comparison, and with overrides or the catalog changed a pruned workspace counts as removed.
+            let compared_lockfiles = changed_section.is_none();
+            if compared_lockfiles && manager.summary.first_change.is_some() {
                 changed_section = Some("dependencies");
             }
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
+                let lockfile_name = loaded_lockfile_name(&load_result);
+                // A yarn.lock takes its workspaces from package.json, and migrating one can add a package for a `workspace:` entry at a path that is not a workspace.
+                let from_yarn = matches!(
+                    &load_result,
+                    lockfile::LoadResult::Ok(ok) if ok.migrated == lockfile::Migrated::Yarn
+                );
+                if compared_lockfiles && !from_yarn {
+                    note_workspaces_that_differ(
+                        &lockfile_before_clean,
+                        &manager.lockfile,
+                        lockfile_name,
+                    );
+                }
                 if let Some(section) = changed_section {
-                    let lockfile_name = loaded_lockfile_name(&load_result);
                     match &manager.summary.first_change {
                         Some(change) if section == "dependencies" => {
                             bun_core::note!(
@@ -1642,6 +1656,95 @@ fn overrides_field(
         return Field::Overrides;
     };
     Field::of(&entry.root).map_or(Field::Overrides, |(field, _)| field)
+}
+
+/// Notes the workspaces that only one lockfile of a failed frozen comparison has: `loaded` (the one before the clean) or `installed`.
+#[cold]
+#[inline(never)]
+fn note_workspaces_that_differ(loaded: &Lockfile, installed: &Lockfile, lockfile_name: &str) {
+    let loaded_count = loaded.loaded_package_count as usize;
+    let installed_count = installed.packages.len();
+
+    let added = workspaces_only_in(installed, installed_count, loaded, loaded_count);
+    if !added.is_empty() {
+        bun_core::note!(
+            "{} workspace{} not in {}: {}",
+            added.len(),
+            if added.len() == 1 { "" } else { "s" },
+            lockfile_name,
+            workspace_list(installed, &added),
+        );
+    }
+
+    let dropped = workspaces_only_in(loaded, loaded_count, installed, installed_count);
+    if !dropped.is_empty() {
+        bun_core::note!(
+            "{} workspace{} only in {}: {}",
+            dropped.len(),
+            if dropped.len() == 1 { "" } else { "s" },
+            lockfile_name,
+            workspace_list(loaded, &dropped),
+        );
+    }
+}
+
+/// The workspaces among the first `count` packages of `lockfile` that none of the first `other_count` of `other` has the name and path of, sorted by path.
+fn workspaces_only_in(
+    lockfile: &Lockfile,
+    count: usize,
+    other: &Lockfile,
+    other_count: usize,
+) -> Vec<PackageID> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let other_buf = other.buffers.string_bytes.as_slice();
+    let resolutions = lockfile.packages.items_resolution();
+    let name_hashes = lockfile.packages.items_name_hash();
+    let other_resolutions = other.packages.items_resolution();
+    let other_count = other_count.min(other_resolutions.len());
+
+    let mut only: Vec<PackageID> = Vec::new();
+    for id in 0..count.min(resolutions.len()) {
+        let resolution = &resolutions[id];
+        if resolution.tag != ResolutionTag::Workspace {
+            continue;
+        }
+        let in_other = (other.packages_named(name_hashes[id]).iter()).any(|&other_id| {
+            (other_id as usize) < other_count
+                && other_resolutions[other_id as usize].eql(resolution, other_buf, buf)
+        });
+        if !in_other {
+            only.push(id as PackageID);
+        }
+    }
+    let path = |id: PackageID| resolutions[id as usize].workspace().slice(buf);
+    index_sort::sort_indices_unstable(&mut only, &mut |a, b| path(a).cmp(path(b)).then(a.cmp(&b)));
+    only
+}
+
+/// `"name" (path)` of the first five workspaces in `ids`, then how many more there are.
+fn workspace_list(lockfile: &Lockfile, ids: &[PackageID]) -> std::string::String {
+    use bun_core::fmt::escape_control_chars as text;
+    use std::fmt::Write as _;
+    const SHOWN: usize = 5;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let names = lockfile.packages.items_name();
+    let resolutions = lockfile.packages.items_resolution();
+    let mut list = std::string::String::new();
+    for &id in ids.iter().take(SHOWN) {
+        if !list.is_empty() {
+            list.push_str(", ");
+        }
+        let _ = write!(
+            list,
+            "\"{}\" ({})",
+            text(names[id as usize].slice(buf)),
+            text(resolutions[id as usize].workspace().slice(buf)),
+        );
+    }
+    if ids.len() > SHOWN {
+        let _ = write!(list, " and {} more", ids.len() - SHOWN);
+    }
+    list
 }
 
 pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {

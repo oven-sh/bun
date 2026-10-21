@@ -16,6 +16,7 @@ const {
   processPfxOptions,
   stripTls13CipherNames,
   validateSecureContextOptions,
+  kCreateServerContext,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");
 const {
@@ -25,6 +26,7 @@ const {
   validateInt32,
   validateBuffer,
   validateFunction,
+  validateObject,
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
@@ -1076,6 +1078,20 @@ function buildSharedCreds(server, options) {
   });
 }
 
+// A server verifies clients against the CA chain of its PKCS#12 bundle: the chain goes into `ca`.
+function caWithPfxCAs(ca, pfxExtraCAs) {
+  if (!pfxExtraCAs?.length) return ca;
+  // InternalSecureContext applies tls.setDefaultCACertificates() only to a context with no `ca`, so it is named here.
+  const base = ca ?? _defaultCACertificatesOverride;
+  return base == null ? pfxExtraCAs : $isArray(base) ? [...base, ...pfxExtraCAs] : [base, ...pfxExtraCAs];
+}
+
+// The context of a node:http server, from the options its constructor checked. Not interned, like buildSharedCreds().
+function createServerContext(options, pfxExtraCAs) {
+  options.ca = caWithPfxCAs(options.ca, pfxExtraCAs);
+  return new InternalSecureContext(options).context;
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1599-L1611
 function SNICallback(servername, callback) {
   callback(null, selectServerName(this.server[kcontexts], servername));
@@ -1169,196 +1185,149 @@ function Server(options, secureConnectionListener): void {
   let listenerContext;
 
   this.setSecureContext = function (options) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1424: no call builds from the options of an earlier one.
+    validateObject(options, "options");
     const serverTLSOptions = options;
     const next: Record<string, any> = { __proto__: null };
     if (options instanceof InternalSecureContext) {
       options = options.context;
     }
-    if (options) {
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1456: falsy counts as absent
-      const { minVersion, maxVersion, secureProtocol } = options;
-      if (
-        (minVersion != null && !minVersion) ||
-        (maxVersion != null && !maxVersion) ||
-        (secureProtocol != null && !secureProtocol)
-      ) {
-        options = {
-          ...options,
-          minVersion: minVersion || undefined,
-          maxVersion: maxVersion || undefined,
-          secureProtocol: secureProtocol || undefined,
-        };
-      }
-      validateSecureContextOptions(options);
-      options = processPfxOptions(options);
-
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1431-L1474: a falsy key, cert, ca or crl counts as absent
-      let cert = options.cert || undefined;
-      // Assign unconditionally so a later setSecureContext() that omits an
-      // option clears the previous call's value (Node resets each omitted
-      // field) instead of silently keeping stale key material.
-      if (cert) {
-        throwOnInvalidTLSArray("options.cert", cert);
-      }
-      next.cert = cert;
-
-      let key = options.key || undefined;
-      if (key) {
-        throwOnInvalidTLSArray("options.key", key);
-      }
-      next.key = key;
-
-      let ca = options.ca || undefined;
-      // InternalSecureContext applies tls.setDefaultCACertificates() itself; a named pipe listener builds from this field.
-      if (_defaultCACertificatesOverride !== undefined && ca == null) {
-        ca = _defaultCACertificatesOverride;
-      }
-      // buildSharedCreds() drops them, so they go into `ca`: an mTLS server verifies clients against the bundle's own CA chain.
-      const pfxExtraCAs = options._pfxExtraCACerts;
-      if (pfxExtraCAs?.length) {
-        ca = ca == null ? pfxExtraCAs : Array.isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
-      }
-      if (ca) {
-        throwOnInvalidTLSArray("options.ca", ca);
-      }
-      next.ca = ca;
-
-      const crl = options.crl || undefined;
-      if (crl) {
-        throwOnInvalidTLSArray("options.crl", crl);
-      }
-      next.crl = crl;
-
-      next.allowPartialTrustChain = !!options.allowPartialTrustChain;
-
-      next.sessionTimeout = options.sessionTimeout;
-
-      const sigalgs = options.sigalgs;
-      if (sigalgs !== undefined && sigalgs !== null) {
-        validateString(sigalgs, "options.sigalgs");
-        if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
-      }
-      next.sigalgs = sigalgs;
-
-      const ecdhCurve = options.ecdhCurve;
-      if (ecdhCurve !== undefined) validateString(ecdhCurve, "options.ecdhCurve");
-      next.ecdhCurve = ecdhCurve;
-
-      let passphrase = options.passphrase;
-      if (passphrase && typeof passphrase !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-      }
-      next.passphrase = passphrase;
-
-      let servername = options.servername;
-      if (servername && typeof servername !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
-      }
-      next.servername = servername;
-
-      let secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
-        throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-      }
-      if (options.honorCipherOrder !== false) secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;
-      next.secureOptions = secureOptions;
-
-      const ciphers = options.ciphers;
-      if (typeof ciphers !== "undefined") {
-        if (typeof ciphers !== "string") {
-          throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", ciphers);
-        }
-
-        validateCiphers(ciphers);
-      }
-      // Unconditional so an omitted `ciphers` clears the previous value.
-      next.ciphers = options.ciphers;
-
-      // Pin the protocol version range the server will negotiate.
-      // validateSecureContextOptions already rejected unknown method names.
-      // Assign unconditionally so a later setSecureContext() without these
-      // options clears the previous call's version constraints instead of
-      // re-applying them to the next context built.
-      next.secureProtocol = options.secureProtocol;
-      next.minVersion = options.minVersion;
-      next.maxVersion = options.maxVersion;
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1456: falsy counts as absent
+    const { minVersion, maxVersion, secureProtocol } = options;
+    if (
+      (minVersion != null && !minVersion) ||
+      (maxVersion != null && !maxVersion) ||
+      (secureProtocol != null && !secureProtocol)
+    ) {
+      options = {
+        ...options,
+        minVersion: minVersion || undefined,
+        maxVersion: maxVersion || undefined,
+        secureProtocol: secureProtocol || undefined,
+      };
     }
+    validateSecureContextOptions(options);
+    options = processPfxOptions(options);
+
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1431-L1474: a falsy key, cert, ca or crl counts as absent
+    let cert = options.cert || undefined;
+    // Unconditional: an option that a later setSecureContext() omits is cleared, as in Node.
+    if (cert) {
+      throwOnInvalidTLSArray("options.cert", cert);
+    }
+    next.cert = cert;
+
+    let key = options.key || undefined;
+    if (key) {
+      throwOnInvalidTLSArray("options.key", key);
+    }
+    next.key = key;
+
+    // buildSharedCreds() drops `_pfxExtraCACerts`.
+    const ca = caWithPfxCAs(options.ca || undefined, options._pfxExtraCACerts);
+    if (ca) {
+      throwOnInvalidTLSArray("options.ca", ca);
+    }
+    next.ca = ca;
+
+    const crl = options.crl || undefined;
+    if (crl) {
+      throwOnInvalidTLSArray("options.crl", crl);
+    }
+    next.crl = crl;
+
+    next.allowPartialTrustChain = !!options.allowPartialTrustChain;
+
+    next.sessionTimeout = options.sessionTimeout;
+
+    const sigalgs = options.sigalgs;
+    if (sigalgs !== undefined && sigalgs !== null) {
+      validateString(sigalgs, "options.sigalgs");
+      if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
+    }
+    next.sigalgs = sigalgs;
+
+    const ecdhCurve = options.ecdhCurve;
+    if (ecdhCurve !== undefined) validateString(ecdhCurve, "options.ecdhCurve");
+    next.ecdhCurve = ecdhCurve;
+
+    let passphrase = options.passphrase;
+    if (passphrase && typeof passphrase !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
+    }
+    next.passphrase = passphrase;
+
+    let servername = options.servername;
+    if (servername && typeof servername !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.servername", "string", servername);
+    }
+    next.servername = servername;
+
+    let secureOptions = options.secureOptions || 0;
+    if (secureOptions && typeof secureOptions !== "number") {
+      throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+    }
+    if (options.honorCipherOrder !== false) secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;
+    next.secureOptions = secureOptions;
+
+    const ciphers = options.ciphers;
+    if (typeof ciphers !== "undefined") {
+      if (typeof ciphers !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", ciphers);
+      }
+
+      validateCiphers(ciphers);
+    }
+    // Unconditional so an omitted `ciphers` clears the previous value.
+    next.ciphers = options.ciphers;
+
+    // Unconditional too. validateSecureContextOptions() already rejected unknown method names.
+    next.secureProtocol = options.secureProtocol;
+    next.minVersion = options.minVersion;
+    next.maxVersion = options.maxVersion;
     const isContext = serverTLSOptions instanceof InternalSecureContext;
     // Reads the staged fields over the server's own. Throws on material BoringSSL rejects, so it runs before the fields change.
     const own = buildSharedCreds({ __proto__: this, ...next }, isContext ? undefined : serverTLSOptions);
     // Accepted sockets take their verify mode from the context, so the listener's is always this server's own. An instance names no key, as in Node.
     listenerContext = own.context;
     const handle = this._handle;
-    if (handle && options) {
+    if (handle) {
       setListenerSecureContext(handle, listenerContext);
     }
-    if (options) {
-      this.cert = next.cert;
-      this.key = next.key;
-      this.ca = next.ca;
-      this.crl = next.crl;
-      this.allowPartialTrustChain = next.allowPartialTrustChain;
-      this.sessionTimeout = next.sessionTimeout;
-      this.sigalgs = next.sigalgs;
-      this.ecdhCurve = next.ecdhCurve;
-      this.passphrase = next.passphrase;
-      this.servername = next.servername;
-      this.secureOptions = next.secureOptions;
-      this.ciphers = next.ciphers;
-      this.secureProtocol = next.secureProtocol;
-      this.minVersion = next.minVersion;
-      this.maxVersion = next.maxVersion;
-    }
+    this.cert = next.cert;
+    this.key = next.key;
+    this.ca = next.ca;
+    this.crl = next.crl;
+    this.allowPartialTrustChain = next.allowPartialTrustChain;
+    this.sessionTimeout = next.sessionTimeout;
+    this.sigalgs = next.sigalgs;
+    this.ecdhCurve = next.ecdhCurve;
+    this.passphrase = next.passphrase;
+    this.servername = next.servername;
+    this.secureOptions = next.secureOptions;
+    this.ciphers = next.ciphers;
+    this.secureProtocol = next.secureProtocol;
+    this.minVersion = next.minVersion;
+    this.maxVersion = next.maxVersion;
     this._sharedCreds = isContext ? serverTLSOptions : own;
   };
 
   this[buntls] = function (port, host, isClient) {
-    const requestCert = isClient ? true : this._requestCert;
     return [
       {
         serverName: sniName(this.servername || host || "localhost"),
-        // What a socket listener serves. Only a named pipe's still builds its own from the fields below.
+        // The one context of this server, built by setSecureContext(). A listener gets none of the options it was built from.
         secureContext: listenerContext,
-        key: normalizePemKeyOption(this.key, this.passphrase),
-        cert: this.cert,
-        ca: this.ca,
-        crl: this.crl,
-        allowPartialTrustChain: this.allowPartialTrustChain,
-        sessionTimeout: this.sessionTimeout ?? 0,
-        sigalgs: this.sigalgs,
-        ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
-        passphrase: this.passphrase,
-        secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,
-        requestCert,
+        requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
-        clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
-        clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
-        // Translate minVersion/maxVersion/secureProtocol to the integer
-        // protocol range the native layer applies (secureProtocol wins, like
-        // Node's SecureContext::Init). When none are given the module-level
-        // tls.DEFAULT_MIN_VERSION / DEFAULT_MAX_VERSION apply.
-        ...(() => {
-          const processed = this.ciphers && stripTls13CipherNames(this.ciphers);
-          let minVersion, maxVersion;
-          const range = secureProtocolToVersionRange(this.secureProtocol);
-          if (range) {
-            minVersion = range[0];
-            maxVersion = range[1];
-          } else {
-            const min = processed && processed.tls13Only ? "TLSv1.3" : (this.minVersion ?? DEFAULT_MIN_VERSION);
-            minVersion = tlsStringToProtocolVersion(min);
-            maxVersion = tlsStringToProtocolVersion(this.maxVersion ?? DEFAULT_MAX_VERSION);
-          }
-          return { ciphers: processed && processed.cipherList, minVersion, maxVersion };
-        })(),
       },
       TLSSocket,
     ];
   };
 
-  this.setSecureContext(options);
+  this.setSecureContext(options ?? {});
   maybeWarnAboutExtraCACerts();
   // Matches Node's tls.Server handshakeTimeout default + validation:
   // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/wrap.js#L1386
@@ -1750,6 +1719,7 @@ const tlsExports = {
   getCACertificates,
 };
 Object.defineProperty(tlsExports, "rootCertificates", { configurable: false });
+Object.defineProperty(tlsExports, kCreateServerContext, { __proto__: null, value: createServerContext });
 
 export default tlsExports as any as typeof import("node:tls") & {
   SecureContext: typeof SecureContext;

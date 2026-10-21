@@ -37,6 +37,8 @@ leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
 leak:JSC__JSModuleLoader__loadAndEvaluateModule
 leak:uws_create_app
+# uws_create_app_with_ssl_ctx ends in a tail call to this, so an optimized build has no frame for the shim.
+leak:uWS::TemplatedApp<true>::create(ssl_ctx_st*)
 leak:uws_h3_create_app
 leak:lsquic_global_init
 leak:us_create_quic_client_context

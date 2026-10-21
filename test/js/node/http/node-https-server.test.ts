@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls as validCert } from "harness";
 import { spawn } from "node:child_process";
+import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
@@ -255,8 +256,10 @@ describe("https.createServer forwards every TLS server option", () => {
     ["sessionTimeout", -1, "ERR_OUT_OF_RANGE"],
     ["sigalgs", "", "ERR_INVALID_ARG_VALUE"],
     ["crl", 42, "ERR_INVALID_ARG_TYPE"],
+    ["crl", "not a crl", "ERR_CRYPTO_OPERATION_FAILED"],
+    ["ciphers", "no-such-cipher", "ERR_SSL_NO_CIPHER_MATCH"],
     ["minVersion", "TLSv9", "ERR_TLS_INVALID_PROTOCOL_VERSION"],
-  ])("throws on an invalid %s like tls.createServer", (name, value, code) => {
+  ])("throws on an invalid %s: %p like tls.createServer", (name, value, code) => {
     expect(() => https.createServer({ ...validCert, [name]: value })).toThrow(expect.objectContaining({ code }));
     expect(() => https.createServer({ [name]: value })).toThrow(expect.objectContaining({ code }));
   });
@@ -272,6 +275,9 @@ describe("https.createServer forwards every TLS server option", () => {
     ["ticketKeys", ""],
     ["crl", ""],
     ["crl", 0],
+    ["ca", false],
+    ["ca", 0],
+    ["ca", ""],
     ["passphrase", 0],
   ])("listens with %s: %p like Node", async (name, value) => {
     await using server = https.createServer({ ...validCert, [name]: value });
@@ -290,6 +296,503 @@ describe("https.createServer forwards every TLS server option", () => {
       expect(() => https.createServer({ ...validCert, ecdhCurve: "X448:prime256v1" })).toThrow(error);
     },
   );
+
+  // Node builds the context in the constructor, and listen() reads no option again:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1384
+  describe("when the server is constructed, and never again", () => {
+    // ca1 signs agent1, which the server here presents and one client too. ca2 signs agent3 and agent4.
+    const [ca1, ca2] = [read("ca1-cert.pem"), read("ca2-cert.pem")];
+    const identity = { key: read("agent1-key.pem"), cert: read("agent1-cert.pem") };
+    const authorized = "authorized=true error=null";
+
+    type Construct = (options: https.ServerOptions, listener?: http.RequestListener) => http.Server;
+    const constructors: [string, Construct][] = [
+      ["https.createServer()", (options, listener) => https.createServer(options, listener)],
+      ["new https.Server()", (options, listener) => new https.Server(options, listener)],
+      ["https.Server()", (options, listener) => (https.Server as any)(options, listener)],
+    ];
+    // Bun only: Node's http.Server ignores TLS options.
+    if (process.versions.bun) {
+      constructors.push(
+        ["http.createServer()", (options, listener) => http.createServer(options as http.ServerOptions, listener)],
+        ["new http.Server()", (options, listener) => new http.Server(options as http.ServerOptions, listener)],
+      );
+    }
+
+    // Each changes, after the server exists, what its options named. Unless it says otherwise, agent1 stays trusted and agent4 refused.
+    type Change = { options: object; change(): void; served?: string; refused?: string };
+    const changes: [string, (dir: string) => Change][] = [
+      [
+        "a CA is pushed into the `ca` array",
+        () => {
+          const ca = [ca1];
+          return { options: { ...identity, ca, requestCert: true }, change: () => void ca.push(ca2) };
+        },
+      ],
+      [
+        "a Buffer in the `ca` array is overwritten with another CA",
+        () => {
+          // A PEM parser skips the newlines that pad the shorter certificate.
+          const buffer = Buffer.alloc(Math.max(ca1.length, ca2.length), "\n");
+          buffer.write(ca1);
+          return {
+            options: { ...identity, ca: [buffer], requestCert: true },
+            change: () => void buffer.fill("\n").write(ca2),
+          };
+        },
+      ],
+      [
+        "the `crl` array is emptied",
+        () => {
+          const crl = [read("ca2-crl-agent3.pem")];
+          return {
+            options: { ...identity, ca: ca2, crl, requestCert: true },
+            change: () => void (crl.length = 0),
+            served: "agent4",
+            refused: "agent3",
+          };
+        },
+      ],
+      [
+        "the `key` Buffer is zeroed",
+        () => {
+          const key = Buffer.from(identity.key);
+          return { options: { ...identity, key, ca: ca1, requestCert: true }, change: () => void key.fill(0) };
+        },
+      ],
+      [
+        "the `cert` Buffer is zeroed",
+        () => {
+          const cert = Buffer.from(identity.cert);
+          return { options: { ...identity, cert, ca: ca1, requestCert: true }, change: () => void cert.fill(0) };
+        },
+      ],
+      [
+        "the Buffer of a `{ pem }` key is zeroed",
+        () => {
+          const pem = Buffer.from(identity.key);
+          return {
+            options: { ...identity, key: [{ pem }], ca: ca1, requestCert: true },
+            change: () => void pem.fill(0),
+          };
+        },
+      ],
+      [
+        "the ArrayBuffer of the `key` is transferred",
+        () => {
+          const key = new Uint8Array(Buffer.from(identity.key));
+          return {
+            options: { ...identity, key, ca: ca1, requestCert: true },
+            change: () => void (key.buffer as ArrayBuffer).transfer(),
+          };
+        },
+      ],
+    ];
+    if (process.versions.bun) {
+      changes.push(
+        [
+          "the file of a `ca` BunFile is rewritten with another CA",
+          dir => {
+            const path = join(dir, "ca.pem");
+            writeFileSync(path, ca1);
+            return {
+              options: { ...identity, ca: Bun.file(path), requestCert: true },
+              change: () => writeFileSync(path, ca2),
+            };
+          },
+        ],
+        [
+          "the file of a `key` BunFile is deleted",
+          dir => {
+            const path = join(dir, "key.pem");
+            writeFileSync(path, identity.key);
+            return {
+              options: { ...identity, key: Bun.file(path), ca: ca1, requestCert: true },
+              change: () => rmSync(path),
+            };
+          },
+        ],
+      );
+    }
+
+    describe.concurrent.each(changes)("%s", (_label, build) => {
+      test.each([
+        ["before listen()", false],
+        ["between close() and a second listen()", true],
+      ])("%s", async (_when, relisten) => {
+        using dir = tempDir("https-options-at-construction", {});
+        const { options, change, served = "agent1", refused = "agent4" } = build(String(dir));
+        let requests = 0;
+        await using server = https.createServer(options as https.ServerOptions, (req, res) => {
+          requests++;
+          verdict(req, res);
+        });
+        if (relisten) {
+          await listen(server);
+          server.close();
+          await once(server, "close");
+        }
+        change();
+        const port = await listen(server);
+
+        expect(await get(port, refused)).toBe("refused");
+        expect(requests).toBe(0);
+        expect(await get(port, served)).toBe(authorized);
+      });
+    });
+
+    test.concurrent.each(constructors)("%s trusts the `ca` array as it was", async (_label, construct) => {
+      const ca = [ca1];
+      let requests = 0;
+      await using server = construct({ ...identity, ca, requestCert: true }, (req, res) => {
+        requests++;
+        verdict(req, res);
+      });
+      ca.push(ca2);
+      const port = await listen(server);
+
+      expect(await get(port, "agent4")).toBe("refused");
+      expect(requests).toBe(0);
+      expect(await get(port, "agent1")).toBe(authorized);
+    });
+
+    test.each(constructors)(
+      "%s throws for a key or a certificate that the TLS library rejects",
+      (_label, construct) => {
+        const thrown = (options: object) => {
+          try {
+            construct(options);
+          } catch (error) {
+            return (error as NodeJS.ErrnoException).code;
+          }
+        };
+        // A fixed file: what a wrong passphrase makes of a key depends on the salt the key was encrypted with.
+        const encrypted = {
+          key: readFileSync(join(import.meta.dirname, "fixtures", "cert.encrypted.key"), "utf8"),
+          cert: readFileSync(join(import.meta.dirname, "fixtures", "cert.pem"), "utf8"),
+        };
+        // agent3's key does not belong to agent1's certificate.
+        const mismatched = { key: read("agent3-key.pem"), cert: identity.cert };
+
+        expect({
+          mismatched: thrown(mismatched),
+          certificate: thrown({ key: identity.key, cert: "not a certificate" }),
+          wrongPassphrase: thrown({ ...encrypted, passphrase: "wrong" }),
+          noPassphrase: thrown(encrypted),
+          // Node checks the HTTP options before it builds the context.
+          httpOption: thrown({ ...mismatched, headersTimeout: "soon" }),
+        }).toEqual({
+          mismatched: "ERR_OSSL_X509_KEY_VALUES_MISMATCH",
+          certificate: "ERR_OSSL_PEM_NO_START_LINE",
+          wrongPassphrase: "ERR_OSSL_BAD_DECRYPT",
+          noPassphrase: "ERR_OSSL_BAD_DECRYPT",
+          httpOption: "ERR_INVALID_ARG_TYPE",
+        });
+      },
+    );
+
+    // Bun only: a BunFile is read when the context is built.
+    test.skipIf(!process.versions.bun)(
+      "throws for a BunFile that does not exist when the server is constructed",
+      () => {
+        using dir = tempDir("https-options-at-construction", {});
+        const options: object = { ...identity, key: Bun.file(join(String(dir), "key.pem")) };
+        expect(() => https.createServer(options as https.ServerOptions)).toThrow(
+          expect.objectContaining({ code: "ENOENT" }),
+        );
+      },
+    );
+
+    test("keeps requestCert without rejectUnauthorized across close() and a second listen()", async () => {
+      const options = { ...identity, ca: ca1, requestCert: true, rejectUnauthorized: false };
+      await using server = https.createServer(options, verdict);
+      const verdicts = async (port: number) => ({
+        agent1: await get(port, "agent1"),
+        agent4: await get(port, "agent4"),
+      });
+      const expected = { agent1: authorized, agent4: "authorized=false error=UNABLE_TO_VERIFY_LEAF_SIGNATURE" };
+
+      expect(await verdicts(await listen(server))).toEqual(expected);
+      server.close();
+      await once(server, "close");
+      expect(await verdicts(await listen(server))).toEqual(expected);
+    });
+
+    test("serves a client that names the `servername` of the server, and one that names another", async () => {
+      await using server = https.createServer({ ...identity, servername: "agent1" } as https.ServerOptions);
+      const port = await listen(server);
+
+      expect(await handshake(port, { servername: "agent1" })).toStartWith("TLS_");
+      expect(await handshake(port, { servername: "another.example" })).toStartWith("TLS_");
+    });
+
+    test("resumes a session across close() and a second listen()", async () => {
+      await using server = https.createServer(identity);
+      async function connect(port: number, session?: Buffer) {
+        const client = tls.connect({
+          port,
+          host: "127.0.0.1",
+          rejectUnauthorized: false,
+          maxVersion: "TLSv1.2",
+          session,
+        });
+        await once(client, "secureConnect");
+        return client;
+      }
+      const first = await connect(await listen(server));
+      const session = first.getSession()!;
+      first.destroy();
+      server.close();
+      await once(server, "close");
+
+      const second = await connect(await listen(server), session);
+      const reused = second.isSessionReused();
+      second.destroy();
+      expect(reused).toBe(true);
+    });
+
+    // The ticket carries the verdict of the handshake that earned it, and the context that issued it is still the server's.
+    test("serves a session of before close() in place of the client certificate it was issued for", async () => {
+      await using server = https.createServer({ ...identity, ca: ca1, requestCert: true }, verdict);
+      // What the server answers, or "refused", and the session it issues.
+      async function request(port: number, options: tls.ConnectionOptions) {
+        const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, maxVersion: "TLSv1.2", ...options }); // prettier-ignore
+        let answer = "";
+        let session: Buffer | undefined;
+        client.on("session", issued => (session = issued));
+        client.on("data", chunk => (answer += chunk));
+        client.on("error", () => {});
+        client.on("secureConnect", () =>
+          client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+        );
+        const closed = Promise.withResolvers<void>();
+        client.on("close", () => closed.resolve());
+        await closed.promise;
+        return { verdict: answer.match(/authorized=\w+/)?.[0] ?? "refused", session };
+      }
+      const first = await request(await listen(server), identity);
+      server.close();
+      await once(server, "close");
+      const port = await listen(server);
+
+      expect({
+        certificate: first.verdict,
+        session: (await request(port, { session: first.session })).verdict,
+        neither: (await request(port, {})).verdict,
+      }).toEqual({ certificate: "authorized=true", session: "authorized=true", neither: "refused" });
+    });
+
+    // In a process of its own: tls.DEFAULT_CIPHERS and the default CA list are process-wide, and neither can be put back.
+    test("takes the process-wide TLS defaults as they are when it is constructed", async () => {
+      const script = `
+        const https = require("node:https"), tls = require("node:tls"), { once } = require("node:events");
+        const { readFileSync } = require("node:fs"), { join } = require("node:path");
+        const keys = name => readFileSync(join(process.env.TEST_KEYS, name));
+        const identity = { key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") };
+        const [aes128, aes256] = ["ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384"];
+
+        async function listen(server) {
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          return server.address().port;
+        }
+        // What the server answers to a request, or the cipher of the handshake when there is no request, or the error code.
+        function connect(port, options, request) {
+          const { promise, resolve } = Promise.withResolvers();
+          let answer = "";
+          const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...options }, () => {
+            if (request) return client.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n");
+            resolve(client.getCipher().name);
+            client.destroy();
+          });
+          client.on("data", chunk => (answer += chunk));
+          client.on("error", error => resolve(error.code));
+          client.on("close", () => resolve(answer.slice(answer.indexOf("\\r\\n\\r\\n") + 4)));
+          return promise;
+        }
+        // A server that is constructed while tls[name] is value.
+        function constructedWith(name, value) {
+          const saved = tls[name];
+          tls[name] = value;
+          try {
+            return https.createServer(identity);
+          } finally {
+            tls[name] = saved;
+          }
+        }
+        const result = {};
+
+        const atLeast13 = constructedWith("DEFAULT_MIN_VERSION", "TLSv1.3");
+        const atMost12 = constructedWith("DEFAULT_MAX_VERSION", "TLSv1.2");
+        const [port13, port12] = [await listen(atLeast13), await listen(atMost12)];
+        result.atLeast13 = await connect(port13, { maxVersion: "TLSv1.2" });
+        // A TLS 1.2 suite: the names of TLS 1.3 suites start with TLS_.
+        result.atMost12 = (await connect(port12, {})).slice(0, 6);
+
+        // The list is narrowed only while listen() runs: that is where a late read would take it.
+        const server = https.createServer(identity);
+        const saved = tls.DEFAULT_CIPHERS;
+        tls.DEFAULT_CIPHERS = aes128;
+        const listening = listen(server);
+        tls.DEFAULT_CIPHERS = saved;
+        result.ciphers = await connect(await listening, { ciphers: aes256, maxVersion: "TLSv1.2" });
+
+        // ca1 signs agent1, and agent1.pfx carries it. ca2 signs agent4.
+        tls.setDefaultCACertificates([keys("ca2-cert.pem").toString()]);
+        async function authorized(options) {
+          const policy = { requestCert: true, rejectUnauthorized: false };
+          const port = await listen(https.createServer({ ...options, ...policy }, (req, res) => res.end(String(req.socket.authorized))));
+          const verdicts = {};
+          for (const agent of ["agent1", "agent4"]) {
+            verdicts[agent] = await connect(port, { key: keys(agent + "-key.pem"), cert: keys(agent + "-cert.pem") }, true);
+          }
+          return verdicts;
+        }
+        result.defaultCA = {
+          plain: await authorized(identity),
+          pfx: await authorized({ pfx: keys("agent1.pfx"), passphrase: "sample" }),
+        };
+
+        console.log(JSON.stringify(result));
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, TEST_KEYS: join(import.meta.dirname, "../test/fixtures/keys") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, result: JSON.parse(stdout || "null") }).toEqual({
+        stderr: "",
+        result: {
+          atLeast13: "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+          atMost12: "ECDHE-",
+          ciphers: "ECDHE-RSA-AES256-GCM-SHA384",
+          defaultCA: { plain: { agent1: "false", agent4: "true" }, pfx: { agent1: "true", agent4: "true" } },
+        },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // A subclass in the old style can swallow the throw of the constructor. What is left must not listen without TLS.
+    // Bun only: in Node such a server neither listens nor reports an error.
+    test.skipIf(!process.versions.bun)("does not listen when its context did not build", async () => {
+      function Swallowing(this: https.Server, options: https.ServerOptions) {
+        try {
+          (https.Server as any).call(this, options);
+        } catch {}
+      }
+      Object.setPrototypeOf(Swallowing.prototype, https.Server.prototype);
+      // agent3's key does not belong to agent1's certificate.
+      const server: https.Server = new (Swallowing as any)({ key: read("agent3-key.pem"), cert: identity.cert });
+      const settled = Promise.withResolvers<string>();
+      server.once("listening", () => settled.resolve("listening")).once("error", () => settled.resolve("error"));
+      server.listen(0, "127.0.0.1");
+      try {
+        expect({ outcome: await settled.promise, address: server.address() }).toEqual({
+          outcome: "error",
+          address: null,
+        });
+      } finally {
+        if (server.listening) server.close();
+      }
+    });
+
+    // Bun only: the options of a listen() call take the place of those of the constructor.
+    test.skipIf(!process.versions.bun)(
+      "listen({ tls }) serves the options of that call and no context among them",
+      async () => {
+        const agent3 = { key: read("agent3-key.pem"), cert: read("agent3-cert.pem") };
+        await using server = https.createServer(identity);
+        const listening = once(server, "listening");
+        const secureContext = (tls.createSecureContext(agent3) as any).context;
+        (server as any).listen({ port: 0, host: "127.0.0.1", tls: { ...validCert, secureContext } });
+        await listening;
+        const { port } = server.address() as AddressInfo;
+
+        async function presented(port: number) {
+          const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+          await once(client, "secureConnect");
+          const { fingerprint256 } = client.getPeerCertificate();
+          client.destroy();
+          return fingerprint256;
+        }
+        const byThatCall = await presented(port);
+        server.close();
+        await once(server, "close");
+
+        expect({ byThatCall, byTheNext: await presented(await listen(server)) }).toEqual({
+          byThatCall: new X509Certificate(validCert.cert).fingerprint256,
+          byTheNext: new X509Certificate(identity.cert).fingerprint256,
+        });
+      },
+    );
+
+    // In a process of its own: a count taken here would include what other tests left for the GC.
+    test.skipIf(!process.versions.bun)("holds one SSL_CTX, and gives it up when it is collected", async () => {
+      const script = `
+        const { sslCtxLiveCount } = require("bun:internal-for-testing");
+        const https = require("node:https"), { once } = require("node:events");
+        const identity = JSON.parse(process.env.TEST_TLS);
+        const shapes = [identity, { ...identity, servername: "agent1" }];
+        const before = sslCtxLiveCount();
+        const live = () => sslCtxLiveCount() - before;
+
+        async function collect(rounds, until = () => false) {
+          for (let i = 0; i < rounds && !until(); i++) {
+            Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+          }
+        }
+        async function listen(server) {
+          await once(server.listen(0, "127.0.0.1"), "listening");
+        }
+        async function close(server) {
+          server.close();
+          await once(server, "close");
+        }
+
+        // One server of each shape, referenced until the end: construction, then twice listen(), close(), collection.
+        const held = shapes.map(options => https.createServer(options));
+        const counts = [live()];
+        for (let i = 0; i < 2; i++) {
+          for (const server of held) await listen(server);
+          counts.push(live());
+          for (const server of held) await close(server);
+          counts.push(live());
+          // The listener of a closed server is destroyed on GC.
+          await collect(3);
+          counts.push(live());
+        }
+
+        // Servers that nothing references: a listener that kept a context would leave one for each.
+        async function churn(n) {
+          for (let i = 0; i < n; i++) {
+            const server = https.createServer(shapes[i % shapes.length]);
+            await listen(server);
+            await close(server);
+          }
+        }
+        await churn(20);
+        const left = () => live() - held.length;
+        await collect(10, () => left() === 0);
+        console.log(JSON.stringify({ counts, left: left() }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, TEST_TLS: JSON.stringify(identity) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { counts, left } = JSON.parse(stdout || "{}");
+      expect({ stderr, counts }).toEqual({ stderr: "", counts: [2, 2, 2, 2, 2, 2, 2] });
+      // One or two closed servers can outlive these collections, with or without TLS. A leak leaves 10 or 20.
+      expect(left).toBeGreaterThanOrEqual(0);
+      expect(left).toBeLessThanOrEqual(2);
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 describe("server.blockList", () => {

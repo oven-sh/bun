@@ -6,6 +6,7 @@ export default [
     construct: true,
     finalize: true,
     memoryCost: true,
+    estimatedSize: true,
     configurable: false,
     klass: {
       // `tls.createSecureContext()` entry — WeakGCMap-memoised by config

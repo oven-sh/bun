@@ -985,6 +985,7 @@ impl SideEffects {
             ExprData::ESpecial(special) => match special {
                 E::Special::ModuleExports
                 | E::Special::ResolvedSpecifierString(_)
+                | E::Special::ImportMetaRequire
                 | E::Special::HotData => None,
                 E::Special::HotAccept | E::Special::HotAcceptVisited | E::Special::HotEnabled => {
                     Some(Known {

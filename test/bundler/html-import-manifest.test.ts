@@ -553,15 +553,13 @@ console.log("About manifest:", aboutHtml);
   });
   const rooted = (files: Record<string, string>) =>
     Object.fromEntries(Object.entries(files).map(([name, contents]) => ["/" + name, contents]));
-  /** Holds the file `held` until the scan has found the file `found`. */
-  function findFirst(found: string, held: string): BunPlugin {
-    const isFound = Promise.withResolvers<void>();
+  /** Holds the files `held` until the scan has found every file that it can find without them. */
+  function findLast(...held: string[]): BunPlugin {
     return {
-      name: "find-first",
+      name: "find-last",
       setup(builder) {
-        builder.onLoad({ filter: /\.(js|mjs|ts|html)$/ }, async ({ path }) => {
-          if (basename(path) === found) isFound.resolve();
-          if (basename(path) === held) await isFound.promise;
+        builder.onLoad({ filter: /\.(js|mjs|ts)$/ }, async ({ path, defer }) => {
+          if (held.includes(basename(path))) await defer();
           return undefined;
         });
       },
@@ -592,7 +590,7 @@ console.log("About manifest:", aboutHtml);
       chunkNaming: "[name]-[hash].[ext]",
       entryPoints: ["/server.js"],
       files: rooted(pagePerRoute(first, second)),
-      plugins: [findFirst(second + ".html", first + ".js")],
+      plugins: [findLast(first + ".js")],
       onAfterBundle(api) {
         expect(stylesheets(readManifests(api, "out/server.js"))).toEqual([
           [{ input: first + ".html", name: first }],
@@ -608,7 +606,7 @@ console.log("About manifest:", aboutHtml);
       chunkNaming: "[name]-[hash].[ext]",
       entryPoints: [`/routes/${first}.js`, `/routes/${second}.js`],
       files: rooted(pagePerRoute(first, second)),
-      plugins: [findFirst(second + ".html", first + ".js")],
+      plugins: [findLast(first + ".js")],
       onAfterBundle(api) {
         expect(outputNames(api).filter(name => name.endsWith(".css"))).toEqual([first + ".css"]);
       },
@@ -625,15 +623,12 @@ console.log("About manifest:", aboutHtml);
     test(`html-import/outputs-do-not-depend-on-the-page-that-is-found-first (${name})`, async () => {
       using dir = tempDir("html-import-found-first", pagePerRoute("home", "about"));
       const builds: [string, string, string][][] = [];
-      for (const [found, held] of [
-        ["home.html", "about.js"],
-        ["about.html", "home.js"],
-      ]) {
+      for (const held of ["about.js", "home.js"]) {
         const build = await Bun.build({
           entrypoints: [join(dir, "server.js")],
-          outdir: join(dir, "out-" + found),
+          outdir: join(dir, "out-" + held),
           target: "bun",
-          plugins: [findFirst(found, held)],
+          plugins: [findLast(held)],
           ...options,
         });
         const outputs = build.outputs.map(async (output): Promise<[string, string, string]> => [
@@ -739,7 +734,7 @@ console.log("About manifest:", aboutHtml);
       "/shared.css": `body { margin: 0; }`,
       "/outside.css": `body { padding: 0; }`,
     },
-    plugins: [findFirst("aaa.html", "home.js"), findFirst("bravo.html", "a.mjs")],
+    plugins: [findLast("home.js", "a.mjs")],
     onAfterBundle(api) {
       expect(outputNames(api).filter(name => name.endsWith(".css"))).toEqual(["alpha.css", "home.css"]);
     },
@@ -767,7 +762,7 @@ console.log("About manifest:", aboutHtml);
       "/node_modules/ui/charlie.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body>charlie</body></html>`,
       "/node_modules/ui/shared.css": `body { margin: 0; }`,
     },
-    plugins: [findFirst("charlie.html", "b.js")],
+    plugins: [findLast("b.js")],
     onAfterBundle(api) {
       expect(stylesheets(readManifests(api, "out/server.js"))).toEqual([
         [{ input: "node_modules/ui/alpha.html", name: "alpha" }],
@@ -851,17 +846,14 @@ console.log("About manifest:", aboutHtml);
       Object.entries(pagePerRoute("home", "about")).map(([name, contents]) => [join(dir, name), contents]),
     );
     const names: string[][] = [];
-    for (const [found, held] of [
-      ["home.html", "about.js"],
-      ["about.html", "home.js"],
-    ]) {
+    for (const held of ["about.js", "home.js"]) {
       const build = await Bun.build({
         entrypoints: [join(dir, "server.js")],
-        outdir: join(dir, "out-" + found),
+        outdir: join(dir, "out-" + held),
         target: "bun",
         naming: { chunk: "[name]-[hash].[ext]" },
         files,
-        plugins: [findFirst(found, held)],
+        plugins: [findLast(held)],
       });
       names.push(build.outputs.map(output => basename(output.path)));
     }
@@ -883,11 +875,10 @@ console.log("About manifest:", aboutHtml);
       `,
       "/later.ts": `import frame from "./frame.htm" with { type: "html" }; export { frame };`,
       "/page.html": `<!DOCTYPE html><html><body><script type="module" src="./client.ts"></script></body></html>`,
-      "/client.ts": `import url from "./frame.htm"; import "./marker.ts"; console.log(url);`,
-      "/marker.ts": `console.log("marker");`,
+      "/client.ts": `import url from "./frame.htm"; console.log(url);`,
       "/frame.htm": `<!DOCTYPE html><html><body>frame</body></html>`,
     },
-    plugins: [findFirst("marker.ts", "later.ts")],
+    plugins: [findLast("later.ts")],
     onAfterBundle(api) {
       expect(outputNames(api)).toEqual(["frame.htm", "page.html", "page.js", "server.js"]);
     },

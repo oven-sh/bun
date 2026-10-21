@@ -195,7 +195,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn bump_name3(&self, a: &[u8], b: &[u8], c: &[u8]) -> &'a [u8] {
+    pub(crate) fn bump_name3(&self, a: &[u8], b: &[u8], c: &[u8]) -> &'a [u8] {
         let mut v = BumpVec::<u8>::with_capacity_in(a.len() + b.len() + c.len(), self.arena);
         v.extend_from_slice(a);
         v.extend_from_slice(b);

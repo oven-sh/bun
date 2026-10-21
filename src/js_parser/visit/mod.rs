@@ -1035,22 +1035,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
-            let body_ref =
-                if class.should_lower_standard_decorators && class.ts_decorators.len_u32() > 0 {
-                    let name = bstr::BStr::new(original_name);
-                    let inner_name = bun_alloc::arena_format!(in self.arena, "_{name}");
-                    let inner_ref = self.generate_temp_var(inner_name.into_bump_str().as_bytes());
-                    class.inner_class_ref = inner_ref;
-                    self.decorated_class_names.push((inner_ref, name_ref));
-                    // The name of a class expression is declared nowhere else:
-                    // the renamer still has to number it around its neighbors.
-                    if is_expr {
-                        VecExt::append(&mut self.vis_scope().generated, name_ref);
-                    }
-                    inner_ref
-                } else {
-                    name_ref
-                };
+            let body_ref = if class.should_lower_standard_decorators
+                && class.ts_decorators.len_u32() > 0
+            {
+                let inner_ref = self.generate_temp_var(self.bump_name3(b"_", original_name, b""));
+                class.inner_class_ref = inner_ref;
+                self.decorated_class_names.push((inner_ref, name_ref));
+                // The name of a class expression is declared nowhere else:
+                // the renamer still has to number it around its neighbors.
+                if is_expr {
+                    VecExt::append(&mut self.vis_scope().generated, name_ref);
+                }
+                inner_ref
+            } else {
+                name_ref
+            };
             // SAFETY: `original_name` is an AST-arena slice.
             unsafe {
                 self.vis_scope().members.put(

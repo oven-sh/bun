@@ -740,6 +740,199 @@ describe("bundler", () => {
     });
   }
 
+  // The compiler evaluates a default value and a `case` test ahead of their
+  // place in the source. So it takes an arrow function there only when the
+  // body is an expression that is safe to move, or a block with no statement.
+  // Every other arrow leaves the component as written. The body has to be
+  // judged as it is written: the visit pass runs first, and with minify.syntax
+  // it prints a block that is one `return` as an expression body and empties a
+  // block whose statements are dead. The compiler took those, so a component
+  // was memoized in a minified build only.
+  //
+  // Each entry is an arrow function and the number of cache hooks in a render
+  // of a component that has it as a default. The numbers are the verdicts of
+  // babel-plugin-react-compiler.
+  const arrowDefaults: Record<string, [arrow: string, cacheHooks: 0 | 1]> = {
+    Expression: [`() => null`, 1],
+    ExpressionUndefined: [`() => undefined`, 1],
+    EmptyBlock: [`() => {}`, 1],
+    BlockOfAComment: [`() => { /* nothing */ }`, 1],
+    // A directive is not a statement.
+    BlockOfADirective: [`() => { "use example"; }`, 1],
+    BlockOfTwoDirectives: [`() => { "use example"\n 'use other' }`, 1],
+
+    OneReturn: [`() => { return null; }`, 0],
+    AsyncOneReturn: [`async () => { return null; }`, 0],
+    OneReturnInAnArrow: [`() => () => { return null; }`, 0],
+    OneReturnInAnObject: [`{ handler: () => { return null; } }`, 0],
+    // minify.syntax leaves one `return` of these.
+    ConstThenReturn: [`() => { const nothing = null; return nothing; }`, 0],
+    DirectiveThenReturn: [`() => { "use strict"; return null; }`, 0],
+    // minify.syntax leaves nothing of these. The last one only in production.
+    NestedBlock: [`() => { {} }`, 0],
+    DeadBranch: [`() => { if (false) throw new Error("not reached"); }`, 0],
+    UnusedConst: [`() => { const unused = 1; }`, 0],
+    WarningInDevelopment: [`() => { if (process.env.NODE_ENV !== "production") console.warn("no onClick"); }`, 0],
+    // The visit pass leaves nothing of these in every build.
+    EmptyStatement: [`() => { ; }`, 0],
+    NumberStatement: [`() => { 1; }`, 0],
+    // A string that is not a whole statement is not a directive.
+    StringInAnExpression: [`() => { "use example"\n .length }`, 0],
+  };
+  const arrowsInDefaults = /* jsx */ `
+    import { render } from "react/compiler-runtime";
+
+    ${Object.entries(arrowDefaults)
+      .map(
+        ([name, [arrow]]) => /* jsx */ `
+    function ${name}(props) {
+      const { label, onClick = ${arrow} } = props;
+      const style = { color: label };
+      return <button style={style} onClick={onClick}>{label}</button>;
+    }`,
+      )
+      .join("\n")}
+
+    // The other places that the compiler moves a value from.
+    function ArrayPattern(props) {
+      const [onClick = () => { return null; }] = props.list;
+      const style = { color: props.label };
+      return <button style={style} onClick={onClick}>{props.label}</button>;
+    }
+    function AssignmentPattern(props) {
+      let onClick;
+      ({ onClick = () => { return null; } } = props);
+      const style = { color: props.label };
+      return <button style={style} onClick={onClick}>{props.label}</button>;
+    }
+    function ParameterOfANestedFunction({ label }) {
+      const handler = (onClick = () => { return null; }) => onClick;
+      const style = { color: label };
+      return <button style={style} onClick={handler()}>{label}</button>;
+    }
+    function CaseTest(props) {
+      const style = { color: props.label };
+      switch (props.label) {
+        case (() => { return "a"; })():
+          return <button style={style} />;
+        default:
+          return <i style={style} />;
+      }
+    }
+    // An arrow function in any other place is no obstacle, whatever its body.
+    function NotADefault({ label }) {
+      const text = () => { return label + "!"; };
+      const style = { color: label };
+      return <button style={style}>{text()}</button>;
+    }
+
+    const forms = {
+      ${Object.keys(arrowDefaults).join(", ")},
+      ArrayPattern,
+      AssignmentPattern,
+      ParameterOfANestedFunction,
+      CaseTest,
+      NotADefault,
+    };
+    for (const [name, form] of Object.entries(forms)) {
+      const { element, cacheHooks } = render(form, { label: "a", list: [] });
+      console.log(name + ": " + cacheHooks + (form === NotADefault ? ", renders " + element.props.children : ""));
+    }
+  `;
+  const arrowsInDefaultsStdout = [
+    ...Object.entries(arrowDefaults).map(([name, [, cacheHooks]]) => `${name}: ${cacheHooks}`),
+    "ArrayPattern: 0",
+    "AssignmentPattern: 0",
+    "ParameterOfANestedFunction: 0",
+    "CaseTest: 0",
+    "NotADefault: 1, renders a!",
+  ].join("\n");
+  const reactThatCountsCacheHooks = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": `export const useState = () => ["as written", () => {}];`,
+    "/node_modules/react/jsx-runtime.js": `export const jsx = (type, props) => ({ type, props }), jsxs = jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      let cacheHooks = 0;
+      export function c(size) {
+        cacheHooks++;
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      }
+      export function render(component, props) {
+        cacheHooks = 0;
+        return { element: component(props), cacheHooks };
+      }
+    `,
+  };
+  for (const minifySyntax of [false, true]) {
+    for (const nodeEnv of ["development", "production"]) {
+      itBundled(`react-compiler/ArrowInADefaultIsJudgedAsWritten-syntax=${minifySyntax}-${nodeEnv}`, {
+        files: { "/entry.jsx": arrowsInDefaults, ...reactThatCountsCacheHooks },
+        reactCompiler: true,
+        backend: "cli",
+        target: "browser",
+        minifySyntax,
+        define: { "process.env.NODE_ENV": JSON.stringify(nodeEnv) },
+        run: { stdout: arrowsInDefaultsStdout },
+      });
+    }
+  }
+  itBundled("react-compiler/ArrowInADefaultIsJudgedAsWritten-BunBuildWithMinify", {
+    files: { "/entry.jsx": arrowsInDefaults, ...reactThatCountsCacheHooks },
+    reactCompiler: true,
+    backend: "api",
+    target: "browser",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    define: { "process.env.NODE_ENV": `"production"` },
+    run: { stdout: arrowsInDefaultsStdout },
+  });
+  // In the ssr mode a compiled component has its useState call replaced with
+  // the initial state and its event handlers dropped.
+  for (const minifySyntax of [false, true]) {
+    itBundled(`react-compiler/ArrowInADefaultIsJudgedAsWritten-ssr-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { useState } from "react";
+
+          function Expression(props) {
+            const { onClick = () => null } = props;
+            const [state] = useState("compiled");
+            return <button onClick={onClick}>{state}</button>;
+          }
+          function OneReturn(props) {
+            const { onClick = () => { return null; } } = props;
+            const [state] = useState("compiled");
+            return <button onClick={onClick}>{state}</button>;
+          }
+          function DeadBranch(props) {
+            const { onClick = () => { if (false) throw new Error("not reached"); } } = props;
+            const [state] = useState("compiled");
+            return <button onClick={onClick}>{state}</button>;
+          }
+
+          for (const [name, form] of Object.entries({ Expression, OneReturn, DeadBranch })) {
+            const { props } = form({});
+            console.log(name + ": " + props.children + ", onClick is " + ("onClick" in props ? "kept" : "dropped"));
+          }
+        `,
+        ...reactThatCountsCacheHooks,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target: "bun",
+      minifySyntax,
+      run: {
+        stdout: `
+          Expression: compiled, onClick is dropped
+          OneReturn: as written, onClick is kept
+          DeadBranch: as written, onClick is kept
+        `,
+      },
+    });
+  }
+
   // A user's local `jsx` / `jsxs` / `jsxDEV` / `Fragment` binding in the
   // component body scope must not capture the automatic JSX runtime import
   // when the React Compiler rewrites the component.

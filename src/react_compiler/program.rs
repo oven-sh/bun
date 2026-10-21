@@ -51,6 +51,42 @@ pub enum JsxImportKind {
     CreateElement,
 }
 
+/// How the body of an arrow function is written.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ArrowBody {
+    /// `() => value`
+    Expression,
+    /// `() => {}`. A directive is not a statement, as in upstream's tree.
+    EmptyBlock,
+    /// `() => { ... }`
+    Block,
+}
+
+impl ArrowBody {
+    /// What the node says. It is how the arrow is written only in a tree that no visit pass has changed.
+    pub fn of_node(arrow: &ast::E::Arrow) -> ArrowBody {
+        let stmts = arrow.body.stmts.slice();
+        if arrow.prefer_expr
+            && matches!(
+                stmts,
+                [Stmt {
+                    data: StmtData::SReturn(_),
+                    ..
+                }]
+            )
+        {
+            ArrowBody::Expression
+        } else if stmts
+            .iter()
+            .all(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
+        {
+            ArrowBody::EmptyBlock
+        } else {
+            ArrowBody::Block
+        }
+    }
+}
+
 /// Parser-side state the React Compiler needs. Implemented by `P` at the
 /// hook site so this crate stays free of a `bun_js_parser` dependency.
 ///
@@ -76,6 +112,12 @@ pub trait Host {
     /// does upstream's. For a tree that has a node for them.
     fn parentheses(&self) -> &[(Loc, Loc)] {
         &[]
+    }
+
+    /// How the body of `arrow` is written. The parser's visit pass rewrites the statements before the compile, and
+    /// when it minifies it sets `prefer_expr` on a block that is one `return`.
+    fn arrow_body(&self, arrow: &ast::E::Arrow) -> ArrowBody {
+        ArrowBody::of_node(arrow)
     }
 
     /// The namespace import that `item` is a member of. The parser makes an import of its own of `ns.member`.

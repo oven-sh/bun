@@ -39,6 +39,44 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let mut all = self.p.import_items_for_namespace.iter();
         all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
     }
+    fn arrow_body(&self, arrow: &js_ast::E::Arrow) -> bun_react_compiler::ArrowBody {
+        use crate::lexer::{Lexer, T};
+        use bun_react_compiler::ArrowBody;
+
+        // `parse_arrow_body` puts `body.loc` at the `=>` of an expression body and at the `{` of a block.
+        let Ok(start) = usize::try_from(arrow.body.loc.start) else {
+            return ArrowBody::of_node(arrow);
+        };
+        let mut log = js_ast::Log::init();
+        let mut lexer = Lexer::init_without_reading(&mut log, self.p.source, self.p.arena);
+        lexer.current = start;
+        lexer.step();
+        let mut next = move || {
+            let token = lexer.next().ok().map(|()| lexer.token);
+            (token, lexer.has_newline_before)
+        };
+        match next().0 {
+            Some(T::TEqualsGreaterThan) => ArrowBody::Expression,
+            Some(T::TOpenBrace) => {
+                let mut token = next().0;
+                loop {
+                    match token {
+                        Some(T::TCloseBrace) => return ArrowBody::EmptyBlock,
+                        // A string that is a whole statement is a directive.
+                        Some(T::TStringLiteral) => match next() {
+                            (Some(T::TSemicolon), _) => token = next().0,
+                            (after @ Some(T::TCloseBrace), _)
+                            | (after @ Some(T::TStringLiteral), true) => token = after,
+                            _ => return ArrowBody::Block,
+                        },
+                        _ => return ArrowBody::Block,
+                    }
+                }
+            }
+            // An arrow that the parser did not read from the source.
+            _ => ArrowBody::of_node(arrow),
+        }
+    }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
     }

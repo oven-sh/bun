@@ -250,6 +250,28 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  // Matches oxlint 1.87.
+  test("an arrow function in a default is reported, unless its body is an expression or has no statement", async () => {
+    const withDefault = (name: string, arrow: string) =>
+      `export function ${name}({ label, onClick = ${arrow} }) { return <button onClick={onClick}>{label}</button>; }\n`;
+    const { diagnostics, exit } = await report({
+      ".oxlintrc.json": rc(["react/todo"]),
+      "arrows.jsx":
+        withDefault("OneReturn", "() => { return null; }") +
+        withDefault("EmptyStatement", "() => { ; }") +
+        withDefault("Expression", "() => null") +
+        withDefault("Undefined", "() => undefined") +
+        withDefault("EmptyBlock", "() => {}") +
+        // A directive is not a statement.
+        withDefault("Directive", `() => { "use example"; }`),
+    });
+    expect(locationsOf(diagnostics["arrows.jsx"])).toEqual([
+      ["react(todo)", 1, 46],
+      ["react(todo)", 2, 51],
+    ]);
+    expect(exit).toBe(1);
+  });
+
   test(
     "a long component is compiled",
     async () => {

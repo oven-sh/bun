@@ -17,6 +17,7 @@ use super::helpers::{
 use super::jsx::lower_jsx_call;
 use crate::lowering::FunctionNode;
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
+use crate::program::ArrowBody;
 
 pub(crate) fn lower_expression(
     builder: &mut HirBuilder,
@@ -1409,17 +1410,24 @@ fn is_reorderable_expression(
         Data::EIndex(i) if i.optional_chain.is_none() => {
             is_member_chain_of_module_level_or_global(builder, &i.target)
         }
-        Data::EArrow(arrow) => {
-            let stmts = arrow.body.stmts.slice();
-            if arrow.prefer_expr && stmts.len() == 1 {
-                if let ast::stmt::Data::SReturn(r) = &stmts[0].data {
-                    if let Some(v) = &r.value {
-                        return is_reorderable_expression(builder, v, false);
-                    }
+        Data::EArrow(arrow) => match builder.host().arrow_body(arrow) {
+            ArrowBody::Expression => match arrow.body.stmts.slice() {
+                [
+                    ast::Stmt {
+                        data: ast::stmt::Data::SReturn(ret),
+                        ..
+                    },
+                ] => {
+                    // The parser's visit pass makes `return undefined` a `return`.
+                    ret.value
+                        .as_ref()
+                        .is_none_or(|value| is_reorderable_expression(builder, value, false))
                 }
-            }
-            stmts.is_empty()
-        }
+                _ => false,
+            },
+            ArrowBody::EmptyBlock => true,
+            ArrowBody::Block => false,
+        },
         Data::ECall(call)
             if call.was_jsx_element && !builder.environment().config.jsx_can_be_reordered =>
         {

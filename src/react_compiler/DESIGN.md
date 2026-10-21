@@ -159,6 +159,20 @@ resolved `RefTag::Symbol`, and JSX has been lowered to
 `E::Call { was_jsx_element: true }`. Lowering reads that call shape and
 codegen emits it, so the compiled body needs no further visiting.
 
+The visit pass has also rewritten the function by then, and what it leaves
+depends on the build: with `minify.syntax` it folds constants, drops dead
+statements, and sets `prefer_expr` on an arrow function whose block body is one
+`return`. Upstream compiles the tree as it is written. So a verdict that
+upstream takes from the shape of the source must not be taken from the visited
+node, or the build decides which functions are compiled. How the body of an
+arrow function is written (an expression, a block with no statement, any other
+block) is such a fact: an arrow in a default value or a `case` test is safe to
+reorder only with one of the first two. Lowering asks `Host::arrow_body` for
+it. The parser reads it from the source at `body.loc`. The linter's tree, which
+no visit pass has changed, says it itself. The value of a default is still
+judged as the visit pass left it: `n = 1 + 2` is safe to reorder only in a
+build that folds it.
+
 The visit pass emits two call shapes. The automatic runtime calls
 `jsx(type, {...props, children}, key)` (or `jsxs` / `jsxDEV`). The classic
 runtime, and the automatic runtime when `key` follows a spread, calls

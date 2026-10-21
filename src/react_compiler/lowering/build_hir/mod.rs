@@ -33,7 +33,7 @@ use super::hir_builder::{
     HirBuilder, convert_loc, create_temporary_place, is_always_reserved_word,
     reserved_identifier_diagnostic,
 };
-use crate::program::Host;
+use crate::program::{ArrowBody, Host};
 use std::rc::Rc;
 
 mod expr;
@@ -257,7 +257,7 @@ pub(super) fn lower_inner<'h>(
 
     // Lower the body
     let mut directives: HirVec<StoreStr> = AstAlloc::vec();
-    let expr_body = arrow_expression_body(func);
+    let expr_body = arrow_expression_body(host, func);
     match expr_body {
         Some(expr) => {
             let fallthrough = builder.reserve(BlockKind::Block);
@@ -337,25 +337,26 @@ pub(super) fn lower_inner<'h>(
     ))
 }
 
-/// Bun's `E::Arrow` always carries a `G::FnBody`; an expression body is encoded
-/// as a single `SReturn` with `prefer_expr` set. Detect that shape so the
-/// upstream `FunctionBody::Expression` arm is preserved (emits `Implicit`
-/// return variant instead of `Explicit`).
-fn arrow_expression_body<'a>(func: &FunctionNode<'a>) -> Option<&'a Expr> {
+/// Bun's `E::Arrow` always carries a `G::FnBody`; an expression body is a
+/// single `SReturn`, and the host says whether the arrow is written with one.
+/// Detect that shape so the upstream `FunctionBody::Expression` arm is
+/// preserved (emits `Implicit` return variant instead of `Explicit`).
+fn arrow_expression_body<'a>(host: &dyn Host, func: &FunctionNode<'a>) -> Option<&'a Expr> {
     let FunctionNode::Arrow(a) = func else {
         return None;
     };
-    if !a.prefer_expr {
+    if host.arrow_body(a) != ArrowBody::Expression {
         return None;
     }
-    let stmts = a.body.stmts.slice();
-    if stmts.len() != 1 {
-        return None;
+    match a.body.stmts.slice() {
+        [
+            Stmt {
+                data: StmtData::SReturn(r),
+                ..
+            },
+        ] => r.value.as_ref(),
+        _ => None,
     }
-    if let StmtData::SReturn(r) = &stmts[0].data {
-        return r.value.as_ref();
-    }
-    None
 }
 
 // =============================================================================

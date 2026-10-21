@@ -96,7 +96,7 @@ lists! {
     import_call_type_args: (ExprId, IdList<TypeNodeId>),
     comments: Comment,
     diagnostics: Diagnostic,
-    specifier_uses: SpecifierUse,
+    module_specifiers: SpecifierUse,
 }
 
 impl<'a> Program<'a> {
@@ -741,7 +741,8 @@ impl Walk<'_, '_> {
         }
         // A specifier that the parser reads twice is listed twice, and out of order.
         let positions = |program: &Program<'_>| {
-            let mut positions: Vec<u32> = program.specifier_uses.iter().map(|it| it.pos).collect();
+            let mut positions: Vec<u32> =
+                program.module_specifiers.iter().map(|it| it.pos).collect();
             crate::sort::sort(&mut positions[..]);
             positions.dedup();
             positions

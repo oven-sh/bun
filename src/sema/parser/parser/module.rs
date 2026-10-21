@@ -96,11 +96,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !is_type_only {
             mode = ResolutionMode::None;
         }
-        self.f.specifier_uses.push(SpecifierUse {
+        self.f.module_specifiers.push(SpecifierUse {
             spec,
             pos,
             kind,
             mode,
+            role: SpecifierRole::NodeAndImport,
         });
         (spec, mode)
     }
@@ -712,11 +713,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             let mut spec = Atom::NONE;
             if self.token() == T::String {
                 spec = self.lx.atom;
-                self.f.specifier_uses.push(SpecifierUse {
+                self.f.module_specifiers.push(SpecifierUse {
                     spec,
                     pos: self.pos(),
                     kind: SpecifierKind::Require,
                     mode: ResolutionMode::None,
+                    role: SpecifierRole::NodeAndImport,
                 });
                 self.next_after_string();
             } else {

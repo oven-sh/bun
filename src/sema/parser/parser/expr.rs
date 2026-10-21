@@ -225,11 +225,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `newIdentifier` for an `await`, which sets `statementHasAwaitIdentifier`. A function body restores the flag. A
     /// parameter default, a type and an arrow function's expression body don't, so an `await` there counts too. See
-    /// `top_level_statement`.
+    /// `top_level_statement`, and `note_reparsed_statement` for a JavaScript file with JSDoc comments.
     #[cold]
     #[inline(never)]
     pub(crate) fn note_await_as_a_name(&mut self) {
-        if self.recovers() && !self.options.dialect.oxc {
+        let is_asked = self.recovers() || self.reads_jsdoc() && self.f.is_js;
+        if is_asked && !self.options.dialect.oxc {
             self.has_await_identifier = true;
         }
     }
@@ -1037,6 +1038,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 {
                     self.has_await_identifier = true;
                     self.has_plain_top_level_await = had_plain;
+                    if self.reads_jsdoc() {
+                        self.note_await_before_line_break();
+                    }
                 }
                 self.next();
                 let operand = match self.has_context(ctx::AWAIT) || !self.options.dialect.oxc {
@@ -1513,11 +1517,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             _ => return,
         };
-        self.f.specifier_uses.push(SpecifierUse {
+        self.f.module_specifiers.push(SpecifierUse {
             spec,
             pos,
             kind,
             mode: ResolutionMode::None,
+            role: SpecifierRole::NodeAndImport,
         });
     }
 

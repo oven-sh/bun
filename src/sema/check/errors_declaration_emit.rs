@@ -3136,7 +3136,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     fn module_specifier_text(&self, s: StmtId, spec: Atom) -> Vec<u8> {
         let hir = self.c.hir(self.file());
         let (from, to) = (hir[s].start, hir[s].loc.end);
-        let mut uses = hir.specifier_uses.iter();
+        let mut uses = hir.specifier_nodes();
         let specifier_use = uses.find(|it| it.spec == spec && (from..to).contains(&it.pos));
         let text = &hir.text[..];
         if let Some(start) = specifier_use.map(|it| it.pos as usize)

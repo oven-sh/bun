@@ -2134,7 +2134,7 @@ impl<'f, 's> Binder<'f, 's> {
             self.b.has_loop_types_that_depend_on_order,
         ) = measure_flow(&self.b.flow, &self.b.flow_edges, &self.b.flow_shared);
         // `collectExternalModuleReferences`
-        let uses = self.f.specifier_uses.iter();
+        let uses = self.f.imports();
         let dynamic = uses.filter(|u| u.kind.is_dynamic() && u.spec.is_some());
         let mut dynamic: Vec<(u32, Atom)> = dynamic.map(|u| (u.pos, u.spec)).collect();
         dynamic.sort_by_key(|dynamic| dynamic.0);

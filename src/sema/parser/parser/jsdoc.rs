@@ -5,6 +5,10 @@
 //! where it ends and what's wrong with it, and those nodes are dropped. Where reparser.go clones it (`reparse`), it's
 //! parsed a second time, into the file.
 //!
+//! The module specifiers in a type stay, without nodes, until all comments of the node are read. Then `with_jsdoc`
+//! decides which of them `collectExternalModuleReferences` finds: its walk looks in the comments of a node, not at
+//! what a tag gave to another node.
+//!
 //! All of this only runs with `Options::reads_jsdoc`. Without it, a node that can have comments costs one flag test.
 
 use super::reparse::Host;
@@ -46,6 +50,8 @@ pub(super) struct Attached<'a> {
     pub(super) range: Option<TextRange>,
     /// `jsdocScannerInfoHasSeeOrLink`
     pub(super) has_see_or_link: bool,
+    /// True if a JSDoc comment on the previous token's line was passed over: it doesn't belong to the node.
+    pub(super) has_passed_over: bool,
 }
 
 /// How much of a reparsed node the checker visits, which determines which errors about it are reported.
@@ -76,6 +82,14 @@ pub(crate) struct State {
     pub(super) full_signatures: bun_sema::util::FxHashSet<u32>,
     /// The functions whose `@param` tags were compared with their parameters.
     pub(super) documented_functions: bun_sema::util::FxHashSet<u32>,
+    /// The first tokens of the nodes in whose comments `keep_found_specifiers` kept a module specifier.
+    pub(super) hosts_of_found_specifiers: bun_sema::util::FxHashSet<u32>,
+    /// True if two of them start with the same token, so they have the same comments. A speculative parse that's
+    /// rolled back can set it without that.
+    pub(super) has_found_specifiers_twice: bool,
+    /// True if `reparseTopLevelAwait` also reparses the statements that follow, in a module. See
+    /// `note_await_before_line_break`.
+    pub(crate) reparses_rest: bool,
 }
 
 impl State {
@@ -203,6 +217,129 @@ fn finish_jsdoc_lists(file: &mut FileBuilder, src: &[u8], comments: &[Comment]) 
     }
 }
 
+/// A comment is read for each node that has it, and what the walk of `collectExternalModuleReferences` finds in it is
+/// in the list once for each of them. It's found once.
+#[cold]
+#[inline(never)]
+fn forget_specifiers_found_again(file: &mut FileBuilder, comments: &[Comment]) {
+    let is_in_comment = |pos: u32| {
+        let after = comments.partition_point(|comment| comment.pos <= pos);
+        after
+            .checked_sub(1)
+            .is_some_and(|at| pos < comments[at].end)
+    };
+    let is_found = |it: &SpecifierUse| {
+        let is_import_without_node = matches!(
+            it.role,
+            SpecifierRole::Import
+                | SpecifierRole::ImportOfStatement
+                | SpecifierRole::ImportUnlessReparsed
+        );
+        is_import_without_node && is_in_comment(it.pos)
+    };
+    let all = file.module_specifiers.iter().enumerate();
+    let found = all.filter(|(_, it)| is_found(it));
+    let mut found: SmallVec<[(u32, u32); 16]> =
+        found.map(|(index, it)| (it.pos, index as u32)).collect();
+    found.shared_sort_unstable();
+    let mut before = u32::MAX;
+    for &(pos, index) in &found {
+        if pos == before
+            && let Some(again) = file.module_specifiers.get_mut(index as usize)
+        {
+            again.role = SpecifierRole::Neither;
+        }
+        before = pos;
+    }
+}
+
+/// A type that the tree of a JSDoc comment keeps, from its first token to the token after it.
+#[derive(Copy, Clone)]
+struct KeptType {
+    pos: u32,
+    end: u32,
+    /// True if it's in a tag that makes a statement, which has the type too: a `@typedef` or a `@callback` whose name
+    /// has no dots, or an `@import` with a clause.
+    is_of_statement: bool,
+}
+
+/// Collects the types that the tree of a comment with `tags` keeps. jsdoc.go drops some of what it parses, and
+/// `reparse` only reparses some of what it keeps.
+fn kept_types<'t>(tags: &'t [syntax::Tag<'t>], kept: &mut SmallVec<[KeptType; 8]>) {
+    // The tags that are inside another tag.
+    let mut open: SmallVec<[(&'t [syntax::Tag<'t>], bool); 4]> = SmallVec::new();
+    open.push((tags, false));
+    while let Some((tags, is_of_statement)) = open.pop() {
+        let mut keep = |pos: u32, end: u32, is_of_statement: bool| {
+            kept.push(KeptType {
+                pos,
+                end,
+                is_of_statement,
+            });
+        };
+        for tag in tags {
+            match &tag.kind {
+                TagKind::Type(ty) | TagKind::Satisfies(ty) | TagKind::This(ty) => {
+                    keep(ty.pos, ty.end, is_of_statement);
+                }
+                TagKind::Return(ty) | TagKind::Throws(ty) => {
+                    if let Some(ty) = ty {
+                        keep(ty.pos, ty.end, is_of_statement);
+                    }
+                }
+                TagKind::Param(property) | TagKind::Property(property) => match &property.ty {
+                    syntax::TagType::None => {}
+                    syntax::TagType::Expr(ty) => keep(ty.pos, ty.end, is_of_statement),
+                    syntax::TagType::Literal { properties, .. } => {
+                        open.push((properties, is_of_statement));
+                    }
+                },
+                TagKind::Template(template) => {
+                    if let Some(ty) = template.constraint {
+                        keep(ty.pos, ty.end, false);
+                    }
+                    for ty in template.params.iter().filter_map(|param| param.default) {
+                        keep(ty.pos, ty.end, false);
+                    }
+                }
+                TagKind::Typedef(typedef) => {
+                    let is_of_statement = typedef.name.namespaces.is_empty();
+                    match &typedef.ty {
+                        syntax::TagType::None => {}
+                        syntax::TagType::Expr(ty) => keep(ty.pos, ty.end, is_of_statement),
+                        syntax::TagType::Literal { properties, .. } => {
+                            open.push((properties, is_of_statement));
+                        }
+                    }
+                }
+                TagKind::Callback(callback) => {
+                    let is_of_statement = callback.name.namespaces.is_empty();
+                    open.push((&callback.signature.params, is_of_statement));
+                    if let Some(ty) = callback.signature.ret {
+                        keep(ty.pos, ty.end, is_of_statement);
+                    }
+                }
+                TagKind::Overload(signature) => {
+                    open.push((&signature.params, false));
+                    if let Some(ty) = signature.ret {
+                        keep(ty.pos, ty.end, false);
+                    }
+                }
+                TagKind::Implements(class_name) | TagKind::Augments(class_name, _) => {
+                    if let Some(type_args) = class_name.type_args {
+                        keep(type_args.entry.start as u32, class_name.end, false);
+                    }
+                }
+                // The expression that can be in the place of its string.
+                TagKind::Import(import) => {
+                    keep(import.entry.start as u32, import.end, import.has_clause);
+                }
+                TagKind::Modifier(_) | TagKind::Other => {}
+            }
+        }
+    }
+}
+
 /// The state `parseJSDocComment` saves.
 struct Outer<'a> {
     mark: Mark,
@@ -215,6 +352,8 @@ struct Outer<'a> {
     last_nullable_type: (TypeNodeId, u32),
     parameter_question_pos: u32,
     has_top_level_await: bool,
+    /// `saveHasAwaitIdentifier`
+    has_await_identifier: bool,
     /// `saveDiagnosticsLength`
     diagnostics: usize,
 }
@@ -357,7 +496,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, C
             (false, true) => TypeShape::OPTIONAL,
             (true, true) => TypeShape::VARIADIC | TypeShape::OPTIONAL,
         };
-        let mut after = self.end_first_parse(&first);
+        let mut after = self.end_first_parse(&first, true);
         if parsed.is_missing && !self.has_failed() {
             after = at;
         }
@@ -379,7 +518,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, C
         }
         let first = self.begin_first_parse();
         self.jsdoc_type_arguments(at);
-        let after = self.end_first_parse(&first);
+        let after = self.end_first_parse(&first, true);
         (Some(TypeArguments { entry: at }), after)
     }
 
@@ -387,7 +526,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, C
         let first = self.begin_first_parse();
         self.resume(at);
         self.expression();
-        self.end_first_parse(&first)
+        // jsdoc.go drops the default value of a parameter.
+        self.end_first_parse(&first, false)
     }
 
     fn parse_modifiers(
@@ -426,7 +566,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, C
         }
         let first = self.begin_first_parse();
         let (_, end, has_clause) = self.jsdoc_import(at);
-        let after = self.end_first_parse(&first);
+        let after = self.end_first_parse(&first, true);
         let import = syntax::Import {
             has_clause,
             entry: at,
@@ -544,7 +684,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// Drops what was built since `begin_first_parse`. Returns the lexer's state at the end of the parse.
-    fn end_first_parse(&mut self, first: &FirstParse) -> JSDocScannerState {
+    /// `keeps_specifiers` is true if jsdoc.go keeps the nodes: the module specifiers in them then stay for
+    /// `with_jsdoc`.
+    fn end_first_parse(&mut self, first: &FirstParse, keeps_specifiers: bool) -> JSDocScannerState {
         self.lx.skips_jsdoc_asterisks = false;
         self.take_scanner_errors();
         let after = self.state();
@@ -552,13 +694,54 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let mut reported = self.f.diagnostics.split_off(from);
         // `checkTypeReferenceNode`: `A.<T>` is `A<T>` in a JSDoc comment.
         reported.retain(|it| it.kind == DiagnosticKind::Parse && it.code != 8020);
-        self.rollback(&first.checkpoint);
+        let specifiers = first.checkpoint.file.module_specifiers as usize;
+        let has_any = self.f.is_js && self.f.module_specifiers.len() > specifiers;
+        match keeps_specifiers && has_any {
+            true => self.rollback_but_specifiers(&first.checkpoint),
+            false => self.rollback(&first.checkpoint),
+        }
         self.f.diagnostics.append(&mut reported);
         // `rollback` moved the lexer, so put the token back at the end of the text.
         if let Some(why) = self.lx.rejection {
             self.lx.reject(why);
         }
         after
+    }
+
+    /// `rollback` for a first parse that read module specifiers. The ones `ForEachDynamicImportOrRequireCall` can find
+    /// stay, without nodes, for `with_jsdoc`.
+    #[cold]
+    #[inline(never)]
+    fn rollback_but_specifiers(&mut self, to: &Checkpoint) {
+        let read = self
+            .f
+            .module_specifiers
+            .get(to.file.module_specifiers as usize..);
+        let found = read.unwrap_or_default().iter();
+        let found = found.filter(|it| it.kind.is_dynamic() && it.spec.is_some());
+        let without_node = |it: &SpecifierUse| SpecifierUse {
+            role: SpecifierRole::Neither,
+            ..*it
+        };
+        let found: SmallVec<[SpecifierUse; 4]> = found.map(without_node).collect();
+        self.rollback(to);
+        self.f.module_specifiers.extend(found);
+    }
+
+    /// What was reparsed since the file had `from` module specifiers is what a tag gives to a node. The walk of
+    /// `collectExternalModuleReferences` finds the original in the comment, not this clone.
+    #[cold]
+    #[inline(never)]
+    fn note_specifiers_of_clone(&mut self, from: usize) {
+        for specifier in self.f.module_specifiers.iter_mut().skip(from) {
+            if specifier.kind.is_dynamic() {
+                specifier.role = match specifier.role {
+                    SpecifierRole::NodeAndImport => SpecifierRole::Node,
+                    SpecifierRole::Import => SpecifierRole::Neither,
+                    role => role,
+                };
+            }
+        }
     }
 
     /// Filters the diagnostics reported since the file had `from` of them, which are about reparsed nodes. Keeps only
@@ -727,11 +910,12 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.reject(Rejection::Unsupported);
         }
         if spec.is_some() {
-            self.f.specifier_uses.push(SpecifierUse {
+            self.f.module_specifiers.push(SpecifierUse {
                 spec,
                 pos: specifier,
                 kind: SpecifierKind::Import,
                 mode,
+                role: SpecifierRole::NodeAndImport,
             });
         }
         let declaration = Import {
@@ -812,6 +996,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             last_nullable_type: self.last_nullable_type,
             parameter_question_pos: self.parameter_question_pos,
             has_top_level_await: self.has_top_level_await,
+            has_await_identifier: self.has_await_identifier,
             diagnostics: self.f.diagnostics.len(),
         };
         self.lx
@@ -844,6 +1029,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.last_nullable_type = outer.last_nullable_type;
         self.parameter_question_pos = outer.parameter_question_pos;
         self.has_top_level_await = outer.has_top_level_await;
+        self.has_await_identifier = outer.has_await_identifier;
         self.jsdoc.is_in_comment = false;
         match self.lx.rejection {
             None => {}
@@ -912,9 +1098,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let Some(outer) = self.enter_comment_containing(expr.entry.start) else {
             return TypeNodeId::NONE;
         };
+        let specifiers = self.f.module_specifiers.len();
         let parsed = self.jsdoc_type(expr.entry);
         self.keep_checker_errors(outer.diagnostics, reach);
         self.leave_comment(outer);
+        if self.f.module_specifiers.len() > specifiers {
+            self.note_specifiers_of_clone(specifiers);
+        }
         let mut ty = parsed.ty;
         let Some(&TypeNode { end, .. }) = self.f.types.get(ty.idx()) else {
             return TypeNodeId::NONE;
@@ -950,9 +1140,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let Some(outer) = self.enter_comment_containing(args.entry.start) else {
             return IdList::EMPTY;
         };
+        let specifiers = self.f.module_specifiers.len();
         let list = self.jsdoc_type_arguments(args.entry);
         self.keep_checker_errors(outer.diagnostics, Reach::Checked);
         self.leave_comment(outer);
+        if self.f.module_specifiers.len() > specifiers {
+            self.note_specifiers_of_clone(specifiers);
+        }
         list
     }
 
@@ -967,9 +1161,14 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let Some(outer) = self.enter_comment_containing(import.entry.start) else {
             return StmtId::NONE;
         };
+        let specifiers = self.f.module_specifiers.len();
         let (declaration, ..) = self.jsdoc_import(import.entry);
         self.keep_checker_errors(outer.diagnostics, reach);
         self.leave_comment(outer);
+        // Not the declaration's own specifier, which is a string: a call in the expression that's in its place.
+        if self.f.module_specifiers.len() > specifiers + usize::from(declaration.spec.is_some()) {
+            self.note_specifiers_of_clone(specifiers);
+        }
         if self.has_failed() {
             return StmtId::NONE;
         }
@@ -990,6 +1189,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             last_has_tags: false,
             range: None,
             has_see_or_link: false,
+            has_passed_over: false,
         };
         // `GetLeadingCommentRanges`: the comments after the first line break, or after the start of the file.
         let mut is_collecting = with_trailing || full_start == 0;
@@ -1017,6 +1217,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             };
             attached.has_see_or_link |= found & flags::SEE_OR_LINK != 0;
             if !is_collecting || !is_jsdoc {
+                attached.has_passed_over |= is_jsdoc;
                 // A line comment ends with its line.
                 is_collecting |= comment.starts_with(b"//");
                 continue;
@@ -1054,6 +1255,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if self.is_too_deep() {
             return;
         }
+        let specifiers = self.f.module_specifiers.len();
         let attached = self.jsdoc_before(token, full_start, with_trailing);
         if self.f.is_js
             && let Some(comments) = attached.range
@@ -1065,9 +1267,127 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 comments,
                 first_satisfies_tag: first_satisfies_tag.map_or(u32::MAX, |tag| tag.name_pos),
             });
+            if attached.has_passed_over && !matches!(host, Host::EndOfFile) {
+                self.forget_specifiers_before(full_start, comments.pos, specifiers);
+            }
+        }
+        if self.f.module_specifiers.len() > specifiers {
+            self.keep_found_specifiers(host, token, &attached, specifiers);
         }
         if !attached.docs.is_empty() {
             self.reparse_tags(host, &attached);
+        }
+    }
+
+    /// `GetNodeAtPosition` with `includeJSDoc`, for the comments of `host`, whose first token is at `token`. The
+    /// reader's parses left the module specifiers from `from` on. The walk finds the ones in a type that the tree of a
+    /// comment keeps: jsdoc.go parses more than it keeps. Each is kept once, and the rest is dropped.
+    #[cold]
+    #[inline(never)]
+    fn keep_found_specifiers(
+        &mut self,
+        host: &Host,
+        token: u32,
+        attached: &Attached<'a>,
+        from: usize,
+    ) {
+        let mut kept: SmallVec<[KeptType; 8]> = SmallVec::new();
+        for doc in &attached.docs {
+            kept_types(&doc.tags, &mut kept);
+        }
+        // The end of the file is a token, which the walk doesn't enter.
+        if matches!(host, Host::EndOfFile) {
+            kept.retain(|it| it.is_of_statement);
+        }
+        if !kept.is_sorted_by_key(|it| it.pos) {
+            kept.shared_sort_unstable_by_key(|it| it.pos);
+        }
+        let specifiers = &mut self.f.module_specifiers;
+        let (mut end, mut last) = (from, 0);
+        for index in from..specifiers.len() {
+            let mut specifier = specifiers[index];
+            let after = kept.partition_point(|it| it.pos <= specifier.pos);
+            let Some(around) = after.checked_sub(1).map(|at| kept[at]) else {
+                continue;
+            };
+            // The reader goes back and reads a tag again.
+            let is_known = specifier.pos <= last
+                && specifiers[from..end]
+                    .iter()
+                    .any(|it| it.pos == specifier.pos);
+            if specifier.pos >= around.end || is_known {
+                continue;
+            }
+            last = last.max(specifier.pos);
+            specifier.role = match around.is_of_statement {
+                true => SpecifierRole::ImportOfStatement,
+                false => SpecifierRole::Import,
+            };
+            specifiers[end] = specifier;
+            end += 1;
+        }
+        specifiers.truncate(end);
+        if end > from && !self.jsdoc.hosts_of_found_specifiers.insert(token) {
+            self.jsdoc.has_found_specifiers_twice = true;
+        }
+    }
+
+    /// The first `JSDoc` of a node starts where the node starts, at `full_start`. So to the walk, a comment before
+    /// `first`, where this node's first comment starts, is inside that `JSDoc`. What a node inside this one found
+    /// there (it starts with the same token and has that comment) is no longer found, except in the statements that
+    /// tags made. `before` is how many module specifiers the file had before this node read its comments.
+    #[cold]
+    #[inline(never)]
+    fn forget_specifiers_before(&mut self, full_start: u32, first: u32, before: usize) {
+        let earlier = self.f.module_specifiers.iter_mut().take(before).rev();
+        // What is at or after `full_start` belongs to this node.
+        for specifier in earlier.take_while(|it| it.pos >= full_start) {
+            if specifier.pos < first && specifier.role == SpecifierRole::Import {
+                specifier.role = SpecifierRole::Neither;
+            }
+        }
+    }
+
+    /// At an `await` at the top level that is a name unless the file is a module. Before a word or a literal on the
+    /// next line, the statement ends here for the first parse, so what `reparseTopLevelAwait` parses in its place ends
+    /// elsewhere, and it reparses the statements that follow too. How far it gets isn't followed: every statement up
+    /// to the end of the file is taken as reparsed. See `note_reparsed_statement`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_await_before_line_break(&mut self) {
+        let is_before_word_on_next_line = self.look_ahead(|p| {
+            p.next();
+            let is_word_or_literal = p.token().is_identifier_or_keyword()
+                || matches!(p.token(), T::Number | T::BigInt | T::String);
+            p.newline_before() && is_word_or_literal
+        });
+        self.jsdoc.reparses_rest |= is_before_word_on_next_line;
+    }
+
+    /// `reparseTopLevelAwait`: the statement that was just parsed has an `await` that is a name unless the file is a
+    /// module. In a module it's reparsed, and the reparsed nodes have lost their comments to the walk of
+    /// `collectExternalModuleReferences`, which then only has the nodes: what a tag gave a type to. `from` is how many
+    /// module specifiers the file had before the statement.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_reparsed_statement(&mut self, from: usize) {
+        let comments = &self.lx.comments;
+        let is_in_comment = |pos: u32| {
+            let after = comments.partition_point(|comment| comment.pos <= pos);
+            after
+                .checked_sub(1)
+                .is_some_and(|at| pos < comments[at].end)
+        };
+        for specifier in self.f.module_specifiers.iter_mut().skip(from) {
+            specifier.role = match specifier.role {
+                SpecifierRole::Import | SpecifierRole::ImportOfStatement
+                    if is_in_comment(specifier.pos) =>
+                {
+                    SpecifierRole::ImportUnlessReparsed
+                }
+                SpecifierRole::Node => SpecifierRole::NodeAndImportIfReparsed,
+                role => role,
+            };
         }
     }
 
@@ -1078,7 +1398,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[inline(never)]
     pub(crate) fn end_of_file_jsdoc(&mut self, reparsed: usize) {
         let (token, full_start) = (self.f.source_len, self.full_start());
-        self.with_jsdoc(token, full_start, false, &mut Host::Other);
+        self.with_jsdoc(token, full_start, false, &mut Host::EndOfFile);
         self.list_reparsed(reparsed);
     }
 
@@ -1348,6 +1668,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if self.f.is_js {
             self.f.jsdoc_asterisks = std::mem::take(&mut self.lx.jsdoc_asterisks);
             finish_jsdoc_lists(&mut self.f, self.lx.src, &self.lx.comments);
+            if self.jsdoc.has_found_specifiers_twice {
+                forget_specifiers_found_again(&mut self.f, &self.lx.comments);
+            }
         }
     }
 }

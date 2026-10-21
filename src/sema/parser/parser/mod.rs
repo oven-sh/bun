@@ -153,7 +153,7 @@ file_lists! {
     classes, interfaces, aliases, enums, enum_members, modules, members, props, var_decls, calls,
     cases, jsx, imports, import_specs, import_equals, exports, export_specs, tuple_elems, mapped,
     modifiers, names, parens, non_null_ends, far_names, tagged_templates,
-    jsx_expressions, body_starts, specifier_uses,
+    jsx_expressions, body_starts, module_specifiers,
     decorators, modifiers_of_params, modifiers_of_stmts, modifiers_of_props, with_bodies, detached_semicolons,
     import_attributes,
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
@@ -600,9 +600,16 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
         let reparsed = self.jsdoc.reparsed.len();
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
+            let specifiers = self.f.module_specifiers.len();
             let statement = match self.recovers() {
                 true => self.top_level_statement(),
-                false => self.statement(),
+                false => {
+                    // `top_level_statement` does the same.
+                    if self.reads_jsdoc() {
+                        self.has_await_identifier = false;
+                    }
+                    self.statement()
+                }
             };
             self.take_stray_decorators(0);
             if is_an_external_module_indicator(&self.f, statement) {
@@ -612,6 +619,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             if self.reads_jsdoc() {
                 self.statement_jsdoc(statement);
                 self.list_reparsed(reparsed);
+                if (self.has_await_identifier || self.jsdoc.reparses_rest)
+                    && self.f.module_specifiers.len() > specifiers
+                {
+                    self.note_reparsed_statement(specifiers);
+                }
             }
             self.s.ids.push(statement.0);
         }
@@ -1009,19 +1021,28 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// Discards the nodes built since `since`, which don't belong anywhere in the tree. The tokens stay consumed, and
-    /// diagnostics and other records about the text are kept.
+    /// diagnostics and other records about the text are kept. A module specifier there stays one of `file.Imports()`,
+    /// and the checker has no node of it to resolve.
     #[cold]
     #[inline(never)]
     pub(crate) fn discard_nodes(&mut self, since: &Checkpoint) {
         let now = file_lens(&self.f);
         let lens = FileLens {
-            specifier_uses: now.specifier_uses,
+            module_specifiers: now.module_specifiers,
             keyword_identifier_positions: now.keyword_identifier_positions,
             diagnostics: now.diagnostics,
             after_skipped: now.after_skipped,
             ..since.file
         };
         truncate_file(&mut self.f, &lens);
+        let kept = since.file.module_specifiers as usize;
+        for specifier in self.f.module_specifiers.iter_mut().skip(kept) {
+            specifier.role = match specifier.role {
+                SpecifierRole::NodeAndImport => SpecifierRole::Import,
+                SpecifierRole::Node => SpecifierRole::Neither,
+                role => role,
+            };
+        }
         let strays = since.stacks.stray_decorators as usize;
         self.s.stray_decorators.truncate(strays);
         if self.reads_jsdoc() {

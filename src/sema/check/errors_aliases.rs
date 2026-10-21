@@ -147,8 +147,7 @@ impl Checker<'_, '_> {
     /// The position of the module specifier `spec` of the statement at `pos`.
     fn aliases_specifier_pos(&self, file: FileId, pos: u32, spec: Atom) -> Option<u32> {
         self.hir(file)
-            .specifier_uses
-            .iter()
+            .specifier_nodes()
             .filter(|u| u.spec == spec && u.pos >= pos && !u.kind.is_call())
             .map(|u| u.pos)
             .min()

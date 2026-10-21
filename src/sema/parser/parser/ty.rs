@@ -1559,11 +1559,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         self.expect(T::CloseParen);
         if argument.is_none() {
-            self.f.specifier_uses.push(SpecifierUse {
+            self.f.module_specifiers.push(SpecifierUse {
                 spec,
                 pos: spec_pos,
                 kind: SpecifierKind::ImportType,
                 mode,
+                role: SpecifierRole::NodeAndImport,
             });
         }
         let mut name = Span::EMPTY;

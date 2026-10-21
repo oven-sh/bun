@@ -14,6 +14,8 @@ use smallvec::SmallVec;
 pub(super) enum Host {
     /// Hosted tags on it are ignored.
     Other,
+    /// The same for the end of the file, which is a token and not a node.
+    EndOfFile,
     VariableStatement(Span<VarDeclId>),
     VariableDeclaration(VarDeclId),
     /// `export default e`, `export = e`

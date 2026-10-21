@@ -1566,8 +1566,9 @@ impl<'a, 's> Reader<'a, 's> {
 
     /// `parseThrowsTag`
     fn parse_throws_tag(&mut self, start: usize, margin: usize, indent_text: usize) -> TagKind<'a> {
-        self.try_parse_type_expression();
-        self.parse_unknown_tag(start, margin, indent_text)
+        let type_expression = self.try_parse_type_expression();
+        self.parse_trailing_tag_comments(start, self.scanner.full_start, margin, indent_text);
+        TagKind::Throws(type_expression)
     }
 
     /// `parseImportTag`
@@ -2177,7 +2178,8 @@ pub mod syntax {
     ///
     /// Every method takes the scanner's position and returns its position afterwards, so no
     /// position state is kept between two calls. After a call the file's lists are unchanged,
-    /// except for the parser's errors (`mark`).
+    /// except for the parser's errors (`mark`), and for the module specifiers in what jsdoc.go
+    /// keeps of a type, of type arguments and of an `@import` tag. Those have no node.
     pub trait Syntax {
         /// `nextToken`. Returns the token `Scan` finds starting at `from`, which is the current
         /// token's `TokenEnd`.
@@ -2407,6 +2409,8 @@ pub mod syntax {
         Augments(ClassName<'a>, Cow<'a, [u8]>),
         /// `@public`, `@private`, `@protected`, `@readonly`, `@override`
         Modifier(Flags),
+        /// `@throws`, `@exception`. No node gets its type.
+        Throws(Option<TypeExpr>),
         /// Any other tag.
         Other,
     }

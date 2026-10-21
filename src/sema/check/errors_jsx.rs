@@ -93,6 +93,7 @@ impl Checker<'_, '_> {
                 pos: u32::MAX,
                 kind: SpecifierKind::Import,
                 mode: self.files().module(file).default_mode,
+                role: SpecifierRole::NodeAndImport,
             };
             let (site, location) = (SpecifierSite::default(), (file, hir[first].pos, end));
             let since = self.reported.len();

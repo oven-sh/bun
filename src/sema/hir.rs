@@ -1816,6 +1816,52 @@ impl SpecifierKind {
     }
 }
 
+/// Which of typescript-go's two sets a module specifier is in. The checker resolves the module of a node of the file.
+/// `collectExternalModuleReferences` puts in `file.Imports()` what it finds in the text: the statements, and for each
+/// `import` and `require` the node at that place (`GetNodeAtPosition`). In a JavaScript file that walk looks in the JSDoc
+/// comments of a node before it looks at the children, so the two sets differ there in both directions.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SpecifierRole {
+    /// A node that the walk finds: every specifier outside JSDoc comments.
+    NodeAndImport,
+    /// A node that the walk does not get to: of a type that is parsed again for the node a tag gives it to. The walk
+    /// finds that type in the comment.
+    Node,
+    /// No node: what the walk finds in a JSDoc comment of a node, or in syntax that the tree of the file has no place for.
+    Import,
+    /// `Import`, in a `@typedef`, `@callback` or `@import` tag. The statement that the tag makes has it too, so the walk
+    /// finds it where the comment has no node that it enters.
+    ImportOfStatement,
+    /// Neither, in a JSDoc comment: the walk does not look there, or another of the list stands for this one.
+    Neither,
+    /// `Import`, in a statement that `reparseTopLevelAwait` parses again if the file is a module. The comments of what it
+    /// parses again are lost to the walk.
+    ImportUnlessReparsed,
+    /// `Node`, in such a statement. There the walk has only the nodes. It gets to some of them and not to others, which
+    /// is not told apart: each counts.
+    NodeAndImportIfReparsed,
+}
+
+impl SpecifierRole {
+    #[inline]
+    pub fn is_node(self) -> bool {
+        use SpecifierRole::*;
+        matches!(self, NodeAndImport | Node | NodeAndImportIfReparsed)
+    }
+
+    /// `is_module`: `ExternalModuleIndicator != nil`, which is what `reparseTopLevelAwait` asks.
+    #[inline]
+    pub fn is_import(self, is_module: bool) -> bool {
+        use SpecifierRole::*;
+        match self {
+            NodeAndImport | Import | ImportOfStatement => true,
+            Node | Neither => false,
+            ImportUnlessReparsed => !is_module,
+            NodeAndImportIfReparsed => is_module,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct SpecifierUse {
     pub spec: Atom,
@@ -1824,7 +1870,10 @@ pub struct SpecifierUse {
     /// `getModeForUsageLocation`: the value of `resolution-mode` where it applies, which is after `import type` and
     /// `export type`, and in the import type `import("m", { with: { .. } })`.
     pub mode: ResolutionMode,
+    pub role: SpecifierRole,
 }
+
+const _: () = assert!(std::mem::size_of::<SpecifierUse>() == 12);
 
 #[derive(Copy, Clone, Debug)]
 pub struct Import {
@@ -2387,8 +2436,9 @@ pub struct FileIn<S: Storage> {
     /// never visits: the span from the start of the expression to the start of what follows the
     /// decorators. The expressions are separate statements.
     pub stray_decorators: S::Few<(u32, u32)>,
-    /// The occurrences of module specifiers, except those of `import()`, which are expressions.
-    pub specifier_uses: S::Nodes<SpecifierUse>,
+    /// Every module specifier in the text, each with its `SpecifierRole`. The checker reads `specifier_nodes()`, the
+    /// binder and the loader read `imports()`. Not in the order of the text.
+    pub module_specifiers: S::Nodes<SpecifierUse>,
 
     /// The specifier of each `import.defer(..)`, and the position of the `)` of the call.
     pub deferred_import_calls: S::Few<(ExprId, u32)>,
@@ -2723,6 +2773,19 @@ impl<S: Storage> FileIn<S> {
         after > 0 && pos < self.jsdoc_comments[after - 1].1
     }
 
+    /// The module specifiers that are nodes: what the checker resolves.
+    pub fn specifier_nodes(&self) -> impl Iterator<Item = &SpecifierUse> {
+        self.module_specifiers.iter().filter(|u| u.role.is_node())
+    }
+
+    /// The module specifiers that `collectExternalModuleReferences` looks at. Of a statement, `collectModuleReferences`
+    /// decides whether it is one of `file.Imports()`. For the binder and the loader: `has_module_syntax` is final then.
+    pub fn imports(&self) -> impl Iterator<Item = &SpecifierUse> {
+        let is_module = self.has_module_syntax;
+        let all = self.module_specifiers.iter();
+        all.filter(move |u| u.role.is_import(is_module))
+    }
+
     /// `NodeFlagsHasJSDoc` for a node whose first token is at `token`. See `jsdoc_hosts`.
     pub fn jsdoc_host_at(&self, token: u32) -> Option<&JsDocHost> {
         let index = self
@@ -2920,7 +2983,7 @@ macro_rules! long_lists {
             import_specs,
             exports,
             export_specs,
-            specifier_uses,
+            module_specifiers,
             parens,
             jsx_expressions,
             modifiers,
@@ -2969,7 +3032,7 @@ macro_rules! file_in_arena {
             modifiers_of_props: $few!($this.modifiers_of_props),
             unclosed_literals: $few!($this.unclosed_literals),
             stray_decorators: $few!($this.stray_decorators),
-            specifier_uses: $long!($this.specifier_uses),
+            module_specifiers: $long!($this.module_specifiers),
             deferred_import_calls: $few!($this.deferred_import_calls),
             import_call_type_args: $few!($this.import_call_type_args),
             import_attributes: $few!($this.import_attributes),

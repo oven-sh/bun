@@ -2642,7 +2642,7 @@ fn referenced_lib(host: &dyn Host, options: &Options, reference_text: &[u8]) -> 
 /// found one more time for each such word in its specifier, or in a comment inside or before it.
 fn dynamic_imports<'a>(hir: &'a hir::File) -> Vec<&'a SpecifierUse> {
     let text = &hir.text[..];
-    let uses = hir.specifier_uses.iter().filter(|u| u.kind.is_dynamic());
+    let uses = hir.imports().filter(|u| u.kind.is_dynamic());
     let mut uses: Vec<&SpecifierUse> = uses.collect();
     uses.shared_sort_by_key(|u| u.pos);
     let words = find_import_or_require(text);
@@ -2654,7 +2654,15 @@ fn dynamic_imports<'a>(hir: &'a hir::File) -> Vec<&'a SpecifierUse> {
         if text.get(open) != Some(&b'(') {
             continue;
         }
-        let specifier = skip_trivia(text, open + 1);
+        let mut specifier = skip_trivia(text, open + 1);
+        // In a type of a JSDoc comment, the `*` at the start of a line is trivia.
+        if hir
+            .jsdoc_asterisks
+            .binary_search(&(specifier as u32))
+            .is_ok()
+        {
+            specifier = skip_trivia(text, specifier + 1);
+        }
         let Ok(u) = uses.binary_search_by_key(&(specifier as u32), |u| u.pos) else {
             continue;
         };
@@ -2727,8 +2735,17 @@ fn module_references(hir: &hir::File) -> Vec<(u32, u32, bool)> {
     references
 }
 
-/// True if `u` is one of `file.Imports()`. `visited`: the `module_references` of the file.
-fn is_among_imports(visited: &[(u32, u32, bool)], atoms: &Interner, u: &SpecifierUse) -> bool {
+/// True if `u` is one of `file.Imports()`. `visited`: the `module_references` of the file. `is_module`:
+/// `hir::File::has_module_syntax`.
+fn is_among_imports(
+    visited: &[(u32, u32, bool)],
+    atoms: &Interner,
+    is_module: bool,
+    u: &SpecifierUse,
+) -> bool {
+    if !u.role.is_import(is_module) {
+        return false;
+    }
     // `ForEachDynamicImportOrRequireCall` looks at the whole text.
     if u.kind.is_dynamic() {
         return u.spec.is_some();
@@ -3557,9 +3574,9 @@ impl Included<'_, '_> {
             specifiers.push((atoms.intern(&runtime), module.default_mode, 1397, 0, 0));
         }
         // `file.Imports()`: the specifiers of statements, then those of `import()`, the call and the type.
-        let mut uses = hir.specifier_uses.to_vec();
+        let mut uses = hir.module_specifiers.to_vec();
         let visited = module_references(hir);
-        uses.retain(|u| is_among_imports(&visited, atoms, u));
+        uses.retain(|u| is_among_imports(&visited, atoms, hir.has_module_syntax, u));
         uses.shared_sort_by_key(|u| (u.kind.is_dynamic(), u.pos));
         let calls = (uses.iter().any(|u| u.kind.is_call())).then(|| ExprsByKind::new(hir));
         for u in &uses {
@@ -3567,7 +3584,9 @@ impl Included<'_, '_> {
             let end = end_of_string_literal(text, u.pos);
             let times = calls.as_ref().filter(|_| u.kind.is_call());
             let times = times.map_or(1, |calls| times_among_imports(hir, calls, text, u));
-            specifiers.extend(std::iter::repeat_n((u.spec, mode, 1393, u.pos, end), times));
+            // `SkipTrivia(text, node.Pos())`
+            let start = hir.skip_trivia_of_node_at(u.pos);
+            specifiers.extend(std::iter::repeat_n((u.spec, mode, 1393, start, end), times));
         }
         for (spec, mode, code, start, end) in specifiers {
             let Some(&target) = module.imports.get(&(spec, mode)) else {
@@ -6358,11 +6377,12 @@ impl<'s> Files<'s> {
         let implied_format =
             implied_node_format_for_emit(program_resolver, path, is_lib, options.module);
         let default_mode = options.default_mode(implied_format);
-        let visited = match hir.specifier_uses.is_empty() {
+        let visited = match hir.module_specifiers.is_empty() {
             true => Vec::new(),
             false => module_references(hir),
         };
-        let is_import = |u: &SpecifierUse| is_among_imports(&visited, atoms, u);
+        let is_module = hir.has_module_syntax;
+        let is_import = |u: &SpecifierUse| is_among_imports(&visited, atoms, is_module, u);
         let mut extensionless_imports = Vec::new();
         // `moduleNames`, each with the mode it is resolved in, and whether it is a synthetic import
         // or one of `file.Imports()`: a module augmentation adds no file to the program.
@@ -6390,7 +6410,8 @@ impl<'s> Files<'s> {
             if let Some((_, runtime)) = &runtime {
                 trace(runtime, default_mode);
             }
-            let statements = hir.specifier_uses.iter().filter(|u| !u.kind.is_dynamic());
+            let statements = hir.module_specifiers.iter();
+            let statements = statements.filter(|u| !u.kind.is_dynamic());
             let mut statements: Vec<&SpecifierUse> = statements.collect();
             statements.shared_sort_by_key(|u| u.pos);
             let uses = statements.into_iter().chain(dynamic_imports(hir));
@@ -6443,9 +6464,9 @@ impl<'s> Files<'s> {
         // The specifiers of statements come before those of `import()`, the call and the type.
         const AFTER_IMPORTS: (bool, u32) = (true, u32::MAX);
         let mut keyed_names: Vec<((bool, u32), (Atom, ResolutionMode, bool))> = Vec::new();
-        // Groups the uses by specifier, each group in the order of `specifier_uses`. A barrel file has thousands of
+        // Groups the uses by specifier, each group in the order of `module_specifiers`. A barrel file has thousands of
         // specifiers, so a scan of all uses for each one is quadratic.
-        let uses = hir.specifier_uses.iter().enumerate();
+        let uses = hir.module_specifiers.iter().enumerate();
         let mut uses_by_specifier: Vec<(u32, u32)> =
             uses.map(|(at, u)| (u.spec.0, at as u32)).collect();
         uses_by_specifier.shared_sort_unstable();
@@ -6453,7 +6474,7 @@ impl<'s> Files<'s> {
             let from = uses_by_specifier.partition_point(|it| it.0 < spec.0);
             let group = uses_by_specifier[from..].iter();
             let group = group.take_while(move |it| it.0 == spec.0);
-            group.map(|it| &hir.specifier_uses[it.1 as usize])
+            group.map(|it| &hir.module_specifiers[it.1 as usize])
         };
         // `collectModuleReferences`: of the imports in the body of a `declare module "m"` in a
         // script, only non-relative specifiers are resolved.
@@ -6579,7 +6600,7 @@ impl<'s> Files<'s> {
             };
             let unsupported_extension = unsupported_extension.map(|code| {
                 let mode_of = |u: &SpecifierUse| mode_for_usage_location(options, default_mode, u);
-                let uses = hir.specifier_uses.iter();
+                let uses = hir.imports();
                 let uses = uses.filter(|u| u.spec == spec && mode_of(u) == mode);
                 let first = uses.min_by_key(|u| u.pos);
                 let span = first.map(|u| (u.pos, end_of_string_literal(&hir.text, u.pos)));

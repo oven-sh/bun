@@ -91,13 +91,14 @@ impl Checker<'_, '_> {
         self.check_flow_too_deep(file);
         let module = self.files().module(file);
         let sorted;
-        let has_calls = hir.specifier_uses.iter().any(|u| u.kind.is_call());
-        let uses: &[SpecifierUse] = if !has_calls && hir.specifier_uses.is_sorted_by_key(|u| u.pos)
-        {
-            &hir.specifier_uses
+        // The nodes that aren't arguments of calls, in the order of the text.
+        let is_one = |u: &SpecifierUse| u.role.is_node() && !u.kind.is_call();
+        let all = &hir.module_specifiers[..];
+        let uses: &[SpecifierUse] = if all.iter().all(is_one) && all.is_sorted_by_key(|u| u.pos) {
+            all
         } else {
-            let mut uses = hir.specifier_uses.to_vec();
-            uses.retain(|u| !u.kind.is_call());
+            let mut uses = all.to_vec();
+            uses.retain(is_one);
             uses.shared_sort_unstable_by_key(|u| u.pos);
             sorted = uses;
             &sorted
@@ -476,6 +477,7 @@ impl Checker<'_, '_> {
             pos: start,
             kind: SpecifierKind::Import,
             mode: ResolutionMode::None,
+            role: SpecifierRole::NodeAndImport,
         };
         let site = SpecifierSite {
             is_ambient: true,
@@ -693,7 +695,7 @@ impl Checker<'_, '_> {
         };
         let start = hir[s].start;
         let is_written = |u: &&SpecifierUse| u.spec == spec && u.pos >= start && !u.kind.is_call();
-        let uses = hir.specifier_uses.iter().filter(is_written);
+        let uses = hir.specifier_nodes().filter(is_written);
         if let Decl::ExportSpec(specifier) = decl
             && !hir[hir[specifier].export].has_module_specifier
         {
@@ -1722,7 +1724,7 @@ impl Checker<'_, '_> {
         file: FileId,
         specifier_use: SpecifierUse,
     ) -> bool {
-        let later = self.hir(file).specifier_uses.iter().map(|u| u.pos);
+        let later = self.hir(file).module_specifiers.iter().map(|u| u.pos);
         let within = TextRange {
             pos: specifier_use.pos,
             end: later

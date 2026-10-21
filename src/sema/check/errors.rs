@@ -504,7 +504,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let is_ambient = hir.kind == FileKind::Declaration;
         // `getTypeFromImportTypeNode`
-        for &specifier_use in &hir.specifier_uses {
+        for &specifier_use in hir.specifier_nodes() {
             if specifier_use.kind == SpecifierKind::ImportType {
                 let site = SpecifierSite {
                     is_ambient,
@@ -533,6 +533,7 @@ impl Checker<'_, '_> {
                     pos: hir[argument].pos,
                     kind: SpecifierKind::ImportCall,
                     mode: ResolutionMode::None,
+                    role: SpecifierRole::NodeAndImport,
                 };
                 let site = SpecifierSite {
                     is_emittable: true,
@@ -592,6 +593,7 @@ impl Checker<'_, '_> {
             pos: self.hir(file)[argument].pos,
             kind: SpecifierKind::RequireCall,
             mode: self.require_resolution_mode(file, spec),
+            role: SpecifierRole::NodeAndImport,
         };
         self.resolve_external_module(file, specifier_use, SpecifierSite::default())
     }

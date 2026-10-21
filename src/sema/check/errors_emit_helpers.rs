@@ -218,6 +218,7 @@ impl Checker<'_, '_> {
             pos: u32::MAX,
             kind: SpecifierKind::Import,
             mode,
+            role: SpecifierRole::NodeAndImport,
         };
         let error_node = (file, request.start, request.end);
         let site = SpecifierSite::default();

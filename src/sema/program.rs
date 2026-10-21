@@ -196,8 +196,7 @@ pub struct Module<'s> {
     pub extensionless_imports: ArenaFew<'s, (Atom, Option<&'static [u8]>)>,
     /// `ResolvedFileName` for the `imports` that resolve to a different file than the one in the
     /// program: a duplicate of a package file (the program has the copy that's kept) or a source of
-    /// a referenced project (the program has its declaration file). Also for the `imports` whose
-    /// `ResolvedFileName` isn't normalized.
+    /// a referenced project (the program has its declaration file).
     pub redirected_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom)>,
     /// The `imports` that resolve to a referenced project's declaration file, for which the source is loaded instead.
     pub project_reference_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
@@ -1205,9 +1204,9 @@ impl PackageJsonInfoCache {
                 6240 => 6096,
                 _ => continue,
             };
-            // A candidate in a type root isn't normalized.
-            let normalized = join(b"/", &trace.args[0]);
-            let path = to_path(&normalized, host.is_case_sensitive());
+            // From the displayed path to the checker's format.
+            let package_json = join(b"/", &trace.args[0]);
+            let path = to_path(&package_json, host.is_case_sensitive());
             if self.cached.insert(path.into_owned()) {
                 trace.code = first;
             }
@@ -6531,7 +6530,7 @@ impl<'s> Files<'s> {
         let (mut arbitrary_extension_imports, mut arbitrary_extension_files) =
             (Vec::new(), Vec::new());
         let (mut ts_extension_imports, mut project_reference_imports) = (Vec::new(), Vec::new());
-        let (mut unbuilt_imports, mut redirected_imports) = (Vec::new(), Vec::new());
+        let mut unbuilt_imports = Vec::new();
         for (spec, mode, is_import) in module_names {
             let text = atoms.bytes(spec);
             if text.is_empty() {
@@ -6541,9 +6540,6 @@ impl<'s> Files<'s> {
                 continue;
             };
             let (key, found) = ((spec, mode), resolved.file_name);
-            if resolved.resolved_file_name != found {
-                redirected_imports.push((spec, mode, atoms.intern(resolved.resolved_file_name)));
-            }
             if let Some(id) = resolved.package_id {
                 let package = (atoms.intern(id.name), found.ends_with(b".d.ts"));
                 if !resolved_packages.contains(&package) {
@@ -6574,7 +6570,7 @@ impl<'s> Files<'s> {
                 Some(7042) => json_imports.push((spec, mode, atoms.intern(found))),
                 Some(6263) => {
                     arbitrary_extension_imports.push(key);
-                    arbitrary_extension_files.push(atoms.intern(resolved.resolved_file_name));
+                    arbitrary_extension_files.push(atoms.intern(found));
                 }
                 _ => {}
             }
@@ -6745,7 +6741,7 @@ impl<'s> Files<'s> {
                 .package_json_directory(path)
                 .map_or(Atom::NONE, |directory| atoms.intern(directory)),
             edges: &[],
-            redirected_imports: few_in(redirected_imports, arena),
+            redirected_imports: few_in(Vec::new(), arena),
             project_reference_imports: few_in(project_reference_imports, arena),
             unbuilt_imports: few_in(unbuilt_imports, arena),
             project_reference_source: Atom::NONE,

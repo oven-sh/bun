@@ -25,7 +25,7 @@ use crate::resolve::{
     equate_string_case_insensitive, get_base_file_name, get_declaration_file_extension,
     get_relative_path_from_directory, get_root_length, has_ts_implementation_extension, inside,
     is_declaration_file_name, is_relative, is_rooted_disk_path, join, known_extension,
-    node_module_path_parts, normalize_path, object_kind, path_is_relative, remove_file_extension,
+    node_module_path_parts, object_kind, path_is_relative, remove_file_extension,
 };
 use crate::util::SharedSort;
 use bstr::ByteSlice;
@@ -6996,7 +6996,7 @@ impl<'p, 's> Checker<'p, 's> {
         Some(output_dts.to_vec())
     }
 
-    /// `ResolvedFileName` of an import of `importing`, normalized.
+    /// `ResolvedFileName` of an import of `importing`.
     fn resolved_file_name_of_import(
         &self,
         importing: FileId,
@@ -7007,7 +7007,7 @@ impl<'p, 's> Checker<'p, 's> {
         let importer = files.module(importing);
         let mut redirected = importer.redirected_imports.iter();
         if let Some(&(_, _, name)) = redirected.find(|it| it.0 == specifier && it.1 == mode) {
-            return normalize_path(self.atoms().bytes(name).to_vec());
+            return self.atoms().bytes(name).to_vec();
         }
         let path = files
             .module(importer.imports[&(specifier, mode)])

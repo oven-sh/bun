@@ -1529,29 +1529,6 @@ pub(crate) fn get_path_components(path: &[u8]) -> SmallVec<[&[u8]; 8]> {
     components
 }
 
-/// The path that the file system resolves `path` to. It follows `.`, `..` and empty names, which never appear in a
-/// directory listing. Returns `None` if `path` is already absolute and normalized.
-fn normalized_for_lookup(path: &[u8]) -> Option<Vec<u8>> {
-    let names = &path[get_root_length(path)..];
-    let is_normalized = path.starts_with(b"/")
-        && (names.is_empty()
-            || !strings::split(names, b"/").any(|it| matches!(it, b"" | b"." | b".."))
-            // In the checker's format a URL's root has a `/` before it.
-            || get_encoded_root_length(&path[1..]) < 0);
-    (!is_normalized).then(|| join(b"/", path))
-}
-
-/// `NormalizePath` of an absolute path, which keeps a separator at the end.
-pub(crate) fn normalize_path(path: Vec<u8>) -> Vec<u8> {
-    let Some(mut normalized) = normalized_for_lookup(strings::without_trailing_slash(&path)) else {
-        return path;
-    };
-    if path.ends_with(b"/") && !normalized.ends_with(b"/") {
-        normalized.push(b'/');
-    }
-    normalized
-}
-
 /// `nativepath.IsNetworkPath`, for a path in TypeScript's format.
 pub fn is_network_path(path: &[u8]) -> bool {
     let is_separator = |c: &u8| matches!(c, b'/' | b'\\');
@@ -1963,9 +1940,6 @@ impl PackageId<'_> {
 #[derive(Copy, Clone, Debug)]
 pub struct ResolvedModule<'h> {
     /// `ResolvedFileName`. For a declaration file of a referenced project, the source it is emitted from.
-    /// It isn't normalized if it was found in a type root.
-    pub resolved_file_name: &'h [u8],
-    /// `parseTask.normalizedFilePath` of the task for it: its name in the program.
     pub file_name: &'h [u8],
     pub using_ts_extension: bool,
     /// `Extension` is one that requires `allowArbitraryExtensions` (`GetResolutionDiagnostic`).
@@ -2452,8 +2426,7 @@ impl<'h> Resolver<'h> {
 
     /// `realPath`
     fn real_path(&self, path: &[u8], look: Look) -> Vec<u8> {
-        let normalized = normalized_for_lookup(path);
-        let real = self.host.realpath(normalized.as_deref().unwrap_or(path));
+        let real = self.host.realpath(path);
         look.trace(6130, &[Arg::Path(path), Arg::Path(&real)]);
         real
     }
@@ -2463,11 +2436,8 @@ impl<'h> Resolver<'h> {
         let real = self.real_path(file_name, look);
         // `ComparePaths`. A real path that differs only in case doesn't count: the name stays as
         // written, which the program reports.
-        let is_real = |name: &[u8]| is_same_path(&real, name, self.host.is_case_sensitive());
-        if is_real(file_name) || normalized_for_lookup(file_name).is_some_and(|it| is_real(&it)) {
-            return None;
-        }
-        Some(real)
+        let is_real = is_same_path(&real, file_name, self.host.is_case_sensitive());
+        (!is_real).then_some(real)
     }
 
     /// Returns the real path of `found`. `found` itself becomes `resolved.originalPath`.
@@ -2596,9 +2566,6 @@ impl<'h> Resolver<'h> {
         if let Some(&known) = self.caches.dirs.get_ref(path) {
             return known;
         }
-        if let Some(normalized) = normalized_for_lookup(path) {
-            return self.is_dir(&normalized);
-        }
         // `projectReferenceDtsFakingVfs.DirectoryExists`
         let result = self.host.is_dir(path)
             || (!self.options.referenced_outputs.is_empty()
@@ -2613,9 +2580,6 @@ impl<'h> Resolver<'h> {
         if let Some(&known) = self.caches.files.get_ref(path) {
             return known;
         }
-        if let Some(normalized) = normalized_for_lookup(path) {
-            return self.is_file(&normalized);
-        }
         // Most misses are in directories that don't exist.
         let result = self.is_dir(dirname::<Posix>(path)) && self.host.is_file(path);
         *self.caches.files.insert_ref(self.keep(path), result)
@@ -2625,10 +2589,6 @@ impl<'h> Resolver<'h> {
         let dir = strings::without_trailing_slash(dir);
         if let Some(known) = self.caches.packages.get_ref(dir) {
             return known.as_ref();
-        }
-        // `packageJsonInfoCache` has `tspath.Path` as its key.
-        if let Some(normalized) = normalized_for_lookup(dir) {
-            return self.package(&normalized);
         }
         let path = inside(dir, b"package.json");
         // `getPackageJsonInfo`: a file that can't be read or parsed is a package without fields.
@@ -2740,16 +2700,9 @@ impl<'h> Resolver<'h> {
             // would first bring it up to date with the source.
             let source = self.source_of_project_reference_redirect(&path);
             let is_project_reference_redirect = source.is_some();
-            let resolved_file_name = self.keep(&source.unwrap_or(path));
-            // `parseTask.addSubTask`: the program has a file under its normalized name.
-            let file_name = match normalized_for_lookup(resolved_file_name) {
-                Some(normalized) => self.keep(&normalized),
-                None => resolved_file_name,
-            };
             ResolvedModule {
                 is_project_reference_redirect,
-                resolved_file_name,
-                file_name,
+                file_name: self.keep(&source.unwrap_or(path)),
                 using_ts_extension: outcome.using_ts_extension.get(),
                 has_arbitrary_extension: outcome.arbitrary_extension.get(),
                 is_external_library_import: outcome.is_external.get(),
@@ -2799,7 +2752,11 @@ impl<'h> Resolver<'h> {
         });
         Some(PackageId {
             name,
-            sub_module_name: self.keep(found.get(directory.len() + 1..).unwrap_or_default()),
+            sub_module_name: self.keep(
+                (found.strip_prefix(&directory[..]))
+                    .and_then(|rest| rest.strip_prefix(b"/"))
+                    .unwrap_or_default(),
+            ),
             version,
             peer_dependencies,
         })
@@ -3198,15 +3155,16 @@ impl<'h> Resolver<'h> {
         };
         look.trace(6281, &[]);
         let real = self.real_path(directory, look);
-        let Some(at) = strings::last_index_of(&real, b"/node_modules") else {
+        let mut containing = ancestors(&real);
+        let Some(node_modules) = containing.find(|it| get_base_file_name(it) == b"node_modules")
+        else {
             return Vec::new();
         };
-        let node_modules = &real[..at + b"/node_modules".len()];
         let mut names: Vec<&[u8]> = peers.iter().map(|peer| peer.0.as_slice()).collect();
         names.shared_sort_unstable();
         let mut found = Vec::new();
         for name in names {
-            let Some(peer) = self.get_package_json_info(&inside(node_modules, name), look) else {
+            let Some(peer) = self.get_package_json_info(&join(node_modules, name), look) else {
                 look.trace(6283, &[Arg::Bytes(name)]);
                 continue;
             };
@@ -3260,7 +3218,7 @@ impl<'h> Resolver<'h> {
         let found = primary.or_else(|| {
             // Then like a module, from the location of the reference. An entry of `types` is only
             // looked up in `typeRoots`.
-            if from_config && from.ends_with(INFERRED_TYPES_CONTAINING_FILE) {
+            if from_config && get_base_file_name(from) == INFERRED_TYPES_CONTAINING_FILE {
                 look.trace(6265, &[]);
                 return None;
             }
@@ -3295,9 +3253,7 @@ impl<'h> Resolver<'h> {
                 None => look.trace(6119, &[name, found, primary]),
             }
         }
-        // `parseTask.addSubTask`: the program has a file under its normalized name.
-        let found = source.unwrap_or_else(|| normalize_path(found));
-        Some((found, is_external, package_id))
+        Some((source.unwrap_or(found), is_external, package_id))
     }
 
     /// The type-root search of `resolveTypeReferenceDirective` and `resolveFromTypeRoot`. Finds a
@@ -3310,28 +3266,31 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Option<Vec<u8>> {
         for root in roots {
-            // `getCandidateFromTypeRoot`. The candidate isn't normalized, and neither is what's found there.
+            // `getCandidateFromTypeRoot`
             let candidate = if root.ends_with(b"/node_modules/@types") {
-                combine_paths(root, &look.mangle_scoped_package_name(name))
+                resolve_path(root, &look.mangle_scoped_package_name(name))
             } else {
-                combine_paths(root, name)
+                resolve_path(root, name)
             };
             if !self.is_dir(root) {
                 look.trace(6148, &[Arg::Path(root)]);
                 continue;
             }
-            if from_config && let Some(found) = self.file(&candidate, look) {
-                let normalized = normalized_for_lookup(&found);
-                let path = normalized.as_deref().unwrap_or(&found);
-                if let Some(directory) = parse_node_module_from_path(path) {
+            // A name with a separator at its end can only be a directory.
+            if from_config
+                && !candidate.ends_with(b"/")
+                && let Some(found) = self.file(&candidate, look)
+            {
+                if let Some(directory) = parse_node_module_from_path(&found) {
                     let package = self.get_package_json_info(directory, look);
                     self.get_package_id(&found, directory, package, look);
                 }
                 return Some(found);
             }
             // In a directory that doesn't exist, `loadNodeModuleFromDirectory` finds nothing and logs nothing.
-            if self.is_dir(&candidate)
-                && let Some(found) = self.package_entry(&candidate, look)
+            let directory = strings::without_trailing_slash(&candidate);
+            if self.is_dir(directory)
+                && let Some(found) = self.package_entry(directory, look)
             {
                 return Some(found);
             }
@@ -3418,10 +3377,7 @@ impl<'h> Resolver<'h> {
         }
         look.trace(6110, &[]);
         for root in roots.iter().filter(|root| root.as_slice() != matched) {
-            let candidate = match suffix {
-                b"" => root.clone(),
-                _ => inside(root, suffix),
-            };
+            let candidate = inside(root, suffix);
             look.trace(
                 6109,
                 &[Arg::Bytes(suffix), Arg::Path(root), Arg::Path(&candidate)],
@@ -3538,6 +3494,9 @@ impl<'h> Resolver<'h> {
     /// `tryFile`: `path`, if it is a file. With `moduleSuffixes`, the first existing file among
     /// `path` with each suffix inserted before its extension.
     fn try_file(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
+        if path.ends_with(b"/") {
+            return None;
+        }
         // `tryFileLookup`
         let lookup = |path: &[u8]| {
             let exists =
@@ -3571,8 +3530,6 @@ impl<'h> Resolver<'h> {
         {
             return None;
         }
-        let normalized = normalized_for_lookup(path);
-        let path = normalized.as_deref().unwrap_or(path);
         self.file_exists_if_project_reference_dts(path).or_else(|| {
             // `fileOrDirectoryExistsUsingSource`
             let real = self.path_through_linked_package(path)?;
@@ -3655,9 +3612,10 @@ impl<'h> Resolver<'h> {
             .find_map(|e| self.try_file(&[stem, *e].concat(), look))
     }
 
-    /// `loadModuleFromFile`: the file that `path` maps to through its own extension, or else `path`
-    /// with an extension added.
-    fn file(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
+    /// `loadModuleFromFile`: the file that `candidate` maps to through its own extension, or else `candidate`
+    /// with an extension added. A separator at its end only shows in the log.
+    fn file(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {
+        let path = strings::without_trailing_slash(candidate);
         if look.as_require {
             let named = |path: Vec<u8>| self.is_file(&path).then_some(path);
             let extensions = look.outcome.require_extensions.iter();
@@ -3670,7 +3628,7 @@ impl<'h> Resolver<'h> {
                 .or_else(|| aliased.find_map(named))
                 .or_else(|| extended.find_map(named));
         }
-        if let Some(found) = self.load_module_from_file_no_implicit_extensions(path, look) {
+        if let Some(found) = self.load_module_from_file_no_implicit_extensions(candidate, look) {
             return Some(found);
         }
         // Under Node's rules for `import` no extension is added.
@@ -3684,19 +3642,18 @@ impl<'h> Resolver<'h> {
     /// extensions it maps to are tried in its place.
     fn load_module_from_file_no_implicit_extensions(
         &self,
-        path: &[u8],
+        candidate: &[u8],
         look: Look,
     ) -> Option<Vec<u8>> {
-        // `GetBaseFileName` ignores a trailing separator.
-        let name = path.strip_suffix(b"/").unwrap_or(path);
-        let base = strings::last_index_of_char(name, b'/').map_or(0, |i| i + 1);
-        let dot = base + strings::last_index_of_char(&name[base..], b'.')?;
+        let path = strings::without_trailing_slash(candidate);
+        let base = strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1);
+        let dot = base + strings::last_index_of_char(&path[base..], b'.')?;
         // `RemoveFileExtension`: `.d.ts` is removed as a whole.
         let extension = SUPPORTED_DECLARATION_EXTENSIONS
             .into_iter()
             .find(|e| path.ends_with(e))
             .unwrap_or_else(|| &path[dot..]);
-        look.trace(6132, &[Arg::Path(path), Arg::Bytes(extension)]);
+        look.trace(6132, &[Arg::Path(candidate), Arg::Bytes(extension)]);
         self.with_extensions(&path[..path.len() - extension.len()], extension, look)
     }
 
@@ -3783,11 +3740,13 @@ impl<'h> Resolver<'h> {
         if look.as_require {
             return self.file_or_directory(path, look);
         }
+        if path.ends_with(b"/") {
+            return None;
+        }
         let is_declaration = is_declaration_file_name(path);
         let is_implementation = !is_declaration && has_ts_implementation_extension(path);
         if look.typescript && is_implementation || look.declarations && is_declaration {
             let found = self.try_file(path, look)?;
-            // `None` if a separator follows the name.
             let extension = try_extract_ts_extension(&found);
             // A trailing `*` matches a part of the specifier that includes the extension.
             look.outcome
@@ -3858,9 +3817,6 @@ impl<'h> Resolver<'h> {
             b"index"
         };
         if let Some(package) = package {
-            // Whatever is combined with `candidate` here is normalized afterwards.
-            let normalized = normalized_for_lookup(candidate);
-            let dir = normalized.as_deref().unwrap_or(candidate);
             let version_paths = get_version_paths(&package.json, look);
             // `getPackageFile`: only the first of these fields that has a value.
             let fields: &[&[u8]] = match (is_package_dir, look.declarations) {
@@ -3869,8 +3825,9 @@ impl<'h> Resolver<'h> {
                 (true, true) => &[b"typings", b"types", b"main"],
                 (true, false) => &[b"main"],
             };
-            let entry = (fields.iter())
-                .find_map(|field| get_package_json_path_field(&package.json, field, dir, look));
+            let entry = (fields.iter()).find_map(|field| {
+                get_package_json_path_field(&package.json, field, candidate, look)
+            });
             let package_file = entry.as_deref().unwrap_or(b"");
             let inner = Look {
                 // An entry named by a package that is not `"type": "module"` may omit its
@@ -3896,17 +3853,18 @@ impl<'h> Resolver<'h> {
             // if there's no entry. The comparison uses the zero `ComparePathsOptions`, so it
             // ignores case on every file system.
             if let Some(paths) = version_paths
-                && (entry.as_ref()).is_none_or(|entry| contains_path(dir, entry, false))
+                && (entry.as_ref()).is_none_or(|entry| contains_path(candidate, entry, false))
             {
                 // `GetRelativePathFromDirectory`
                 let module_name = match &entry {
                     Some(entry) => get_path_components(entry)
-                        .get(get_path_components(dir).len()..)
+                        .get(get_path_components(candidate).len()..)
                         .unwrap_or_default()
                         .join(&b"/"[..]),
                     None => index.to_vec(),
                 };
-                let found = self.through_types_versions(paths, dir, &module_name, &load, look);
+                let found =
+                    self.through_types_versions(paths, candidate, &module_name, &load, look);
                 if found.is_some() {
                     return found;
                 }
@@ -3980,14 +3938,14 @@ impl<'h> Resolver<'h> {
     /// `loadModuleFromSpecificNodeModulesDirectory`: `spec` in `modules`, which is a `node_modules`
     /// or the `@types` in one.
     fn in_modules(&self, modules: &[u8], spec: &[u8], look: Look) -> Found {
-        // `RemoveTrailingDirectorySeparator(NormalizePath(..))`
-        let candidate = join(modules, spec);
+        let candidate = resolve_path(modules, spec);
+        let candidate_directory = strings::without_trailing_slash(&candidate);
         let (name, rest) = split_package_name(spec);
         // Without `rest`, `packageInfo` is the `package.json` in `candidate`.
         let package_dir = if name.is_empty() || rest.is_empty() {
-            candidate.clone()
+            candidate_directory.to_vec()
         } else {
-            inside(modules, name)
+            join(modules, name)
         };
         if look.resolve_package_directory_only {
             return match self.is_dir(&package_dir) {
@@ -4008,7 +3966,7 @@ impl<'h> Resolver<'h> {
         let mut is_package_logged = !is_traced;
         if !rest.is_empty()
             && (exports.is_none() || is_traced)
-            && let Some(nested) = self.get_package_json_info(&candidate, look)
+            && let Some(nested) = self.get_package_json_info(candidate_directory, look)
         {
             if is_traced && respects_exports {
                 is_package_logged = self.get_package_json_info(&package_dir, look).is_some();
@@ -4019,8 +3977,9 @@ impl<'h> Resolver<'h> {
                 if !is_directory && let Some(found) = self.file(&candidate, look) {
                     return Found::File(found);
                 }
-                if let Some(found) = self.directory_entry(&candidate, Some(nested), true, look) {
-                    self.get_package_id(&found, &candidate, Some(nested), look);
+                let nested = Some(nested);
+                if let Some(found) = self.directory_entry(candidate_directory, nested, true, look) {
+                    self.get_package_id(&found, candidate_directory, nested, look);
                     return Found::File(found);
                 }
             }
@@ -4342,17 +4301,11 @@ impl<'h> Resolver<'h> {
                     6404,
                     &[Arg::Bytes(field), Arg::Bytes(key), Arg::Bytes(&filled)],
                 );
-                // `strings.ReplaceAll(resolvedTarget, "*", subpath)`: a `*` in the directory of the
-                // package is replaced too.
-                let named = if is_pattern && strings::contains_char(package_dir, b'*') {
-                    let resolved_target = inside(package_dir, target_string);
-                    join(
-                        b"/",
-                        &strings::replace_owned(&resolved_target, b"*", subpath),
-                    )
-                } else {
-                    join(package_dir, &filled)
-                };
+                let named = resolve_path(package_dir, &filled);
+                // A separator at the end: a directory, which is no file.
+                if named.ends_with(b"/") {
+                    return Found::No;
+                }
                 let input = self.input_file_for(&named, subpath, package_dir, is_imports, look);
                 let found = match input {
                     Found::No => Found::of(self.named_file(&named, target_string, look)),
@@ -4845,9 +4798,8 @@ fn match_pattern<'a>(pattern: &[u8], text: &'a [u8]) -> Option<&'a [u8]> {
     None
 }
 
-/// `ParseNodeModuleFromPath`: the directory of the package that the file at `path` is in. For a file directly in a
-/// scope's directory, that's the scope's directory. For a file directly in `node_modules`, it's `node_modules/` with
-/// the slash, which costs `SubModuleName` its first letter.
+/// `NodeModulePackageRootForFile`: the directory of the package that the file at `path` is in. For a file directly in a
+/// scope's directory, that's the scope's directory. For a file directly in `node_modules`, it's `node_modules`.
 fn parse_node_module_from_path(path: &[u8]) -> Option<&[u8]> {
     let marker = b"/node_modules/";
     let at = strings::last_index_of(path, marker)? + marker.len();
@@ -4860,7 +4812,7 @@ fn parse_node_module_from_path(path: &[u8]) -> Option<&[u8]> {
     if path.get(at) == Some(&b'@') {
         end = next(end);
     }
-    Some(&path[..end])
+    Some(strings::without_trailing_slash(&path[..end]))
 }
 
 /// `@scope/name/sub/path` is (`@scope/name`, `sub/path`).

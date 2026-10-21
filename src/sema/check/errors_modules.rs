@@ -29,7 +29,7 @@
 
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, SymbolId};
-use crate::resolve::{ModuleKind, is_relative, normalize_path};
+use crate::resolve::{ModuleKind, is_relative};
 use crate::util::SharedSort;
 use bun_collections::ArrayHashMap;
 
@@ -1091,8 +1091,7 @@ impl Checker<'_, '_> {
             .position(|&u| u == (spec, mode))
             .and_then(|index| {
                 let resolved_file_name = importing.arbitrary_extension_files[index];
-                let resolved_file_name = self.atoms().bytes(resolved_file_name).to_vec();
-                files.by_path.get(&normalize_path(resolved_file_name))
+                files.by_path.get(self.atoms().bytes(resolved_file_name))
             });
         match source_file {
             Some(source_file) if files.module(source_file).is_module() => {

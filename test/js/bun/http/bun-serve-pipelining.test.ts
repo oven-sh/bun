@@ -202,7 +202,8 @@ const plainResponse = (req: Request) => new Response(`body of ${new URL(req.url)
 // A node:net or node:tls client, for the tests that look at how the stream ends:
 // with the server's FIN (`ended`) or with an error such as ECONNRESET. With
 // `allowHalfOpen` the client does not answer the server's FIN with its own, so
-// a lingering close stays open until the test ends the socket.
+// a lingering close stays open until the test ends the socket. Bind it with
+// `using`: a test that fails must not leave its socket open.
 async function connectNodeSocket(
   transport: Transport,
   server: Bun.Server<undefined>,
@@ -229,7 +230,7 @@ async function connectNodeSocket(
   await once(socket, transport.name === "tls" ? "secureConnect" : "connect");
   // Resolves once the kernel has the bytes.
   const write = (data: string) => new Promise<void>(resolve => socket.write(data, () => resolve()));
-  return { socket, reader, seen, ended, closed, write };
+  return { socket, reader, seen, ended, closed, write, [Symbol.dispose]: () => void socket.destroy() };
 }
 
 // A round trip on a separate connection. Anything the pipelining client wrote
@@ -470,7 +471,7 @@ describe.each(transports)("$name", transport => {
         ...transport.listen(String(dir)),
         fetch: recordingHandler(hits, () => new Response(big)),
       });
-      const client = await connectNodeSocket(transport, server, String(dir));
+      using client = await connectNodeSocket(transport, server, String(dir));
 
       client.socket.end(request("/big") + request("/small"));
       await client.closed;
@@ -512,7 +513,7 @@ describe.each(transports)("$name", transport => {
             : response;
         },
       });
-      const client = await connectNodeSocket(transport, server, String(dir));
+      using client = await connectNodeSocket(transport, server, String(dir));
 
       await client.write(request("/hold"));
       await handler.entered("/hold");
@@ -541,7 +542,7 @@ describe.each(transports)("$name", transport => {
       using dir = tempDir("serve-pipelining", {});
       const handler = holdingHandler();
       using server = Bun.serve({ ...transport.listen(String(dir)), fetch: handler.fetch });
-      const client = await connectNodeSocket(transport, server, String(dir));
+      using client = await connectNodeSocket(transport, server, String(dir));
 
       await client.write(request("/hold") + request("/closing", "Connection: close\r\n"));
       await handler.entered("/hold");
@@ -858,7 +859,7 @@ describe("a request pipelined behind a Connection: close request", () => {
     const unix = transports.find(transport => transport.name === "unix")!;
     const handler = holdingHandler();
     using server = Bun.serve({ ...unix.listen(String(dir)), fetch: handler.fetch });
-    const client = await connectNodeSocket(unix, server, String(dir));
+    using client = await connectNodeSocket(unix, server, String(dir));
 
     await client.write(request("/hold", "Connection: close\r\n"));
     await handler.entered("/hold");
@@ -897,7 +898,7 @@ it.if(isPosix)(
         return response;
       },
     });
-    const client = await connectNodeSocket(unix, server, String(dir));
+    using client = await connectNodeSocket(unix, server, String(dir));
     client.reader.headResponses = 1;
 
     await client.write("HEAD /hold HTTP/1.1\r\nHost: x\r\n\r\n");
@@ -1027,7 +1028,7 @@ it("a held request whose body fails to parse is aborted at once when the client 
       return handler.fetch(req);
     },
   });
-  const client = await connectNodeSocket(tcpOnly, server, "", { allowHalfOpen: true });
+  using client = await connectNodeSocket(tcpOnly, server, "", { allowHalfOpen: true });
 
   await client.write(request("/hold"));
   await handler.entered("/hold");
@@ -1049,8 +1050,28 @@ it("a held request whose body fails to parse is aborted at once when the client 
     hits: ["/hold", "/probe", "/probe", "/hold-body"],
   });
   handler.release("/hold-body");
-  client.socket.destroy();
 });
+
+// Puts the connection of `client` into a lingering close, and resolves on the
+// server's FIN. The client has to keep its side open (`allowHalfOpen`), and the
+// unix transport makes it exact: a write is in the server's queue when it returns.
+async function startLingeringClose(
+  client: Awaited<ReturnType<typeof connectNodeSocket>>,
+  handler: ReturnType<typeof holdingHandler>,
+  server: Bun.Server<undefined>,
+  dir: string,
+) {
+  const unix = transports.find(transport => transport.name === "unix")!;
+  await client.write(request("/hold"));
+  await handler.entered("/hold");
+  // /closing is held. /never stays unread, so the close behind /closing lingers.
+  await client.write(request("/closing", "Connection: close\r\n"));
+  await probe(unix, server, dir);
+  await client.write(request("/never"));
+
+  handler.release("/hold");
+  await client.ended;
+}
 
 // closeIdleConnections() and a graceful stop() close the connections that are
 // idle. A lingering close is not idle: it stays open so that the close does not
@@ -1070,17 +1091,9 @@ it.if(isPosix)("closeIdleConnections() leaves a lingering close to end by itself
       return new Response("swept");
     },
   });
-  const client = await connectNodeSocket(unix, server, String(dir), { allowHalfOpen: true });
+  using client = await connectNodeSocket(unix, server, String(dir), { allowHalfOpen: true });
 
-  await client.write(request("/hold"));
-  await handler.entered("/hold");
-  // /closing is held. /never stays unread, so the close behind /closing lingers.
-  await client.write(request("/closing", "Connection: close\r\n"));
-  await probe(unix, server, String(dir));
-  await client.write(request("/never"));
-
-  handler.release("/hold");
-  await client.ended;
+  await startLingeringClose(client, handler, server, String(dir));
   expect(await (await fetch("http://localhost/sweep", { unix: socketPath })).text()).toBe("swept");
   // The server still reads, and it closes on the client's FIN.
   await client.write(request("/late"));
@@ -1091,6 +1104,114 @@ it.if(isPosix)("closeIdleConnections() leaves a lingering close to end by itself
     seen: { ended: true },
     responses: [ok("body of /hold"), ok("body of /closing")],
   });
+});
+
+// A lingering close has two bounds, for a client that does not end its side.
+describe("a lingering close", () => {
+  // LINGERING_CLOSE_MAX_BYTES in HttpResponse.h.
+  const lingeringCloseMaxBytes = 8 * 1024 * 1024;
+
+  // The server drops what the client still sends, up to a byte limit, and then
+  // closes. The client writes twice the limit and counts what it gets out. A unix
+  // socket holds little in flight, so a write completes only when the server has
+  // read it: with the limit a write fails half way, and without it every write
+  // completes and the close comes later, on the timeout. A limit that is too low
+  // fails the test further up that uploads 4 MiB into a lingering close.
+  it.concurrent.if(isPosix)("stops reading at its byte limit", async () => {
+    using dir = tempDir("serve-pipelining", {});
+    const unix = transports.find(transport => transport.name === "unix")!;
+    const handler = holdingHandler();
+    using server = Bun.serve({ ...unix.listen(String(dir)), fetch: handler.fetch });
+    using client = await connectNodeSocket(unix, server, String(dir), { allowHalfOpen: true });
+    await startLingeringClose(client, handler, server, String(dir));
+
+    // Counts the writes that the kernel took whole, until one fails or the
+    // connection closes.
+    const chunk = Buffer.alloc(1024 * 1024, "a");
+    let flushed = 0;
+    while (flushed < 2 * lingeringCloseMaxBytes) {
+      const written = Promise.withResolvers<boolean>();
+      client.socket.write(chunk, error => written.resolve(!error));
+      if (!(await Promise.race([written.promise, client.closed.then(() => false)]))) break;
+      flushed += chunk.length;
+    }
+
+    expect({
+      hits: handler.hits,
+      sawFin: client.seen.ended,
+      responses: client.reader.responses.map(summarize),
+    }).toEqual({
+      hits: ["/hold", "/probe", "/closing"],
+      sawFin: true,
+      responses: [ok("body of /hold"), ok("body of /closing")],
+    });
+    expect(flushed).toBeLessThan(2 * lingeringCloseMaxBytes);
+  });
+
+  // A client that neither sends nor ends is closed by the timeout of the linger.
+  // The server has no idle timeout here, so nothing else closes the socket, and a
+  // graceful stop() resolves only once every connection is closed. The close
+  // starts to linger in two places: behind the parse loop, when the last response
+  // completes inside the replay, and in onWritable, when its body drains later.
+  // onWritable resets the timeout of the socket right after, and with no idle
+  // timeout that reset must not take the bound away. The usockets timeout sweep
+  // ticks every 4 seconds: each case takes 4 to 8 real seconds, which is why
+  // they have their own timeout.
+  const drainedBody = Buffer.alloc(1024 * 1024, "x");
+  it.concurrent.if(isPosix).each([
+    {
+      last: "completes inside the replay",
+      drains: false,
+      hits: ["/hold", "/probe", "/closing"],
+      bodyLengths: [13, 16],
+    },
+    {
+      last: "drains through onWritable",
+      drains: true,
+      hits: ["/hold", "/probe", "/probe"],
+      bodyLengths: [drainedBody.length],
+    },
+  ])(
+    "ends on its timeout for a silent client when the last response $last",
+    async ({ drains, hits, bodyLengths }) => {
+      using dir = tempDir("serve-pipelining", {});
+      const unix = transports.find(transport => transport.name === "unix")!;
+      const handler = holdingHandler();
+      using server = Bun.serve({
+        ...unix.listen(String(dir)),
+        idleTimeout: 0,
+        async fetch(req) {
+          const response = await handler.fetch(req);
+          return drains && new URL(req.url).pathname === "/hold"
+            ? new Response(drainedBody, { headers: { Connection: "close" } })
+            : response;
+        },
+      });
+      using client = await connectNodeSocket(unix, server, String(dir), { allowHalfOpen: true });
+      if (drains) {
+        await client.write(request("/hold"));
+        await handler.entered("/hold");
+        // The first /never is held, the second one stays unread, so the close
+        // behind the body of /hold lingers.
+        for (let i = 0; i < 2; i++) {
+          await client.write(request("/never"));
+          await probe(unix, server, String(dir));
+        }
+        handler.release("/hold");
+        await client.ended;
+      } else {
+        await startLingeringClose(client, handler, server, String(dir));
+      }
+      expect(client.seen).toEqual({ ended: true });
+
+      await server.stop();
+      expect({
+        hits: handler.hits,
+        bodyLengths: client.reader.responses.map(({ body }) => body.length),
+      }).toEqual({ hits: [...hits], bodyLengths: [...bodyLengths] });
+    },
+    20_000,
+  );
 });
 
 // A graceful stop() closes idle connections and marks busy ones to close once

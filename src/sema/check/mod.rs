@@ -106,6 +106,7 @@ use crate::util::{FxHashMap, List};
 use bun_threading::Guarded;
 use errors_aliases::SpecifierSite;
 use errors_names_and_exports::{root_declaration, root_pattern};
+use errors_small::SymbolAtLocation;
 use errors_type_nodes::array_element_type_node;
 use errors_type_nodes::has_parse_diagnostics;
 use errors_type_nodes::start_of_type;
@@ -846,6 +847,7 @@ impl<'s> Program<'s> {
             spare_rechecked: Vec::new(),
             inference_contexts: Vec::new(),
             instantiation_depth: 0,
+            instantiation_stack: [TypeId::ERROR; 100],
             outermost_comparison: None,
             instantiation_count: 0,
             instantiations_computed: 0,
@@ -1568,6 +1570,8 @@ pub struct Checker<'p, 's> {
     /// `inferenceContextInfos`
     inference_contexts: Vec<InferenceContextInfo>,
     instantiation_depth: u32,
+    /// `instantiationStack`: the first `instantiation_depth` entries are the types being instantiated.
+    instantiation_stack: [TypeId; 100],
     /// The `errorNode` of the comparison that began while no query or instantiation was in progress
     /// and hasn't ended yet. See `begin_comparison`.
     outermost_comparison: Option<Option<(FileId, u32, u32)>>,
@@ -3277,7 +3281,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_limit_in_tsgo() {
             return TypeId::UNRESOLVED;
         }
-        self.report_at_current_node(2589);
+        self.report_at_current_node(2589, sink::Args::default());
         TypeId::ERROR
     }
 
@@ -3304,8 +3308,62 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return TypeId::UNRESOLVED;
         }
-        self.error_at_current_node(2589);
+        let names = self.circular_type_names();
+        let (code, names) = match &names[..] {
+            [] => {
+                self.error_at_current_node(2589);
+                return TypeId::ERROR;
+            }
+            [name] => (5114, name.clone()),
+            // `quotedAndCommaSeparated`
+            _ => (5115, cat!(b"'", names.join(&b"', '"[..]), b"'")),
+        };
+        let args = self.stringify_args(&[Arg::Bytes(&names)]);
+        self.error_at_current_node_with(code, args);
         TypeId::ERROR
+    }
+
+    /// `getCircularTypeNames`: the names of the types that are being instantiated three times or more.
+    fn circular_type_names(&mut self) -> Vec<Vec<u8>> {
+        let stack = self.instantiation_stack;
+        let stack = &stack[..(self.instantiation_depth as usize).min(stack.len())];
+        let mut names = Vec::new();
+        for (at, ty) in stack.iter().enumerate() {
+            if stack[..at].iter().filter(|earlier| *earlier == ty).count() != 2 {
+                continue;
+            }
+            let symbol = match (self.alias_symbol_of_type(*ty), self.symbol_of_type(*ty)) {
+                (Some(alias), _) => alias,
+                (None, Some(SymbolAtLocation::Symbol(symbol))) => symbol,
+                _ => continue,
+            };
+            if self.has_internal_name(symbol) {
+                continue;
+            }
+            let name = self.symbol_to_string(symbol);
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// True if `symbol.Name` is empty or starts with `InternalSymbolNamePrefix`.
+    fn has_internal_name(&self, symbol: Sym) -> bool {
+        match self.files().symbol(symbol).name {
+            Atom::NONE
+            | known::anonymous_function
+            | known::object_literal
+            | known::computed
+            | known::assignment_declaration
+            | known::missing
+            | known::constructor_declaration
+            | known::call_signature
+            | known::construct_signature
+            | known::index_signature
+            | known::type_literal => true,
+            name => self.atoms().bytes(name).first() == Some(&0xFE),
+        }
     }
 
     /// `checkSourceElement`, `checkDeferredNode` and `checkExpressionEx` begin with
@@ -3351,7 +3409,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
-        if !self.report_at_current_node(code) {
+        self.error_at_current_node_with(code, sink::Args::default());
+    }
+
+    /// `error_at_current_node` for a message with arguments.
+    #[cold]
+    fn error_at_current_node_with(&mut self, code: u32, args: sink::Args) {
+        if !self.report_at_current_node(code, args) {
             return;
         }
         // A query that began under an instantiation had less depth left than the same query has
@@ -3373,7 +3437,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns false if there's no node to report at. Nothing in progress is stored then.
-    fn report_at_current_node(&mut self, code: u32) -> bool {
+    fn report_at_current_node(&mut self, code: u32, args: sink::Args) -> bool {
         self.note_gave_up();
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
@@ -3401,8 +3465,9 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // Past the limit of 5,000,000, every further instantiation in the statement reports the same error.
         // `sort_and_deduplicate_diagnostics` would keep only one, so don't accumulate millions until then.
-        if !self.is_last_diagnostic_of_task(at, code) {
-            self.add_diagnostic_of(None, Reported::bare(at, code));
+        let diagnostic = Reported::new(at, code, args);
+        if !self.is_last_diagnostic_of_task(&diagnostic) {
+            self.add_diagnostic_of(None, diagnostic);
         }
         true
     }

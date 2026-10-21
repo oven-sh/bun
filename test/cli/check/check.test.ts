@@ -12458,9 +12458,9 @@ export declare const a4: A4; export const n4: never = a4;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(6,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(8,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(10,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        "a.ts(6,18): error TS5114: Instantiations of type 'Ser' appear infinitely circular.
+        a.ts(8,18): error TS5114: Instantiations of type 'Ser' appear infinitely circular.
+        a.ts(10,18): error TS5114: Instantiations of type 'DeepPartial' appear infinitely circular.
         a.ts(11,43): error TS2322: Type 'any' is not assignable to type 'never'.
         a.ts(12,43): error TS2322: Type 'any' is not assignable to type 'never'.
         a.ts(13,43): error TS2322: Type '{ h?: any; }' is not assignable to type 'never'."
@@ -12938,10 +12938,10 @@ export type W2 = { w: Wrap<[1]> };
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(3,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(8,56): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(12,23): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(16,18): error TS2589: Type instantiation is excessively deep and possibly infinite."
+        "a.ts(3,18): error TS5114: Instantiations of type 'Ser' appear infinitely circular.
+        a.ts(8,56): error TS5114: Instantiations of type 'Grow' appear infinitely circular.
+        a.ts(12,23): error TS5114: Instantiations of type 'Ser' appear infinitely circular.
+        a.ts(16,18): error TS5115: Instantiations of the following types appear infinitely circular: 'Box', 'Wrap'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -13308,14 +13308,14 @@ export type B7 = S7<[U7]>;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(3,23): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(6,19): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(9,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(12,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(15,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(18,23): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(21,24): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(24,18): error TS2589: Type instantiation is excessively deep and possibly infinite."
+        "a.ts(3,23): error TS5114: Instantiations of type 'S0' appear infinitely circular.
+        a.ts(6,19): error TS5114: Instantiations of type 'S1' appear infinitely circular.
+        a.ts(9,18): error TS5114: Instantiations of type 'S2' appear infinitely circular.
+        a.ts(12,18): error TS5114: Instantiations of type 'S3' appear infinitely circular.
+        a.ts(15,18): error TS5114: Instantiations of type 'S4' appear infinitely circular.
+        a.ts(18,23): error TS5114: Instantiations of type 'S5' appear infinitely circular.
+        a.ts(21,24): error TS5114: Instantiations of type 'S6' appear infinitely circular.
+        a.ts(24,18): error TS5114: Instantiations of type 'S7' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
     });
@@ -16209,10 +16209,10 @@ export function f(b: B<string>) { function g(a: A<string>) {} g(b); }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(5,49): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        b.ts(5,41): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        c.ts(5,46): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        d.ts(5,63): error TS2589: Type instantiation is excessively deep and possibly infinite."
+        "a.ts(5,49): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        b.ts(5,41): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        c.ts(5,46): error TS5114: Instantiations of type 'W' appear infinitely circular.
+        d.ts(5,63): error TS5114: Instantiations of type 'W' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
     });
@@ -20264,13 +20264,13 @@ export const deferred: Deferred<"a"> = 1;
       const { stdout, exitCode } = await check(dir);
       // The type has one level per round, up to the limit.
       expect(stdout.replace(repeat("x", 99), "<99 x>")).toMatchInlineSnapshot(`
-        "a.ts(2,43): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(3,40): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(4,54): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(5,42): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(6,38): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(7,41): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        a.ts(8,50): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        "a.ts(2,43): error TS5114: Instantiations of type 'Template' appear infinitely circular.
+        a.ts(3,40): error TS5114: Instantiations of type 'Union' appear infinitely circular.
+        a.ts(4,54): error TS5114: Instantiations of type 'Intersection' appear infinitely circular.
+        a.ts(5,42): error TS5114: Instantiations of type 'Keyof' appear infinitely circular.
+        a.ts(6,38): error TS5114: Instantiations of type 'Indexed' appear infinitely circular.
+        a.ts(7,41): error TS5114: Instantiations of type 'Argument' appear infinitely circular.
+        a.ts(8,50): error TS5114: Instantiations of type 'Intrinsic' appear infinitely circular.
         a.ts(10,14): error TS2322: Type '1' is not assignable to type '\`<99 x>\${any}\`'.
         a.ts(12,14): error TS2322: Type 'number' is not assignable to type '[[[[[[[[[[[[...]]]]]]]]]]]]'."
       `);
@@ -20775,8 +20775,8 @@ export const loaded = loader.load(key, options, key);
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(17,6): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        b.ts(8,6): error TS2589: Type instantiation is excessively deep and possibly infinite."
+        "a.ts(17,6): error TS5114: Instantiations of type 'ValidateJSON' appear infinitely circular.
+        b.ts(8,6): error TS5114: Instantiations of type 'ValidateJSON' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
     });
@@ -21291,7 +21291,7 @@ export {};
           a.ts(26,24): error TS2322: Type 'D<T>' is not assignable to type 'D<U>'.
             Type 'T' is not assignable to type 'U'.
               'U' could be instantiated with an arbitrary type which could be unrelated to 'T'.
-          a.ts(32,30): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          a.ts(32,30): error TS5114: Instantiations of type 'Walk' appear infinitely circular.
           a.ts(33,9): error TS2322: Type 'any[]' is not assignable to type 'never'."
         `);
         expect(exitCode).toBe(1);
@@ -21338,11 +21338,11 @@ export {};
         );
         const { stdout, exitCode } = await check(dir);
         expect(stdout).toMatchInlineSnapshot(`
-          "intersection-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
-          mapped-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
+          "intersection-over.ts(3,17): error TS5114: Instantiations of type 'All' appear infinitely circular.
+          mapped-over.ts(3,17): error TS5114: Instantiations of type 'Leaves' appear infinitely circular.
           tail-over.ts(2,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
-          tuple-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite.
-          union-over.ts(3,17): error TS2589: Type instantiation is excessively deep and possibly infinite."
+          tuple-over.ts(3,17): error TS5114: Instantiations of type 'Depth' appear infinitely circular.
+          union-over.ts(3,17): error TS5114: Instantiations of type 'Flat' appear infinitely circular."
         `);
         expect(exitCode).toBe(1);
       });
@@ -22488,7 +22488,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
     });
 
     // `instantiateType` fails at 100 nested calls. The expected output of each program is TypeScript 7.0.2's.
-    test("reports TS2589 at the same recursion depth as tsc for every way a type can recur", async () => {
+    test("reports TS5114 at the same recursion depth as tsc for every way a type can recur", async () => {
       // `E` is the element type of the counting tuples, and it's different in every file. The first `length` lookup on
       // a tuple takes two more levels, and tuple types are shared by the whole program.
       const wrap = `type Wrap<N extends number, T = 1, A extends E[] = []> = A["length"] extends N ? T : Wrap<N, { v: T }, [...A, E]>;`;
@@ -22601,7 +22601,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
             files[file] = lines.join("\n") + "\n";
             if (over) {
               expected.push(
-                `${file}(${lines.length},${column}): error TS2589: Type instantiation is excessively deep and possibly infinite.`,
+                `${file}(${lines.length},${column}): error TS5114: Instantiations of type 'F' appear infinitely circular.`,
               );
             }
           }

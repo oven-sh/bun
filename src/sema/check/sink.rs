@@ -795,13 +795,14 @@ impl Checker<'_, '_> {
         self.log_diagnostic(owner, diagnostic);
     }
 
-    /// True if the last logged diagnostic belongs to the task and is `Reported::bare(at, code)`. It's still in the log,
-    /// so whatever reported it wasn't discarded.
-    pub(super) fn is_last_diagnostic_of_task(&self, at: (FileId, u32, u32), code: u32) -> bool {
+    /// True if the last logged diagnostic belongs to the task and has the position, code and arguments of `new`. It's
+    /// still in the log, so whatever reported it wasn't discarded.
+    pub(super) fn is_last_diagnostic_of_task(&self, new: &Reported) -> bool {
         (self.task.diagnostics.last()).is_some_and(|(owner, last)| {
             owner.is_none()
-                && last.code == code
-                && (last.file, last.start, last.end) == at
+                && last.code == new.code
+                && (last.file, last.start, last.end) == (new.file, new.start, new.end)
+                && last.args == new.args
                 && last.by_emit == self.is_emitting
         })
     }

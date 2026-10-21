@@ -359,10 +359,20 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().mapper_of(&pairs)
     }
 
-    /// Runs `worker` inside `instantiateTypeWithAlias`'s bookkeeping. `worker` instantiates with
+    /// `c.instantiationStack = append(c.instantiationStack, t)`
+    #[inline]
+    fn push_instantiation(&mut self, ty: TypeId) {
+        if let Some(entry) = (self.instantiation_stack).get_mut(self.instantiation_depth as usize) {
+            *entry = ty;
+        }
+        self.instantiation_depth += 1;
+    }
+
+    /// Runs `worker` inside `instantiateTypeWithAlias`'s bookkeeping for `ty`. `worker` instantiates with
     /// `mapper` and neither reads nor writes `Program::instantiations`.
     pub(super) fn in_instantiation(
         &mut self,
+        ty: TypeId,
         mapper: MapperId,
         worker: impl FnOnce(&mut Self) -> TypeId,
     ) -> TypeId {
@@ -373,7 +383,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let is_active = self.active_mappers.is_active(mapper);
         self.instantiation_count += 1;
-        self.instantiation_depth += 1;
+        self.push_instantiation(ty);
         if !is_active {
             self.active_mappers.push(mapper);
         }
@@ -857,7 +867,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.instantiation_depth == 0 && self.stack.is_empty() {
             self.reset_instantiation_count_if_idle();
         }
-        self.instantiation_depth += 1;
+        self.push_instantiation(ty);
         if serial == 0 {
             self.active_mappers.push(mapper);
         }

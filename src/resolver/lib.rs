@@ -801,7 +801,7 @@ pub mod fs {
     /// every call resolves to the `entries_option_map()` singleton; this keeps
     /// `RealFS.entries` field-shaped without inlining the (large) backing array.
     ///
-    /// `&mut self` on `get` and `at_index` only bounds the `&mut EntriesOption` that they return. The caller keeps the slot exclusive with `entries_mutex`, which the two `get` calls in `hot_reloader.rs` do not take.
+    /// `&mut self` on `get` and `at_index` only bounds the `&mut EntriesOption` that they return. The caller keeps the slot exclusive with `entries_mutex`: `DirInfo::get_entries_const` does not take it, and `read_directory` returns the slot after its guard is gone. The caller of `at_index` and `put` also passes an index that this map assigned, and not one of the `DirInfo` map.
     pub struct EntriesMap(());
     impl EntriesMap {
         /// Module-private: only `RealFS::init` may construct the singleton handle.
@@ -841,9 +841,9 @@ pub mod fs {
             &mut self,
             index: bun_alloc::IndexType,
         ) -> Option<&mut EntriesOption> {
-            // SAFETY: only a store makes an `IndexType`, so `index` is a sentinel
-            // or `put` on this map assigned it. The caller read it from the table
-            // (`get_or_put`, under the map's lock) or from a `DirInfo` that is filled.
+            // SAFETY: every caller passes the index of a `get_or_put` on this map,
+            // or `DirInfo::entries`, which stores one. Nothing here checks that:
+            // it rests on the caller, as the exclusive slot does (see the struct doc).
             let slot = unsafe { self.inner().at_index(index) }?;
             // SAFETY: as in `get`.
             Some(unsafe { self.slot_mut(slot) })
@@ -854,9 +854,10 @@ pub mod fs {
             value: EntriesOption,
         ) -> crate::CrateResult<*mut EntriesOption> {
             if result.has_slot() {
-                // SAFETY: `get_or_put` on this map gave `result` its index. The
-                // callers hold `entries_mutex` from that `get_or_put` to here, so
-                // every user of the slot that takes the mutex is out (see the struct doc).
+                // SAFETY: every caller passes the result of a `get_or_put` on this
+                // map, and holds `entries_mutex` from that `get_or_put` to here, so
+                // every user of the slot that takes the mutex is out. Nothing here
+                // checks either: it rests on the caller (see the struct doc).
                 return Ok(unsafe { self.inner().replace(result, value) }.as_ptr());
             }
             // `BSSMapInner::put` mutates `result.index` to record placement; callers

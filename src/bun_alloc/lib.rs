@@ -1368,6 +1368,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
         if counts.tail_free == 0 {
             self.grow(counts)?;
         }
+        // `Relaxed`: `&mut counts` orders this load after the `grow` that stored the element.
         let block = self.ptrs[usize::from(counts.blocks) - 1].load(Ordering::Relaxed);
         let block = NonNull::new(block).expect("alloc");
         let index = COUNT - counts.tail_free as usize;
@@ -1387,11 +1388,13 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     /// Adds a block. `append` calls it when the last block is full.
     #[cold]
     fn grow(&self, counts: &mut OverflowCounts) -> core::result::Result<(), AllocError> {
+        const { assert!(COUNT > 0, "an overflow block must hold at least one item") };
         let blocks = usize::from(counts.blocks);
         if blocks >= OVERFLOW_GROUP_SLOTS {
             return Err(AllocError);
         }
         let block = Box::into_raw(Box::<OverflowListBlock<ValueType, COUNT>>::new_uninit());
+        // `Relaxed`: `&mut counts` orders the appenders, and the contract of `slot_ptr` orders each reader after its `append`.
         self.ptrs[blocks].store(block.cast(), Ordering::Relaxed);
         counts.blocks += 1;
         counts.tail_free = COUNT as u32;
@@ -1479,8 +1482,8 @@ unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COU
 
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
-/// Slots per overflow block of a [`BSSMapInner`]. The unit tests use small blocks, so that they cross several.
-const BSS_OVERFLOW_BLOCK_SIZE: usize = if cfg!(test) { 4 } else { 2048 };
+/// Slots per overflow block of a [`BSSMapInner`] that names no other size.
+const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 /// A chunk of overflow slots of a [`BSSList`]: the inline `tail`, or a heap block.
 struct BSSListOverflowBlock<ValueType> {
@@ -1496,7 +1499,8 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     /// In-place field initialization into demand-zero storage.
     ///
     /// SAFETY: `slot` must be valid for writes of `Self`, aligned, exclusive and
-    /// zeroed, as [`bss_heap_init`] gives it. It does not have to be `'static`.
+    /// zeroed, as [`bss_heap_init`] gives it. It does not have to be `'static`,
+    /// but the list must stay at `slot` until it is dropped: `head` points into it.
     pub unsafe fn init_at(slot: *mut Self) {
         // `state` is the only field that `init_at` writes, so it leads the layout.
         const { assert!(core::mem::offset_of!(Self, state) == 0) };
@@ -1809,9 +1813,14 @@ struct BSSMapState {
 
 /// Every method takes `&self` and none reads a slot, so a slot pointer stays valid across every later call on the map.
 #[repr(C)]
-pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
+pub struct BSSMapInner<
+    ValueType,
+    const COUNT: usize,
+    const REMOVE_TRAILING_SLASHES: bool,
+    const OVERFLOW_BLOCK_SIZE: usize = BSS_OVERFLOW_BLOCK_SIZE,
+> {
     state: std::sync::Mutex<BSSMapState>,
-    overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
+    overflow_list: OverflowList<ValueType, OVERFLOW_BLOCK_SIZE>,
     // Only `[0..backing_buf_used]` is initialized.
     backing_buf: UnsafeCell<[MaybeUninit<ValueType>; COUNT]>,
 }
@@ -1823,13 +1832,21 @@ pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLAS
 // that reason. `put` stores each element of the block table
 // (`overflow_list.ptrs`) once, under the lock. `at_index` loads it without
 // the lock (see `OverflowList::slot_ptr`).
-unsafe impl<ValueType: Send, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> Sync
-    for BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
+unsafe impl<
+    ValueType: Send,
+    const COUNT: usize,
+    const REMOVE_TRAILING_SLASHES: bool,
+    const OVERFLOW_BLOCK_SIZE: usize,
+> Sync for BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES, OVERFLOW_BLOCK_SIZE>
 {
 }
 
-impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
-    BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
+impl<
+    ValueType,
+    const COUNT: usize,
+    const REMOVE_TRAILING_SLASHES: bool,
+    const OVERFLOW_BLOCK_SIZE: usize,
+> BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES, OVERFLOW_BLOCK_SIZE>
 {
     const MAX_INDEX: usize = COUNT - 1;
 

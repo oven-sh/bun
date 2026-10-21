@@ -3375,7 +3375,8 @@ impl<'a> Resolver<'a> {
         let mut dir_cache_info_result = self.dir_cache.get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
-            return Ok(DirInfo::ref_in(self.dir_cache, dir_cache_info_result.index));
+            // SAFETY: `get_or_put` on this map read the index from the table, under the lock of the map.
+            return Ok(unsafe { DirInfo::ref_in(self.dir_cache, dir_cache_info_result.index) });
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()`
@@ -4228,7 +4229,8 @@ impl<'a> Resolver<'a> {
         Self::assert_valid_cache_key(path_without_trailing_slash);
         let top_result = self.dir_cache.get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::ItemStatus::Unknown {
-            return Ok(DirInfo::ref_in(self.dir_cache, top_result.index));
+            // SAFETY: `get_or_put` on this map read the index from the table, under the lock of the map.
+            return Ok(unsafe { DirInfo::ref_in(self.dir_cache, top_result.index) });
         }
 
         self.dir_info_cached_miss(enable_logging, input_path, top_result)
@@ -4712,7 +4714,8 @@ impl<'a> Resolver<'a> {
                 .dir_cache
                 .put(&mut queue_top.result, DirInfo::DirInfo::default())?
                 .as_ptr();
-            let parent_dir_ptr = DirInfo::ref_in(self.dir_cache, top_parent.index);
+            // SAFETY: `top_parent.index` is a sentinel, or `get_or_put` or `put` on this map gave it, on this thread.
+            let parent_dir_ptr = unsafe { DirInfo::ref_in(self.dir_cache, top_parent.index) };
 
             self.dir_info_uncached(
                 dir_info_ptr,

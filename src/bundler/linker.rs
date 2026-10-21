@@ -82,7 +82,7 @@ mod hardcoded_module {
 /// singleton (the `OnceLock`-style exception PORTING.md carves out).
 #[inline]
 pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
-    relative_paths_list().append(&src).expect("OOM")
+    bun_core::handle_oom(relative_paths_list().append(&src))
 }
 impl Linker {
     // ── raw-pointer field accessors ──────────────────────────────────────

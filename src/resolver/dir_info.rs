@@ -269,7 +269,8 @@ impl DirInfo {
 
     #[inline]
     pub(crate) fn get_parent(&self) -> Option<DirInfoRef> {
-        ref_at_index(self.parent)
+        // SAFETY: `parent` is a link of this `DirInfo`.
+        unsafe { ref_at_link(self.parent) }
     }
 
     /// Handle to the enclosing browser-scope `DirInfo` slot. Frequently
@@ -277,7 +278,8 @@ impl DirInfo {
     /// `Copy` arena handle (not `&mut`) is returned — overlapping shared
     /// reads through `DirInfoRef::deref` are sound.
     pub(crate) fn get_enclosing_browser_scope(&self) -> Option<DirInfoRef> {
-        ref_at_index(self.enclosing_browser_scope)
+        // SAFETY: `enclosing_browser_scope` is a link of this `DirInfo`.
+        unsafe { ref_at_link(self.enclosing_browser_scope) }
     }
 }
 
@@ -315,22 +317,28 @@ fn hash_map_instance_init() -> NonNull<HashMap> {
     }
 }
 
-/// Look up a `DirInfo` slot in the process-lifetime BSSMap singleton by index
-/// and wrap it as a [`DirInfoRef`]. It takes no lock: the slot of a stored `parent` / `enclosing_browser_scope` index was filled before the `DirInfo` that stores it.
+/// The slot of a link in the process-lifetime BSSMap singleton. A link is the
+/// `parent` or the `enclosing_browser_scope` of a `DirInfo`. It takes no lock.
+///
+/// SAFETY: `link` must be a link. A link is a sentinel, or an index that `put`
+/// on the singleton assigned before `dir_info_uncached`, the only writer of
+/// the two fields, filled the `DirInfo` that stores it.
 #[inline]
-fn ref_at_index(index: Index) -> Option<DirInfoRef> {
-    ref_in(hash_map_instance(), index)
+unsafe fn ref_at_link(link: Index) -> Option<DirInfoRef> {
+    // SAFETY: that is the contract of `ref_in`.
+    unsafe { ref_in(hash_map_instance(), link) }
 }
 
 /// The slot of `index` in `map`. The handle stays valid across every later call on the map.
+///
+/// SAFETY: `index` must be a sentinel, or an index that `put` on `map` assigned,
+/// and that `put` must happen-before this call (the contract of `BSSMapInner::at_index`).
 #[inline]
-pub(crate) fn ref_in(map: &HashMap, index: Index) -> Option<DirInfoRef> {
-    // SAFETY: only a store makes an `Index`, so `index` is a sentinel or `put` on
-    // the singleton assigned it. The caller read it from the table, under the
-    // lock of the map, or from a `DirInfo` that is filled. `put` wrote the slot
-    // before the table had the index, so the slot holds a `DirInfo`, which is
-    // `DirInfoRef`'s invariant. The type-level doc of `DirInfoRef` says when
-    // that `DirInfo` can still change.
+pub(crate) unsafe fn ref_in(map: &'static HashMap, index: Index) -> Option<DirInfoRef> {
+    // SAFETY: caller contract. `put` wrote the slot before the table had the
+    // index, and nothing frees a slot of a `'static` map, so the slot holds a
+    // `DirInfo` for as long as a handle lives, which is `DirInfoRef`'s invariant.
+    // The type-level doc of `DirInfoRef` says when that `DirInfo` can still change.
     unsafe { Some(DirInfoRef::from_raw(map.at_index(index)?.as_ptr())) }
 }
 

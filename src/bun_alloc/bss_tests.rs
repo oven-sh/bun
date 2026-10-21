@@ -286,37 +286,44 @@ mod map {
     use super::*;
 
     const INLINE: usize = 4;
-    pub(super) type Map = BSSMapInner<u64, INLINE, false>;
+    /// Slots per overflow block. It is small, so that the tests cross several blocks.
+    const BLOCK: usize = 4;
+    pub(super) type Map<const OVERFLOW_BLOCK_SIZE: usize = BLOCK> =
+        BSSMapInner<u64, INLINE, false, OVERFLOW_BLOCK_SIZE>;
 
     fn new() -> Store<Map> {
         Store::boxed(Map::init_at)
     }
 
-    pub(super) fn put(map: &Store<Map>, key: &[u8], value: u64) -> (IndexType, *mut u64) {
+    pub(super) fn put<const B: usize>(
+        map: &Store<Map<B>>,
+        key: &[u8],
+        value: u64,
+    ) -> (IndexType, *mut u64) {
         let mut result = map.get_or_put(key).unwrap();
         let slot = map.put(&mut result, value).unwrap();
         (result.index, slot.as_ptr())
     }
 
     /// Puts keys until `used` slots of `backing_buf` are taken.
-    fn fill_inline(map: &Store<Map>, used: usize) {
+    fn fill_inline<const B: usize>(map: &Store<Map<B>>, used: usize) {
         for i in used as u8..INLINE as u8 {
             assert!(!put(map, &[b'#', i], u64::from(i)).0.is_overflow());
         }
     }
 
-    fn at_index(map: &Store<Map>, index: IndexType) -> *mut u64 {
+    fn at_index<const B: usize>(map: &Store<Map<B>>, index: IndexType) -> *mut u64 {
         // SAFETY: every index in these tests comes from `put` on `map`, on this
         // thread or through the lock of the map.
         unsafe { map.at_index(index) }.unwrap().as_ptr()
     }
 
-    fn get(map: &Store<Map>, key: &[u8]) -> Option<*mut u64> {
+    fn get<const B: usize>(map: &Store<Map<B>>, key: &[u8]) -> Option<*mut u64> {
         map.get(key).map(NonNull::as_ptr)
     }
 
     /// Puts A, then calls every method of the map. A `&mut` to A is live across all of them.
-    pub(super) fn slot_stays_writable_across_every_method(map: &Store<Map>) {
+    pub(super) fn slot_stays_writable_across_every_method<const B: usize>(map: &Store<Map<B>>) {
         let (index, a_ptr) = put(map, b"a", 1);
         // SAFETY: `a_ptr` is an initialized slot of a live map, and nothing else borrows it.
         let a = unsafe { &mut *a_ptr };
@@ -434,7 +441,7 @@ mod map {
         let a = map.put(&mut inline, 1).unwrap();
         fill_inline(&map, 1);
         // The overflow slot is in the second block.
-        for i in 0..BSS_OVERFLOW_BLOCK_SIZE as u8 {
+        for i in 0..BLOCK as u8 {
             put(&map, &[b'+', i], u64::from(i));
         }
         let mut overflow = map.get_or_put(b"o").unwrap();
@@ -442,9 +449,10 @@ mod map {
         assert_eq!(
             (
                 overflow.index.is_overflow(),
-                overflow.index.index() as usize
+                overflow.index.index() as usize,
+                lock_state(&map.state).overflow_counts.blocks
             ),
-            (true, BSS_OVERFLOW_BLOCK_SIZE)
+            (true, BLOCK, 2)
         );
 
         // SAFETY: `put` assigned both indexes, and nothing else uses the two slots.
@@ -472,7 +480,7 @@ mod map {
     #[test]
     fn every_slot_stays_writable_across_three_overflow_blocks() {
         let map = new();
-        let count = INLINE + 2 * BSS_OVERFLOW_BLOCK_SIZE + 1;
+        let count = INLINE + 2 * BLOCK + 1;
         let key = |i: usize| (i as u32).to_le_bytes();
         let mut slots: Vec<(IndexType, &mut u64)> = Vec::with_capacity(count);
         for i in 0..count {
@@ -481,8 +489,11 @@ mod map {
             slots.push((index, unsafe { &mut *slot }));
         }
         assert_eq!(
-            slots[count - 1].0.index() as usize,
-            2 * BSS_OVERFLOW_BLOCK_SIZE
+            (
+                slots[count - 1].0.index() as usize,
+                lock_state(&map.state).overflow_counts.blocks
+            ),
+            (2 * BLOCK, 3)
         );
         for (i, (index, slot)) in slots.iter_mut().enumerate() {
             let address = &raw mut **slot;
@@ -494,6 +505,37 @@ mod map {
         for (i, (_, slot)) in slots.iter().enumerate() {
             assert_eq!(**slot, i as u64 + 1);
         }
+    }
+
+    /// The resolver's maps name no block size. This crosses the first boundary of the default size.
+    #[test]
+    fn slot_is_writable_after_a_new_block_of_the_default_size() {
+        let map: Store<BSSMapInner<u64, INLINE, false>> = Store::boxed(BSSMapInner::init_at);
+        fill_inline(&map, 0);
+        let (first_index, first) = put(&map, b"first", 1);
+        // SAFETY: `first` is an initialized slot of a live map, and nothing else borrows it.
+        let first = unsafe { &mut *first };
+        *first = 5;
+        // Pretend that the first block has one free slot: 2,046 more puts take minutes under Miri.
+        {
+            let mut state = lock_state(&map.state);
+            state.overflow_counts.count = BSS_OVERFLOW_BLOCK_SIZE as u32 - 1;
+            state.overflow_counts.tail_free = 1;
+        }
+        let (last_index, last) = put(&map, b"last", 2);
+        let (next_index, next) = put(&map, b"next", 3);
+        assert_eq!(
+            [first_index, last_index, next_index].map(|index| index.index() as usize),
+            [0, BSS_OVERFLOW_BLOCK_SIZE - 1, BSS_OVERFLOW_BLOCK_SIZE]
+        );
+        assert_eq!(lock_state(&map.state).overflow_counts.blocks, 2);
+        *first = 10;
+        assert_eq!(
+            [first_index, last_index, next_index].map(|index| at_index(&map, index)),
+            [&raw mut *first, last, next]
+        );
+        // SAFETY: `last` and `next` are initialized slots of a live map.
+        assert_eq!((*first, unsafe { (*last, *next) }), (10, (2, 3)));
     }
 
     #[test]
@@ -576,7 +618,7 @@ mod map {
             0xA5A5_0000_0000_0000 | ((writer as u64) << 32) | u64::from(i)
         }
 
-        let map: Store<BSSMapInner<u64, N, false>> = Store::boxed(BSSMapInner::init_at);
+        let map: Store<BSSMapInner<u64, N, false, BLOCK>> = Store::boxed(BSSMapInner::init_at);
         let map = &map;
         let done: [AtomicBool; WRITERS] = Default::default();
         let done = &done;
@@ -631,9 +673,14 @@ mod map {
         assert_eq!(
             (
                 usize::from(state.backing_buf_used),
-                state.overflow_counts.count as usize
+                state.overflow_counts.count as usize,
+                usize::from(state.overflow_counts.blocks)
             ),
-            (total.min(N), total.saturating_sub(N))
+            (
+                total.min(N),
+                total.saturating_sub(N),
+                total.saturating_sub(N).div_ceil(BLOCK)
+            )
         );
     }
 

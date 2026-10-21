@@ -423,7 +423,7 @@ export const cases: Record<string, Case> = {
   },
   // `finally` ran as often as its block, however the `try` was left.
   "finally.ts": {
-    functions: "9/10",
+    functions: "11/12",
     lines: `
  2|function completes() {
  2|  try {
@@ -444,6 +444,16 @@ export const cases: Record<string, Case> = {
  -|  }
  -|}
  1|handles();
+ 1|function neverCatches() {
+ 1|  try {
+ 1|    at();
+ 0|  } catch {
+ 0|    at();
+ 1|  } finally {
+ 1|    at();
+ -|  }
+ -|}
+ 1|neverCatches();
  1|function throws() {
  1|  try {
  1|    throw new Error();
@@ -510,6 +520,14 @@ export const cases: Record<string, Case> = {
  1|sameLine(true);
  1|sameLine(true);
  1|sameLine(false);
+ 1|function sameLineAsCatch() {
+ 1|  try {
+ 1|    at();
+ 1|  } catch { at(); } finally {
+ 1|    at();
+ -|  }
+ -|}
+ 1|sameLineAsCatch();
 `,
   },
   // What is after a statement that the function was left at, and did not come back to.

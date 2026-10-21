@@ -42,7 +42,7 @@ impl Rule for RequireLocalTestContextForConcurrentSnapshots {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // Whether something is in a call of `it.concurrent` or the like.
+        // Caches whether a node is inside a call to `it.concurrent` or similar.
         let mut in_concurrent = AncestorMemo::default();
         for possible_jest_node in
             jest::iter_possible_jest_call_node(cx.file(), jest::Runner::Vitest)
@@ -71,7 +71,7 @@ impl Rule for RequireLocalTestContextForConcurrentSnapshots {
     }
 }
 
-/// `it.concurrent(..)`, `describe["concurrent"](..)`
+/// Matches `it.concurrent(..)` and `describe["concurrent"](..)`.
 fn is_test_or_describe_node(node: Node) -> bool {
     let Some(member_expr) = node
         .as_expr()

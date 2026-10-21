@@ -1,11 +1,11 @@
-// The rules that oxlint shares with ESLint and typescript-eslint are ports of the originals here. With a configuration of oxlint their
-// messages have the texts of oxlint.
+// `bun lint` ports the rules that oxlint shares with ESLint and typescript-eslint from the originals. With an oxlint
+// config, their messages use oxlint's text.
 //
 //   OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun messages.ts <oxlint 1.87>
 //
-// messages.json has, for each message id whose text is replaced, a short input for which oxlint reports what `bun lint` reports with
-// that id, the text of oxlint and its `help`. It is all that is reported for the input, or with `index` the last. This asks oxlint for
-// the texts again.
+// For each message id whose text is replaced, messages.json has a short input for which oxlint reports the problem that
+// `bun lint` reports with that id, plus oxlint's text and `help`. That problem is the only one reported for the input,
+// or the last one if the entry has an `index`. This script records the text and `help` from oxlint again.
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -13,31 +13,31 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 export type Entry = {
-  /** As oxlint calls it. */
+  /** oxlint's name for the rule. */
   rule: string;
-  /** The message id of the original. */
+  /** The message id in the original rule. */
   id: string;
   file: string;
   code: string;
-  /** The other files of its directory: what it imports. */
+  /** The other files in its directory, which it imports. */
   files?: Record<string, string>;
   options: unknown[];
-  /** If not that of all. */
+  /** Overrides the shared `tsconfig.json`. */
   tsconfig?: object;
-  /** How many problems are reported before it. */
+  /** The number of problems reported before it. */
   index?: number;
   message: string;
-  /** What oxlint prints under it, if anything. */
+  /** The help text oxlint prints under it, if any. */
   help?: string;
 };
 
 const path = join(import.meta.dir, "messages.json");
 export const entries: Entry[] = JSON.parse(readFileSync(path, "utf8"));
 
-/** The directory of an entry. */
+/** Returns an entry's directory. */
 export const directoryOf = (index: number) => String(index);
 
-/** Every entry in a directory with a configuration of its own: one run with `--type-aware` lints them all. */
+/** Puts every entry in a directory with its own config, so one `--type-aware` run lints them all. */
 export function filesOf(all: Entry[]): Record<string, string> {
   const files: Record<string, string> = {
     ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" } }),
@@ -59,7 +59,7 @@ export function filesOf(all: Entry[]): Record<string, string> {
   return files;
 }
 
-/** What is reported in the file of each entry, in the order of the file, from the output of `-f json`. */
+/** Parses `-f json` output. Returns the reports in each entry's file, in source order. */
 function reportsOf(stdout: string, all: Entry[]) {
   const found: { offset: number; message: string; help?: string }[][] = all.map(() => []);
   for (const it of JSON.parse(stdout).diagnostics) {
@@ -71,10 +71,10 @@ function reportsOf(stdout: string, all: Entry[]) {
   return found.map(it => it.sort((a, b) => a.offset - b.offset));
 }
 
-/** Their texts. */
+/** Returns the message text of the reports in each entry's file. */
 export const messagesOf = (stdout: string, all: Entry[]) => reportsOf(stdout, all).map(it => it.map(it => it.message));
 
-/** The `help` of the report that each entry is about. */
+/** Returns the `help` of each entry's own report. */
 export const helpsOf = (stdout: string, all: Entry[]) =>
   reportsOf(stdout, all).map((it, index) => it[all[index].index ?? 0]?.help);
 

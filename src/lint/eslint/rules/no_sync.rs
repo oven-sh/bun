@@ -9,8 +9,7 @@ pub struct NoSync {
 const NO_SYNC: Message = Message::new("noSync", "Unexpected sync method: '{{propertyName}}'.");
 
 impl NoSync {
-    /// Whether a `MemberExpression` that is `node` is looked at: with `allowAtRootLevel`, only
-    /// inside a function.
+    /// True if the `MemberExpression` `node` should be checked. With `allowAtRootLevel`, that's only inside a function.
     fn applies<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) -> bool {
         let is_function = |it: Node| matches!(it, Node::Func(func) if ast_utils::is_function_with_body(func));
         !self.allows_at_root_level || cx.state.find(node, |_, it| is_function(it).then_some(())).is_some()
@@ -29,7 +28,7 @@ impl NoSync {
         }
     }
 
-    /// `implements a.b`, and `extends a.b` of an interface: ESTree has a `MemberExpression` there.
+    /// Checks `implements a.b` and an interface's `extends a.b`, which are a `MemberExpression` in ESTree.
     fn check_heritage<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let TypeKind::Ref { name, .. } = ty.kind() else {
             return;
@@ -51,7 +50,7 @@ impl Rule for NoSync {
         .exprs(&[ExprTag::Dot, ExprTag::Index])
         .classes()
         .stmts(&[StmtTag::Interface]);
-    /// That a node is in a function.
+    /// Remembers which nodes are inside a function.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(options: &Options) -> Self {

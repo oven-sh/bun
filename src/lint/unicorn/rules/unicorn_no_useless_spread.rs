@@ -22,7 +22,7 @@ const ITERABLE_TO_ARRAY: Message = Message::new(
 impl Rule for NoUselessSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-spread", Kind::Problem).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Spread]).props();
-    /// The array literals of which it is known that not all elements are `...[..]`.
+    /// The array literals already known to have an element that isn't `...[..]`.
     type State<'a> = IdSet<Expr<'a>>;
 
     fn new(_: &Options) -> Self {
@@ -75,7 +75,13 @@ impl<'a> Spread<'a> {
     }
 }
 
-/// Whether `...literal` in `list` is reported whatever else is in `list`.
+/// Returns `fix` unless it drops a comment. The printer doesn't emit comments, and the text between the brackets and
+/// the elements is removed too.
+fn keeping_comments(fixer: Fixer, fix: Fix) -> Option<Fix> {
+    fixer.keeps_comments(&fix).then_some(fix)
+}
+
+/// True if `...literal` in `list` is reported regardless of `list`'s other elements.
 fn is_useless_spread_in_list(literal: ExprTag, list: ExprTag) -> bool {
     match literal {
         ExprTag::Object => list == ExprTag::Object,
@@ -93,19 +99,19 @@ fn check<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUselessSpread>) {
         }
         return;
     }
-    // What follows is about `[...argument]` and `{...argument}`.
+    // The rest only applies to `[...argument]` and `{...argument}`.
     let is_array = match list.kind() {
         ExprKind::Array(elements) if elements.len() == 1 => true,
         ExprKind::Object(properties) if properties.len() == 1 => false,
         _ => return,
     };
-    let around = match list.parent() {
+    let outer_list = match list.parent() {
         Node::Expr(outer) if outer.tag() == ExprTag::Spread && outer.jsx_container_span().is_none() => outer.parent(),
         Node::Prop(outer) if outer.kind() == PropKind::Spread && !outer.is_jsx_attribute() => outer.parent(),
         _ => Node::File(cx.file()),
     };
-    // It is reported as `...list` then.
-    if matches!(around, Node::Expr(around) if is_useless_spread_in_list(list.tag(), around.tag())) {
+    // Then it's reported as `...list` instead.
+    if matches!(outer_list, Node::Expr(outer_list) if is_useless_spread_in_list(list.tag(), outer_list.tag())) {
         return;
     }
     if !(is_array && check_useless_iterable_to_array(spread, cx)) {
@@ -134,10 +140,10 @@ fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUseles
             codegen.code.push(b'(');
             codegen.print_object_expression(&properties);
             codegen.code.push(b')');
-            fixer.replace(list, codegen.code)
+            keeping_comments(fixer, fixer.replace(list, codegen.code))
         }),
         (ExprKind::Array(_), ExprKind::Array(outer)) if outer.len() == 1 => {
-            report.fix(|fixer| fixer.replace(list, argument.text()))
+            report.fix(|fixer| keeping_comments(fixer, fixer.replace(list, argument.text())))
         }
         (ExprKind::Array(_), ExprKind::Array(outer)) => report.fix(|fixer| {
             if cx.state.contains(list) {
@@ -161,11 +167,11 @@ fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUseles
                 }
             }
             codegen.code.push(b']');
-            Some(fixer.replace(list, codegen.code))
+            keeping_comments(fixer, fixer.replace(list, codegen.code))
         }),
         (ExprKind::Array(elements), _) => report.fix(|fixer| {
             let (file, brackets) = (fixer.file(), argument.span());
-            // A hole is where its comma is.
+            // A hole's position is its comma.
             let elements = elements.first().zip(elements.last()).map(|(first, last)| {
                 let start = match first.is_missing() {
                     true => skip_trivia(file.text(), brackets.start + 1),
@@ -177,13 +183,13 @@ fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUseles
                 };
                 Span::new(start, end)
             });
-            fixer.replace(spread.span(), elements.map_or(&b""[..], |it| file.slice(it)))
+            keeping_comments(fixer, fixer.replace(spread.span(), elements.map_or(&b""[..], |it| file.slice(it))))
         }),
         _ => report,
     };
 }
 
-/// The elements of the arrays, if all of `list` is `...[..]`.
+/// The arrays' elements, if every element of `list` is `...[..]`.
 fn elements_of_spread_arrays<'a>(list: List<'a, Expr<'a>>) -> Option<Vec<Expr<'a>>> {
     let mut all = Vec::new();
     for spread in list {
@@ -201,7 +207,7 @@ fn elements_of_spread_arrays<'a>(list: List<'a, Expr<'a>>) -> Option<Vec<Expr<'a
     Some(all)
 }
 
-/// `spread`: the only element of an array.
+/// `spread` is the only element of an array.
 fn check_useless_iterable_to_array<'a>(spread: Spread<'a>, cx: &Cx<'a, NoUselessSpread>) -> bool {
     let array = spread.list;
     let parent = match array.parent() {
@@ -230,7 +236,7 @@ fn check_useless_iterable_to_array<'a>(spread: Spread<'a>, cx: &Cx<'a, NoUseless
             if accepts_iterable && let Some(ctor_name) = new.callee().as_ident() {
                 cx.report(spread.dots(), ITERABLE_TO_ARRAY)
                     .data("ctor_name", ctor_name)
-                    .fix(|fixer| fixer.replace(array.outer_span(), spread.argument_text()));
+                    .fix(|fixer| keeping_comments(fixer, fixer.replace(array.outer_span(), spread.argument_text())));
             }
             accepts_iterable
         }
@@ -242,7 +248,7 @@ fn check_useless_iterable_to_array<'a>(spread: Spread<'a>, cx: &Cx<'a, NoUseless
             if accepts_iterable && let Some(method_name) = get_method_name(call) {
                 cx.report(spread.dots(), ITERABLE_TO_ARRAY)
                     .data("ctor_name", method_name)
-                    .fix(|fixer| fixer.replace(array, spread.argument_text()));
+                    .fix(|fixer| keeping_comments(fixer, fixer.replace(array, spread.argument_text())));
             }
             accepts_iterable
         }
@@ -256,10 +262,10 @@ fn get_method_name(call: Call) -> Option<Vec<u8>> {
     Some([object.map_or(&b"unknown"[..], Name::bytes), b".", static_property_name(callee)?.bytes()].concat())
 }
 
-/// What is called or awaited in `target`, which is taken without its parentheses, as it is written. `None`: it is long.
+/// The source text of what `target` calls or awaits, without `target`'s own parentheses. `None` if it's too long.
 fn diagnostic_name(target: Expr<'_>) -> Option<&[u8]> {
     let (mut at, mut span) = (target, target.span());
-    // Parentheses and the whole of an optional chain are nodes for oxlint.
+    // Parentheses and a whole optional chain are nodes in oxlint.
     while !at.is_chain_root() && span == at.span() {
         at = match at.kind() {
             ExprKind::Call(call) => call.callee(),
@@ -276,7 +282,7 @@ fn diagnostic_name(target: Expr<'_>) -> Option<&[u8]> {
     (snippet.len() <= 50 && !strings::contains_char(snippet, b'\n')).then_some(snippet)
 }
 
-/// `spread`: all that is in an array or an object.
+/// `spread` is the only element of an array or an object.
 fn check_useless_clone<'a>(spread: Spread<'a>, is_array: bool, cx: &Cx<'a, NoUselessSpread>) {
     let target = get_inner_expression(spread.argument);
     let (wanted, noun) = if is_array { (ValueHint::NewArray, "array") } else { (ValueHint::NewObject, "object") };
@@ -298,7 +304,7 @@ fn check_useless_clone<'a>(spread: Spread<'a>, is_array: bool, cx: &Cx<'a, NoUse
         let has_holes = matches!(target.kind(), ExprKind::New(new)
             if new.args().len() == 1 && get_inner_expression(new.callee()).is_ident("Array"));
         let suffix: &[u8] = if has_holes { b".fill()" } else { b"" };
-        fixer.replace(spread.list, [spread.argument_text(), suffix].concat())
+        keeping_comments(fixer, fixer.replace(spread.list, [spread.argument_text(), suffix].concat()))
     });
 }
 
@@ -306,16 +312,16 @@ fn check_useless_clone<'a>(spread: Spread<'a>, is_array: bool, cx: &Cx<'a, NoUse
 enum ValueHint {
     NewObject,
     NewArray,
-    /// `[...it]` is not a copy of it: it makes an array of it.
+    /// `[...it]` doesn't copy it but converts it to an array.
     NewTypedArray,
-    /// An iterable that is not an array.
+    /// An iterable that isn't an array.
     NewIterable,
     /// A promise of a new array.
     Promise,
     Unknown,
 }
 
-/// What is known of the value of `e`. Of `a ? b : c`: what is known of both `b` and `c`.
+/// What's known about `e`'s value. For `a ? b : c`, what's known about both `b` and `c`.
 fn const_eval(e: Expr) -> ValueHint {
     let mut pending: SmallVec<[Expr; 4]> = smallvec![e];
     let mut known = None;
@@ -329,7 +335,7 @@ fn const_eval(e: Expr) -> ValueHint {
         };
         match known {
             None => known = Some(hint),
-            // Of two promises nothing is known.
+            // Two promises give `Unknown`.
             Some(known) if known == hint && hint != ValueHint::Promise => {}
             Some(_) => return ValueHint::Unknown,
         }
@@ -337,7 +343,7 @@ fn const_eval(e: Expr) -> ValueHint {
     known.unwrap_or(ValueHint::Unknown)
 }
 
-/// `Err`: it is what `a ? b : c` is: the `b` and the `c`.
+/// `Err` holds the `b` and `c` of an `a ? b : c`.
 fn const_eval_unless_conditional(e: Expr<'_>) -> Result<ValueHint, [Expr<'_>; 2]> {
     let (mut at, mut is_awaited) = (e, false);
     loop {
@@ -401,7 +407,7 @@ fn const_eval_call(call: Call) -> ValueHint {
     }
 }
 
-/// `a.map(..)` and the like: of an array it makes a new array.
+/// `a.map(..)` and the like, which return a new array when called on an array.
 fn is_functional_array_method(call: Call) -> bool {
     const FUNCTIONAL_ARRAY_METHODS: [&str; 12] = [
         "concat",
@@ -420,14 +426,14 @@ fn is_functional_array_method(call: Call) -> bool {
     is_method_call(call, None, Some(&FUNCTIONAL_ARRAY_METHODS), None, None)
 }
 
-/// Such a method, called on a typed array: it makes a new typed array.
+/// Such a method called on a typed array, which returns a new typed array.
 fn is_typed_array_method(mut call: Call) -> bool {
     loop {
         let object = get_member_expr(call.callee()).and_then(Expr::object);
         let Some(object) = object.filter(|_| is_functional_array_method(call)) else {
             return false;
         };
-        // A chain of such calls can be as long as the code.
+        // Loop instead of recursing, because a chain of such calls can be arbitrarily long.
         match get_inner_expression_unless_chain(object).and_then(Expr::as_call) {
             Some(inner) if is_functional_array_method(inner) => call = inner,
             _ => {

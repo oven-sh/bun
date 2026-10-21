@@ -7,7 +7,7 @@ pub struct NoIterator;
 
 const NO_ITERATOR: Message = Message::new("noIterator", "Reserved name '__iterator__'.");
 
-/// `member`: the `__iterator__` of `object`. oxlint suggests `object[Symbol.iterator]`.
+/// `member` is the `__iterator__` of `object`. oxlint suggests `object[Symbol.iterator]`.
 fn report<'a>(member: Expr<'a>, object: Expr<'a>, cx: &Cx<'a, NoIterator>) {
     let report = cx.report(member, NO_ITERATOR);
     if cx.language().is_oxlint {
@@ -58,8 +58,7 @@ impl Rule for NoIterator {
         }
     }
 
-    // `interface I extends a.b`, `class C implements a.b`: typescript-eslint has the name as
-    // a `MemberExpression`.
+    // `interface I extends a.b`, `class C implements a.b`: in typescript-eslint the name is a `MemberExpression`.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let TypeKind::Ref { name, .. } = ty.kind() else {
             return;

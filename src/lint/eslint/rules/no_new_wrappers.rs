@@ -6,7 +6,7 @@ pub struct NoNewWrappers;
 
 const NO_CONSTRUCTOR: Message =
     Message::new("noConstructor", "Do not use {{fn}} as a constructor.");
-/// What oxlint says about `new Symbol()`.
+/// oxlint's message for `new Symbol()`.
 const NOT_A_CONSTRUCTOR: Message = Message::new("notAConstructor", "`{{fn}}` is not a constructor");
 
 impl Rule for NoNewWrappers {
@@ -30,7 +30,7 @@ impl Rule for NoNewWrappers {
         let Some(name) = call.callee().as_ident() else {
             return;
         };
-        // For oxc `(String)` is no name.
+        // oxc doesn't treat `(String)` as an identifier.
         if cx.language().is_oxlint && call.callee().is_parenthesized() {
             return;
         }
@@ -41,14 +41,14 @@ impl Rule for NoNewWrappers {
         if cx.file().global(name.bytes()).is_some()
             && Node::Expr(e).scope().resolve_name(name).is_none()
         {
-            // Of what is long, oxlint points at `new String`.
-            let place = match cx.language().is_oxlint && e.span().len() > 24 {
+            // For a long expression, oxlint points only at `new String`.
+            let location = match cx.language().is_oxlint && e.span().len() > 24 {
                 true => e.span().to(call.callee().span()),
                 false => e.span(),
             };
             let message = if is_symbol { NOT_A_CONSTRUCTOR } else { NO_CONSTRUCTOR };
-            let report = cx.report(place, message).data("fn", name);
-            // oxlint has a fix: without the `new`, or the argument if that is a literal of the kind.
+            let report = cx.report(location, message).data("fn", name);
+            // oxlint's fix removes the `new`, or keeps only the argument if it's already a literal of that type.
             if cx.language().is_oxlint {
                 report.fix(|fixer| {
                     let literal = call.args().first().map(get_inner_expression).filter(|it| match it.tag() {

@@ -1,5 +1,5 @@
-//! What the rules of `jest` and of `vitest` about mocks do: `jest.fn()`, `vi.mock(..)`, `.mockReturnValue(..)`. Each module is a file
-//! of oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
+//! The shared logic of the `jest` and `vitest` rules about mocks: `jest.fn()`, `vi.mock(..)`, `.mockReturnValue(..)`.
+//! Each module is a file in oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
     Ctx, JestFnKind, JestGeneralFnKind, ParsedJestFnCall, PossibleJestNode, Runner, get_node_name,
@@ -13,24 +13,24 @@ use bun_lint_oxlint::ast_util::{as_member_expression, static_property_info};
 use bun_lint_oxlint::import::{ImportImportName, import_entries, import_entries_of};
 use smallvec::SmallVec;
 
-/// Not in parentheses, and not the whole of an optional chain.
+/// True if `e` isn't parenthesized and isn't the root of an optional chain.
 fn is_plain(e: Expr) -> bool {
     !e.is_parenthesized() && !e.is_chain_root()
 }
 
-/// The statements of a body without the directives.
+/// The body's statements, without the directives.
 fn statements_of(func: Func<'_>) -> Option<impl Iterator<Item = Stmt<'_>>> {
     func.body_statements()
         .map(|it| it.iter().filter(|it| it.directive().is_none()))
 }
 
-/// Those of `names` that the file has.
+/// The entries of `names` that the file mentions.
 fn find_names<'a>(file: &'a File<'a>, names: &[&str]) -> SmallVec<[Name<'a>; 4]> {
     names.iter().filter_map(|it| file.find_name(it)).collect()
 }
 
-/// `a.mockImplementation(..)`: where the name of the method is written, the name, which is one of `names`, and the first argument,
-/// which is no `...a`.
+/// For `a.mockImplementation(..)`, returns the method name's span, the name (one of `names`), and the first argument,
+/// which can't be `...a`.
 fn method_call_with_argument<'a>(
     node: Expr<'a>,
     names: &[Name<'a>],
@@ -68,7 +68,7 @@ pub(crate) mod no_mocks_import {
             if contains_mocks_dir(declaration.spec().bytes())
                 && let Some(span) = declaration.spec_span()
             {
-                // Once for each name that is imported.
+                // Reported once per imported name.
                 for _ in import_entries_of(declaration) {
                     ctx.report(span, NO_MOCKS_IMPORT);
                 }
@@ -77,7 +77,7 @@ pub(crate) mod no_mocks_import {
         if !ctx.file.mentions("require") {
             return;
         }
-        // It stops at the first `require` that is not called with a string.
+        // Stops at the first `require` that isn't called with a string.
         for reference in ctx.file.unresolved_references_to(b"require") {
             let call_expr = reference
                 .expr()
@@ -111,7 +111,7 @@ pub(crate) mod no_restricted_jest_methods {
     const RESTRICTED_JEST_METHOD_WITH_MESSAGE: Message = Message::new("", "{{message}}");
 
     pub(crate) struct NoRestrictedTestMethodsConfig {
-        /// Each with the message, if there is one.
+        /// Each method with its message, if it has one.
         restricted_methods: Vec<(Vec<u8>, Option<Vec<u8>>)>,
     }
 
@@ -190,7 +190,7 @@ pub(crate) mod prefer_mock_promise_shorthand {
                 b"mockImplementationOnce" => (true, true),
                 _ => continue,
             };
-            // What the function returns, which has no parameters. A rest parameter does not count.
+            // The value returned by a function with no parameters. A rest parameter doesn't count.
             let arg_expr = match expr.as_fn().filter(|_| is_implementation) {
                 _ if !is_implementation => Some(expr),
                 Some(func)
@@ -279,7 +279,7 @@ pub(crate) mod prefer_mock_return_shorthand {
     struct Mock<'a> {
         property_span: Span,
         new_property_name: &'static str,
-        /// The function, as the argument.
+        /// The function, as the argument expression.
         expr: Expr<'a>,
         func: Func<'a>,
         return_expression: Expr<'a>,
@@ -314,7 +314,8 @@ pub(crate) mod prefer_mock_return_shorthand {
             .take_while(|_| !methods.is_empty())
             .filter_map(|it| as_mock(it, &methods, ctx.runner))
             .collect();
-        // What is returned by one can have others in it. These come first, and are not looked at again.
+        // One mock's returned expression can contain other mocks. The inner ones go first, so their cached results are
+        // reused.
         utils::sort::sort_unstable_by_key(&mut mocks, |it| {
             std::cmp::Reverse(it.return_expression.span().start)
         });
@@ -355,7 +356,7 @@ pub(crate) mod prefer_mock_return_shorthand {
             || matches!(
                 symbol.declarations().next(),
                 Some(Declaration::Var(pat)) if Node::Pat(pat).ancestors().find_map(|it| match it {
-                    // Not the parameter of a `catch`.
+                    // Excludes a `catch` parameter.
                     Node::VarDecl(declarator) => Some(
                         declarator.var_kind() != VarKind::Const && it.parent().as_stmt().is_some_and(|it| it.tag() == StmtTag::Var),
                     ),
@@ -365,7 +366,8 @@ pub(crate) mod prefer_mock_return_shorthand {
             )
     }
 
-    /// The function `argument_expression`, which is not `async` and has no parameters, and what it returns, if it does nothing else.
+    /// Returns the function `argument_expression` and what it returns, if the function isn't `async`, has no parameters
+    /// and only returns.
     fn get_mock_return(
         argument_expression: Expr<'_>,
         runner: Runner,
@@ -390,33 +392,34 @@ pub(crate) mod prefer_mock_return_shorthand {
         }
     }
 
-    /// What there is in an expression that is returned.
+    /// A summary of a returned expression's contents.
     #[derive(Copy, Clone, Default)]
     struct Returned {
         /// A call, a `new`, a tagged template or an `import()`.
         contains_call_like_expression: bool,
         has_mutable_reference: bool,
-        /// A `this` that is that of the function.
+        /// A `this` that belongs to the function itself.
         has_this_expression: bool,
     }
 
     #[derive(Default)]
     struct ReturnedExpressionVisitor<'a> {
-        /// Of the expressions that have been visited.
+        /// Results for the expressions already visited.
         known: IdMap<Expr<'a>, Returned>,
-        /// [`is_mutable`]
+        /// Caches [`is_mutable`].
         mutable: IdMap<Symbol<'a>, bool>,
-        /// Each with its `this_binding_depth`: in how many functions, values of properties of classes and static blocks it is.
+        /// Each node with its `this_binding_depth`: how many functions, class property values and static blocks it's
+        /// nested in.
         pending: Vec<(Node<'a>, i32)>,
     }
 
-    /// What `node` adds to `this_binding_depth`.
+    /// Returns what `node` adds to `this_binding_depth`.
     fn this_binding(node: Node) -> i32 {
         let binds_this = |node: Node| matches!(node, Node::Func(func) if !func.is_arrow());
         match node {
             Node::Expr(e) => match e.parent() {
                 Node::Member(member) => i32::from(member.init() == Some(e)),
-                // The decorator of a parameter is not in the function.
+                // A parameter's decorator isn't inside the function.
                 parent @ Node::Param(param) => {
                     -i32::from(binds_this(parent.parent()) && param.decorators().any(|it| it == e))
                 }
@@ -485,7 +488,7 @@ pub(crate) mod prefer_spy_on {
     }
 
     /// Returns the callee of `mock(..)` if it's the `mock` imported from `bun:test`.
-    fn mock_of_bun(value: Expr<'_>) -> Option<Expr<'_>> {
+    fn bun_mock_callee(value: Expr<'_>) -> Option<Expr<'_>> {
         let callee = value.as_call().filter(|_| is_plain(value))?.callee();
         let (file, local) = (value.file(), callee.as_ident()?);
         let is_mock = import_entries(file).any(|it| {
@@ -518,14 +521,14 @@ pub(crate) mod prefer_spy_on {
     }
 
     /// Reports `a.b = mock(c)`.
-    fn check_mock_of_bun<'a>(
+    fn check_bun_mock<'a>(
         assign_expr: Expr<'a>,
         (callee, call_expr): (Expr<'a>, Expr<'a>),
         left_assign: Expr<'a>,
         ctx: &Ctx<'a, '_>,
     ) {
         let report = ctx.report(callee, USE_SPY_ON);
-        if !ctx.can_write(b"spyOn") || left_assign.is_private_member() {
+        if !ctx.can_write(b"spyOn", assign_expr) || left_assign.is_private_member() {
             return;
         }
         report.suggest(USE_SPY_ON, |fixer| {
@@ -546,18 +549,18 @@ pub(crate) mod prefer_spy_on {
             let ExprKind::Assign { target, value, .. } = node.kind() else {
                 continue;
             };
-            // Not the default in `[a.b = jest.fn()] = c`.
+            // Skips the default in `[a.b = jest.fn()] = c`.
             if !matches!(target.tag(), ExprTag::Dot | ExprTag::Index) || node.is_assignment_target()
             {
                 continue;
             }
             if ctx.runner == Runner::Bun
-                && let Some(callee) = mock_of_bun(value)
+                && let Some(callee) = bun_mock_callee(value)
             {
-                check_mock_of_bun(node, (callee, value), target, ctx);
+                check_bun_mock(node, (callee, value), target, ctx);
                 continue;
             }
-            // `jest.fn()`, or a member of what a call returns: `jest.fn().a`
+            // `jest.fn()`, or a member of a call's result: `jest.fn().a`
             let call_expr = match as_member_expression(value) {
                 Some(mem_expr) => mem_expr.object(),
                 None => Some(value),
@@ -618,7 +621,7 @@ pub(crate) mod prefer_spy_on {
             });
     }
 
-    /// The `jest.fn(a)` that the chain `call_expr` starts with: how the replacement starts, and the `a`.
+    /// Finds the `jest.fn(a)` at the start of the chain `call_expr`. Returns how the replacement starts, and `a`.
     fn get_test_fn_call(call_expr: Expr<'_>) -> (&'static str, Option<Expr<'_>>) {
         let mut at = call_expr;
         loop {

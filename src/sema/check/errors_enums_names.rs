@@ -1,17 +1,16 @@
-//! Enums and names: where a `const` enum may be used, and the specialized diagnostics for names
-//! that resolve, or fail to resolve, in particular ways.
+//! Enums and names: where a `const` enum may be used, and the specialized diagnostics for names that resolve, or fail
+//! to resolve, in particular ways.
 //!
-//! 2475 2476, 2397, 1281, 2311 18004, 2690, 2686; at a JSX tag and at the first name of an import
-//! alias also 2448 2449 2450, 2372 2373.
+//! 2475 2476, 2397, 1281, 2311 18004, 2690, 2686. At a JSX tag and at the first name of an import alias, also 2448 2449
+//! 2450, 2372 2373.
 //!
-//! Follows `isBlockScopedNameDeclaredBeforeUse`, `checkConstEnumAccess`,
-//! `checkElementAccessExpression`, `initializeChecker`,
-//! `addUndefinedToGlobalsOrErrorOnRedeclaration`, `getCannotFindNameDiagnosticForName`,
+//! Mirrors `isBlockScopedNameDeclaredBeforeUse`, `checkConstEnumAccess`, `checkElementAccessExpression`,
+//! `initializeChecker`, `addUndefinedToGlobalsOrErrorOnRedeclaration`, `getCannotFindNameDiagnosticForName`,
 //! `checkAndReportErrorForUsingTypeAsValue`, `maybeMappedType`, `allTypesAssignableToKindEx`,
-//! `onSuccessfullyResolvedSymbol`, `checkImportEqualsDeclaration` and `markJsxAliasReferenced` of
-//! TypeScript 7.0.2's checker.go and `Resolve` of its nameresolver.go.
+//! `onSuccessfullyResolvedSymbol`, `checkImportEqualsDeclaration` and `markJsxAliasReferenced` in TypeScript 7.0.2's
+//! checker.go, and `Resolve` in its nameresolver.go.
 //!
-//! Runs after the passes that report unresolved names: some of their diagnostics are reworded here.
+//! Runs after the passes that report unresolved names, because it rewords some of their diagnostics.
 
 use super::errors_names_and_exports::is_valid_type_only_alias_use_site;
 use super::*;
@@ -33,27 +32,27 @@ fn is_in_right_side_of_import_or_export_assignment(hir: &hir::File, mut node: No
 }
 
 impl Checker<'_, '_> {
-    pub(super) fn check_x_enums_names(&mut self, file: FileId) {
+    pub(super) fn check_enums_and_names(&mut self, file: FileId) {
         let hir = self.hir(file);
         if hir.has_errors || hir.kind == FileKind::Json {
             return;
         }
-        // `checkEnumDeclaration`, `initializeChecker` and `checkAndReportErrorForUsingTypeAsValue` apply to declaration files too. The
-        // other passes only support source files.
+        // `checkEnumDeclaration`, `initializeChecker` and `checkAndReportErrorForUsingTypeAsValue` apply to declaration
+        // files too. The other passes only support source files.
         if hir.kind == FileKind::Declaration {
-            self.check_x_built_in_global_names(file);
+            self.check_built_in_global_names(file);
             return;
         }
-        self.check_x_built_in_global_names(file);
-        self.check_x_names_from_other_files(file);
-        self.check_x_umd_globals(file);
-        self.check_x_jsx_factories(file);
+        self.check_built_in_global_names(file);
+        self.check_names_from_other_files(file);
+        self.check_umd_globals(file);
+        self.check_jsx_factories(file);
     }
 
     // ───────────────────────────── `const` enums ─────────────────────────────
 
-    /// `checkConstEnumAccess` for `e`, for the other `NonNullExpression`s of a run of `!` that it is,
-    /// and for each parenthesized expression and `JsxExpression` around it. They have the same type.
+    /// `checkConstEnumAccess` for `e`, for the other `NonNullExpression`s if `e` is a run of `!`, and for each
+    /// parenthesized expression and `JsxExpression` around it. They all have the same type.
     pub(super) fn check_const_enum_access(&mut self, file: FileId, e: ExprId, ty: TypeId) {
         let (hir, files) = (self.hir(file), self.files());
         let TypeData::Anon {
@@ -68,10 +67,10 @@ impl Checker<'_, '_> {
         let resolves_to_import = match hir[first].kind {
             ExprKind::Ident(name) if files.options.verbatim_module_syntax => {
                 let scope = self.enclosing_scope_of_expr(file, first);
-                let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+                let lookup = &mut |table: SymbolTable, entry: Option<Sym>, meaning: SymFlags| {
                     // `excludeGlobals`
                     let is_global = matches!(table, SymbolTable::Globals);
-                    held.filter(|&held| !is_global && files.means(held, meaning))
+                    entry.filter(|&entry| !is_global && files.means(entry, meaning))
                 };
                 let found = files.resolve_with(file, scope, name, SymFlags::ALIAS, false, lookup);
                 matches!(found, Ok(Some(_)))
@@ -80,7 +79,7 @@ impl Checker<'_, '_> {
         };
         let flag_name = super::errors_modules::isolated_modules_like_flag_name(files);
         let mut node = hir.node(e);
-        // The parent of each is a `NonNullExpression`.
+        // Each one's parent is a `NonNullExpression`.
         for &(_, end) in non_null_ends_in(hir, e) {
             let (start, _) = self.get_error_range_for_node(file, node);
             self.error_at((file, start, end), 2475, &[]);
@@ -93,7 +92,7 @@ impl Checker<'_, '_> {
         }
         loop {
             let parent = hir.parent(node);
-            // The other children of a `TypeQuery` are types.
+            // A `TypeQuery`'s other children are types.
             let ok = matches!(
                 hir.kind(parent),
                 Kind::PropertyAccessExpression | Kind::ElementAccessExpression
@@ -125,26 +124,25 @@ impl Checker<'_, '_> {
     // ───────────────────────────── reserved names ─────────────────────────────
 
     /// `initializeChecker`, `addUndefinedToGlobalsOrErrorOnRedeclaration`: 2397
-    fn check_x_built_in_global_names(&mut self, file: FileId) {
+    fn check_built_in_global_names(&mut self, file: FileId) {
         let (bound, files) = (self.bound(file), self.files());
         let report = |c: &mut Self, decl: Decl, name: Atom| {
             if let Some((start, _)) = c.error_range_of_declaration(file, decl) {
                 c.error_at((file, start, 0), 2397, &[Arg::Atom(name)]);
             }
         };
-        // A script cannot declare `globalThis`, with any meaning.
+        // A script can't declare `globalThis`, with any meaning.
         if !files.module(file).is_module()
             && let Some(symbol) = bound.lookup(bound.scopes[0].locals, known::globalThis)
         {
-            // The table has a placeholder for a symbol that `mergeSymbol` has refused
-            // (`Files::redirect_name_to`).
+            // The table has a placeholder for a symbol that `mergeSymbol` rejected (`Files::redirect_name_to`).
             let is_local =
-                |part: &&Sym| part.file == file && bound.symbols[part.id.idx()].parent.is_none();
-            let refused = files.refused_merges.iter();
-            let refused = refused.filter(|it| it.target == files.global_this_symbol);
-            let refused = refused.flat_map(|it| it.source_parts).find(is_local);
-            let symbol = refused.map_or(symbol, |part| part.id);
-            for &decl in bound.symbols[symbol.idx()].decls.iter() {
+                |part: &&Sym| part.file == file && bound.symbol(part.id).parent.is_none();
+            let rejected = files.rejected_merges.iter();
+            let rejected = rejected.filter(|it| it.target == files.global_this_symbol);
+            let rejected = rejected.flat_map(|it| it.source_parts).find(is_local);
+            let symbol = rejected.map_or(symbol, |part| part.id);
+            for &decl in bound.symbol(symbol).decls.iter() {
                 report(self, decl, known::globalThis);
             }
         }
@@ -165,7 +163,7 @@ impl Checker<'_, '_> {
     // ───────────────────────────── names that resolve after all ─────────────────────────────
 
     /// `Resolve`, at an enum declaration: 1281.
-    fn check_x_names_from_other_files(&mut self, file: FileId) {
+    fn check_names_from_other_files(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         if !files.options.isolated_modules || hir.enums.is_empty() {
             return;
@@ -183,14 +181,12 @@ impl Checker<'_, '_> {
                 at = s.parent;
                 if s.symbol.is_none()
                     || matches!(s.kind, ScopeKind::File)
-                    || !bound.symbols[s.symbol.idx()]
-                        .flags
-                        .contains(SymFlags::MERGED)
+                    || !bound.symbol(s.symbol).flags.contains(SymFlags::MERGED)
                 {
                     continue;
                 }
-                // In an enum only its members are in scope; in a namespace, all but the members of an enum it is merged with
-                // (`SymbolFlagsModuleMember`).
+                // In an enum only its members are in scope. In a namespace, everything is except the members of an enum
+                // it's merged with (`SymbolFlagsModuleMember`).
                 let expected = if matches!(s.kind, ScopeKind::Enum(_)) {
                     SymFlags::ENUM_MEMBER
                 } else {
@@ -200,8 +196,8 @@ impl Checker<'_, '_> {
                     continue;
                 };
                 let flags = files.flags(found);
-                // `getSymbol`: an alias is matched by the meaning of its target, and an unresolved
-                // alias matches any meaning.
+                // `getSymbol`: an alias is matched by its target's meaning, and an unresolved alias matches any
+                // meaning.
                 let is_intended = files.symbol_flags(found).intersects(expected);
                 if !is_intended || flags.contains(SymFlags::EXPORT_ONLY) {
                     continue;
@@ -209,7 +205,7 @@ impl Checker<'_, '_> {
                 let start = hir[e].pos;
                 if let ScopeKind::Enum(en) = s.kind
                     && !hir[en].flags.contains(Flags::AMBIENT)
-                    && files.decls(found).first().is_some_and(|d| d.0 != file)
+                    && files.decls_of(found).first().is_some_and(|d| d.0 != file)
                 {
                     let option = super::errors_modules::isolated_modules_like_flag_name(files);
                     let (of, member) = (self.atoms().bytes(hir[en].name), self.atoms().bytes(name));
@@ -250,8 +246,8 @@ impl Checker<'_, '_> {
         if !self.is_union(ty) {
             return false;
         }
-        // `allTypesAssignableToKindEx(t, TypeFlagsStringOrNumberLiteral, strict)`. Strict mode rejects `any`, `unknown`, `void`,
-        // `undefined` and `null` by flag, so every kind of `undefined` and `null` counts.
+        // `allTypesAssignableToKindEx(t, TypeFlagsStringOrNumberLiteral, strict)`. Strict mode rejects `any`,
+        // `unknown`, `void`, `undefined` and `null` by flag, so every kind of `undefined` and `null` counts.
         for &part in self.parts(ty) {
             if self.is_any(part) || part == TypeId::UNKNOWN || self.is_nullish(part) {
                 return false;
@@ -268,8 +264,8 @@ impl Checker<'_, '_> {
     // ───────────────────────────── names that resolve where they must not be used
     // ─────────────────────────────
 
-    /// `onSuccessfullyResolvedSymbol`: 2686, the UMD global name of a module is only for scripts.
-    fn check_x_umd_globals(&mut self, file: FileId) {
+    /// `onSuccessfullyResolvedSymbol`: 2686. A module's UMD global name is only for scripts.
+    fn check_umd_globals(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         for &(e, scope) in &bound.free_idents {
             if let ExprKind::Ident(name) = hir[e].kind
@@ -282,12 +278,12 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `markJsxAliasReferenced`, where a name it looks up resolves: the JSX factory at every tag
-    /// name, and at an opening fragment the fragment factory too.
-    fn check_x_jsx_factories(&mut self, file: FileId) {
+    /// `markJsxAliasReferenced`, where a name it looks up resolves: the JSX factory at every tag name, plus the
+    /// fragment factory at an opening fragment.
+    fn check_jsx_factories(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let options = &files.options;
-        // `jsxFactoryRefErr`: otherwise `Resolve` reports nothing.
+        // `jsxFactoryRefErr`: otherwise `Resolve` doesn't report anything.
         if hir.jsx.is_empty() || options.jsx != crate::resolve::JsxEmit::React {
             return;
         }
@@ -339,10 +335,10 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `onSuccessfullyResolvedSymbol` for `result`, which a name looked up from `scope` resolved
-    /// to, at an `error_location` that is not an identifier expression: those are checked by the
-    /// passes over the identifiers of a file. 1361 and 1362 at a tag name are reported by
-    /// `check_type_only_jsx_factory`; the first name of an import alias is a valid use site.
+    /// `onSuccessfullyResolvedSymbol` for `result`, which a name looked up from `scope` resolved to, at an
+    /// `error_location` that isn't an identifier expression. Identifier expressions are checked by the passes over a
+    /// file's identifiers. 1361 and 1362 at a tag name are reported by `check_type_only_jsx_factory`, and the first
+    /// name of an import alias is a valid use site.
     pub(super) fn on_successfully_resolved_symbol(
         &mut self,
         file: FileId,
@@ -388,7 +384,7 @@ impl Checker<'_, '_> {
 
 // ───────────────────────────── constant expressions ─────────────────────────────
 
-/// The `location` of `evaluate`, and what is declared before or after it.
+/// The `location` of `evaluate`. Declarations are classified as before or after it.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum Location {
     Member(FileId, EnumMemberId),
@@ -405,7 +401,7 @@ impl Location {
         }
     }
 
-    /// `hir`: of `file()`.
+    /// `hir` must be the HIR of `file()`.
     pub(super) fn node(self, hir: &hir::File) -> Node {
         match self {
             Location::Member(_, member) => hir.node(member),
@@ -435,8 +431,8 @@ pub(super) fn is_declared_before_use(
 
 // ───────────────────────────── kinds of types and symbols ─────────────────────────────
 
-/// `onSuccessfullyResolvedSymbol`: whether `name`, resolved from `scope` of `file`, a module, is
-/// the UMD global name of a module, which is only for scripts.
+/// `onSuccessfullyResolvedSymbol`: true if `name`, resolved from `scope` of `file`, a module, is a module's UMD global
+/// name, which is only for scripts.
 pub(super) fn resolves_to_umd_global(
     files: &Files,
     file: FileId,
@@ -447,15 +443,14 @@ pub(super) fn resolves_to_umd_global(
     !files.options.allow_umd_global_access
         && files.module(file).is_module()
         && umd_global(files, name).is_some_and(|global| {
-            // `getSymbol`: an alias is matched by the meaning of its target, which is every meaning
-            // if it cannot be resolved.
+            // `getSymbol`: an alias is matched by its target's meaning, which is every meaning if it can't be resolved.
             files.resolve_name(file, scope, name, meaning) == Some(global)
                 && files.symbol_flags(global).intersects(meaning)
         })
 }
 
-/// `Resolve`: `associatedDeclarationForContainingInitializerOrBindingName` of a name looked up from
-/// `location`. `NONE`: it has none, or it is `withinDeferredContext` by then.
+/// `Resolve`: `associatedDeclarationForContainingInitializerOrBindingName` of a name looked up from `location`. `NONE`
+/// if it has none, or if it's already `withinDeferredContext` at that point.
 fn associated_declaration_for_containing_initializer_or_binding_name(
     hir: &hir::File,
     mut location: Node,
@@ -514,12 +509,12 @@ fn get_is_deferred_context(hir: &hir::File, location: Node, last_location: Node)
                 .is_none())
 }
 
-/// The global symbol named `name`, if it is declared only by `export as namespace name`.
+/// The global symbol named `name`, if it's declared only by `export as namespace name`.
 fn umd_global(files: &Files, name: Atom) -> Option<Sym> {
     let symbol = *files.globals.get(name)?;
     (files.flags(symbol).contains(SymFlags::ALIAS)
         && files
-            .decls(symbol)
+            .decls_of(symbol)
             .iter()
             .all(|d| matches!(d.1, Decl::UmdGlobal(_))))
     .then_some(symbol)

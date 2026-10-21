@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { Request, Response } from "../webcore/response.bind.ts";
 
 export const FileSystemRouterOptions = b.dictionary(
   {
@@ -34,8 +35,8 @@ export const MatchedRoute = b.class({
 
 export const Routable = b.union({
   path: b.string.allowStringObject,
-  request: b.classRef("Request"),
-  response: b.classRef("Response"),
+  request: Request,
+  response: Response,
 });
 
 export const RouterStyle = b.enumeration(["nextjs"]);

@@ -27,7 +27,7 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedBlob.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -704,7 +704,7 @@ static std::optional<WebSocket::Payload> convertPayload(JSGlobalObject& lexicalG
         return impl->span();
     }
 
-    if (auto* blob = dynamicDowncast<JSBlob>(value)) {
+    if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(value)) {
         const uint8_t* ptr = nullptr;
         size_t length = 0;
         if (!Blob__sharedView(JSValue::encode(blob), &ptr, &length)) {

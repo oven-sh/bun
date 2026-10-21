@@ -2,7 +2,7 @@
 #include "Bindgen/JSBytesView.h"
 #include "Bindgen/ExternTraits.h"
 #include "ErrorCode.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedBlob.h"
 #include "blob.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
@@ -12,7 +12,7 @@ using namespace JSC;
 
 bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
 {
-    if (!value.inherits<WebCore::JSBlob>())
+    if (!value.inherits<Bun::Bindgen::Generated::JSBlob>())
         return false;
     const uint8_t* data = nullptr;
     size_t length = 0;

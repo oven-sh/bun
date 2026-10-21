@@ -91,6 +91,7 @@
 #include "ZigGlobalObject.h"
 #include "JSEnvironmentVariableMap.h"
 #include "blob.h"
+#include "GeneratedBlob.h"
 #include "ZigGeneratedClasses.h"
 #include "JSX509Certificate.h"
 #include "ncrypto.h"
@@ -1408,7 +1409,7 @@ private:
             }
 
             // write bun types
-            if (auto* blob = dynamicDowncast<JSBlob>(obj)) {
+            if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(obj)) {
                 if (!startObjectInternal(blob)) // handle duplicates
                     return true;
                 // TODO: a Blob of a file descriptor should not be stored either.

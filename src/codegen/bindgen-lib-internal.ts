@@ -820,7 +820,11 @@ export class BytesType extends Type {
   }
   get tsType(): string {
     if (this.#options.otherwise === "toString") return "any";
-    const spelling = { string: "string", buffer: "ArrayBuffer | SharedArrayBuffer | ArrayBufferView", blob: "Blob" };
+    const spelling = {
+      string: "string",
+      buffer: "ArrayBuffer | SharedArrayBuffer | ArrayBufferView",
+      blob: "globalThis.Blob",
+    };
     return this.#options.from.map(kind => spelling[kind]).join(" | ");
   }
   get passesValue(): boolean {
@@ -1061,14 +1065,14 @@ export class RefType extends Type {
   readonly pointee: string;
   readonly header: string | null;
   readonly #valueKinds: ValueKinds;
-  readonly #refuses: string;
+  readonly #refuses: string | null;
   constructor(
     idlType: string,
     tsType: string,
     pointee: string,
     header: string | null,
     valueKinds: ValueKinds,
-    refuses: string,
+    refuses: string | null,
   ) {
     super();
     this.idlType = idlType;

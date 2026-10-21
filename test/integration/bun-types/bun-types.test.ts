@@ -309,16 +309,20 @@ function checkForEmptyInterfaces(program: ts.Program) {
  * `Class<T>`: the constructor of a class of which only the instances, `T`, are published.
  */
 const PUBLISHED_AS: Record<string, string | null> = {
+  "Archive.bind.ts": "typeof Bun",
+  "Blob.bind.ts": "{ Blob: Class<Bun.BunFile> }",
   "BunObject.bind.ts": "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape }",
   "BunObjectInternals.bind.ts": null,
   "Crypto.bind.ts":
     'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',
   "CryptoHasher.bind.ts": "typeof Bun",
   "DevServer.bind.ts": null,
+  "FetchSession.bind.ts": "typeof Bun",
   "Glob.bind.ts": "typeof Bun",
   "HTMLBundle.bind.ts": null,
   "HashObject.bind.ts": "typeof Bun.hash & { wyhash: typeof Bun.hash }",
   "Image.bind.ts": "typeof Bun",
+  "JSBundler.bind.ts": null,
   "JSMySQLConnection.bind.ts": null,
   "JSMySQLQuery.bind.ts": null,
   "JSON5Object.bind.ts": "typeof Bun.JSON5",
@@ -330,7 +334,9 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "PasswordObject.bind.ts": "typeof Bun.password",
   "PostgresSQLConnection.bind.ts": null,
   "PostgresSQLQuery.bind.ts": null,
+  "ReadableStream.bind.ts": null,
   "ResourceUsage.bind.ts": null,
+  "S3Client.bind.ts": "typeof Bun",
   "S3Stat.bind.ts": "{ S3Stat: Class<Bun.S3Stats> }",
   "SSLConfig.bind.ts": null,
   "SemverObject.bind.ts": "typeof Bun.semver",
@@ -352,7 +358,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "ffi.bind.ts": null,
   "filesystem_router.bind.ts": "typeof Bun",
   "fmt_jsc.bind.ts": null,
-  "html_rewriter.bind.ts": null,
+  "html_rewriter.bind.ts": "{ HTMLRewriter: typeof HTMLRewriter }",
   "interpreter.bind.ts": null,
   "jest.bind.ts": null,
   "jsc_hooks.bind.ts": null,
@@ -368,6 +374,8 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_util_binding.bind.ts": null,
   "node_zlib_binding.bind.ts": null,
   "resolve_message.bind.ts": "{ ResolveMessage: Class<ResolveMessage>; BuildMessage: Class<BuildMessage> }",
+  "response.bind.ts":
+    '{ Request: Class<Omit<Request, "keepalive" | "duplex">>; Response: typeof Response & { prototype: Response } }',
   "socket_body.bind.ts": null,
   "sourcemap.bind.ts": null,
   "udp_socket.bind.ts": null,
@@ -536,6 +544,8 @@ describe("@types/bun integration test", () => {
     ).toEqual([
       // Published, and nothing has ever read it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
+      // Published, and a Request has neither.
+      "filesystem_router.bind.ts: new FileSystemRouter().match(input: string | Request | Response): MatchedRoute | null: input has no keepalive, duplex",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
       "valkey.bind.ts: new RedisClient().psubscribe is not published",
       "valkey.bind.ts: new RedisClient().pubsub is not published",

@@ -171,6 +171,7 @@
 
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
+#include "GeneratedBlob.h"
 #include "ZigGeneratedClasses.h"
 #include "GeneratedExpect.h"
 #include "JavaScriptCore/JSMapInlines.h"
@@ -2979,7 +2980,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         if (dynamicDowncast<WebCore::JSFetchHeaders>(cell))
             return static_cast<double>(uncheckedDowncast<WebCore::JSFetchHeaders>(cell)->wrapped().size());
 
-        if (auto* blob = dynamicDowncast<WebCore::JSBlob>(cell)) {
+        if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(cell)) {
             uint64_t size = Bun__Blob__getSizeForBindings(blob->wrapped());
             if (size == std::numeric_limits<uint64_t>::max())
                 return std::numeric_limits<double>::max();

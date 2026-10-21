@@ -153,13 +153,12 @@ JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr
     , m_cookies(nullptr, JSC::WriteBarrierEarlyInit)
 {
 }
-extern SYSV_ABI "C" size_t Request__estimatedSize(void* requestPtr);
 extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
 void JSBunRequest::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
 
-    auto size = Request__estimatedSize(this->wrapped());
+    auto size = Bun__Bindgen__Request__structSize + Bun__Bindgen__Request__estimatedSize(this->wrapped());
     vm.heap.reportExtraMemoryAllocated(this, size);
 }
 
@@ -292,7 +291,7 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
 
 Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, globalObject->JSRequestPrototype());
+    auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, Bun::Bindgen::prototypeForClass<JSBunRequest::Base>(globalObject));
     auto* prototype = JSBunRequestPrototype::create(vm, globalObject, prototypeStructure);
     return JSBunRequest::createStructure(vm, globalObject, prototype);
 }

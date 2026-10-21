@@ -68,9 +68,12 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "BunObject.h"
+#include "GeneratedBlob.h"
 #include "GeneratedBunObject.h"
 #include "GeneratedCrypto.h"
+#include "GeneratedHtmlRewriter.h"
 #include "GeneratedResolveMessage.h"
+#include "GeneratedResponse.h"
 #include "GeneratedTextDecoder.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
@@ -2928,7 +2931,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInherits, (JSGlobalObject*, CallFrame* callFr
     JSValue value = callFrame->argument(1);
     switch (static_cast<InheritsClass>(callFrame->uncheckedArgument(0).asInt32())) {
     case InheritsClass::Blob:
-        return JSValue::encode(jsBoolean(value.inherits<JSBlob>()));
+        return JSValue::encode(jsBoolean(value.inherits<Bun::Bindgen::Generated::JSBlob>()));
     case InheritsClass::ReadableStream:
         return JSValue::encode(jsBoolean(value.inherits<JSReadableStream>()));
     case InheritsClass::WritableStream:

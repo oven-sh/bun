@@ -34,17 +34,4 @@
     clippy::unused_unit
 )]
 
-// Bring BodyMixin into scope so codegen UFCS calls like
-// `Request::get_text(&mut *this, …)` / `Response::get_blob(…)` resolve to the
-// trait default methods.
-// NOTE: must be a named import — `as _` only covers `.method()` dot-call
-// resolution, not the `Type::method(…)` qualified-path form the codegen emits.
-use crate::webcore::body::BodyMixin;
-// Same for `Blob`: the struct lives in `bun_jsc::webcore_types` (lower crate,
-// data-only) but every JS-facing method (`get_text`, `get_slice`, …) is
-// layered on via the `BlobExt` extension trait in `bun_runtime`. The codegen
-// emits `Blob::get_text(&mut *this, …)` UFCS, so the trait must be in scope
-// by name here for those calls to resolve.
-use crate::webcore::blob::BlobExt;
-
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_classes.rs"));

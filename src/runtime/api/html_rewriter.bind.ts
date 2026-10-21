@@ -142,6 +142,19 @@ export const Element = b.class({
   },
 });
 
+export const HTMLRewriter = b.class({
+  rustPath: "crate::api::html_rewriter::HTMLRewriter",
+  configurable: false,
+  /** The `on()` / `onDocument()` callbacks: `HandlerList` in html_rewriter.rs. */
+  internalFields: ["handlers"],
+  construct: { length: 0 },
+  proto: {
+    on: { ...chainable(b.self), args: { selector: b.any, handlers: b.any }, capability: "js", throws: true },
+    onDocument: { ...chainable(b.self), args: { handlers: b.any }, capability: "js", throws: true },
+    transform: { returns: b.any, args: { input: b.any }, passThis: true, capability: "js", throws: true },
+  },
+});
+
 /** One per `transform()`, never exposed to JavaScript: the output `Response` keeps it alive, and its internal fields keep alive the values the rewrite uses. */
 export const HTMLRewriterTransform = b.class({
   rustPath: "crate::api::html_rewriter::RewriterPipe",

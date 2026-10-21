@@ -16,6 +16,7 @@
 //! consumer, the canonical `BuildArtifact` stays in `bun_runtime::api`.
 
 use core::cell::Cell;
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_core::strings::AsciiStatus;
@@ -105,8 +106,7 @@ impl From<MimeType> for BlobContentType {
 // Blob
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The `m_ctx` payload of
-/// the codegen'd `JSBlob` wrapper.
+/// What a JS `Blob` wraps (`src/runtime/webcore/Blob.bind.ts`).
 ///
 /// R-2 (`sharedThis`): every JS-facing host-fn takes `&Blob` (not `&mut Blob`)
 /// so re-entrant JS calls cannot stack two `&mut` to the same instance. Fields
@@ -168,10 +168,14 @@ impl Default for Blob {
     }
 }
 
-// Codegen externs (build/debug/codegen/ZigGeneratedClasses.cpp `JSBlob`).
-// `*mut Blob` is opaque to C++ — only Rust dereferences it.
 const _: () = {
-    use crate::generated::JSBlob;
+    // The class is generated into `bun_runtime`, which has its members (`BlobExt`).
+    unsafe extern "C" {
+        safe fn Bun__Bindgen__Blob__fromJS(value: JSValue) -> *mut c_void;
+        safe fn Bun__Bindgen__Blob__fromJSDirect(value: JSValue) -> *mut c_void;
+        fn Bun__Bindgen__Blob__create(global: *mut JSGlobalObject, wrapped: *mut c_void)
+        -> JSValue;
+    }
 
     // `JSValue::as(Blob)` special-case: a `BuildArtifact`
     // wraps a `Blob`, so downcasting to `Blob` must also match it. The struct
@@ -186,10 +190,14 @@ const _: () = {
 
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            JSBlob::from_js(value).or_else(|| __bun_blob_from_build_artifact(value))
+            match Bun__Bindgen__Blob__fromJS(value) {
+                blob if blob.is_null() => __bun_blob_from_build_artifact(value),
+                blob => Some(blob.cast()),
+            }
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            JSBlob::from_js_direct(value)
+            let blob = Bun__Bindgen__Blob__fromJSDirect(value);
+            (!blob.is_null()).then(|| blob.cast())
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             // Heap-promote and hand
@@ -197,10 +205,8 @@ const _: () = {
             // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::to_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
             let ptr = Blob::new(self);
-            JSBlob::to_js(ptr, global)
-        }
-        fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            JSBlob::get_constructor(global)
+            // SAFETY: the new object takes the one ref `Blob::new` made.
+            unsafe { Bun__Bindgen__Blob__create(global.as_mut_ptr(), ptr.cast()) }
         }
     }
 };

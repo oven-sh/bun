@@ -60,11 +60,11 @@ export const bytes = (options: BytesOptions) => new BytesType(options);
 /** The native `Blob` behind a JS `Blob`. */
 export const blob = new RefType(
   "Bun::Bindgen::IDLBlobRef",
-  "Blob",
+  "globalThis.Blob",
   "bun_jsc::webcore_types::Blob",
   "Bindgen/IDLConvertBlob.h",
-  [{ cpp: "WebCore::JSBlob" }],
-  "detached Blobs",
+  [{ cpp: "Bun::Bindgen::Generated::JSBlob" }],
+  null,
 );
 
 /** An instance of the class `name` of a `.classes.ts` file, as a `&'a` of the Rust struct it wraps. */

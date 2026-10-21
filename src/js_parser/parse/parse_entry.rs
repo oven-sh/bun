@@ -2504,7 +2504,13 @@ impl<'a> Parser<'a> {
 
         // After `to_ast`: its import scan removes a TypeScript `import a = b.c` that nothing reads, and un-counts `b`.
         if P::<TS, false>::ALLOW_MACROS && !p.macro_.refs.is_empty() {
-            p.reject_macro_value_uses(&ast);
+            crate::scan::scan_macro_refs::reject_macro_value_uses(
+                &p.macro_.refs,
+                &p.options.features,
+                &ast,
+                p.source,
+                p.log(),
+            );
         }
 
         if reject_import_statements {

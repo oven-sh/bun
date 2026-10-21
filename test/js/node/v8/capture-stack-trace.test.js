@@ -2117,3 +2117,29 @@ test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
   const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
   expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
 });
+
+test.concurrent("a stack taken while a CommonJS module loads names the frame of require() anonymous", async () => {
+  using dir = tempDir("stack-while-commonjs-loads", {
+    "main.cjs": `require("./child.cjs");`,
+    "child.cjs": [
+      `const line = new Error().stack.split("\\n")[2];`,
+      `Error.prepareStackTrace = (_error, callSites) => callSites[1];`,
+      `const callSite = new Error().stack;`,
+      `console.log(JSON.stringify({ line, name: callSite.getFunctionName(), text: String(callSite) }));`,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.cjs"],
+    cwd: String(dir),
+    // Debug builds show the frames of builtin JavaScript unless this is off.
+    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+    stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (native)" },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});

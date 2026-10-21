@@ -412,6 +412,13 @@ pub(crate) struct ShellCpTask {
     pub task: ShellTask,
 }
 
+/// Whether there is anything to copy for a source operand.
+enum Check {
+    Copy,
+    /// The destination stays as it is, and that is not an error.
+    Skip,
+}
+
 impl ShellCpTask {
     fn create(
         cmd: NodeId,
@@ -531,8 +538,8 @@ impl ShellCpTask {
     }
 
     /// Recover `*ShellCpTask` from the
-    /// intrusive `*WorkPoolTask`, run the impl, and on error post back
-    /// immediately (success path defers the post to `cp_on_finish`).
+    /// intrusive `*WorkPoolTask`, run the impl, and post back immediately
+    /// unless a copy was started (which defers the post to `cp_on_finish`).
     unsafe fn work_pool_callback(task: *mut crate::shell::interpreter::WorkPoolTask) {
         // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
         // is embedded in `ShellCpTask` at `TASK_OFFSET`. `this` is a live
@@ -550,15 +557,16 @@ impl ShellCpTask {
                 .poster
                 .take()
                 .expect("shell cp task on the pool is armed");
-            if let Some(e) = (*this).run_from_thread_pool_impl(&poster) {
-                (*this).err = Some(e);
-                (*this).task.poster = Some(poster);
-                Self::enqueue_to_event_loop(this);
-            } else {
+            match (*this).run_from_thread_pool_impl(&poster) {
                 // The copy now belongs to a `ShellAsyncCpTask` (holding its
                 // own poster, completing on the JS thread via `cp_on_finish`);
                 // this task's pool part is over.
-                drop(poster);
+                Ok(Check::Copy) => drop(poster),
+                result => {
+                    (*this).err = result.err();
+                    (*this).task.poster = Some(poster);
+                    Self::enqueue_to_event_loop(this);
+                }
             }
         }
     }
@@ -612,11 +620,11 @@ impl ShellCpTask {
         src: &bun_core::ZStr,
         tgt: &bun_core::ZStr,
         appended: Option<&[u8]>,
-    ) -> Option<ShellErr> {
+    ) -> Result<Check, ShellErr> {
         use bun_sys::S;
         use resolve_path::Platform;
 
-        let custom = |msg: String| Some(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
+        let custom = |msg: String| Err(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
         let src_shown = bstr::BStr::new(&self.src);
         let tgt_shown = || -> Vec<u8> {
             let mut shown = self.tgt.clone();
@@ -631,12 +639,20 @@ impl ShellCpTask {
 
         // If lstat fails, let the copy report the error.
         let Ok(src_stat) = bun_sys::lstat(src) else {
-            return None;
+            return Ok(Check::Copy);
         };
         // A symlink to a directory is copied as a link, so don't treat it as a directory.
         let src_is_dir = S::ISDIR(src_stat.st_mode as _);
         if let Ok(tgt_stat) = bun_sys::lstat(tgt) {
+            // A directory is still merged into an existing one, without replacing its files.
+            if self.opts.no_clobber && !src_is_dir {
+                return Ok(Check::Skip);
+            }
             if Self::same_inode(&src_stat, &tgt_stat) || src.as_bytes() == tgt.as_bytes() {
+                // Only the same operand twice is an error. Scripts rely on `cp file .` exiting 0.
+                if self.opts.no_clobber || appended.is_some() || src.as_bytes() != tgt.as_bytes() {
+                    return Ok(Check::Skip);
+                }
                 return custom(format!(
                     "{src_shown} and {} are identical (not copied)",
                     bstr::BStr::new(&tgt_shown()),
@@ -658,7 +674,7 @@ impl ShellCpTask {
         }
 
         if !src_is_dir {
-            return None;
+            return Ok(Check::Copy);
         }
         let into_itself = || {
             custom(format!(
@@ -687,7 +703,7 @@ impl ShellCpTask {
             }
             ancestor = parent;
         }
-        None
+        Ok(Check::Copy)
     }
 
     /// Resolves src/tgt to absolute paths, classifies them per the three
@@ -697,17 +713,17 @@ impl ShellCpTask {
     fn run_from_thread_pool_impl(
         &mut self,
         poster: &bun_jsc::ConcurrentPoster,
-    ) -> Option<ShellErr> {
+    ) -> Result<Check, ShellErr> {
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
         let src = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.src) {
             Ok(path) => path,
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Err(ShellErr::new_sys(&e)),
         };
         let mut tgt = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.tgt)
         {
             Ok(path) => path,
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
         // Cases:
@@ -720,12 +736,12 @@ impl ShellCpTask {
         // need to create it.
         let src_is_dir = match Self::is_dir(&src) {
             Ok(x) => x,
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
         // Any source directory without -R is an error.
         if src_is_dir && !self.opts.recursive {
-            return Some(ShellErr::Custom(
+            return Err(ShellErr::Custom(
                 format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
                     .into_bytes()
                     .into_boxed_slice(),
@@ -738,7 +754,7 @@ impl ShellCpTask {
                 // If it has a trailing directory separator, it's a directory.
                 (Self::has_trailing_sep(tgt.as_bytes()), false)
             }
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
         let mut _copying_many = false;
@@ -754,13 +770,13 @@ impl ShellCpTask {
                 let basename = resolve_path::basename(src.as_bytes());
                 tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
                     Ok(path) => path,
-                    Err(e) => return Some(ShellErr::new_sys(&e)),
+                    Err(e) => return Err(ShellErr::new_sys(&e)),
                 };
                 appended = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
-                return Some(ShellErr::Custom(
+                return Err(ShellErr::Custom(
                     format!("directory {} does not exist", bstr::BStr::new(&self.tgt))
                         .into_bytes()
                         .into_boxed_slice(),
@@ -770,14 +786,14 @@ impl ShellCpTask {
         } else {
             // 3rd synopsis: source_files... -> target.
             if src_is_dir {
-                return Some(ShellErr::Custom(
+                return Err(ShellErr::Custom(
                     format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
                         .into_bytes()
                         .into_boxed_slice(),
                 ));
             }
             if !tgt_exists || !tgt_is_dir {
-                return Some(ShellErr::Custom(
+                return Err(ShellErr::Custom(
                     format!("{} is not a directory", bstr::BStr::new(&self.tgt))
                         .into_bytes()
                         .into_boxed_slice(),
@@ -786,14 +802,14 @@ impl ShellCpTask {
             let basename = resolve_path::basename(src.as_bytes());
             tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
                 Ok(path) => path,
-                Err(e) => return Some(ShellErr::new_sys(&e)),
+                Err(e) => return Err(ShellErr::new_sys(&e)),
             };
             appended = Some(basename);
             _copying_many = true;
         }
 
-        if let Some(err) = self.check_paths(&src, &tgt, appended) {
-            return Some(err);
+        if let Check::Skip = self.check_paths(&src, &tgt, appended)? {
+            return Ok(Check::Skip);
         }
 
         let args = crate::node::fs::args::Cp::owned(
@@ -801,7 +817,7 @@ impl ShellCpTask {
             tgt.as_bytes().to_vec(),
             crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
-                force: true,
+                force: !self.opts.no_clobber,
                 error_on_exist: false,
             },
         );
@@ -815,7 +831,7 @@ impl ShellCpTask {
             std::ptr::from_mut::<ShellCpTask>(self),
         );
 
-        None
+        Ok(Check::Copy)
     }
 
     /// # Safety
@@ -870,6 +886,8 @@ pub(crate) struct Opts {
     pub(crate) recursive: bool,
     /// `-v` — verbose
     pub(crate) verbose: bool,
+    /// `-n` — do not overwrite an existing file
+    pub(crate) no_clobber: bool,
 }
 
 impl FlagParser for Opts {
@@ -879,22 +897,19 @@ impl FlagParser for Opts {
 
     fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
         match ch {
-            b'f' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-f"))),
-            b'H' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-H"))),
-            b'i' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-i"))),
-            b'L' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-L"))),
-            b'P' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            b'p' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            b'R' => {
-                self.recursive = true;
-                Some(ParseFlagResult::ContinueParsing)
-            }
-            b'v' => {
-                self.verbose = true;
-                Some(ParseFlagResult::ContinueParsing)
-            }
-            b'n' => Some(ParseFlagResult::ContinueParsing),
-            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
+            b'R' => self.recursive = true,
+            b'v' => self.verbose = true,
+            b'n' => self.no_clobber = true,
+            // Only the first flag of a group is rejected. Scripts rely on `-Rp` and `-Rf` working.
+            _ if i > 0 => {}
+            b'f' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-f"))),
+            b'H' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-H"))),
+            b'i' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-i"))),
+            b'L' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-L"))),
+            b'P' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
+            b'p' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
+            _ => return Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
         }
+        None
     }
 }

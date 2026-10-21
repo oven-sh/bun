@@ -862,15 +862,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
         // by `ctx.request_weakref` until `RequestContext::deinit` releases it.
         // `body_hive` (the original +1) moves into the Request — paired drop in
-        // `Request::finalize`.
+        // `Request::destroy`.
         let request_object: *mut crate::webcore::Request =
-            bun_core::heap::into_raw(crate::webcore::Request::new(crate::webcore::Request::init(
+            crate::webcore::Request::new(crate::webcore::Request::init(
                 ctx_ref.method,
                 AnyRequestContext::init(ctx),
                 SSL,
                 Some(signal_ref),
                 body_hive,
-            )));
+            ));
         // SAFETY: freshly leaked from `heap::into_raw`, so `request_object`
         // carries the allocation's provenance, as `init_ref` requires.
         ctx_ref

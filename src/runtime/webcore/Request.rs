@@ -60,7 +60,7 @@ const _: () = {
             // `js_ref = .init_weak(...)`, and `check_body_stream_ref` —
             // otherwise the wrapper reports size 0 and any Locked-body
             // ReadableStream is never migrated into the GC slot.
-            let ptr = bun_core::heap::into_raw(Box::new(self));
+            let ptr = Request::new(self);
             // SAFETY: `ptr` is a freshly-leaked heap allocation; the inherent
             // `to_js` hands it to the C++ wrapper which takes ownership (freed
             // via `RequestClass__finalize`). Same pattern as `do_clone`.
@@ -78,8 +78,10 @@ const _: () = {
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
 /// field layout is unchanged. `method`/`flags`/`request_context`/`body`/
 /// `weak_ptr_data` are only written during construction or via raw-ptr
-/// `finalize`, so stay plain.
+/// `destroy`, so stay plain.
 #[repr(C)]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Request::destroy)]
 pub(crate) struct Request {
     pub(crate) url: JsCell<BunString>,
 
@@ -92,13 +94,16 @@ pub(crate) struct Request {
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. The
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
     /// hold their own `+1` on the same slot. `ManuallyDrop` because
-    /// `finalize()` decouples from `Box` and must release this handle exactly
+    /// `destroy()` decouples from `Box` and must release this handle exactly
     /// once before `Box::from_raw().drop()` (which would otherwise re-run it).
     body: ManuallyDrop<BodyHiveHandle>,
     js_ref: JsCell<JsRef>,
     pub method: Method,
     pub(crate) flags: Flags,
     pub(crate) request_context: AnyRequestContext,
+    /// The JS wrapper holds the only ref, so `destroy` runs when it is collected.
+    ref_count: Cell<u32>,
+    /// Bun.serve's RequestContext holds a weak reference, which can outlive the wrapper.
     pub(crate) weak_ptr_data: WeakPtrData,
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
@@ -133,9 +138,10 @@ impl Default for Flags {
 
 // Heap-allocates via Box::new (global mimalloc).
 impl Request {
+    /// The caller owns the one ref, which `to_js` hands to the JS wrapper.
     #[inline]
-    pub(crate) fn new(v: Request) -> Box<Request> {
-        Box::new(v)
+    pub(crate) fn new(v: Request) -> *mut Request {
+        bun_core::heap::into_raw(Box::new(v))
     }
 }
 
@@ -383,11 +389,11 @@ impl Request {
     /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
     /// so it needs the same fetch-spec step-1 usability check.
     #[bun_uws::uws_callback(export = "Request__clone")]
-    pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
+    pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<NonNull<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
         let cx = global_this.js_thread_of_caller_no_frame();
-        self.clone(&cx).ok()
+        NonNull::new(self.clone(&cx).ok()?)
     }
 
     /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a
@@ -429,6 +435,7 @@ impl Request {
             method,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
+            ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }
@@ -718,16 +725,13 @@ impl Request {
         self.signal.set(None);
     }
 
-    pub(crate) fn finalize(self: Box<Self>) {
-        // weak_ptr_data may have outstanding refs aliasing this allocation;
-        // hand ownership back to the raw pointer FIRST so a panic in the work
-        // below leaks instead of Box-drop UAF-ing those weak holders.
-        let this = bun_core::heap::release(self);
+    fn destroy(this: *mut Request) {
         // Release the request's `+1` on the body slot. `ManuallyDrop` so the
         // hot-path `Box::from_raw().drop()` below cannot re-run this.
         // SAFETY: `this` is live and this is the sole release point for `body`.
-        unsafe { ManuallyDrop::drop(&mut this.body) };
-        if this.weak_ptr_data.on_finalize() {
+        unsafe { ManuallyDrop::drop(&mut (*this).body) };
+        // SAFETY: ref_count hit 0; a `WeakPtr` left only touches `weak_ptr_data`, on this thread.
+        if unsafe { (*this).weak_ptr_data.on_finalize() } {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
             // `drop_in_place` over every field (headers / url / signal /
@@ -740,8 +744,11 @@ impl Request {
             // Cold path: weak_ptr_data still has outstanding refs — keep the
             // allocation alive, but release inner resources now so they aren't
             // pinned until the last `WeakPtr` drops.
-            this.js_ref.with_mut(|r| r.finalize());
-            this.finalize_without_deinit();
+            // SAFETY: as above.
+            unsafe {
+                (*this).js_ref.with_mut(|r| r.finalize());
+                (*this).finalize_without_deinit();
+            }
         }
     }
 
@@ -996,6 +1003,7 @@ impl Request {
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
+            ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         };
@@ -1438,7 +1446,7 @@ impl Request {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         this_value: JSValue,
-    ) -> JsResult<Box<Request>> {
+    ) -> JsResult<*mut Request> {
         let arguments = callframe.arguments();
 
         let request = Self::construct_into(
@@ -1456,10 +1464,8 @@ impl Request {
     ) -> JsResult<JSValue> {
         self.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
-        let cloned = self.clone(&global_this.js_thread_of_caller(callframe))?;
-
-        let cloned_ptr = bun_core::heap::into_raw(cloned);
-        // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
+        let cloned_ptr = self.clone(&global_this.js_thread_of_caller(callframe))?;
+        // SAFETY: `clone` just allocated it; `to_js` hands its ref to the wrapper.
         let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
         Ok(js_wrapper)
@@ -1507,6 +1513,7 @@ impl Request {
                     method: self.method,
                     flags: self.flags,
                     request_context: AnyRequestContext::NULL,
+                    ref_count: Cell::new(1),
                     weak_ptr_data: WeakPtrData::EMPTY,
                     reported_estimated_size: Cell::new(0),
                 },
@@ -1520,7 +1527,7 @@ impl Request {
         Ok(())
     }
 
-    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Box<Request>> {
+    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<*mut Request> {
         // allocator param dropped (global mimalloc)
         // `clone_into` `ptr::write`s the new fields over the seed
         // without reading or dropping it.
@@ -1539,12 +1546,13 @@ impl Request {
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
+            ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
         self.clone_into(&mut req, cx, false)?;
-        Ok(req)
+        Ok(bun_core::heap::into_raw(req))
     }
 }
 
@@ -1568,6 +1576,7 @@ impl Request {
                 ..Flags::default()
             },
             request_context,
+            ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }

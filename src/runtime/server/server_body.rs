@@ -2093,7 +2093,7 @@ where
         // TODO: set Host header
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
-        let existing_request: Box<Request> = if first_arg.is_string() {
+        let request: *mut Request = if first_arg.is_string() {
             let url_utf8 = arguments[0].to_utf8(ctx)?;
             let temp_url_str = url_utf8.slice();
 
@@ -2155,7 +2155,7 @@ where
                 }
             }
 
-            Box::new(Request::init2(
+            Request::new(Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
@@ -2177,16 +2177,10 @@ where
             return Ok(JSPromise::rejected_promise(ctx, err).to_js());
         };
 
-        // `Request::to_js` stores `self as *mut
-        // Request` into the JS wrapper, which adopts ownership and frees the
-        // allocation in its GC finalizer. Relinquish the `Box` here so the
-        // local going out of scope does not also drop it (double-free / UAF).
-        let request: *mut Request = bun_core::heap::into_raw(existing_request);
-
         debug_assert!(!self.config.on_request.is_empty()); // confirmed above
         let global_this = self.global();
         let on_request = self.config.on_request;
-        // SAFETY: `request` was just allocated via `heap::alloc`; ownership
+        // SAFETY: `request` was just allocated via `heap::alloc`; its ref
         // transfers to the JS wrapper inside `to_js`.
         let request_value = unsafe { (*request).to_js(&global_this) };
         let response_value =
@@ -2814,7 +2808,7 @@ where
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
         // The ctx and Request each own a +1 on the
-        // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
+        // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
         ctx.set_request_body(Some(body_hive.clone()));
 
         let _context = server.vm().enter_context(server.context.get());
@@ -2825,7 +2819,7 @@ where
 
         // The Request's own ref.
         let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
-        let request_object_box = Request::new(Request::init(
+        let request_object_ptr: *mut Request = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
             SSL,
@@ -2836,7 +2830,6 @@ where
         // pointer; Request is freed via ctx.deinit's request_weakref. The weak
         // handle takes the raw pointer, not a reborrow of `request_object`:
         // writes through `request_object` below would otherwise invalidate it.
-        let request_object_ptr: *mut Request = bun_core::heap::into_raw(request_object_box);
         ctx.set_request_weakref(request_object_ptr);
         // SAFETY: freshly leaked; shared view — everything below (headers/url
         // population, `to_js`) takes `&Request`.
@@ -3084,7 +3077,7 @@ where
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
         // The ctx and Request each own a +1 on the
-        // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
+        // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
         ctx.request_body.set(Some(body_hive.clone()));
 
         let _context = this.vm().enter_context(this.context.get());
@@ -3097,7 +3090,7 @@ where
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
         // The Request's own ref.
         let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
-        let request_object_box = Request::new(Request::init(
+        let request_object_ptr: *mut Request = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),
             SSL,
@@ -3110,7 +3103,6 @@ where
         // pointer; freed via ctx.deinit's request_weakref. Everything below
         // goes through this raw pointer rather than a `&mut Request` reborrow:
         // the weak handle and the deferred `detach_request` both alias it.
-        let request_object_ptr: *mut Request = bun_core::heap::into_raw(request_object_box);
         // SAFETY: freshly leaked, so it carries the allocation's provenance.
         ctx.request_weakref
             .set(unsafe { bun_ptr::WeakPtr::<Request>::init_ref(request_object_ptr) });

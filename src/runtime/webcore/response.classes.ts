@@ -7,7 +7,7 @@ export default [
     sharedThis: true,
     construct: true,
     constructNeedsThis: true,
-    finalize: true,
+    refCounted: true,
     final: false,
     klass: {},
     JSType: "0b11101110",

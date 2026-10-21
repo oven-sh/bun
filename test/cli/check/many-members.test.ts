@@ -343,28 +343,15 @@ const expected = (titles: string[]) =>
     titles.flatMap(title => sizes.map(size => [`${title} ${size}`, cases[title].errors.trim().split("\n")])),
   );
 
-// A debug build that is not in memory takes longer to start than the 5 seconds that a test has without `--timeout`. No
-// build on CI is a debug build, so this shortens no limit there.
-const slow = isDebug ? 20_000 : undefined;
+test.each(Object.keys(cases))("%s", async title => {
+  expect(await reported([bunExe(), "check", "--threads", "1"], [title])).toEqual(expected([title]));
+});
 
-test.each(Object.keys(cases))(
-  "%s",
-  async title => {
-    expect(await reported([bunExe(), "check", "--threads", "1"], [title])).toEqual(expected([title]));
-  },
-  slow,
-);
-
-test.skipIf(!tsc)(
-  "TypeScript reports the same about these programs",
-  async () => {
-    const titles = Object.keys(cases);
-    expect(await reported([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], titles)).toEqual(
-      expected(titles),
-    );
-  },
-  slow,
-);
+// What TypeScript reports does not depend on the build of bun, so a debug build, which has the least time, leaves it out.
+test.skipIf(!tsc || isDebug)("TypeScript reports the same about these programs", async () => {
+  const titles = Object.keys(cases);
+  expect(await reported([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], titles)).toEqual(expected(titles));
+});
 
 // One declaration, or one object literal, with many names. Each of these lists was searched entry by entry for every
 // name, which took the seconds beside it in a release build. The clock says nothing on a busy machine, so the limit is on
@@ -429,26 +416,22 @@ const large: [string, number, number, (count: number) => string][] = [
   ],
 ];
 // A debug build is some fifty times slower. It has the first of them, with fewer members: 7.5 seconds, and now 1.7.
-test.each(isDebug ? large.slice(0, 1) : large)(
-  "%s do not take quadratic time",
-  async (_, most, seconds, program) => {
-    const [count, limit] = isDebug ? [32_000, 4] : [most, isASAN ? seconds * 10 : seconds];
-    using dir = tempDir("bun-check-members", { "tsconfig.json": tsconfig, "a.ts": program(count) + probe });
-    await using proc = spawn({
-      cmd: [bunExe(), "check", "--threads", "1"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // A crash, an assertion or a sanitizer report: the exit code alone says nothing about why.
-    if (exitCode !== 1) console.error(`bun check exited with ${exitCode}:\n${stderr}`);
-    expect({ errors: stdout.trim().replace(/^a\.ts\(\d+,/, "("), exitCode }).toEqual({
-      errors: "(14): error TS2322: Type '0' is not assignable to type 'never'.",
-      exitCode: 1,
-    });
-    expect(Number(proc.resourceUsage()!.cpuTime.user) / 1e6).toBeLessThan(limit);
-  },
-  slow,
-);
+test.each(isDebug ? large.slice(0, 1) : large)("%s do not take quadratic time", async (_, most, seconds, program) => {
+  const [count, limit] = isDebug ? [32_000, 4] : [most, isASAN ? seconds * 10 : seconds];
+  using dir = tempDir("bun-check-members", { "tsconfig.json": tsconfig, "a.ts": program(count) + probe });
+  await using proc = spawn({
+    cmd: [bunExe(), "check", "--threads", "1"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crash, an assertion or a sanitizer report: the exit code alone says nothing about why.
+  if (exitCode !== 1) console.error(`bun check exited with ${exitCode}:\n${stderr}`);
+  expect({ errors: stdout.trim().replace(/^a\.ts\(\d+,/, "("), exitCode }).toEqual({
+    errors: "(14): error TS2322: Type '0' is not assignable to type 'never'.",
+    exitCode: 1,
+  });
+  expect(Number(proc.resourceUsage()!.cpuTime.user) / 1e6).toBeLessThan(limit);
+});

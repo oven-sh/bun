@@ -7290,6 +7290,33 @@ export const wrong: number = "";`,
       expect(exitCode).toBe(1);
     });
 
+    test("reports declaration errors once there are no other errors, like `tsc --noEmit`", async () => {
+      const files = {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noEmit: false, declaration: true, outDir: "out" },
+        }),
+        "a.ts": `namespace N {
+  interface Hidden {
+    a: number;
+  }
+  export declare const hidden: Hidden;
+}
+export const shown = N.hidden;
+`,
+      };
+      const declarationError =
+        "a.ts(7,14): error TS4025: Exported variable 'shown' has or is using private name 'Hidden'.";
+      const typeError = "b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.";
+      using broken = project({ ...files, "b.ts": `export const wrong: number = "";\n` });
+      expect((await check(broken)).stdout).toBe(typeError);
+      // `tsc -b` emits, unless the project has `noEmit`.
+      expect((await check(broken, ["-b"])).stdout).toBe(`${declarationError}\n${typeError}`);
+      using fixed = project({ ...files, "b.ts": `export const right: number = 1;\n` });
+      const { stdout, exitCode } = await check(fixed);
+      expect(stdout).toBe(declarationError);
+      expect(exitCode).toBe(1);
+    });
+
     const isolatedDeclarations = ["--declaration", "true", "--isolatedDeclarations", "true"];
 
     test("isolatedDeclarations: reports every property of `export default {} satisfies T`", async () => {
@@ -7318,11 +7345,11 @@ export const wrong: number = "";`,
 }
 `,
       });
-      const { stdout, exitCode } = await check(dir, isolatedDeclarations);
-      expect(stdout).toMatchInlineSnapshot(`
-        "recursive.ts(2,10): error TS7023: 'next' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
-        recursive.ts(2,10): error TS9008: Method must have an explicit return type annotation with --isolatedDeclarations."
-      `);
+      // With `noImplicitAny` there's a TS7023, and no declaration errors next to it.
+      const { stdout, exitCode } = await check(dir, [...isolatedDeclarations, "--noImplicitAny", "false"]);
+      expect(stdout).toMatchInlineSnapshot(
+        `"recursive.ts(2,10): error TS9008: Method must have an explicit return type annotation with --isolatedDeclarations."`,
+      );
       expect(exitCode).toBe(1);
     });
 
@@ -7367,7 +7394,7 @@ export const outer = struct({ a: str, b: struct({ c: str }) });
 
     test("isolatedDeclarations: `exports.a = e` is an assignment to an expando, `module.exports = e` isn't", async () => {
       using dir = project({
-        "tsconfig.json": `{"compilerOptions":{"strict":true,"noEmit":true,"target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["esnext"],"types":[],"skipLibCheck":true,"allowJs":true,"checkJs":true,"declaration":true,"isolatedDeclarations":true}}`,
+        "tsconfig.json": `{"compilerOptions":{"strict":true,"outDir":"out","target":"esnext","module":"esnext","moduleResolution":"bundler","lib":["esnext"],"types":[],"skipLibCheck":true,"allowJs":true,"checkJs":true,"declaration":true,"isolatedDeclarations":true}}`,
         "lib.d.ts": `export declare function f(): number;
 `,
         "properties.cjs": `const { f } = require("./lib");
@@ -7378,9 +7405,10 @@ module.exports.two = { n: f() };
 module.exports = { one: f() };
 `,
       });
-      const { stdout, exitCode } = await check(dir);
+      // A build that emits reports declaration errors next to other errors.
+      const { stdout, exitCode } = await check(dir, ["-b"]);
       expect(stdout).toMatchInlineSnapshot(`
-        "tsconfig.json(1,162): error TS5053: Option 'allowJs' cannot be specified with option 'isolatedDeclarations'.
+        "tsconfig.json(1,163): error TS5053: Option 'allowJs' cannot be specified with option 'isolatedDeclarations'.
         whole.cjs(2,1): error TS9013: Expression type can't be inferred with --isolatedDeclarations.
         whole.cjs(2,25): error TS9013: Expression type can't be inferred with --isolatedDeclarations."
       `);

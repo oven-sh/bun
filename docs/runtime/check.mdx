@@ -650,7 +650,7 @@ bun -p process.versions.typescript
 
 These differences are intentional:
 
-- **`bun check` only checks.** It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, even if `declaration` or `incremental` is on. Use [`bun build`](/bundler) to produce JavaScript and `tsc` to produce declaration files.
+- **`bun check` only checks.** It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, even if `declaration` or `incremental` is on. Use [`bun build`](/bundler) to produce JavaScript and `tsc` to produce declaration files. As with `tsc --noEmit`, errors about declaration files, such as TS4025 or the TS90xx errors of `isolatedDeclarations`, are reported once there are no other errors. `bun check -b` reports them next to other errors, like `tsc -b`, unless the project has `noEmit`.
 - **Referenced projects don't have to be built.** `tsc` without `-b` reads the `.d.ts` files that an earlier build wrote, and reports TS6305 if there are none. `bun check` reads the source files.
 - **Compiler options work with `-b`.** `tsc -b --strict` reports TS5094. `bun check -b --strict` applies the option to every project.
 - **A `tsconfig.json` with nothing but `references` is followed.** `tsc` without `-b` [checks nothing](#a-tsconfigjson-with-nothing-but-references) there.

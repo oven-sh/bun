@@ -4653,17 +4653,11 @@ fn check_named_files(
         }
         finish_files();
     };
-    // `EmitFilesAndReportErrors` calls `Emit` after collecting diagnostics, even if there are errors, and the
-    // declaration transformer reports under `noEmit` too (`emitDeclarationFile`). `HandleNoEmitOnError` skips `Emit`,
-    // and so does `noEmit` on an incremental program. Every `tsc -b` program is incremental. Otherwise this models `tsc
-    // -p --noEmit`.
+    // `EmitFilesAndReportErrors` calls `Emit` after collecting diagnostics, even if there are errors.
+    // `HandleNoEmitOptions` skips it.
     let options = &program.files.options;
-    let emits_despite_errors = options.emits_declarations
-        && !options.no_emit_on_error
-        && !match options.is_build {
-            true => options.no_emit,
-            false => options.is_incremental,
-        };
+    let emits_despite_errors =
+        options.emits_declarations && !options.no_emit_on_error && !options.no_emit;
     let emit_on_early_exit = || -> Vec<Diagnostic> {
         if emits_despite_errors {
             check_files(Requested::Declaration, true);

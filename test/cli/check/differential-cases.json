@@ -4777,7 +4777,7 @@
   },
   "23-C4": {
     "files": {
-      "a.ts": "export namespace Q { namespace H2 { export enum P { A, B } } export const v = H2.P.A as H2.P; }\nexport const l1 = Q.v;\nconst sentinel: number = \"\";\n",
+      "a.ts": "export namespace Q { namespace H2 { export enum P { A, B } } export const v = H2.P.A as H2.P; }\nexport const l1 = Q.v;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -4867,7 +4867,7 @@
   },
   "23-P2": {
     "files": {
-      "a.mts": "export const x = require(\"pkg\");\nconst sentinel: number = \"\";\n",
+      "a.mts": "export const x = require(\"pkg\");\n",
       "g.d.ts": "declare function require(id: string): import(\"pkg\", { with: { \"resolution-mode\": \"require\" } }).Foo;\n",
       "node_modules/pkg/index.d.ts": "export interface Foo { a: 1 }\n",
       "node_modules/pkg/package.json": "{ \"name\": \"pkg\", \"exports\": { \"require\": { \"types\": \"./index.d.ts\" } } }\n",
@@ -6612,7 +6612,7 @@
   },
   "29-C1a": {
     "files": {
-      "a.ts": "namespace N { interface I { readonly p: unique symbol } export declare const x: I[\"p\"]; }\nexport const a = [N.x] as const;\nconst sentinel: number = \"\";\n",
+      "a.ts": "namespace N { interface I { readonly p: unique symbol } export declare const x: I[\"p\"]; }\nexport const a = [N.x] as const;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -6680,20 +6680,20 @@
   },
   "29-C6": {
     "files": {
-      "b.js": "import { mkH } from \"./m\";\nexport function f() { return mkH(); }\n/** @type {number} */ const sentinel = \"\";\n",
+      "b.js": "import { mkH } from \"./m\";\nexport function f() { return mkH(); }\n",
       "m.ts": "interface Hidden { h: 1 }\nexport declare function mkH(): Hidden;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"allowJs\": true, \"checkJs\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "29-C7a": {
     "files": {
-      "a.ts": "namespace NS { namespace P { export interface J { j: 1 } } export declare function mk(): P.J; }\nexport const e = NS.mk();\nconst sentinel: number = \"\";\n",
+      "a.ts": "namespace NS { namespace P { export interface J { j: 1 } } export declare function mk(): P.J; }\nexport const e = NS.mk();\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "29-C7b": {
     "files": {
-      "a.ts": "import { mk } from \"./m\";\nexport const v = mk();\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { mk } from \"./m\";\nexport const v = mk();\n",
       "m.ts": "namespace Hid { export interface I { i: 1 } }\nexport declare function mk(): Hid.I;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
@@ -6736,13 +6736,13 @@
   },
   "29-P1a": {
     "files": {
-      "a.ts": "type T = { readonly s: unique symbol };\ndeclare const o: T;\nexport const v = { [o.s]: 1 };\nconst sentinel: number = \"\";\n",
+      "a.ts": "type T = { readonly s: unique symbol };\ndeclare const o: T;\nexport const v = { [o.s]: 1 };\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "29-P1b": {
     "files": {
-      "a.ts": "export function f() { class C { static readonly s: unique symbol = Symbol(); } return { [C.s]: 1 }; }\nconst sentinel: number = \"\";\n",
+      "a.ts": "export function f() { class C { static readonly s: unique symbol = Symbol(); } return { [C.s]: 1 }; }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -9747,7 +9747,7 @@
   },
   "39-C11d": {
     "files": {
-      "node_modules/x/index.ts": "export const c = [1].map(x => x);\nconst sentinel: number = \"\";\n",
+      "node_modules/x/index.ts": "export const c = [1].map(x => x);\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"declaration\": true, \"isolatedDeclarations\": true }, \"files\": [\"node_modules/x/index.ts\"] }\n"
     }
   },
@@ -10631,7 +10631,7 @@
   },
   "42-C14b": {
     "files": {
-      "a.ts": "import { a, b } from \"outer\";\nexport default { x: b(), y: a() };\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { a, b } from \"outer\";\nexport default { x: b(), y: a() };\n",
       "node_modules/outer/index.d.ts": "import { B } from \"inner\";\nimport { A } from \"inner/zz/deep\";\nexport declare function b(): B;\nexport declare function a(): A;\n",
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface B { b: 1 }\n",
       "node_modules/outer/node_modules/inner/package.json": "{ \"name\": \"inner\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
@@ -10789,7 +10789,7 @@
   },
   "42-P4": {
     "files": {
-      "a.ts": "import { mk } from \"outer\";\nexport const v = mk();\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { mk } from \"outer\";\nexport const v = mk();\n",
       "node_modules/outer/index.d.ts": "import { T } from \"Binner\";\nimport { T as T2 } from \"ainner\";\nexport declare function mk(): T;\n",
       "node_modules/outer/node_modules/Binner/index.d.ts": "export interface T { t: 1 }\n",
       "node_modules/outer/node_modules/Binner/package.json": "{ \"name\": \"inner\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
@@ -12472,19 +12472,19 @@
   },
   "60-L02": {
     "files": {
-      "a.ts": "export function f(this, a: number): void {}\nexport const g = function (this, a: number): void {};\nexport class A { m(this, v: number): void {} static n(this): void {} }\nexport interface I { m(this, v: number): void; (this): void; }\nexport type T = (this, a: number) => void;\nexport const o = { m(this, a: number): void {} };\nexport function h(b, a: number): void {}\nconst sentinel: number = \"\";\n",
+      "a.ts": "export function f(this, a: number): void {}\nexport const g = function (this, a: number): void {};\nexport class A { m(this, v: number): void {} static n(this): void {} }\nexport interface I { m(this, v: number): void; (this): void; }\nexport type T = (this, a: number) => void;\nexport const o = { m(this, a: number): void {} };\nexport function h(b, a: number): void {}\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noImplicitAny\": false, \"declaration\": true, \"isolatedDeclarations\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "60-L04a": {
     "files": {
-      "a.js": "function f() { const s = Symbol(); return { [s]: 1 }; }\nexport class C0 { constructor() { this.x = f(); } }\nexport class C1 { [+1]() {} constructor() { this[1] = f(); } }\nexport class C2 { 1() {} constructor() { this[1] = f(); } }\nexport class C3 { [1]() {} constructor() { this[1] = f(); } }\nexport class C4 { [-1]() {} constructor() { this[\"-1\"] = f(); } }\nexport class C5 { [+1]() {} constructor() { this[\"+1\"] = f(); } }\n/** @type {number} */\nconst sentinel = \"\";\n",
+      "a.js": "function f() { const s = Symbol(); return { [s]: 1 }; }\nexport class C0 { constructor() { this.x = f(); } }\nexport class C1 { [+1]() {} constructor() { this[1] = f(); } }\nexport class C2 { 1() {} constructor() { this[1] = f(); } }\nexport class C3 { [1]() {} constructor() { this[1] = f(); } }\nexport class C4 { [-1]() {} constructor() { this[\"-1\"] = f(); } }\nexport class C5 { [+1]() {} constructor() { this[\"+1\"] = f(); } }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"allowJs\": true, \"checkJs\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "60-L04b": {
     "files": {
-      "a.ts": "function f() { const s = Symbol(); return { [s]: 1 }; }\nexport function g() {}\ng[\"ab\"] = f();\ng.cd = f();\ng[1] = f();\nexport const h = () => {};\nh[\"ab\"] = f();\nh.cd = f();\nconst sentinel: number = \"\";\n",
+      "a.ts": "function f() { const s = Symbol(); return { [s]: 1 }; }\nexport function g() {}\ng[\"ab\"] = f();\ng.cd = f();\ng[1] = f();\nexport const h = () => {};\nh[\"ab\"] = f();\nh.cd = f();\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -12542,7 +12542,7 @@
   },
   "60-L20b": {
     "files": {
-      "a.ts": "function f() { const s = Symbol(); return { [s]: 1 }; }\nconst k = \"foo\";\nexport class H1 { get foo() { return f(); } set [k](v) {} }\nexport class H2 { get [k]() { return f(); } set foo(v) {} }\nexport class H3 { get [k]() { return f(); } set [k](v) {} }\nexport class H4 { set [k](v) {} get foo() { return f(); } }\nexport class H5 { static get foo() { return f(); } static set [k](v) {} }\nconst sentinel: number = \"\";\n",
+      "a.ts": "function f() { const s = Symbol(); return { [s]: 1 }; }\nconst k = \"foo\";\nexport class H1 { get foo() { return f(); } set [k](v) {} }\nexport class H2 { get [k]() { return f(); } set foo(v) {} }\nexport class H3 { get [k]() { return f(); } set [k](v) {} }\nexport class H4 { set [k](v) {} get foo() { return f(); } }\nexport class H5 { static get foo() { return f(); } static set [k](v) {} }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -12560,13 +12560,13 @@
   },
   "61-L04": {
     "files": {
-      "a.ts": "export const o1 = { m(this, a: number): void {} };\nexport const f1 = function (this, a: number): void {};\nexport function g1(this, a: number): void {}\nexport class C { m(this, a: number): void {} }\nexport interface I { m(this, a: number): void }\nexport const f2 = function (this: string, a: number): void {};\nconst sentinel: number = \"\";\n",
+      "a.ts": "export const o1 = { m(this, a: number): void {} };\nexport const f1 = function (this, a: number): void {};\nexport function g1(this, a: number): void {}\nexport class C { m(this, a: number): void {} }\nexport interface I { m(this, a: number): void }\nexport const f2 = function (this: string, a: number): void {};\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"declaration\": true, \"isolatedDeclarations\": true } }\n"
     }
   },
   "61-L04b": {
     "files": {
-      "a.ts": "export const o3 = { get y(): number { return 1; }, set y(this: any) {} };\nexport const o2 = { get x(): number { return 1; }, set x(this: any, v: number) {} };\nconst sentinel: number = \"\";\n",
+      "a.ts": "export const o3 = { get y(): number { return 1; }, set y(this: any) {} };\nexport const o2 = { get x(): number { return 1; }, set x(this: any, v: number) {} };\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"declaration\": true, \"isolatedDeclarations\": true } }\n"
     }
   },
@@ -12774,7 +12774,7 @@
   },
   "63-L03b": {
     "files": {
-      "a.ts": "export class B { set x(this, v: number) {} }\nexport class H { get x(this): number { return 1; } }\nexport class I { get x(this): number { return 1; } set x(this, v: number) {} }\nexport class J { static set x(this, v: number) {} }\nexport class K { private set x(this, v: number) {} }\nexport class M { get x(): number { return 1; } set x(this, v: number) {} }\nexport class N { get x(this) { return 1; } }\nexport abstract class O { abstract set x(this, v: number); }\nexport declare class P { set x(this, v: number); }\nexport interface Q { set x(this, v: number); get y(this): number }\nexport type R = { set x(this, v: number); get y(this): number }\nconst sentinel: number = \"\";\n",
+      "a.ts": "export class B { set x(this, v: number) {} }\nexport class H { get x(this): number { return 1; } }\nexport class I { get x(this): number { return 1; } set x(this, v: number) {} }\nexport class J { static set x(this, v: number) {} }\nexport class K { private set x(this, v: number) {} }\nexport class M { get x(): number { return 1; } set x(this, v: number) {} }\nexport class N { get x(this) { return 1; } }\nexport abstract class O { abstract set x(this, v: number); }\nexport declare class P { set x(this, v: number); }\nexport interface Q { set x(this, v: number); get y(this): number }\nexport type R = { set x(this, v: number); get y(this): number }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"isolatedDeclarations\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
@@ -13247,7 +13247,7 @@
   },
   "75-R02": {
     "files": {
-      "a.ts": "import { make, make2, make3, cls } from \"./m\";\nexport const v = make();\nexport const v2 = make2();\nexport const v3 = make3();\nexport const v4 = cls();\nexport function f(p = make()) { return [make2()]; }\nexport class C { p = make(); static s = make2(); m() { return make3(); } }\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { make, make2, make3, cls } from \"./m\";\nexport const v = make();\nexport const v2 = make2();\nexport const v3 = make3();\nexport const v4 = cls();\nexport function f(p = make()) { return [make2()]; }\nexport class C { p = make(); static s = make2(); m() { return make3(); } }\n",
       "m.ts": "namespace N { export default class Foo { x = 1 } }\nnamespace N2 { export default class { y = 1 } }\nnamespace N3 { export default interface Ifc { z: number } }\nexport function make() { return new N.default(); }\nexport function make2() { return new N2.default(); }\nexport function make3() { return null! as N3.default; }\nexport function cls() { return N.default; }\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"declaration\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
@@ -14480,13 +14480,13 @@
       "node_modules/dep/internal.d.ts": "export interface T { a: 1 }\n",
       "node_modules/dep/package.json": "{\"name\": \"dep\", \"version\": \"1.0.0\", \"exports\": {\".\": \"./index.d.ts\"}}",
       "package.json": "{\"name\": \"p\", \"dependencies\": {\"dep\": \"*\"}}",
-      "src/a.ts": "import { f } from \"dep\";\nexport const x = f();\nconst sentinel: number = \"\";\n",
+      "src/a.ts": "import { f } from \"dep\";\nexport const x = f();\n",
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"declaration\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"paths\": {\"@/*\": [\"./*\"]}}, \"files\": [\"src/a.ts\"]}"
     }
   },
   "88-R19b": {
     "files": {
-      "a.ts": "import { f } from \"dep\";\nexport const x = f();\nconst sentinel: number = \"\";\n",
+      "a.ts": "import { f } from \"dep\";\nexport const x = f();\n",
       "node_modules/dep/index.d.ts": "import { T } from \"./internal\";\nexport declare function f(): T;\n",
       "node_modules/dep/internal.d.ts": "export interface T { a: 1 }\n",
       "node_modules/dep/package.json": "{\"name\": \"dep\", \"version\": \"1.0.0\", \"exports\": {\".\": \"./index.d.ts\"}}",

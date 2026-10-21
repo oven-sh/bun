@@ -417,6 +417,14 @@ impl Conn {
             v => Some(v != 0),
         }
     }
+    /// The live stream with this id, which lsquic never reuses.
+    pub fn stream_by_id(&self, id: u64) -> Option<Stream> {
+        unsafe extern "C" {
+            fn lsquic_conn_get_stream_by_id(c: *mut lsquic_conn, id: u64) -> *mut lsquic_stream;
+        }
+        // SAFETY: as above; lsquic returns one of this conn's live streams.
+        unsafe { Stream::from_raw(lsquic_conn_get_stream_by_id(self.0, id)) }
+    }
     pub fn make_stream(&self) {
         // SAFETY: as above.
         unsafe { lsquic_conn_make_stream(self.0) }

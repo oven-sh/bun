@@ -2065,11 +2065,9 @@ class QuicStream {
           ? error.errorCode
           : getQuicSessionState(inner.session).internalErrorCode;
     } else {
-      // No error: Node still shuts the stream down on the wire with
-      // RESET_STREAM(0)/STOP_SENDING(0) (ngtcp2_conn_shutdown_stream with
-      // app code 0) — a clean FIN would make the peer surface a normal
-      // empty stream instead of never seeing it.
-      abortCode = 0n;
+      // Node v26.3.0 sends nothing here and loses the stream's place
+      // (https://github.com/nodejs/node/blob/v26.3.0/doc/api/quic.md#L1844-L1846).
+      abortCode = 0n; // the one reset code after which the peer's `closed` resolves
     }
     // When the whole session is being torn down, the cascaded per-stream
     // destroys must not emit wire frames: the session goes away immediately
@@ -2077,13 +2075,12 @@ class QuicStream {
     // the surviving peer is expected to clean up via its own close/idle
     // timeout rather than via per-stream RESET/STOP_SENDING.
     const cascadingFromSessionDestroy = inner.session !== undefined && isQuicSessionDestroying(inner.session);
-    // Node parity for streams created and abandoned in one turn.
+    // Records what this destroy owes the peer. handle.destroy() below sends it
+    // or parks it, together with the reset of a live writer.
     if (abortCode !== undefined && !cascadingFromSessionDestroy) {
       const wantStop = !inner.state.readEnded;
       const wantReset = inner.writer === undefined && !inner.state.writeEnded;
-      if (wantStop || wantReset) {
-        this.#handle.abortForDestroy(wantStop ? abortCode : undefined, wantReset ? abortCode : undefined);
-      }
+      this.#handle.abortForDestroy(wantStop ? abortCode : undefined, wantReset ? abortCode : undefined);
     }
     const { onerror } = inner;
     if (error !== undefined && typeof onerror === "function") {

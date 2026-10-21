@@ -1,0 +1,64 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -1700,6 +1700,14 @@
+ unsigned
+ lsquic_conn_n_avail_streams (const lsquic_conn_t *);
+ 
++/* bun: the connection's live stream with this ID, or NULL.  A stream ID is
++ * never reused, so it names a stream that lsquic can free on any tick more
++ * safely than the pointer does.  conn_iface has carried this lookup since
++ * gQUIC; it was never filled in for IETF connections.
++ */
++lsquic_stream_t *
++lsquic_conn_get_stream_by_id (lsquic_conn_t *, lsquic_stream_id_t);
++
+ /**
+  * Create a new request stream.  This causes @ref on_new_stream() callback
+  * to be called.  If creating more requests is not permitted at the moment
+--- a/src/liblsquic/lsquic_conn.c
++++ b/src/liblsquic/lsquic_conn.c
+@@ -246,6 +246,18 @@
+ }
+ 
+ 
++/* bun: see lsquic_conn_get_stream_by_id in lsquic.h. */
++lsquic_stream_t *
++lsquic_conn_get_stream_by_id (struct lsquic_conn *lconn,
++                                            lsquic_stream_id_t stream_id)
++{
++    if (lconn->cn_if->ci_get_stream_by_id)
++        return lconn->cn_if->ci_get_stream_by_id(lconn, stream_id);
++    else
++        return NULL;
++}
++
++
+ unsigned
+ lsquic_conn_cancel_pending_streams (struct lsquic_conn *lconn, unsigned count)
+ {
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -5334,6 +5334,15 @@
+ }
+ 
+ 
++/* bun: upstream fills the conn_iface lookup for gQUIC connections only. */
++static lsquic_stream_t *
++ietf_full_conn_ci_get_stream_by_id (struct lsquic_conn *lconn,
++                                            lsquic_stream_id_t stream_id)
++{
++    return find_stream_by_id((struct ietf_full_conn *) lconn, stream_id);
++}
++
++
+ static void
+ maybe_schedule_ss_for_stream (struct ietf_full_conn *conn,
+                 lsquic_stream_id_t stream_id, enum http_error_code error_code)
+@@ -9346,6 +9355,7 @@
+     .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
+     .ci_get_min_datagram_size=  ietf_full_conn_ci_get_min_datagram_size, \
+     .ci_get_path             =  ietf_full_conn_ci_get_path, \
++    .ci_get_stream_by_id     =  ietf_full_conn_ci_get_stream_by_id, \
+     .ci_going_away           =  ietf_full_conn_ci_going_away, \
+     .ci_hsk_done             =  ietf_full_conn_ci_hsk_done, \
+     .ci_internal_error       =  ietf_full_conn_ci_internal_error, \

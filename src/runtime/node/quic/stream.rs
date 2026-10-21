@@ -129,13 +129,27 @@ pub(crate) struct QuicStream {
     headers_received: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
+    /// `QuicSession::parked_aborts` at this stream's last `write` / `end_write`.
+    wrote_after_parks: Cell<u32>,
     pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool)>>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
     close_reported: Cell<bool>,
     destroyed: Cell<bool>,
+    /// The app called `stopSending()`, or `destroy()` failed a live writer:
+    /// the frames of the destroy are never retracted.
+    abort_always_sent: Cell<bool>,
+    /// A JS `destroy()` is between `abortForDestroy` and the native `destroy`.
+    destroying: Cell<bool>,
+    /// The STOP_SENDING and RESET_STREAM codes that destroy owes the peer.
+    destroy_codes: Cell<[u64; 2]>,
 }
+
+/// "No frame" in `QuicStream::destroy_codes`.
+const NO_FRAME: u64 = u64::MAX;
+/// A QUIC error code has 62 bits. lsquic sends the low 62 of a larger value.
+const CODE_MASK: u64 = (1 << 62) - 1;
 
 impl QuicStream {
     pub(super) fn create(
@@ -163,12 +177,16 @@ impl QuicStream {
             wrote_to_lsquic: Cell::new(false),
             headers_received: Cell::new(false),
             priority: Cell::new(DEFAULT_PRIORITY),
+            wrote_after_parks: Cell::new(0),
             pending_headers: JsCell::new(Vec::new()),
             trailers_requested: Cell::new(false),
             blocked_reported: Cell::new(false),
             announce_suppressed: Cell::new(false),
             close_reported: Cell::new(false),
             destroyed: Cell::new(false),
+            abort_always_sent: Cell::new(false),
+            destroying: Cell::new(false),
+            destroy_codes: Cell::new([NO_FRAME; 2]),
         };
         let raw_ptr = bun_core::heap::into_raw(Box::new(stream));
         let handle = crate::generated_classes::js_QuicStream::to_js(raw_ptr, global);
@@ -364,6 +382,11 @@ impl QuicStream {
 
     pub(super) fn is_announce_suppressed(&self) -> bool {
         self.announce_suppressed.get()
+    }
+    /// Whether lsquic has opened this stream and JS wrote to it after the
+    /// session parked its abort number `index`.
+    pub(super) fn wrote_after_park(&self, index: usize) -> bool {
+        !self.raw.get().is_null() && self.wrote_after_parks.get() as usize > index
     }
     pub(super) fn has_undelivered_outbound(&self) -> bool {
         let out = self.outbound.get();
@@ -767,7 +790,7 @@ impl QuicStream {
         let pending = self.outbound.get().data.len() as u32;
         self.with_state(|s| s.write_desired_size = s.high_water_mark.saturating_sub(pending));
         if let Some(session) = self.session_ref() {
-            session.note_stream_write();
+            self.wrote_after_parks.set(session.parked_aborts());
         }
         self.kick_write();
         Ok(JSValue::js_number(queued as f64))
@@ -787,7 +810,7 @@ impl QuicStream {
             };
         });
         if let Some(session) = self.session_ref() {
-            session.note_stream_write();
+            self.wrote_after_parks.set(session.parked_aborts());
         }
         self.kick_write();
         Ok(JSValue::UNDEFINED)
@@ -806,30 +829,14 @@ impl QuicStream {
         } else {
             error_code_arg(arg)
         };
-        let write_done = self.with_state(|s| s.fin_sent != 0 || s.write_ended != 0);
+        let [stop, reset] = self
+            .destroy_codes
+            .replace([NO_FRAME; 2])
+            .map(|c| (c != NO_FRAME).then_some(c));
+        self.destroying.set(false);
         if !cascading {
             if let Some(s) = self.ls() {
-                let deferred = self
-                    .session_ref()
-                    .is_some_and(|session| session.has_deferred_abort(s.raw()));
-                if !deferred {
-                    let send_ended = write_done || self.outbound.get().end != PendingEnd::None;
-                    if code != 0 || !send_ended {
-                        s.reset(code);
-                    } else {
-                        self.outbound.with_mut(|o| {
-                            if o.end == PendingEnd::Trailers {
-                                o.end = PendingEnd::None;
-                            }
-                        });
-                        self.drain_outbound();
-                        if self.outbound.get().data.is_empty() {
-                            s.close();
-                        } else {
-                            s.reset(code);
-                        }
-                    }
-                }
+                self.finish_on_wire(s, stop, reset, code);
             }
         }
         let session = self.session.get();
@@ -857,8 +864,19 @@ impl QuicStream {
             o.data.clear();
             o.end = PendingEnd::None;
         });
+        if self.destroying.get() {
+            // `destroy()` fails a live writer. Its reset goes out with the
+            // other frame of the destroy.
+            let [stop, reset] = self.destroy_codes.get();
+            if reset == NO_FRAME {
+                self.destroy_codes.set([stop, code & CODE_MASK]);
+            }
+            self.abort_always_sent.set(true);
+            return Ok(JSValue::UNDEFINED);
+        }
         if let Some(s) = self.ls() {
             s.reset(code);
+            self.wrote_to_lsquic.set(true);
         }
         self.kick_write();
         Ok(JSValue::UNDEFINED)
@@ -869,8 +887,15 @@ impl QuicStream {
             return Ok(JSValue::UNDEFINED);
         }
         let code = error_code_arg(frame.arguments_as_array::<1>()[0]);
-        if let Some(s) = self.ls() {
+        if self.destroying.get() {
+            let [stop, reset] = self.destroy_codes.get();
+            if stop == NO_FRAME {
+                self.destroy_codes.set([code & CODE_MASK, reset]);
+            }
+            self.abort_always_sent.set(true);
+        } else if let Some(s) = self.ls() {
             s.stop_sending(code);
+            self.abort_always_sent.set(true);
         }
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| {
@@ -884,7 +909,8 @@ impl QuicStream {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Node parity for streams created and abandoned in one turn.
+    /// First native call of a JS `destroy()`: records the end state and the
+    /// frames the destroy owes. `destroy` sends or parks them.
     pub(crate) fn abort_for_destroy(
         &self,
         _g: &JSGlobalObject,
@@ -916,21 +942,46 @@ impl QuicStream {
                 o.end = PendingEnd::None;
             });
         }
-        if let Some(s) = self.ls() {
-            if self.wrote_to_lsquic.get() {
-                if let Some(code) = stop {
-                    s.stop_sending(code);
+        self.destroy_codes
+            .set([stop, reset].map(|c| c.map_or(NO_FRAME, |c| c & CODE_MASK)));
+        self.destroying.set(true);
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// What a destroyed stream still puts on the wire. Data the app wrote and
+    /// ended is delivered. The frames go out in the call, as node's do, unless
+    /// the session parks them (`QuicSession::parks_stream_abort`):
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/quic/quic.js#L1973-L1988
+    fn finish_on_wire(&self, s: lsquic::Stream, stop: Option<u64>, reset: Option<u64>, code: u64) {
+        let write_done = self.with_state(|st| st.fin_sent != 0 || st.write_ended != 0);
+        let send_ended = write_done || self.outbound.get().end != PendingEnd::None;
+        let mut reset = reset.or((code != 0 || !send_ended).then_some(code));
+        if reset.is_none() {
+            self.outbound.with_mut(|o| {
+                if o.end == PendingEnd::Trailers {
+                    o.end = PendingEnd::None;
                 }
-                if let Some(code) = reset {
-                    s.reset(code);
-                }
-            } else if let Some(session) = self.session_ref() {
-                session.defer_stream_abort(s.raw(), reset, stop);
-                session.schedule_process();
+            });
+            self.drain_outbound();
+            if !self.outbound.get().data.is_empty() {
+                reset = Some(code);
             }
         }
-        self.kick_write();
-        Ok(JSValue::UNDEFINED)
+        // A stream that already sent keeps nothing back, as on main.
+        let parks = (stop.is_some() || reset.is_some()) && !self.wrote_to_lsquic.get();
+        let always_sent = self.abort_always_sent.get();
+        let parked_on = self
+            .session_ref()
+            .filter(|session| parks && session.parks_stream_abort(always_sent));
+        match parked_on {
+            Some(session) => {
+                // `teardown` nulls the ctx next, so nothing answers lsquic.
+                s.want_read(false);
+                s.want_write(false);
+                session.defer_stream_abort(s.id(), stop, reset, always_sent);
+            }
+            None => send_abort(s, stop, reset),
+        }
     }
 
     pub(crate) fn set_priority(
@@ -1008,6 +1059,17 @@ impl QuicStream {
             Ok(JSValue::js_boolean(false))
         }
     }
+}
+
+/// Hands a destroyed stream's last frames to lsquic and releases the stream.
+pub(super) fn send_abort(s: lsquic::Stream, stop: Option<u64>, reset: Option<u64>) {
+    if let Some(code) = stop {
+        s.stop_sending(code);
+    }
+    if let Some(code) = reset {
+        s.reset(code);
+    }
+    s.close();
 }
 
 fn error_code_arg(value: JSValue) -> u64 {

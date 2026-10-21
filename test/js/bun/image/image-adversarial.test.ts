@@ -384,6 +384,39 @@ describe("hostile header dimensions", () => {
     const vp8 = Buffer.from([0x30, 0x01, 0x00, 0x9d, 0x01, 0x2a, 0xff, 0x3f, 0xff, 0x3f, 0, 0, 0, 0]);
     expect(await survives(new Bun.Image(Buffer.concat([riff, vp8])).bytes())).toBe("rejected");
   });
+
+  test("GIF metadata() reports the size of the frame that is decoded", async () => {
+    Bun.Image.backend = "bun";
+    // 1×1 logical screen, 16383×16383 frame.
+    const bigFrame = Buffer.from("47494638396101000100800000000000255b0d2c00000000ff3fff3f0002022c003b", "hex");
+    expect(await new Bun.Image(bigFrame).metadata()).toEqual({ width: 16383, height: 16383, format: "gif" });
+    await expect(new Bun.Image(bigFrame, { maxPixels: 64 }).metadata()).rejects.toThrow(/maxPixels/);
+    // 65535×65535 logical screen, 4×4 frame.
+    const bigScreen = Buffer.from(bigFrame);
+    bigScreen.writeUInt16LE(65535, 6);
+    bigScreen.writeUInt16LE(65535, 8);
+    bigScreen.writeUInt16LE(4, 24);
+    bigScreen.writeUInt16LE(4, 26);
+    expect(await new Bun.Image(bigScreen, { maxPixels: 64 }).metadata()).toEqual({
+      width: 4,
+      height: 4,
+      format: "gif",
+    });
+    expect((await rgbaOf(bigScreen)).length).toBe(4 * 4 * 4);
+    // Only the start of a file still reports the logical screen.
+    expect(await new Bun.Image(Buffer.from("GIF89a\x02\x00\x03\x00\x00\x00\x00", "binary")).metadata()).toEqual({
+      width: 2,
+      height: 3,
+      format: "gif",
+    });
+  });
+
+  test("a path with a null byte is rejected like Bun.file() rejects it", () => {
+    using dir = tempDir("image-null-byte-path", { "image": tinyPng });
+    expect(() => new Bun.Image(join(String(dir), "image\0.png"))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
 });
 
 // ─── 4. malformed PNG chunk structure ────────────────────────────────────────

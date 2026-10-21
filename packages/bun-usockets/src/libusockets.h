@@ -700,6 +700,9 @@ int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
  * from one the peer has already written to or closed. */
 int us_socket_queued_input(us_socket_r s) nonnull_fn_decl;
 
+/* The kernel rejected a send of TLS records. The error code of the close that follows stands for the lost records, not for a failed read. */
+int us_socket_ssl_send_rejected(us_socket_r s) nonnull_fn_decl;
+
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 /* TLS ciphertext bytes already sealed for this socket and reported as

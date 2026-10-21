@@ -382,8 +382,7 @@ pub(crate) fn install_hoisted_packages(
                         deps.unmanaged.set_all(false);
                     }
 
-                    // Each dependency that leads to a workspace gives its `node_modules` a tree, and
-                    // each tree places its packages there. A script in there waits for all of them.
+                    // Two trees can be one workspace's `node_modules`. Its scripts wait for both.
                     let resolutions = this.lockfile.buffers.resolutions.as_slice();
                     let mut first_tree_of = vec![tree::INVALID_ID; this.lockfile.packages.len()];
                     if let Some(of_the_project) = first_tree_of.first_mut() {
@@ -455,6 +454,7 @@ pub(crate) fn install_hoisted_packages(
                 progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
+                // The project's first tree is tree 0.
                 workspaces_seen: vec![0],
                 summary: &mut summary,
                 successfully_installed: Bitset::init_empty(pkg_len)?,

@@ -61,8 +61,7 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) skip_verify_installed_version_number: bool,
     pub(crate) skip_delete: bool,
-    /// For `set_outlived_root`: the workspaces whose first tree the install has reached. The
-    /// project's is tree 0, so it starts out in here.
+    /// For `set_outlived_root`: the workspaces whose first tree the install has reached.
     pub(crate) workspaces_seen: Vec<PackageID>,
     pub(crate) root_node_modules_folder: Dir,
     /// Acquired when the first package is linked, so an install with nothing to link never takes

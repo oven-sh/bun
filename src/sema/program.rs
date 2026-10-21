@@ -1132,6 +1132,13 @@ struct SubTask {
     package: Option<u32>,
 }
 
+/// `parseTask.subTasks` of a loaded task.
+struct SubTasks {
+    tasks: Vec<SubTask>,
+    /// `startedSubTasks`
+    has_started: bool,
+}
+
 /// The bookkeeping of `Files::load` about the files it has found, besides the files themselves.
 #[derive(Default)]
 struct Found<'s> {
@@ -4799,8 +4806,9 @@ impl<'s> Files<'s> {
             .chain(automatic)
             .map(|task| (task, 0))
             .collect();
-        // `subTasks` of the tasks that are loaded and haven't started them yet.
-        let mut not_started: FxHashMap<FileId, Vec<SubTask>> = FxHashMap::default();
+        // `subTasks` of the loaded tasks that may still start them: those that haven't yet, and those above depth 0,
+        // which start them again when they are reached at a lower depth.
+        let mut sub_tasks_of: FxHashMap<FileId, SubTasks> = FxHashMap::default();
         // `subTasks` of one file. Reused for the next.
         let mut sub_tasks: Vec<SubTask> = Vec::new();
         let mut package_json_info_cache = PackageJsonInfoCache::default();
@@ -4898,7 +4906,7 @@ impl<'s> Files<'s> {
                     *package = package.or(task.package);
                     let depth = depth + u32::from(task.increases_depth);
                     // "If we're seeing this task at a lower depth than before, reprocess its subtasks to
-                    // ensure they are loaded." A task starts its sub tasks only once.
+                    // ensure they are loaded."
                     let starts_sub_tasks = depth < depths[data.idx()];
                     if starts_sub_tasks {
                         depths[data.idx()] = depth;
@@ -4920,8 +4928,9 @@ impl<'s> Files<'s> {
                             continue;
                         }
                         if modules[id.idx()].is_some() {
-                            if starts_sub_tasks && let Some(waiting) = not_started.remove(id) {
-                                queued.extend(waiting.into_iter().map(|task| (task, depth)));
+                            if starts_sub_tasks && let Some(known) = sub_tasks_of.get_mut(id) {
+                                known.has_started = true;
+                                queued.extend(known.tasks.iter().map(|&task| (task, depth)));
                             }
                             continue;
                         }
@@ -5107,8 +5116,13 @@ impl<'s> Files<'s> {
                         // `w.start(loader, taskByFileName.subTasks, data.lowestDepth)`
                         if starts_sub_tasks {
                             queued.extend(sub_tasks.iter().map(|&task| (task, depth)));
-                        } else {
-                            not_started.insert(*id, std::mem::take(&mut sub_tasks));
+                        }
+                        if !starts_sub_tasks || depth > 0 {
+                            let known = SubTasks {
+                                tasks: sub_tasks.clone(),
+                                has_started: starts_sub_tasks,
+                            };
+                            sub_tasks_of.insert(*id, known);
                         }
                     }
                 }
@@ -5127,7 +5141,8 @@ impl<'s> Files<'s> {
                     let file = match stack.last_mut() {
                         Some(top) => {
                             // Sub tasks that were never started aren't loaded.
-                            let has_started = !not_started.contains_key(&top.0);
+                            let has_started =
+                                sub_tasks_of.get(&top.0).is_none_or(|it| it.has_started);
                             let edges = match modules[top.0.idx()].as_ref().filter(|_| has_started)
                             {
                                 Some(module) => module.edges,
@@ -5236,8 +5251,10 @@ impl<'s> Files<'s> {
         if let Some(task) = automatic_task {
             seen[task.idx()] = false;
         }
-        for file in not_started.into_keys() {
-            if let Some(module) = &mut modules[file.idx()] {
+        for (file, known) in sub_tasks_of {
+            if !known.has_started
+                && let Some(module) = &mut modules[file.idx()]
+            {
                 module.edges = &[];
             }
         }

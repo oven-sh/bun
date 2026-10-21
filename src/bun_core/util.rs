@@ -4151,81 +4151,31 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
 }
 
 // ── which ─────────────────────────────────────────────────────────────────
-// `bun.which` lives in the `bun_which` crate (tier-2, full Windows PATHEXT
-// support). bun_core cannot re-export it (bun_which → bun_core dep cycle), so
-// callers import `bun_which::which` directly. See `src/bun.rs` for the
-// `bun::which` re-export.
-//
-// A POSIX-only copy is kept here because `spawn_sync_inherit` (below) needs
-// PATH resolution at tier-0 and cannot reach up to `bun_which`. This is a
-// load-bearing duplicate; do NOT dedup against `src/which/lib.rs`.
-/// Tier-0 POSIX `which`. Resolves `bin` against `cwd` and each `PATH` entry
-/// for an executable named `bin`; returns the NUL-terminated match written
-/// into `buf`. POSIX semantics; Windows `PATHEXT` handling stays in
-/// `bun_which` (tier-2).
+/// The next `$PATH` entry where `dir/bin` passes `access(X_OK)`. A directory passes too: exec decides.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) fn which<'a>(
+fn which_next<'a>(
     buf: &'a mut PathBuffer,
-    path: &[u8],
-    cwd: &[u8],
+    entries: &mut crate::strings::SplitIterator<'_>,
     bin: &[u8],
 ) -> Option<&'a ZStr> {
     if bin.is_empty() {
         return None;
     }
-    // If `bin` contains a separator, resolve relative to cwd only.
-    let has_sep = bin.iter().copied().any(crate::path_sep::is_sep_native);
-    let check = |buf: &mut PathBuffer, dir: &[u8], bin: &[u8]| -> Option<usize> {
-        let mut n = 0usize;
-        if !dir.is_empty() {
-            if dir.len() + 1 + bin.len() + 1 > buf.0.len() {
-                return None;
-            }
-            buf.0[..dir.len()].copy_from_slice(dir);
-            n = dir.len();
-            if buf.0[n - 1] != b'/' {
-                buf.0[n] = b'/';
-                n += 1;
-            }
+    for dir in entries {
+        if dir.is_empty() || dir.len() + 1 + bin.len() + 1 > buf.0.len() {
+            continue;
         }
-        if n + bin.len() + 1 > buf.0.len() {
-            return None;
+        buf.0[..dir.len()].copy_from_slice(dir);
+        let mut n = dir.len();
+        if buf.0[n - 1] != b'/' {
+            buf.0[n] = b'/';
+            n += 1;
         }
         buf.0[n..n + bin.len()].copy_from_slice(bin);
         n += bin.len();
         buf.0[n] = 0;
-        // SAFETY: `buf.0[n] == 0` was just written, so `buf.0.as_ptr()` is a
-        // valid NUL-terminated C string for `access(2)`.
-        unsafe {
-            if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
-                return Some(n);
-            }
-        }
-        None
-    };
-    // Absolute `bin` → probe it directly without joining `cwd`.
-    if crate::path_sep::is_absolute_native(bin) {
-        return check(buf, b"", bin).map(|n| ZStr::from_buf(&buf.0, n));
-    }
-    if has_sep {
-        // Relative with separator → resolve against cwd only; trim
-        // trailing '/' from cwd and strip a leading "./" from bin.
-        let cwd = {
-            let mut c = cwd;
-            while let [rest @ .., b'/'] = c {
-                c = rest;
-            }
-            c
-        };
-        let bin = bin.strip_prefix(b"./").unwrap_or(bin);
-        return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
-    }
-    // Bare names go straight to PATH — do NOT consult cwd.
-    for dir in crate::strings::split(path, b":") {
-        if dir.is_empty() {
-            continue;
-        }
-        if let Some(n) = check(buf, dir, bin) {
+        // SAFETY: `buf.0[n] == 0` was just written, so `buf.0` holds a NUL-terminated C string.
+        if unsafe { libc::access(buf.0.as_ptr().cast(), libc::X_OK) } == 0 {
             return Some(ZStr::from_buf(&buf.0, n));
         }
     }
@@ -4630,20 +4580,6 @@ fn spawn_sync_inherit_impl(
         // crash_handler spawning `llvm-symbolizer` by bare name).
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let pid: libc::pid_t = {
-            let arg0 = argv[0].as_ref();
-            let mut pathbuf = PathBuffer::ZEROED;
-            let exe: *const core::ffi::c_char = if crate::strings::contains_char(arg0, b'/') {
-                // Contains a separator → use as-is (execve resolves relative
-                // to cwd, matching posix_spawnp semantics for non-bare names).
-                ptrs[0]
-            } else {
-                let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
-                match which(&mut pathbuf, path_env, b".", arg0) {
-                    Some(z) => z.as_ptr(),
-                    None => return Err(crate::CrateError::FileNotFound),
-                }
-            };
-
             // dup2(n, n) for fds 0..=2 — posix_spawn_bun's Dup2 same-fd path
             // clears CLOEXEC and bumps the close-range floor past stdio. An
             // empty actions list would start the close-range at fd 1.
@@ -4673,16 +4609,42 @@ fn spawn_sync_inherit_impl(
                 ..Default::default()
             };
             let mut pid: core::ffi::c_int = 0;
-            // SAFETY: exe/ptrs/environ are NUL-terminated; req layout matches C.
-            let rc = spawn_ffi::posix_spawn_bun(
-                &raw mut pid,
-                exe,
-                &raw const req,
-                ptrs.as_ptr(),
-                environ,
-            );
-            if rc != 0 {
-                return Err(crate::CrateError::Unexpected);
+            let mut spawn = |exe: *const core::ffi::c_char| {
+                // SAFETY: exe/ptrs/environ are NUL-terminated; req layout matches C.
+                spawn_ffi::posix_spawn_bun(
+                    &raw mut pid,
+                    exe,
+                    &raw const req,
+                    ptrs.as_ptr(),
+                    environ,
+                )
+            };
+            let arg0 = argv[0].as_ref();
+            if crate::strings::contains_char(arg0, b'/') {
+                // A name with a separator is not searched: execve resolves it against the cwd.
+                if spawn(ptrs[0]) != 0 {
+                    return Err(crate::CrateError::Unexpected);
+                }
+            } else {
+                let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
+                let mut entries = crate::strings::split(path_env, b":");
+                let mut pathbuf = PathBuffer::ZEROED;
+                let mut refused = false;
+                loop {
+                    let Some(exe) = which_next(&mut pathbuf, &mut entries, arg0) else {
+                        return Err(if refused {
+                            crate::CrateError::Unexpected
+                        } else {
+                            crate::CrateError::FileNotFound
+                        });
+                    };
+                    match spawn(exe.as_ptr()) as core::ffi::c_int {
+                        0 => break,
+                        // exec refused this candidate (a directory, a dead `#!`): go on like posix_spawnp.
+                        libc::EACCES | libc::ENOENT | libc::ENOTDIR => refused = true,
+                        _ => return Err(crate::CrateError::Unexpected),
+                    }
+                }
             }
             pid as libc::pid_t
         };

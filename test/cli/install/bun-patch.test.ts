@@ -10,9 +10,11 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
+  rmdirSync,
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
 } from "fs";
 import {
   bunEnv,
@@ -2937,6 +2939,147 @@ describe.concurrent("the links on the way to the package folder", () => {
     expect(kind(dir, "node_modules")).toBe("link");
     expect(await readdirSorted(join(dir, "real-node-modules"))).toEqual(["no-deps"]);
     expect(await readdirSorted(join(dir, "real-node-modules", "no-deps"))).toEqual(["index.js", "package.json"]);
+  });
+
+  // `bun link <name>` puts a link to a checkout at node_modules/<name>. package.json and the lockfile keep the version
+  // from the registry, so `bun patch` takes the package. It used to replace the checkout with the copy.
+  describe("a link from bun link", () => {
+    /** `app` with `dependencies` installed, where `bun link` then put a link to `checkout` over `name`. */
+    async function linkedProject(
+      linker: Linker,
+      dependencies: Record<string, string>,
+      { name, version, files = {} }: { name: string; version: string; files?: DirectoryTree },
+    ) {
+      const tmp = tempDir("bun-patch-bun-link", {
+        app: {
+          "package.json": JSON.stringify({ name: "app", dependencies }),
+          "bunfig.toml": `[install]\nlinker = "${linker}"\nglobalStore = false\n`,
+        },
+        checkout: {
+          ".git": { HEAD: "ref: refs/heads/main\n" },
+          "package.json": JSON.stringify({ name, version }),
+          "index.js": "module.exports = 'checkout';\n",
+          "uncommitted.txt": "work in progress\n",
+          ...files,
+        },
+      });
+      const dir = join(String(tmp), "app");
+      const checkout = join(String(tmp), "checkout");
+      const env = { ...projectEnv(dir), BUN_INSTALL_GLOBAL_DIR: join(String(tmp), "global") };
+      await bunOk(dir, env, "install");
+      await bunOk(checkout, env, "link");
+      await bunOk(dir, env, "link", name);
+      const link = join(dir, "node_modules", name);
+      expect([kind(link), realpathSync(link)]).toEqual(["link", checkout]);
+      return {
+        dir,
+        env,
+        checkout,
+        link,
+        /** The names next to the project, and each path in the checkout with the contents of the files. */
+        outside: () => ({
+          siblings: readdirSync(String(tmp)).sort(),
+          checkout: tree(checkout).map(path =>
+            kind(checkout, path) === "file" ? `${path}: ${readFileSync(join(checkout, path), "utf8")}` : path,
+          ),
+        }),
+        [Symbol.asyncDispose]: () => tmp[Symbol.asyncDispose](),
+      };
+    }
+    const noDeps = { name: "no-deps", version: "1.1.0" };
+    const refusal = (folder: string, real: string, note: string) =>
+      `error: refusing to patch ${folder}: resolves to ${real}, outside the project's node_modules\nnote: ${note}\n`;
+
+    test.each([
+      ["no-deps", noDeps],
+      ["node_modules/no-deps", noDeps],
+      ["@types/is-number", { name: "@types/is-number", version: "1.0.0" }],
+    ])("bun patch %s replaces the link and keeps the checkout", async (arg, pkg) => {
+      await using project = await linkedProject("hoisted", { [pkg.name]: pkg.version }, pkg);
+      const { dir, env, link, outside } = project;
+      const before = outside();
+
+      await expectPrepared(dir, env, arg, pkg.name, `node_modules/${pkg.name}`);
+      expect({ copy: kind(link), files: tree(link), outside: outside() }).toEqual({
+        copy: "directory",
+        files: ["index.js", "package.json"],
+        outside: before,
+      });
+
+      await Bun.write(join(link, "index.js"), patched);
+      await bunOk(dir, env, "patch", "--commit", arg);
+      expect(Object.keys((await Bun.file(join(dir, "package.json")).json()).patchedDependencies)).toEqual([
+        `${pkg.name}@${pkg.version}`,
+      ]);
+      expect(await bunOk(dir, env, "-e", `console.log(require("${pkg.name}"))`)).toBe("patched\n");
+      expect(outside()).toEqual(before);
+    });
+
+    // The install that `bun patch` starts with puts the link to the store back.
+    test.each(["no-deps", "node_modules/no-deps"])("isolated linker: bun patch %s keeps the checkout", async arg => {
+      await using project = await linkedProject("isolated", { "no-deps": "1.1.0" }, noDeps);
+      const { dir, env, link, outside } = project;
+      const before = outside();
+
+      await expectPrepared(dir, env, arg, "no-deps", "node_modules/no-deps");
+      expect({ link: realpathSync(link), outside: outside() }).toEqual({
+        link: join(dir, storeFolder("no-deps@1.1.0", "no-deps")),
+        outside: before,
+      });
+    });
+
+    // The diff moves files in and out of the folder, and puts its scratch folders next to it.
+    test.each([
+      ["hoisted", "no-deps"],
+      ["hoisted", "node_modules/no-deps"],
+      ["isolated", "node_modules/no-deps"],
+    ] as const)("%s linker: --commit %s without bun patch is refused", async (linker, arg) => {
+      await using project = await linkedProject(linker, { "no-deps": "1.1.0" }, noDeps);
+      const { dir, env, checkout, link, outside } = project;
+      const before = outside();
+
+      const note = "run bun patch on the package first to create an editable copy";
+      await expectRefused(dir, env, refusal("node_modules/no-deps", checkout, note), "--commit", arg);
+      expect({ link: kind(link), outside: outside() }).toEqual({ link: "link", outside: before });
+    });
+
+    // The root takes no-deps@2.0.0, so the hoisted tree has no-deps@1.0.0 below the link.
+    test.each(["no-deps@1.0.0", "node_modules/one-fixed-dep/node_modules/no-deps"])(
+      "bun patch %s below the link is refused",
+      async arg => {
+        await using project = await linkedProject(
+          "hoisted",
+          { "no-deps": "2.0.0", "one-fixed-dep": "1.0.0" },
+          {
+            name: "one-fixed-dep",
+            version: "1.0.0",
+            files: {
+              "node_modules/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+              "node_modules/no-deps/not-in-the-package.txt": "",
+            },
+          },
+        );
+        const { dir, env, checkout, link, outside } = project;
+        const before = outside();
+        const folder = "node_modules/one-fixed-dep/node_modules/no-deps";
+        const message = refusal(
+          folder,
+          join(checkout, "node_modules", "no-deps"),
+          "remove the symlink that leads there, run bun install and patch the package again",
+        );
+
+        await expectRefused(dir, env, message, arg);
+        await expectRefused(dir, env, message, "--commit", arg);
+        expect({ link: kind(link), outside: outside() }).toEqual({ link: "link", outside: before });
+
+        // On Windows the link is a junction, which only rmdir removes.
+        if (isWindows) rmdirSync(link);
+        else unlinkSync(link);
+        await bunOk(dir, env, "install");
+        await expectPrepared(dir, env, arg, "no-deps", folder);
+        expect(outside()).toEqual(before);
+      },
+    );
   });
 
   // A link that `publicHoistPattern` created isn't removed when the pattern is. The hoisted tree has no-deps@1.0.0 at

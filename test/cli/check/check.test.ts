@@ -5225,6 +5225,50 @@ export {};
       `);
     });
 
+    test("the key type of a computed property name is as fresh as the type of the name's expression", async () => {
+      using dir = project({
+        "a.ts": `enum E { A = "x", B = "y" }
+const fresh = "a";
+const regular: "b" = "b";
+const literal = { [fresh]: 1, [regular]: 1, ["c"]: 1, [0]: 1, [E.A]: 1 };
+class Class { [fresh] = 1; [regular] = 1; ["c"] = 1; [0] = 1; [E.A] = 1 }
+type Mapped = { [K in keyof typeof literal]: K };
+declare function key<T, K extends keyof T>(of: T, name: K): Extract<keyof T, K>;
+declare const instance: Class, mapped: Mapped;
+let l1 = key(literal, "a"), l2 = key(literal, "b"), l3 = key(literal, "c"), l4 = key(literal, 0), l5 = key(literal, E.A);
+let c1 = key(instance, "a"), c2 = key(instance, "b"), c3 = key(instance, "c"), c4 = key(instance, 0), c5 = key(instance, E.A);
+let m1 = mapped.a, m2 = mapped.b, m3 = mapped.c, m4 = mapped[0], m5 = mapped[E.A];
+let s1 = key({ ...literal }, "a");
+declare const only: keyof { [E.A]: 1 }, onlyOfLiteral: keyof typeof single;
+const single = { [E.A]: 1 };
+let e1 = only, e2 = onlyOfLiteral;
+const widened: never[] = [l1, l2, l3, l4, l5, c1, c2, c3, c4, c5, m1, m2, m3, m4, m5, s1, e1, e2];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(16,27): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,31): error TS2322: Type '"b"' is not assignable to type 'never'.
+        a.ts(16,35): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,39): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(16,43): error TS2322: Type 'E.A' is not assignable to type 'never'.
+        a.ts(16,47): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,51): error TS2322: Type '"b"' is not assignable to type 'never'.
+        a.ts(16,55): error TS2322: Type '"c"' is not assignable to type 'never'.
+        a.ts(16,59): error TS2322: Type '0' is not assignable to type 'never'.
+        a.ts(16,63): error TS2322: Type 'E.A' is not assignable to type 'never'.
+        a.ts(16,67): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,71): error TS2322: Type '"b"' is not assignable to type 'never'.
+        a.ts(16,75): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,79): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(16,83): error TS2322: Type 'E.A' is not assignable to type 'never'.
+        a.ts(16,87): error TS2322: Type 'string' is not assignable to type 'never'.
+        a.ts(16,91): error TS2322: Type 'E.A' is not assignable to type 'never'.
+        a.ts(16,95): error TS2322: Type 'E.A' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("resolves a property access on every kind of type, and reports TS2339 where it's missing", async () => {
       using dir = project({
         "types.ts": `export interface OnlyType { a: 1 }

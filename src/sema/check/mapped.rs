@@ -647,7 +647,20 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(ty) = self.literal_type_from_property_name(file, key, name_kind, 0)
             && (!is_late_bound || self.property_name_of_type(ty) == Some(prop.name))
         {
-            return Some(ty);
+            // `lateBindMember` and `checkObjectLiteral` store the type of the expression in brackets as it is, which
+            // is a fresh type for a literal, an enum member or an unannotated constant.
+            let is_in_object_literal = matches!(prop.source, PropSource::Literal(..));
+            return Some(match (key, name_kind) {
+                (PropKey::Computed(e), _) if is_late_bound || is_in_object_literal => {
+                    self.check_computed_property_name(file, e)
+                }
+                (_, NameKind::ComputedString | NameKind::ComputedNumber)
+                    if is_in_object_literal =>
+                {
+                    self.fresh(ty)
+                }
+                _ => ty,
+            });
         }
         self.key_type_of_name(prop.name)
     }

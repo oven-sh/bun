@@ -1129,9 +1129,16 @@ struct SerializedTypeEntry {
     tracked_symbols: Vec<TrackedSymbolArgs>,
 }
 
-/// `CompositeTypeCacheIdentity`, preceded by the node that has the links: the enclosing declaration
-/// and `Printer::enclosing_expression`.
-type SerializedTypeKey = (Enclosing, Option<ExprId>, TypeId, u32);
+/// `CompositeTypeCacheIdentity`, preceded by the node that has the links.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct SerializedTypeKey {
+    enclosing_declaration: Enclosing,
+    /// `Printer::enclosing_expression`
+    enclosing_expression: Option<ExprId>,
+    ty: TypeId,
+    flags: u32,
+    infer_type_parameters: Box<[TypeId]>,
+}
 
 /// `links.serializedTypes` of every node, in `c.typeToStringNodebuilder`.
 #[derive(Default)]
@@ -1139,8 +1146,12 @@ pub(super) struct SerializedTypes(FxHashMap<SerializedTypeKey, SerializedTypeEnt
 
 /// The locals of `visitAndTransformType` that outlive the `transform` call.
 struct TypeVisit {
+    /// `typeId`
     ty: TypeId,
     identity: Option<Identity>,
+    /// The declaration of the mapped type that a reverse mapped type comes from, and the previous value of
+    /// `Printer::symbol_depth` for it.
+    reverse_mapped_origin: Option<(Identity, u32)>,
     /// The key of the result among the `serializedTypes`.
     key: Option<SerializedTypeKey>,
     /// The previous value of `Printer::symbol_depth` for `identity`.
@@ -1617,6 +1628,15 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         self.elision()
     }
 
+    /// `createCyclicStructurePlaceholder`
+    fn cyclic_structure_placeholder(&mut self) -> Node {
+        if self.flags & ALLOW_ANONYMOUS_IDENTIFIER == 0 {
+            self.encountered_error = true;
+            self.report(Report::CyclicStructure);
+        }
+        self.elided_information_placeholder()
+    }
+
     // ───────────────────────────── types ─────────────────────────────
 
     /// `typeToTypeNode`
@@ -1753,28 +1773,26 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             .deferred(ty)
             .map(|reference| Identity::Node(reference.file, reference.node));
         match self.c.data(ty) {
+            // Nested arrays and tuples aren't limited by the depth of a symbol or a node that they share.
+            TypeData::Ref { target, .. } if self.c.is_array(ty) => {
+                self.visit_and_transform_type(ty, None, |printer, ty| {
+                    printer.array_type_to_node(ty, *target)
+                })
+            }
+            TypeData::Tuple {
+                flags, readonly, ..
+            } => self.visit_and_transform_type(ty, None, |printer, ty| {
+                let elems = printer.c.type_arguments(ty);
+                printer.tuple_to_node(elems, flags, *readonly)
+            }),
             TypeData::Ref { target, .. } if node_of_reference.is_some() => self
                 .visit_and_transform_type(ty, node_of_reference, |printer, ty| {
                     let args = printer.c.type_arguments(ty);
                     printer.type_reference_to_node(ty, *target, args)
                 }),
-            TypeData::Tuple {
-                flags, readonly, ..
-            } if node_of_reference.is_some() => {
-                self.visit_and_transform_type(ty, node_of_reference, |printer, ty| {
-                    let elems = printer.c.type_arguments(ty);
-                    printer.tuple_to_node(elems, flags, *readonly)
-                })
-            }
             TypeData::Ref { target, .. } => {
                 let args = self.c.type_arguments(ty);
                 self.type_reference_to_node(ty, *target, args)
-            }
-            TypeData::Tuple {
-                flags, readonly, ..
-            } => {
-                let elems = self.c.type_arguments(ty);
-                self.tuple_to_node(elems, flags, *readonly)
             }
             TypeData::TypeParam(..) => self.type_parameter_to_node(ty),
             TypeData::Marker(Marker::Restrictive(of)) => self.type_to_node(*of),
@@ -1929,7 +1947,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         &mut self,
         key: &SerializedTypeKey,
     ) -> &mut FxHashMap<SerializedTypeKey, SerializedTypeEntry> {
-        if key.1.is_some() && key.0.fake_scope == 0 {
+        if key.enclosing_expression.is_some() && key.enclosing_declaration.fake_scope == 0 {
             &mut self.c.serialized_types.0
         } else {
             &mut self.serialized_types
@@ -1942,9 +1960,28 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         ty: TypeId,
         identity: Option<Identity>,
     ) -> ControlFlow<Node, TypeVisit> {
+        if self.check_truncation_length() {
+            return ControlFlow::Break(self.elided_information_placeholder());
+        }
+        // A deferred reference and a regular one are the same type for a cycle.
+        let ty = if self.c.types().deferred(ty).is_some() && self.c.is_array_or_tuple(ty) {
+            let arguments = self.c.type_arguments(ty);
+            self.c.create_type_reference(ty, arguments)
+        } else {
+            ty
+        };
+        if self.visited_types.contains(&ty) {
+            return ControlFlow::Break(self.cyclic_structure_placeholder());
+        }
         let key = self
             .enclosing_declaration
-            .map(|at| (at, self.enclosing_expression, ty, self.flags));
+            .map(|enclosing_declaration| SerializedTypeKey {
+                enclosing_declaration,
+                enclosing_expression: self.enclosing_expression,
+                ty,
+                flags: self.flags,
+                infer_type_parameters: self.infer_type_parameters.as_slice().into(),
+            });
         if let Some(key) = &key
             && let Some(cached) = self.serialized_types_of(key).get(key)
         {
@@ -1960,27 +1997,34 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 _ => node,
             });
         }
+        // The type arguments of a reverse mapped type can grow forever, so that no type repeats.
+        let mut reverse_mapped_origin = None;
+        if let TypeData::ReverseMapped { mapped, .. } = *self.c.data(ty)
+            && let Some((file, node, _)) = self.c.mapped_origin(mapped)
+        {
+            let origin = Identity::Node(file, node);
+            match self.enter_symbol(origin, 99) {
+                Some(depth) => reverse_mapped_origin = Some((origin, depth)),
+                None => return ControlFlow::Break(self.elided_information_placeholder()),
+            }
+        }
         let mut depth = 0;
         if let Some(identity) = identity {
-            match self
-                .symbol_depth
-                .iter_mut()
-                .find(|entry| entry.0 == identity)
-            {
-                Some(entry) => {
-                    depth = entry.1;
-                    if depth > 10 {
-                        return ControlFlow::Break(self.elided_information_placeholder());
+            match self.enter_symbol(identity, 10) {
+                Some(previous) => depth = previous,
+                None => {
+                    if let Some((origin, depth)) = reverse_mapped_origin {
+                        self.set_symbol_depth(origin, depth);
                     }
-                    entry.1 = depth + 1;
+                    return ControlFlow::Break(self.elided_information_placeholder());
                 }
-                None => self.symbol_depth.push((identity, 1)),
             }
         }
         self.visited_types.push(ty);
         ControlFlow::Continue(TypeVisit {
             ty,
             identity,
+            reverse_mapped_origin,
             key,
             depth,
             previous_tracked_symbols: std::mem::take(&mut self.tracked_symbols),
@@ -1988,11 +2032,45 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         })
     }
 
+    /// Adds one to `symbolDepth[identity]` and returns the previous value. If that's over `maximum`, the printer starts
+    /// to truncate and `None` is returned.
+    fn enter_symbol(&mut self, identity: Identity, maximum: u32) -> Option<u32> {
+        match self
+            .symbol_depth
+            .iter_mut()
+            .find(|entry| entry.0 == identity)
+        {
+            Some(entry) if entry.1 > maximum => {
+                self.truncating = true;
+                None
+            }
+            Some(entry) => {
+                entry.1 += 1;
+                Some(entry.1 - 1)
+            }
+            None => {
+                self.symbol_depth.push((identity, 1));
+                Some(0)
+            }
+        }
+    }
+
+    fn set_symbol_depth(&mut self, identity: Identity, depth: u32) {
+        if let Some(entry) = self
+            .symbol_depth
+            .iter_mut()
+            .find(|entry| entry.0 == identity)
+        {
+            entry.1 = depth;
+        }
+    }
+
     /// `visitAndTransformType` from where `transform` has returned `node`.
     fn end_type_visit(&mut self, visit: TypeVisit, node: Node) -> Node {
         let TypeVisit {
             ty,
             identity,
+            reverse_mapped_origin,
             key,
             depth,
             previous_tracked_symbols,
@@ -2015,13 +2093,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             self.serialized_types_of(&key).insert(key, entry);
         }
         self.visited_types.retain(|&visited| visited != ty);
-        if let Some(identity) = identity
-            && let Some(entry) = self
-                .symbol_depth
-                .iter_mut()
-                .find(|entry| entry.0 == identity)
-        {
-            entry.1 = depth;
+        if let Some(identity) = identity {
+            self.set_symbol_depth(identity, depth);
+        }
+        if let Some((origin, depth)) = reverse_mapped_origin {
+            self.set_symbol_depth(origin, depth);
         }
         node
     }
@@ -3024,26 +3100,29 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         Node::simple(cat!(parent.text, b".", name))
     }
 
-    /// `typeReferenceToTypeNode` for a reference to a class or an interface.
-    fn type_reference_to_node(&mut self, ty: TypeId, target: Sym, args: &[TypeId]) -> Node {
-        if let Some(element) = self.c.array_element(ty) {
-            let is_readonly = self.c.global_type_symbol(known::ReadonlyArray) == Some(target);
-            let element = self.type_to_node(element);
-            if self.flags & WRITE_ARRAY_AS_GENERIC_TYPE != 0 {
-                let name: &[u8] = if is_readonly {
-                    b"ReadonlyArray"
-                } else {
-                    b"Array"
-                };
-                return Node::simple(cat!(name, type_arguments_text(vec![element])));
-            }
-            let array = cat!(element.emit(POSTFIX), b"[]");
-            return if is_readonly {
-                Node::new(cat!(b"readonly ", array), TYPE_OPERATOR)
+    /// `arrayOrTupleTypeToNode` for an array.
+    fn array_type_to_node(&mut self, ty: TypeId, target: Sym) -> Node {
+        let is_readonly = self.c.global_type_symbol(known::ReadonlyArray) == Some(target);
+        let element = self.c.array_element(ty).unwrap_or(TypeId::ERROR);
+        let element = self.type_to_node(element);
+        if self.flags & WRITE_ARRAY_AS_GENERIC_TYPE != 0 {
+            let name: &[u8] = if is_readonly {
+                b"ReadonlyArray"
             } else {
-                Node::new(array, POSTFIX)
+                b"Array"
             };
+            return Node::simple(cat!(name, type_arguments_text(vec![element])));
         }
+        let array = cat!(element.emit(POSTFIX), b"[]");
+        if is_readonly {
+            Node::new(cat!(b"readonly ", array), TYPE_OPERATOR)
+        } else {
+            Node::new(array, POSTFIX)
+        }
+    }
+
+    /// `typeReferenceToTypeNode`
+    fn type_reference_to_node(&mut self, ty: TypeId, target: Sym, args: &[TypeId]) -> Node {
         if self.flags & WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL != 0
             && self.c.files().flags(target).contains(SymFlags::CLASS)
             && !self.is_value_symbol_accessible(target)
@@ -3738,7 +3817,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 && bound.member_symbol[m.idx()].is_some()
                 && !self.is_late_bindable_index_signature(file, member.key)
             {
-                return Some(self.c.symbol_of_member(file, m));
+                // `typeof C.name` needs a name that's an identifier.
+                let symbol = self.c.symbol_of_member(file, m);
+                let name = self.c.files().symbol(symbol).name;
+                return is_identifier_text(self.c.atoms().bytes(name)).then_some(symbol);
             }
         }
         None
@@ -3761,9 +3843,16 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `createAnonymousTypeNode`
     fn anonymous_type_to_node(&mut self, ty: TypeId) -> Node {
-        // `createAnonymousTypeNodeEx`: "Anonymous types without a symbol are never circular."
+        // `createAnonymousTypeNodeEx`: a reverse mapped type has no symbol. For display, placeholders for its properties
+        // and index signatures end the recursion.
         if matches!(self.c.data(ty), TypeData::ReverseMapped { .. }) {
-            return self.object_type_to_node(ty);
+            if self.flags & ALLOW_ANONYMOUS_IDENTIFIER != 0 {
+                return self.object_type_to_node(ty);
+            }
+            if self.visited_types.contains(&ty) {
+                return self.cyclic_structure_placeholder();
+            }
+            return self.visit_and_transform_type(ty, None, Self::object_type_to_node);
         }
         // An `InstantiationExpressionType` that's the type of its type query is printed as that query.
         if let TypeData::Synth(shape) = self.c.data(ty)
@@ -3775,7 +3864,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             if self.c.instantiate(declared, self.mapper) == ty {
                 // A query whose name can't be used here is printed from its type, which re-enters here.
                 if self.visited_types.contains(&ty) {
-                    return self.elided_information_placeholder();
+                    return self.cyclic_structure_placeholder();
                 }
                 self.visited_types.push(ty);
                 // `tryReuseExistingNonParameterTypeNode`: `getTypeFromTypeNode(existing, true)` is
@@ -3857,7 +3946,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             {
                 return self.symbol_to_type_node(alias, false, Vec::new());
             }
-            return self.elided_information_placeholder();
+            return self.cyclic_structure_placeholder();
         }
         self.visit_and_transform_type(ty, Some(identity), Self::object_type_to_node)
     }
@@ -4140,23 +4229,25 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             let text = self.signature_to_text(signature, kind, b"", false, Some(ty));
             elements.push(cat!(text, b";"));
         }
-        let is_reverse_mapped = matches!(self.c.data(ty), TypeData::ReverseMapped { .. });
+        let uses_placeholder = matches!(self.c.data(ty), TypeData::ReverseMapped { .. })
+            && self.flags & ALLOW_ANONYMOUS_IDENTIFIER != 0;
         for info in index {
-            // The placeholder is created whether or not it is used.
-            let placeholder = self.elided_information_placeholder();
-            let type_node = is_reverse_mapped.then_some(&placeholder);
-            if let Some(names) = self.index_info_to_object_computed_names(info, type_node) {
+            let placeholder = uses_placeholder.then(|| self.elided_information_placeholder());
+            if let Some(names) =
+                self.index_info_to_object_computed_names(info, placeholder.as_ref())
+            {
                 elements.extend(names);
                 continue;
             }
             let name = self.get_name_from_index_info(info);
             let key = self.c.instantiate(info.key, mapper);
             let key = self.type_to_node(key);
-            let value = if is_reverse_mapped {
-                placeholder
-            } else {
-                let value = self.c.instantiate(info.value, mapper);
-                self.type_to_node(value)
+            let value = match placeholder {
+                Some(placeholder) => placeholder,
+                None => {
+                    let value = self.c.instantiate(info.value, mapper);
+                    self.type_to_node(value)
+                }
             };
             self.approximate_length += name.len() + 4;
             let modifier: &[u8] = if info.readonly {
@@ -4724,6 +4815,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `shouldUsePlaceholderForProperty`
     fn should_use_placeholder_for_property(&self, property: &ReverseMappedProperty) -> bool {
+        // The placeholders are for display, not for declaration files.
+        if self.flags & ALLOW_ANONYMOUS_IDENTIFIER == 0 {
+            return false;
+        }
         let stack = &self.reverse_mapped_stack;
         if stack
             .iter()
@@ -5949,11 +6044,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             return self.type_to_node(ty);
         }
         if self.visited_types.contains(&ty) {
-            if self.flags & ALLOW_ANONYMOUS_IDENTIFIER == 0 {
-                self.encountered_error = true;
-                self.report(Report::CyclicStructure);
-            }
-            return self.elided_information_placeholder();
+            return self.cyclic_structure_placeholder();
         }
         self.visit_and_transform_type(ty, None, Self::type_to_node)
     }

@@ -7883,12 +7883,12 @@ take({ ...new K() });
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(5,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: (() => Promise<string>) | undefined; }' but required in type '{ [key: string]: unknown; required: number; }'.
-        a.ts(6,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: (x: Map<string, number>) => void; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        "a.ts(5,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ... | undefined; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(6,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ...; }' but required in type '{ [key: string]: unknown; required: number; }'.
         a.ts(7,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
-        a.ts(8,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<...>[]; }' but required in type '{ [key: string]: unknown; required: number; }'.
-        a.ts(10,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: () => Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
-        a.ts(12,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: () => Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(8,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ...; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(10,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ...; }' but required in type '{ [key: string]: unknown; required: number; }'.
+        a.ts(12,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: ...; }' but required in type '{ [key: string]: unknown; required: number; }'.
         a.ts(14,6): error TS2741: Property 'required' is missing in type '{ adminAPIKey?: string | null | undefined; organization?: string | null | undefined; project?: string | null | undefined; webhookSecret?: string | null | undefined; baseURL?: string | null | undefined; ... 4 more ...; last: Promise<...>; }' but required in type '{ [key: string]: unknown; required: number; }'.
         a.ts(15,48): error TS2304: Cannot find name 'Missing'.
         a.ts(16,6): error TS2741: Property 'required' is missing in type '{ kind: "single"; other: Missing; method(x: Map<string, number>): Promise<string>; readonly acc: Promise<string>; }' but required in type '{ [key: string]: unknown; required: number; }'.
@@ -10015,7 +10015,7 @@ export function g12() { if (!o["m"]) { const n: never = o["m"]; return n; } retu
         a.ts(17,70): error TS2322: Type 'undefined' is not assignable to type 'string | number'.
         a.ts(20,25): error TS2412: Type 'undefined' is not assignable to type 'string | number' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the type of the target.
         a.ts(20,43): error TS2412: Type 'undefined' is not assignable to type 'string' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the type of the target.
-        b.ts(2,46): error TS2322: Type '{ <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<T>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): (...args: B) => R; }' is not assignable to type 'never'.
+        b.ts(2,46): error TS2322: Type '{ <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<T>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): ...; }' is not assignable to type 'never'.
         b.ts(4,42): error TS2322: Type '() => void' is not assignable to type 'never'.
         b.ts(6,51): error TS2322: Type '() => string' is not assignable to type 'never'.
         b.ts(13,43): error TS2322: Type '() => void' is not assignable to type 'never'.
@@ -11027,12 +11027,12 @@ export function go(input: RequestInfo, init?: RequestInit) {
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(20,44): error TS2345: Argument of type 'string | { readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; } | null; ... 20 more ...; clone: (...' is not assignable to parameter of type 'URL | RequestInfo'.
-          Type '{ readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; } | null; ... 20 more ...; clone: () => { .....' is not assignable to type 'URL | RequestInfo'.
-            Type '{ readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; } | null; ... 20 more ...; clone: () => { .....' is not assignable to type 'Request'.
+        "a.ts(20,44): error TS2345: Argument of type 'string | { readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; } | null; ... 20 more ...; clone: ...; }' is not assignable to parameter of type 'URL | RequestInfo'.
+          Type '{ readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; } | null; ... 20 more ...; clone: ...; }' is not assignable to type 'URL | RequestInfo'.
+            Type '{ readonly body: { readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; } | null; ... 20 more ...; clone: ...; }' is not assignable to type 'Request'.
               Types of property 'body' are incompatible.
-                Type '{ readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; } | null' is not assignable to type 'ReadableStream<Uint8Array<ArrayBuffer>> | null'.
-                  Type '{ readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: (options?: ReadableStreamIteratorOptions | undefined) => { ...; }; }' is not assignable to type 'ReadableStream<Uint8Array<ArrayBuffer>>'.
+                Type '{ readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; } | null' is not assignable to type 'ReadableStream<Uint8Array<ArrayBuffer>> | null'.
+                  Type '{ readonly locked: boolean; cancel: (reason?: any) => Promise<void>; getReader: (options?: ReadableStreamGetReaderOptions | undefined) => ReadableStreamReader<...>; ... 4 more ...; values: ...; }' is not assignable to type 'ReadableStream<Uint8Array<ArrayBuffer>>'.
                     The types returned by 'getReader(...)' are incompatible between these types.
                       Type 'ReadableStreamReader<Uint8Array<ArrayBuffer>>' is not assignable to type 'ReadableStreamBYOBReader'.
                         Type 'ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>' is not assignable to type 'ReadableStreamBYOBReader'.
@@ -11121,7 +11121,7 @@ export const e7: UU<Req> = null! as Req; export const e8: Req = null! as UU<Req>
         a.ts(27,14): error TS2322: Type '{ a: 1; c: { one: 1; }; }' is not assignable to type 'never'.
         a.ts(30,14): error TS2322: Type '{ url: string; clone: () => { url: string; clone: ...; self: ...; arr: ...[]; }; self: ...; arr: ...[]; }' is not assignable to type 'never'.
         a.ts(30,57): error TS2322: Type '{ url: string; clone: () => { url: string; clone: ...; self: ...; arr: ...[]; }; self: ...; arr: ...[]; }' is not assignable to type 'never'.
-        a.ts(30,110): error TS2322: Type '{ url: string; clone: () => { url: string; clone: ...; self: ...; arr: ...[]; }; self: ...; arr: ...[]; }[]' is not assignable to type 'never'."
+        a.ts(30,110): error TS2322: Type '{ url: string; clone: () => { url: string; clone: ...; self: ...; arr: ...; }; self: ...; arr: ...; }[]' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -12712,14 +12712,14 @@ export const mutual: never = (null! as FromA<unknown>)._output;
         a.ts(15,14): error TS2322: Type 'Record<string, any>' is not assignable to type 'never'.
         a.ts(19,14): error TS2322: Type 'any[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][]' is not assignable to type 'never'.
         a.ts(19,28): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Array'.
-        a.ts(23,14): error TS2322: Type 'keyof Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<...>>>>>>>>>>>' is not assignable to type 'never'.
+        a.ts(23,14): error TS2322: Type 'keyof Keys<...>' is not assignable to type 'never'.
           Type '"_output"' is not assignable to type 'never'.
         a.ts(23,28): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
-        a.ts(24,14): error TS2322: Type 'keyof Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<...>>>>>>>>>>>' is not assignable to type 'never'.
+        a.ts(24,14): error TS2322: Type 'keyof Keys<...>' is not assignable to type 'never'.
           Type '"_output"' is not assignable to type 'never'.
         a.ts(28,14): error TS2322: Type '[1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, any]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
         a.ts(28,27): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
-        a.ts(34,14): error TS2322: Type '["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", [...]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(34,14): error TS2322: Type '["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ...]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
         a.ts(34,30): error TS5114: Instantiations of type 'Schema' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
@@ -12748,7 +12748,7 @@ const h: never = g;
         a.ts(5,62): error TS2322: Type '{ [P in keyof T]+?: T[P] | undefined; }' is not assignable to type 'never'.
         a.ts(6,92): error TS2322: Type '{ +readonly [P in keyof T as \`x\${P & string}\`]+?: T[P] | undefined; }' is not assignable to type 'never'.
         a.ts(8,42): error TS2322: Type 'M<T>' is not assignable to type 'never'.
-        a.ts(8,65): error TS2322: Type '{ [n: number]: M<T>; length: number; toString(): string; toLocaleString(): string; toLocaleString(locales: string | string[], options?: Intl.NumberFormatOptions & Intl.DateTimeFormatOptions): string; ... 37 more ...; with(index: number, value: M<...>): M<...>[]; }' is not assignable to type 'never'.
+        a.ts(8,65): error TS2322: Type '{ [n: number]: M<T>; length: number; toString(): string; toLocaleString(): string; toLocaleString(locales: string | string[], options?: Intl.NumberFormatOptions & Intl.DateTimeFormatOptions): string; ... 37 more ...; with(index: number, value: M<...>): ...; }' is not assignable to type 'never'.
         a.ts(10,7): error TS2322: Type '<T>(m: { +readonly [P in keyof T]+?: T[P]; }) => { +readonly [P in keyof T]+?: T[P] | undefined; }' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
@@ -15433,7 +15433,7 @@ export const e9: never = (null! as F9<unknown>)._output;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(4,14): error TS2322: Type '[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[any, any], [any, any]], [[any, any], [any, any]]], [[[any, any], [...]], [...]]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [....' is not assignable to type 'never'.
+        "a.ts(4,14): error TS2322: Type '[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[any, any], [any, any]], [[any, any], [any, any]]], [[[any, any], ...], ...]], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...], ...]...' is not assignable to type 'never'.
         a.ts(4,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
@@ -15511,9 +15511,9 @@ export const second: never = (null! as FromB<unknown>)._output;
         a.ts(34,14): error TS2322: Type '"yes"' is not assignable to type 'never'.
         a.ts(34,27): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(37,14): error TS2322: Type '{ readonly _output: 1; }' is not assignable to type 'never'.
-        a.ts(42,14): error TS2322: Type '["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", [...]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(42,14): error TS2322: Type '["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ...]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
         a.ts(42,29): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
-        a.ts(43,14): error TS2322: Type '["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", [...]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'."
+        a.ts(43,14): error TS2322: Type '["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ...]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -16476,8 +16476,8 @@ export const r16: keyof typeof k5 = null!; export const r17: never = r16;
         a.ts(9,14): error TS2322: Type '(v: PropertyKey) => boolean' is not assignable to type 'never'.
         a.ts(11,14): error TS2322: Type '() => string' is not assignable to type 'never'.
         a.ts(13,14): error TS2322: Type '(() => string) & (() => string)' is not assignable to type 'never'.
-        a.ts(14,14): error TS2322: Type '{ <T>(this: new () => T, thisArg: T): void; <T, A extends any[]>(this: new (...args: A) => T, thisArg: T, args: A): void; } & { <T, R>(this: (this: T) => R, thisArg: T): R; <T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, args: A): R; }' is not assignable to type 'never'.
-        a.ts(15,14): error TS2322: Type '{ <T>(this: T, thisArg: any): T; <A extends any[], B extends any[], R>(this: new (...args: [...A, ...B]) => R, thisArg: any, ...args: A): new (...args: B) => R; } & { <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<...>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [......]) => R,...' is not assignable to type 'never'.
+        a.ts(14,14): error TS2322: Type '{ <T>(this: new () => T, thisArg: T): void; <T, A extends any[]>(this: new (...args: A) => T, thisArg: T, args: A): void; } & { <T, R>(this: (this: T) => R, thisArg: T): R; <T, A extends any[], R>(this: ..., thisArg: T, args: A): R; }' is not assignable to type 'never'.
+        a.ts(15,14): error TS2322: Type '{ <T>(this: T, thisArg: any): T; <A extends any[], B extends any[], R>(this: new (...args: [...A, ...B]) => R, thisArg: any, ...args: A): new (...args: B) => R; } & { <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<...>; <T, A extends any[], B extends any[], R>(this: ..., thisArg: T, ...args: A): ...; }' is not assignable to type 'never'.
         a.ts(16,14): error TS2322: Type 'IC & IF' is not assignable to type '{ call: 1; }'.
           Types of property 'call' are incompatible.
             Type '(<T, A extends any[]>(this: new (...args: A) => T, thisArg: T, ...args: A) => void) & (<T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, ...args: A) => R)' is not assignable to type '1'.
@@ -19145,13 +19145,13 @@ export function h3() { const a = Mix(K); const b = Mix(a); const r: never = b; c
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(3,30): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & { ...; } & typeof K' is not assignable to type 'never'.
+        "a.ts(3,30): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & ... & typeof K' is not assignable to type 'never'.
         a.ts(4,30): error TS2417: Class static side 'typeof C' incorrectly extends base class static side '{ prototype: Mix.(Anonymous class); } & { prototype: Mix.(Anonymous class); } & typeof K'.
           Type 'typeof C' is not assignable to type 'typeof K'.
             Types of property 's' are incompatible.
               Type 'string' is not assignable to type 'number'.
-        a.ts(5,66): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & { ...; } & typeof K' is not assignable to type 'never'.
-        a.ts(5,86): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & { ...; } & typeof K' is not assignable to type '{ q: 1; }'."
+        a.ts(5,66): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & ... & typeof K' is not assignable to type 'never'.
+        a.ts(5,86): error TS2322: Type '{ new (...a: any[]): Mix.(Anonymous class); prototype: Mix.(Anonymous class); } & ... & typeof K' is not assignable to type '{ q: 1; }'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -19164,7 +19164,7 @@ export function h3() { const a = Mix(K); const b = Mix(a); const r: never = b; c
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(1,152): error TS2417: Class static side 'typeof C' incorrectly extends base class static side '{ m?: number | undefined; prototype: Mix.(Anonymous class); } & { readonly prototype: Object; getPrototypeOf(o: any): any; getOwnPropertyDescriptor(o: any, p: PropertyKey): PropertyDescriptor | undefined; ... 20 more ...; groupBy<K extends PropertyKey, T>(items: Iterable<...>, keySelector: (item: T, index: number) =...'.
+        "a.ts(1,152): error TS2417: Class static side 'typeof C' incorrectly extends base class static side '{ m?: number | undefined; prototype: Mix.(Anonymous class); } & { readonly prototype: Object; getPrototypeOf(o: any): any; getOwnPropertyDescriptor(o: any, p: PropertyKey): PropertyDescriptor | undefined; ... 20 more ...; groupBy<K extends PropertyKey, T>(items: Iterable<...>, keySelector: ...): Partial<...>; }'.
           Type 'typeof C' is not assignable to type '{ m?: number; prototype: Mix.(Anonymous class); }'.
             Property 'm' is private in type '{ m?: number | undefined; prototype: Mix.(Anonymous class); }' but not in type 'typeof C'."
       `);
@@ -19641,7 +19641,7 @@ export interface Near { near: 1 }
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(6,11): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Wrap<Wrap<{ ...; }>>>, NoInfer<{ ...; } & { ...; }>>'.
+        "a.ts(6,11): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Wrap<Wrap<...>>>, NoInfer<... & ...>>'.
         a.ts(9,7): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Far>, NoInfer<Near>>'.
         a.ts(11,5): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Far>, Near>'.
         a.ts(13,6): error TS2345: Argument of type 'number' is not assignable to parameter of type 'H<NoInfer<Far>, NoInfer<Far>>'.
@@ -19667,13 +19667,13 @@ namespace M125 { declare function f(): { both: [ReturnType<typeof f>, ReturnType
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(1,331): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
-        a.ts(2,336): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, ... 4 more ..., 8]; }'.
-        a.ts(3,339): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, ... 5 more ..., 8]; }'.
-        a.ts(4,342): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, ... 6 more ..., 8]; }'.
-        a.ts(5,345): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [...]; }'.
-        a.ts(6,351): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [...]; }'.
-        a.ts(7,356): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: [..., ...]; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { ...; }; u: [...]; }'."
+        "a.ts(1,331): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(2,336): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(3,339): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(4,342): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(5,345): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, 4, 5, 6, 7, 8]; }'.
+        a.ts(6,351): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, 2, 3, ... 4 more ..., 8]; }'.
+        a.ts(7,356): error TS2322: Type 'null' is not assignable to type '{ both: [..., { gg: ...; }]; zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: 1; t: { a: 1; b: 2; }; u: [1, ... 6 more ..., 8]; }'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -20661,7 +20661,7 @@ export const deferred: Deferred<"a"> = 1;
         a.ts(7,41): error TS5114: Instantiations of type 'Argument' appear infinitely circular.
         a.ts(8,50): error TS5114: Instantiations of type 'Intrinsic' appear infinitely circular.
         a.ts(10,14): error TS2322: Type '1' is not assignable to type '\`<99 x>\${any}\`'.
-        a.ts(12,14): error TS2322: Type 'number' is not assignable to type '[[[[[[[[[[[[...]]]]]]]]]]]]'."
+        a.ts(12,14): error TS2322: Type 'number' is not assignable to type '[...]'."
       `);
       expect(exitCode).toBe(1);
     });

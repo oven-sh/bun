@@ -359,8 +359,8 @@ export {};
   Property 'call' does not exist on type '{ tag: 0; toString(): "own"; name: 1; }'.
 (12,7): error TS2322: Type '"mine" | (<T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, ...args: A) => R)' is not assignable to type 'never'.
   Type '"mine"' is not assignable to type 'never'.
-(13,7): error TS2322: Type '{ <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<T>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): (...args: B) => R; } | { ...; }' is not assignable to type 'never'.
-  Type '{ <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<T>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): (...args: B) => R; }' is not assignable to type 'never'.
+(13,7): error TS2322: Type '{ <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<T>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): ...; } | ...' is not assignable to type 'never'.
+  Type '{ <T>(this: T, thisArg: ThisParameterType<T>): OmitThisParameter<T>; <T, A extends any[], B extends any[], R>(this: (this: T, ...args: [...A, ...B]) => R, thisArg: T, ...args: A): ...; }' is not assignable to type 'never'.
 (14,7): error TS2322: Type 'number' is not assignable to type 'never'.
 (15,11): error TS2339: Property 'tag' does not exist on type 'Functions'.
   Property 'tag' does not exist on type '(x: 1) => void'.

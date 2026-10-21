@@ -6206,6 +6206,14 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return files.mode_of_require(at.file);
             }
+            if initializer.is_some()
+                && !is_parenthesized(hir, initializer)
+                && let ExprKind::ImportCall { args, .. } = hir[initializer].kind
+                && let Some(specifier) = hir.ids(args).next()
+                && matches!(hir[specifier].kind, ExprKind::String(_))
+            {
+                return files.mode_of_import_call(at.file);
+            }
         }
         files.default_resolution_mode_for_file(at.file)
     }

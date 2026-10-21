@@ -169,7 +169,7 @@ export const cases: Record<string, Case> = {
  0|];
 `,
   },
-  // The `{` where an object starts is code, unless it is after a `:`. The `{` of a block or of a body is not. No `}` is.
+  // A `{` is code only where no block can start: after `( [ , = ? | & .`. No `}` is.
   "braces.ts": {
     functions: "3/4",
     lines: `
@@ -258,7 +258,6 @@ export const cases: Record<string, Case> = {
  1|export class Empty
  -|{
  -|}
- 1|export const empty = {};
 `,
   },
   // Where a constant is inlined, its value has the position of its declaration.

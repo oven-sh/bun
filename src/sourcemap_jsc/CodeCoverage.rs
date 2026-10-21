@@ -608,7 +608,8 @@ pub struct BasicBlockRange {
 pub struct ByteRangeMapping {
     /// A bit for each code unit of the text JSC compiled, which is what JSC's offsets and the
     /// source map's generated columns count. Set if the unit can make its line executable:
-    /// not white space or a block's brace. The text itself is only borrowed while this is made.
+    /// not white space, a `}`, or a `{` that may be a block's. The text itself is only borrowed
+    /// while this is made.
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
@@ -772,9 +773,9 @@ impl ByteRangeMapping {
         })
     }
 
-    /// `line` ran as often as the code at `offset` did, if that is code. A brace is not: the `{`
-    /// of a loop body shares a line with a header that runs once, and after a `return` JSC has
-    /// the `}` in a block of its own that never runs.
+    /// `line` ran as often as the code at `offset` did, if that is code. A block's brace is not:
+    /// the `{` of a loop body shares a line with a header that runs once, and after a `return` JSC
+    /// has the `}` in a block of its own that never runs.
     fn count_line(
         &self,
         counts: &ExecutionCounts,
@@ -840,8 +841,8 @@ fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
             0x0D if units.peek().is_some_and(|&(_, next)| next == 0x0A) => {}
             0x0A | 0x0D | 0x2028 | 0x2029 => {
                 starts.push(u32::try_from(i + 1).expect("int cast"));
-                // The line may have ended in a comment.
-                if core::mem::take(&mut seen_slashes) {
+                // The line may have ended in a comment, or in a number: `1.`
+                if core::mem::take(&mut seen_slashes) || previous == 0x2E {
                     previous = 0;
                 }
             }
@@ -849,7 +850,7 @@ fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
         }
         let is_executable = match unit {
             0x09 | 0x0A | 0x0D | 0x20 => continue,
-            // No block starts after one of these, an object does. After a `:` both do.
+            // No block starts after one of these. After a `:`, one can.
             0x7B => matches!(
                 u8::try_from(previous),
                 Ok(b'(' | b'[' | b',' | b'=' | b'?' | b'|' | b'&' | b'.')

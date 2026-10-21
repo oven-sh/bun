@@ -1131,7 +1131,7 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(exitCode).toBe(1);
 });
 
-test("the brace of a block is not listed after a comment, in a file that Bun does not transpile", async () => {
+test("the brace of a block is not listed after a comment or a number, in a file that Bun does not transpile", async () => {
   using dir = tempDir("cov-brace-after-comment", {
     "built.js": `// @bun
 export function f() {
@@ -1142,6 +1142,10 @@ export function f() {
         one: 1,
       },
     ];
+  }
+  globalThis.y = 1.
+  {
+    globalThis.y++;
   }
 }
 `,
@@ -1160,12 +1164,11 @@ export function f() {
     stderr: "inherit",
   });
   const exitCode = await proc.exited;
-  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
-  const listed = lcov
-    .slice(lcov.indexOf("SF:built.js"))
-    .split("end_of_record")[0]
-    .match(/^DA:\d+/gm);
-  expect(listed).not.toContain("DA:4");
-  expect(listed).toContain("DA:6");
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:built.js"));
+  expect(record).toBeDefined();
+  expect(record).not.toContain("DA:4,");
+  expect(record).toContain("DA:6,");
+  expect(record).not.toContain("DA:12,");
   expect(exitCode).toBe(0);
 });

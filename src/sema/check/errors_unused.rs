@@ -2082,8 +2082,10 @@ impl Checker<'_, '_> {
                 ScopeKind::Block => u.is_block_scope_checked(ScopeId(i as u32)),
                 // Among overloads, only the implementation.
                 ScopeKind::Fn(f) => {
+                    let kind = hir.kind(hir.node(f));
                     !matches!(hir[f].body, FnBody::None)
-                        && hir.kind(hir.node(f)).is_function_like_declaration()
+                        && (kind.is_function_like_declaration()
+                            || kind == Kind::ClassStaticBlockDeclaration)
                         && !u.is_never_checked(hir[f].start)
                 }
                 _ => false,

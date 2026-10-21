@@ -1513,10 +1513,14 @@ impl<'a> Converter<'a, '_> {
                     None => None,
                 };
                 let finally = match finalizer {
-                    Some(finalizer) => Some(Finally {
-                        loc: self.loc(finalizer.span()),
-                        stmts: self.block(finalizer)?,
-                    }),
+                    Some(finalizer) => {
+                        let loc = self.loc(finalizer.span());
+                        Some(Finally {
+                            loc,
+                            stmts: self.block(finalizer)?,
+                            body_loc: loc,
+                        })
+                    }
                     None => None,
                 };
                 JsStmt::alloc(

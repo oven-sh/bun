@@ -5306,6 +5306,14 @@ console.log(foo, array);
     new Bun.Transpiler().scanImports("");
   });
 
+  it("transformSync treats an undefined context as omitted", () => {
+    const transpiler = new Bun.Transpiler();
+    expect(transpiler.transformSync("let a: number = 1;", "ts", undefined)).toBe("let a = 1;\n");
+    expect(() => transpiler.transformSync("let a: number = 1;", "ts", null)).toThrow(
+      "Expected context to be a object or loader for 'transformSync'.",
+    );
+  });
+
   it("preserves exotic directives", () => {
     expect(
       new Bun.Transpiler().transformSync(`"use client";

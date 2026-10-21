@@ -7591,15 +7591,14 @@ impl<'p, 's> Checker<'p, 's> {
                     has_union |= self.is_union(apparent);
                 }
             }
-            // A union's properties are created when they're listed, each with the types of the properties it combines,
-            // whether or not another member has the name. The members are listed in order, and each name is immediately
-            // looked up in all of them. So in `Partial<T> & T`, and in `{ a: 1 } & T & Partial<T>`, the mapped type has
-            // its (still empty) members in place while the constraint of `T` is listed.
+            // `somePropertyReducesToNever` lists the properties of every member, in order, before it looks up any name.
+            // A union's properties are created when they're listed, each with the types of the properties it combines.
+            // Then each name that several members have is looked up in all of them, in the order found.
             if has_union {
                 let apparent: SmallVec<[TypeId; 4]> =
                     members.iter().map(|&it| self.apparent_type(it)).collect();
-                let mut checked = crate::util::FxHashSet::<Atom>::default();
-                let mut has_resolved_the_others = false;
+                let mut lists: SmallVec<[Members<'p>; 4]> = SmallVec::new();
+                let mut is_listed_in_all = true;
                 for &current in &apparent {
                     let listed = match self.is_union(current) {
                         true => self.union_as_object(current),
@@ -7608,30 +7607,27 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some(current_members) = self.members(listed) else {
                         continue;
                     };
-                    let props = &current_members.shape().props;
                     // FOR SPEED. Thousands of intersections have the same few unions among their constraints.
-                    let is_listed_in_all = apparent.iter().all(|&other| {
+                    is_listed_in_all &= apparent.iter().all(|&other| {
                         !self.is_union(other) || self.listed_in_unions.contains(&(listed, other))
                     });
                     listed_now.push(listed);
-                    if !has_resolved_the_others && !props.is_empty() {
-                        has_resolved_the_others = true;
-                        for &other in &apparent {
-                            if !self.is_union(other) {
-                                self.members(other);
-                            }
+                    lists.push(current_members);
+                }
+                if !is_listed_in_all {
+                    let mut found: Vec<Atom> = Vec::new();
+                    let mut seen = crate::util::FxHashSet::<Atom>::default();
+                    let mut shared = crate::util::FxHashSet::<Atom>::default();
+                    for prop in lists.iter().flat_map(|list| &list.shape().props) {
+                        match seen.insert(prop.name) {
+                            true => found.push(prop.name),
+                            false => _ = shared.insert(prop.name),
                         }
                     }
-                    if is_listed_in_all {
-                        continue;
-                    }
-                    for prop in props {
-                        if !checked.insert(prop.name) {
-                            continue;
-                        }
+                    for name in found.into_iter().filter(|name| shared.contains(name)) {
                         for &other in &apparent {
                             if self.is_union(other) {
-                                self.union_property(other, prop.name);
+                                self.union_property(other, name);
                             }
                         }
                     }

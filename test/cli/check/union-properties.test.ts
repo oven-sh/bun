@@ -2999,7 +2999,7 @@ export {};
 /** `text(1)` .. `text(4)` */
 const four = (text: (i: number) => string) => [1, 2, 3, 4].map(text);
 
-// `errors`: what TypeScript 7.0.2 reports for `program(count)`, for every `count` in `sizes`, without the file name.
+// `errors`: what TypeScript 7.1 reports for `program(count)`, for every `count` in `sizes`, without the file name.
 const reduced: typeof members = {
   "an intersection of the same object types and one more that shares no name with them": {
     // There are also 4 other constituents, with 8 properties.
@@ -3830,6 +3830,12 @@ declare const other: { id: string };${programs.join("")}\nexport {};\n`;
 (57,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
 (58,10): error TS7023: 'load13' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
 (59,7): error TS7022: 'routes13' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(61,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(63,7): error TS7022: 'routes14' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(69,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(71,7): error TS7022: 'routes16' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(73,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(75,7): error TS7022: 'routes17' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (77,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
 (79,7): error TS7022: 'routes18' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (81,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
@@ -3857,6 +3863,12 @@ declare const other: { id: string };${programs.join("")}\nexport {};\n`;
 (141,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
 (142,10): error TS7023: 'load34' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
 (143,7): error TS7022: 'routes34' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(145,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(147,7): error TS7022: 'routes35' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(153,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(155,7): error TS7022: 'routes37' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+(157,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(159,7): error TS7022: 'routes38' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (161,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
 (163,7): error TS7022: 'routes39' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (165,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
@@ -4636,31 +4648,44 @@ declare function register(entry: { id: string }): number;
 declare const given: { id: string; title?: string };${programs.join("")}\nexport {};\n`;
     },
     errors: `
+(28,10): error TS7023: 'load6' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(29,7): error TS7022: 'routes6' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (29,31): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
   Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
     Types of property 'title' are incompatible.
       Type 'string | undefined' is not assignable to type 'string'.
         Type 'undefined' is not assignable to type 'string'.
+(31,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(32,7): error TS7022: 'routes7' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (32,31): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
   Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
     Types of property 'title' are incompatible.
       Type 'string | undefined' is not assignable to type 'string'.
         Type 'undefined' is not assignable to type 'string'.
+(33,10): error TS7023: 'load7' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(35,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(37,7): error TS7022: 'routes8' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (37,31): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
   Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
     Types of property 'title' are incompatible.
       Type 'string | undefined' is not assignable to type 'string'.
         Type 'undefined' is not assignable to type 'string'.
+(39,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(40,7): error TS7022: 'routes9' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (40,31): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
   Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
     Types of property 'title' are incompatible.
       Type 'string | undefined' is not assignable to type 'string'.
         Type 'undefined' is not assignable to type 'string'.
+(41,10): error TS7023: 'load9' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+(43,31): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
+(45,7): error TS7022: 'routes10' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (45,33): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
   Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.
     Types of property 'title' are incompatible.
       Type 'string | undefined' is not assignable to type 'string'.
         Type 'undefined' is not assignable to type 'string'.
+(47,32): error TS2502: 'to' is referenced directly or indirectly in its own type annotation.
 (48,7): error TS7022: 'routes11' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 (48,33): error TS2345: Argument of type '{ id: string; title?: string | undefined; }' is not assignable to parameter of type '{ a?: 1 | undefined; } & { id: string; title?: string | undefined; } & Partial<{ id: string; title?: string | undefined; }> & Required<{ id: string; title?: string | undefined; }>'.
   Type '{ id: string; title?: string | undefined; }' is not assignable to type 'Required<{ id: string; title?: string | undefined; }>'.

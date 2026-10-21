@@ -385,9 +385,6 @@ pub(crate) fn install_hoisted_packages(
                     // Two trees can be one workspace's `node_modules`. Its scripts wait for both.
                     let resolutions = this.lockfile.buffers.resolutions.as_slice();
                     let mut first_tree_of = vec![tree::INVALID_ID; this.lockfile.packages.len()];
-                    if let Some(of_the_project) = first_tree_of.first_mut() {
-                        *of_the_project = 0;
-                    }
                     for tree in trees.iter().skip(1) {
                         if !this.lockfile.is_importer_tree_id(tree.id) {
                             continue;

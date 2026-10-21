@@ -102,7 +102,7 @@ impl SystemError {
         promise: &JSPromise,
     ) -> JSValue {
         let value = self.to_error_instance(global);
-        value.attach_async_stack_from_promise(global, promise);
+        value.attach_async_stack_to_fresh_error(global, promise);
         value
     }
 

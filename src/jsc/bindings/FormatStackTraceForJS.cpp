@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "FormatStackTraceForJS.h"
+#include "AsyncStackTrace.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
@@ -748,7 +749,13 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    if (!destination->stackTrace()) {
+    // One with no frames of its own takes them only while its stack is undecided.
+    auto* destinationFrames = destination->stackTrace();
+    if ((!destinationFrames || destinationFrames->isEmpty()) && !Bun::errorStackIsUndecided(vm, destination)) {
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (!destinationFrames) {
         destination->captureStackTrace(vm, globalObject, 1);
     }
 

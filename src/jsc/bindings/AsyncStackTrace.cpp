@@ -148,31 +148,57 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     }
 }
 
-extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
+// What the error's construction leaves: it has formatted no stack and has no frames to format.
+static bool hasNoFramesOfItsOwn(JSC::ErrorInstance* error)
+{
+    if (error->hasMaterializedErrorInfo())
+        return false;
+    auto* frames = error->stackTrace();
+    return !frames || frames->isEmpty();
+}
+
+namespace Bun {
+
+bool errorStackIsUndecided(JSC::VM& vm, JSC::ErrorInstance* error)
+{
+    // An assignment to `stack` does not mark an error with no frames as materialized, so the property is looked up.
+    // Formatting also adds `line` and `column`, which an error that is not extensible must not gain.
+    return hasNoFramesOfItsOwn(error) && error->isStructureExtensible() && !JSC::isValidOffset(error->getDirectOffset(vm, vm.propertyNames->stack));
+}
+
+} // namespace Bun
+
+static void attachAsyncStack(JSC::JSGlobalObject* globalObject, JSC::ErrorInstance* error, JSC::JSPromise* promise)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
-    if (!instance || !promise)
-        return;
-
-    // Don't overwrite an existing stack trace. User-provided errors (e.g. via
-    // StreamError.JSValue or Body.ValueError.JSValue) may already have a
-    // meaningful synchronous stack from where they were created. Also skip if
-    // .stack was already accessed — setStackFrames after materialization
-    // would desync m_stackTrace from the cached property.
-    if (instance->hasMaterializedErrorInfo())
-        return;
-    if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
-        return;
-
     size_t limit = globalObject->stackTraceLimit().value_or(10);
     if (!limit)
         return;
 
     WTF::Vector<JSC::StackFrame> frames;
-    collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
+    collectAsyncStackFramesFromPromise(vm, error, promise, frames, limit);
     if (frames.isEmpty())
         return;
 
-    instance->setStackFrames(vm, WTF::move(frames));
+    error->setStackFrames(vm, WTF::move(frames));
+}
+
+extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
+{
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
+    if (!instance || !promise)
+        return;
+    // Before the walk: the lookup of `stack` can allocate, and no collection may run between the walk and setStackFrames().
+    if (!Bun::errorStackIsUndecided(JSC::getVM(globalObject), instance))
+        return;
+    attachAsyncStack(globalObject, instance, promise);
+}
+
+extern "C" void Bun__attachAsyncStackToFreshError(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
+{
+    auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
+    if (!instance || !promise || !hasNoFramesOfItsOwn(instance))
+        return;
+    ASSERT(Bun::errorStackIsUndecided(JSC::getVM(globalObject), instance));
+    attachAsyncStack(globalObject, instance, promise);
 }

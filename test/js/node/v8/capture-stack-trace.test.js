@@ -1,7 +1,8 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readFile } from "node:fs";
 import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
@@ -1424,6 +1425,243 @@ test("Error.appendStackTrace keeps the stack trace when the source and destinati
     return 0;
   }
   f(64);
+});
+
+// Two places give an error frames that it did not capture. Native code that rejects a promise gives the error the
+// frames of the async function that awaits the promise. Error.appendStackTrace gives it the frames of another error.
+describe("frames from another place", () => {
+  const missingFile = join(import.meta.dir, "capture-stack-trace.does-not-exist");
+
+  // Native code makes this error with no JavaScript on the stack. It has no frames and no `stack`.
+  async function errorWithNoFrames() {
+    const { promise, resolve } = Promise.withResolvers();
+    readFile(missingFile, resolve);
+    return await promise;
+  }
+
+  function functionNotOnTheStack() {}
+
+  // [what decides the stack of an error with no frames, how, what the error then reads as its `stack`]
+  const decisions = [
+    ["an assigned string", error => void (error.stack = "assigned"), () => "assigned"],
+    ["an assigned undefined", error => void (error.stack = undefined), () => undefined],
+    ["a read-only value", error => void Object.defineProperty(error, "stack", { value: "defined" }), () => "defined"],
+    [
+      "a getter",
+      error => void Object.defineProperty(error, "stack", { get: () => "from the getter" }),
+      () => "from the getter",
+    ],
+    [
+      "Error.captureStackTrace() that captures no frames",
+      error => Error.captureStackTrace(error, functionNotOnTheStack),
+      error => `${error.name}: ${error.message}`,
+    ],
+    ["Object.freeze()", error => void Object.freeze(error), () => undefined],
+    ["Object.preventExtensions()", error => void Object.preventExtensions(error), () => undefined],
+  ];
+
+  // Errors a stream with `error` while the async function `awaits` awaits the promise that `consume` makes from
+  // the stream. Native code rejects that promise with an error that it did not make. Returns what `awaits` catches.
+  async function rejectWhileAwaited(error, consume, underlyingSource = {}) {
+    let controller;
+    const stream = new ReadableStream({
+      ...underlyingSource,
+      start(c) {
+        controller = c;
+      },
+    });
+    async function awaits() {
+      try {
+        await consume(stream);
+      } catch (rejection) {
+        return rejection;
+      }
+    }
+    const pending = awaits();
+    controller.error(error);
+    return await pending;
+  }
+  const read = stream => stream.getReader().read();
+
+  test("an error with no frames and no stack takes the frames of the async function that awaits it", async () => {
+    const error = await errorWithNoFrames();
+    // A read of `stack` decides nothing.
+    expect(error.stack).toBeUndefined();
+    expect(Object.hasOwn(error, "stack")).toBe(false);
+    expect(await rejectWhileAwaited(error, read)).toBe(error);
+    expect(error.stack).toContain("at async awaits");
+  });
+
+  test.each(decisions)(
+    "an error with no frames takes no async frames when its stack is decided by %s",
+    async (_, decide, stackAfter) => {
+      const error = await errorWithNoFrames();
+      decide(error);
+      const before = Object.getOwnPropertyDescriptors(error);
+      expect(await rejectWhileAwaited(error, read)).toBe(error);
+      expect(Object.getOwnPropertyDescriptors(error)).toEqual(before);
+      expect(error.stack).toBe(stackAfter(error));
+    },
+  );
+
+  test.each([
+    ["Error.stackTraceLimit = 0", 0],
+    ["an Error.stackTraceLimit that is not a number", "none"],
+  ])("an error made under %s keeps an assigned stack when native code rejects with it", async (_, limit) => {
+    const savedLimit = Error.stackTraceLimit;
+    Error.stackTraceLimit = limit;
+    let error;
+    try {
+      error = new Error("made with no frames");
+    } finally {
+      Error.stackTraceLimit = savedLimit;
+    }
+    error.stack = "assigned";
+    const before = Object.getOwnPropertyDescriptors(error);
+    expect(await rejectWhileAwaited(error, read)).toBe(error);
+    expect(Object.getOwnPropertyDescriptors(error)).toEqual(before);
+  });
+
+  test.each([
+    ["reader.closed", {}, stream => stream.getReader().closed],
+    ["a BYOB read", { type: "bytes" }, stream => stream.getReader({ mode: "byob" }).read(new Uint8Array(8))],
+    [
+      "for await over the stream",
+      {},
+      async stream => {
+        for await (const chunk of stream) void chunk;
+      },
+    ],
+    ["pipeTo()", {}, stream => stream.pipeTo(new WritableStream())],
+  ])("an error with no frames keeps an assigned stack when it rejects %s", async (_, underlyingSource, consume) => {
+    const error = await errorWithNoFrames();
+    error.stack = "assigned";
+    const before = Object.getOwnPropertyDescriptors(error);
+    expect(await rejectWhileAwaited(error, consume, underlyingSource)).toBe(error);
+    expect(Object.getOwnPropertyDescriptors(error)).toEqual(before);
+  });
+
+  test("an error with no frames keeps an assigned stack when it aborts a fetch()", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const error = await errorWithNoFrames();
+    error.stack = "assigned";
+    const before = Object.getOwnPropertyDescriptors(error);
+    const controller = new AbortController();
+    async function awaits() {
+      try {
+        await fetch(server.url, { signal: controller.signal });
+      } catch (rejection) {
+        return rejection;
+      }
+    }
+    const pending = awaits();
+    controller.abort(error);
+    expect(await pending).toBe(error);
+    expect(Object.getOwnPropertyDescriptors(error)).toEqual(before);
+  });
+
+  test("an error with no frames keeps an assigned stack when it aborts a fetch() whose body is being read", async () => {
+    // The body does not end, so response.text() is pending when the abort comes.
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue("the body starts");
+            },
+          }),
+        ),
+    });
+    const error = await errorWithNoFrames();
+    error.stack = "assigned";
+    const before = Object.getOwnPropertyDescriptors(error);
+    const controller = new AbortController();
+    const response = await fetch(server.url, { signal: controller.signal });
+    async function awaits() {
+      try {
+        await response.text();
+      } catch (rejection) {
+        return rejection;
+      }
+    }
+    const pending = awaits();
+    controller.abort(error);
+    expect(await pending).toBe(error);
+    expect(Object.getOwnPropertyDescriptors(error)).toEqual(before);
+  });
+
+  test.concurrent("an error with no frames keeps a stack that native code gave it", async () => {
+    // The second warning of an unhandled rejection has no frames. Native code puts the stack of the reason on it.
+    const src = `
+      const reason = new Error("reason");
+      process.on("warning", async warning => {
+        if (!warning.message.startsWith("Unhandled promise rejection.")) return;
+        const stackBefore = Object.getOwnPropertyDescriptor(warning, "stack").value;
+        let controller;
+        const reader = new ReadableStream({ start(c) { controller = c; } }).getReader();
+        async function awaitsRead() {
+          try {
+            await reader.read();
+          } catch (rejection) {
+            return rejection;
+          }
+        }
+        const pending = awaitsRead();
+        controller.error(warning);
+        const rejection = await pending;
+        const stackAfter = Object.getOwnPropertyDescriptor(warning, "stack").value;
+        console.log(JSON.stringify({
+          rejectedWithTheWarning: rejection === warning,
+          hadTheStackOfTheReason: stackBefore === reason.stack,
+          hasTheStackOfTheReason: stackAfter === reason.stack,
+        }));
+      });
+      Promise.reject(reason);`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--unhandled-rejections=warn", "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      rejectedWithTheWarning: true,
+      hadTheStackOfTheReason: true,
+      hasTheStackOfTheReason: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The `throw` keeps `Error()` out of tail position. A tail call leaves no frame of this function.
+  function makeSource() {
+    try {
+      throw new Error("source");
+    } catch (source) {
+      return source;
+    }
+  }
+
+  test("Error.appendStackTrace gives the frames of the source to a destination with no frames and no stack", async () => {
+    const destination = await errorWithNoFrames();
+    Error.appendStackTrace(makeSource(), destination);
+    expect(destination.stack).toContain("at makeSource");
+  });
+
+  test.each(decisions)(
+    "Error.appendStackTrace adds no frames to a destination with no frames when its stack is decided by %s",
+    async (_, decide, stackAfter) => {
+      const destination = await errorWithNoFrames();
+      decide(destination);
+      const before = Object.getOwnPropertyDescriptors(destination);
+      const source = makeSource();
+      Error.appendStackTrace(source, destination);
+      expect(Object.getOwnPropertyDescriptors(destination)).toEqual(before);
+      expect(destination.stack).toBe(stackAfter(destination));
+      // The source keeps the frames that the destination did not take.
+      expect(source.stack).toContain("at makeSource");
+    },
+  );
 });
 
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {

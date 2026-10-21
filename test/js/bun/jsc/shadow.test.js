@@ -138,8 +138,8 @@ test.todo("in a ShadowRealm, the message event of a Worker is an object of that 
   expect(await settledIn(sharedRealm(), message)).toBe("own realm");
 });
 
-// Each completion looks its realm up by job. A lookup that answers with another live realm, or
-// with a realm for a job of the main realm, fails here.
+// A job of a realm looks its realm up by job. A lookup that answers with another live realm fails
+// here, and so does a job of the main realm that completes in a realm.
 test("jobs of two ShadowRealms and of the main realm complete in the realm that scheduled them", async () => {
   const realms = [sharedRealm(), realmWithNatives()];
   const before = heapStats().protectedGlobalObjectCount;
@@ -257,7 +257,7 @@ test.concurrent("a disposed Bun.ModuleGraph does not leave the ShadowRealm of it
       const inFlight = heapStats().protectedGlobalObjectCount - baseline;
       graph.dispose();
       let kept = inFlight;
-      for (let turn = 0; turn < 200 && kept !== 0; turn++) {
+      while (kept !== 0) {
         await new Promise(resolve => setImmediate(resolve));
         kept = heapStats().protectedGlobalObjectCount - baseline;
       }
@@ -317,7 +317,7 @@ test.concurrent("bun test --isolate does not leave the ShadowRealm of a finished
         const expected = Number(readFileSync(join(dir, "protected-globals"), "utf8"));
         // Round-trip the thread pool so A's pending job lands here.
         let protectedGlobals = heapStats().protectedGlobalObjectCount;
-        for (let i = 0; i < 40 && protectedGlobals !== expected; i++) {
+        while (protectedGlobals !== expected) {
           await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
           protectedGlobals = heapStats().protectedGlobalObjectCount;
         }

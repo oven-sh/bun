@@ -4710,8 +4710,7 @@ pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
     pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
-    /// The global whose `node:fs` binding this is: a sync call that builds its result here builds it in that global.
-    /// The binding's wrapper, which every sync call is made on, keeps it alive.
+    /// This `node:fs` binding's global, kept alive by its wrapper: sync results are built in it.
     pub(crate) global: Option<bun_jsc::GlobalRef>,
 }
 

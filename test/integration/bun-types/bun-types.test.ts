@@ -348,6 +348,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "csrf_jsc.bind.ts": "typeof Bun.CSRF",
   "dns.bind.ts": "typeof Bun.dns",
   "dns_internals.bind.ts": null,
+  "expect.bind.ts": null,
   "ffi.bind.ts": null,
   "filesystem_router.bind.ts": "typeof Bun",
   "fmt_jsc.bind.ts": null,

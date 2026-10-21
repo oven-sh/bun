@@ -172,6 +172,7 @@
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
 #include "ZigGeneratedClasses.h"
+#include "GeneratedExpect.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
 #include <JavaScriptCore/JSWeakMap.h>
@@ -349,7 +350,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
-    if (dynamicDowncast<JSExpectAnything>(matcherPropCell)) {
+    if (dynamicDowncast<Bun::Bindgen::Generated::JSExpectAnything>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -358,7 +359,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::PASS;
-    } else if (auto* expectAny = dynamicDowncast<JSExpectAny>(matcherPropCell)) {
+    } else if (auto* expectAny = dynamicDowncast<Bun::Bindgen::Generated::JSExpectAny>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -461,7 +462,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectStringContaining = dynamicDowncast<JSExpectStringContaining>(matcherPropCell)) {
+    } else if (auto* expectStringContaining = dynamicDowncast<Bun::Bindgen::Generated::JSExpectStringContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -480,7 +481,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectStringMatching = dynamicDowncast<JSExpectStringMatching>(matcherPropCell)) {
+    } else if (auto* expectStringMatching = dynamicDowncast<Bun::Bindgen::Generated::JSExpectStringMatching>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -509,7 +510,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectArrayContaining = dynamicDowncast<JSExpectArrayContaining>(matcherPropCell)) {
+    } else if (auto* expectArrayContaining = dynamicDowncast<Bun::Bindgen::Generated::JSExpectArrayContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -555,7 +556,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectObjectContaining = dynamicDowncast<JSExpectObjectContaining>(matcherPropCell)) {
+    } else if (auto* expectObjectContaining = dynamicDowncast<Bun::Bindgen::Generated::JSExpectObjectContaining>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -574,7 +575,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         }
 
         return AsymmetricMatcherResult::FAIL;
-    } else if (auto* expectCloseTo = dynamicDowncast<JSExpectCloseTo>(matcherPropCell)) {
+    } else if (auto* expectCloseTo = dynamicDowncast<Bun::Bindgen::Generated::JSExpectCloseTo>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -604,7 +605,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             bool isClose = std::abs(expected - received) < threshold;
             return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
         }
-    } else if (auto* customMatcher = dynamicDowncast<JSExpectCustomAsymmetricMatcher>(matcherPropCell)) {
+    } else if (auto* customMatcher = dynamicDowncast<Bun::Bindgen::Generated::JSExpectCustomAsymmetricMatcher>(matcherPropCell)) {
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
@@ -612,7 +613,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         // and it would result in a double negation
         flags = flags & ~FLAG_NOT;
 
-        bool passed = ExpectCustomAsymmetricMatcher__execute(customMatcher->wrapped(), JSValue::encode(matcherProp), globalObject, JSValue::encode(otherProp));
+        bool passed = ExpectCustomAsymmetricMatcher__execute(customMatcher->payload(), JSValue::encode(matcherProp), globalObject, JSValue::encode(otherProp));
         return passed ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
     }
 
@@ -6328,12 +6329,12 @@ extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* 
 
 extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->JSExpectPrototype());
+    return JSValue::encode(Bun::Bindgen::prototypeForClass<Bun::Bindgen::Generated::JSExpect>(globalObject));
 }
 
 extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
+    return JSValue::encode(Bun::Bindgen::prototypeForClass<Bun::Bindgen::Generated::JSExpectStatic>(globalObject));
 }
 
 extern "C" EncodedJSValue JSFunction__createFromZig(
@@ -6520,6 +6521,11 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     *outSourceURL = Bun::toStringRef(sourceURL);
     *outLine = lineColumn.line;
     *outColumn = lineColumn.column;
+}
+
+CPP_DECL void JSC__JSGlobalObject__getCallerSrcLoc(JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
+{
+    Bun__CallFrame__getCallerSrcLoc(JSC::getVM(globalObject).topCallFrame, globalObject, outSourceURL, outLine, outColumn);
 }
 
 extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalObject* global, JSC::JSObject* object)

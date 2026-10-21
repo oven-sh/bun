@@ -1,10 +1,15 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_contain_keys(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        self.contain_matcher(global, frame, "toContainKeys", ExpectedArray::AfterValue, ContainMsgs::CONTAIN,
+    pub(crate) fn to_contain_keys(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        self.contain_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toContainKeys", ExpectedArray::AfterValue, ContainMsgs::CONTAIN,
             |g, value, expected| {
                 let count = expected.get_length(g)?;
                 // jest-extended checks truthiness before hasOwnProperty; non-object passes only on empty expected.

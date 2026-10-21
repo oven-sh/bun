@@ -77,7 +77,6 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
 
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("toBeWithin() requires 2 arguments");
   expect(stderr).toContain("toBeWithin() requires the first argument to be a number");
   expect(stderr).toContain("toBeWithin() requires the second argument to be a number");
   expect(stderr).toContain("4 fail");

@@ -224,6 +224,17 @@ pub struct CallerSrcLoc {
     pub column: c_uint,
 }
 
+impl JSGlobalObject {
+    /// [`CallFrame::get_caller_src_loc`] for the frame of the host function that is running.
+    pub fn get_caller_src_loc(&self) -> CallerSrcLoc {
+        let mut str = bun_core::String::default();
+        let mut line: c_uint = 0;
+        let mut column: c_uint = 0;
+        JSC__JSGlobalObject__getCallerSrcLoc(self, &mut str, &mut line, &mut column);
+        CallerSrcLoc { str, line, column }
+    }
+}
+
 /// This is an advanced iterator struct which is used by various APIs. In
 /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
 /// know if they have to do threadsafe clones.
@@ -286,6 +297,12 @@ impl<'a> ArgumentsSlice<'a> {
 unsafe extern "C" {
     safe fn Bun__CallFrame__getCallerSrcLoc(
         cf: &CallFrame,
+        global: &JSGlobalObject,
+        out_str: &mut bun_core::String,
+        out_line: &mut c_uint,
+        out_column: &mut c_uint,
+    );
+    safe fn JSC__JSGlobalObject__getCallerSrcLoc(
         global: &JSGlobalObject,
         out_str: &mut bun_core::String,
         out_line: &mut c_uint,

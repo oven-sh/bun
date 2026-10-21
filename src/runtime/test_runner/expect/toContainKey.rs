@@ -1,10 +1,15 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome, make_formatter};
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_contain_key(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        self.contain_matcher(global, frame, "toContainKey", ExpectedArray::None, ContainMsgs::CONTAIN,
+    pub(crate) fn to_contain_key(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        self.contain_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toContainKey", ExpectedArray::None, ContainMsgs::CONTAIN,
             |g, value, expected| {
                 if !value.is_object() {
                     let mut f = make_formatter(g);

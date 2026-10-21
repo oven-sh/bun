@@ -1,37 +1,33 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
 use super::throw;
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn to_be_close_to(
         &self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected_: JsLocal<'_>,
+        precision_: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         let this = self.post_match_guard(global);
 
-        let this_value = call_frame.this();
-        let arguments = call_frame.arguments();
+        let this_value = this_value.to_js();
 
         this.increment_expect_call_counter();
 
-        if arguments.len() < 1 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "toBeCloseTo() requires at least 1 argument. Expected value must be a number"
-            )));
-        }
-
-        let expected_ = arguments[0];
+        let expected_ = expected_.to_js();
         if !expected_.is_number() {
             return Err(global.throw_invalid_argument_type("toBeCloseTo", "expected", "number"));
         }
 
         let mut precision: f64 = 2.0;
-        if arguments.len() > 1 {
-            let precision_ = arguments[1];
+        let precision_ = precision_.to_js();
+        if !precision_.is_undefined() {
             if !precision_.is_number() {
                 return Err(global.throw_invalid_argument_type("toBeCloseTo", "precision", "number"));
             }

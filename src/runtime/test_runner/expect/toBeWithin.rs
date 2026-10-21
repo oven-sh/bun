@@ -1,30 +1,25 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 use super::{throw, Expect};
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn to_be_within(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        start_value: JsLocal<'_>,
+        end_value: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         let (this, value, not) = self.matcher_prelude(
             global,
-            frame.this(),
+            this_value.to_js(),
             "toBeWithin",
             "<green>start<r><d>, <r><green>end<r>",
         )?;
 
-        let arguments = frame.arguments();
-
-        if arguments.len() < 2 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "toBeWithin() requires 2 arguments"
-            )));
-        }
-
-        let start_value = arguments[0];
+        let start_value = start_value.to_js();
         start_value.ensure_still_alive();
 
         if !start_value.is_number() {
@@ -33,7 +28,7 @@ impl Expect {
             )));
         }
 
-        let end_value = arguments[1];
+        let end_value = end_value.to_js();
         end_value.ensure_still_alive();
 
         if !end_value.is_number() {

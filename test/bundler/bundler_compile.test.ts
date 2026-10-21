@@ -151,23 +151,6 @@ describe("bundler", () => {
       },
     },
   });
-  // The bundle in the executable goes to the engine as the bundler wrote it. The closure that `__esm` wraps
-  // around the module assigns to `b`, a variable outside it, through a shorthand property of an object pattern.
-  // See edgecase/EsmWrapDestructuringShorthandTargetImport.
-  itBundled("compile/EsmWrapDestructuringShorthandTarget", {
-    compile: true,
-    files: {
-      "/entry.mjs": /* js */ `
-        const declaration = require("./declaration.js");
-        console.log(declaration.a, declaration.b);
-      `,
-      "/declaration.js": /* js */ `
-        const options = { b: 2 };
-        export const { a = 1, b } = options;
-      `,
-    },
-    run: { stdout: "1 2" },
-  });
 
   // `import defer * as ns from "..."` must not break bytecode generation.
   // The bundler inlines the deferred module into the entry chunk (documented

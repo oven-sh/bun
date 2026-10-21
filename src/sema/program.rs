@@ -6432,6 +6432,8 @@ impl<'s> Files<'s> {
                 (b".json", b".json"),
             ]
             .into_iter()
+            // `HasTrailingDirectorySeparator`: `./dir/` can't be a file name without its extension.
+            .filter(|_| !matches!(text.last(), Some(b'/' | b'\\')))
             .find(|(e, _)| host.is_file(&[&stem[..], e].concat()));
             Some((spec, suggested.map(|found| found.1)))
         };

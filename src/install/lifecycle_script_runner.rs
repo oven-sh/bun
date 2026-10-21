@@ -253,7 +253,7 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
-/// npm takes `-w` / `--workspaces` / `-s` anywhere before `--`, `bun run` only in front. Returns how much of `script[at..]` it read.
+/// `npm run` takes `-w` / `--workspaces` / `-s` / `--prefix` anywhere before `--`, `bun run` only in front. Returns how much of `script[at..]` it read.
 fn append_npm_run_flags(
     out: &mut Vec<u8>,
     script: &[u8],
@@ -262,21 +262,53 @@ fn append_npm_run_flags(
     use bun_core::strings;
 
     let (before, args) = script.split_at(at);
-    let end = strings::index_of_any(args, b";&|\r\n").unwrap_or(args.len());
+    // In a quoted string the command ends at the closing quote too.
+    let quote = open_quote(before);
+    let end = match quote {
+        b'"' => strings::index_of_any(args, b";&|\r\n\""),
+        b'\'' => strings::index_of_any(args, b";&|\r\n'"),
+        _ => strings::index_of_any(args, b";&|\r\n"),
+    }
+    .unwrap_or(args.len());
     let command = args[..end].trim_ascii_end();
-    if strings::index_of_any(command, b"'\"()$`\\#").is_some() {
+    // The caller reads what follows `--`, the script's arguments, like any other text.
+    let own = match strings::tokenize_any(command, b" \t").find(|token| *token == b"--") {
+        Some(token) => command[..token.as_ptr().addr() - command.as_ptr().addr()].trim_ascii_end(),
+        None => command,
+    };
+    // Without a `-` there is no flag to move.
+    if !strings::contains_char(own, b'-') || strings::index_of_any(own, b"'\"()$`\\#").is_some() {
         return Ok(0);
     }
-    // In a quoted string this can be one of several commands, and the one with the closing quote is not read.
-    let quoted = ends_in_quoted_string(before);
+    // A value is not the next flag, or a word with a redirect attached to it.
+    let is_value = |value: &&[u8]| {
+        !value.is_empty() && value[0] != b'-' && strings::index_of_any(value, b"<>").is_none()
+    };
 
     let mut flags: Vec<u8> = Vec::new();
     let mut rest: Vec<u8> = Vec::new();
-    let mut selects_workspaces = false;
+    let (mut selects_workspaces, mut selects_directory) = (false, false);
     let (mut silent, mut if_present, mut other_flag) = (false, false, false);
-    let (mut own, mut name_end) = (command, None);
-    let mut tokens = strings::tokenize_any(command, b" \t");
+    let mut name_end = None;
+    let mut tokens = strings::tokenize_any(own, b" \t");
     while let Some(token) = tokens.next() {
+        let directory = match token {
+            b"-C" | b"--prefix" | b"-prefix" => Some(tokens.next().unwrap_or_default()),
+            _ => token
+                .strip_prefix(b"--prefix=")
+                .or_else(|| token.strip_prefix(b"-prefix="))
+                .or_else(|| token.strip_prefix(b"-C=")),
+        };
+        if let Some(directory) = directory {
+            if !is_value(&directory) {
+                return Ok(0);
+            }
+            selects_directory = true;
+            // Two words: a shell expands `~` only at the start of a word.
+            flags.extend_from_slice(b" --cwd ");
+            flags.extend_from_slice(directory);
+            continue;
+        }
         let workspace = match token {
             b"-w" | b"--workspace" => tokens.next(),
             b"--workspaces" | b"--ws" | b"-ws" => {
@@ -293,11 +325,6 @@ fn append_npm_run_flags(
                 silent = true;
                 flags.extend_from_slice(b" --silent");
                 continue;
-            }
-            // The caller reads the script's arguments like any other text.
-            b"--" => {
-                own = command[..token.as_ptr().addr() - command.as_ptr().addr()].trim_ascii_end();
-                break;
             }
             _ => match token
                 .strip_prefix(b"--workspace=")
@@ -316,12 +343,7 @@ fn append_npm_run_flags(
                 }
             },
         };
-        // It must not be the next flag, or a word with a redirect attached to it.
-        let Some(workspace) = workspace.filter(|workspace| {
-            !workspace.is_empty()
-                && workspace[0] != b'-'
-                && strings::index_of_any(workspace, b"<>").is_none()
-        }) else {
+        let Some(workspace) = workspace.filter(is_value) else {
             return Ok(0);
         };
         selects_workspaces = true;
@@ -335,7 +357,7 @@ fn append_npm_run_flags(
     }
 
     // `bun run` hands another option of npm to the script, and alone its `--if-present` also runs a file or a binary.
-    if !selects_workspaces && (quoted || if_present || other_flag || !silent) {
+    if !selects_workspaces && !selects_directory && (if_present || other_flag || !silent) {
         return Ok(0);
     }
     let name_end = name_end.unwrap_or(rest.len());
@@ -354,8 +376,8 @@ fn append_npm_run_flags(
     Ok(own.len())
 }
 
-/// Whether a shell is inside a `'...'` or `"..."` string at the end of `text`.
-fn ends_in_quoted_string(mut text: &[u8]) -> bool {
+/// The quote of the `'...'` or `"..."` string that a shell is inside at the end of `text`, or 0.
+fn open_quote(mut text: &[u8]) -> u8 {
     use bun_core::strings;
 
     let mut quote = 0;
@@ -373,7 +395,7 @@ fn ends_in_quoted_string(mut text: &[u8]) -> bool {
             quote = 0;
         }
     }
-    quote != 0
+    quote
 }
 
 /// Without a POSIX shell, this runs `bun exec --no-env-file`. Like `sh`, it doesn't add any `.env*`

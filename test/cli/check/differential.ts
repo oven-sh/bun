@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir as temporaryDirectory } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
@@ -40,6 +40,9 @@ let running = 0;
 const waiting: (() => void)[] = [];
 // How many times `endChecks` has ended the tests that the checks were for.
 let ended = 0;
+// The children that are running, and the directories of the tests, for `endChecks`.
+const exits = new Set<Promise<unknown>>();
+const directories: Disposable[] = [];
 
 /**
  * Returns what `cmd` prints and how it exited. It starts once fewer than `width` others are running, whichever tests
@@ -59,7 +62,10 @@ export async function outputOf(cmd: string[], cwd: string) {
       stdout: "pipe",
       stderr: "ignore",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const exited = proc.exited;
+    exits.add(exited);
+    void exited.then(() => exits.delete(exited));
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), exited]);
     // `endChecks` killed it. Its test is over, so the test's code must not continue from here.
     if (before !== ended) return new Promise<never>(() => {});
     return { stdout, exitCode, signalCode: proc.signalCode };
@@ -72,13 +78,23 @@ export async function outputOf(cmd: string[], cwd: string) {
 
 /**
  * `endChildren`, for tests that are over. A test that timed out keeps running: its checks that wait for a slot would
- * start when the children exit, and the code after them would start more.
+ * start when the children exit, and the code after them would start more. So its code stops at its checks and never
+ * reaches the end of a `using`, and this removes its directories once the children are gone.
  */
-export function endChecks() {
+export async function endChecks() {
   ended++;
   waiting.length = 0;
   endChildren();
+  await Promise.all(exits);
+  for (const directory of directories.splice(0)) directory[Symbol.dispose]();
 }
+
+/** `tempDir` of the harness. `endChecks` removes the directory too, for a test that it stopped before the end. */
+export const tempDir: typeof temporaryDirectory = (...args) => {
+  const directory = temporaryDirectory(...args);
+  directories.push(directory);
+  return directory;
+};
 
 /**
  * Returns the lines of `output`, with `root` stripped from paths. A crash prints nothing, so it adds a line with the

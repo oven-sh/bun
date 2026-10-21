@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { bunExe, isASAN, isDebug, tempDir } from "harness";
-import { endChecks, linesOf, tsc } from "./differential";
+import { bunExe, isASAN, isDebug } from "harness";
+import { endChecks, linesOf, tempDir, tsc } from "./differential";
 
 afterAll(endChecks);
 

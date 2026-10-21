@@ -1,10 +1,20 @@
 import { afterAll, expect, test } from "bun:test";
-import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunExe, isASAN, isDebug, isWindows } from "harness";
 import { existsSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { longLimit, spawn } from "../children";
-import { endChecks, env, inBatches, linesOf, modulesInCycles, outputOf, tsc, writtenCases } from "./differential";
+import {
+  endChecks,
+  env,
+  inBatches,
+  linesOf,
+  modulesInCycles,
+  outputOf,
+  tempDir,
+  tsc,
+  writtenCases,
+} from "./differential";
 import { hasRunner } from "./typescript-go/conformance";
 
 afterAll(endChecks);

@@ -1470,13 +1470,6 @@
     "windows": 86,
     "windows-aarch64": 119
   },
-  "cli/install/frozen-lockfile-missing-workspace.test.ts": {
-    "default": 637,
-    "asan": 2711,
-    "musl": 737,
-    "windows": 836,
-    "windows-aarch64": 1304
-  },
   "cli/install/frozen-lockfile-pruned.test.ts": {
     "default": 1332,
     "asan": 7896,

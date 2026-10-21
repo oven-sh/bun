@@ -777,6 +777,59 @@ napi_value late_finalizer_run_count(const Napi::CallbackInfo &info) {
 // termination, or napi_tsfn_abort. Everything is printed from here (not from
 // JS: a worker's console.log reaches stdout asynchronously) and compared with
 // node's output. `data` carries the item number.
+struct ExternalBufferWork {
+  std::atomic<int32_t> *report;
+  std::atomic<bool> finalized{false};
+  napi_async_work work;
+};
+
+// async_work_with_external_buffer(report: Int32Array on a SharedArrayBuffer):
+// queues work on an external ArrayBuffer. report[0] is set when execute()
+// starts. execute() returns once the buffer's finalizer has run, or after half
+// a second, and report[1] says which: 1 if the finalizer ran during execute().
+static napi_value
+async_work_with_external_buffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  void *report;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, info[0], nullptr, nullptr,
+                                              &report, nullptr, nullptr));
+  auto *data = new ExternalBufferWork;
+  data->report = static_cast<std::atomic<int32_t> *>(report);
+
+  napi_value buffer, name;
+  NODE_API_CALL(env, napi_create_external_arraybuffer(
+                         env, data, 1,
+                         [](napi_env, void *data, void *) {
+                           static_cast<ExternalBufferWork *>(data)->finalized =
+                               true;
+                         },
+                         nullptr, &buffer));
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "work", NAPI_AUTO_LENGTH, &name));
+  NODE_API_CALL(
+      env,
+      napi_create_async_work(
+          env, nullptr, name,
+          [](napi_env, void *opaque) {
+            auto *data = static_cast<ExternalBufferWork *>(opaque);
+            data->report[0] = 1;
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(500);
+            while (!data->finalized &&
+                   std::chrono::steady_clock::now() < deadline) {
+              std::this_thread::yield();
+            }
+            data->report[1] = data->finalized;
+          },
+          [](napi_env env, napi_status, void *opaque) {
+            napi_delete_async_work(
+                env, static_cast<ExternalBufferWork *>(opaque)->work);
+          },
+          data, &data->work));
+  NODE_API_CALL(env, napi_queue_async_work(env, data->work));
+  return buffer;
+}
+
 static napi_threadsafe_function queued_items_tsfn = nullptr;
 static bool queued_items_tsfn_print_finalize = false;
 static bool queued_items_tsfn_finalized = false;
@@ -864,6 +917,7 @@ napi_value threadsafe_function_with_queued_items_finalized(
 }
 
 void register_async_tests(Napi::Env env, Napi::Object exports) {
+  REGISTER_FUNCTION(env, exports, async_work_with_external_buffer);
   REGISTER_FUNCTION(env, exports, queue_threadsafe_function_items);
   REGISTER_FUNCTION(env, exports, abort_threadsafe_function_with_queued_items);
   REGISTER_FUNCTION(env, exports,

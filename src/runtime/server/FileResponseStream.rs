@@ -573,6 +573,10 @@ impl FileResponseStream {
             "finish (already={})",
             self.state.get().contains(State::FINISHED)
         );
+        // If the request aborts before the reader gets its first byte, no reader callback will release this ref.
+        // On Windows, a pending uv read needs the stream alive and releases the ref itself.
+        #[cfg(unix)]
+        drop(self.take_read_ref());
         if self.state.get().contains(State::FINISHED) {
             return;
         }
@@ -582,12 +586,10 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             let resp = self.resp.get();
-            resp.end_without_body(resp.should_close_connection());
+            // `end` writes a chunked body's final chunk, or `Content-Length: 0` if no
+            // length was declared, and runs the uWS close check.
+            resp.end(b"", resp.should_close_connection());
             self.deliver(resp, StreamEnd::Complete);
-            // This end runs uncorked (reader callbacks), so no cork or parser
-            // gate will run the close check; do it here, after `on_complete`
-            // like `end_sendfile`, so the callbacks see a live socket.
-            resp.close_if_done_and_marked();
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry
@@ -644,9 +646,9 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
-        // field — closes the poll handle. `bun.destroy(this)` is owned by
-        // `heap::take` in `deref`, not here.
+        // `start()` cleared CLOSE_HANDLE, so the reader's `Drop` doesn't unregister the poll.
+        #[cfg(unix)]
+        self.reader_mut().handle.close_without_closing_fd();
         if self.auto_close.get() {
             #[cfg(windows)]
             Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());

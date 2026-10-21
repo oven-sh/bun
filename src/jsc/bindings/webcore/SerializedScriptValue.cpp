@@ -1185,7 +1185,7 @@ private:
                     return true;
                 write(RegExpTag);
                 write(regExp->regExp()->pattern());
-                write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
+                write(String(JSC::Yarr::flagsString(regExp->regExp()->flags()).span()));
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
@@ -1971,12 +1971,17 @@ private:
             write(*downcast<CryptoKeyRSA>(*key).exportData());
             break;
         }
-        case CryptoKeyClass::OKP:
+        case CryptoKeyClass::OKP: {
+            auto& okpKey = downcast<CryptoKeyOKP>(*key);
             write(CryptoKeyClassSubtag::OKP);
             write(key->algorithmIdentifier());
-            write(downcast<CryptoKeyOKP>(*key).namedCurve());
-            write(downcast<CryptoKeyOKP>(*key).platformKey());
+            write(okpKey.namedCurve());
+            // X25519 public and private keys are both 32 bytes, so write which one this is.
+            if (okpKey.namedCurve() == CryptoKeyOKP::NamedCurve::X25519)
+                write(key->type() == CryptoKey::Type::Public ? CryptoKeyAsymmetricTypeSubtag::Public : CryptoKeyAsymmetricTypeSubtag::Private);
+            write(okpKey.platformKey());
             break;
+        }
         }
     }
 #endif
@@ -2533,7 +2538,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = String { std::span { ptr, length } };
+            str = String { std::span { byteCast<Latin1Character>(ptr), length } };
             ptr += length;
             return true;
         }
@@ -3201,8 +3206,6 @@ private:
         CryptoAlgorithmIdentifier algorithm;
         if (!read(algorithm))
             return false;
-        if (!CryptoKeyOKP::isValidOKPAlgorithm(algorithm))
-            return false;
         CryptoKeyOKP::NamedCurve namedCurve;
         if (!read(namedCurve))
             return false;
@@ -3211,10 +3214,19 @@ private:
             if (algorithm != CryptoAlgorithmIdentifier::Ed25519)
                 return false;
             break;
-        case CryptoKeyOKP::NamedCurve::X25519:
+        case CryptoKeyOKP::NamedCurve::X25519: {
             if (algorithm != CryptoAlgorithmIdentifier::X25519)
                 return false;
-            break;
+            // Records from Bun <= 1.4.3 don't have a type subtag, so they fail its range check. No release could read them anyway.
+            CryptoKeyAsymmetricTypeSubtag type;
+            if (!read(type))
+                return false;
+            Vector<uint8_t> keyData;
+            if (!read(keyData))
+                return false;
+            result = CryptoKeyOKP::create(algorithm, namedCurve, type == CryptoKeyAsymmetricTypeSubtag::Public ? CryptoKeyType::Public : CryptoKeyType::Private, WTF::move(keyData), extractable, usages);
+            return !!result;
+        }
         }
         Vector<uint8_t> keyData;
         if (!read(keyData))
@@ -3656,7 +3668,8 @@ private:
             double d;
             if (!read(d))
                 return JSValue();
-            DateInstance* obj = DateInstance::create(m_lexicalGlobalObject->vm(), m_globalObject->dateStructure(), d);
+            // timeClip() preserves a NaN's payload and getTime() boxes the number as-is, so purify it here.
+            DateInstance* obj = DateInstance::create(m_lexicalGlobalObject->vm(), m_globalObject->dateStructure(), purifyNaN(d));
             addTerminalToObjectPool(obj);
             return obj;
         }
@@ -4271,8 +4284,11 @@ size_t SerializedScriptValue::computeMemoryCost() const
 #if ENABLE(WEBASSEMBLY)
     // We are not supporting WebAssembly Module memory estimation yet.
     if (m_wasmMemoryHandlesArray) {
-        for (auto& content : *m_wasmMemoryHandlesArray)
-            cost += content->sizeInBytes(std::memory_order_relaxed);
+        // A shared memory with a maximum of zero has null contents.
+        for (auto& content : *m_wasmMemoryHandlesArray) {
+            if (content)
+                cost += content->sizeInBytes(std::memory_order_relaxed);
+        }
     }
 #endif
 
@@ -4337,6 +4353,9 @@ size_t SerializedScriptValue::computeMemoryCost() const
 
 static void markObjectWithPrivateName(VM& vm, JSObject& object, const Identifier& privateName)
 {
+    // A WebAssembly GC object's Structure can't transition, and these objects aren't cloneable or transferable anyway.
+    if (object.type() == WebAssemblyGCObjectType)
+        return;
     if (object.getDirect(vm, privateName))
         return;
     object.putDirect(vm, privateName, jsBoolean(true), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
@@ -4350,6 +4369,24 @@ void markAsUncloneable(VM& vm, JSObject& object)
 void markAsUntransferable(VM& vm, JSObject& object)
 {
     markObjectWithPrivateName(vm, object, builtinNames(vm).isUntransferablePrivateName());
+}
+
+// Serializing runs user code (getters, Proxy traps) that can invalidate entries create() accepted; runs before anything is detached.
+static std::optional<Exception> transferListChangedDuringSerialization(VM& vm, const Vector<JSC::Strong<JSC::JSObject>>& transferList, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<MessagePort>>& messagePorts)
+{
+    for (auto& transferable : transferList) {
+        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
+            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
+    }
+    for (auto& arrayBuffer : arrayBuffers) {
+        if (arrayBuffer->isDetached())
+            return Exception { DataCloneError, "ArrayBuffer in transfer list was detached during serialization"_s };
+    }
+    for (auto& port : messagePorts) {
+        if (port->isDetached() || port->isClosing())
+            return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
+    }
+    return std::nullopt;
 }
 
 static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffers(VM& vm, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers)
@@ -4784,14 +4821,23 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
     }
 
-    auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);
-    if (arrayBufferContentsArray.hasException()) {
-        releaseSerializedBlockListRefs();
-        RELEASE_AND_RETURN(scope, arrayBufferContentsArray.releaseException());
+    // Most calls have no transfer list; this keeps them at one branch.
+    std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray;
+    if (!transferList.isEmpty()) {
+        if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
+            releaseSerializedBlockListRefs();
+            RELEASE_AND_RETURN(scope, WTF::move(*exception));
+        }
+        auto transferred = transferArrayBuffers(vm, arrayBuffers);
+        if (transferred.hasException()) {
+            releaseSerializedBlockListRefs();
+            RELEASE_AND_RETURN(scope, transferred.releaseException());
+        }
+        arrayBufferContentsArray = transferred.releaseReturnValue();
     }
 
     scope.releaseAssertNoException();
-    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
+    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), WTF::move(arrayBufferContentsArray), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
 #if ENABLE(WEBASSEMBLY)
         ,
         makeUnique<WasmModuleArray>(wasmModules), context == SerializationContext::WorkerPostMessage ? makeUnique<WasmMemoryHandleArray>(wasmMemoryHandles) : nullptr

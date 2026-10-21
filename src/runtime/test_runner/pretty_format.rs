@@ -423,7 +423,7 @@ impl Tag {
 
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
-        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set)
+        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX)
     }
 }
 
@@ -1041,6 +1041,10 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            self.failed = true;
+            return Err(self.global_this.throw_stack_overflow());
+        }
         // reshaped for borrowck — `WrappedWriter` borrows both writer_
         // and &mut self.estimated_line_length; we use a local wrapper and sync
         // `failed` at scope exit. estimated_line_length is unused by WrappedWriter
@@ -1117,8 +1121,13 @@ impl<'a> Formatter<'a> {
                         self.reset_line();
                         self.write_indent(writer.ctx).expect("unreachable");
                         let length = str.len;
-                        for (i, c) in str.slice().iter().enumerate() {
-                            writer.print(format_args!("\"{}\": \"{}\",\n", i, *c as char));
+                        for i in 0..length {
+                            let unit = [str.char_at(i)];
+                            writer.print(format_args!(
+                                "\"{}\": \"{}\",\n",
+                                i,
+                                bun_fmt::utf16(&unit)
+                            ));
                             if i != length - 1 {
                                 self.write_indent(writer.ctx).expect("unreachable");
                             }
@@ -1596,12 +1605,12 @@ impl<'a> Formatter<'a> {
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()
-                                + bun_fmt::digit_count(timer.internals.id.max(0)),
+                                + bun_fmt::digit_count(timer.internals.id),
                         );
                         if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
                             self.add_for_new_line(
                                 b"repeats ".len()
-                                    + bun_fmt::digit_count(timer.internals.id.max(0)),
+                                    + bun_fmt::digit_count(timer.internals.id),
                             );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -1634,7 +1643,7 @@ impl<'a> Formatter<'a> {
                     {
                         self.add_for_new_line(
                             b"Immediate(# ) ".len()
-                                + bun_fmt::digit_count(immediate.internals.id.max(0)),
+                                + bun_fmt::digit_count(immediate.internals.id),
                         );
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",
@@ -2613,12 +2622,25 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
         value: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
+        let mut sink = bun_io::FmtAdapter::new(writer);
+        let global = self.global_this;
+        self.format::<_, ENABLE_ANSI_COLORS>(
+            TagResult { tag: tag.into(), cell },
+            &mut sink,
+            value,
+            global,
+        )
+    }
+}
+
+impl From<bun_jsc::FormatTag> for Tag {
+    fn from(tag: bun_jsc::FormatTag) -> Tag {
         use bun_jsc::FormatTag as Ft;
         // Map the wider `console_object::Tag` onto this file's `Tag`. Only the
         // variants the `write_format` hooks actually emit are reachable
         // (Boolean / Double / Object / Private / String); the rest collapse
         // onto `Object` so any future caller still renders something useful.
-        let local = match tag {
+        match tag {
             Ft::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
             Ft::String => Tag::String,
             Ft::Undefined => Tag::Undefined,
@@ -2652,15 +2674,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
             | Ft::CustomGetterSetter
             | Ft::Proxy
             | Ft::RevokedProxy => Tag::Object,
-        };
-        let mut sink = bun_io::FmtAdapter::new(writer);
-        let global = self.global_this;
-        self.format::<_, ENABLE_ANSI_COLORS>(
-            TagResult { tag: local, cell },
-            &mut sink,
-            value,
-            global,
-        )
+        }
     }
 }
 
@@ -2676,10 +2690,10 @@ pub(crate) trait AsymmetricMatcherFormatter {
     fn amf_quote_strings(&mut self) -> &mut bool;
     /// `printAs(tag, …)` routed through the formatter's own runtime
     /// dispatcher. Only `Object` / `String` / `Array` are reached.
-    fn amf_print_as<const C: bool>(
+    fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
-        w: &mut dyn bun_io::Write,
+        w: &mut W,
         v: JSValue,
         cell: JSType,
     ) -> JsResult<()>;
@@ -2692,18 +2706,17 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
-    fn amf_print_as<const C: bool>(
+    fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
-        w: &mut dyn bun_io::Write,
+        w: &mut W,
         v: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
-        // Reuse the `ConsoleFormatter` bridge above (FormatTag → local `Tag`
-        // mapping + `format` dispatch). `AsFmt` adapts `dyn bun_io::Write` →
-        // `core::fmt::Write` for the trait method's signature.
-        let mut bridge = AsFmt::new(w);
-        <Self as bun_jsc::ConsoleFormatter>::print_as::<_, C>(self, tag, &mut bridge, v, cell)
+        // The writer itself: an adapter around it for each matcher inside a matcher makes every
+        // write as deep as they are nested, where nothing checks the stack.
+        let global = self.global_this;
+        self.format::<W, C>(TagResult { tag: tag.into(), cell }, w, v, global)
     }
 }
 
@@ -2714,10 +2727,10 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
-    fn amf_print_as<const C: bool>(
+    fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
-        w: &mut dyn bun_io::Write,
+        w: &mut W,
         v: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
@@ -2849,7 +2862,7 @@ impl JestPrettyFormat {
                 this.amf_add_for_new_line(b"ObjectContaining ".len());
                 writer.write_all(b"ObjectContaining ");
             }
-            this.amf_print_as::<ENABLE_ANSI_COLORS>(
+            this.amf_print_as::<W, ENABLE_ANSI_COLORS>(
                 bun_jsc::FormatTag::Object, &mut *writer.ctx, object_value, JSType::Object,
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
@@ -2868,7 +2881,7 @@ impl JestPrettyFormat {
                 this.amf_add_for_new_line(b"StringContaining ".len());
                 writer.write_all(b"StringContaining ");
             }
-            this.amf_print_as::<ENABLE_ANSI_COLORS>(
+            this.amf_print_as::<W, ENABLE_ANSI_COLORS>(
                 bun_jsc::FormatTag::String, &mut *writer.ctx, substring_value, JSType::String,
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
@@ -2891,7 +2904,7 @@ impl JestPrettyFormat {
             if test_value.is_reg_exp() {
                 *this.amf_quote_strings() = false;
             }
-            this.amf_print_as::<ENABLE_ANSI_COLORS>(
+            this.amf_print_as::<W, ENABLE_ANSI_COLORS>(
                 bun_jsc::FormatTag::String, &mut *writer.ctx, test_value, JSType::String,
             )?;
             *this.amf_quote_strings() = original_quote_strings;
@@ -2923,7 +2936,7 @@ impl JestPrettyFormat {
                 this.amf_add_for_new_line(matcher_name.length() + 1);
                 writer.print(format_args!("{}", matcher_name));
                 writer.write_all(b" ");
-                this.amf_print_as::<ENABLE_ANSI_COLORS>(
+                this.amf_print_as::<W, ENABLE_ANSI_COLORS>(
                     bun_jsc::FormatTag::Array, &mut *writer.ctx, args_value, JSType::Array,
                 )?;
             }

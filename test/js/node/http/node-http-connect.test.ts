@@ -219,7 +219,7 @@ describe("HTTP server CONNECT", () => {
     let timeoutFired = false;
 
     proxyServer.on("connect", (req, socket, head) => {
-      socket.setTimeout(100);
+      (socket as net.Socket).setTimeout(100);
       socket.on("timeout", () => {
         timeoutFired = true;
         socket.write("HTTP/1.1 408 Request Timeout\r\n\r\n");
@@ -283,8 +283,8 @@ describe("HTTP server CONNECT", () => {
       async function listen(onTunnel: (socket: net.Socket) => void, onRequest?: http.RequestListener) {
         const server = secure ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }) : http.createServer();
         server.on(kind === "CONNECT" ? "connect" : "upgrade", (req, socket) => {
-          sockets.push(socket);
-          onTunnel(socket);
+          sockets.push(socket as net.Socket);
+          onTunnel(socket as net.Socket);
         });
         server.on("request", onRequest ?? ((req, res) => res.end("ok")));
         await once(server.listen(0, "127.0.0.1"), "listening");
@@ -400,7 +400,7 @@ describe("HTTP server CONNECT", () => {
       const chunks: Buffer[] = [];
       let received = 0;
       const { promise: receivedAll, resolve: onReceivedAll } = Promise.withResolvers<void>();
-      tunnel.on("data", chunk => {
+      tunnel.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
         received += chunk.length;
         if (received >= total) onReceivedAll();
@@ -426,7 +426,7 @@ describe("HTTP server CONNECT", () => {
       await using server = await t.listen(socket => {
         socket.write(accept);
         socket.on("drain", () => drains++);
-        socket.on("data", chunk => {
+        socket.on("data", (chunk: Buffer) => {
           chunks.push(chunk);
           const before = received;
           received += chunk.length;
@@ -524,8 +524,8 @@ describe("HTTP server CONNECT", () => {
       // The client takes the response. It ends with the last chunk of the chunked encoding.
       const { promise: responseRead, resolve: onResponseRead } = Promise.withResolvers<void>();
       const lastChunk = Buffer.from("\r\n0\r\n\r\n");
-      let tail = Buffer.alloc(0);
-      client.on("data", chunk => {
+      let tail: Buffer = Buffer.alloc(0);
+      client.on("data", (chunk: Buffer) => {
         tail = (chunk.length < lastChunk.length ? Buffer.concat([tail, chunk]) : chunk).subarray(-lastChunk.length);
         if (tail.equals(lastChunk)) onResponseRead();
       });
@@ -556,7 +556,7 @@ describe("HTTP server CONNECT", () => {
       // The socket stays paused with these listeners: pause() was explicit.
       const events: string[] = [];
       const chunks: Buffer[] = [];
-      tunnel.on("data", chunk => chunks.push(chunk));
+      tunnel.on("data", (chunk: Buffer) => chunks.push(chunk));
       tunnel.on("end", () => events.push("end"));
       const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
       tunnel.on("close", () => onClosed());
@@ -580,7 +580,7 @@ describe("HTTP server CONNECT", () => {
     const upgradeSocket = Promise.withResolvers<net.Socket>();
     const proceed = Promise.withResolvers<void>();
     server.on("upgrade", async (req, socket, head) => {
-      upgradeSocket.resolve(socket);
+      upgradeSocket.resolve(socket as net.Socket);
       await proceed.promise;
       wss.handleUpgrade(req, socket, head, ws => ws.on("message", data => ws.send(String(data))));
     });
@@ -607,7 +607,7 @@ describe("HTTP server CONNECT", () => {
     echoed.promise.catch(() => {});
     client.on("error", fail);
     client.on("close", () => fail(new Error("the connection closed before the echo")));
-    client.on("data", chunk => {
+    client.on("data", (chunk: Buffer) => {
       received.push(chunk);
       if (Buffer.concat(received).includes(echo)) echoed.resolve();
     });
@@ -626,7 +626,7 @@ describe("HTTP server CONNECT", () => {
     const socket = await upgradeSocket.promise;
     const highWaterMark = socket.readableHighWaterMark;
     const pongs: Buffer[] = [];
-    for (let left = highWaterMark; left > 0; ) {
+    for (let left = highWaterMark; left > 0;) {
       // A frame is 6 to 131 bytes. Never leave less than a frame.
       const length = left <= 131 ? left : Math.min(131, left - 6);
       pongs.push(frame(0xa, Buffer.alloc(length - 6)));
@@ -1291,7 +1291,7 @@ describe("CONNECT pipelined behind a pending response", () => {
     });
     server.on("clientError", onFailure);
     server.on("connect", (req, socket, head) => {
-      events.push(`connect ${req.url} upgrade=${req.upgrade}`);
+      events.push(`connect ${req.url} upgrade=${(req as any).upgrade}`);
       let tunneled = head.toString();
       socket.on("data", chunk => (tunneled += chunk));
       socket.on("end", () => socket.end(`${ESTABLISHED}tunneled:${tunneled}`));
@@ -1302,7 +1302,7 @@ describe("CONNECT pipelined behind a pending response", () => {
     const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
     try {
       const received: Buffer[] = [];
-      client.on("data", chunk => received.push(chunk));
+      client.on("data", (chunk: Buffer) => received.push(chunk));
       client.on("error", onFailure);
       client.on("close", () => onFailure(new Error(`closed before the first response finished: ${events}`)));
       client.write(options.written);
@@ -1396,7 +1396,7 @@ describe("CONNECT pipelined behind a pending response", () => {
     });
     server.on("connect", (req, socket) => {
       first!.end("first");
-      onHandoff(socket);
+      onHandoff(socket as net.Socket);
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as AddressInfo;
@@ -1705,7 +1705,7 @@ describe("Should be compatible with node.js", () => {
     const server = http.createServer();
     let serverSocket: net.Socket;
     server.on("connect", (req, socket) => {
-      serverSocket = socket;
+      serverSocket = socket as net.Socket;
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
     });
     server.listen(0, "127.0.0.1");
@@ -1726,7 +1726,7 @@ describe("Should be compatible with node.js", () => {
 
   test("tests should run on node.js", async () => {
     const process = Bun.spawn({
-      cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],
+      cmd: [nodeExe()!, "--test", join(import.meta.dir, "node-http-connect.node.mts")],
       stdout: "inherit",
       stderr: "inherit",
       stdin: "ignore",
@@ -1838,7 +1838,7 @@ test("server.close(cb) still waits for a tunnel that is half-open after the peer
   const tunnel = Promise.withResolvers<net.Socket>();
   server.on("connect", (req, socket) => {
     socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-    tunnel.resolve(socket);
+    tunnel.resolve(socket as net.Socket);
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
@@ -2131,6 +2131,110 @@ test("a tunnel write that waits for a drain settles its callbacks when the clien
   }
 });
 
+describe("tunnel socket bytesWritten and bytesRead", () => {
+  describe.each(["http", "https"] as const)("%s", proto => {
+    // Compares deltas, because Node also counts the HTTP bytes sent on this connection before the tunnel.
+    test.each(["connect", "upgrade"] as const)(
+      "'%s': count raw bytes and keep the counts after 'close'",
+      async event => {
+        const server = proto === "https" ? https.createServer(tlsCert) : http.createServer();
+        const reply =
+          event === "connect"
+            ? "HTTP/1.1 200 Connection Established\r\n\r\n"
+            : "HTTP/1.1 101 Switching Protocols\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n";
+        const seen: Record<string, number | number[]> = {};
+        const closed = Promise.withResolvers<void>();
+        server.on(event, (req, duplex, head) => {
+          const socket = duplex as net.Socket;
+          const writtenBefore = socket.bytesWritten;
+          const readBefore = socket.bytesRead - head.length;
+          let received = head.length;
+          socket.cork();
+          socket.write(reply);
+          socket.write("héllo");
+          seen.corked = socket.bytesWritten - writtenBefore;
+          socket.uncork();
+          seen.uncorked = socket.bytesWritten - writtenBefore;
+          socket.on("data", chunk => {
+            received += chunk.length;
+            if (received < 8) return;
+            seen.read = socket.bytesRead - readBefore;
+            socket.end("bye");
+            seen.ended = socket.bytesWritten - writtenBefore;
+          });
+          socket.on("close", () => {
+            seen.closed = [socket.bytesWritten - writtenBefore, socket.bytesRead - readBefore];
+            closed.resolve();
+          });
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = (server.address() as AddressInfo).port;
+        const client =
+          proto === "https"
+            ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+            : net.connect(port, "127.0.0.1");
+        try {
+          const replyLength = reply.length + Buffer.byteLength("héllo");
+          let got = 0;
+          client.on("data", chunk => {
+            const before = got;
+            got += chunk.length;
+            if (before < replyLength && got >= replyLength) client.write("12345");
+          });
+          client.on("end", () => client.end());
+          client.write(
+            (event === "connect"
+              ? "CONNECT a.test:443 HTTP/1.1\r\nHost: a.test:443\r\n\r\n"
+              : "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n") + "abc",
+          );
+          await closed.promise;
+          expect(seen).toEqual({
+            corked: replyLength,
+            uncorked: replyLength,
+            read: 8,
+            ended: replyLength + 3,
+            closed: [replyLength + 3, 8],
+          });
+        } finally {
+          client.destroy();
+          server.closeAllConnections();
+          server.close();
+        }
+      },
+    );
+  });
+
+  test("bytesWritten includes a write waiting for drain and the write queued behind it", async () => {
+    const server = http.createServer();
+    // Two chunks are more than a loopback socket buffers while the peer isn't reading. Winsock accepts them whole.
+    const chunk = Buffer.alloc(16 * 1024 * 1024, "a");
+    const seen = Promise.withResolvers<{ waiting: boolean; written: number }>();
+    server.on("upgrade", (req, duplex) => {
+      const socket = duplex as net.Socket;
+      socket.on("error", () => {});
+      const before = socket.bytesWritten;
+      socket.write(chunk);
+      socket.write(chunk);
+      seen.resolve({ waiting: socket.writableLength > 0, written: socket.bytesWritten - before });
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n");
+      expect(await seen.promise).toEqual({
+        waiting: isWindows ? expect.any(Boolean) : true,
+        written: 2 * chunk.length,
+      });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+});
+
 // The handed-off socket writes straight to the kernel. While uWS still holds
 // bytes of the response before the CONNECT, such a write must go out behind them.
 describe("a CONNECT tunnel pipelined behind a response that still drains", () => {
@@ -2182,7 +2286,7 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
       await handedOff.promise;
 
       const chunks: Buffer[] = [];
-      client.on("data", chunk => chunks.push(chunk));
+      client.on("data", (chunk: Buffer) => chunks.push(chunk));
       const closed = once(client, "close");
       client.resume();
       await closed;
@@ -2313,7 +2417,7 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
     try {
       await once(client, "connect");
       const chunks: Buffer[] = [];
-      client.on("data", chunk => chunks.push(chunk));
+      client.on("data", (chunk: Buffer) => chunks.push(chunk));
       client.on("error", () => {});
       const closed = once(client, "close");
       client.write(

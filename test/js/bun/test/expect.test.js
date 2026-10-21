@@ -141,6 +141,27 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  test("resolves and rejects call then() of a pending Promise subclass", async () => {
+    class Lazy extends Promise {
+      thenCalls = 0;
+      then(onFulfilled, onRejected) {
+        this.thenCalls++;
+        return super.then(onFulfilled, onRejected);
+      }
+    }
+    for (const outcome of ["resolves", "rejects"]) {
+      const { promise, resolve, reject } = Promise.withResolvers.call(Lazy);
+      setTimeout(outcome === "resolves" ? resolve : reject, 0, 1);
+      await expect(promise)[outcome].toBe(1);
+      expect(promise.thenCalls).toBe(1);
+    }
+
+    const { promise, resolve } = Promise.withResolvers.call(Lazy);
+    setTimeout(resolve, 0);
+    expect(() => promise).not.toThrow();
+    expect(promise.thenCalls).toBe(1);
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });
@@ -880,6 +901,82 @@ describe("expect()", () => {
       expect({ a: 123n }).toEqual({ a: expect.any(BigInt) });
       expect({ a: 123n }).not.toEqual({ a: expect.any(g) });
     });
+
+    it("gives a matcher undefined for an element that the other array does not have", () => {
+      const seen = [];
+      expect.extend({
+        toBeRecorded(value) {
+          seen.push(value);
+          return { pass: false, message: () => "" };
+        },
+      });
+      const matchers = [
+        expect.stringContaining("a"),
+        expect.stringMatching(/a/),
+        expect.any(String),
+        expect.any(Symbol),
+        expect.any(BigInt),
+        expect.any(Boolean),
+        expect.any(Number),
+        expect.any(Array),
+        expect.any(Object),
+        expect.any(Promise),
+        expect.any(Date),
+        expect.anything(),
+        expect.arrayContaining([1]),
+        expect.objectContaining({ a: 1 }),
+        expect.closeTo(1),
+        // @ts-expect-error
+        expect.toBeRecorded(),
+      ];
+      for (const matcher of matchers) {
+        expect([,]).not.toEqual([matcher]);
+        expect([[,]]).not.toEqual(expect.arrayContaining([[matcher]]));
+        expect({ a: [["x"]] }).not.toMatchObject({ a: expect.arrayContaining([["x", matcher]]) });
+      }
+      expect([,]).toEqual([expect.not.stringContaining("a")]);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.filter(value => value !== undefined)).toEqual([]);
+    });
+
+    it("gives a matcher the value of a getter at an index", () => {
+      const array = [1];
+      Object.defineProperty(array, 1, { get: () => "x", enumerable: true });
+      expect(array).toEqual([1, expect.anything()]);
+      expect(array).toEqual([1, expect.any(String)]);
+      expect(array).toEqual([1, expect.stringContaining("x")]);
+      expect(array).not.toEqual([1, expect.stringContaining("y")]);
+      expect([array]).toEqual(expect.arrayContaining([[1, expect.stringContaining("x")]]));
+    });
+
+    if (isBun) {
+      it("does not crash on an element that the other array does not have", async () => {
+        const { bunEnv, bunExe } = require("harness");
+        const src = `
+          import { expect } from "bun:test";
+          const getter = Object.defineProperty([], 0, { get: () => "x", enumerable: true });
+          for (const matcher of [expect.stringContaining("a"), expect.any(String), expect.arrayContaining([1])]) {
+            try { expect([,]).toEqual([matcher]); } catch {}
+            try { expect([]).toEqual(expect.arrayContaining([[matcher]])); } catch {}
+            try { expect(getter).toEqual([matcher]); } catch {}
+            try { expect({ a: [["x"]] }).toMatchObject({ a: expect.arrayContaining([["x", matcher]]) }); } catch {}
+          }
+          console.log("ok");
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", src],
+          env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+          stdout: "ok\n",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
+    }
   });
 
   test("toThrow asymmetric matchers", () => {
@@ -996,6 +1093,58 @@ describe("expect()", () => {
       }).toThrow(err);
     }
   });
+
+  if (isBun) {
+    test(".not.toThrow(Class) reports a thrown string, symbol or BigInt that Symbol.hasInstance accepts", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        import { expect } from "bun:test";
+        class Anything {
+          static [Symbol.hasInstance]() {
+            return true;
+          }
+        }
+        const report = async run => {
+          try {
+            await run();
+            console.log("passed");
+          } catch (e) {
+            console.log(e.message.split("\\n").filter(Boolean).slice(1).join(" | "));
+          }
+        };
+        const thrower = thrown => () => {
+          throw thrown;
+        };
+        for (const thrown of ["boom", Symbol("boom"), 10n ** 30n, {}, { message: "an object" }, new TypeError("an error")]) {
+          await report(() => expect(thrower(thrown)).not.toThrow(Anything));
+        }
+        await report(() => expect(Promise.reject("boom")).rejects.not.toThrow(Anything));
+        await report(() => expect(thrower("boom")).not.toThrow(RangeError));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: [
+          'Expected constructor: not Anything | Received value: "boom"',
+          "Expected constructor: not Anything | Received value: Symbol(boom)",
+          "Expected constructor: not Anything | Received value: 1000000000000000000000000000000n",
+          "Expected constructor: not Anything | Received value: {}",
+          'Expected constructor: not Anything | Received message: "an object"',
+          'Expected constructor: not Anything | Received message: "an error"',
+          'Expected constructor: not Anything | Received value: "boom"',
+          "passed",
+          "",
+        ],
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  }
 
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");

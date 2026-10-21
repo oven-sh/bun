@@ -116,6 +116,7 @@ pub(crate) mod js_bundler {
         pub(crate) dir: OwnedString,
         pub(crate) outdir: OwnedString,
         pub(crate) rootdir: OwnedString,
+        pub(crate) tsconfig_override: OwnedString,
         pub(crate) jsx: api::Jsx,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
@@ -149,6 +150,8 @@ pub(crate) mod js_bundler {
         /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
         pub(crate) fold_chunks: bool,
         pub(crate) module_preload: bool,
+        /// `check`: see `BundleOptions::type_check`.
+        pub(crate) check: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -180,6 +183,7 @@ pub(crate) mod js_bundler {
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
+                tsconfig_override: OwnedString::default(),
                 jsx: api::Jsx {
                     factory: Box::default(),
                     fragment: Box::default(),
@@ -216,6 +220,7 @@ pub(crate) mod js_bundler {
                 min_chunk_size: None,
                 fold_chunks: true,
                 module_preload: true,
+                check: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -592,9 +597,9 @@ pub(crate) mod js_bundler {
                             let p = Plugin::create(
                                 global_this,
                                 match this.target {
-                                    Target::Bun | Target::BunMacro => jsc::BunPluginTarget::Bun,
-                                    Target::Node => jsc::BunPluginTarget::Node,
-                                    _ => jsc::BunPluginTarget::Browser,
+                                    Target::Bun | Target::BunMacro => BunPluginTarget::Bun,
+                                    Target::Node => BunPluginTarget::Node,
+                                    _ => BunPluginTarget::Browser,
                                 },
                             );
                             **plugins = Some(p);
@@ -682,7 +687,6 @@ pub(crate) mod js_bundler {
                         min: 0,
                         max: i128::from(u32::MAX),
                         field_name: b"bytecodeDepth",
-                        always_allow_zero: false,
                     },
                 )?;
             }
@@ -738,6 +742,11 @@ pub(crate) mod js_bundler {
             if let Some(slice) = config.get_optional_slice(global_this, b"outdir")? {
                 this.outdir.append_slice_exact(slice.slice())?;
                 has_out_dir = true;
+                drop(slice);
+            }
+
+            if let Some(slice) = config.get_optional_slice(global_this, b"tsconfig")? {
+                this.tsconfig_override.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
 
@@ -886,6 +895,9 @@ pub(crate) mod js_bundler {
             }
             if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
                 this.module_preload = module_preload;
+            }
+            if let Some(check) = config.get_boolean_loose(global_this, "check")? {
+                this.check = check;
             }
             if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
                 && let Some(fold_chunks) =
@@ -1570,22 +1582,28 @@ pub(crate) mod js_bundler {
         {
             resolve.value = ResolveValue::NoMatch;
         } else {
-            let global = bv2_plugin(resolve.bv2).global_object();
-            let path = path_value
-                .to_bun_string(global)
-                .expect("Unexpected: path is not a string")
-                .to_owned_slice()
-                .into_boxed_slice();
-            let namespace = namespace_value
-                .to_bun_string(global)
-                .expect("Unexpected: namespace is not a string")
-                .to_owned_slice()
-                .into_boxed_slice();
-            resolve.value = ResolveValue::Success(ResolveSuccess {
-                path,
-                namespace,
-                external: external_value.to_boolean(),
+            let plugin = bv2_plugin(resolve.bv2);
+            let global = plugin.global_object();
+            let strings = path_value.to_bun_string(global).and_then(|path| {
+                let namespace = namespace_value.to_bun_string(global)?;
+                Ok((path, namespace))
             });
+            resolve.value = match strings {
+                Ok((path, namespace)) => ResolveValue::Success(ResolveSuccess {
+                    path: path.to_owned_slice().into_boxed_slice(),
+                    namespace: namespace.to_owned_slice().into_boxed_slice(),
+                    external: external_value.to_boolean(),
+                }),
+                // Flattening a `path` or `namespace` string can still throw.
+                Err(err) => {
+                    let exception = global.take_exception(err);
+                    ResolveValue::Err(plugin_msg_from_js(
+                        plugin,
+                        &resolve.import_record.source_file,
+                        exception,
+                    ))
+                }
+            };
         }
 
         bv2_mut(resolve.bv2).on_resolve_async(resolve);
@@ -1695,24 +1713,21 @@ pub(crate) mod js_bundler {
             this.value = LoadValue::NoMatch;
         } else {
             let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
-            let global = bv2_plugin(this.bv2).global_object();
-            let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(
-                global,
+            let plugin = bv2_plugin(this.bv2);
+            this.value = match crate::node::StringOrBuffer::from_js_to_owned_slice(
+                plugin.global_object(),
                 source_code_value,
             ) {
-                Ok(s) => s,
+                Ok(source_code) => LoadValue::Success(LoadSuccess {
+                    loader: bun_ast::Loader::from_api(loader),
+                    source_code: source_code.into(),
+                }),
+                // Flattening a `contents` string can still throw.
                 Err(err) => {
-                    match err {
-                        JsError::OutOfMemory => bun_core::out_of_memory(),
-                        JsError::Thrown | JsError::Terminated => {}
-                    }
-                    panic!("Unexpected: source_code is not a string");
+                    let exception = plugin.global_object().take_exception(err);
+                    LoadValue::Err(plugin_msg_from_js(plugin, &this.path, exception))
                 }
             };
-            this.value = LoadValue::Success(LoadSuccess {
-                loader: bun_ast::Loader::from_api(loader),
-                source_code: source_code.into(),
-            });
         }
 
         bv2_mut(this.bv2).on_load_async(this);
@@ -1723,6 +1738,21 @@ pub(crate) mod js_bundler {
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
     pub(crate) use bun_bundler::bundle_v2::api::JSBundler::Plugin;
 
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub(crate) enum BunPluginTarget {
+        Bun = 0,
+        Node = 1,
+        Browser = 2,
+    }
+
+    // Crosses FFI by-value to `JSBundlerPlugin__create`
+    // (C++: `typedef uint8_t BunPluginTarget`, `headers-handwritten.h`). NB: the
+    // C++ header's *named* constants (`BunPluginTargetBrowser = 1`, `Node = 2`)
+    // disagree with the Rust enum (`Node = 1`, `Browser = 2`). The width (`u8`)
+    // is what matters at the ABI.
+    bun_core::assert_ffi_discr!(BunPluginTarget, u8; Bun = 0, Node = 1, Browser = 2);
+
     // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
     // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
     // validity proof lives in the type. `runSetupFunction` and `globalObject`
@@ -1731,7 +1761,7 @@ pub(crate) mod js_bundler {
     unsafe extern "C" {
         safe fn JSBundlerPlugin__create(
             global: &JSGlobalObject,
-            target: jsc::BunPluginTarget,
+            target: BunPluginTarget,
         ) -> *mut Plugin;
         safe fn JSBundlerPlugin__tombstone(plugin: &Plugin);
         safe fn JSBundlerPlugin__runOnEndCallbacks(
@@ -1765,7 +1795,7 @@ pub(crate) mod js_bundler {
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
     pub(crate) trait PluginJscExt {
-        fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
+        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(
             &mut self,
             global_this: &JSGlobalObject,
@@ -1801,7 +1831,7 @@ pub(crate) mod js_bundler {
     }
 
     impl PluginJscExt for Plugin {
-        fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin {
+        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin {
             jsc::mark_binding();
             let plugin = JSBundlerPlugin__create(global, target);
             JSValue::from_cell(plugin).protect();
@@ -2004,6 +2034,7 @@ pub(crate) fn js_worker_live_count(
     ))
 }
 
+pub(crate) use js_bundler::BunPluginTarget;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;

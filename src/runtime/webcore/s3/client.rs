@@ -350,6 +350,7 @@ pub(crate) fn list_objects(
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
             reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+            tls_props: crate::socket::http_client_defaults(vm),
             signals: Some(task.signal_store.to()),
             ..Default::default()
         },
@@ -1285,6 +1286,7 @@ fn download_stream(
             verbose: Some(verbose),
             signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
+            tls_props: crate::socket::http_client_defaults(vm),
             ..Default::default()
         },
     ));

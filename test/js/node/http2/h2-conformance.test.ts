@@ -64,7 +64,7 @@ class RawH2 {
 
   constructor(port: number) {
     this.socket = net.connect(port, "127.0.0.1");
-    this.socket.on("data", d => this.onData(d));
+    this.socket.on("data", (d: Buffer) => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
   }
@@ -691,7 +691,7 @@ class RawH2Server {
     const s = new RawH2Server(server);
     server.on("connection", socket => {
       s.socket = socket;
-      socket.on("data", d => s.onData(d));
+      socket.on("data", (d: Buffer) => s.onData(d));
       socket.on("error", () => {});
     });
     server.listen(0, "127.0.0.1");
@@ -810,7 +810,7 @@ describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
     let received = 0;
     const finished = Promise.withResolvers<void>();
     const server = http2.createServer();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       // Slow consumer: tiny highWaterMark + async completion forces repeated pause/resume of the
       // request readable while the body is still arriving.
       const slow = new Writable({
@@ -1050,18 +1050,18 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
 describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   // HPACK "literal never indexed, new name" (0x10) so the wire shape is exactly what is written
   // and no client library normalizes it away.
-  function hpackBlock(pairs: [string, string][]): Buffer {
+  function hpackBlock(pairs: readonly (readonly [string, string])[]): Buffer {
     return Buffer.concat(pairs.flatMap(([n, v]) => [Buffer.from([0x10]), hpackLiteral(n), hpackLiteral(v)]));
   }
 
   async function probe(
-    headers: [string, string][],
+    headers: readonly (readonly [string, string])[],
     opts?: http2.ServerOptions,
   ): Promise<{ dispatched: boolean; frames: Frame[] }> {
     const srv = http2.createServer(opts ?? {});
     srv.on("sessionError", () => {});
     let dispatched = false;
-    srv.on("stream", stream => {
+    srv.on("stream", (stream: http2.ServerHttp2Stream) => {
       dispatched = true;
       stream.on("error", () => {});
       try {
@@ -1185,7 +1185,7 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
     ],
     ["CONNECT without :authority", [[":method", "CONNECT"]]],
   ] as const)("a request with %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
-    expectStreamProtocolError(await probe(headers as [string, string][]));
+    expectStreamProtocolError(await probe(headers));
   });
 
   test.each([
@@ -1237,9 +1237,7 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
       ],
     ],
   ] as const)("with enableConnectProtocol: %s is RST with PROTOCOL_ERROR and never dispatched", async (_, headers) => {
-    expectStreamProtocolError(
-      await probe(headers as [string, string][], { settings: { enableConnectProtocol: true } }),
-    );
+    expectStreamProtocolError(await probe(headers, { settings: { enableConnectProtocol: true } }));
   });
 
   test("a valid request block is dispatched", async () => {
@@ -1771,7 +1769,7 @@ describe("stream release after a queued END_STREAM", () => {
     const refs: WeakRef<object>[] = [];
     const queuedAfterEnd: number[] = [];
     const server = http2.createServer();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       refs.push(new WeakRef(stream));
       stream.respond({ ":status": 200 });
       stream.end(BODY);
@@ -1838,7 +1836,7 @@ describe("stream release after a queued END_STREAM", () => {
     const refs: WeakRef<object>[] = [];
     let stalledFinished = false;
     const server = http2.createServer();
-    server.on("stream", (stream, headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       if (headers[":path"] === "/stalled") {
         stream.once("finish", () => {
           stalledFinished = true;
@@ -1887,7 +1885,7 @@ describe("stream release after a queued END_STREAM", () => {
     const refs: WeakRef<object>[] = [];
     const uploaded: Promise<number>[] = [];
     const server = http2.createServer({ settings: { initialWindowSize: WINDOW } });
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       // Answer as soon as the headers arrive, so the server's END_STREAM reaches the client while
       // the client still has the body's tail queued, and keep reading the body so that tail really
       // is flushed from the queue (an upload nobody reads gets reset instead, and a reset releases

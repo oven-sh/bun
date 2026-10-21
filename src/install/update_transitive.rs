@@ -16,7 +16,9 @@ use crate::npm::PackageManifest;
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
-use crate::package_manager_real::{PackageUpdateInfo, enqueue_dependency_with_main};
+use crate::package_manager_real::{
+    PackageUpdateInfo, WorkspacePackageJSONCache, enqueue_dependency_with_main,
+};
 use crate::update_scope::UpdateScope;
 use crate::{
     DependencyID, DependencyVersionTag, GetJsonOptions, GetJsonResult, PackageID, PackageManager,
@@ -63,12 +65,18 @@ impl DirectDependencies {
         out
     }
 
-    /// Edges still resolving to the previous package of a direct dependency that moved follow it when their range allows.
-    pub fn redirect_dependents(&self, lockfile: &mut Lockfile) {
+    /// Edges on the previous package of a moved direct dependency follow it if their range allows.
+    pub fn redirect_dependents(&self, lockfile: &mut Lockfile, direct_only: bool) {
         if self.owners.is_empty() || lockfile.loaded_package_count == 0 {
             return;
         }
-        redirect(lockfile, self.moved_pairs(lockfile));
+        redirect(lockfile, self.moved_pairs(lockfile), direct_only);
+    }
+
+    /// Returns the packages that direct dependencies have moved to since the snapshot.
+    pub(crate) fn moved_to(&self, lockfile: &Lockfile) -> Vec<PackageID> {
+        let pairs = self.moved_pairs(lockfile);
+        pairs.into_iter().map(|(_, new)| new).collect()
     }
 
     fn moved_pairs(&self, lockfile: &Lockfile) -> Vec<(PackageID, PackageID)> {
@@ -128,6 +136,19 @@ impl DirectDependencies {
                     || (new as usize) >= packages_len
                     || pkg_res[new as usize].tag != ResolutionTag::Npm
                     || name_hashes[old as usize] != name_hashes[new as usize]
+                    // A peer shares the version of a regular dependency of its owner or of the root.
+                    // If that dependency still resolves to `old`, or already resolves to `new`, only
+                    // the peer was rebound and nothing was updated.
+                    || (dep.behavior.is_peer()
+                        && [owner, 0].into_iter().any(|holder| {
+                            (dep_slices[holder].get(deps).iter())
+                                .zip(res_slices[holder].get(resolutions))
+                                .any(|(other, &kept)| {
+                                    other.name_hash == dep.name_hash
+                                        && !other.behavior.is_peer()
+                                        && (kept == old || kept == new)
+                                })
+                        }))
                 {
                     continue;
                 }
@@ -205,10 +226,18 @@ fn named_pairs(
 }
 
 /// Every edge still resolving to an `old` package whose range accepts its `new` npm package is re-pointed at it.
-fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>) {
+fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>, direct_only: bool) {
     if pairs.is_empty() {
         return;
     }
+    let transitive_rows = direct_only.then(|| {
+        let mut rows =
+            DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
+        for owner in 0..lockfile.packages.len() {
+            set_rows_of(&mut rows, lockfile, owner);
+        }
+        rows
+    });
     let mut new_of: Vec<PackageID> = vec![invalid_package_id; lockfile.packages.len()];
     for (old, new) in pairs {
         let slot = &mut new_of[old as usize];
@@ -231,7 +260,7 @@ fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>) {
                 continue;
             }
             let dep = &deps[j];
-            if dep.behavior.is_bundled() {
+            if dep.behavior.is_bundled() || transitive_rows.as_ref().is_some_and(|r| r.is_set(j)) {
                 continue;
             }
             let Some(range) = dedupe::effective_npm_range(lockfile, j as DependencyID, dep) else {
@@ -263,8 +292,6 @@ struct Pin {
 #[derive(Default)]
 pub struct TransitiveUpdate {
     pins: Vec<Pin>,
-    /// Kept for `print_plan` when no install summary will print the rows (`--dry-run`, `--lockfile-only`).
-    report: Option<Report>,
 }
 
 impl TransitiveUpdate {
@@ -286,35 +313,18 @@ impl TransitiveUpdate {
             }
             edges
         };
-        let (pins, report) = plan_edges(manager, &edges, direct)?;
-        register_moved(manager, &report.moved)?;
-        let printed_here = manager.options.dry_run || manager.options.lockfile_only;
-        Ok(TransitiveUpdate {
-            pins,
-            report: printed_here.then_some(report),
-        })
+        let (pins, moved) = plan_edges(manager, &edges, direct)?;
+        register_moved(manager, &moved)?;
+        Ok(TransitiveUpdate { pins })
     }
 
     /// Runs after the differ's own enqueues (including its override/catalog invalidation loops) so the pins win; edges the differ moved off their package are left to it.
-    pub fn enqueue(&self, manager: &mut PackageManager) -> crate::Result<()> {
-        self.enqueue_inner(manager, None)
-    }
-
-    /// Like `enqueue`, also returning the rows it pinned so later invalidation passes leave them alone.
-    pub fn enqueue_tracked(&self, manager: &mut PackageManager) -> crate::Result<DynamicBitSet> {
-        let mut pinned = DynamicBitSet::init_empty(manager.lockfile.buffers.resolutions.len())?;
-        self.enqueue_inner(manager, Some(&mut pinned))?;
-        Ok(pinned)
-    }
-
-    fn enqueue_inner(
-        &self,
-        manager: &mut PackageManager,
-        mut pinned: Option<&mut DynamicBitSet>,
-    ) -> crate::Result<()> {
+    /// Returns the rows it pinned so later invalidation passes leave them alone.
+    pub fn enqueue(&self, manager: &mut PackageManager) -> crate::Result<DynamicBitSet> {
         if self.pins.is_empty() {
-            return Ok(());
+            return Ok(DynamicBitSet::default());
         }
+        let mut pinned = DynamicBitSet::init_empty(manager.lockfile.buffers.resolutions.len())?;
         let _ = manager.get_cache_directory();
         let _ = manager.get_temporary_directory();
         for pin in &self.pins {
@@ -325,12 +335,10 @@ impl TransitiveUpdate {
                 Some(to) => audit_fix::enqueue_pinned(manager, pin.dep_id, to)?,
                 None => reresolve(manager, pin.dep_id)?,
             }
-            if let Some(pinned) = pinned.as_deref_mut() {
-                pinned.set(pin.dep_id as usize);
-            }
+            pinned.set(pin.dep_id as usize);
             manager.summary.update += 1;
         }
-        Ok(())
+        Ok(pinned)
     }
 
     /// `--dry-run` / `--lockfile-only` have no install summary: once everything is resolved this prints the update rows (transitive plan, moved direct dependencies, `named` moves) and, for a dry run, the count line.
@@ -348,13 +356,13 @@ impl TransitiveUpdate {
             return;
         }
         let dry_run = options.dry_run;
-        let mut rows = self
-            .report
-            .as_ref()
-            .map_or_else(Vec::new, |report| report.rows.clone());
+        // Read back from the resolutions so rows the collapse re-pointed print where they landed.
+        let pinned: Vec<(DependencyID, PackageID)> =
+            self.pins.iter().map(|pin| (pin.dep_id, pin.from)).collect();
         let mut pairs = direct.moved_pairs(&manager.lockfile);
         pairs.extend(named_pairs(&manager.lockfile, named));
-        rows.extend(rows_between(manager, pairs));
+        pairs.extend(named_pairs(&manager.lockfile, &pinned));
+        let mut rows = rows_between(manager, pairs);
         sort_dedup_rows(&mut rows);
         let kept = kept_patched_rows(manager);
         if !dry_run && rows.is_empty() && kept.is_empty() {
@@ -395,7 +403,7 @@ impl TransitiveUpdate {
     pub fn redirect_dependents(&self, lockfile: &mut Lockfile) {
         let moved: Vec<(DependencyID, PackageID)> =
             self.pins.iter().map(|pin| (pin.dep_id, pin.from)).collect();
-        redirect_moved_edges(lockfile, &moved);
+        redirect_moved_edges(lockfile, &moved, false);
     }
 }
 
@@ -417,9 +425,9 @@ pub(crate) fn refresh_children_of(
         }
         edges
     };
-    let (pins, report) = plan_edges(manager, &edges, &DirectDependencies::default())?;
-    register_moved(manager, &report.moved)?;
-    let update = TransitiveUpdate { pins, report: None };
+    let (pins, moved) = plan_edges(manager, &edges, &DirectDependencies::default())?;
+    register_moved(manager, &moved)?;
+    let update = TransitiveUpdate { pins };
     update.enqueue(manager)?;
     Ok(update
         .pins
@@ -428,7 +436,7 @@ pub(crate) fn refresh_children_of(
         .collect())
 }
 
-/// Only the synchronous resolve sees the cleared peer bit (the manifest callback re-reads the buffer row), so callers fetch the manifest first.
+/// Resolves the row again as if it were not a peer. The row in the lockfile keeps its peer bit.
 fn reresolve(manager: &mut PackageManager, dep_id: DependencyID) -> crate::Result<()> {
     let mut dep = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
     dep.behavior = dep.behavior.with(Behavior::PEER, false);
@@ -462,18 +470,26 @@ pub(crate) fn enqueue_peer_rows(
     register_moved(manager, &from)
 }
 
-/// Pending log lines go to stderr; `--silent` drops everything but errors.
+/// Pending log lines go to stderr; `--silent` drops everything but errors. An error among them fails the install here, because the reset below hides it from `install_with_manager`.
 fn print_log(manager: &PackageManager) -> crate::Result<()> {
     let log = manager.log_mut();
-    if manager.options.log_level != LogLevel::Silent || log.has_errors() {
+    let failed = log.has_errors();
+    if manager.options.log_level != LogLevel::Silent || failed {
         log.print(core::ptr::from_mut(Output::error_writer()))?;
     }
     log.reset();
+    if failed {
+        return Err(crate::Error::InstallFailed);
+    }
     Ok(())
 }
 
 /// `moved` pairs an invalidated edge with the package it used to resolve to; every other edge still on that package follows it to the edge's new npm resolution when its range allows.
-pub(crate) fn redirect_moved_edges(lockfile: &mut Lockfile, moved: &[(DependencyID, PackageID)]) {
+pub(crate) fn redirect_moved_edges(
+    lockfile: &mut Lockfile,
+    moved: &[(DependencyID, PackageID)],
+    direct_only: bool,
+) {
     let pairs: Vec<(PackageID, PackageID)> = {
         let pkg_res = lockfile.packages.items_resolution();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -487,7 +503,7 @@ pub(crate) fn redirect_moved_edges(lockfile: &mut Lockfile, moved: &[(Dependency
             })
             .collect()
     };
-    redirect(lockfile, pairs);
+    redirect(lockfile, pairs, direct_only);
 }
 
 /// Packages of `cleaned` that the `moved` edges of `before_clean` resolved to, for seeding the security scan.
@@ -537,13 +553,6 @@ struct Row {
     later: Box<[u8]>,
 }
 
-#[derive(Default)]
-struct Report {
-    rows: Vec<Row>,
-    /// Pre-clean ids of the instances at least one row moves away from.
-    moved: Vec<PackageID>,
-}
-
 /// Registers each npm package of `moved` (pre-clean ids) like a `bun update <name>` request so the install summary prints its update row; a name with several moving instances keeps its lowest original.
 pub(crate) fn register_moved(
     manager: &mut PackageManager,
@@ -574,15 +583,8 @@ pub(crate) fn register_moved(
                 continue;
             }
         }
-        let mut tag_buf =
-            vec![0u8; current.tag.pre.len() + current.tag.build.len()].into_boxed_slice();
-        let original = current.clone_into(buf, &mut tag_buf, &mut 0);
-        *entry.value_ptr = PackageUpdateInfo {
-            original_version_literal: Box::default(),
-            written_back: false,
-            original_version_string_buf: tag_buf,
-            original_version: Some(original),
-        };
+        *entry.value_ptr = PackageUpdateInfo::default();
+        entry.value_ptr.set_original_version(current, buf);
     }
     Ok(())
 }
@@ -632,9 +634,9 @@ pub fn pretty_update_row(name: &[u8], from: &[u8], to: &[u8], downgrade: bool) {
     pretty!(
         "<b>{}<r> <d>{} {}<r> <b><cyan>{}<r>",
         BStr::new(name),
-        BStr::new(from),
+        bun_core::fmt::escape_control_chars(from),
         glyphs.arrow,
-        BStr::new(to)
+        bun_core::fmt::escape_control_chars(to)
     );
 }
 
@@ -710,40 +712,113 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
-/// After `bun update` cleaned the lockfile: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package.
+/// Returns the source of the root package.json and its `patchedDependencies` object.
+fn root_patched_dependencies<'a>(
+    cache: &'a mut WorkspacePackageJSONCache,
+    log: &mut bun_ast::Log,
+    root_dir: &[u8],
+) -> Option<(&'a bun_ast::Source, bun_ast::Expr)> {
+    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
+    let mut path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    // Auto-install does not call `init`, so the path is empty. It uses the package.json next to the
+    // lockfile that it loaded.
+    if path.is_empty() {
+        path = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            root_dir,
+            &mut path_buf.0,
+            &[b"package.json"],
+        );
+    }
+    let opts = GetJsonOptions {
+        init_reset_store: false,
+        ..Default::default()
+    };
+    let GetJsonResult::Entry(entry) = cache.get_with_path(log, path, opts) else {
+        return None;
+    };
+    let patched = entry.root.get_object(b"patchedDependencies")?;
+    Some((&entry.source, patched))
+}
+
+/// The `patchedDependencies` keys, read from the root package.json because the lockfile only stores
+/// their hashes.
+pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[u8]>> {
+    let log = manager.log_mut();
+    let root_dir = manager.root_dir.dir;
+    let Some((_, patched)) =
+        root_patched_dependencies(&mut manager.workspace_package_json_cache, log, root_dir)
+    else {
+        return Vec::new();
+    };
+    let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(patched.property_count());
+    patched.for_each_property(|key, _, _| keys.push(Box::from(key)));
+    keys
+}
+
+/// A `patchedDependencies` key without a version matches no package, so its patch is never applied.
+#[cold]
+fn warn_patch_key_without_version(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    key_loc: bun_ast::Loc,
+    name: &[u8],
+    lockfile: &Lockfile,
+) {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let installed: &[PackageID] = lockfile
+        .package_index
+        .get(&Semver::string::Builder::string_hash(name))
+        .map_or(&[], PackageIndexEntry::as_slice);
+    let mut keys: Vec<u8> = Vec::new();
+    for &id in installed {
+        let resolution = &lockfile.packages.items_resolution()[id as usize];
+        let separator = if keys.is_empty() { "" } else { ", " };
+        let _ = write!(
+            keys,
+            "{separator}{}@{}",
+            BStr::new(name),
+            resolution.fmt(buf, bun_core::fmt::PathSep::Posix)
+        );
+    }
+    if keys.is_empty() {
+        let _ = write!(keys, "{}@<version>", BStr::new(name));
+    }
+    log.add_range_warning_fmt(
+        Some(source),
+        source.range_of_string(key_loc),
+        format_args!(
+            "patchedDependencies keys need a version: {}",
+            bun_core::fmt::for_terminal(BStr::new(&keys))
+        ),
+    );
+}
+
+/// Runs after the lockfile is cleaned. Prints one warning per `patchedDependencies` key that
+/// doesn't match an installed package.
 pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     if manager.lockfile.patched_dependencies.count() == 0
         || manager.options.log_level == LogLevel::Silent
     {
         return;
     }
-    let keys: Vec<Box<[u8]>> = {
-        let log = manager.log_mut();
-        // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-        let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
-        let opts = GetJsonOptions {
-            init_reset_store: false,
-            ..Default::default()
-        };
-        let GetJsonResult::Entry(entry) = manager
-            .workspace_package_json_cache
-            .get_with_path(log, path, opts)
-        else {
-            return;
-        };
-        let Some(patched) = entry.root.get_object(b"patchedDependencies") else {
-            return;
-        };
-        let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(patched.property_count());
-        patched.for_each_property(|key, _, _| keys.push(Box::from(key)));
-        keys
+    let log = manager.log_mut();
+    let root_dir = manager.root_dir.dir;
+    let Some((source, patched)) =
+        root_patched_dependencies(&mut manager.workspace_package_json_cache, log, root_dir)
+    else {
+        return;
     };
+    let mut keys: Vec<(Box<[u8]>, bun_ast::Loc)> = Vec::with_capacity(patched.property_count());
+    patched.for_each_property(|key, loc, _| keys.push((Box::from(key), loc)));
 
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
-    for key in keys {
-        let Some(at) = strings::last_index_of_char(&key, b'@').filter(|&at| at > 0) else {
+    for (key, key_loc) in keys {
+        // Split at the first `@` after the scope's. A URL in place of the version can contain more.
+        let Some(at) = strings::index_of_char_pos(&key, b'@', 1) else {
+            warn_patch_key_without_version(log, source, key_loc, &key, lockfile);
             continue;
         };
         let Some(patch) = lockfile
@@ -757,16 +832,17 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
             .package_index
             .get(&Semver::string::Builder::string_hash(name))
             .map_or(&[], PackageIndexEntry::as_slice);
+        // `file:` folders, `link:` dependencies and workspaces are never patched.
         if installed
             .iter()
-            .any(|&id| pkg_res[id as usize].tag != ResolutionTag::Npm)
+            .any(|&id| !pkg_res[id as usize].can_enqueue_install_task())
         {
             continue;
         }
         let mut now: Vec<u8> = Vec::new();
         let mut still_applies = false;
         for &id in installed {
-            let current = text(pkg_res[id as usize].npm().version.fmt(buf));
+            let current = text(pkg_res[id as usize].fmt(buf, bun_core::fmt::PathSep::Posix));
             if &*current == version {
                 still_applies = true;
                 break;
@@ -782,15 +858,15 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
         if now.is_empty() {
             bun_core::warn!(
                 "{} no longer applies ({} is no longer installed)",
-                BStr::new(patch.path.slice(buf)),
-                BStr::new(name)
+                bun_core::fmt::escape_control_chars(patch.path.slice(buf)),
+                bun_core::fmt::EscapeControlChars(BStr::new(name))
             );
         } else {
             bun_core::warn!(
                 "{} no longer applies ({} is now {})",
-                BStr::new(patch.path.slice(buf)),
-                BStr::new(name),
-                BStr::new(&now)
+                bun_core::fmt::escape_control_chars(patch.path.slice(buf)),
+                bun_core::fmt::EscapeControlChars(BStr::new(name)),
+                bun_core::fmt::for_terminal(BStr::new(&now))
             );
         }
     }
@@ -835,7 +911,7 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
             continue;
         };
         let Some(found) = manifest
-            .find_best_version_with_filter(&range.npm().version, buf, min_age, excludes)
+            .find_for_dependency(&range, buf, min_age, excludes)
             .unwrap()
         else {
             continue;
@@ -1018,12 +1094,12 @@ pub(crate) fn plannable_peer_rows(
     rows
 }
 
-/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag.
+/// Also returns the pre-clean ids of the instances at least one row moves away from.
 fn plan_edges(
     manager: &mut PackageManager,
     edges: &DynamicBitSet,
     direct: &DirectDependencies,
-) -> crate::Result<(Vec<Pin>, Report)> {
+) -> crate::Result<(Vec<Pin>, Vec<PackageID>)> {
     let mut instances: Vec<Instance> = Vec::new();
     let mut kept: Vec<PackageID> = Vec::new();
     {
@@ -1122,7 +1198,7 @@ fn plan_edges(
     }
     instances.retain(|inst| !inst.wants.is_empty());
     if instances.is_empty() {
-        return Ok((Vec::new(), Report::default()));
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
@@ -1136,7 +1212,7 @@ fn plan_edges(
     let pkg_names = manager.lockfile.packages.items_name();
 
     let mut pins: Vec<Pin> = Vec::new();
-    let mut report = Report::default();
+    let mut moved: Vec<PackageID> = Vec::new();
     let mut unchecked: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
     // Non-inline prerelease strings of planned versions live in the manifest buffer; copied into the lockfile's below.
     let mut pre_strings: Vec<(core::ops::Range<usize>, u64, Box<[u8]>)> = Vec::new();
@@ -1162,12 +1238,11 @@ fn plan_edges(
         };
         let manifest: &PackageManifest = manifest;
         let manifest_buf: &[u8] = &manifest.string_buf;
-        let rows_before = report.rows.len();
+        let pins_before = pins.len();
         for want in &inst.wants {
-            let (v, to, later) = if want.version.tag == DependencyVersionTag::Npm {
-                let range = &want.version.npm().version;
+            let to = if want.version.tag == DependencyVersionTag::Npm {
                 let Some(found) = manifest
-                    .find_best_version_with_filter(range, buf, min_age, excludes)
+                    .find_for_dependency(&want.version, buf, min_age, excludes)
                     .unwrap()
                 else {
                     continue;
@@ -1184,11 +1259,10 @@ fn plan_edges(
                         Box::from(v.tag.pre.slice(manifest_buf)),
                     ));
                 }
-                (v, Some(v), later_than(manifest, v, min_age, excludes))
+                Some(v)
             } else {
-                let tag = want.version.dist_tag().tag.slice(buf);
                 let Some(found) = manifest
-                    .find_by_dist_tag_with_filter(tag, min_age, excludes)
+                    .find_for_dependency(&want.version, buf, min_age, excludes)
                     .unwrap()
                 else {
                     continue;
@@ -1196,22 +1270,16 @@ fn plan_edges(
                 if found.version.order(inst.current, manifest_buf, buf) == Ordering::Equal {
                     continue;
                 }
-                (found.version, None, Box::default())
+                None
             };
             pins.extend(want.dep_ids.iter().map(|&dep_id| Pin {
                 dep_id,
                 from: inst.pkg_id,
                 to,
             }));
-            report.rows.push(Row {
-                name: Box::from(name),
-                from: text(inst.current.fmt(buf)),
-                to: text(v.fmt(manifest_buf)),
-                later,
-            });
         }
-        if report.rows.len() != rows_before {
-            report.moved.push(inst.pkg_id);
+        if pins.len() != pins_before {
+            moved.push(inst.pkg_id);
         }
     }
     index_sort::sort_vec_unstable_by(&mut unchecked, |a, b| a.cmp(b));
@@ -1230,25 +1298,5 @@ fn plan_edges(
         }
     }
 
-    sort_dedup_rows(&mut report.rows);
-    Ok((pins, report))
-}
-
-/// The `latest` dist-tag when it is newer than the release `v` an in-range move stops at, like the `+` rows' `(vX available)`.
-fn later_than(
-    manifest: &PackageManifest,
-    v: Semver::Version,
-    min_age: Option<f64>,
-    excludes: Option<&[&[u8]]>,
-) -> Box<[u8]> {
-    if v.tag.has_pre() {
-        return Box::default();
-    }
-    let manifest_buf: &[u8] = &manifest.string_buf;
-    let latest = manifest
-        .find_by_dist_tag_with_filter(b"latest", min_age, excludes)
-        .unwrap()
-        .map(|found| found.version)
-        .filter(|latest| latest.order(v, manifest_buf, manifest_buf) == Ordering::Greater);
-    latest.map_or_else(Box::default, |latest| text(latest.fmt(manifest_buf)))
+    Ok((pins, moved))
 }

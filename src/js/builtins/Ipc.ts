@@ -3,9 +3,7 @@ interface DgramSocketFields {
   type: import("node:dgram").SocketType;
 }
 type IpcHandle =
-  | import("node:net").Server
-  | import("node:net").Socket
-  | (import("node:dgram").Socket & DgramSocketFields);
+  import("node:net").Server | import("node:net").Socket | (import("node:dgram").Socket & DgramSocketFields);
 /**
  * @typedef {Object} Serialized
  * @property {"NODE_HANDLE"} cmd

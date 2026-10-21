@@ -151,6 +151,29 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
+        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
+            // Nothing is bundled, so nothing has been resolved or read.
+            let entry_points = this_transpiler.options.entry_points.iter();
+            let checked = options::TypeChecked {
+                cwd: bun_resolver::fs::FileSystem::instance().top_level_dir(),
+                tsconfig: ctx.args.tsconfig_override.as_deref(),
+                conditions: &ctx.args.conditions,
+                loaders: &this_transpiler.options.loaders,
+                entry_points: &mut entry_points.map(|path| &**path),
+                sources: &mut core::iter::empty(),
+            };
+            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
+                log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ))?;
+                Output::flush();
+                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+            }
+        } else if ctx.bundler_options.check {
+            this_transpiler.options.type_check =
+                Some(crate::cli::check_command::check_for_build_command);
+        }
+
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 
@@ -194,7 +217,6 @@ impl BuildCommand {
             .options
             .asset_naming
             .clone_from(&ctx.bundler_options.asset_naming);
-        this_transpiler.options.server_components = ctx.bundler_options.server_components;
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
             if this_transpiler.options.target.is_server_side() {
@@ -532,78 +554,6 @@ impl BuildCommand {
                 this_transpiler.options.macro_remap = remap;
             }
             MacroOptions::Unspecified => {}
-        }
-
-        let mut client_transpiler: Option<transpiler::Transpiler> = None;
-        if this_transpiler.options.server_components {
-            let mut ct = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
-            // Note: `BundleOptions<'a>` is non-`Clone`;
-            // `Transpiler::init` above rebuilds options from the same `ctx.args`,
-            // and the divergent fields are set explicitly below. `client_transpiler`
-            // is currently unused after this block, so a
-            // perfect field-wise copy is not load-bearing.
-            ct.options.target = bun_ast::Target::Browser;
-            ct.options.server_components = true;
-            ct.options.conditions = this_transpiler.options.conditions.clone()?;
-            this_transpiler
-                .options
-                .conditions
-                .append_slice(&[b"react-server" as &[u8]])?;
-            this_transpiler.options.react_fast_refresh = false;
-            this_transpiler.options.minify_syntax = true;
-            ct.options.minify_syntax = true;
-            {
-                use bun_bundler::DefineDataExt as _;
-                use bun_bundler::DefineExt as _;
-                // Feed `--define` entries into
-                // the client transpiler's Define table.
-                let user_defines = match &ctx.args.define {
-                    Some(input) => {
-                        let mut raw = bun_bundler::defines::RawDefines::default();
-                        raw.reserve(input.keys.len() + 4);
-                        for (key, value) in input.keys.iter().zip(input.values.iter()) {
-                            raw.insert(key.as_ref(), value.clone());
-                        }
-                        let drop: Vec<&[u8]> = ctx.args.drop.iter().map(|d| d.as_ref()).collect();
-                        Some(bun_bundler::defines::DefineData::from_input(
-                            &raw, &drop, log_ref, arena,
-                        )?)
-                    }
-                    None => None,
-                };
-                ct.options.define = options::Define::init(
-                    user_defines,
-                    None,
-                    this_transpiler.options.define.drop_debugger,
-                    this_transpiler.options.dead_code_elimination
-                        && this_transpiler.options.minify_syntax,
-                )?;
-            }
-
-            crate::bake::bake_body::add_import_meta_defines(
-                &mut this_transpiler.options.define,
-                crate::bake::Mode::Development,
-                crate::bake::Side::Server,
-            )?;
-            crate::bake::bake_body::add_import_meta_defines(
-                &mut ct.options.define,
-                crate::bake::Mode::Development,
-                crate::bake::Side::Client,
-            )?;
-
-            this_transpiler.sync_resolver_opts();
-            this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
-            ct.sync_resolver_opts();
-            ct.resolver.env_loader = core::ptr::NonNull::new(ct.env);
-            client_transpiler = Some(ct);
-        }
-        let _ = client_transpiler;
-
-        // var env_loader = this_transpiler.env;
-
-        if ctx.debug.dump_environment_variables {
-            this_transpiler.dump_environment_variables();
-            return Ok(());
         }
 
         let mut reachable_file_count: usize = 0;
@@ -1309,6 +1259,8 @@ pub(crate) fn collect_compile_assets(
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
+            // Names are stored as valid UTF-8, so two names that differ only in invalid bytes collide.
+            let dest = bstr::BStr::new(&dest).to_string().into_bytes();
             if seen.contains_key(&dest) {
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",

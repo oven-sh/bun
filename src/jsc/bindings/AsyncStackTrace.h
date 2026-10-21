@@ -12,19 +12,15 @@ class ErrorInstance;
 }
 
 // Attaches an async stack (from `promise`'s await chain) to `errorValue` when it is an
-// ErrorInstance whose stack is undecided (see errorStackIsUndecided); no-op otherwise. Never throws.
+// ErrorInstance whose stack is undecided (Bun::errorStackIsUndecided); no-op otherwise. Never throws.
 extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject*, JSC::EncodedJSValue errorValue, JSC::JSPromise*);
 
-// The same for an error that the calling native code just built. No script has seen the error,
-// so this entry does not look for a `stack` property or a structure that is not extensible.
+// For an error that the caller just built, so that no script has seen it: skips the lookup of an own `stack`.
 extern "C" void Bun__attachAsyncStackToFreshError(JSC::JSGlobalObject*, JSC::EncodedJSValue errorValue, JSC::JSPromise*);
 
 namespace Bun {
 
-// True while frames from another place can still become the stack of `error`: it has formatted no
-// stack, has no frames of its own, is extensible, and owns no `stack` property of any kind (a value,
-// an accessor, or the lazy accessor of Error.captureStackTrace). A read of `stack` decides nothing.
-// Runs no JavaScript and does not throw.
+// True while borrowed frames can still become the stack of `error`: it captured a frame list with no frames, formatted nothing, is extensible, and owns no `stack` but the unread lazy one of Error.captureStackTrace(). Runs no JavaScript.
 bool errorStackIsUndecided(JSC::VM&, JSC::ErrorInstance*);
 
 // C++ convenience wrapper over Bun__attachAsyncStackFromPromise.

@@ -4,8 +4,10 @@
 
 #include "BunClientData.h"
 #include "ErrorStackFrame.h"
+#include "FormatStackTraceForJS.h"
 
 #include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/FunctionExecutable.h>
@@ -148,22 +150,28 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     }
 }
 
-// What the error's construction leaves: it has formatted no stack and has no frames to format.
-static bool hasNoFramesOfItsOwn(JSC::ErrorInstance* error)
+static bool capturedNoFrames(JSC::ErrorInstance* error)
 {
     if (error->hasMaterializedErrorInfo())
         return false;
+    // No frame list: the error captured nothing, or it holds its stack as a string (structuredClone(), a collection).
     auto* frames = error->stackTrace();
-    return !frames || frames->isEmpty();
+    return frames && frames->isEmpty();
 }
 
 namespace Bun {
 
 bool errorStackIsUndecided(JSC::VM& vm, JSC::ErrorInstance* error)
 {
-    // An assignment to `stack` does not mark an error with no frames as materialized, so the property is looked up.
-    // Formatting also adds `line` and `column`, which an error that is not extensible must not gain.
-    return hasNoFramesOfItsOwn(error) && error->isStructureExtensible() && !JSC::isValidOffset(error->getDirectOffset(vm, vm.propertyNames->stack));
+    // Formatting adds `stack`, `line` and `column`, which an error that is not extensible must not gain.
+    if (!capturedNoFrames(error) || !error->isStructureExtensible())
+        return false;
+    JSC::PropertyOffset offset = error->getDirectOffset(vm, vm.propertyNames->stack);
+    if (!JSC::isValidOffset(offset))
+        return true;
+    // The unread lazy `stack` of Error.captureStackTrace() is no decision: a tail call can leave it with no frames (https://github.com/oven-sh/bun/issues/32132).
+    auto* accessor = dynamicDowncast<JSC::CustomGetterSetter>(error->getDirect(offset));
+    return accessor && accessor->getter() == errorInstanceLazyStackCustomGetter;
 }
 
 } // namespace Bun
@@ -197,7 +205,7 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
 extern "C" void Bun__attachAsyncStackToFreshError(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
 {
     auto* instance = dynamicDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(errorValue));
-    if (!instance || !promise || !hasNoFramesOfItsOwn(instance))
+    if (!instance || !promise || !capturedNoFrames(instance))
         return;
     ASSERT(Bun::errorStackIsUndecided(JSC::getVM(globalObject), instance));
     attachAsyncStack(globalObject, instance, promise);

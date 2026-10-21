@@ -1966,6 +1966,7 @@ impl<'p, 's> Checker<'p, 's> {
             .is_some_and(|m| self.is_declared_outside_classes(file, m));
         // Declarations with the same name form one property.
         let mut groups: Vec<(Atom, SmallVec<[MemberId; 4]>)> = Vec::new();
+        let mut names = OrderedSet::default();
         for m in members.iter() {
             let member = &hir[m];
             if (has_static_side && member.flags.contains(Flags::STATIC)) != want_static {
@@ -2005,9 +2006,9 @@ impl<'p, 's> Checker<'p, 's> {
                     if is_dynamic && self.is_late_bound_by_another_call(file, m) {
                         continue;
                     }
-                    match groups.iter_mut().find(|g| g.0 == name) {
-                        Some(group) => group.1.push(m),
-                        None => groups.push((name, smallvec![m])),
+                    match names.insert_full(name) {
+                        (_, true) => groups.push((name, smallvec![m])),
+                        (group, false) => groups[group].1.push(m),
                     }
                 }
                 MemberKind::CallSignature => {

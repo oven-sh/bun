@@ -152,7 +152,7 @@ struct UnionPropertyBuilder<'p, 's> {
     /// Everything in `symbols`, plus the symbols added after it filled up.
     more_symbols: FxHashSet<(*const Prop<'p>, MapperId)>,
     /// `indexTypes`. It's only passed to `getUnionType`, so duplicates are dropped.
-    index_types: SmallVec<[TypeId; 4]>,
+    index_types: OrderedSet<TypeId>,
     merged_instantiations: bool,
     flags: PropFlags,
     is_public: bool,
@@ -167,7 +167,7 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
             prop_hashes: FxHashSet::default(),
             symbols: SmallVec::new(),
             more_symbols: FxHashSet::default(),
-            index_types: SmallVec::new(),
+            index_types: OrderedSet::default(),
             merged_instantiations: false,
             flags: PropFlags::empty(),
             is_public: false,
@@ -221,9 +221,7 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
 
     fn add_index_type(&mut self, ty: TypeId) {
         self.flags |= PropFlags::WRITE_PARTIAL;
-        if !self.index_types.contains(&ty) {
-            self.index_types.push(ty);
-        }
+        self.index_types.insert(ty);
     }
 }
 
@@ -762,7 +760,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else if flags.contains(PropFlags::PROTECTED) {
             flags.remove(PropFlags::PRIVATE);
         }
-        prop_set.extend(index_types.into_iter().map(|t| Prop {
+        prop_set.extend(index_types.into_keys().into_iter().map(|t| Prop {
             name,
             flags: PropFlags::WRITE_PARTIAL,
             source: PropSource::Type(t),

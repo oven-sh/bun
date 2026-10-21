@@ -819,7 +819,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `instanceNames`, `staticNames`: 1 for a property, 2 for an accessor, 3 once errors have been reported.
-        let mut names: SmallVec<[(Atom, bool, u8); 4]> = SmallVec::new();
+        let (mut names, mut states) = (OrderedSet::default(), SmallVec::<[u8; 4]>::new());
         // 1 for an instance member, 2 for a static member.
         let mut private_names: SmallVec<[(Atom, u8); 4]> = SmallVec::new();
         for m in members.iter() {
@@ -858,14 +858,14 @@ impl Checker<'_, '_> {
                 if count < 2 || kind == 0 {
                     continue;
                 }
-                match names.iter_mut().find(|n| (n.0, n.1) == (name, is_static)) {
-                    None => names.push((name, is_static, kind)),
-                    Some(state) if state.2 == 1 || state.2 == 2 && kind != 2 => {
-                        state.2 = 3;
+                match names.insert_full((name, is_static)) {
+                    (_, true) => states.push(kind),
+                    (at, false) if states[at] == 1 || states[at] == 2 && kind != 2 => {
+                        states[at] = 3;
                         let is_static = Some(is_static);
                         self.report_duplicate_member_errors(file, members, name, is_static, 2300);
                     }
-                    Some(_) => {}
+                    _ => {}
                 }
             }
             if check_private_names && let (Some(name), PropKey::Private(_)) = (name, member.key) {

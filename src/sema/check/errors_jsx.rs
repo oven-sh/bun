@@ -342,17 +342,16 @@ impl Checker<'_, '_> {
                 self.grammar_error_at((file, tag.pos, tag.end), 2639, &[]);
             }
         }
-        let mut seen: Vec<PropKey> = Vec::new();
+        let mut seen = OrderedSet::default();
         for p in jsx.attrs.iter() {
             let attr = &hir[p];
             if attr.kind == PropKind::Spread {
                 continue;
             }
-            if seen.contains(&attr.key) {
+            if !seen.insert(attr.key) {
                 let at = (file, attr.pos, self.end_of_jsx_attr_name(file, p));
                 return self.grammar_error_at(at, 17001, &[]);
             }
-            seen.push(attr.key);
             // The parser places the `Missing` of `name={}` at the `{`.
             if attr.value.is_some() && matches!(hir[attr.value].kind, ExprKind::Missing) {
                 let at = (file, hir[attr.value].pos, attr.end);

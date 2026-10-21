@@ -26245,6 +26245,8 @@ describe.concurrent("--check", () => {
     const long = isDebug || isASAN ? 3000 : 40000;
     // Members of one list. A search through the list for each member makes these take 7 to 15 s in a release build.
     const wide = isDebug || isASAN ? 256 : 4096;
+    // Names in one declaration or one object literal, where such a search takes 9 s.
+    const many = isDebug || isASAN ? 2048 : 131072;
     const templates: [name: string, n: number, source: (n: number) => string][] = [
       [
         "a sequence of `if` statements in a `finally` block",
@@ -26416,6 +26418,34 @@ describe.concurrent("--check", () => {
           )
             .map(i => `export const t${i} = \`a\${n}b\${s}c\${u}d\${${i}}\` + \`\${o}\`;`)
             .join("\n")}`,
+      ],
+      [
+        "an interface with many members and an object literal that has them all",
+        many,
+        n =>
+          `interface T { ${range(n)
+            .map(i => `a${i}?: number;`)
+            .join(" ")} }\nexport const t: T = { ${range(n)
+            .map(i => `a${i}: ${i}`)
+            .join(", ")} };`,
+      ],
+      [
+        "an object literal with a computed name for each member of an enum",
+        many,
+        n =>
+          `enum E { ${range(n)
+            .map(i => `m${i}`)
+            .join(", ")} }\nexport const o: Record<E, number> = {\n${range(n)
+            .map(i => `  [E.m${i}]: ${i},`)
+            .join("\n")}\n};`,
+      ],
+      [
+        "a class with many pairs of accessors",
+        many / 2,
+        n =>
+          `export class C {\n${range(n)
+            .map(i => `  get a${i}(): number { return ${i}; }\n  set a${i}(v: number) {}`)
+            .join("\n")}\n}`,
       ],
       [
         "a call of a union of functions, whose parameter is an intersection",

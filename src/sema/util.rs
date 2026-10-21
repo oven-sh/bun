@@ -165,6 +165,11 @@ impl<K: Copy + Eq + std::hash::Hash> OrderedSet<K> {
         }
     }
 
+    #[inline]
+    pub(crate) fn contains(&self, key: K) -> bool {
+        self.index_of(key).is_some()
+    }
+
     /// Returns `index_of(key)`, and true if this call added the key.
     #[inline]
     pub(crate) fn insert_full(&mut self, key: K) -> (usize, bool) {
@@ -905,7 +910,7 @@ mod tests {
             }
         }
         assert_eq!(keys.index_of(39 * 7), Some(39));
-        assert!(keys.index_of(1).is_none() && keys.insert(1) && !keys.insert(1));
+        assert!(!keys.contains(1) && keys.insert(1) && !keys.insert(1));
         assert!(
             keys.into_keys()
                 .into_iter()

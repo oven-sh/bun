@@ -2192,14 +2192,30 @@ describe("bundler", () => {
     `,
   };
 
-  itBundled("barrel/UnusedReExportOfPackageWithSideEffectsIsSkipped", {
-    files: reExportOfPackageWithSideEffects,
-    outdir: "/out",
-    run: { stdout: "a undefined" },
-  });
+  // optimizeImports skips the re-export too, whatever "sideEffects" says.
+  for (const [name, barrelPackage, optimizeImports] of [
+    ["AutomaticMode", { sideEffects: false }, undefined],
+    ["OptimizeImports", {}, ["barrel-pkg"]],
+    ["OptimizeImportsWithBarrelFileListedInSideEffects", { sideEffects: ["./index.js"] }, ["barrel-pkg"]],
+  ] as const) {
+    itBundled(`barrel/UnusedReExportOfPackageWithSideEffectsIsSkipped/${name}`, {
+      files: {
+        ...reExportOfPackageWithSideEffects,
+        "/node_modules/barrel-pkg/package.json": JSON.stringify({
+          name: "barrel-pkg",
+          main: "./index.js",
+          ...barrelPackage,
+        }),
+      },
+      optimizeImports: optimizeImports && [...optimizeImports],
+      outdir: "/out",
+      run: { stdout: "a undefined" },
+    });
+  }
 
   // The ways to load effect-pkg: the application imports it, the package
-  // lists the barrel file in "sideEffects", or the barrel is not pure.
+  // lists the barrel file in "sideEffects", or the barrel is not pure. The
+  // last two hold in automatic mode only.
   for (const [name, files] of [
     [
       "ApplicationImportsThePackage",

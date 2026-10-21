@@ -1945,7 +1945,7 @@ test.concurrent("positions are mapped the same after a collection found the fram
 
 // The source map of a bundled file is dropped with the file's source, which the trace's code kept alive.
 test.concurrent.each(["inline", "linked"])(
-  "positions in a bundled module with an %s source map are mapped after the module is collected",
+  "positions in a bundled module are mapped after the module is collected (%s source map)",
   async sourcemap => {
     using dir = tempDir("stack-positions-of-collected-module", {
       "lib.ts": `

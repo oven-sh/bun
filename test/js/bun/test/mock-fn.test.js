@@ -386,10 +386,11 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledWith(43);
   });
   test("a call that a node:vm timeout stops keeps its incomplete result", () => {
+    let started = false;
+    let fn;
     // A timeout can pass before the implementation starts. The next turn has a longer one.
-    for (let timeout = 50; ; timeout *= 2) {
-      let started = false;
-      const fn = jest.fn(() => {
+    for (let timeout = 50; timeout <= 6400 && !started; timeout *= 2) {
+      fn = jest.fn(() => {
         started = true;
         // The loop has an end, so a timeout that does not work fails this test and does not hang it.
         for (const end = Date.now() + 10_000; Date.now() < end;);
@@ -401,11 +402,10 @@ describe("mock()", () => {
         code = error.code;
       }
       expect(code).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
-      if (!started) continue;
-      // What stops the run is not a value that the implementation threw.
-      expect(fn.mock.results).toEqual([{ type: "incomplete", value: undefined }]);
-      break;
     }
+    expect(started).toBe(true);
+    // What stops the run is not a value that the implementation threw.
+    expect(fn.mock.results).toEqual([{ type: "incomplete", value: undefined }]);
   });
   test("mockReset works", () => {
     const instance = new Error("foo");

@@ -1,13 +1,13 @@
-//! Prettier's `parser-postcss.js`: the tree of `postcss`, with selectors, values and parameters
-//! parsed.
+//! Prettier's `parser-postcss.js`: the `postcss` tree with selectors, values and parameters parsed.
 
 use super::Parser as Syntax;
 use super::media_query::{self, MediaNode};
+use super::misc::{line_comment_at_end, next_line_comment};
 use super::postcss::{self, Kind, NodeId, Range, Tree};
 use super::selector_parser::{SelectorId, Selectors};
 use super::value_parser::{ValueId, Values};
 use crate::stack::Stack;
-use crate::syntax_error::{Message, Refusal, Refused};
+use crate::syntax_error::{Message, Rejected, Rejection};
 use crate::text;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
@@ -19,8 +19,7 @@ pub(crate) enum Value<'a> {
     None,
     Text(Cow<'a, [u8]>),
     Parsed(ValueId),
-    /// `--a: { .. }`: `{ type: "css-rule", nodes }`. The nodes are those of the rule that is the only node of the
-    /// tree.
+    /// `--a: { .. }`: `{ type: "css-rule", nodes }`. The nodes are the children of the tree's only node, a rule.
     Rule(Box<Tree>),
 }
 
@@ -34,20 +33,20 @@ pub(crate) enum Params<'a> {
     Unknown(Cow<'a, [u8]>),
 }
 
-/// The selectors and the values of a node. Those of the next node take their place.
+/// One node's selectors and values. Converting the next node overwrites them.
 #[derive(Default)]
 pub(crate) struct Parsed {
     pub(crate) selectors: Selectors,
     pub(crate) values: Values,
 }
 
-/// A node, without what is in its block.
+/// A node, without its block's contents.
 pub(crate) struct CssNode<'a> {
     pub(crate) kind: Kind,
     /// `locStart(node)` and `locEnd(node)`
     pub(crate) start: usize,
     pub(crate) end: usize,
-    /// Whether it has `nodes`.
+    /// True if it has `nodes`.
     pub(crate) has_block: bool,
     /// `raws.before`, `raws.between`, `raws.after`, `raws.afterName`
     pub(crate) before: &'a [u8],
@@ -60,7 +59,7 @@ pub(crate) struct CssNode<'a> {
     /// `raws.selector`
     pub(crate) raw_selector: Cow<'a, [u8]>,
     pub(crate) is_scss_nested_property: bool,
-    /// `isNested`: a declaration of SCSS with a block.
+    /// `isNested`: an SCSS declaration with a block.
     pub(crate) is_nested: bool,
     pub(crate) prop: Cow<'a, [u8]>,
     pub(crate) value: Value<'a>,
@@ -75,33 +74,42 @@ pub(crate) struct CssNode<'a> {
     /// `raws.params`
     pub(crate) raw_params: Cow<'a, [u8]>,
     pub(crate) custom_selector: Option<Cow<'a, [u8]>>,
-    /// What `postcss-less` and Prettier say of a node of Less.
+    /// A trailing `//` comment split off the end of the params or the value. It's printed after the `;`, or before the
+    /// `{`, which then moves to the next line.
+    pub(crate) line_comment: &'a [u8],
+    /// Flags that `postcss-less` and Prettier set on a Less node.
     pub(crate) extend: bool,
     pub(crate) mixin: bool,
     pub(crate) function: bool,
     pub(crate) variable: bool,
 }
 
+/// Result of `Context::split_line_comment`.
+struct BeforeLineComment<'a> {
+    head: &'a [u8],
+    comment: &'a [u8],
+}
+
 pub(crate) struct Context<'a> {
-    /// What is parsed.
+    /// The text that's parsed.
     pub(crate) text: &'a [u8],
     /// `options.originalText`
     pub(crate) original_text: &'a [u8],
-    /// Whether that is the same.
+    /// True if `text` and `original_text` are the same.
     pub(crate) is_original_text: bool,
     /// `Tree::extra`
     pub(crate) extra: &'a [u8],
     pub(crate) syntax: Syntax,
     pub(crate) is_oxfmt: bool,
-    /// Why a node has not been converted.
-    pub(crate) refusal: Refusal,
+    /// Why a node couldn't be converted.
+    pub(crate) rejection: Rejection,
     pub(crate) stack: Stack,
-    /// By where a custom property set starts, whether what is in it [can be converted](Context::can_be_converted). One
-    /// that is in `n` others is converted for each of them.
+    /// Caches whether a custom property set's contents [can be converted](Context::can_be_converted), keyed by the
+    /// set's start offset. Otherwise a set nested in `n` others would be converted once for each of them.
     pub(crate) convertible_sets: RefCell<FxHashMap<u32, bool>>,
 }
 
-/// The part of `text` from `start` to `end`.
+/// `text[start..end]`, or nothing if that's out of range.
 fn slice<'a>(text: &Cow<'a, [u8]>, start: usize, end: usize) -> Cow<'a, [u8]> {
     match text {
         Cow::Borrowed(text) => Cow::Borrowed(text.get(start..end).unwrap_or_default()),
@@ -119,7 +127,7 @@ fn trim<'a>(text: &Cow<'a, [u8]>) -> Cow<'a, [u8]> {
     )
 }
 
-/// `/(\s*)(!default).*$/` or the same with `!global`: where the match starts.
+/// Matches `/(\s*)(!default).*$/`, or the same with `!global`, and returns the match's start.
 fn find_directive(value: &[u8], directive: &[u8]) -> Option<usize> {
     let mut from = 0;
     while let Some(at) = text::index_of_from(value, directive, from) {
@@ -133,7 +141,7 @@ fn find_directive(value: &[u8], directive: &[u8]) -> Option<usize> {
     None
 }
 
-/// `/^\s*:?\s*/`: the length of the match.
+/// Returns the length of the `/^\s*:?\s*/` match.
 fn after_name_prefix_len(after_name: &[u8]) -> usize {
     let rest = bun_core::strings::trim_js_whitespace_start(after_name);
     let rest = bun_core::strings::trim_js_whitespace_start(rest.strip_prefix(b":").unwrap_or(rest));
@@ -141,7 +149,7 @@ fn after_name_prefix_len(after_name: &[u8]) -> usize {
 }
 
 /// `params.replace(/^(?!if)([^"'\s(]+)(\s+)\(/, "$1($2")`
-fn move_space_behind_parenthesis(params: &[u8]) -> Option<Vec<u8>> {
+fn move_space_after_parenthesis(params: &[u8]) -> Option<Vec<u8>> {
     if params.starts_with(b"if") {
         return None;
     }
@@ -163,10 +171,10 @@ fn move_space_behind_parenthesis(params: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// `params.replace(/(\$\S+?)(\s+)?\.{3}/, "$1...$2")`
-fn move_space_behind_dots(params: &[u8]) -> Option<Vec<u8>> {
+fn move_space_after_dots(params: &[u8]) -> Option<Vec<u8>> {
     let mut from = 0;
     while let Some(dollar) = bun_core::strings::index_of_char_pos(params, b'$', from) {
-        // `\S+?` takes as little as it can, and no white space.
+        // `\S+?` is lazy and doesn't match whitespace.
         let mut at = dollar + 1;
         while params
             .get(at)
@@ -186,10 +194,31 @@ fn move_space_behind_dots(params: &[u8]) -> Option<Vec<u8>> {
                 return Some(out);
             }
         }
-        // Another `$` before the white space would be followed by the same, from further on.
+        // A later `$` before the whitespace would scan the same bytes and fail too, so skip past them.
         from = at;
     }
     None
+}
+
+/// True for the at-rules whose params Prettier parses into `node.value`.
+fn parses_params_as_value(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"namespace"
+            | b"supports"
+            | b"if"
+            | b"else"
+            | b"for"
+            | b"each"
+            | b"while"
+            | b"debug"
+            | b"mixin"
+            | b"include"
+            | b"function"
+            | b"return"
+            | b"define-mixin"
+            | b"add-mixin"
+    )
 }
 
 /// `getValueRootOffset` and `getAtRuleParamsRootOffset` for an at-rule.
@@ -197,10 +226,10 @@ fn value_root_offset(node: &CssNode<'_>) -> u32 {
     (node.start + 1 + node.name.len() + after_name_prefix_len(node.after_name)) as u32
 }
 
-/// `.a-#{ $b }` is `.a-#{$b}` for oxfmt, in a selector as in a value. Prettier leaves a selector as it is there.
-fn without_blanks_at_the_ends_of_interpolations(selector: &[u8]) -> Vec<u8> {
+/// oxfmt prints `.a-#{ $b }` as `.a-#{$b}` in selectors as well as in values. Prettier leaves selectors alone.
+fn trim_interpolation_whitespace(selector: &[u8]) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::with_capacity(selector.len());
-    // How many `{` are open in the interpolation. 0: it is not in one.
+    // The number of open `{` in the interpolation, or 0 outside of one.
     let mut depth = 0u32;
     let mut quote = 0u8;
     let mut at = 0;
@@ -233,7 +262,7 @@ fn without_blanks_at_the_ends_of_interpolations(selector: &[u8]) -> Vec<u8> {
     result
 }
 
-/// `isScssNestedPropertyNode`. `selector`: as `postcss` has cleaned it.
+/// `isScssNestedPropertyNode`. `selector` is the selector as cleaned by `postcss`.
 fn is_scss_nested_property(selector: &[u8]) -> bool {
     let mut selector = Cow::Borrowed(selector);
     // `.replace(/\/\*.*?\*\//, "")`
@@ -267,7 +296,28 @@ impl<'a> Context<'a> {
         postcss::text_of_range(range, self.text, self.extra)
     }
 
-    /// The texts of `ranges`, one after the other.
+    /// Returns the text of `range` as it is in the original file, trimmed. The copy of a Less file that gets parsed
+    /// has a space instead of every `*`, `"` and `'` between a `//` and the end of its line, whether or not the `//`
+    /// starts a comment. `range` excludes those spaces at either end of a value, so it's widened over them first.
+    pub(crate) fn original_text_of(&self, range: Range) -> &'a [u8] {
+        let before = self.text.get(..range.start as usize).unwrap_or_default();
+        let spaces_before = before.iter().rev().take_while(|it| **it == b' ').count();
+        self.original_text_from(Range::new(range.start - spaces_before as u32, range.end))
+    }
+
+    /// Like [`original_text_of`](Self::written), but only widens the end of `range`. Use it when `range` already starts
+    /// at the right byte, like a `//` comment's range.
+    fn original_text_from(&self, range: Range) -> &'a [u8] {
+        let text_after = self.text.get(range.end as usize..);
+        let Some(text_after) = text_after.filter(|_| !self.is_original_text) else {
+            return strings::trim_js_whitespace(self.of(range));
+        };
+        let spaces_after = text_after.iter().take_while(|it| **it == b' ').count();
+        let original =
+            (self.original_text).get(range.start as usize..range.end as usize + spaces_after);
+        strings::trim_js_whitespace(original.unwrap_or_default())
+    }
+
     fn concat(&self, ranges: &[Range]) -> Cow<'a, [u8]> {
         let mut all = Range::default();
         for (index, &range) in ranges.iter().enumerate() {
@@ -287,25 +337,62 @@ impl<'a> Context<'a> {
         Cow::Borrowed(self.of(all))
     }
 
-    /// What `parseNestedCSS` does with an at-rule of Less only. Returns whether that is all.
+    /// Splits `text` at the `//` comment it ends with. Returns the text before the comment, and the comment as it is
+    /// in the original file. `start` is the offset of `text` in the file. `text_after` is everything between `text` and
+    /// the `{` or the `;`. Returns `None` unless `text_after` has a line break.
+    fn split_line_comment(
+        &self,
+        text: &'a [u8],
+        start: u32,
+        text_after: &[u8],
+    ) -> Option<BeforeLineComment<'a>> {
+        if self.syntax == Syntax::Css
+            || !strings::contains(text, b"//")
+            || strings::index_of_any(text_after, b"\n\r").is_none()
+        {
+            return None;
+        }
+        let at = line_comment_at_end(text)?;
+        let comment =
+            self.original_text_from(Range::new(start + at as u32, start + text.len() as u32));
+        let head = &text[..at];
+        comment
+            .starts_with(b"//")
+            .then_some(BeforeLineComment { head, comment })
+    }
+
+    /// True if `value`, a custom property's value, has a `//` comment that would swallow a `;` printed after it. CSS
+    /// doesn't have `//` comments. Less only recognizes one after whitespace. `postcss-scss` treats every `//` as one.
+    fn has_line_comment(&self, value: &[u8]) -> bool {
+        let mut at = 0;
+        while self.syntax != Syntax::Css
+            && let Some(start) = next_line_comment(value, at)
+        {
+            if self.syntax == Syntax::Scss
+                || !value[..start]
+                    .last()
+                    .is_some_and(|it| !it.is_ascii_whitespace())
+            {
+                return true;
+            }
+            at = start + 2;
+        }
+        false
+    }
+
+    /// The Less-only part of `parseNestedCSS` for an at-rule. Returns true if the node needs no further conversion.
     fn convert_less_at_rule(
         &self,
         raw: &postcss::Node,
         node: &mut CssNode<'a>,
         parsed: &mut Parsed,
-    ) -> Result<bool, Refused> {
-        let parse = |text: Cow<'a, [u8]>, node: &CssNode<'a>, parsed: &mut Parsed| {
+    ) -> Result<bool, Rejected> {
+        let parse = |text: Cow<'a, [u8]>, root_offset: u32, parsed: &mut Parsed| {
             let Parsed { selectors, values } = parsed;
             values
-                .parse(
-                    &text,
-                    self.syntax,
-                    value_root_offset(node),
-                    selectors,
-                    &self.stack,
-                )
+                .parse(&text, self.syntax, root_offset, selectors, &self.stack)
                 .map(Value::Parsed)
-                .map_err(|_| self.refusal.note(Message::UnreadableAtRule, raw.start))
+                .map_err(|_| self.rejection.note(Message::UnreadableAtRule, raw.start))
         };
         // `node.params`
         let clean_params: Cow<'a, [u8]> = match &raw.clean_params {
@@ -319,9 +406,24 @@ impl<'a> Context<'a> {
             }
         };
 
-        // For `postcss-less` it is a variable, and `node.value` is a string.
+        // `postcss-less` marks it as a variable, and `node.value` is a string.
         if raw.variable {
-            let mut value = skip(&clean_params, raw.value_skips as usize);
+            // Prettier parses `node.params`, where `postcss` has already stripped most comments. It then reads the text
+            // of the remaining comments at offsets that assume nothing was stripped: `@a: b /* c */ d/* e */f` becomes
+            // `@a: b d  c */ d f`.
+            let mut value = match raw.value_skips {
+                0 => {
+                    let colon_and_whitespace_len = after_name_prefix_len(node.after_name) as u32;
+                    self.concat(&[
+                        Range::new(
+                            raw.after_name.start + colon_and_whitespace_len,
+                            raw.after_name.end,
+                        ),
+                        raw.params,
+                    ])
+                }
+                skips => skip(&clean_params, skips as usize),
+            };
             if !bun_core::strings::trim_js_whitespace(&value).is_empty() {
                 for directive in [&b"!default"[..], b"!global"] {
                     if let Some(at) = find_directive(&value, directive) {
@@ -331,19 +433,22 @@ impl<'a> Context<'a> {
                         }
                     }
                 }
-                node.value = parse(value, node, parsed)?;
+                node.value = parse(value, value_root_offset(node), parsed)?;
             }
         }
 
         if raw.mixin {
+            // Prettier turns `.a() // b⏎;` into `.a() // b;`.
+            let mut params = &node.raw_params[..];
+            if let Cow::Borrowed(text) = node.raw_params
+                && let Some(BeforeLineComment { head, comment }) =
+                    self.split_line_comment(text, value_root_offset(node), self.of(raw.between))
+            {
+                params = strings::trim_js_whitespace_end(head);
+                node.line_comment = comment;
+            }
             // `raws.identifier + name + raws.afterName + raws.params`
-            let source = [
-                self.of(raw.identifier),
-                node.name,
-                node.after_name,
-                &node.raw_params,
-            ]
-            .concat();
+            let source = [self.of(raw.identifier), node.name, node.after_name, params].concat();
             node.selector = Some(parsed.selectors.parse(&source, &self.stack));
             return Ok(true);
         }
@@ -357,17 +462,15 @@ impl<'a> Context<'a> {
             node.variable = true;
             let rest = &node.name[colon + 1..];
             node.name = &node.name[..colon];
-            let value = if clean_params.is_empty() {
-                Cow::Borrowed(rest)
-            } else if node.after_name.is_empty() && raw.clean_params.is_none() {
-                Cow::Borrowed(self.of(Range::new(
-                    raw.name.start + colon as u32 + 1,
-                    raw.params.end,
-                )))
-            } else {
-                Cow::Owned([rest, &clean_params].concat())
+            // Prettier joins `rest` and the params without `raws.afterName`, so `@a:1px solid` becomes `@a: 1pxsolid`.
+            // To compute the value's offset in the file it also counts `raws.afterName` instead of the colon. Comment
+            // text is read from that offset, so `@a:b(c)/* d */e` becomes `@a: b(c) )/* d * e`.
+            let after_colon = raw.name.start + colon as u32 + 1;
+            let value = match clean_params.is_empty() {
+                true => rest,
+                false => self.of(Range::new(after_colon, raw.params.end)),
             };
-            node.value = parse(value, node, parsed)?;
+            node.value = parse(Cow::Borrowed(value), after_colon, parsed)?;
         }
         // `@color :blue;`
         if !matches!(node.name, b"page" | b"nest" | b"keyframes") && clean_params.starts_with(b":")
@@ -378,13 +481,14 @@ impl<'a> Context<'a> {
                 false => self.of(Range::new(raw.after_name.start, raw.after_name.end + 1)),
             };
             if clean_params.len() > 1 {
-                node.value = parse(skip(&clean_params, 1), node, parsed)?;
+                let value = self.of(Range::new(raw.params.start + 1, raw.params.end));
+                node.value = parse(Cow::Borrowed(value), raw.params.start + 1, parsed)?;
             }
         }
         Ok(node.variable)
     }
 
-    /// Whether `id` and everything in it can be converted.
+    /// True if `id` and all its descendants can be converted.
     fn can_be_converted(&self, tree: &Tree, id: NodeId, parsed: &mut Parsed) -> bool {
         self.stack.has_room()
             && self.convert(tree, id, parsed).is_ok()
@@ -393,8 +497,8 @@ impl<'a> Context<'a> {
                 .all(|child| self.can_be_converted(tree, child, parsed))
     }
 
-    /// Whether the rule `only` of `tree`, which is what is in the custom property set that starts at `start`, can be
-    /// converted.
+    /// True if `only` can be converted. It's the only rule in `tree`, which has the contents of the custom property set
+    /// that starts at `start`.
     fn is_convertible_set(
         &self,
         start: u32,
@@ -422,7 +526,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// The name that an at-rule has for Prettier.
+    /// Returns the at-rule's name as Prettier sees it.
     pub(crate) fn name_of_at_rule(&self, raw: &postcss::Node) -> &'a [u8] {
         let name = self.of(raw.name);
         match bun_core::strings::index_of_char_usize(name, b':') {
@@ -434,13 +538,13 @@ impl<'a> Context<'a> {
         }
     }
 
-    /// `parseNestedCSS`, and `calculateLoc` for the node. What has been in `parsed` is lost.
+    /// `parseNestedCSS`, plus `calculateLoc` for the node. Overwrites `parsed`.
     pub(crate) fn convert(
         &self,
         tree: &Tree,
         id: NodeId,
         parsed: &mut Parsed,
-    ) -> Result<CssNode<'a>, Refused> {
+    ) -> Result<CssNode<'a>, Rejected> {
         parsed.selectors.clear();
         parsed.values.clear();
         let raw = &tree.nodes[id as usize];
@@ -470,6 +574,7 @@ impl<'a> Context<'a> {
             params: Params::None,
             raw_params: Cow::Borrowed(b""),
             custom_selector: None,
+            line_comment: b"",
             extend: raw.extend,
             mixin: raw.mixin,
             function: raw.function,
@@ -488,15 +593,14 @@ impl<'a> Context<'a> {
                     && self.syntax == Syntax::Scss
                     && bun_core::strings::contains(&node.raw_selector, b"#{")
                 {
-                    node.raw_selector = Cow::Owned(without_blanks_at_the_ends_of_interpolations(
-                        &node.raw_selector,
-                    ));
+                    node.raw_selector =
+                        Cow::Owned(trim_interpolation_whitespace(&node.raw_selector));
                 }
-                // Prettier has no way to print a selector that is still a string.
+                // Prettier can't print a selector that's still a string.
                 if bun_core::strings::trim_js_whitespace(&node.raw_selector).is_empty()
                     || (node.raw_selector.starts_with(b"@") && node.raw_selector.ends_with(b":"))
                 {
-                    return Err(self.refusal.note(Message::RuleWithoutSelector, raw.start));
+                    return Err(self.rejection.note(Message::RuleWithoutSelector, raw.start));
                 }
                 {
                     let clean = raw
@@ -522,7 +626,8 @@ impl<'a> Context<'a> {
                 node.start + bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len())
             }
             Some(end) => end as usize,
-            // What is in `parsed` is lost, which only matters for what is printed: the root is not.
+            // `end_of` overwrites `parsed`. That's fine for the root, which prints nothing from it. Other nodes pass a
+            // scratch one.
             None => match (raw.kind, raw.last_child) {
                 (Kind::AtRule, 0) => {
                     node.start + 1 + node.name.len() + node.after_name.len() + node.raw_params.len()
@@ -541,13 +646,22 @@ impl<'a> Context<'a> {
         raw: &postcss::Node,
         node: &mut CssNode<'a>,
         parsed: &mut Parsed,
-    ) -> Result<(), Refused> {
+    ) -> Result<(), Rejected> {
         let value = self.of(raw.value);
         // `getValueRootOffset`
         let root_offset = raw.start + node.prop.len() as u32 + node.between.len() as u32;
 
+        let is_custom_property = node.prop.starts_with(b"--");
         // A custom property set looks like a declaration.
-        if node.prop.starts_with(b"--") && value.starts_with(b"{") {
+        if is_custom_property && let Some(rest) = value.strip_prefix(b"{") {
+            // `--a: {"b":1}` is JSON for a script. Prettier parses it as a set anyway and adds a `;` before the `}`.
+            if matches!(
+                strings::trim_js_whitespace_start(rest).first(),
+                Some(b'"' | b'\'')
+            ) {
+                node.value = Value::Text(Cow::Borrowed(self.original_text_of(raw.value)));
+                return Ok(());
+            }
             let mut rules = None;
             if bun_core::strings::trim_js_whitespace_end(raw.clean_value.as_deref().unwrap_or(value)).ends_with(b"}")
                 && let Some(end) = raw.end
@@ -560,7 +674,7 @@ impl<'a> Context<'a> {
                 && only != 0
                 && only == tree.nodes[0].last_child
                 && tree.nodes[only as usize].kind == Kind::Rule
-                // What is in it would not live long enough.
+                // Text in `tree.extra` wouldn't live long enough.
                 && tree.extra.is_empty()
                 && self.is_convertible_set(raw.start, &tree, only, parsed)
             {
@@ -569,9 +683,9 @@ impl<'a> Context<'a> {
             parsed.values.clear();
             node.value = match rules {
                 Some(rules) => Value::Rule(rules),
-                // Prettier reads `raws.value.raw`, which is only there if the value has comments.
+                // Prettier reads `raws.value.raw`, which only exists if the value has comments.
                 None if raw.clean_value.is_none() => {
-                    return Err(self.refusal.note(Message::UnreadableValue, root_offset));
+                    return Err(self.rejection.note(Message::UnreadableValue, root_offset));
                 }
                 None => Value::Parsed(parsed.values.unknown(value, root_offset)),
             };
@@ -585,6 +699,17 @@ impl<'a> Context<'a> {
                 None => Cow::Borrowed(value),
             });
         } else {
+            // Prettier reads `b//` in `a: b// c⏎;` as a word and prints `a: b// c;`.
+            let trimmed = strings::trim_js_whitespace_end(value);
+            if !raw.has_block
+                && !is_custom_property
+                && let Some(BeforeLineComment { head, comment }) =
+                    self.split_line_comment(trimmed, root_offset, &value[trimmed.len()..])
+                && head.last().is_some_and(|it| !it.is_ascii_whitespace())
+            {
+                value = head;
+                node.line_comment = comment;
+            }
             let has_bang = strings::contains_char(value, b'!');
             if has_bang && let Some(at) = find_directive(value, b"!default") {
                 node.scss_default = true;
@@ -599,7 +724,7 @@ impl<'a> Context<'a> {
                 value = &value[..at];
             }
             if value.starts_with(b"progid:") {
-                // It stays the string that `postcss` has made of it.
+                // Keep the string from `postcss`.
                 node.value = Value::Text(match &raw.clean_value {
                     Some(clean) => Cow::Owned(clean.to_vec()),
                     None => Cow::Borrowed(self.of(raw.value)),
@@ -615,12 +740,23 @@ impl<'a> Context<'a> {
                     &mut parsed.selectors,
                     &self.stack,
                 )
-                .map_err(|_| self.refusal.note(Message::UnreadableValue, root_offset))?;
-            node.value = Value::Parsed(root);
+                .map_err(|_| self.rejection.note(Message::UnreadableValue, root_offset))?;
+            // Prettier treats every `//` as the start of a comment: `--a: https://b` becomes `--a: https: ; //b`.
+            let is_verbatim = is_custom_property
+                && strings::contains(value, b"//")
+                && next_line_comment(value, 0).is_some()
+                && !self.has_line_comment(value);
+            let end = raw.value.start + value.len() as u32;
+            node.value = match is_verbatim {
+                true => Value::Text(Cow::Borrowed(
+                    self.original_text_of(Range::new(raw.value.start, end)),
+                )),
+                false => Value::Parsed(root),
+            };
         }
 
         if self.syntax == Syntax::Less {
-            // `a +: b`, which merges: `/^\s*\+\s*:/`
+            // `a +: b`, a merge: `/^\s*\+\s*:/`
             let spaces = text::leading_white_space_len(&node.between);
             if let Some(rest) = node.between[spaces..].strip_prefix(b"+")
                 && bun_core::strings::trim_js_whitespace_start(rest).starts_with(b":")
@@ -648,7 +784,7 @@ impl<'a> Context<'a> {
         raw: &postcss::Node,
         node: &mut CssNode<'a>,
         parsed: &mut Parsed,
-    ) -> Result<(), Refused> {
+    ) -> Result<(), Rejected> {
         let has_text =
             |range: Range| !bun_core::strings::trim_js_whitespace(self.of(range)).is_empty();
         let params = trim(&self.concat(&[
@@ -669,12 +805,18 @@ impl<'a> Context<'a> {
             return Ok(());
         }
         let name = node.name;
-        let root_offset = value_root_offset(node);
+        // Offset of `params` in the file. Prettier computes it from the name. If the params are only comments, they're
+        // in `raws.between` and Prettier doesn't count the whitespace before them: `@else /* a */ {` becomes
+        // `@else  /* a * {`.
+        let root_offset = match raw.params.is_empty() && raw.after_name.is_empty() {
+            true => raw.between.start + text::leading_white_space_len(self.of(raw.between)) as u32,
+            false => value_root_offset(node),
+        };
         let Parsed { selectors, values } = parsed;
         let value = |text: &[u8], values: &mut Values, selectors: &mut Selectors| {
             values
                 .parse(text, self.syntax, root_offset, selectors, &self.stack)
-                .map_err(|_| self.refusal.note(Message::UnreadableAtRule, raw.start))
+                .map_err(|_| self.rejection.note(Message::UnreadableAtRule, raw.start))
         };
 
         if self.syntax == Syntax::Css && name == b"custom-selector" {
@@ -683,7 +825,7 @@ impl<'a> Context<'a> {
                 Some(clean) => Cow::Owned(clean.to_vec()),
                 None => Cow::Borrowed(self.of(raw.params)),
             };
-            let unreadable = || self.refusal.note(Message::UnreadableAtRule, raw.start);
+            let unreadable = || self.rejection.note(Message::UnreadableAtRule, raw.start);
             let start = text::index_of_from(&clean, b":--", 0).ok_or_else(unreadable)?;
             let name_len = clean[start..]
                 .iter()
@@ -697,11 +839,30 @@ impl<'a> Context<'a> {
                 Some(selectors.parse(&trim(&slice(&clean, name_len, clean.len())), &self.stack));
             return Ok(());
         }
+        // When the `{` or the `;` is on the line after the comment, Prettier prints `@media (a) // b {`,
+        // `@if $a// b {`, `@else  { // ` and `@extend .a // b;`. It gets two cases right: a comment it finds while
+        // parsing a value, which needs whitespace before it, and a comment before the `{` of an at-rule whose params it
+        // doesn't parse.
+        let is_comment_attached = |head: &[u8]| !head.last().is_some_and(u8::is_ascii_whitespace);
+        let mut params = params;
+        if let Cow::Borrowed(text) = params
+            && let Some(BeforeLineComment { head, comment }) =
+                self.split_line_comment(text, root_offset, self.of(raw.between))
+            && match &*name.to_ascii_lowercase() {
+                b"media" | b"custom-media" => true,
+                b"import" | b"use" | b"forward" => is_comment_attached(head),
+                _ if parses_params_as_value(name) => is_comment_attached(head),
+                _ => !raw.has_block,
+            }
+        {
+            params = Cow::Borrowed(strings::trim_js_whitespace_end(head));
+            node.line_comment = comment;
+        }
         if params.is_empty() {
             return Ok(());
         }
         if matches!(name, b"warn" | b"error") {
-            // For oxfmt what they say is an expression like any other.
+            // oxfmt formats their message like any other expression.
             match self.is_oxfmt.then(|| value(&params, values, selectors)) {
                 Some(Ok(parsed)) => node.value = Value::Parsed(parsed),
                 _ => node.params = Params::Unknown(params.clone()),
@@ -729,37 +890,32 @@ impl<'a> Context<'a> {
             }
         } else if matches!(&*name.to_ascii_lowercase(), b"import" | b"use" | b"forward") {
             node.params = Params::Value(value(&params, values, selectors)?);
-        } else if matches!(
-            name,
-            b"namespace"
-                | b"supports"
-                | b"if"
-                | b"else"
-                | b"for"
-                | b"each"
-                | b"while"
-                | b"debug"
-                | b"mixin"
-                | b"include"
-                | b"function"
-                | b"return"
-                | b"define-mixin"
-                | b"add-mixin"
-        ) {
+        } else if parses_params_as_value(name) {
             let mut text = params.clone();
-            if let Some(moved) = move_space_behind_dots(&text) {
+            if let Some(moved) = move_space_after_dots(&text) {
                 text = Cow::Owned(moved);
             }
-            if let Some(moved) = move_space_behind_parenthesis(&text) {
+            if let Some(moved) = move_space_after_parenthesis(&text) {
                 text = Cow::Owned(moved);
             }
             node.value = Value::Parsed(value(&text, values, selectors)?);
         } else if matches!(&*name.to_ascii_lowercase(), b"media" | b"custom-media") {
             node.params = if bun_core::strings::contains(&params, b"#{") {
-                // What Prettier makes of it is lost, and the string of `postcss` stays.
+                // Prettier's result for this case is discarded, so the string from `postcss` stays.
                 Params::Text(match &raw.clean_params {
                     Some(clean) => Cow::Owned(clean.to_vec()),
                     None => Cow::Borrowed(self.of(raw.params)),
+                })
+            } else if self.syntax != Syntax::Css
+                && strings::contains(&params, b"//")
+                && next_line_comment(&params, 0).is_some()
+            {
+                // Prettier joins a query onto one line: `@media a // b⏎ and (c)` becomes `@media a // b and (c)`. Keep
+                // the original text instead.
+                let start = root_offset as usize;
+                Params::Text(match self.original_text.get(start..start + params.len()) {
+                    Some(text) => Cow::Borrowed(text),
+                    None => params.clone(),
                 })
             } else {
                 match params {

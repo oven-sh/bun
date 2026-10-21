@@ -1,5 +1,6 @@
-//! What a run says to people that is not a problem in a file, and what oxlint calls `default`. ESLint's flavour has the former on
-//! standard error. oxlint writes nothing there, so its `default` is `pretty` with all of it after the problems.
+//! Everything a run tells people besides the problems in files, and oxlint's `default` format. With ESLint's flavor,
+//! the former goes to standard error. oxlint writes nothing there, so its `default` is `pretty` with all of it after
+//! the problems.
 
 use super::stylish::plural;
 use super::{Format, Meta, excerpt};
@@ -78,7 +79,8 @@ pub(crate) fn write(
     }
 }
 
-/// With the end of the last line. It is never empty: oxlint's ends with two lines also when there is no problem, or `--silent`.
+/// Includes the final newline. The output is never empty, because oxlint prints its last two lines even with no
+/// problems or with `--silent`.
 pub(super) fn write_default(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     excerpt::write_pretty(out, results, meta);
     if !out.is_empty() {
@@ -98,8 +100,9 @@ pub(super) fn write_default(out: &mut Vec<u8>, results: &[FileResult], meta: &Me
     );
 }
 
-/// All that oxlint prints when it has found no file to lint. It asks no format for the problems then, so there is no document
-/// without problems, only what a format prints at the very end of a run. `is_error`: not `--no-error-on-unmatched-pattern`.
+/// Everything oxlint prints when it finds no files to lint. It never asks the format to print problems then, so there's
+/// no empty document, only what the format prints at the very end of a run. `is_error` is false with
+/// `--no-error-on-unmatched-pattern`.
 pub(crate) fn without_files(format: Format, meta: &Meta, is_error: bool) -> Vec<u8> {
     let mut out = Vec::new();
     if is_error && format == Format::OxlintDefault {
@@ -119,9 +122,9 @@ pub(crate) fn without_files(format: Format, meta: &Meta, is_error: bool) -> Vec<
     out
 }
 
-/// What oxlint reports about `oxlint-suppressions.json`: errors of no rule, at no place, in a file without a name and without
-/// text.
-pub(crate) fn about_suppressions(has_unused: bool, has_new: bool) -> Option<FileResult> {
+/// oxlint's errors about `oxlint-suppressions.json`. They have no rule and no location, and are in a file without a
+/// name or text.
+pub(crate) fn suppression_errors(has_unused: bool, has_new: bool) -> Option<FileResult> {
     let error = |text: &[u8], help: &'static str| LintMessage {
         message: text.to_vec(),
         details: Some(Box::new(Details {

@@ -21,11 +21,11 @@ const PROCESS_MODULES: [&str; 2] = ["node:process", "process"];
 
 pub struct State<'a> {
     runs_later: RunsLater<'a>,
-    /// The file mentions one of [`PROCESS_MODULES`].
+    /// True if the file mentions one of [`PROCESS_MODULES`].
     mentions_module: bool,
 }
 
-/// `process.env`, `Bun.env`, `import.meta.env`, and the `env` of `import { env } from "node:process"`.
+/// `process.env`, `Bun.env`, `import.meta.env`, and the `env` from `import { env } from "node:process"`.
 fn is_environment(e: Expr, mentions_module: bool) -> bool {
     match e.kind() {
         ExprKind::Dot { obj, name, .. } if name.name().is("env") => match obj.kind() {
@@ -53,7 +53,8 @@ impl NoEnvAtModuleScope {
         is_listed(&self.allow, name)
     }
 
-    /// `environment` is used as a whole. What `const { A, B } = process.env` reads has names.
+    /// Called when `environment` is used as a whole. True for `const { A, B } = process.env` if every name it reads is
+    /// allowed.
     fn allows_all_of(&self, environment: Expr) -> bool {
         match environment.parent() {
             Node::VarDecl(declaration) => match declaration.pat().kind() {
@@ -85,7 +86,7 @@ impl Rule for NoEnvAtModuleScope {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // Not what a type has after `typeof`.
+        // Skip a member access in a `typeof` type.
         if !ast_utils::is_member_expression(e) {
             return;
         }

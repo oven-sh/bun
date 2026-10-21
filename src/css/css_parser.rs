@@ -2336,6 +2336,19 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 }
 
+/// Positions are `i32`, and a column at the end of the input is `len + 1`.
+const MAX_INPUT_LEN: usize = i32::MAX as usize - 1;
+
+fn check_input_len(code: &[u8]) -> Maybe<(), Err<ParserError>> {
+    if code.len() > MAX_INPUT_LEN {
+        return Err(Err {
+            kind: ParserError::input_too_large,
+            loc: None,
+        });
+    }
+    Ok(())
+}
+
 // ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
 mod stylesheet_impl {
     use super::*;
@@ -2567,6 +2580,7 @@ mod stylesheet_impl {
             // returned `StyleSheet`.
             // TODO(refactor): re-thread the lifetime through `CssRuleList<'bump, R>`
             // and drop the `'static` bound on `arena`.
+            check_input_len(code)?;
             let mut composes = ComposesMap::default();
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
@@ -2669,6 +2683,7 @@ mod stylesheet_impl {
             // TODO: 'bump lifetime threading — `DeclarationBlock<'static>` in
             // `StyleAttribute` vs `Parser<'a>` here; `arena: &'static Bump`
             // matches the crate-wide erasure (see `parse_with`).
+            check_input_len(code)?;
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
                 symbols: SymbolList::default(),
@@ -2982,12 +2997,19 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserOpts: u8 {
         const CSS_MODULES = 0b1;
+        /// Makes `TokenList::parse` keep `url()` as a raw token instead of creating an import record.
+        const RAW_URL_TOKENS = 0b10;
     }
 }
 impl ParserOpts {
     #[inline]
     pub(crate) fn css_modules(self) -> bool {
         self.contains(Self::CSS_MODULES)
+    }
+
+    #[inline]
+    pub(crate) fn raw_url_tokens(self) -> bool {
+        self.contains(Self::RAW_URL_TOKENS)
     }
 }
 
@@ -3059,10 +3081,13 @@ impl<'a> Parser<'a> {
     }
 
     // TODO: dedupe import records??
+    /// `start_position..end_position` is the whole token, such as `url("./a.png")`: the range that
+    /// an error about the import underlines.
     pub(crate) fn add_import_record(
         &mut self,
         url: &[u8],
         start_position: usize,
+        end_position: usize,
         kind: ImportKind,
     ) -> CssResult<u32> {
         if let Some(ptr) = self.import_records {
@@ -3081,8 +3106,7 @@ impl<'a> Parser<'a> {
                     loc: bun_ast::Loc {
                         start: i32::try_from(start_position).expect("int cast"),
                     },
-                    // TODO: technically this is not correct because the url could be escaped
-                    len: i32::try_from(url.len()).expect("int cast"),
+                    len: i32::try_from(end_position - start_position).expect("int cast"),
                 },
                 tag: Default::default(),
                 loader: None,
@@ -3226,6 +3250,17 @@ impl<'a> Parser<'a> {
         if result.is_err() {
             self.reset(&start);
         }
+        result
+    }
+
+    pub(crate) fn parse_with_raw_url_tokens<R>(
+        &mut self,
+        func: impl FnOnce(&mut Parser) -> CssResult<R>,
+    ) -> CssResult<R> {
+        let saved = self.flags;
+        self.flags.insert(ParserOpts::RAW_URL_TOKENS);
+        let result = func(self);
+        self.flags = saved;
         result
     }
 
@@ -3541,10 +3576,6 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn position(&self) -> usize {
-        debug_assert!(strings::is_on_char_boundary(
-            self.input.tokenizer.src,
-            self.input.tokenizer.position
-        ));
         self.input.tokenizer.position
     }
 
@@ -3908,7 +3939,7 @@ pub mod nth {
                     } else if strings::eql_case_insensitive_asciii_check_length(unit, b"n-") {
                         return parse_signless_b(input, a, -1);
                     } else {
-                        if let Ok(b) = parse_n_dash_digits(unit) {
+                        if let Ok(b) = parse_n_dash_digits(input.arena(), unit) {
                             return Ok((a, b));
                         } else {
                             return Err(input.new_unexpected_token_error(Token::Ident(unit)));
@@ -3936,7 +3967,7 @@ pub mod nth {
                     } else {
                         (value, 1)
                     };
-                    if let Ok(b) = parse_n_dash_digits(slice) {
+                    if let Ok(b) = parse_n_dash_digits(input.arena(), slice) {
                         return Ok((a, b));
                     }
                     return Err(input.new_unexpected_token_error(Token::Ident(value)));
@@ -3951,7 +3982,7 @@ pub mod nth {
                     } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
                         return parse_signless_b(input, 1, -1);
                     } else {
-                        if let Ok(b) = parse_n_dash_digits(value) {
+                        if let Ok(b) = parse_n_dash_digits(input.arena(), value) {
                             return Ok((1, b));
                         } else {
                             return Err(input.new_unexpected_token_error(Token::Ident(value)));
@@ -4006,21 +4037,20 @@ pub mod nth {
         Err(input.new_unexpected_token_error(tok))
     }
 
-    fn parse_n_dash_digits(str: &[u8]) -> Maybe<i32, ()> {
+    fn parse_n_dash_digits(arena: &Bump, str: &[u8]) -> Maybe<i32, ()> {
         let bytes = str;
         if bytes.len() >= 3
             && strings::eql_case_insensitive_asciii_check_length(&bytes[0..2], b"n-")
             && bytes[2..].iter().all(|&b| b >= b'0' && b <= b'9')
         {
-            parse_number_saturate(&str[1..]) // Include the minus sign
+            parse_number_saturate(arena, &str[1..]) // Include the minus sign
         } else {
             Err(())
         }
     }
 
-    fn parse_number_saturate(string: &[u8]) -> Maybe<i32, ()> {
-        let arena = Bump::new();
-        let mut input = ParserInput::new(string, &arena);
+    fn parse_number_saturate(arena: &Bump, string: &[u8]) -> Maybe<i32, ()> {
+        let mut input = ParserInput::new(string, arena);
         let mut parser = Parser::new(&mut input, None, ParserOpts::default(), None);
         let tok = match parser.next_including_whitespace_and_comments() {
             Ok(v) => v,
@@ -4108,7 +4138,6 @@ impl<'a> Tokenizer<'a> {
     }
 
     pub(crate) fn get_position(&self) -> usize {
-        debug_assert!(strings::is_on_char_boundary(self.src, self.position));
         self.position
     }
 

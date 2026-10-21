@@ -6,8 +6,10 @@ const Worker = require("internal/cluster/Worker");
 const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
-const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
-const { UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
+const onInternalMessage = $bindgen("node_cluster_binding.bind.ts", "onInternalMessagePrimary");
+const validateFd = $bindgen("node_cluster_binding.bind.ts", "clusterValidateFd");
+const isDgramSocketFd = $bindgen("udp_socket.bind.ts", "dgramIsFdAdopted");
+const { UV_EEXIST, UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 
 let child_process;
 let RoundRobinHandle;
@@ -240,6 +242,19 @@ function exitedAfterDisconnect(worker, message) {
   send(worker, { ack: message.seq });
 }
 
+// A handle closes its fd when its last worker is removed, so a second handle for the same fd
+// would close it while the first handle still uses it.
+function isFdInUse(fd: number, isUdp: boolean) {
+  // SharedHandle rejects a number that isn't a valid fd.
+  if ((fd | 0) !== fd) return false;
+  if (isUdp && isDgramSocketFd(fd)) return true;
+  let inUse = false;
+  handles.forEach(handle => {
+    if (handle.fd === fd) inUse = true;
+  });
+  return inUse;
+}
+
 function queryServer(worker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
@@ -293,6 +308,16 @@ function queryServer(worker, message) {
       error.syscall = "write";
       worker.emit("error", error);
       return;
+    }
+    const fd = message.fd;
+    if (typeof fd === "number" && fd >= 0) {
+      const isUdp = message.addressType === "udp4" || message.addressType === "udp6";
+      if (isFdInUse(fd, isUdp)) {
+        // Like node, report a wrong fd type before reporting that the fd is in use.
+        const errno = validateFd(fd, isUdp) || UV_EEXIST;
+        send(worker, { errno, key, ack: message.seq, data: cachedHandle ? cachedHandle.data : message.data }, null);
+        return;
+      }
     }
     if (
       schedulingPolicy !== SCHED_RR ||

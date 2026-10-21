@@ -7,7 +7,7 @@ use std::cmp::Reverse;
 /// Enforce variables to be declared either together or separately in functions.
 pub struct OneVar {
     separate_requires: bool,
-    /// By [`index`].
+    /// Indexed by [`index`].
     kinds: [KindOptions; 5],
 }
 
@@ -18,7 +18,7 @@ enum Mode {
     Consecutive,
 }
 
-/// What is asked of the declarations of one kind.
+/// The modes configured for one kind of declaration.
 #[derive(Copy, Clone, Default)]
 struct KindOptions {
     uninitialized: Option<Mode>,
@@ -54,7 +54,7 @@ const SPLIT: Message = Message::new(
     "Split '{{type}}' declarations into multiple statements.",
 );
 
-/// The keys of the options, by [`index`].
+/// The option keys, indexed by [`index`].
 const KEYS: [&str; 5] = ["var", "let", "const", "using", "awaitUsing"];
 
 fn index(kind: VarKind) -> usize {
@@ -95,7 +95,7 @@ impl KindOptions {
     }
 }
 
-/// What has been declared in a scope, as far as it has to be declared together.
+/// Tracks what a scope has declared so far. Only declarations that have to be combined are recorded.
 #[derive(Copy, Clone, Default)]
 struct Seen {
     initialized: bool,
@@ -103,35 +103,34 @@ struct Seen {
     required: bool,
 }
 
-/// Whether ESLint's `startFunction` is called for `node`, or with `of_blocks` its `startBlock` as well.
-fn is_scope(node: Node<'_>, of_blocks: bool, is_oxlint: bool) -> bool {
+/// True if ESLint calls `startFunction` for `node`, or with `includes_blocks`, `startFunction` or `startBlock`.
+fn is_scope(node: Node<'_>, includes_blocks: bool, is_oxlint: bool) -> bool {
     match node {
-        // The block that is the body of a function is not a node: one scope stands for ESLint's
-        // two, of which the outer is empty.
+        // A function's body block isn't a node here, so one scope replaces ESLint's two. The outer one is always empty.
         Node::File(_) => true,
         Node::Func(func) => func.has_body(),
         Node::Stmt(statement) => match statement.tag() {
-            // ESLint does not know namespaces. For oxlint what is declared in one is apart, `var` too.
+            // ESLint doesn't know about namespaces. oxlint treats a namespace as its own scope, even for `var`.
             StmtTag::Module => is_oxlint,
-            StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => of_blocks,
+            StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => includes_blocks,
             _ => false,
         },
         _ => false,
     }
 }
 
-/// The scopes of one sort, those of functions or those of blocks, around the current statement in which something has been
-/// declared, the innermost last.
+/// The function scopes, or the block scopes, that enclose the current statement and have declared something, innermost
+/// last.
 struct Scopes<'a> {
-    of_blocks: bool,
+    includes_blocks: bool,
     is_oxlint: bool,
-    around: AncestorMemo<'a, Node<'a>>,
-    /// Each with its [`number_of`] and its [`extent_of`].
+    enclosing_scopes: AncestorMemo<'a, Node<'a>>,
+    /// Each with its [`scope_id`] and its [`statements_span`].
     open: Vec<(u64, Span, [Seen; 5])>,
 }
 
-/// It tells a scope from the others of the file.
-fn number_of(scope: Node<'_>) -> u64 {
+/// Returns an ID that's unique to this scope within the file.
+fn scope_id(scope: Node<'_>) -> u64 {
     match scope {
         Node::Func(func) => 1 << 32 | u64::from(func.id().0),
         Node::Stmt(statement) => 2 << 32 | u64::from(statement.id().0),
@@ -139,8 +138,8 @@ fn number_of(scope: Node<'_>) -> u64 {
     }
 }
 
-/// From where to where there are statements in a scope.
-fn extent_of(scope: Node<'_>) -> Span {
+/// Returns the span from a scope's first statement to its last.
+fn statements_span(scope: Node<'_>) -> Span {
     let body = scope.as_func().and_then(Func::body_statements);
     match body.and_then(|it| it.first().zip(it.last())) {
         Some((first, last)) => first.span().to(last.span()),
@@ -149,40 +148,41 @@ fn extent_of(scope: Node<'_>) -> Span {
 }
 
 impl<'a> Scopes<'a> {
-    fn new(of_blocks: bool, is_oxlint: bool) -> Self {
+    fn new(includes_blocks: bool, is_oxlint: bool) -> Self {
         Scopes {
-            of_blocks,
+            includes_blocks,
             is_oxlint,
-            around: AncestorMemo::default(),
+            enclosing_scopes: AncestorMemo::default(),
             open: Vec::new(),
         }
     }
 
-    /// What has been declared in the scope of `statement`, by [`index`]. The statements come as they end: after what is in them.
+    /// Returns what `statement`'s scope has declared so far, indexed by [`index`]. Statements have to come in order of
+    /// their ends, so each comes after the statements nested in it.
     fn seen(&mut self, statement: Stmt<'a>) -> Option<&mut [Seen; 5]> {
-        let (of_blocks, is_oxlint) = (self.of_blocks, self.is_oxlint);
-        // Nearly always it is what the statement is directly in.
+        let (includes_blocks, is_oxlint) = (self.includes_blocks, self.is_oxlint);
+        // The scope is nearly always the statement's parent.
         let parent = statement.parent();
-        let scope = match is_scope(parent, of_blocks, is_oxlint) {
+        let scope = match is_scope(parent, includes_blocks, is_oxlint) {
             true => parent,
-            false => self.around.find(parent, |_, it| is_scope(it, of_blocks, is_oxlint).then_some(it))?,
+            false => self.enclosing_scopes.find(parent, |_, it| is_scope(it, includes_blocks, is_oxlint).then_some(it))?,
         };
-        let number = number_of(scope);
+        let number = scope_id(scope);
         if self.open.last().is_none_or(|it| it.0 != number) {
-            // What ends before the statement, and what is in it.
+            // Pop the scopes that end before the statement, and the ones nested in it.
             let start = statement.span().start;
             while self.open.last().is_some_and(|it| it.1.end <= start || it.1.start > start) {
                 self.open.pop();
             }
             if self.open.last().is_none_or(|it| it.0 != number) {
-                self.open.push((number, extent_of(scope), Default::default()));
+                self.open.push((number, statements_span(scope), Default::default()));
             }
         }
         self.open.last_mut().map(|it| &mut it.2)
     }
 }
 
-/// How many of some declarations have what.
+/// Counts over a list of declarators.
 #[derive(Copy, Clone)]
 struct Counts {
     total: usize,
@@ -192,7 +192,7 @@ struct Counts {
 }
 
 impl Counts {
-    /// `mentions_require`: whether one can be a `require`.
+    /// `mentions_require` is false if none of them can be a `require`.
     fn of<'a>(declarations: List<'a, VarDecl<'a>>, mentions_require: bool) -> Counts {
         let mut counts = Counts {
             total: 0,
@@ -220,13 +220,13 @@ fn is_require(declaration: VarDecl<'_>) -> bool {
     })
 }
 
-/// The declarations and the kind of a `VariableDeclaration`.
+/// Returns the declarators and the kind of a `VariableDeclaration`.
 fn as_variable_declaration(statement: Stmt<'_>) -> Option<(List<'_, VarDecl<'_>>, VarKind)> {
     let declarations = statement.as_var()?;
     Some((declarations, declarations.first()?.var_kind()))
 }
 
-/// The element before `statement` in `statement.parent.body`, if that is a list.
+/// Returns the element before `statement` in `statement.parent.body`, if that's a list.
 fn previous_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     // Its parent is an `ExportNamedDeclaration`.
     if statement.is_exported() {
@@ -235,7 +235,7 @@ fn previous_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     body_of(statement.parent())?.before(statement.span().start)
 }
 
-/// `parent.body`, if that is a list of statements.
+/// Returns `parent.body`, if that's a list of statements.
 pub(super) fn body_of(parent: Node<'_>) -> Option<List<'_, Stmt<'_>>> {
     match parent {
         Node::File(file) => Some(file.body()),
@@ -245,49 +245,44 @@ pub(super) fn body_of(parent: Node<'_>) -> Option<List<'_, Stmt<'_>>> {
     }
 }
 
-/// The `VariableDeclaration` of the same kind right before `statement`.
+/// Returns the `VariableDeclaration` of the same kind right before `statement`.
 fn previous_declaration(statement: Stmt<'_>, kind: VarKind) -> Option<(Stmt<'_>, List<'_, VarDecl<'_>>)> {
     let previous = previous_statement(statement).filter(|it| !it.is_exported())?;
     let (declarations, previous_kind) = as_variable_declaration(previous)?;
     (previous_kind == kind).then_some((previous, declarations))
 }
 
-/// `statement` is the `init` of a `for`.
+/// True if `statement` is the `init` of a `for`.
 fn is_for_init(statement: Stmt<'_>) -> bool {
     matches!(statement.parent(), Node::Stmt(parent)
         if matches!(parent.kind(), StmtKind::For { init, .. } if init == Some(statement)))
 }
 
-/// `statement` is the `left` of a `for`-`in` or a `for`-`of`.
+/// True if `statement` is the `left` of a `for`-`in` or a `for`-`of`.
 fn is_for_left(statement: Stmt<'_>) -> bool {
     matches!(statement.parent(), Node::Stmt(parent)
         if matches!(parent.kind(), StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == statement))
 }
 
-/// What [`join_declarations`] joins `statement` with.
+/// Returns the statement that [`join_declarations`] joins `statement` with.
 fn joined_with(statement: Stmt<'_>, kind: VarKind) -> Option<Stmt<'_>> {
-    // oxlint joins nothing with a `declare`, and nothing that is exported.
-    let is_ambient = |it: Stmt| it.flags().contains(Flags::AMBIENT);
+    // Declarations with `declare` are never joined, as in oxlint. ESLint's fix mistakes `declare` for the keyword and
+    // breaks the code.
     let (previous, _) = previous_declaration(statement, kind)?;
-    let is_left = statement.file().language().is_oxlint && (is_ambient(statement) || is_ambient(previous));
-    (!is_left).then_some(previous)
+    (statement.modifiers().is_empty() && previous.modifiers().is_empty()).then_some(previous)
 }
 
-/// oxlint's `help` is what it calls its fix.
+/// oxlint's `help` is the name of its fix.
 fn name_of_fix(name: &str, is_fixed: bool) -> String {
     if is_fixed { name.to_owned() } else { String::new() }
 }
 
-/// ESLint's `joinDeclarations`: a `,` in the place of the `;` of `previous`, or after it, and no keyword.
-fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, previous: Stmt<'a>, kind: VarKind) -> Option<Fix> {
+/// ESLint's `joinDeclarations`: replaces the `;` of `previous` with a `,`, or adds one after it, and removes the
+/// keyword.
+fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, previous: Stmt<'a>, kind: VarKind) -> Fix {
     let file = fixer.file();
-    let first = match statement.modifiers().is_empty() {
-        true => {
-            let (start, word) = (statement.span().start, if kind == VarKind::AwaitUsing { "await" } else { kind_text(kind) });
-            Span::new(start, start + word.len() as u32)
-        }
-        false => file.first_token(statement)?.span(),
-    };
+    let (start, word) = (statement.span().start, if kind == VarKind::AwaitUsing { "await" } else { kind_text(kind) });
+    let first = Span::new(start, start + word.len() as u32);
     let mut text = b",".to_vec();
     text.extend_from_slice(file.slice(previous.span().between(first)));
     let mut last = first;
@@ -297,7 +292,7 @@ fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, previous: Stmt<'
         last = Span::new(using, using + "using".len() as u32);
     }
     let start = previous.semicolon().map_or_else(|| previous.span().end, |it| it.start);
-    Some(fixer.replace(Span::new(start, last.end), text))
+    fixer.replace(Span::new(start, last.end), text)
 }
 
 /// ESLint's `splitDeclarations`
@@ -312,7 +307,9 @@ fn split_declarations<'a>(
     }
     let file = fixer.file();
     let export_placement = if statement.is_exported() { "export " } else { "" };
-    let kind = kind_text(kind);
+    // ESLint drops the `declare`, which turns the remaining declarations into real variables.
+    let declare = if statement.flags().contains(Flags::AMBIENT) { "declare " } else { "" };
+    let kind = format!("{declare}{}", kind_text(kind));
     let mut fixes = Vec::new();
     for declaration in declarations {
         let Some(comma) = file.token_after(declaration).filter(|it| it.is(",")) else {
@@ -347,9 +344,9 @@ fn report_combine<'a>(cx: &Cx<'a, OneVar>, statement: Stmt<'a>, kind: VarKind, m
     let previous = || *previous.get_or_init(|| joined_with(statement, kind));
     cx.report(statement.span_without_export(), message)
         .data("type", kind_text(kind))
-        // oxlint's `help` is what it calls its fix.
+        // oxlint's `help` is the name of its fix.
         .labels_with(|details| details.help = if previous().is_some() { "Combine variable declarations" } else { "" }.into())
-        .fix(|fixer| join_declarations(fixer, statement, previous()?, kind));
+        .fix(|fixer| Some(join_declarations(fixer, statement, previous()?, kind)));
 }
 
 impl OneVar {
@@ -381,14 +378,15 @@ impl OneVar {
         }
         scope.uninitialized |= always_uninitialized && counts.uninitialized > 0;
         if always_initialized {
-            let apart = if self.separate_requires { counts.requires } else { 0 };
-            scope.required |= apart > 0;
-            scope.initialized |= counts.initialized > apart;
+            let separate_count = if self.separate_requires { counts.requires } else { 0 };
+            scope.required |= separate_count > 0;
+            scope.initialized |= counts.initialized > separate_count;
         }
         true
     }
 
-    /// ESLint's `checkVariableDeclaration`. `seen`: what has been declared in the scope of `statement`, of its `kind`.
+    /// ESLint's `checkVariableDeclaration`. `seen` is what `statement`'s scope has declared so far with the same
+    /// `kind`.
     fn check_variable_declaration<'a>(
         &self,
         statement: Stmt<'a>,
@@ -479,19 +477,19 @@ impl OneVar {
 impl Rule for OneVar {
     const META: Meta = Meta::eslint("one-var", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::Var]).finish();
-    /// Whether the file can have a `require`.
+    /// True if the file mentions `require`.
     type State<'a> = bool;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         let mut kinds = [KindOptions::default(); 5];
         if options.get(0).is_some_and(|it| it.as_object().is_some()) {
-            let of_all = |key: &str| object.has(key).then(|| Mode::of(object.str(key)));
+            let shared_mode = |key: &str| object.has(key).then(|| Mode::of(object.str(key)));
             for (kind, key) in kinds.iter_mut().zip(KEYS) {
                 let mode = Mode::of(object.str(key));
                 *kind = KindOptions {
-                    uninitialized: of_all("uninitialized").unwrap_or(mode),
-                    initialized: of_all("initialized").unwrap_or(mode),
+                    uninitialized: shared_mode("uninitialized").unwrap_or(mode),
+                    initialized: shared_mode("initialized").unwrap_or(mode),
                 };
             }
         } else {
@@ -508,7 +506,7 @@ impl Rule for OneVar {
     }
 
     fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        // Only what has to be declared together depends on what has been declared before.
+        // Only `"always"` depends on earlier declarations.
         match self.kinds.iter().any(|it| it.has(Mode::Always)) {
             true => On::new().finish(),
             false => On::new().stmts(&[StmtTag::Var]),
@@ -537,7 +535,7 @@ impl Rule for OneVar {
                 self.check_variable_declaration(statement, declaration, &mut seen[index(declaration.1)], cx);
             }
         };
-        // As they end, which is how the parser leaves them.
+        // In order of their ends, which is usually how the parser stores them.
         let all = || cx.file().stmts_of_kind(StmtTag::Var);
         if all().map(|it| it.span().end).is_sorted_by(|a, b| a < b) {
             return all().for_each(check);

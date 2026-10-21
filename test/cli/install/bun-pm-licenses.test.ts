@@ -142,7 +142,7 @@ async function setupProductionInstall(files: Files) {
   const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
   await install(packageDir, "hoisted", "--lockfile-only");
   await install(packageDir, "hoisted", "--production");
-  // What those versions laid.
+  // The layout that those versions created.
   renameSync(nm(packageDir, "uses-a-dep-10", "node_modules", "a-dep"), nm(packageDir, "a-dep"));
   rmSync(nm(packageDir, "uses-a-dep-10", "node_modules"), { recursive: true });
   return packageDir;
@@ -833,7 +833,7 @@ describe("bun pm licenses", () => {
     expect(normalizeBunSnapshot(lsLong)).toBe(normalizeBunSnapshot(stdout));
     expect(stdout).not.toContain(nm(hoistedDir));
 
-    // --long adds no field to the JSON output: the listing is the one `--json` alone produces.
+    // --long doesn't add any field to the JSON output. The listing is the same as with `--json` alone.
     expect(longJson).toStrictEqual(fullJsonWithPaths(hoistedDir));
   });
 
@@ -1789,7 +1789,7 @@ describe("bun pm licenses", () => {
     },
   );
 
-  test.concurrent("a package that spells its version another way than bun.lock is listed", async () => {
+  test.concurrent("a package whose version is spelled differently than in bun.lock is listed", async () => {
     const dir = clone(hoistedDir);
     patchInstalledManifest(dir, "a-dep", { version: "1.0.1+build.7", license: "MIT" });
 

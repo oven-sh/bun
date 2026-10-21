@@ -5,9 +5,9 @@ use bun_lint::rule::Plugin;
 
 /// Enforce boolean attributes notation in JSX
 pub struct JsxBooleanValue {
-    /// `"always"`, not `"never"`
+    /// True for `"always"`, false for `"never"`.
     is_always: bool,
-    /// `never` beside `"always"`, `always` beside `"never"`
+    /// The `never` list with `"always"`, the `always` list with `"never"`.
     exceptions: Vec<Box<[u8]>>,
     assume_undefined_is_false: bool,
 }
@@ -47,7 +47,7 @@ impl Rule for JsxBooleanValue {
         };
         let is_oxlint = cx.language().is_oxlint;
         for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
-            // A `true` or a `false` after the `=` is in braces.
+            // A `true` or `false` after the `=` is always in braces.
             let boolean = match attribute.value().map(Expr::tag) {
                 None => None,
                 Some(ExprTag::True) => Some(true),
@@ -57,18 +57,18 @@ impl Rule for JsxBooleanValue {
             let Some((key, name)) = attribute.key().and_then(|key| Some((key, key.name()?.bytes()))) else {
                 continue;
             };
-            // Upstream takes the node `b` of `a:b` for the name: it is in no list.
+            // For `a:b` upstream uses the node `b` as the name, which never matches a list entry.
             let is_namespaced = strings::contains_char(name, b':');
             let is_exception = !is_namespaced && self.exceptions.iter().any(|it| **it == *name);
-            // Whether the value has to be written for this attribute.
+            // True if this attribute has to spell out its value.
             let is_always = self.is_always != is_exception;
-            // oxlint passes over `a:b`.
+            // oxlint skips `a:b`.
             if is_always != boolean.is_none() || (is_oxlint && is_namespaced) {
                 continue;
             }
             let (ident, whole) = (key.span(cx.file()), attribute.span());
             let after_name = Span::after(ident, whole.end);
-            // oxlint has texts of its own, and points at the `={true}` that is to be omitted.
+            // oxlint has its own messages, and reports the `={true}` that should be omitted.
             let (message, at, removed) = match (boolean, is_oxlint) {
                 (None, false) => (SET_BOOLEAN, ident, None),
                 (None, true) => (BOOLEAN_VALUE_ALWAYS, ident, None),
@@ -77,8 +77,8 @@ impl Rule for JsxBooleanValue {
                 (Some(false), false) => (OMIT_PROP_AND_BOOLEAN, whole, Some(whole)),
                 (Some(false), true) => (BOOLEAN_VALUE_UNDEFINED_FALSE, whole, Some(whole)),
             };
-            let shown = if is_namespaced { &b"[object Object]"[..] } else { name };
-            cx.report(at, message).data(if is_oxlint { "attr" } else { "propName" }, shown).fix(|fixer| match removed {
+            let display_name = if is_namespaced { &b"[object Object]"[..] } else { name };
+            cx.report(at, message).data(if is_oxlint { "attr" } else { "propName" }, display_name).fix(|fixer| match removed {
                 Some(removed) => fixer.remove(removed),
                 None => fixer.insert_after(ident, "={true}"),
             });

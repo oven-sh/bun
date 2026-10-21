@@ -10,13 +10,13 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::join_spill;
 use std::borrow::Cow;
 
-/// `TypeOrValueSpecifier`: how the options of rules name types and values.
+/// `TypeOrValueSpecifier`: how rule options refer to types and values.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum TypeOrValueSpecifier {
-    /// `"name"`: whatever has that name, wherever it is declared.
+    /// `"name"`: anything with that name, wherever it's declared.
     Name(Vec<u8>),
-    /// `FileSpecifier`, `{ from: "file", name, path }`: declared in that file, which is relative to
-    /// the current directory, or without a path in any file below the current directory.
+    /// `FileSpecifier`, `{ from: "file", name, path }`: declared in that file, which is relative to the current
+    /// directory. Without a path, declared in any file under the current directory.
     File {
         name: Vec<Vec<u8>>,
         path: Option<Vec<u8>>,
@@ -31,8 +31,8 @@ pub enum TypeOrValueSpecifier {
 }
 
 impl TypeOrValueSpecifier {
-    /// An element of an option that has `typeOrValueSpecifiersSchema`. `None` for what the schema
-    /// does not allow.
+    /// Parses an element of an option that has `typeOrValueSpecifiersSchema`. `None` for anything the schema doesn't
+    /// allow.
     pub fn parse(value: &Json) -> Option<TypeOrValueSpecifier> {
         if let Some(name) = value.as_str() {
             return Some(TypeOrValueSpecifier::Name(name.to_vec()));
@@ -73,7 +73,7 @@ impl TypeOrValueSpecifier {
     }
 }
 
-/// An option that has `typeOrValueSpecifiersSchema`:
+/// Parses an option that has `typeOrValueSpecifiersSchema`:
 /// `parse_type_or_value_specifiers(options.object(0).array("allow"))`.
 pub fn parse_type_or_value_specifiers(values: &[Json]) -> Vec<TypeOrValueSpecifier> {
     values
@@ -89,14 +89,14 @@ fn specifier_name_matches(ty: Type, names: &[Vec<u8>]) -> bool {
     symbol.is_some_and(|it| {
         names.includes(it.escaped_name()) && !(is_oxlint && has_internal_symbol_name(it))
     }) || ty.intrinsic_name().is_some_and(|it| {
-        // In typescript-go `boolean`, `true` and `false` are not intrinsic types.
+        // In typescript-go `boolean`, `true` and `false` aren't intrinsic types.
         names.includes(it.as_bytes()) && !(is_oxlint && matches!(it, "boolean" | "true" | "false"))
     })
 }
 
-/// typescript-go spells a name that the compiler makes up (`__type`, `__object`, `__function`,
-/// `__class`) with `ast.InternalSymbolNamePrefix`, so no name of a specifier is that of such a
-/// symbol. A declaration that is written with the name has it as its `name`.
+/// typescript-go spells a compiler-generated name (`__type`, `__object`, `__function`, `__class`) with
+/// `ast.InternalSymbolNamePrefix`, so a specifier's name never matches such a symbol. A declaration that's actually
+/// written with that name has it as its `name`.
 fn has_internal_symbol_name(symbol: TsSymbol<'_>) -> bool {
     let name = symbol.escaped_name();
     name.starts_with(b"__")
@@ -115,9 +115,9 @@ fn declaration_files_of<'a>(symbol: Option<TsSymbol<'a>>) -> impl Iterator<Item 
     declarations_of(symbol).map(|declaration| declaration.get_source_file())
 }
 
-/// `getCanonicalFileName(a) === getCanonicalFileName(b)`, for paths that are normalized.
+/// `getCanonicalFileName(a) === getCanonicalFileName(b)`, for normalized paths.
 fn is_same_file_name(program: Types, a: &[u8], b: &[u8]) -> bool {
-    // tsgolint compares the names as they are.
+    // tsgolint compares the names verbatim.
     let is_oxlint = program.file.language().is_oxlint;
     match program.compiler_options().use_case_sensitive_file_names || is_oxlint {
         true => a == b,
@@ -151,8 +151,8 @@ fn type_declared_in_file<'a>(
         .any(|declaration| is_same_file_name(program, declaration.file_name(), absolute_path))
 }
 
-/// `typeDeclaredInLib(declarationFiles, program)`. What has no declaration is intrinsic (`string`,
-/// `number`), and counts as part of the library.
+/// `typeDeclaredInLib(declarationFiles, program)`. A type without a declaration is intrinsic (`string`, `number`) and
+/// counts as part of the library.
 fn type_declared_in_lib<'a>(mut declaration_files: impl Iterator<Item = SourceFile<'a>>) -> bool {
     let Some(first) = declaration_files.next() else {
         return true;
@@ -161,16 +161,16 @@ fn type_declared_in_lib<'a>(mut declaration_files: impl Iterator<Item = SourceFi
         || declaration_files.any(|declaration| declaration.is_default_library())
 }
 
-/// The `declare module "name" {}` that the node is in. `namespace a {}` and `global {}` are looked
-/// through. tsgolint looks through `namespace a {}` only: in `global {}` it finds none.
+/// Returns the `declare module "name" {}` that contains the node, looking through `namespace a {}` and `global {}`.
+/// tsgolint only looks through `namespace a {}`, so inside `global {}` it finds nothing.
 fn find_parent_module_declaration(node: TsNode<'_>, is_oxlint: bool) -> Option<TsNode<'_>> {
-    let looked_through = match is_oxlint {
+    let transparent = match is_oxlint {
         true => NodeFlags::NAMESPACE,
         false => NodeFlags::NAMESPACE | NodeFlags::GLOBAL_AUGMENTATION,
     };
     for node in std::iter::once(node).chain(node.ancestors()) {
         match node.kind() {
-            SyntaxKind::ModuleDeclaration if !node.flags().intersects(looked_through) => {
+            SyntaxKind::ModuleDeclaration if !node.flags().intersects(transparent) => {
                 return node
                     .name()
                     .is_some_and(|name| name.kind() == SyntaxKind::StringLiteral)
@@ -192,6 +192,39 @@ fn type_declared_in_declare_module<'a>(
         let name =
             find_parent_module_declaration(declaration, is_oxlint).and_then(|module| module.name());
         name.is_some_and(|name| name.text() == package_name)
+    })
+}
+
+/// True if `symbol` has a declaration in a `declare module "name" {}`.
+pub fn is_declared_in_ambient_module(symbol: TsSymbol<'_>, name: &[u8]) -> bool {
+    type_declared_in_declare_module(name, symbol.declarations(), false)
+}
+
+/// True if `declaration` is visible to every file. It has to be at the top level of a declaration file that is a
+/// script, or of a `declare global {}` in a declaration file.
+fn is_global_declaration(declaration: TsNode<'_>) -> bool {
+    let file = declaration.get_source_file();
+    if !file.is_declaration_file() {
+        return false;
+    }
+    for node in declaration.ancestors() {
+        match node.kind() {
+            SyntaxKind::ModuleBlock => {}
+            SyntaxKind::ModuleDeclaration => {
+                return node.flags().intersects(NodeFlags::GLOBAL_AUGMENTATION);
+            }
+            SyntaxKind::SourceFile => return file.symbol().is_none(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// True if `ty` is a global class or interface whose name is in `names`. Any declaration file can declare it: a
+/// `lib.*.d.ts`, or one from `@types/node` or `bun-types`. A class with that name in a module isn't the global.
+pub fn is_global_type(ty: Type, names: impl Names) -> bool {
+    ty.get_symbol().is_some_and(|symbol| {
+        names.includes(symbol.name()) && symbol.declarations().any(is_global_declaration)
     })
 }
 
@@ -223,8 +256,8 @@ fn type_exported_from_declare_module<'a>(
         })
 }
 
-/// Whether `package_path` is `package_name` or something inside it, by whole components: `semver`
-/// covers `semver` and `semver/classes/semver.d.ts`, not `semver-compare`.
+/// True if `package_path` is `package_name` or something inside it, by whole components: `semver` covers `semver` and
+/// `semver/classes/semver.d.ts`, not `semver-compare`.
 fn path_is_in_package(package_path: &[u8], package_name: &[u8]) -> bool {
     match package_path.strip_prefix(package_name) {
         Some(rest) => rest.is_empty() || rest.starts_with(b"/"),
@@ -270,13 +303,13 @@ fn type_declared_in_package_declaration_file<'a>(
     let is_oxlint = program.file.language().is_oxlint;
     type_declared_in_declare_module(package_name, declarations_of(symbol), is_oxlint)
         || type_declared_in_declaration_file(package_name, declaration_files_of(symbol))
-        // tsgolint does not ask what the module exports.
+        // tsgolint doesn't check the module's exports.
         || !is_oxlint && type_exported_from_declare_module(package_name, symbol, program)
 }
 
-/// `typeMatchesSpecifier(type, specifier, program)`: whether the type has the name, and is declared
-/// where the specifier says. Every constituent of a union has to match, one of an intersection.
-/// tsgolint asks a union as a whole, and so each part of an intersection.
+/// `typeMatchesSpecifier(type, specifier, program)`: true if the type has the name and is declared where the specifier
+/// says. Every constituent of a union has to match, but only one of an intersection. tsgolint matches a union as a
+/// whole, and likewise each part of an intersection.
 pub fn type_matches_specifier(ty: Type, specifier: &TypeOrValueSpecifier) -> bool {
     if !has_room_on_the_stack() {
         return false;
@@ -328,11 +361,10 @@ pub fn type_matches_some_specifier(ty: Type, specifiers: &[TypeOrValueSpecifier]
         .any(|specifier| type_matches_specifier(ty, specifier))
 }
 
-/// What [`value_matches_specifier`] takes as the `node`. It is asked for upstream's
-/// `getStaticName`.
+/// The `node` argument of [`value_matches_specifier`]. It provides upstream's `getStaticName`.
 pub trait StaticallyNamed<'a>: Copy {
-    /// The `name` of an `Identifier`, a `JSXIdentifier` or a `PrivateIdentifier`, which is without
-    /// the `#`, or the value of a `Literal` that is a string.
+    /// The `name` of an `Identifier`, a `JSXIdentifier` or a `PrivateIdentifier` (without the `#`), or the value of a
+    /// string `Literal`.
     fn get_static_name(self) -> Option<&'a [u8]>;
 }
 
@@ -373,8 +405,8 @@ impl<'a> StaticallyNamed<'a> for Node<'a> {
     }
 }
 
-/// `valueMatchesSpecifier(node, specifier, program, type)`: whether `node`, an [`Expr`], a [`Pat`]
-/// or an [`Ident`], is the name, and for a package also whether `ty`, its type, is declared there.
+/// `valueMatchesSpecifier(node, specifier, program, type)`: true if `node`, an [`Expr`], a [`Pat`] or an [`Ident`], has
+/// the name, and for a package specifier, if its type `ty` is also declared there.
 pub fn value_matches_specifier<'a>(
     node: impl StaticallyNamed<'a>,
     specifier: &TypeOrValueSpecifier,

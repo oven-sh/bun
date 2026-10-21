@@ -1132,7 +1132,16 @@ class Http2ServerResponse extends Stream {
 
     if (typeof cb === "function") {
       if (stream.writableEnded) this.once("finish", cb);
-      else stream.once("finish", cb);
+      else {
+        // A stream that is destroyed first never finishes. The response emits its own 'finish' at the stream's 'close'.
+        const onFinish = () => {
+          stream.removeListener("finish", onFinish);
+          this.removeListener("finish", onFinish);
+          cb();
+        };
+        stream.once("finish", onFinish);
+        this.once("finish", onFinish);
+      }
     }
 
     if (!stream.headersSent) this.writeHead(this[kState].statusCode);

@@ -6617,6 +6617,32 @@ it.skipIf(!isLinux)("streams build no frames for what they have buffered when th
   expect({ errors, streams, completed, batches }).toEqual({ errors: [], streams: 5, completed: 20000, batches: 1 });
 });
 
+it("res.end() calls its callback once when the client leaves before the response is sent", async () => {
+  const chunk = Buffer.alloc(65536, "x");
+  for (const requests of [1, 5]) {
+    const callbacks = [];
+    const server = http2.createServer((req, res) => {
+      let calls = 0;
+      for (let i = 0; i < 64; i++) res.write(chunk);
+      res.end(() => calls++);
+      res.on("close", () => callbacks.push(calls));
+    });
+    const sessionClosed = Promise.withResolvers();
+    server.on("session", session => session.on("close", sessionClosed.resolve));
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    for (let i = 0; i < requests; i++) {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.once("data", () => client.destroy());
+    }
+    await sessionClosed.promise;
+    await new Promise(resolve => server.close(resolve));
+    expect(callbacks).toEqual(Array(requests).fill(1));
+  }
+});
+
 it.skipIf(!isLinux)("a session reports ECONNRESET when its read finds the connection reset", async () => {
   for (const secure of [false, true]) {
     const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();

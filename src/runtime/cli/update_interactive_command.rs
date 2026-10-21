@@ -23,6 +23,7 @@ use bun_install::package_manager_real::package_json_editor::{
     catalog_object_of, updated_version_literal,
 };
 use bun_install::update_scope::selects;
+use bun_install::update_transitive::pretty_update_row;
 use bun_install::{
     CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
     PackageManager, WorkspacePackageJsonCacheEntry, resolution,
@@ -54,8 +55,8 @@ struct OutdatedPackage {
     /// A `latest` that is older than the installed version is shown, but no key or flag can select
     /// it, because `bun update` does not downgrade.
     latest_is_newer: bool,
-    /// Both the default scope and the scope of `name` are the npm registry, so the name links to npmjs.org.
-    uses_default_registry: bool,
+    /// The page on npmjs.org that `name` links to.
+    npm_page: NpmPage,
     is_catalog: bool,
     catalog_name: Option<Box<[u8]>>,
 }
@@ -103,6 +104,15 @@ impl OutdatedPackage {
         }
     }
 
+    /// The name of the installed package, if npmjs.org has a page for it.
+    fn npm_page_name(&self) -> Option<&[u8]> {
+        match &self.npm_page {
+            NpmPage::None => None,
+            NpmPage::OfName => Some(&self.name),
+            NpmPage::Of(package_name) => Some(package_name),
+        }
+    }
+
     /// `name` or `name:catalog`.
     fn catalog_key(&self) -> Vec<u8> {
         match &self.catalog_name {
@@ -123,6 +133,16 @@ impl OutdatedPackage {
             ""
         }
     }
+}
+
+/// The page of the installed package on npmjs.org.
+enum NpmPage {
+    /// The default scope or the scope of the installed package is not the npm registry.
+    None,
+    /// The installed package has the name of the dependency.
+    OfName,
+    /// The installed package has this name. The name of the dependency is an alias of it.
+    Of(Box<[u8]>),
 }
 
 struct PackageUpdate {
@@ -641,13 +661,13 @@ impl UpdateInteractiveCommand {
             let package_name =
                 manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
 
-            let scope = manager.options.scope_for_package_name(package_name).clone();
-            let uses_default_registry = global_uses_default_registry
-                && manager.options.scope_for_package_name(name_slice).url_hash == default_url_hash;
+            let scope = manager.options.scope_for_package_name(package_name);
+            let uses_default_registry =
+                global_uses_default_registry && scope.url_hash == default_url_hash;
             let mut expired = false;
             let Some(manifest) = manager.manifests.by_name_allow_expired(
                 cache_ctx,
-                &scope,
+                scope,
                 package_name,
                 Some(&mut expired),
                 needs_extended,
@@ -700,7 +720,13 @@ impl UpdateInteractiveCommand {
                 dependency_type: DependencyGroup::prop_for_behavior(dep.behavior),
                 workspace_name: Box::from(workspace_name),
                 behavior: dep.behavior,
-                uses_default_registry,
+                npm_page: if !uses_default_registry {
+                    NpmPage::None
+                } else if name_slice == package_name {
+                    NpmPage::OfName
+                } else {
+                    NpmPage::Of(Box::from(package_name))
+                },
                 is_catalog,
                 catalog_name,
                 use_latest: update_to_latest, // default to --latest flag value
@@ -1102,8 +1128,8 @@ impl UpdateInteractiveCommand {
                         .name
                         .saturating_sub(printed_width(&display_name) + tag.len());
 
-                    let package_url =
-                        if Output::enable_ansi_colors_stdout() && pkg.uses_default_registry {
+                    let package_url = match pkg.npm_page_name() {
+                        Some(package_name) if Output::enable_ansi_colors_stdout() => {
                             let ver: &[u8] = if selected {
                                 pkg.target_version()
                             } else {
@@ -1111,12 +1137,12 @@ impl UpdateInteractiveCommand {
                             };
                             format!(
                                 "https://npmjs.org/package/{}/v/{}",
-                                BStr::new(&pkg.name),
+                                BStr::new(package_name),
                                 BStr::new(ver)
                             )
-                        } else {
-                            String::new()
-                        };
+                        }
+                        _ => String::new(),
+                    };
                     let hyperlink = TerminalHyperlink::new(
                         package_url.as_bytes(),
                         display_name.as_bytes(),
@@ -1378,21 +1404,10 @@ type DryRunRow = (Box<[u8]>, Box<[u8]>, Box<[u8]>);
 fn print_dry_run_rows(rows: &mut Vec<DryRunRow>, start_time: i128) {
     index_sort::sort_vec_unstable_by(rows, |a, b| a.cmp(b));
     rows.dedup();
-    let (glyph, arrow) = if Output::enable_ansi_colors_stdout() {
-        ("↑", "→")
-    } else {
-        ("^", "->")
-    };
     bun_core::pretty!("\n");
     for (name, from, to) in rows.iter() {
-        bun_core::prettyln!(
-            "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b><cyan>{}<r>",
-            glyph,
-            BStr::new(name),
-            BStr::new(from),
-            arrow,
-            BStr::new(to)
-        );
+        pretty_update_row(name, from, to, false);
+        bun_core::prettyln!("");
     }
     let n = rows.len();
     bun_core::pretty!(

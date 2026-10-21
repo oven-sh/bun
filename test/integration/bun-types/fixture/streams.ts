@@ -63,6 +63,15 @@ Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("gzip")).pipeTh
 Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("brotli")).pipeThrough(new DecompressionStream("brotli"));
 Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("zstd")).pipeThrough(new DecompressionStream("zstd"));
 
+// ReadableStream.from() has type errors when lib.dom.d.ts is present, for the
+// same reason as the direct stream above. A sync iterable may yield promises:
+// the stream awaits them. It does not await the values of an async iterable.
+declare const asyncChunks: AsyncIterable<Promise<string>>;
+expectType(ReadableStream.from([1, Promise.resolve(2)])).is<ReadableStream<number>>();
+expectType(ReadableStream.from(asyncChunks)).is<ReadableStream<Promise<string>>>();
+// @ts-expect-error - a number is not iterable
+ReadableStream.from(1);
+
 Bun.file("./foo.csv")
   .stream()
   .pipeThrough(new TextDecoderStream())

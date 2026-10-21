@@ -1819,6 +1819,9 @@ JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason 
     case CommonAbortReason::ConnectionClosed: {
         return createDOMException(globalObject, ExceptionCode::AbortError, "The connection was closed."_s);
     }
+    case CommonAbortReason::RequestBodyTooLarge: {
+        return createDOMException(globalObject, ExceptionCode::AbortError, "Request body exceeded maxRequestBodySize"_s);
+    }
     default: {
         break;
     }

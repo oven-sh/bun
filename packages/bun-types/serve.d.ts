@@ -840,6 +840,21 @@ declare module "bun" {
 
       /**
        * The maximum size of a request body, in bytes
+       *
+       * Bun answers a request with a larger `Content-Length` with `413`
+       * before its handler runs. A body with no declared length is counted as
+       * it arrives. When it passes the limit, Bun aborts the request as it
+       * does when the client disconnects: `request.signal` aborts with an
+       * `AbortError` that names the limit, and a read of the body rejects with
+       * an `Error` that names it. Bun answers `413`, then closes the
+       * connection. If the response has already started, Bun resets the
+       * connection instead (on HTTP/2, the stream). HTTP/3 does not reset the
+       * stream yet: the response ends early, without an error.
+       *
+       * The limit has no effect on a request whose response is complete, on a
+       * request that a static or file route answers, or while a `Bun.file()`
+       * response is in flight.
+       *
        * @default 1024 * 1024 * 128 // 128MB
        */
       maxRequestBodySize?: number;

@@ -1781,7 +1781,7 @@ where
                 )
                 .is_null()
             {
-                // SAFETY: `init` just made `ws` in its JS wrapper, which `ws` holds strongly. uWS never stored it.
+                // SAFETY: `ws` is in its JS wrapper, which it holds strongly. uWS never stored it.
                 unsafe { &*ws }.discard_unopened();
                 return;
             }

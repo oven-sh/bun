@@ -3,7 +3,6 @@
 #include "JSSocketAddressDTO.h"
 #include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/WTFString.h>

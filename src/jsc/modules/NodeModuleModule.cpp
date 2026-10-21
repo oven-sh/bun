@@ -26,7 +26,6 @@
 #include "BunString.h"
 
 #include "GeneratedNodeModuleModule.h"
-#include "ZigGeneratedClasses.h"
 
 namespace Bun {
 

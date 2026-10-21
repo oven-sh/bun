@@ -2,7 +2,6 @@
 #include "JSNodeHTTPServerSocketPrototype.h"
 #include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
 #include "DOMIsoSubspaces.h"
 #include "ScriptExecutionContext.h"
 #include "helpers.h"

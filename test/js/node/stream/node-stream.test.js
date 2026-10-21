@@ -1935,7 +1935,7 @@ describe("promise pipeline with a function as the last entry (nodejs/node#65559)
         cb();
       },
     });
-    const sinkFinished = new Promise(resolve => sink.on("finish", resolve));
+    const sinkFinished = finishedP(sink);
     await new Promise(resolve => setImmediate(resolve));
     tail.pipe(sink);
     await done.promise;

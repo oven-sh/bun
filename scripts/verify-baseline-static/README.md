@@ -175,3 +175,7 @@ cargo test --manifest-path scripts/verify-baseline-static/Cargo.toml
 - `tests/pdb_marks.rs`: the built scanner on `tests/fixtures/switch-table.dll`
   and its PDB. `tests/fixtures/switch-table.s` is their source and holds the
   commands that rebuild them.
+
+The `verify-baseline` CI steps only build the scanner. The tests run in
+`.github/workflows/verify-baseline-static.yml`, on a pull request that changes
+the crate's sources, tests or manifests.

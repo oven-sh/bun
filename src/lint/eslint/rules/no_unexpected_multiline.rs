@@ -21,12 +21,11 @@ const DIVISION: Message = Message::new(
     "Unexpected newline between numerator and division operator.",
 );
 
-/// The token after `e` and its parentheses, which is one character long, if it is on another line
-/// than what is before it.
+/// Returns the one-character token after `e` and its parentheses, if a line break comes before it.
 fn break_after(e: Expr) -> Option<Span> {
     let file = e.file();
     let before = e.outer_span();
-    // Nearly always the token follows at once.
+    // Fast path: the token nearly always follows immediately.
     if !matches!(file.text().get(before.end as usize), Some(b'\t'..=b'\r' | b' ' | b'/' | 0x80..)) {
         return None;
     }
@@ -34,11 +33,11 @@ fn break_after(e: Expr) -> Option<Span> {
     strings::contains_js_line_break(file.slice(Span::after(before, open))).then(|| Span::new(open, open + 1))
 }
 
-/// The `(` of a call with type arguments, if it is on another line than their `>`: where oxlint looks.
+/// Returns the `(` of a call with type arguments, if it isn't on the same line as their `>`. That's what oxlint checks.
 fn break_after_type_args<'a>(call: Call<'a>, file: &'a File<'a>) -> Option<Span> {
     let text = file.text();
     let is = |at: u32, byte: u8| text.get(at as usize) == Some(&byte);
-    // Nearly always `>(` follows the last of them, and it takes no tokens of the file to see that.
+    // Fast path: `>(` nearly always follows the last type argument, which the text shows without tokenizing the file.
     let mut close = skip_trivia(text, call.type_args().last()?.span().end);
     while is(close, b')') || is(close, b',') {
         close = skip_trivia(text, close + 1);
@@ -72,7 +71,7 @@ impl NoUnexpectedMultiline {
     }
 
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint looks at a call without arguments too, and not at the last call of an optional chain.
+        // oxlint also checks a call without arguments, and skips the last call of an optional chain.
         let is_oxlint = cx.language().is_oxlint;
         if let Some(call) = e.as_call()
             && !call.is_optional()
@@ -134,7 +133,8 @@ impl NoUnexpectedMultiline {
         let Some(second_slash) = e.operator_span() else {
             return;
         };
-        // oxlint compares how far behind `a` the line ends with where `a` starts in the file.
+        // oxlint compares the offset of the line break relative to the end of `a` with the absolute offset of `a`'s
+        // start.
         if cx.language().is_oxlint
             && strings::index_of_char_usize(cx.slice(Span::new(left.span().end, e.span().end)), b'\n')
                 .is_none_or(|newline| newline >= inner.span().start as usize)
@@ -146,7 +146,7 @@ impl NoUnexpectedMultiline {
             && after.start() == second_slash.end
             && after.value().iter().all(|c| match c {
                 b'g' | b'i' | b'm' | b's' | b'u' | b'y' => true,
-                // oxlint does not know these flags.
+                // oxlint doesn't know these flags.
                 b'd' | b'v' => !cx.language().is_oxlint,
                 _ => false,
             })

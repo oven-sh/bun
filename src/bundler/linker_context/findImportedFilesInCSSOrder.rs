@@ -2,9 +2,9 @@ use crate::mal_prelude::*;
 use bstr::BStr;
 
 use bun_alloc::Arena;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, Range};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
-use bun_core::handle_oom;
+use bun_core::{StackCheck, handle_oom};
 
 use crate::Graph::Graph;
 use crate::bun_css::css_parser::BundlerCssRule;
@@ -17,8 +17,10 @@ use bun_ast::Index as AstIndex;
 // `CssImportOrder` values are arena-backed (the inner `Vec`s point into bump
 // arenas and are never individually freed). Rust's `Vec` has `Drop`, so a
 // literal `*entry` is not `Copy`; we duplicate the values bitwise instead.
-// `conditions` slabs come from `deep_clone_conditions`, which allocates them
-// from the `LinkerGraph` arena (`graph.heap`). The `Vec` headers aliasing a
+// `conditions` slabs come from `fork_conditions`, which allocates them
+// from the `LinkerGraph` arena (`graph.heap`). Each `ImportConditions` in a slab
+// is a bitwise copy of the conditions of an `ImportRule`. The rule's stylesheet
+// owns their heap and outlives the link. The `Vec` headers aliasing a
 // slab are `mem::forget`'d everywhere (`CssImportOrder::drop` + the
 // post-`visit()` forget below); the slab itself is bulk-freed with the arena.
 // `wip_order`/`order` shuffles use `len`-truncation rather than
@@ -72,11 +74,14 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// as far as "@layer" is concerned. So we may in some cases keep both the
 /// first and last locations and only write out the "@layer" information
 /// for the first location.
+///
+/// The traversal recurses once per `@import`. Returns `Err` if the import chain
+/// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
     this: &'a mut LinkerContext,
     temp_arena: &'a Arena,
     entry_points: &[Index],
-) -> Vec<CssImportOrder> {
+) -> Result<Vec<CssImportOrder>, CssImportChainTooDeep> {
     let _ = temp_arena;
 
     struct Visitor<'a> {
@@ -96,6 +101,11 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         has_external_import: bool,
         visited: Vec<Index>,
         order: Vec<CssImportOrder>,
+
+        stack_check: StackCheck,
+        /// Set when the stack is nearly exhausted. The traversal then unwinds
+        /// without visiting anything else.
+        too_deep: Option<CssImportChainTooDeep>,
     }
 
     impl<'a> Visitor<'a> {
@@ -103,6 +113,30 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         fn input_file_pretty(&self, source_index: Index) -> &BStr {
             let sources = self.parse_graph.input_files.items_source();
             BStr::new(&sources[source_index.get() as usize].path.pretty)
+        }
+
+        /// Returns false if the traversal stopped because the chain is too deep.
+        fn visit_import(
+            &mut self,
+            importer: Index,
+            record: &ImportRecord,
+            wrapping_conditions: &mut Vec<ImportConditions>,
+            wrapping_import_records: &mut Vec<ImportRecord>,
+        ) -> bool {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.too_deep = Some(CssImportChainTooDeep {
+                    importer,
+                    range: record.range,
+                    kind: record.kind,
+                });
+                return false;
+            }
+            self.visit(
+                record.source_index,
+                wrapping_conditions,
+                wrapping_import_records,
+            );
+            self.too_deep.is_none()
         }
 
         fn visit(
@@ -177,35 +211,34 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // arena-owned, so wrap the local header in
                             // `ManuallyDrop` to avoid a double-free.
                             let mut nested_conditions = core::mem::ManuallyDrop::new(
-                                deep_clone_conditions(wrapping_conditions, self.arena),
+                                fork_conditions(wrapping_conditions, self.arena),
                             );
-                            let mut nested_import_records =
-                                shallow_clone_records(wrapping_import_records);
 
-                            // Clone these import conditions and append them to the state
-                            nested_conditions.append_assume_capacity(
-                                import_rule.conditions_with_import_records(
-                                    self.arena,
-                                    &mut nested_import_records,
-                                ),
-                            );
-                            self.visit(
-                                record.source_index,
+                            // Append these import conditions to the state
+                            // SAFETY: never dropped (see the note at `bitwise_copy`).
+                            nested_conditions.append_assume_capacity(unsafe {
+                                bitwise_copy(import_rule.conditions())
+                            });
+                            let followed = self.visit_import(
+                                source_index,
+                                record,
                                 &mut nested_conditions,
                                 wrapping_import_records,
                             );
-                            // `nested_import_records` is *not* passed to `visit` (the
-                            // outer `wrapping_import_records` is), so it is uniquely
-                            // owned here — drop it normally to free the buffer.
-                            drop(nested_import_records);
+                            if !followed {
+                                return;
+                            }
                             import_record_idx += 1;
                             continue;
                         }
-                        self.visit(
-                            record.source_index,
+                        if !self.visit_import(
+                            source_index,
+                            record,
                             wrapping_conditions,
                             wrapping_import_records,
-                        );
+                        ) {
+                            return;
+                        }
                         import_record_idx += 1;
                         continue;
                     }
@@ -219,15 +252,12 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         // CSS file using a data URL.
                         if import_rule.has_conditions() {
                             let mut all_conditions =
-                                deep_clone_conditions(wrapping_conditions, self.arena);
-                            let mut all_import_records =
-                                shallow_clone_records(wrapping_import_records);
-                            all_conditions.append_assume_capacity(
-                                import_rule.conditions_with_import_records(
-                                    self.arena,
-                                    &mut all_import_records,
-                                ),
-                            );
+                                fork_conditions(wrapping_conditions, self.arena);
+                            let all_import_records = shallow_clone_records(wrapping_import_records);
+                            // SAFETY: never dropped (see the note at `bitwise_copy`).
+                            all_conditions.append_assume_capacity(unsafe {
+                                bitwise_copy(import_rule.conditions())
+                            });
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path),
                                 conditions: all_conditions,
@@ -264,12 +294,16 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             // matter for these because the output order is explicitly undfened
             // in the specification.
             for record in self.all_import_records[source_index.get() as usize].as_slice() {
-                if record.kind == ImportKind::Composes && record.source_index.is_valid() {
-                    self.visit(
-                        record.source_index,
+                if record.kind == ImportKind::Composes
+                    && record.source_index.is_valid()
+                    && !self.visit_import(
+                        source_index,
+                        record,
                         wrapping_conditions,
                         wrapping_import_records,
-                    );
+                    )
+                {
+                    return;
                 }
             }
 
@@ -313,6 +347,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         all_import_records: all_import_records_slice,
         has_external_import: false,
         order: Vec::new(),
+        stack_check: StackCheck::init(),
+        too_deep: None,
     };
     let mut wrapping_conditions: Vec<ImportConditions> = Vec::new();
     let mut wrapping_import_records: Vec<ImportRecord> = Vec::new();
@@ -323,6 +359,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             &mut wrapping_conditions,
             &mut wrapping_import_records,
         );
+        if visitor.too_deep.is_some() {
+            break;
+        }
+    }
+
+    if let Some(too_deep) = visitor.too_deep {
+        return Err(too_deep);
     }
 
     let has_external_import = visitor.has_external_import;
@@ -495,7 +538,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         if conditions.has_anonymous_layer() {
                             // SAFETY: `i < entry.conditions.len() <= capacity`;
                             // shrinking exposes no uninitialized range. The
-                            // truncated tail is arena-owned (`deep_clone_conditions`)
+                            // truncated tail is arena-owned (`fork_conditions`)
                             // and bulk-freed with the arena, so skipping `Drop` is sound.
                             unsafe { entry.conditions.set_len((i as u32) as usize) };
                             layers.replace(Vec::new());
@@ -539,7 +582,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             }
                             // SAFETY: `i` was just decremented from a value
                             // `<= len`, so `i < len <= capacity`. Truncated tail
-                            // is arena-owned (`deep_clone_conditions`) and
+                            // is arena-owned (`fork_conditions`) and
                             // bulk-freed with the arena.
                             unsafe { entry.conditions.set_len((i) as usize) };
                         }
@@ -732,7 +775,32 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         CssOrderDebugStep::AfterMergingAdjacentLayerRules,
     );
 
-    order
+    Ok(order)
+}
+
+/// Error for an `@import` (or cross-file `composes`) chain that's too deep for
+/// the thread's stack.
+pub(crate) struct CssImportChainTooDeep {
+    importer: Index,
+    range: Range,
+    kind: ImportKind,
+}
+
+impl CssImportChainTooDeep {
+    pub(crate) fn add_to_log(&self, sources: &[bun_ast::Source], log: &mut bun_ast::Log) {
+        log.add_range_error_fmt(
+            Some(&sources[self.importer.get() as usize]),
+            self.range,
+            format_args!(
+                "Maximum call stack size exceeded while following this \"{}\" chain",
+                if self.kind == ImportKind::Composes {
+                    "composes"
+                } else {
+                    "@import"
+                }
+            ),
+        );
+    }
 }
 
 /// The returned list is later bitwise-copied into `CssImportOrder` entries via
@@ -744,11 +812,12 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 /// one extra slot for the single `append_assume_capacity` each call site
 /// performs, so the header never reallocates.
 #[inline]
-fn deep_clone_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportConditions> {
+fn fork_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportConditions> {
     let cap = list.len() as usize + 1;
     let slab = arena.alloc_uninit_slice::<ImportConditions>(cap);
     for (dst, src) in slab.iter_mut().zip(list.slice_const()) {
-        dst.write(src.deep_clone(arena));
+        // SAFETY: never dropped (see the note at `bitwise_copy`).
+        dst.write(unsafe { bitwise_copy(src) });
     }
     // SAFETY: `slab[..list.len()]` was just initialized; cap is the slab
     // length. The resulting `Vec` is never dropped (always `mem::forget`'d)

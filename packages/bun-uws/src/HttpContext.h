@@ -558,15 +558,6 @@ private:
                 }
             }
 
-            /* Select the router based on SNI (only possible for SSL) */
-            auto *selectedRouter = &httpContextData->router;
-            if constexpr (SSL) {
-                void *domainRouter = us_socket_server_name_userdata((struct us_socket_t *) s);
-                if (domainRouter) {
-                    selectedRouter = (decltype(selectedRouter)) domainRouter;
-                }
-            }
-
             /* Bun.serve: every request of this read is dispatched corked, not only
              * the first. A response to an earlier request can release the cork
              * taken above (a response that JavaScript produced, a body larger
@@ -579,8 +570,8 @@ private:
             }
 
             /* Route the method and URL */
-            selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
+            httpContextData->router.getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
+            if (!httpContextData->router.route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
                 /* We have to force close this socket as we have no handler for it.
                  * close() first sends the responses to earlier requests of this read. */
                 ((AsyncSocket<SSL> *) s)->close();
@@ -1194,17 +1185,17 @@ public:
             methods = {&method_sv_buffer, 1};
         }
 
-        uint32_t priority = method == "*" ? httpContextData->currentRouter->LOW_PRIORITY : (upgrade ? httpContextData->currentRouter->HIGH_PRIORITY : httpContextData->currentRouter->MEDIUM_PRIORITY);
+        uint32_t priority = method == "*" ? httpContextData->router.LOW_PRIORITY : (upgrade ? httpContextData->router.HIGH_PRIORITY : httpContextData->router.MEDIUM_PRIORITY);
 
         /* If we are passed nullptr then remove this */
         if (!handler) {
             for (const auto &method : methods) {
-                httpContextData->currentRouter->remove(method, pattern, priority);
+                httpContextData->router.remove(method, pattern, priority);
             }
             return;
         }
 
-        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), httpContextData](auto *r) mutable {
+        httpContextData->router.add(methods, pattern, [handler = std::move(handler), httpContextData](auto *r) mutable {
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());

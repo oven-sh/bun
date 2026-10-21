@@ -45,7 +45,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
             parsed_expect.members.iter().find(|member| MATCHERS.iter().any(|it| member.is_name_equal(it)))
     {
         let matcher_span = matcher_to_be_fixed.span;
-        // Without `Times`. Bun has no `toBeCalledOnce`.
+        // The matcher name without `Times`. Bun has no `toBeCalledOnce`.
         let without_suffix = match ctx.runner {
             Runner::Bun if matches!(matcher_to_be_fixed.element, MemberExpressionElement::IdentName(_)) => b"toHaveBeenCalled".as_slice(),
             _ => ctx.file.slice(Span::new(matcher_span.start, matcher_span.end.saturating_sub(5))),

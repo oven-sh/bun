@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 /// Require `.toString()` and `.toLocaleString()` to only be called on objects which provide useful information when stringified.
 pub struct NoBaseToString {
     ignored_type_names: Vec<Vec<u8>>,
-    /// One of them has a `[`.
+    /// True if one of them contains a `[`.
     ignores_name_with_bracket: bool,
     check_unknown: bool,
 }
@@ -33,43 +33,43 @@ pub enum Usefulness {
     Sometimes,
 }
 
-/// What is kept while the certainty of one expression is collected.
+/// State for computing one expression's certainty.
 #[derive(Default)]
 struct Walk<'a> {
-    /// The array and tuple types that are being looked into.
+    /// The array and tuple types currently being examined.
     visited: SmallVec<[Type<'a>; 4]>,
-    /// The array and tuple types that [`NoBaseToString::is_always_on_every_path`] was asked about.
+    /// Cached results of [`NoBaseToString::is_always_on_every_path`] for array and tuple types.
     is_always: IdMap<Type<'a>, bool>,
-    /// While it is asked: the array and tuple types that it has come across.
+    /// Set while `is_always_on_every_path` runs: the array and tuple types it has reached.
     assumed: Option<IdSet<Type<'a>>>,
-    /// Those of them that are still to be looked into.
+    /// Those of them that still have to be examined.
     pending: Vec<Type<'a>>,
-    /// The one that is looked into.
-    looked_into: Option<Type<'a>>,
-    /// Each of them that has been come across, with the one in which.
-    come_across: Vec<(Type<'a>, Option<Type<'a>>)>,
-    /// Since that one was begun with, something was not [`Usefulness::Always`].
-    found_other: bool,
-    /// What has been found for an array or tuple type, if it does not depend on what was in `visited`. Otherwise a `[T, T]` of a
-    /// `[U, U]` of .. is looked into two to the power of the depth times.
+    /// The one being examined.
+    examining: Option<Type<'a>>,
+    /// Each type it reached, paired with the type it was reached from.
+    reached_from: Vec<(Type<'a>, Option<Type<'a>>)>,
+    /// True if something wasn't [`Usefulness::Always`] since `examining` was started.
+    found_non_always: bool,
+    /// The result for an array or tuple type, if it doesn't depend on what was in `visited`. Without this cache, a
+    /// `[T, T]` of a `[U, U]` of .. is examined two to the power of the depth times.
     known: IdMap<Type<'a>, Usefulness>,
-    /// The first of `visited` that has been come across again, since the type that is looked into was begun with.
+    /// The lowest index in `visited` that was reached again since the current type was started.
     first_revisited: Option<usize>,
-    /// Since then, the stack had no room for something. Upstream overflows its stack.
+    /// True if the stack ran out of room since then. Upstream overflows its stack.
     was_cut_off: bool,
 }
 
-/// What has been found for the type of an expression, and whether that was for `join()`. For tsgolint, which keeps it for
-/// the whole file, for every type: its `toStringMemo` and `joinMemo`.
+/// Cached results per expression type, separately for `join()`. tsgolint caches every type for the whole file, so for
+/// it these are its `toStringMemo` and `joinMemo`.
 #[derive(Default)]
 pub struct Certainties<'a> {
-    /// The second is for `join()`.
+    /// Index 1 is for `join()`.
     known: [IdMap<Type<'a>, Usefulness>; 2],
-    /// tsgolint's `resolving`: the types whose entry of `toStringMemo` is being found.
+    /// tsgolint's `resolving`: the types whose `toStringMemo` entry is being computed.
     resolving: IdSet<Type<'a>>,
 }
 
-/// tsgolint's `isBuiltInStringCall` asks for the type of the callee, not for what its scope declares.
+/// tsgolint's `isBuiltInStringCall` checks the callee's type, not what its scope declares.
 fn has_type_of_string_constructor(callee: Expr) -> bool {
     let ty = callee.ty();
     is_builtin_symbol_like(ty, "String") || is_builtin_symbol_like(ty, "StringConstructor")
@@ -101,7 +101,7 @@ fn collect_union_type_certainty<'a>(
     }
 }
 
-/// tsgolint's `collectUnionTypeCertainty` asks every constituent: what it finds for each of them is kept.
+/// tsgolint's `collectUnionTypeCertainty` visits every constituent, because each one's result is cached.
 fn tsgolint_collect_union_type_certainty<'a>(
     ty: Type<'a>,
     mut collect_sub_type_certainty: impl FnMut(Type<'a>) -> Usefulness,
@@ -152,14 +152,14 @@ fn is_symbol_to_primitive_method(node: TsNode) -> bool {
         && is_symbol_from_default_library(object.get_symbol_at_location())
 }
 
-/// It is a member of `interface Object`.
+/// True if it's a member of `interface Object`.
 fn is_declared_on_object(declaration: TsNode) -> bool {
     declaration.parent().is_some_and(|parent| {
         parent.kind() == SyntaxKind::InterfaceDeclaration && parent.name().is_some_and(|name| name.text() == b"Object")
     })
 }
 
-/// `None`: the type has none of the methods.
+/// `None` if the type has none of the methods.
 fn is_to_string_like_from_object(ty: Type) -> Option<bool> {
     // An explicit `[Symbol.toPrimitive]` declaration is always user-defined.
     if tsutils::get_well_known_symbol_property_of_type(ty, "toPrimitive")
@@ -171,7 +171,8 @@ fn is_to_string_like_from_object(ty: Type) -> Option<bool> {
     is_fallback_on_object(ty)
 }
 
-/// Whether the methods that type coercion uses are all declared on `Object` itself. `None`: the type has none of them.
+/// True if the methods that type coercion uses are all declared on `Object` itself. `None` if the type has none of
+/// them.
 fn is_fallback_on_object(ty: Type) -> Option<bool> {
     let mut found_fallback_on_object = false;
     for property_name in ["toLocaleString", "toString", "valueOf"] {
@@ -197,8 +198,8 @@ impl NoBaseToString {
 
     /// `ignoredTypeNames.includes(getTypeName(checker, type))`
     fn has_ignored_name(&self, ty: Type) -> bool {
-        // The text of an array or a tuple type that has no name of its own has a `[`. It has the text of all the types
-        // in it, which is made again for each of them.
+        // The text of an array or tuple type without its own name contains a `[`. It also contains the text of every
+        // type inside it, which would be printed again for each of them.
         let has_bracket = || ty.alias_symbol().is_none() && (ty.is_tuple_type() || ty.is_array_type());
         (self.ignores_name_with_bracket || !has_bracket()) && self.is_ignored(&get_type_name(ty))
     }
@@ -248,14 +249,14 @@ impl NoBaseToString {
         Usefulness::Always
     }
 
-    /// Whether the array or tuple type `ty` is `Always` whatever is in `visited`.
+    /// True if the array or tuple type `ty` is `Always` regardless of what's in `visited`.
     ///
-    /// Upstream looks into the types of a cycle once for every path that leads to them, which does
-    /// not end where a dozen of them refer to each other. This looks into every type once and takes
-    /// those inside it for `Always`. If nothing else turns up, every path finds the same.
+    /// Upstream examines the types in a cycle once for every path that reaches them, which never finishes when a dozen
+    /// of them refer to each other. This examines every type once and assumes the ones inside it are `Always`. If
+    /// nothing else turns up, every path gives the same result.
     ///
-    /// The answer is kept for all the types that it has come across, not to look into what is left of a chain of them
-    /// from each of its links.
+    /// The result is cached for every type it reached, so that the rest of a chain isn't re-examined from each of its
+    /// links.
     fn is_always_on_every_path<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>) -> bool {
         walk.assumed.insert(IdSet::new()).insert(ty);
         walk.pending.push(ty);
@@ -263,27 +264,27 @@ impl NoBaseToString {
         let mut others = Vec::new();
         while let Some(t) = walk.pending.pop() {
             assumed.push(t);
-            walk.looked_into = Some(t);
-            walk.found_other = false;
+            walk.examining = Some(t);
+            walk.found_non_always = false;
             self.collect_elements_certainty(t, walk);
-            if walk.found_other {
+            if walk.found_non_always {
                 others.push(t);
             }
         }
         walk.assumed = None;
-        let come_across = std::mem::take(&mut walk.come_across);
+        let reached_from = std::mem::take(&mut walk.reached_from);
         if others.is_empty() {
             walk.is_always.extend(assumed.into_iter().map(|t| (t, true)));
             return true;
         }
-        // All that one of `others` is in, however deep.
-        let mut around: IdMap<Type<'a>, SmallVec<[Type<'a>; 1]>> = IdMap::new();
-        for (inner, outer) in come_across {
-            around.get_or_insert_with(inner, SmallVec::new).extend(outer);
+        // Find every type that contains one of `others`, at any depth.
+        let mut containers: IdMap<Type<'a>, SmallVec<[Type<'a>; 1]>> = IdMap::new();
+        for (inner, outer) in reached_from {
+            containers.get_or_insert_with(inner, SmallVec::new).extend(outer);
         }
         let mut has_other: IdSet<Type<'a>> = others.iter().copied().collect();
         while let Some(t) = others.pop() {
-            for &outer in around.get(t).map(|it| it.as_slice()).unwrap_or_default() {
+            for &outer in containers.get(t).map(|it| it.as_slice()).unwrap_or_default() {
                 if has_other.insert(outer) {
                     others.push(outer);
                 }
@@ -295,17 +296,17 @@ impl NoBaseToString {
 
     fn collect_to_string_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>) -> Usefulness {
         let certainty = self.to_string_certainty(ty, walk);
-        walk.found_other |= certainty != Usefulness::Always;
+        walk.found_non_always |= certainty != Usefulness::Always;
         certainty
     }
 
     fn to_string_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>) -> Usefulness {
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
-            walk.found_other = true;
+            walk.found_non_always = true;
             walk.was_cut_off = true;
             return Usefulness::Always;
         }
-        // A self referencing array or tuple type is not reported.
+        // A self-referencing array or tuple type isn't reported.
         if walk.assumed.is_none()
             && let Some(revisited) = walk.visited.iter().position(|it| *it == ty)
         {
@@ -314,7 +315,7 @@ impl NoBaseToString {
         }
         let flags = ty.flags();
 
-        // All that follows finds this for them.
+        // Everything below would return `Always` for these.
         if flags.intersects(TypeFlags::PRIMITIVE | TypeFlags::ANY | TypeFlags::NEVER) {
             return Usefulness::Always;
         }
@@ -359,13 +360,13 @@ impl NoBaseToString {
             }
             if let Some(assumed) = &mut walk.assumed {
                 if is_always == Some(false) {
-                    walk.found_other = true;
+                    walk.found_non_always = true;
                     return Usefulness::Always;
                 }
                 if assumed.insert(ty) {
                     walk.pending.push(ty);
                 }
-                walk.come_across.push((ty, walk.looked_into));
+                walk.reached_from.push((ty, walk.examining));
                 return Usefulness::Always;
             }
             if is_always.is_none() && self.is_always_on_every_path(ty, walk) {
@@ -380,12 +381,12 @@ impl NoBaseToString {
             walk.visited.push(ty);
             let certainty = self.collect_elements_certainty(ty, walk);
             walk.visited.pop();
-            let revisited_around = walk.first_revisited.filter(|&first| first < index);
-            if revisited_around.is_none() && !walk.was_cut_off {
+            let revisited_outer = walk.first_revisited.filter(|&first| first < index);
+            if revisited_outer.is_none() && !walk.was_cut_off {
                 walk.known.insert(ty, certainty);
             }
             walk.was_cut_off |= was_cut_off_before;
-            walk.first_revisited = match (revisited_before, revisited_around) {
+            walk.first_revisited = match (revisited_before, revisited_outer) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
             };
@@ -406,7 +407,7 @@ impl NoBaseToString {
         visited: &mut IdSet<Type<'a>>,
         memo: &mut Certainties<'a>,
     ) -> Usefulness {
-        // A self referencing array or tuple type is not reported.
+        // A self-referencing array or tuple type isn't reported.
         if visited.contains(ty) {
             return Usefulness::Always;
         }
@@ -437,13 +438,13 @@ impl NoBaseToString {
                 None => Usefulness::Always,
             };
         }
-        // These have no properties, and the `Boolean` type definition is missing `toString()`. Any other primitive type is
-        // asked for its properties: without `interface BigInt` in the lib, a `bigint` has those of `Object`.
+        // These have no properties, and the `Boolean` type definition is missing `toString()`. Any other primitive
+        // type's properties are checked: without `interface BigInt` in the lib, a `bigint` has `Object`'s.
         let always = TypeFlags::ANY | TypeFlags::NEVER | TypeFlags::NULL | TypeFlags::VOID_LIKE | TypeFlags::BOOLEAN_LIKE;
         if flags.intersects(always) {
             return Usefulness::Always;
         }
-        // The name is the text of the type: `Foo<string>` is not `Foo`.
+        // The name is the type's text, so `Foo<string>` isn't `Foo`.
         if !self.ignored_type_names.is_empty() && matches_type_or_base_type(|t| self.has_ignored_name(t), ty) {
             return Usefulness::Always;
         }
@@ -471,7 +472,7 @@ impl NoBaseToString {
         }
     }
 
-    /// tsgolint's `collectTupleCertainty`, which asks every element, and `collectArrayCertainty`.
+    /// tsgolint's `collectTupleCertainty`, which visits every element, and `collectArrayCertainty`.
     fn tsgolint_collect_elements_certainty<'a>(
         &self,
         ty: Type<'a>,
@@ -524,12 +525,12 @@ impl NoBaseToString {
             Usefulness::Never => "will",
             Usefulness::Sometimes => "may",
         };
-        // oxlint points at the parentheses around it, and names it with them.
-        let (place, name) = match cx.language().is_oxlint {
+        // oxlint's span and name include the parentheses around it.
+        let (report_span, name) = match cx.language().is_oxlint {
             true => (node.outer_span(), cx.file().slice(node.outer_span())),
             false => (node.span(), node.text()),
         };
-        cx.report(place, message).data("name", name).data("certainty", certainty);
+        cx.report(report_span, message).data("name", name).data("certainty", certainty);
     }
 
     fn check_expression<'a>(&self, node: Expr<'a>, ty: Option<Type<'a>>, cx: &mut Cx<'a, Self>) {
@@ -572,7 +573,7 @@ impl NoBaseToString {
         };
         let callee = call.callee();
         let is_oxlint = cx.language().is_oxlint;
-        // For tsgolint the callee in parentheses is a `ParenthesizedExpression`, which it does not look into.
+        // For tsgolint a parenthesized callee is a `ParenthesizedExpression`, which it doesn't look into.
         if is_oxlint && callee.is_parenthesized() {
             return;
         }
@@ -599,7 +600,7 @@ impl NoBaseToString {
             }
             ExprKind::Dot { obj, name, .. } => (obj, name.name()),
             ExprKind::Index { obj, index, .. } => match index.as_ident() {
-                // tsgolint looks at a `PropertyAccessExpression` only.
+                // tsgolint only looks at a `PropertyAccessExpression`.
                 Some(name) if !is_oxlint => (obj, name),
                 _ => return,
             },
@@ -633,7 +634,7 @@ impl NoBaseToString {
             return;
         };
         let expressions = template.exprs();
-        // tsgolint asks the parent, which is the ParenthesizedExpression of a tag in parentheses.
+        // tsgolint checks the parent, which is the `ParenthesizedExpression` if the template is a parenthesized tag.
         if expressions.is_empty()
             || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate)
                 && !(cx.language().is_oxlint && node.is_parenthesized())
@@ -667,7 +668,7 @@ impl Rule for NoBaseToString {
         }
     }
 
-    // tsgolint keeps what it has found for a type while it walks the file: what it finds depends on the order.
+    // tsgolint caches each type's result while it walks the file, so its results depend on the visiting order.
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         match file.language().is_oxlint {
             true => On::new().enter(NodeTags::new().exprs(&KINDS)),

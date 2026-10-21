@@ -1,9 +1,7 @@
 //! Tells whether work that tsgo repeats can be skipped.
 //!
-//! tsgo walks between the same type arguments again within one `inferTypes` call, and computes the type of a property
-//! again for every intersection of a cross product. Where the checker skips such a repeat
-//! (`Checker::infer_from_type_arguments_once`, check/sibling_intersections.rs), that must not be observable. These rules
-//! guarantee it:
+//! tsgo computes the type of a property again for every intersection of a cross product. Where the checker skips such a
+//! repeat (check/sibling_intersections.rs), that must not be observable. These rules guarantee it:
 //!
 //! - The work that's remembered had no side effects, called traces here (`traces_of_inference`). It didn't make a query,
 //!   start a computation whose result is cached in a table, compute an instantiation, create a record, or report
@@ -16,11 +14,9 @@
 //!   way. If the entry is added later, it changes the answer only when it was produced by a cycle or a limit. So what's
 //!   remembered is valid until the next cycle or limit (`inference_disturbances`), either in this task or in a commit
 //!   from another task (`Checker::state_of_commits`).
-//! - What's remembered is dropped before anything that was in progress ends: at the end of the `inferTypes` call, or
-//!   when the union has been filtered.
+//! - What's remembered is dropped before anything that was in progress ends: when the union has been filtered.
 
 use super::super::*;
-use super::Inference;
 
 /// Labels for `Checker::traces_of_inference`. Each one is a `Checker` field or a kind of record.
 const TRACES: [&str; 14] = [
@@ -62,21 +58,6 @@ pub(in super::super) const COMMITS: usize = 7;
 const _: () = assert!(matches!(DISTURBANCES[COMMITS].as_bytes(), b"commits"));
 
 impl<'p, 's> Checker<'p, 's> {
-    /// Everything that a walk between type arguments changes if it does more than repeat an earlier one.
-    pub(super) fn marks_of_argument_walk(&self, n: &Inference) -> impl PartialEq + use<'p, 's> {
-        (
-            self.traces_of_inference(),
-            self.inference_disturbances(),
-            self.lowest_taint,
-            self.instantiation_count,
-            (
-                n.visited.len(),
-                n.unfinished_hits,
-                n.has_reached_contextual_function,
-            ),
-        )
-    }
-
     /// Returns the counters in `TRACES` order. Every computation whose result is cached in a table starts with `enter`
     /// or `begin_scope`, which `work` and `scopes_begun` count.
     pub(in super::super) fn traces_of_inference(&self) -> [u64; TRACES.len()] {

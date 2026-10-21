@@ -23,47 +23,15 @@ type Unmatched<'a> = std::borrow::Cow<'a, [TypeId]>;
 /// From this many pairs on, `Inference::visited` is searched through `Inference::visited_index`.
 const VISITED_INDEX_FROM: usize = 16;
 
-/// A walk that has made this many `infer_types` calls starts to remember its walks between type arguments. See
-/// `Checker::infer_from_type_arguments_once`. The number only decides which walks pay for the bookkeeping, never a
-/// result.
-const REPEATED_ARGUMENT_WALKS_FROM: u32 = 256;
-
-/// A walk between the type arguments of two types, with everything it reads from the `Inference` apart from `visited`
-/// and the infos.
+/// `InferenceKey`
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-struct ArgumentWalk {
+struct InferenceKey {
     source: TypeId,
     target: TypeId,
-    of: ArgumentsOf,
     priority: u32,
-    depth: u32,
-    propagated: Option<TypeId>,
-    contra: bool,
+    contravariant: bool,
     bivariant: bool,
 }
-
-/// Whose type arguments a walk is between. `inferFromTypes` looks for a common alias first, and it may reduce the
-/// source and the target before it gets to the other two. So one pair of types can arrive as two of these.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-enum ArgumentsOf {
-    Alias,
-    Reference,
-    Tuple,
-}
-
-/// See `Checker::infer_from_type_arguments_once`.
-#[derive(Clone, Default)]
-struct RepeatedArgumentWalks {
-    /// The walks that changed nothing, each with the `inference_priority` it produced.
-    priorities: FxHashMap<ArgumentWalk, i32>,
-    /// `Checker::inference_disturbances` when they ran. A lookup that misses without starting an evaluation can get
-    /// another answer after a cycle or a limit (`infer_traces`).
-    disturbances: traces::Disturbances,
-}
-
-/// The priority in `Inference::visited` of a pair whose action hasn't returned. `invoke_once` reads it as
-/// `PRIORITY_CIRCULARITY`.
-const PRIORITY_IN_PROGRESS: i32 = i32::MIN;
 
 // InferencePriority. The lower the better.
 pub(super) const PRIORITY_NAKED: u32 = 1;
@@ -90,8 +58,6 @@ const PRIORITY_IMPLIES_COMBINATION: u32 =
 #[derive(Clone, Default)]
 pub(super) struct Candidate {
     pub covariant: SmallVec<[TypeId; 4]>,
-    /// Type argument nesting depth at which each of `covariant` was found. The deepest come first.
-    depths: SmallVec<[u32; 4]>,
     pub contravariant: SmallVec<[TypeId; 4]>,
     /// Candidates of a worse priority are dropped.
     pub priority: u32,
@@ -118,23 +84,13 @@ pub(super) struct Inference {
     priority: u32,
     /// The best priority anything was inferred at since it was last reset.
     inference_priority: i32,
-    visited: SmallVec<[(TypeId, TypeId, i32); 8]>,
-    /// The index of each pair in `visited`, once there are `VISITED_INDEX_FROM` of them.
-    visited_index: FxHashMap<(TypeId, TypeId), u32>,
-    /// Number of `invoke_once` calls that found their pair in progress.
-    unfinished_hits: u32,
-    /// `None` outside a walk and in a short one.
-    repeated_argument_walks: Option<Box<RepeatedArgumentWalks>>,
+    visited: SmallVec<[(InferenceKey, i32); 4]>,
+    /// The index of each key in `visited`, once there are `VISITED_INDEX_FROM` of them.
+    visited_index: FxHashMap<InferenceKey, u32>,
     /// Each type with its push number. See `is_at_least_as_new`.
     source_stack: SmallVec<[(TypeId, u32); 8]>,
     target_stack: SmallVec<[(TypeId, u32); 8]>,
     expanding: u8,
-    depth: u32,
-    /// How many times `infer_types` was called for the walk. See `REPEATED_ARGUMENT_WALKS_FROM`. It
-    /// never ends a walk, because tsgo has no such limit.
-    calls: u32,
-    /// The walk has reached a signature for which `is_sig_of_context_sensitive_function` is true.
-    has_reached_contextual_function: bool,
     /// The parameter type an inference started from.
     original_target: TypeId,
     /// `InferenceFlagsAnyDefault`: the call is in a JavaScript file, where a parameter without
@@ -178,14 +134,9 @@ impl Inference {
             inference_priority: PRIORITY_MAX,
             visited: SmallVec::new(),
             visited_index: FxHashMap::default(),
-            unfinished_hits: 0,
-            repeated_argument_walks: None,
             source_stack: SmallVec::new(),
             target_stack: SmallVec::new(),
             expanding: 0,
-            depth: 0,
-            calls: 0,
-            has_reached_contextual_function: false,
             original_target: TypeId::NEVER,
             any_default: false,
             source_outer_mapper: MapperId::IDENTITY,
@@ -221,14 +172,9 @@ impl Inference {
             inference_priority,
             visited,
             visited_index,
-            unfinished_hits,
-            repeated_argument_walks,
             source_stack,
             target_stack,
             expanding,
-            depth,
-            calls,
-            has_reached_contextual_function,
             original_target,
             any_default,
             source_outer_mapper,
@@ -246,18 +192,16 @@ impl Inference {
         candidates.clear();
         visited.clear();
         visited_index.clear();
-        *repeated_argument_walks = None;
-        *unfinished_hits = 0;
         source_stack.clear();
         target_stack.clear();
         inferred_type_params.clear();
         intra_expression_inference_sites.clear();
         (*sig, *propagated, *return_context, *outer_return_context) = (None, None, None, None);
-        (*contra, *bivariant, *has_reached_contextual_function) = (false, false, false);
+        (*contra, *bivariant) = (false, false);
         (*any_default, *no_default, *skipped_generic_function) = (false, false, false);
         *no_constraint_checks = false;
         (*priority, *inference_priority) = (0, PRIORITY_MAX);
-        (*expanding, *depth, *calls) = (0, 0, 0);
+        *expanding = 0;
         *original_target = TypeId::NEVER;
         (*source_outer_mapper, *conditional_outer_mapper) =
             (MapperId::IDENTITY, MapperId::IDENTITY);
@@ -344,14 +288,9 @@ impl<'p, 's> Checker<'p, 's> {
         if !n.visited_index.is_empty() {
             n.visited_index.clear();
         }
-        n.unfinished_hits = 0;
-        n.repeated_argument_walks = None;
         n.source_stack.clear();
         n.target_stack.clear();
         n.expanding = 0;
-        n.depth = 0;
-        n.calls = 0;
-        n.has_reached_contextual_function = false;
         n.original_target = target;
         // Fast path: `n.priority` only grows during inference and a candidate with a worse priority than the existing inference is
         // discarded, so nothing can be recorded. Limited to `InferencePriorityReturnType`: at other priorities inference can still
@@ -364,8 +303,6 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         self.infer_types(n, source, target);
-        // Otherwise every clone of the context would copy it.
-        n.repeated_argument_walks = None;
     }
 
     /// `inferFromTypes`
@@ -386,20 +323,13 @@ impl<'p, 's> Checker<'p, 's> {
         if source == TypeId::UNRESOLVED && n.priority & PRIORITY_RETURN != 0 {
             return;
         }
-        n.calls = n.calls.saturating_add(1);
         if self.is_stack_low() {
             return;
         }
         // Two instantiations of one alias: infer between the type arguments only. Without type arguments there is nothing to infer.
-        if let Some((alias, sources, targets, _)) = self.same_alias(source, target) {
+        if let Some((_, sources, ..)) = self.same_alias(source, target) {
             if !sources.is_empty() {
-                self.infer_from_type_arguments_once(
-                    n,
-                    source,
-                    target,
-                    ArgumentsOf::Alias,
-                    |c, n| c.infer_from_type_arguments_of(n, alias, &sources, &targets),
-                );
+                self.invoke_once(n, source, target, Self::infer_from_alias_type_arguments);
             }
             return;
         }
@@ -512,17 +442,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if (st == tt || self.is_array(source) && self.is_array(target))
                     && !are_both_deferred =>
             {
-                let st = *st;
-                self.infer_from_type_arguments_once(
-                    n,
-                    source,
-                    target,
-                    ArgumentsOf::Reference,
-                    |c, n| {
-                        let (sa, ta) = (c.type_arguments(source), c.type_arguments(target));
-                        c.infer_from_type_arguments_of(n, st, sa, ta)
-                    },
-                );
+                self.invoke_once(n, source, target, Self::infer_from_reference_type_arguments);
             }
             (
                 TypeData::Tuple {
@@ -536,16 +456,7 @@ impl<'p, 's> Checker<'p, 's> {
                     ..
                 },
             ) if sf == tf && sr == tr && !are_both_deferred => {
-                self.infer_from_type_arguments_once(
-                    n,
-                    source,
-                    target,
-                    ArgumentsOf::Tuple,
-                    |c, n| {
-                        let (se, te) = (c.type_arguments(source), c.type_arguments(target));
-                        c.infer_from_type_arguments(n, se, te, &[])
-                    },
-                );
+                self.invoke_once(n, source, target, Self::infer_from_reference_type_arguments);
             }
             (TypeData::Keyof(s), TypeData::Keyof(t)) => {
                 self.infer_from_contravariant_types(n, *s, *t)
@@ -640,12 +551,11 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
     ) {
         if n.candidates[index].fixed.is_none() {
-            let (priority, contra, depth) = (n.priority, n.contra && !n.bivariant, n.depth);
+            let (priority, contra) = (n.priority, n.contra && !n.bivariant);
             let mut has_changed = false;
             let c = &mut n.candidates[index];
             if priority < c.priority {
                 c.covariant.clear();
-                c.depths.clear();
                 c.contravariant.clear();
                 c.top_level = true;
                 c.priority = priority;
@@ -657,22 +567,9 @@ impl<'p, 's> Checker<'p, 's> {
                         c.contravariant.push(candidate);
                         has_changed = true;
                     }
-                } else {
-                    let found = c.covariant.iter().position(|&t| t == candidate);
-                    if found.is_none_or(|i| c.depths[i] < depth) {
-                        if let Some(i) = found {
-                            c.covariant.remove(i);
-                            c.depths.remove(i);
-                        }
-                        let at = c
-                            .depths
-                            .iter()
-                            .position(|&d| d < depth)
-                            .unwrap_or(c.depths.len());
-                        c.covariant.insert(at, candidate);
-                        c.depths.insert(at, depth);
-                        has_changed = true;
-                    }
+                } else if !c.covariant.contains(&candidate) {
+                    c.covariant.push(candidate);
+                    has_changed = true;
                 }
             }
             if priority & PRIORITY_RETURN == 0
@@ -693,89 +590,31 @@ impl<'p, 's> Checker<'p, 's> {
         n.inference_priority = n.inference_priority.min(n.priority as i32);
     }
 
-    /// Runs `walk`, which infers between the type arguments of `source` and `target`, unless it would only repeat an
-    /// earlier walk of this `inferTypes` call.
-    ///
-    /// `invokeOnce` stops a second walk between the members of two object types, but nothing stops a second walk between
-    /// the type arguments of two references or aliases. In `B<[...S, E<Id, C<X<S>, Y<S>>>]>` each level mentions the
-    /// level below it several times, so tsgo walks every path: 2.7 times as many for each call added to a chain of calls
-    /// on such a builder.
-    ///
-    /// A walk is remembered if it added no pair to `visited`, found none in progress and left no trace in the checker
-    /// (`marks_of_argument_walk`). Such a walk only read types, read the stored priority of each pair, and offered
-    /// candidates. Run again, it reads the same types and the same priorities, so it follows the same path. Offering a
-    /// candidate again changes nothing: either it's in the list at that depth or a greater one, or a better priority
-    /// has replaced the list and the offer is dropped. `top_level` depends only on the type parameter. So the walk's
-    /// only other effect is on `inference_priority`, and that's stored and applied again.
-    #[inline]
-    fn infer_from_type_arguments_once(
+    /// `inferFromAliasTypeArguments`
+    fn infer_from_alias_type_arguments(
         &mut self,
         n: &mut Inference,
         source: TypeId,
         target: TypeId,
-        of: ArgumentsOf,
-        walk: impl FnOnce(&mut Self, &mut Inference),
     ) {
-        if n.calls < REPEATED_ARGUMENT_WALKS_FROM {
-            return walk(self, n);
+        if let Some((alias, sources, targets, _)) = self.same_alias(source, target) {
+            self.infer_from_type_arguments_of(n, alias, &sources, &targets);
         }
-        self.infer_from_type_arguments_in_long_walk(n, source, target, of, walk)
     }
 
-    /// Returns the walk's key, or `None` if an identical walk is remembered. Its priority has been applied in that
-    /// case.
-    fn begin_argument_walk(
-        &self,
-        n: &mut Inference,
-        source: TypeId,
-        target: TypeId,
-        of: ArgumentsOf,
-    ) -> Option<ArgumentWalk> {
-        let key = ArgumentWalk {
-            source,
-            target,
-            of,
-            priority: n.priority,
-            depth: n.depth,
-            propagated: n.propagated,
-            contra: n.contra,
-            bivariant: n.bivariant,
-        };
-        let disturbances = self.inference_disturbances();
-        let repeated = n.repeated_argument_walks.get_or_insert_default();
-        if repeated.disturbances != disturbances {
-            repeated.priorities.clear();
-            repeated.disturbances = disturbances;
-        }
-        if let Some(&priority) = repeated.priorities.get(&key) {
-            n.inference_priority = n.inference_priority.min(priority);
-            return None;
-        }
-        Some(key)
-    }
-
-    #[inline(never)]
-    fn infer_from_type_arguments_in_long_walk(
+    /// `inferFromReferenceTypeArguments`. Tuples of the same shape are references to the same generic type.
+    fn infer_from_reference_type_arguments(
         &mut self,
         n: &mut Inference,
         source: TypeId,
         target: TypeId,
-        of: ArgumentsOf,
-        walk: impl FnOnce(&mut Self, &mut Inference),
     ) {
-        let Some(key) = self.begin_argument_walk(n, source, target, of) else {
-            return;
-        };
-        let before = self.marks_of_argument_walk(n);
-        let outer = std::mem::replace(&mut n.inference_priority, PRIORITY_MAX);
-        walk(self, n);
-        let priority = n.inference_priority;
-        n.inference_priority = priority.min(outer);
-        // The marks include the disturbances, so `repeated.disturbances` is still current.
-        if self.marks_of_argument_walk(n) == before
-            && let Some(repeated) = &mut n.repeated_argument_walks
-        {
-            repeated.priorities.insert(key, priority);
+        let (sources, targets) = (self.type_arguments(source), self.type_arguments(target));
+        match *self.data(source) {
+            TypeData::Ref { target: symbol, .. } => {
+                self.infer_from_type_arguments_of(n, symbol, sources, targets)
+            }
+            _ => self.infer_from_type_arguments(n, sources, targets, &[]),
         }
     }
 
@@ -806,7 +645,6 @@ impl<'p, 's> Checker<'p, 's> {
         targets: &[TypeId],
         variances: &[u8],
     ) {
-        n.depth += 1;
         for i in 0..sources.len().min(targets.len()) {
             if variances.get(i).is_some_and(|v| v & 7 == 2) {
                 self.infer_from_contravariant_types(n, sources[i], targets[i]);
@@ -814,7 +652,6 @@ impl<'p, 's> Checker<'p, 's> {
                 self.infer_types(n, sources[i], targets[i]);
             }
         }
-        n.depth -= 1;
     }
 
     /// `inferWithPriority`
@@ -852,35 +689,29 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         action: fn(&mut Self, &mut Inference, TypeId, TypeId),
     ) {
+        let key = InferenceKey {
+            source,
+            target,
+            priority: n.priority,
+            contravariant: n.contra,
+            bivariant: n.bivariant,
+        };
         let seen = if n.visited.len() < VISITED_INDEX_FROM {
-            n.visited
-                .iter()
-                .position(|v| v.0 == source && v.1 == target)
+            n.visited.iter().position(|v| v.0 == key)
         } else {
-            n.visited_index
-                .get(&(source, target))
-                .map(|&slot| slot as usize)
+            n.visited_index.get(&key).map(|&slot| slot as usize)
         };
         if let Some(seen) = seen {
-            let mut priority = n.visited[seen].2;
-            if priority == PRIORITY_IN_PROGRESS {
-                n.unfinished_hits += 1;
-                priority = PRIORITY_CIRCULARITY;
-            }
-            n.inference_priority = n.inference_priority.min(priority);
+            n.inference_priority = n.inference_priority.min(n.visited[seen].1);
             return;
         }
         let slot = n.visited.len();
-        n.visited.push((source, target, PRIORITY_IN_PROGRESS));
+        n.visited.push((key, PRIORITY_CIRCULARITY));
         if n.visited.len() == VISITED_INDEX_FROM {
-            n.visited_index.extend(
-                n.visited
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| ((v.0, v.1), i as u32)),
-            );
+            let visited = n.visited.iter().enumerate();
+            (n.visited_index).extend(visited.map(|(i, v)| (v.0, i as u32)));
         } else if n.visited.len() > VISITED_INDEX_FROM {
-            n.visited_index.insert((source, target), slot as u32);
+            n.visited_index.insert(key, slot as u32);
         }
         let saved_priority = std::mem::replace(&mut n.inference_priority, PRIORITY_MAX);
         let saved_expanding = n.expanding;
@@ -901,7 +732,7 @@ impl<'p, 's> Checker<'p, 's> {
         n.target_stack.pop();
         n.source_stack.pop();
         n.expanding = saved_expanding;
-        n.visited[slot].2 = n.inference_priority;
+        n.visited[slot].1 = n.inference_priority;
         n.inference_priority = n.inference_priority.min(saved_priority);
     }
 
@@ -993,6 +824,8 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let mut source_symbols: SmallVec<[_; 8]> = SmallVec::new();
         let mut matched = Matched::default();
+        // The index of a target and of a source that matches it.
+        let mut pairs: SmallVec<[(usize, usize); 8]> = SmallVec::new();
         for (j, &t) in targets.iter().enumerate() {
             let (symbol, alias) = symbols_of(self, t);
             if symbol.is_none() && alias.is_none() {
@@ -1013,12 +846,61 @@ impl<'p, 's> Checker<'p, 's> {
                         && (self.same_alias(s, t))
                             .is_some_and(|(.., has_type_arguments)| has_type_arguments)
                 {
-                    self.infer_types(n, s, t);
+                    pairs.push((j, i));
                     matched.add(i, j, (sources.len(), targets.len()));
                 }
             }
         }
+        // The targets with the deepest generic instantiations come first. From `string[] | string[][]` to
+        // `T[] | T[][]`, the `string` inferred from `string[][]` to `T[][]` is better than the `string[]` inferred
+        // from `string[][]` to `T[]`.
+        if pairs.first().map(|pair| pair.0) != pairs.last().map(|pair| pair.0) {
+            let mut depths: SmallVec<[Option<u32>; 8]> = smallvec![None; targets.len()];
+            // The sources are in the order in which they were first matched.
+            let mut ranks: SmallVec<[usize; 8]> = smallvec![usize::MAX; sources.len()];
+            for (rank, &(j, i)) in pairs.iter().enumerate() {
+                if depths[j].is_none() {
+                    depths[j] = Some(self.type_depth(targets[j], 3));
+                }
+                ranks[i] = ranks[i].min(rank);
+            }
+            pairs.sort_by(|a, b| match a.0 == b.0 {
+                true => ranks[a.1].cmp(&ranks[b.1]),
+                false => (depths[b.0].cmp(&depths[a.0]))
+                    .then_with(|| self.compare_types(targets[a.0], targets[b.0])),
+            });
+        }
+        for (j, i) in pairs {
+            self.infer_types(n, sources[i], targets[j]);
+        }
         matched.remove_from(sources, targets);
+    }
+
+    /// `getTypeDepth`
+    fn type_depth(&mut self, ty: TypeId, max_depth: u32) -> u32 {
+        if max_depth == 0 {
+            return 0;
+        }
+        if let Some((_, arguments)) = self.alias_of_type(ty)
+            && !arguments.is_empty()
+        {
+            return self.type_list_depth(&arguments, max_depth - 1) + 1;
+        }
+        match self.data(ty) {
+            TypeData::Ref { .. } | TypeData::Tuple { .. } => match self.type_arguments(ty) {
+                [] => 0,
+                arguments => self.type_list_depth(arguments, max_depth - 1) + 1,
+            },
+            TypeData::Union(_) => self.type_list_depth(self.parts(ty), max_depth),
+            TypeData::Intersection(parts) => self.type_list_depth(parts, max_depth),
+            _ => 0,
+        }
+    }
+
+    /// `getTypeListDepth`
+    fn type_list_depth(&mut self, types: &[TypeId], max_depth: u32) -> u32 {
+        let depths = types.iter().map(|&ty| self.type_depth(ty, max_depth));
+        depths.max().unwrap_or(0)
     }
 
     /// `inferToMultipleTypes`
@@ -1473,9 +1355,7 @@ impl<'p, 's> Checker<'p, 's> {
             (self.data(source), self.data(target))
             && (st == tt || self.is_array(source) && self.is_array(target))
         {
-            let (sa, ta) = (self.type_arguments(source), self.type_arguments(target));
-            self.infer_from_type_arguments_of(n, *st, sa, ta);
-            return;
+            return self.infer_from_reference_type_arguments(n, source, target);
         }
         // Tuples of the same shape are also references to the same generic type.
         if let (
@@ -1493,9 +1373,7 @@ impl<'p, 's> Checker<'p, 's> {
             && sf == tf
             && sr == tr
         {
-            let (se, te) = (self.type_arguments(source), self.type_arguments(target));
-            self.infer_from_type_arguments(n, se, te, &[]);
-            return;
+            return self.infer_from_reference_type_arguments(n, source, target);
         }
         if self.is_generic_mapped_type(source) && self.is_generic_mapped_type(target) {
             self.infer_from_generic_mapped_types(n, source, target);
@@ -2011,8 +1889,6 @@ impl<'p, 's> Checker<'p, 's> {
         target: SigId,
         return_only: bool,
     ) {
-        n.has_reached_contextual_function |= self.is_sig_of_context_sensitive_function(source)
-            || self.is_sig_of_context_sensitive_function(target);
         let source = self.base_sig(source);
         let declared = self.declared_sig(target);
         let is_method = match self.sig_decl(declared) {
@@ -2043,16 +1919,6 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(ReturnTypePair { s, t }) = self.return_type_pair(source, target) {
             self.infer_types(n, s, t);
         }
-    }
-
-    /// True if `sig`'s type parameters, `this` type and parameter types come from a contextual
-    /// signature. That's `assigned_signature`, which may belong to a check in progress and differs
-    /// before and after that check.
-    fn is_sig_of_context_sensitive_function(&self, sig: SigId) -> bool {
-        self.sig_decl(sig).is_some_and(|(file, func, _)| {
-            let owner = self.takes_context(file, func);
-            owner.is_some_and(|owner| self.is_context_sensitive(file, owner))
-        })
     }
 
     /// Returns the pairs `applyToParameterTypes` visits.

@@ -7948,6 +7948,8 @@ describe("css tests", () => {
         ".a{color:color(from hsl(120 20% 50.002%) srgb r g b)}",
         ".a{color:color(srgb .400024 .600016 .400024)}",
       );
+      // An origin with `none` was never 8-bit. It is converted as before, also when it is a gray.
+      minify_test(".a{color:color(from hsl(none 0% 50%) srgb r g b)}", ".a{color:color(srgb .5 .5 .5)}");
     });
 
     describe("color with an alpha that is not known yet", () => {

@@ -1572,6 +1572,10 @@ impl FloatColor {
     /// This color as the origin of a relative color. Only another function converts it: https://drafts.csswg.org/css-color-5/#relative-colors
     fn read_by(mut self, reader: Option<core::any::TypeId>) -> FloatColor {
         if reader != Some(self.payload_type_id()) {
+            // A color with `none` was never 8-bit, so `parse_from` converts it as before.
+            if self.has_none() {
+                return self;
+            }
             return FloatColor::Rgb(self.to_srgb());
         }
         // `h` is the hue of the origin in [0, 360).

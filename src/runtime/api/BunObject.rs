@@ -1,8 +1,7 @@
 //! `globalThis.Bun` — top-level host functions and lazy-property getters.
 
 /// Append the public path of `to` relative to `dir` to `out`, prefixed by
-/// `origin` (and `asset_prefix` when `origin` is absolute). Called by
-/// `Bun.FileSystemRouter`'s `scriptSrc` getter.
+/// `origin` (and `asset_prefix` when `origin` is absolute). Called by `Bun.FileSystemRouter`.
 ///
 /// The output is raw path bytes. POSIX paths are arbitrary byte sequences;
 /// `bun_string_jsc::create_utf8_for_js` replaces invalid UTF-8 with U+FFFD.

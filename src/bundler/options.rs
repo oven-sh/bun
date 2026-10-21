@@ -410,10 +410,7 @@ impl LoaderExt for Loader {
 
 // ──────────────────────────────────────────────────────────────────────────
 // CYCLEBREAK: jsc::VirtualMachine / jsc::WebCore::Blob are T6 GENUINE deps.
-// `get_loader_and_virtual_source` reaches into VM internals (module_loader,
-// ObjectURLRegistry) and is only called from the runtime side. It takes an
-// opaque vtable now; runtime supplies the static VmLoaderVTable instance
-// (move-in pass).
+// `get_loader_and_virtual_source` reaches them through an opaque vtable that the runtime supplies.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Opaque erased blob handle. SAFETY: erased jsc::WebCore::Blob; bundler only

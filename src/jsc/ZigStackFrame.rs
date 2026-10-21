@@ -18,7 +18,7 @@ pub struct ZigStackFrame {
     pub code_type: ZigStackFrameCode,
     pub is_async: bool,
 
-    /// Set once the source map remapper has handled the frame. Formatters dim the root path only then.
+    /// Set once the source map remapper has handled the frame. Only then is the root path dimmed.
     pub remapped: bool,
 
     /// -1 means not set.

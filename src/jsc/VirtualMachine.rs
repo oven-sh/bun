@@ -3227,8 +3227,7 @@ impl VirtualMachine {
         // Note (validity): the zeroed bytes are NOT a valid
         // `VirtualMachine` — `origin_timer: Instant`, `on_unhandled_rejection:
         // fn(...)`, every `Vec`/`Box`/
-        // `HashMap`/`ArrayHashMap` field (NonNull dangling-when-empty), and
-        // `Option<bool>` (bool-niche → zero = Some)
+        // `HashMap`/`ArrayHashMap` field (NonNull dangling-when-empty), and `Option<bool>`
         // have no all-zero repr. We therefore never materialize
         // `&mut VirtualMachine` until all such fields have been `ptr::write`n
         // via `addr_of_mut!`; remaining fields are zero-valid
@@ -3313,10 +3312,9 @@ impl VirtualMachine {
             addr_of_mut!((*vm).default_tls_reject_unauthorized).write(None);
             addr_of_mut!((*vm).pending_ipc).write(None);
             // Non-zero-valid container fields: `Vec`/`Box`/`HashMap`/
-            // `ArrayHashMap` all carry a `NonNull` (dangling when empty) —
-            // all-zero bytes violate their validity invariants even when
-            // len/cap are 0. Write the canonical empty value via `ptr::write`
-            // (no Drop of zeroed bytes).
+            // `ArrayHashMap` all carry a `NonNull` (dangling when empty): all-zero bytes violate
+            // their validity invariants even when len/cap are 0. Write the
+            // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).child_workers).write(Vec::new());
             addr_of_mut!((*vm).handle)

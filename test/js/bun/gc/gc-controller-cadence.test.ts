@@ -603,13 +603,14 @@ test.skipIf(!isLinux || isASAN)(
 // The marking helper threads used to join every collection from its start. For a collection of a small heap that is
 // most of the pause: each helper wakes, contends for the marking lock with the collector's thread for the few hundred KB
 // there are to mark, and is seen off again. On a 12-core machine an eden collection of a 4 MB heap paused for 3 ms
-// with the 8 helpers and 0.75 ms with none (oven-sh/bun#44797). Now the helpers join once the collection has marked
-// 1 MB, or when the mutator resumes with marking left.
+// with the 8 helpers and 0.75 ms with none (oven-sh/bun#44797). Now no helper is in a collection until the collection
+// asks for one, and it asks when its marking has paid for the wake-up: 2 MB visited by one thread
+// (BUN_JSC_minimumBytesMarkedForParallelMarking), or when the mutator resumes with marking left.
 // BUN_JSC_logGC prints what each visitor marked after every constraint pass: C is the collector's own visitor, P1..Pn
 // the helpers'. A fixed number of markers makes the count the same on every machine. A debug build takes over 10 s to
 // allocate the 60 MB.
 describe.concurrent.skipIf(isDebug)("marking helper threads", () => {
-  async function collectionsOf(script: string, extraEnv: Record<string, string> = {}) {
+  async function run(script: string, extraEnv: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
       env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_numberOfGCMarkers: "4", BUN_GC_TIMER_DISABLE: "1", ...extraEnv },
@@ -620,14 +621,21 @@ describe.concurrent.skipIf(isDebug)("marking helper threads", () => {
     const log = stdout + stderr;
     expect(stdout, log).toContain("done");
     expect(exitCode, log).toBe(0);
-    // One collection runs from its START line to its END]. The last visitor line of it has its totals.
-    return [...log.matchAll(/START [A-Z] \d+kb => (\w+)Collection[\s\S]*?END\]/g)].map(([block, scope]) => {
-      const lines = [...block.matchAll(/v=(\d+)kb \(C:(\d+) M:\d+((?: P\d+:\d+)+)\)/g)];
-      const [, markedKB, collectorKB, helpers] = lines[lines.length - 1];
-      const helpersKB = [...helpers.matchAll(/:(\d+)/g)].reduce((sum, [, kb]) => sum + Number(kb), 0);
-      return { scope, markedKB: Number(markedKB), collectorKB: Number(collectorKB), helpersKB };
-    });
+    // One collection runs from its START line to its END]. The last visitor line of it has its totals, and the END
+    // line has mw=, the number of times the collection woke a thread for its marking.
+    const collections = [...log.matchAll(/START [A-Z] \d+kb => (\w+)Collection[\s\S]*?END\]/g)].map(
+      ([block, scope]) => {
+        const lines = [...block.matchAll(/v=(\d+)kb \(C:(\d+) M:\d+((?: P\d+:\d+)+)\)/g)];
+        const [, markedKB, collectorKB, helpers] = lines[lines.length - 1];
+        const helpersKB = [...helpers.matchAll(/:(\d+)/g)].reduce((sum, [, kb]) => sum + Number(kb), 0);
+        const markerWakeups = Number(block.match(/ mw=(\d+) p=[\d.]+ms \(max [\d.]+\), cycle [\d.]+ms END\]$/)?.[1]);
+        return { scope, markedKB: Number(markedKB), collectorKB: Number(collectorKB), helpersKB, markerWakeups };
+      },
+    );
+    return { collections, voluntaryContextSwitches: Number(proc.resourceUsage()!.contextSwitches.voluntary) };
   }
+  const collectionsOf = async (script: string, extraEnv?: Record<string, string>) =>
+    (await run(script, extraEnv)).collections;
 
   // A ring of 1024 small objects replaced 200k times over: about 60 MB of short-lived objects, so about 7 eden
   // collections at the 8 MB budget, each with under 1 MB to mark (the ring is written, so it is remembered). The first
@@ -655,6 +663,11 @@ describe.concurrent.skipIf(isDebug)("marking helper threads", () => {
       edens.map(c => c.helpersKB),
       JSON.stringify(edens),
     ).toEqual(edens.map(() => 0));
+    // And none of them wakes a thread: a helper that is woken and finds nothing to mark would not show above.
+    expect(
+      edens.map(c => c.markerWakeups),
+      JSON.stringify(edens),
+    ).toEqual(edens.map(() => 0));
   });
 
   // The GC race tests depend on this: with the threshold at 0 they join from the start. A ring four times the size gives
@@ -678,4 +691,75 @@ describe.concurrent.skipIf(isDebug)("marking helper threads", () => {
     expect(fulls.length, JSON.stringify(collections)).toBeGreaterThanOrEqual(1);
     for (const full of fulls) expect(full.helpersKB, JSON.stringify(full)).toBeGreaterThan(0);
   });
+
+  // An LRU cache, churned: a Map over a doubly linked list, a fresh cache each round. A graph like this has next to
+  // nothing for a second thread. A marking thread used to wake every sleeping helper each time it shared a cell or
+  // two, one of them took the cells, and the others went back to sleep: about 220 thread wake-ups per collection
+  // with 8 markers at 4096 entries, and each one is a system call for the thread that makes it. The program ran 2
+  // times faster with one marker (oven-sh/bun#44893). Now the marking pays for each wake-up, 2 MB visited for one,
+  // and a helper that finds nothing shared leaves the collection. The END line of a collection in the GC log has
+  // mw=, the wake-ups it made. A thread that sleeps in a wait makes a voluntary context switch, so those count the
+  // wake-ups too, the ones that the log does not know of included.
+  const lru = (capacity: number, rounds: number) => `
+    const CAPACITY = ${capacity}, SCALE = CAPACITY / 4096, KEYS = 30000 * SCALE, OPS = 65536 * SCALE;
+    let seed = 12345;
+    const rand = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296;
+    const stream = new Uint32Array(OPS);
+    for (let i = 0; i < OPS; i++) stream[i] = Math.floor(KEYS * rand() ** 3);
+    function round() {
+      const map = new Map();
+      const head = { prev: null, next: null }, tail = { prev: head, next: null };
+      head.next = tail;
+      let hits = 0;
+      for (let i = 0; i < OPS; i++) {
+        const key = stream[i];
+        let node = map.get(key);
+        if (node) {
+          hits++;
+          node.prev.next = node.next; node.next.prev = node.prev;
+        } else {
+          if (map.size === CAPACITY) {
+            const old = tail.prev;
+            old.prev.next = tail; tail.prev = old.prev;
+            map.delete(old.key);
+          }
+          node = { key, value: key, prev: null, next: null };
+          map.set(key, node);
+        }
+        node.next = head.next; node.prev = head;
+        head.next.prev = node; head.next = node;
+      }
+      return hits;
+    }
+    let hits = 0;
+    for (let r = 0; r < ${rounds}; r++) hits = round();
+    console.log("done", hits);
+  `;
+  // At 4096 entries a collection marks 1 to 10 MB, and the process makes 2 to 5 voluntary context switches per
+  // collection (80 to 150 before). At 32768 entries it marks 5 to 18 MB and makes 10 to 20 (160 to 250 before): a
+  // collection size that a threshold for when the helpers join does not cover. An ASAN build takes several times
+  // longer for the same program.
+  test.skipIf(isASAN).each([
+    { capacity: 4096, rounds: 60, collectionsOver2MB: 10, switchesPerCollection: 20 },
+    { capacity: 32768, rounds: 4, collectionsOver2MB: 5, switchesPerCollection: 50 },
+  ])(
+    "are woken for the marking that is done, not for every cell that is shared (LRU of $capacity)",
+    async ({ capacity, rounds, collectionsOver2MB, switchesPerCollection }) => {
+      const { collections, voluntaryContextSwitches } = await run(lru(capacity, rounds), {
+        BUN_JSC_numberOfGCMarkers: "8",
+      });
+      const summary = JSON.stringify({ voluntaryContextSwitches, collections });
+      // The collections this is about: the ones with more to mark than the first wake-up costs.
+      expect(collections.filter(c => c.markedKB >= 2048).length, summary).toBeGreaterThanOrEqual(collectionsOver2MB);
+      // What the scheduler makes of the waits of a process differs between systems. These bounds are from Linux.
+      if (isLinux) expect(voluntaryContextSwitches / collections.length, summary).toBeLessThan(switchesPerCollection);
+      // One wake-up per 2 MB that a thread visits, one per 256 KB that a woken thread visits first, and one where
+      // the mutator resumes with marking left and no marker at it. These graphs give a woken thread little, so
+      // they stay under one wake-up per MB. Waking every helper for every shared cell made about 70 per MB.
+      const megabytesMarked = collections.reduce((sum, c) => sum + c.markedKB, 0) / 1024;
+      const markerWakeups = collections.reduce((sum, c) => sum + c.markerWakeups, 0);
+      expect(markerWakeups, summary).toBeLessThanOrEqual(2 * megabytesMarked + 2 * collections.length);
+      for (const c of collections) expect(c.markerWakeups, summary).toBeLessThanOrEqual((2 * c.markedKB) / 1024 + 8);
+    },
+  );
 });

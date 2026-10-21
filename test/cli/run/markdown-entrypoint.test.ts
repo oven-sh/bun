@@ -416,6 +416,9 @@ describe("bun <file.md>", () => {
      * Renders a document with `bun ./doc.md`. `img(name, file)` is an image with the alt text
      * `(name)` that a loopback host serves as `/<file>.png`. `ref` is the same image as a
      * reference to a definition at the end of the document.
+     *
+     * `shown` is what reached the terminal. Compare it on POSIX only: ConPTY sends on its own
+     * rendering of the output, and on Windows Server 2019 the alt texts do not arrive.
      */
     async function render(blocks: (image: Record<"img" | "ref", (name: string, file?: string) => string>) => string[]) {
       const requested: string[] = [];
@@ -475,18 +478,20 @@ describe("bun <file.md>", () => {
           .filter(name => name.startsWith("bun-md-"))
           .map(name => join(tmp, name))
           .sort(),
-        // The files that the terminal is told to draw: the payload of the APC sequence is the path.
-        drawn: Array.from(output.matchAll(/\x1b_Ga=T,t=f[^;]*;([^\x1b]*)\x1b\\/g), match =>
-          Buffer.from(match[1], "base64").toString(),
-        ).sort(),
-        // An image that the terminal is not told to draw shows as its alt text.
-        altTexts: names.filter(name => output.includes(`(${name})`)),
         exitCode,
+        shown: {
+          // The files that the terminal is told to draw: the payload of the APC sequence is the path.
+          drawn: Array.from(output.matchAll(/\x1b_Ga=T,t=f[^;]*;([^\x1b]*)\x1b\\/g), match =>
+            Buffer.from(match[1], "base64").toString(),
+          ).sort(),
+          // An image that the terminal is not told to draw shows as its alt text.
+          altTexts: names.filter(name => output.includes(`(${name})`)),
+        },
       };
     }
 
-    test("fetches and stages only the images that the terminal is told to draw", async () => {
-      const { requested, staged, drawn, altTexts, exitCode } = await render(({ img, ref }) => [
+    test.concurrent("fetches and stages only the images that the terminal is told to draw", async () => {
+      const { requested, staged, exitCode, shown } = await render(({ img, ref }) => [
         // A heading and a table cell show an image as its alt text.
         `# ATX ${img("atx-heading")}`,
         `Setext ${img("setext-heading")}\n===`,
@@ -510,7 +515,7 @@ describe("bun <file.md>", () => {
         img("paragraph-first", "paragraph-then-cell"),
         `| ${img("cell-second", "paragraph-then-cell")} |\n| --- |`,
       ]);
-      expect({ requested, staged: staged.length, altTexts, exitCode }).toEqual({
+      expect({ requested, staged: staged.length, exitCode }).toEqual({
         requested: [
           "/heading-then-paragraph.png",
           "/link.png",
@@ -522,35 +527,36 @@ describe("bun <file.md>", () => {
           "/reference.png",
         ],
         staged: 8,
-        altTexts: [
-          "atx-heading",
-          "setext-heading",
-          "th",
-          "td",
-          "quoted-heading",
-          "list-item-heading",
-          "quoted-th",
-          "quoted-td",
-          "linked-heading",
-          "reference-th",
-          "heading-first",
-          "cell-second",
-        ],
         exitCode: 0,
       });
-      // ConPTY does not hand the APC sequences on, so only a POSIX pty shows what is drawn.
-      if (isPosix) expect(drawn).toEqual(staged);
+      if (isPosix) {
+        expect(shown).toEqual({
+          drawn: staged,
+          altTexts: [
+            "atx-heading",
+            "setext-heading",
+            "th",
+            "td",
+            "quoted-heading",
+            "list-item-heading",
+            "quoted-th",
+            "quoted-td",
+            "linked-heading",
+            "reference-th",
+            "heading-first",
+            "cell-second",
+          ],
+        });
+      }
     });
 
-    test("fetches nothing when the terminal is told to draw no image of the document", async () => {
-      const result = await render(({ img }) => [`# ${img("heading")}`, `| ${img("th")} |\n| --- |\n| ${img("td")} |`]);
-      expect(result).toEqual({
-        requested: [],
-        staged: [],
-        drawn: [],
-        altTexts: ["heading", "th", "td"],
-        exitCode: 0,
-      });
+    test.concurrent("fetches nothing when the terminal is told to draw no image of the document", async () => {
+      const { shown, ...fetched } = await render(({ img }) => [
+        `# ${img("heading")}`,
+        `| ${img("th")} |\n| --- |\n| ${img("td")} |`,
+      ]);
+      expect(fetched).toEqual({ requested: [], staged: [], exitCode: 0 });
+      if (isPosix) expect(shown).toEqual({ drawn: [], altTexts: ["heading", "th", "td"] });
     });
 
     // The renderer asks the same rule. A remote image cannot show that: with no staged file it

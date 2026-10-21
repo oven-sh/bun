@@ -2231,6 +2231,8 @@ fn transpile_source_code_of_any_provenance(
         | L::Json5
         | L::Xml
         | L::Text
+        | L::Base64
+        | L::Dataurl
         | L::Md => {
             // `bun_ast::ASTMemoryAllocator::Scope`.
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();

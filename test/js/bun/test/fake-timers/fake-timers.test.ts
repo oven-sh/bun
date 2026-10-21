@@ -83,15 +83,17 @@ test("captured timeouts use the real clock when fake time is reset", async () =>
     }
     resolveLaterTimer();
   }, 25);
-  await Promise.race([firstTimerDone, laterTimerDone]);
-  expect(firstTimer).toBe("earlier");
-  capturedClearTimeout(earlierTimer);
-  capturedClearTimeout(laterTimer);
-  vi.useRealTimers();
+  try {
+    await Promise.race([firstTimerDone, laterTimerDone]);
+    expect(firstTimer).toBe("earlier");
+  } finally {
+    capturedClearTimeout(earlierTimer);
+    capturedClearTimeout(laterTimer);
+    vi.useRealTimers();
+  }
 });
 
 test("captured real intervals rearm against the real clock when fake time is reset", async () => {
-  const capturedSetImmediate = globalThis.setImmediate.bind(globalThis);
   const capturedSetInterval = globalThis.setInterval.bind(globalThis);
   const capturedClearInterval = globalThis.clearInterval.bind(globalThis);
 
@@ -99,19 +101,22 @@ test("captured real intervals rearm against the real clock when fake time is res
   setSystemTime(0);
 
   let intervalTicks = 0;
-  let resolveFirstTick!: () => void;
-  const firstTick = new Promise<void>(resolve => (resolveFirstTick = resolve));
+  let resolveSecondTick!: () => void;
+  const secondTick = new Promise<void>(resolve => (resolveSecondTick = resolve));
   const interval = capturedSetInterval(() => {
     intervalTicks++;
-    if (intervalTicks === 1) {
-      resolveFirstTick();
+    if (intervalTicks === 2) {
+      resolveSecondTick();
     }
   }, 25);
-  await firstTick;
-  await new Promise<void>(resolve => capturedSetImmediate(resolve));
-  expect(intervalTicks).toBe(1);
-  capturedClearInterval(interval);
-  vi.useRealTimers();
+  try {
+    await secondTick;
+    expect(intervalTicks).toBeGreaterThanOrEqual(2);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    capturedClearInterval(interval);
+    vi.useRealTimers();
+  }
 });
 
 describe("advanceTimersToNextTimer", () => {

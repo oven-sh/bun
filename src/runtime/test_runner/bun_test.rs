@@ -562,6 +562,22 @@ impl BunTestRoot {
         });
     }
 
+    pub(crate) fn mark_timed_out(&self, group_index: usize, timed_out: EntryData) {
+        for &pending in self.pending_then_refs.borrow().iter() {
+            // SAFETY: the list owns a ref on each entry.
+            let pending = unsafe { &*pending };
+            if let RefDataValue::Execution {
+                group_index: group,
+                entry_data: Some(data),
+            } = pending.phase
+                && group == group_index
+                && data == timed_out
+            {
+                pending.timed_out.set(true);
+            }
+        }
+    }
+
     /// Tear down `bun:test` GC roots before `global_exit()` so
     /// `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
     /// closures they pin. Releases the active file's per-test `Strong`s (the
@@ -885,6 +901,7 @@ impl BunTest {
         RefPtr::new(RefData {
             buntest_weak: Rc::downgrade(this_strong),
             phase,
+            timed_out: core::cell::Cell::new(false),
             ref_count: bun_ptr::RefCount::init(),
         })
     }
@@ -921,7 +938,7 @@ impl BunTest {
         // (which itself calls `.get()` for a single field write).
         let this = this_strong.get();
 
-        if is_catch {
+        if is_catch && !refdata.timed_out.get() {
             this.on_uncaught_exception(global_this, Some(result), true, &refdata.phase);
         }
         if !has_one_ref && !is_catch {
@@ -1744,7 +1761,7 @@ bun_jsc::jsc_host_abi! {
 
 // Clone/Copy: bitwise OK — `entry` is a non-owning erased borrow of an
 // `ExecutionEntry` owned by `BunTest::execution`.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
@@ -1832,6 +1849,8 @@ impl fmt::Display for RefDataValue {
 pub(crate) struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
+    /// The callback ran into its time limit. As in Vitest and Jest, a later rejection of its promise isn't an error.
+    pub(crate) timed_out: core::cell::Cell<bool>,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
 impl Drop for RefData {

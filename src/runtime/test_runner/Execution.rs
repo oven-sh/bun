@@ -1235,6 +1235,10 @@ fn step_sequence_one(
                 entry: active_entry_ptr.as_ptr() as *const (),
                 attempt: sequence.attempt,
             };
+            buntest_strong
+                .bun_test_root
+                .get()
+                .mark_timed_out(this.group_index, entry_data);
             report_around_timeout(
                 buntest_strong,
                 global_this,

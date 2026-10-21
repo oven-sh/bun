@@ -40,6 +40,14 @@ test("spyOn", () => {
   expect(spyFixture.iSpy).toHaveBeenCalled();
 });
 
+test("spyOn throws for a name that the module does not export", () => {
+  // @ts-expect-error
+  const spyOnMissingExport = () => spyOn(spyFixture, "notExported");
+  expect(spyOnMissingExport).toThrow(TypeError);
+  expect(spyOnMissingExport).toThrow("Cannot spy on the `notExported` property because the module does not export it");
+  expect(Object.keys(spyFixture)).toEqual(["iSpy"]);
+});
+
 test("mocking a module that points to a file which does not resolve successfully still works", async () => {
   mock.module("i-never-existed-and-i-never-will", () => {
     return {

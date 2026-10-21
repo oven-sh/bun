@@ -186,6 +186,8 @@ test("spyon", () => {
 });
 ```
 
+`spyOn()` throws a `TypeError` when the object cannot take the spy: an index of a frozen array, a `Proxy` whose target is frozen, a WebAssembly GC object, or a name that a module does not export. If the object refuses the original value at `mockRestore()`, that call throws and the spy stays installed.
+
 ### Advanced Spy Usage
 
 ```ts title="test.ts" icon="/icons/typescript.svg"

@@ -1098,6 +1098,232 @@ describe("spyOn", () => {
       obj.original;
       expect(fn).not.toHaveBeenCalled();
     });
+
+    test("throws when the object refuses an index key, and returns no spy that is not installed", () => {
+      const original = () => 1;
+      for (const target of [Object.freeze([original]), Object.freeze({ 0: original })]) {
+        expect(() => spyOn(target, 0)).toThrow(TypeError);
+        expect(() => spyOn(target, 0)).toThrow(
+          "Cannot spy on the `0` property because the object does not allow it to be changed",
+        );
+        expect(target[0]).toBe(original);
+      }
+
+      const numbers = Object.freeze([7]);
+      expect(() => spyOn(numbers, 0)).toThrow(TypeError);
+      expect(() => spyOn(numbers, 5)).toThrow(
+        "Cannot spy on the `5` property because the object does not allow it to be changed",
+      );
+      expect(numbers).toEqual([7]);
+    });
+
+    test("still spies on a named key of a frozen, sealed or non-extensible object", () => {
+      const original = () => 1;
+      const locks = [
+        [Object.freeze, Object.isFrozen],
+        [Object.seal, Object.isSealed],
+        [Object.preventExtensions, target => !Object.isExtensible(target)],
+      ];
+      for (const [lock, isLocked] of locks) {
+        const target = lock({ fn: original });
+        const spy = spyOn(target, "fn").mockReturnValue(2);
+        expect(target.fn()).toBe(2);
+        spy.mockRestore();
+        expect(target.fn).toBe(original);
+        expect(isLocked(target)).toBe(true);
+      }
+    });
+
+    test("still spies on builtins that are read-only or not configurable", () => {
+      const builtins = [
+        [Bun, "fetch"],
+        [Bun, "file"],
+        [Bun, "env"],
+        [Bun, "version"],
+        [Bun, "argv"],
+        [Bun, "stdout"],
+        [Response, "json"],
+        [Math, "PI"],
+      ];
+      for (const [target, key] of builtins) {
+        const before = Object.getOwnPropertyDescriptor(target, key);
+        expect(before.configurable).toBe(false);
+        const spy = spyOn(target, key);
+        let seen;
+        try {
+          spy.mockReturnValue("spied");
+          seen = typeof before.value === "function" ? target[key]() : target[key];
+        } finally {
+          spy.mockRestore();
+        }
+        expect(seen).toBe("spied");
+        expect(Object.getOwnPropertyDescriptor(target, key)).toEqual(before);
+      }
+    });
+
+    test("a Proxy that is not extensible decides the store itself", () => {
+      const original = () => 1;
+      const frozen = new Proxy(Object.freeze({ fn: original }), {});
+      expect(() => spyOn(frozen, "fn")).toThrow(TypeError);
+      expect(frozen.fn).toBe(original);
+
+      const sealed = Object.seal({ fn: original });
+      const spy = spyOn(new Proxy(sealed, {}), "fn");
+      expect(sealed.fn).toBe(spy);
+      spy.mockRestore();
+      expect(sealed.fn).toBe(original);
+      expect(Object.isSealed(sealed)).toBe(true);
+    });
+
+    test("restores through a Proxy that nothing else keeps alive", () => {
+      const original = () => 1;
+      const first = Object.seal({ fn: original });
+      const second = Object.seal({ fn: original });
+      const spy = (() => spyOn(new Proxy(first, {}), "fn"))();
+      (() => spyOn(new Proxy(second, {}), "fn"))();
+      Bun.gc(true);
+      expect(first.fn).toBe(spy);
+
+      spy.mockRestore();
+      expect(first.fn).toBe(original);
+      jest.restoreAllMocks();
+      expect(second.fn).toBe(original);
+    });
+
+    test("a Proxy that is not extensible gets back the attributes and the value that its target held", () => {
+      const original = () => 1;
+      const wrapper = () => original() + 1;
+      const target = Object.preventExtensions(
+        Object.defineProperty({}, "fn", { value: original, writable: true, enumerable: false, configurable: true }),
+      );
+      const before = Object.getOwnPropertyDescriptor(target, "fn");
+      // The `has` trap hides the attributes from the lookup, and the `get` trap returns another function.
+      const proxy = new Proxy(target, {
+        has: (object, key) => key in object,
+        get: (object, key) => (key === "fn" ? wrapper : object[key]),
+      });
+
+      const spy = spyOn(proxy, "fn");
+      expect(target.fn).toBe(spy);
+      expect(target.fn()).toBe(2);
+      expect(Object.getOwnPropertyDescriptor(target, "fn").enumerable).toBe(false);
+      spy.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(target, "fn")).toEqual(before);
+
+      const accessor = Object.preventExtensions({
+        get x() {
+          return 1;
+        },
+      });
+      expect(() => spyOn(new Proxy(accessor, { has: () => true }), "x")).toThrow(
+        "spyOn(target, prop) does not support accessor properties yet",
+      );
+    });
+
+    // The handler refuses a definition while `refuse` is true, so a test can undo the refusal.
+    function refusingProxy(original) {
+      const state = { refuse: false, target: Object.seal({ fn: original }) };
+      state.proxy = new Proxy(state.target, {
+        defineProperty: (target, key, descriptor) => !state.refuse && Reflect.defineProperty(target, key, descriptor),
+      });
+      return state;
+    }
+
+    test("a refused restore throws, and the spy stays installed and can be restored again", () => {
+      const original = () => 1;
+      const state = refusingProxy(original);
+      const spy = spyOn(state.proxy, "fn");
+      expect(state.target.fn).toBe(spy);
+
+      state.refuse = true;
+      expect(() => spy.mockRestore()).toThrow(TypeError);
+      expect(state.target.fn).toBe(spy);
+      expect(state.target.fn()).toBe(1);
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      state.refuse = false;
+      spy.mockRestore();
+      expect(state.target.fn).toBe(original);
+    });
+
+    test("restoreAllMocks restores the other spies when one object refuses", () => {
+      const original = () => 1;
+      const first = { fn: original };
+      const last = { fn: original };
+      const state = refusingProxy(original);
+      spyOn(first, "fn");
+      const refused = spyOn(state.proxy, "fn");
+      spyOn(last, "fn");
+
+      state.refuse = true;
+      expect(() => jest.restoreAllMocks()).toThrow(TypeError);
+      expect(first.fn).toBe(original);
+      expect(last.fn).toBe(original);
+      expect(state.target.fn).toBe(refused);
+      expect(() => jest.restoreAllMocks()).toThrow(TypeError);
+
+      state.refuse = false;
+      jest.restoreAllMocks();
+      expect(state.target.fn).toBe(original);
+    });
+
+    // Both cases need their own process: the first one aborted it, and the second leaves a spy that no restore can remove.
+    test("throws on a WebAssembly GC object, and keeps an index spy that a frozen array refuses to restore", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        const { spyOn, jest } = require("bun:test");
+        const lines = [];
+        const attempt = (label, fn) => {
+          try {
+            fn();
+            lines.push(label + ": no error");
+          } catch (e) {
+            lines.push(label + ": " + e.constructor.name + ": " + e.message);
+          }
+        };
+
+        // (type $s (struct (field (mut i32)))) (type $a (array (mut i32)))
+        // (func (export "s") (result (ref null $s)) struct.new_default $s)
+        // (func (export "a") (result (ref null $a)) i32.const 2 array.new_default $a)
+        const bytes = new Uint8Array([
+          0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+          1, 18, 4, 0x5f, 1, 0x7f, 1, 0x5e, 0x7f, 1, 0x60, 0, 1, 0x63, 0, 0x60, 0, 1, 0x63, 1,
+          3, 3, 2, 2, 3,
+          7, 9, 2, 1, 0x73, 0, 0, 1, 0x61, 0, 1,
+          10, 15, 2, 5, 0, 0xfb, 1, 0, 0x0b, 7, 0, 0x41, 2, 0xfb, 7, 1, 0x0b,
+        ]);
+        const { s, a } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+        for (const [name, target] of [["struct", s()], ["array", a()]]) {
+          for (const key of ["x", Symbol("x"), 0]) attempt(name + " " + String(key), () => spyOn(target, key));
+        }
+
+        const original = () => 1;
+        const list = [original];
+        const spy = spyOn(list, 0);
+        Object.freeze(list);
+        attempt("mockRestore", () => spy.mockRestore());
+        attempt("restoreAllMocks", () => jest.restoreAllMocks());
+        lines.push("still installed: " + (list[0] === spy && list[0]() === 1));
+        console.log(lines.join("\\n"));
+      `;
+      const proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const refusedByWasm = "TypeError: Cannot define property for WebAssembly GC object";
+      const refusedByArray =
+        "TypeError: Cannot restore the `0` property because the object does not allow it to be changed";
+      expect(stdout.trim().split("\n"), stderr).toEqual([
+        `struct x: ${refusedByWasm}`,
+        `struct Symbol(x): ${refusedByWasm}`,
+        `struct 0: ${refusedByWasm}`,
+        `array x: ${refusedByWasm}`,
+        `array Symbol(x): ${refusedByWasm}`,
+        `array 0: ${refusedByWasm}`,
+        `mockRestore: ${refusedByArray}`,
+        `restoreAllMocks: ${refusedByArray}`,
+        "still installed: true",
+      ]);
+      expect(exitCode).toBe(0);
+    });
   }
 
   test("spyOn throws on a WebAssembly GC object", () => {

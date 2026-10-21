@@ -52,6 +52,12 @@ function throwingEndCallback(name, fd, done) {
   });
 }
 
+function endOnly(name, fd, done) {
+  const [socket] = adopt(name, fd);
+  socket.on("close", done);
+  socket.end("x");
+}
+
 // libuv completes a cancelled shutdown before 'close', so nothing of end() is pending at 'close'.
 function untilClose(socket, entry, done) {
   socket.on("close", () => {
@@ -87,6 +93,33 @@ const orderFrom = from => (name, fd, done) => {
     entry.events.push("end() returned");
     process.nextTick(() => entry.events.push("nextTick"));
     queueMicrotask(() => entry.events.push("microtask"));
+  });
+};
+
+// A TCP connection inside this process. `then(client, peer)` runs in a socket callback: the 'data'
+// callback of the peer.
+function connection(then) {
+  const server = net.createServer(peer => {
+    peer.once("data", () => then(client, peer));
+    peer.on("error", () => {});
+    peer.on("close", () => server.close());
+  });
+  const client = new net.Socket();
+  client.on("error", () => {});
+  server.listen(0, "127.0.0.1", () => client.connect(server.address().port, "127.0.0.1", () => client.write("a")));
+}
+
+// In these, end() and the destroy() are in two phases of one loop turn, or the destroy() is in a
+// callback of a socket that has a handle. `then` runs in a socket callback.
+const acrossPhases = then => (name, fd, done) => {
+  const [socket, entry] = adopt(name, fd);
+  connection((client, peer) => {
+    untilClose(socket, entry, () => {
+      client.destroy();
+      peer.destroy();
+      done();
+    });
+    then(socket, endCallback(entry), client, peer);
   });
 };
 
@@ -144,11 +177,7 @@ const groups = {
       );
     },
     // The close in destroy() gives the peer no end-of-file here.
-    "another process holds the socket"(name, fd, done) {
-      const [socket] = adopt(name, fd);
-      socket.on("close", done);
-      socket.end("x");
-    },
+    "another process holds the socket": endOnly,
     // destroy() does not close fd 0, 1 or 2.
     "the fd is 1"(name, _, done) {
       const [socket, entry] = adopt(name, 1);
@@ -210,6 +239,16 @@ const groups = {
       });
       socket.end("x");
     },
+    // destroy() closed the fd: the next life of the socket has nothing to shut down, and ends at once.
+    "end() in the next life of the socket"(name, fd, done) {
+      const [socket, entry] = adopt(name, fd);
+      socket.once("close", () => {
+        socket._undestroy();
+        untilClose(socket, entry, done);
+        socket.end();
+      });
+      socket.destroy();
+    },
     // Each socket has its own request: the 'finish' of the first comes before the shutdown of the second.
     "the 'finish' of another socket destroys it"(name, fd, done) {
       const [socket, entry] = adopt(name, fd);
@@ -221,8 +260,8 @@ const groups = {
     },
   },
   // Where the shutdown comes among what the place that calls end() queued. libuv issues it from
-  // its pending queue, ahead of the immediates of the loop turn. bun issues it from an immediate
-  // of its own, so the reports of the two differ.
+  // its pending queue, and bun from its task queue: after the ticks and the microtasks of that
+  // place, ahead of the immediates of the loop turn.
   order: {
     // The first scenario of a group runs from the main script.
     "from the main script": orderFrom(run => run()),
@@ -244,13 +283,67 @@ const groups = {
     "from the 'finish' of another socket": orderFrom(run =>
       new net.Socket({ fd: 1, writable: true, readable: false }).on("finish", run).end(),
     ),
-    // libuv has issued the shutdown when this immediate runs. In bun the immediate comes first.
+    // The loop has issued the shutdown when this immediate runs.
     "an immediate that was queued before end() calls destroy()"(name, fd, done) {
       const [socket, entry] = adopt(name, fd);
       untilClose(socket, entry, done);
       setImmediate(() => socket.destroy());
       socket.end("x", endCallback(entry));
     },
+    // And when the loop runs this callback: the mkdir is over before end(), so its callback is
+    // queued, or about to be.
+    "an fs callback that was complete before end() calls destroy()"(name, fd, done) {
+      const [socket, entry] = adopt(name, fd);
+      untilClose(socket, entry, done);
+      const dir = require("node:path").join(require("node:os").tmpdir(), `socket-fd-end-${process.pid}-${fd}`);
+      fs.mkdir(dir, () => {
+        fs.rmdirSync(dir);
+        socket.destroy();
+      });
+      while (!fs.existsSync(dir));
+      socket.end("x", endCallback(entry));
+    },
+    // Until the loop issues the shutdown, another holder of the socket can write: in the block of
+    // end(), on a tick, after an await.
+    "writes through the fd after end()"(name, fd, done) {
+      const [socket, entry] = adopt(name, fd);
+      socket._writableState.autoDestroy = false;
+      const late = (entry.late = {});
+      socket.on("finish", () => {
+        late.finish = lateWrite(fd);
+        done();
+      });
+      socket.end("x");
+      late.block = lateWrite(fd);
+      process.nextTick(() => (late.nextTick = lateWrite(fd)));
+      (async () => {
+        await null;
+        late.await = lateWrite(fd);
+      })();
+    },
+  },
+  // Where the reports of the two differ. The loop of bun runs its timers and polls its sockets at
+  // other points of the turn than libuv does, and a socket that has a handle ends on ticks. So a
+  // destroy() from there comes before the shutdown in bun, and after it in node.
+  phases: {
+    "end() in a socket callback, destroy() in a timer that is due": acrossPhases((socket, callback) => {
+      const due = Date.now() + 5;
+      setTimeout(() => socket.destroy(), 1);
+      while (Date.now() < due);
+      socket.end("x", callback);
+    }),
+    // The byte is on its way to the client before the immediate runs.
+    "end() in an immediate, destroy() in a socket callback that is ready": acrossPhases(
+      (socket, callback, client, peer) => {
+        client.once("data", () => socket.destroy());
+        peer.write("z");
+        setImmediate(() => socket.end("x", callback));
+      },
+    ),
+    "destroy() in the end() callback of a socket that has a handle": acrossPhases((socket, callback, client) => {
+      socket.end("x", callback);
+      client.end(() => socket.destroy());
+    }),
   },
   // What only bun does: its connect() takes an fd, and gives a socket that adopted an fd a new
   // handle. It ends a socket that has no `readable: false` by itself. It adopts a datagram socket.
@@ -303,7 +396,7 @@ const groups = {
       socket.end();
       entry.events.push("end() returned");
     },
-    // Until the loop issues the shutdown, its immediate is all that refers to the socket.
+    // Until the loop issues the shutdown, its task is all that refers to the socket.
     "nothing else refers to the socket"(name, fd, done) {
       const entry = (report[name] = { fd, events: [] });
       new net.Socket({ fd, writable: true, readable: false })
@@ -315,6 +408,52 @@ const groups = {
       Bun.gc(true);
       queueMicrotask(() => Bun.gc(true));
       process.nextTick(() => Bun.gc(true));
+    },
+    // The script of a disposed graph gets no callback. Its peer still gets the end-of-file.
+    "the Bun.ModuleGraph that called end() is disposed"(name, fd, done) {
+      const [socket] = adopt(name, fd);
+      const graph = new Bun.ModuleGraph();
+      graph.run(() => socket.end("x"));
+      graph.dispose();
+      setImmediate(() => setImmediate(done));
+    },
+    // A request holds two handles until its task runs, whether the loop issues the shutdown or a
+    // destroy() cancelled it.
+    "200 requests leave no handle"(name, _, done) {
+      const { heapStats } = require("bun:jsc");
+      const entry = (report[name] = { fd: 1, events: [] });
+      Bun.gc(true);
+      const before = heapStats().protectedObjectCount;
+      let open = 200;
+      for (let i = 0; i < 200; i++) {
+        const socket = new net.Socket({ fd: 1, writable: true, readable: false });
+        socket.on("close", () => {
+          if (--open > 0) return;
+          setImmediate(() => {
+            Bun.gc(true);
+            entry.handles = heapStats().protectedObjectCount - before;
+            done();
+          });
+        });
+        socket.end();
+        if (i % 2) socket.destroy();
+      }
+    },
+  },
+  // The parent holds this socket too, with a handle of its own.
+  tcp: { "the fd is a TCP socket": endOnly },
+  // An exit in the block of end() comes before the loop. The exit of a worker still issues the
+  // shutdown. The exit of the process does not: the parent then still writes through the socket.
+  exit: {
+    "a worker exits in the block of end()"(name, fd, done) {
+      report[name] = { fd, events: [] };
+      const end = `new (require("node:net").Socket)({ fd: ${fd}, writable: true, readable: false }).end("x");`;
+      new (require("node:worker_threads").Worker)(end + "process.exit(0);", { eval: true }).on("exit", done);
+    },
+    "process.exit() in the block of end()"(name, fd) {
+      adopt(name, fd)[0].end("x");
+      fs.writeSync(2, JSON.stringify(report) + "\n");
+      process.exit(0);
     },
   },
   // connect({ fd }) gives the fd that end() shut down to a native handle.

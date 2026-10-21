@@ -281,7 +281,7 @@ const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
 const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
 const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 // Created by the first stream socket fd that is adopted for synchronous writes, and by its end().
-let guessHandleType, setImmediateNative, shutdownWriteFd;
+let guessHandleType, queueShutdownWriteFd;
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -304,7 +304,7 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
-// true: end() shuts the write side of the kSyncWriteFd down. A function: the _final callback, while that shutdown is queued.
+// true: end() shuts the write side of the kSyncWriteFd down. [fd, callback]: the request of that end(), with its fd while it is queued.
 const kSyncFdShutdown = Symbol("kSyncFdShutdown");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
@@ -445,28 +445,19 @@ function endNT(self, socket, callback) {
   (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
   callback();
 }
-// libuv issues node's shutdown from its pending queue. An immediate stands in: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1175-L1184
+// libuv issues node's shutdown from its pending queue, ahead of the immediates. The task queue stands in: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1175-L1184
 function finalSyncFd(self, callback) {
-  self[kSyncFdShutdown] = callback;
-  // Not the global setImmediate: a fake clock replaces that one.
-  (setImmediateNative ??= $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1))(
-    endSyncFdTask,
-    self,
-    callback,
-  );
-}
-function endSyncFdTask(self, callback) {
-  // cancelSyncFdShutdown() took the callback since end().
-  if (self[kSyncFdShutdown] !== callback) return;
-  self[kSyncFdShutdown] = undefined;
-  (shutdownWriteFd ??= $bindgen("node_net_binding.bind.ts", "shutdownWriteFd"))(self[kSyncWriteFd]);
-  callback();
+  const request = (self[kSyncFdShutdown] = [self[kSyncWriteFd], callback]);
+  (queueShutdownWriteFd ??= $bindgen("node_net_binding.bind.ts", "queueShutdownWriteFd"))(request, callback);
 }
 // libuv cancels the shutdown request of a closing handle before 'close'. Left queued, _final would complete in the next life of the socket.
 function cancelSyncFdShutdown(self) {
-  const pending = self[kSyncFdShutdown];
+  const request = self[kSyncFdShutdown];
   self[kSyncFdShutdown] = undefined;
-  if (typeof pending === "function") pending();
+  if (!$isJSArray(request) || request[0] === undefined) return;
+  request[0] = undefined;
+  const callback = request[1];
+  callback();
 }
 // shutdown(2) on a datagram or SEQPACKET socket stops the sends of every holder. node refuses such an fd.
 function isStreamSocketFd(fd) {
@@ -2330,7 +2321,7 @@ Socket.prototype[kCloseRawConnection] = function () {
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
   // _undestroy() forgets that end() was called, so the _final of that end() completes first.
-  if (typeof this[kSyncFdShutdown] === "function") cancelSyncFdShutdown(this);
+  if ($isJSArray(this[kSyncFdShutdown])) cancelSyncFdShutdown(this);
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);

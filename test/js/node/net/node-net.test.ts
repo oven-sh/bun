@@ -1636,6 +1636,7 @@ describe("Socket fd adoption", () => {
     type Report = Record<string, Record<string, unknown>>;
     const fifoScenario = "the fd is a FIFO";
     const datagramScenario = "the fd is a datagram socket";
+    const tcpScenario = "the fd is a TCP socket";
 
     // What the other end of a socket, or the read end of a FIFO, has right now.
     function peek(fd: number) {
@@ -1668,11 +1669,13 @@ describe("Socket fd adoption", () => {
     // process sees while the child is alive:
     // - `halfClosed`, for a scenario that expects it. This process and a `cat` hold the socket of
     //   that scenario too, so a close in the child gives the peer no end-of-file. The datagram
-    //   socket is one that this process made and holds.
+    //   socket and the TCP socket are ones that this process made and holds. `afterExit`: looked at
+    //   when the child is gone.
     // - `data` and `eof` for any other scenario: what the other end of the child's fd got.
-    async function reportOf(exe: string, group: string, expected: Report) {
+    async function reportOf(exe: string, group: string, expected: Report, afterExit = false, env = bunEnv) {
       const names = Object.keys(expected);
-      const held = names.filter(name => name !== datagramScenario && "halfClosed" in expected[name]);
+      const made = [datagramScenario, tcpScenario];
+      const held = names.filter(name => !made.includes(name) && "halfClosed" in expected[name]);
       await using holder = Bun.spawn({
         cmd: ["cat"],
         stdio: ["pipe", "ignore", "ignore", ...held.map(() => "pipe" as const)],
@@ -1681,25 +1684,35 @@ describe("Socket fd adoption", () => {
       const heldFds = holder.stdio.slice(3) as number[];
       const open = new Set(heldFds);
       const close = (fd: number) => open.delete(fd) && fs.closeSync(fd);
-      // A datagram socket that is connected, so that a write(2) on its fd sends.
-      const udp: { close(): void }[] = [];
+      // The fd of each socket that this process made for a scenario, and what closes the socket.
+      const own = new Map<string, number>();
+      const closers: (() => void)[] = [];
       try {
         const fifo = names.includes(fifoScenario) ? openFifo(`${group}.fifo`) : undefined;
         if (fifo) open.add(fifo.rfd).add(fifo.wfd);
-        let datagramFd = -1;
         if (names.includes(datagramScenario)) {
+          // Connected, so that a write(2) on its fd sends.
           const receiver = await Bun.udpSocket({ hostname: "127.0.0.1" });
-          udp.push(receiver);
+          closers.push(() => receiver.close());
           const sender = await Bun.udpSocket({
             hostname: "127.0.0.1",
             connect: { hostname: "127.0.0.1", port: receiver.port },
           });
-          udp.push(sender);
-          datagramFd = (sender as unknown as { fd: number }).fd;
+          closers.push(() => sender.close());
+          own.set(datagramScenario, (sender as unknown as { fd: number }).fd);
+        }
+        if (names.includes(tcpScenario)) {
+          // Neither end closes when the other one sends its FIN.
+          const socket = { data() {}, error() {}, end() {} };
+          const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, allowHalfOpen: true, socket });
+          closers.push(() => listener.stop(true));
+          const client = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, allowHalfOpen: true, socket });
+          closers.push(() => client.terminate());
+          own.set(tcpScenario, (client as unknown as { fd: number }).fd);
         }
         await using child = Bun.spawn({
           cmd: [exe, fixture, group],
-          env: bunEnv,
+          env,
           stdio: [
             "pipe",
             "pipe",
@@ -1709,16 +1722,14 @@ describe("Socket fd adoption", () => {
                 ? heldFds[held.indexOf(name)]
                 : name === fifoScenario
                   ? fifo!.wfd
-                  : name === datagramScenario
-                    ? datagramFd
-                    : ("pipe" as const),
+                  : (own.get(name) ?? ("pipe" as const)),
             ),
           ],
         });
         // This process's fd for each scenario: the other end of the child's fd, or the fd it passed.
         const fds = child.stdio.slice(3) as number[];
-        // The datagram socket closes its own fd.
-        for (const fd of fds) if (fd !== datagramFd) open.add(fd);
+        // A socket that this process made closes its own fd.
+        for (const [i, fd] of fds.entries()) if (!own.has(names[i])) open.add(fd);
         if (fifo) close(fifo.wfd);
 
         const stderr = child.stderr.getReader();
@@ -1737,28 +1748,30 @@ describe("Socket fd adoption", () => {
         const fromChild = JSON.parse(line);
         const report: Report = {};
         let onStdout: string | undefined;
+        const heldSockets = () => {
+          for (const [i, name] of names.entries()) {
+            if (held.includes(name) || own.has(name)) report[name].halfClosed = isHalfClosed(fds[i]);
+          }
+        };
         for (const [i, name] of names.entries()) {
           const { fd, ...entry } = fromChild[name];
           if (fd === 1) onStdout = name;
+          const other = !held.includes(name) && !own.has(name);
           report[name] = {
             ...entry,
-            ...(held.includes(name)
-              ? { halfClosed: isHalfClosed(fds[i]) }
-              : name === datagramScenario
-                ? { halfClosed: isHalfClosed(datagramFd) }
-                : name === fifoScenario
-                  ? peek(fifo!.rfd)
-                  : fd === 3 + i && peek(fds[i])),
+            ...(other && (name === fifoScenario ? peek(fifo!.rfd) : fd === 3 + i && peek(fds[i]))),
           };
         }
+        if (!afterExit) heldSockets();
         child.stdin.end();
         const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
         while (await readMore());
+        if (afterExit) heldSockets();
         if (onStdout) report[onStdout].data = stdout;
         return { report, stderr: text.slice(line.length + 1), exitCode };
       } finally {
         for (const fd of open) close(fd);
-        for (const socket of udp) socket.close();
+        for (const closeSocket of closers) closeSocket();
       }
     }
 
@@ -1810,38 +1823,47 @@ describe("Socket fd adoption", () => {
       // Nothing finishes the next life: its lookup never answers.
       "'close' connects the socket again": { events: ["close"], connecting: true, data: "x", eof: true },
       "connect() after the shutdown": { events: ["prefinish", "finish"], connecting: true, data: "x", eof: true },
+      "end() in the next life of the socket": {
+        events: ["close", "prefinish", "finish", "close"],
+        pendingcb: 0,
+        data: "",
+        eof: true,
+      },
       "the 'finish' of another socket destroys it": cancelled,
     };
     // Where the shutdown comes among what the place that calls end() queued: an immediate before end(),
-    // a nextTick and a microtask after it.
-    const order = (events: string[]) => ({ events: ["end() returned", ...events], data: "x", eof: true });
-    const shutdown = ["prefinish", "end callback in store", "finish"];
-    const places = (other: object, fromMicrotask: object, destroyedByImmediate: object): Report => ({
-      "from the main script": other,
-      "from a nextTick": other,
-      "from a microtask": fromMicrotask,
-      "from a timer": other,
-      "from a socket callback": other,
-      "from an fs callback": other,
-      "from an immediate": other,
-      "from the 'finish' of another socket": other,
-      "an immediate that was queued before end() calls destroy()": { ...destroyedByImmediate, data: "x", eof: true },
+    // a nextTick and a microtask after it. libuv issues it from its pending queue, and bun from its task queue.
+    const queued = (events: string[]) => ({ events: ["end() returned", ...events], data: "x", eof: true });
+    const shutdown = ["prefinish", "end callback in store", "finish", "setImmediate"];
+    const fromPlace = queued(["nextTick", "microtask", ...shutdown]);
+    const order: Report = {
+      "from the main script": fromPlace,
+      "from a nextTick": fromPlace,
+      "from a microtask": queued(["microtask", "nextTick", ...shutdown]),
+      "from a timer": fromPlace,
+      "from a socket callback": fromPlace,
+      "from an fs callback": fromPlace,
+      "from an immediate": fromPlace,
+      "from the 'finish' of another socket": fromPlace,
+      "an immediate that was queued before end() calls destroy()": completed,
+      "an fs callback that was complete before end() calls destroy()": completed,
+      "writes through the fd after end()": {
+        events: ["prefinish", "finish"],
+        late: { block: "written", nextTick: "written", await: "written", finish: "EPIPE" },
+        data: "xlatelatelate",
+        eof: true,
+      },
+    };
+    // The loop of bun is not libuv's: between end() and the shutdown it runs the timers that are due after a poll,
+    // and the poll after its immediates. A socket that has a handle ends on ticks. A destroy() from there finds
+    // the shutdown still queued in bun. In node, and on a bun without this shutdown, the socket has finished.
+    const phases = (report: object): Report => ({
+      "end() in a socket callback, destroy() in a timer that is due": report,
+      "end() in an immediate, destroy() in a socket callback that is ready": report,
+      "destroy() in the end() callback of a socket that has a handle": report,
     });
-    // bun issues the shutdown from an immediate of its own: what the loop runs before that immediate comes first,
-    // and a destroy() there cancels the shutdown. On main the socket finishes, as in node.
-    const orderInBun = places(
-      order(["nextTick", "microtask", "setImmediate", ...shutdown]),
-      order(["microtask", "nextTick", "setImmediate", ...shutdown]),
-      { events: ["end callback ERR_STREAM_DESTROYED", "close"], pendingcb: 0 },
-    );
-    // libuv issues it from its pending queue, which it runs before the immediates of the loop turn.
-    const orderInNode = places(
-      order(["nextTick", "microtask", ...shutdown, "setImmediate"]),
-      order(["microtask", "nextTick", ...shutdown, "setImmediate"]),
-      { events: ["prefinish", "end callback", "finish", "close"], pendingcb: 0 },
-    );
     // Not in node: its connect() takes no fd and keeps the handle of an adopted fd, it reads an fd that has no
-    // `readable: false`, it refuses a datagram socket, and it has no Bun.gc().
+    // `readable: false`, it refuses a datagram socket, and it has no Bun.gc() and no Bun.ModuleGraph.
     const onlyBun: Report = {
       // The fd is not end()'s to shut down: _final completes inside end(), as on any socket that has no handle.
       "connect({ fd }) gave the fd to a handle": { events: ["prefinish", "end() returned"], data: "", eof: true },
@@ -1858,6 +1880,10 @@ describe("Socket fd adoption", () => {
       // No shutdown: this process can still send on the socket.
       [datagramScenario]: { events: ["prefinish", "end() returned", "finish", "close"], halfClosed: false },
       "nothing else refers to the socket": { events: ["finish"], data: "x", eof: true },
+      // The script of the graph hears nothing more, and the peer of the socket still gets the end-of-file.
+      "the Bun.ModuleGraph that called end() is disposed": { events: [], halfClosed: true },
+      // Half of them are cancelled by a destroy().
+      "200 requests leave no handle": { events: [], handles: 0, data: "" },
     };
 
     it("half-closes the fd from the event loop", async () => {
@@ -1868,8 +1894,32 @@ describe("Socket fd adoption", () => {
       expect(await reportOf(bunExe(), "destroy", destroy)).toEqual({ report: destroy, stderr: "", exitCode: 0 });
     });
 
-    it("issues the shutdown after an immediate that was queued before end()", async () => {
-      expect(await reportOf(bunExe(), "order", orderInBun)).toEqual({ report: orderInBun, stderr: "", exitCode: 0 });
+    it("issues the shutdown after the ticks of the place that calls end(), ahead of the immediates", async () => {
+      expect(await reportOf(bunExe(), "order", order)).toEqual({ report: order, stderr: "", exitCode: 0 });
+    });
+
+    it("a destroy() from a later phase of the loop turn, or from a socket that has a handle, cancels it", async () => {
+      const cancels = phases(cancelled);
+      expect(await reportOf(bunExe(), "phases", cancels)).toEqual({ report: cancels, stderr: "", exitCode: 0 });
+    });
+
+    const tcp: Report = { [tcpScenario]: { events: ["prefinish", "finish", "close"], halfClosed: true } };
+    it("half-closes a TCP socket fd", async () => {
+      expect(await reportOf(bunExe(), "tcp", tcp)).toEqual({ report: tcp, stderr: "", exitCode: 0 });
+    });
+
+    // The exit of the process comes before the loop, and issues no shutdown. The exit of a worker issues it.
+    const exit: Report = {
+      "a worker exits in the block of end()": { events: [], halfClosed: true },
+      "process.exit() in the block of end()": { events: [], halfClosed: false },
+    };
+    it("the exit of a worker issues the shutdown, and the exit of the process does not", async () => {
+      expect(await reportOf(bunExe(), "exit", exit, true)).toEqual({ report: exit, stderr: "", exitCode: 0 });
+    });
+
+    it("the exit of the process issues no shutdown when it runs the teardown of a worker", async () => {
+      const teardown = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" };
+      expect(await reportOf(bunExe(), "exit", exit, true, teardown)).toEqual({ report: exit, stderr: "", exitCode: 0 });
     });
 
     it("the cases that node does not have", async () => {
@@ -1885,15 +1935,22 @@ describe("Socket fd adoption", () => {
       expect(await reportOf(bunExe(), "handle", handle)).toEqual({ report: handle, stderr: "", exitCode: 0 });
     });
 
-    it.skipIf(!nodeExe())("node gives the same reports, and issues the shutdown before that immediate", async () => {
+    it.skipIf(!nodeExe())("node gives the same reports, and finishes where the loop of bun differs", async () => {
+      const finishes = phases(completed);
       expect([
         await reportOf(nodeExe()!, "end", end),
         await reportOf(nodeExe()!, "destroy", destroy),
-        await reportOf(nodeExe()!, "order", orderInNode),
+        await reportOf(nodeExe()!, "order", order),
+        await reportOf(nodeExe()!, "phases", finishes),
+        await reportOf(nodeExe()!, "tcp", tcp),
+        await reportOf(nodeExe()!, "exit", exit, true),
       ]).toEqual([
         { report: end, stderr: "", exitCode: 0 },
         { report: destroy, stderr: "", exitCode: 0 },
-        { report: orderInNode, stderr: "", exitCode: 0 },
+        { report: order, stderr: "", exitCode: 0 },
+        { report: finishes, stderr: "", exitCode: 0 },
+        { report: tcp, stderr: "", exitCode: 0 },
+        { report: exit, stderr: "", exitCode: 0 },
       ]);
     });
   });

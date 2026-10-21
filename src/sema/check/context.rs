@@ -725,6 +725,12 @@ impl<'p, 's> Checker<'p, 's> {
                     && let crate::bind::ClassOwner::Expr(class) = bound.class_owner[c.idx()]
                 {
                     let expected = self.contextual_type(file, class, context_flags)?;
+                    // The class's own type may still be in progress.
+                    let symbol = self.symbol_of_type(expected);
+                    if symbol.and_then(|it| it.as_binder_symbol()) == Some(self.class_sym(file, c))
+                    {
+                        return None;
+                    }
                     let name = self.declared_member_name(file, hir[m].key)?;
                     return self.contextual_property(expected, name);
                 }

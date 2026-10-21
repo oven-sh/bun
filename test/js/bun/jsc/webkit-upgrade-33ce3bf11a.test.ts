@@ -67,18 +67,19 @@ describe.concurrent("WebKit 33ce3bf11a upgrade", () => {
       return [this, value];
     };
     const { proxy, revoke } = Proxy.revocable(target, handler);
-    const call = new Function("proxy", "receiver", "value", "return proxy.call(receiver, value);");
-    const receiver = {};
+    // The proxy is the callee of this call site, which is what gets linked.
+    const call = new Function("receiver", "value", "return receiver.method(value);");
+    const receiver = { method: proxy };
     for (let i = 0; i < 10_000; i++) {
-      const result = call(proxy, receiver, i);
+      const result = call(receiver, i);
       if (result[0] !== receiver || result[1] !== i) throw new Error(`call ${i} returned ${String(result)}`);
     }
     handler.apply = () => ["trapped"];
-    expect(call(proxy, receiver, 1)).toEqual(["trapped"]);
+    expect(call(receiver, 1)).toEqual(["trapped"]);
     delete handler.apply;
-    expect(call(proxy, receiver, 2)).toEqual([receiver, 2]);
+    expect(call(receiver, 2)).toEqual([receiver, 2]);
     revoke();
-    expect(() => call(proxy, receiver, 3)).toThrow(TypeError);
+    expect(() => call(receiver, 3)).toThrow(TypeError);
   });
 
   // The shortest form of a double comes from zmij instead of dragonbox (33ce3bf11a).

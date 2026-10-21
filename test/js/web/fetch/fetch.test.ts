@@ -1297,7 +1297,7 @@ describe("Response", () => {
         const output = JSON.stringify(input);
         expect(await Response.json(input).text()).toBe(output);
       }
-      // JSON.stringify() returns undefined
+      // No argument gives an empty body. An explicit undefined throws.
       expect(await Response.json().text()).toBe("");
       // JSON.stringify("") returns '""'
       expect(await Response.json("").text()).toBe('""');

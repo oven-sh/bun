@@ -6180,13 +6180,8 @@ describe.concurrent("a write that is the first to observe the peer's reset fails
           while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
             Atomics.wait(cell, 0, 0, 5);
           }
-          // The file says the parent sent the RST, not that this end's kernel has applied it:
-          // macOS delivers loopback packets on a kernel thread. The native handle's remotePort is
-          // getpeername(): it fails once the kernel has reset this end, without consuming the
-          // socket's error. Winsock answers it from the address saved at connect(), so Windows
-          // only has the file.
-          const handle = socket._handle;
-          while (process.platform !== "win32" && handle.remotePort !== undefined && Date.now() < deadline) {
+          // _handle.remotePort is getpeername(): on POSIX it fails once the kernel has applied the RST. See #46085.
+          while (process.platform !== "win32" && socket._handle.remotePort !== undefined && Date.now() < deadline) {
             Atomics.wait(cell, 0, 0, 1);
           }
           socket.write("ping", function onWritten(err) {

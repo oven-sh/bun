@@ -72,7 +72,7 @@ pub(super) fn check_grammar_rest_element(
 /// `GetEmitScriptTarget`: defaults to the latest standard.
 pub(super) fn language_version(c: &Checker<'_, '_>) -> ScriptTarget {
     match c.p.files.options.target {
-        ScriptTarget::None => ScriptTarget::ES2025,
+        ScriptTarget::None => ScriptTarget::ES2026,
         reported => reported,
     }
 }

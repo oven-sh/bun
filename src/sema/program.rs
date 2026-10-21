@@ -3710,7 +3710,7 @@ impl Included<'_, '_> {
     /// `GetEmitScriptTarget().String()`
     fn emit_script_target(&self) -> Vec<u8> {
         let target = match self.options.target {
-            ScriptTarget::None => ScriptTarget::ES2025,
+            ScriptTarget::None => ScriptTarget::ES2026,
             target => target,
         };
         let mut name = Vec::new();

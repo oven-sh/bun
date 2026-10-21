@@ -25,7 +25,7 @@ impl Checker<'_, '_> {
         }
         // `GetEmitScriptTarget`
         let target = match self.p.files.options.target {
-            ScriptTarget::None => ScriptTarget::ES2025,
+            ScriptTarget::None => ScriptTarget::ES2026,
             target => target,
         };
         let mut scan_errors: Vec<RegExpError> = Vec::new();

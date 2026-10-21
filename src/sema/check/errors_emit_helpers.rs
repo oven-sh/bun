@@ -276,7 +276,7 @@ impl Checker<'_, '_> {
     ) -> Vec<Request> {
         // `GetEmitScriptTarget`
         let target = match self.files().options.target {
-            ScriptTarget::None => ScriptTarget::ES2025,
+            ScriptTarget::None => ScriptTarget::ES2026,
             target => target,
         };
         let index = self.exprs_by_kind(file);

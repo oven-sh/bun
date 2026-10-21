@@ -274,6 +274,7 @@ pub enum ScriptTarget {
     ES2023,
     ES2024,
     ES2025,
+    ES2026,
     ESNext,
 }
 
@@ -294,6 +295,7 @@ bun_core::comptime_string_map! {
         b"es2023" => ScriptTarget::ES2023,
         b"es2024" => ScriptTarget::ES2024,
         b"es2025" => ScriptTarget::ES2025,
+        b"es2026" => ScriptTarget::ES2026,
         b"esnext" => ScriptTarget::ESNext,
     };
 }
@@ -981,7 +983,7 @@ impl Options {
             // `targetToLibMap` doesn't have.
             (None, Some(b"es6" | b"es2015")) => vec![b"es6".to_vec()],
             (None, Some(b"es3" | b"es5")) => vec![Vec::new()],
-            (None, target) => vec![[target.unwrap_or(b"es2025"), b".full"].concat()],
+            (None, target) => vec![[target.unwrap_or(b"es2026"), b".full"].concat()],
         };
         options.types = words(b"types").or_else(|| before_6.then(|| vec![b"*".to_vec()]));
         options.type_roots = directories(b"typeRoots");
@@ -1227,8 +1229,10 @@ bun_core::comptime_string_map! {
         b"esnext.regexp" => b"es2024.regexp",
         b"esnext.string" => b"es2024.string",
         b"esnext.float16" => b"es2025.float16",
-        b"esnext.iterator" => b"es2025.iterator",
-        b"esnext.promise" => b"es2025.promise",
+        b"esnext.array" => b"es2026.array",
+        b"esnext.collection" => b"es2026.collection",
+        b"esnext.error" => b"es2026.error",
+        b"esnext.typedarrays" => b"es2026.typedarrays",
     };
 }
 
@@ -1236,7 +1240,7 @@ bun_core::comptime_string_set! {
     /// `tsoptions.Libs`: the keys of `LibMap`.
     pub static LIBS = {
         b"es5", b"es6", b"es2015", b"es7", b"es2016", b"es2017", b"es2018", b"es2019", b"es2020", b"es2021", b"es2022",
-        b"es2023", b"es2024", b"es2025", b"esnext", b"dom", b"dom.iterable", b"dom.asynciterable", b"webworker",
+        b"es2023", b"es2024", b"es2025", b"es2026", b"esnext", b"dom", b"dom.iterable", b"dom.asynciterable", b"webworker",
         b"webworker.importscripts", b"webworker.iterable", b"webworker.asynciterable", b"scripthost", b"es2015.core",
         b"es2015.collection", b"es2015.generator", b"es2015.iterable", b"es2015.promise", b"es2015.proxy", b"es2015.reflect",
         b"es2015.symbol", b"es2015.symbol.wellknown", b"es2016.array.include", b"es2016.intl", b"es2017.arraybuffer",
@@ -1248,11 +1252,12 @@ bun_core::comptime_string_set! {
         b"es2022.error", b"es2022.intl", b"es2022.object", b"es2022.string", b"es2022.regexp", b"es2023.array",
         b"es2023.collection", b"es2023.intl", b"es2024.arraybuffer", b"es2024.collection", b"es2024.object", b"es2024.promise",
         b"es2024.regexp", b"es2024.sharedmemory", b"es2024.string", b"es2025.collection", b"es2025.float16", b"es2025.intl",
-        b"es2025.iterator", b"es2025.promise", b"es2025.regexp", b"esnext.asynciterable", b"esnext.symbol", b"esnext.bigint",
-        b"esnext.weakref", b"esnext.object", b"esnext.regexp", b"esnext.string", b"esnext.float16", b"esnext.iterator",
-        b"esnext.promise", b"esnext.array", b"esnext.collection", b"esnext.date", b"esnext.decorators", b"esnext.disposable",
-        b"esnext.error", b"esnext.intl", b"esnext.sharedmemory", b"esnext.temporal", b"esnext.typedarrays", b"decorators",
-        b"decorators.legacy",
+        b"es2025.iterator", b"es2025.promise", b"es2025.regexp", b"es2026.array", b"es2026.collection", b"es2026.error",
+        b"es2026.iterator", b"es2026.json", b"es2026.math", b"es2026.typedarrays", b"esnext.asynciterable", b"esnext.symbol",
+        b"esnext.bigint", b"esnext.weakref", b"esnext.object", b"esnext.regexp", b"esnext.string", b"esnext.float16",
+        b"esnext.array", b"esnext.collection", b"esnext.error", b"esnext.typedarrays", b"esnext.iterator", b"esnext.promise",
+        b"esnext.date", b"esnext.decorators", b"esnext.disposable", b"esnext.intl", b"esnext.modulesource",
+        b"esnext.sharedmemory", b"esnext.temporal", b"decorators", b"decorators.legacy",
     };
 }
 

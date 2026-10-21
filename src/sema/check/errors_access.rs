@@ -36,6 +36,8 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
         ("es2022", &["at"]),
         ("es2023", &["findLastIndex", "findLast", "toReversed", "toSorted", "toSpliced", "with"]),
     ]),
+    ("IteratorConstructor", &[("es2026", &["concat"])]),
+    ("JSON", &[("es2026", &["isRawJSON", "rawJSON"])]),
     ("ArrayBuffer", &[
         ("es2024", &["maxByteLength", "resizable", "resize", "detached", "transfer", "transferToFixedLength"]),
     ]),
@@ -63,7 +65,7 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ]),
     ("ArrayConstructor", &[
         ("es2015", &["from", "of"]),
-        ("esnext", &["fromAsync"]),
+        ("es2026", &["fromAsync"]),
     ]),
     ("ObjectConstructor", &[
         ("es2015", &["assign", "getOwnPropertySymbols", "keys", "is", "setPrototypeOf"]),
@@ -81,10 +83,11 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
             "trunc", "fround", "cbrt",
         ]),
         ("es2025", &["f16round"]),
+        ("es2026", &["sumPrecise"]),
     ]),
     ("Map", &[
         ("es2015", &["entries", "keys", "values"]),
-        ("esnext", &["getOrInsert", "getOrInsertComputed"]),
+        ("es2026", &["getOrInsert", "getOrInsertComputed"]),
     ]),
     ("MapConstructor", &[("es2024", &["groupBy"])]),
     ("Set", &[
@@ -104,7 +107,7 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
         ("es2015", &["for", "keyFor"]),
         ("es2019", &["description"]),
     ]),
-    ("WeakMap", &[("esnext", &["getOrInsert", "getOrInsertComputed"])]),
+    ("WeakMap", &[("es2026", &["getOrInsert", "getOrInsertComputed"])]),
     ("String", &[
         ("es2015", &[
             "codePointAt", "includes", "endsWith", "normalize", "repeat", "startsWith", "anchor", "big", "blink", "bold", "fixed",
@@ -140,7 +143,11 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ]),
     ("RelativeTimeFormat", &[("es2020", &["format", "formatToParts", "resolvedOptions"])]),
     ("Int8Array", TYPED_ARRAY_FEATURES),
-    ("Uint8Array", TYPED_ARRAY_FEATURES),
+    ("Uint8Array", &[
+        ("es2022", &["at"]),
+        ("es2023", &["findLastIndex", "findLast", "toReversed", "toSorted", "toSpliced", "with"]),
+        ("es2026", &["toBase64", "setFromBase64", "toHex", "setFromHex"]),
+    ]),
     ("Uint8ClampedArray", TYPED_ARRAY_FEATURES),
     ("Int16Array", TYPED_ARRAY_FEATURES),
     ("Uint16Array", TYPED_ARRAY_FEATURES),
@@ -151,8 +158,8 @@ const LIBRARY_FEATURES: &[(&str, Features)] = &[
     ("BigInt64Array", TYPED_ARRAY_FEATURES),
     ("BigUint64Array", TYPED_ARRAY_FEATURES),
     ("Error", &[("es2022", &["cause"])]),
-    ("ErrorConstructor", &[("esnext", &["isError"])]),
-    ("Uint8ArrayConstructor", &[("esnext", &["fromBase64", "fromHex"])]),
+    ("ErrorConstructor", &[("es2026", &["isError"])]),
+    ("Uint8ArrayConstructor", &[("es2026", &["fromBase64", "fromHex"])]),
     ("Date", &[("esnext", &["toTemporalInstant"])]),
 ];
 

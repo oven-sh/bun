@@ -4,7 +4,7 @@ import { chmodSync, readFileSync, statSync } from "fs";
 import { copyFile, exists, open, rm, symlink, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isLinux, isRoot, isWindows, runBunInstall, tempDir, textLockfile } from "harness";
 import { join } from "path";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry, toml } from "registry";
 
 const registry = new TestRegistry();
 
@@ -1042,6 +1042,115 @@ describe.concurrent("no command sees the version that a peer moved away from", (
 
     expect(await run(packageDir, "install")).toMatchObject({ exitCode: 0 });
     expect((await run(packageDir, "pm", "hash")).stdout).toBe(hash);
+  });
+});
+
+// Bun v1.4.2 wrote fixtures/bun.lockb.v1.4.2-peers: `bun install` with zz-10, zz-11 and pf, then `bun add od@1.0.0`.
+// zz-10's peer accepts zz-9@1.0.1 and zz-9@1.0.2. The file has both, and stores the peer on 1.0.1. pf's peer is stored
+// on nd@1.1.0, which is in no tree: od's nd@1.0.1 is at the top. The registry of the file was `http://localhost:1/`,
+// so the tarballs have to be in the cache, which an install in `fill` puts there.
+describe.concurrent("a bun.lockb that Bun 1.4 wrote", () => {
+  const graph: Record<string, Record<string, object>> = {
+    "zz-10": { "2.1.0": { peerDependencies: { "zz-9": "~1.0.1" } } },
+    "zz-11": { "3.1.0": { peerDependencies: { "zz-3": "^1.5.0" }, scripts: { postinstall: "exit 0" } } },
+    "zz-3": { "1.5.0": { dependencies: { "zz-9": "^1.0.2" } } },
+    "zz-9": { "1.0.1": {}, "1.0.2": {} },
+    pf: { "1.0.0": { peerDependencies: { nd: "^1.0.0" } } },
+    od: { "1.0.0": { dependencies: { nd: "1.0.1" } } },
+    nd: { "1.0.1": {}, "1.1.0": {} },
+  };
+  const lockb = readFileSync(join(import.meta.dir, "fixtures", "bun.lockb.v1.4.2-peers"));
+  const app = (dependencies: object) => JSON.stringify({ name: "app", version: "1.0.0", dependencies });
+  const everyVersion = Object.fromEntries(
+    Object.entries(graph).flatMap(([name, versions]) =>
+      Object.keys(versions).map(version => [`${name}-${version}`, `npm:${name}@${version}`]),
+    ),
+  );
+
+  async function serve() {
+    const tarballs = new Map<string, Uint8Array>();
+    for (const [name, versions] of Object.entries(graph)) {
+      for (const [version, manifest] of Object.entries(versions)) {
+        const files = { "package/package.json": JSON.stringify({ name, version, ...manifest }) };
+        tarballs.set(`/${name}/-/${name}-${version}.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
+      }
+    }
+    return Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarball = tarballs.get(pathname);
+        if (tarball) return new Response(tarball);
+        const name = pathname.slice(1);
+        if (!(name in graph)) return new Response("{}", { status: 404 });
+        const versions: Record<string, object> = {};
+        for (const [version, manifest] of Object.entries(graph[name])) {
+          const dist = { tarball: `${origin}/${name}/-/${name}-${version}.tgz` };
+          versions[version] = { name, version, ...manifest, hasInstallScript: "scripts" in manifest, dist };
+        }
+        return Response.json({ name, versions, "dist-tags": { latest: Object.keys(versions).at(-1) } });
+      },
+    });
+  }
+
+  // The tests run at the same time, so each project has a cache of its own, in `project`.
+  async function bun(cwd: string, args: string[], project = cwd) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: installEnv(project),
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ args, stderr, exitCode }).toEqual({ args, stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+    return stdout + stderr;
+  }
+
+  function project(server: { url: URL }) {
+    const bunfig = toml({ install: { registry: server.url.href, linker: "hoisted" } });
+    return tempDir("lockb-from-bun-1.4", {
+      "bun.lockb": lockb,
+      "package.json": app({ od: "1.0.0", pf: "1.0.0", "zz-10": ">=0.0.2", "zz-11": "^3.1.0" }),
+      "bunfig.toml": bunfig,
+      fill: { "package.json": app(everyVersion), "bunfig.toml": bunfig },
+    });
+  }
+
+  // What the file stores for each range, as `bun bun.lockb` prints it.
+  const stored = async (cwd: string) =>
+    Object.fromEntries(
+      [...(await bun(cwd, ["bun.lockb"])).matchAll(/^"?(\S+@[^:"]+)"?:\n  version "([^"]+)"/gm)].flatMap(match =>
+        match[1].split(", ").map(range => [range, match[2]]),
+      ),
+    );
+
+  // `bun pm trust` lays out the install tree of the lockfile it loaded, and that can change what a peer resolves
+  // to. It then saved the lockfile with the change, and with the package that only the peer held still in it.
+  it("bun pm trust saves every dependency on the package that the file stores for it", async () => {
+    using server = await serve();
+    using dir = project(server);
+    const cwd = String(dir);
+
+    await bun(join(cwd, "fill"), ["install"], cwd);
+    await bun(cwd, ["install", "--frozen-lockfile"]);
+    expect(await bun(cwd, ["pm", "trust", "zz-11"])).toContain("1 script ran across 1 package");
+    expect(await file(join(cwd, "bun.lockb")).bytes()).not.toEqual(lockb);
+    // As in the fixture.
+    expect(await stored(cwd)).toEqual({
+      "nd@1.0.1": "1.0.1",
+      "nd@^1.0.0": "1.1.0",
+      "od@1.0.0": "1.0.0",
+      "pf@1.0.0": "1.0.0",
+      "zz-10@>=0.0.2": "2.1.0",
+      "zz-11@^3.1.0": "3.1.0",
+      "zz-3@^1.5.0": "1.5.0",
+      "zz-9@^1.0.2": "1.0.2",
+      "zz-9@~1.0.1": "1.0.1",
+    });
+
+    await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+    await bun(cwd, ["install", "--frozen-lockfile"]);
   });
 });
 

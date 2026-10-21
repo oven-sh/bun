@@ -28,14 +28,14 @@ impl Rule for DefaultPropsMatchPropTypes {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // The `name` of a `PrivateIdentifier` is without the `#`.
+        // A `PrivateIdentifier`'s `name` doesn't include the `#`.
         let names = ["defaultProps", "getDefaultProps", "#defaultProps", "#getDefaultProps"];
         (file.mentions_any(&names) && Components::may_have_any(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let default_props = defaults();
-        // Most files that have the name have it for something else.
+        // Fast path: most files that mention the name use it for something else.
         let mut has_declaration = false;
         default_props.nodes(cx.file(), &mut |_, _| has_declaration = true);
         if !has_declaration {
@@ -68,7 +68,7 @@ impl DefaultPropsMatchPropTypes {
             let message = match prop_types.get(default_prop_name) {
                 Some(prop) if self.allow_required_defaults || prop.is_required != Some(true) => continue,
                 Some(_) => REQUIRED_HAS_DEFAULT,
-                // `propTypes[name]` is a function of `Object.prototype`.
+                // `propTypes[name]` finds a function inherited from `Object.prototype`.
                 None if is_in_object_prototype(default_prop_name) => continue,
                 None => DEFAULT_HAS_NO_TYPE,
             };

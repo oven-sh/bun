@@ -1156,6 +1156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.has_newline_before {
                         is_single_line = false;
                     }
+                    let close_brace_loc = p.lexer.loc();
                     p.lexer.expect(T::TCloseBrace)?;
 
                     return Ok(p.b(
@@ -1164,6 +1165,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 properties.into_bump_slice_mut(),
                             ),
                             is_single_line,
+                            close_brace_loc,
                         },
                         loc,
                     ));

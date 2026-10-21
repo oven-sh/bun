@@ -293,8 +293,7 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         sym: Sym,
     ) -> bool {
-        // `localOrExportSymbol.ValueDeclaration`. A type of the same name can be the first
-        // declaration of the symbol, in this file or in an earlier one.
+        // `localOrExportSymbol.ValueDeclaration`
         let Some((of, crate::bind::Decl::Var(declared) | crate::bind::Decl::Param(declared))) =
             self.files().value_declaration(sym)
         else {

@@ -1,7 +1,8 @@
 import { realpathSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { AddressInfo, createServer, Server, Socket } from "net";
+import { AddressInfo, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -740,6 +741,129 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
         })();
       `),
     ).toEqual({ stdout: "fast", exitCode: 0, failureDetail: "" });
+  });
+});
+
+describe("AsyncLocalStorage", () => {
+  // What node does: the listening handle is made in listen(), a handle it accepts before any script runs. So the
+  // server's own events continue the store of listen(), and the events of an accepted socket run in none.
+  it("a server's own events run in the store of listen(), an accepted socket's in none", async () => {
+    const storage = new AsyncLocalStorage<string>();
+    const seen: Record<string, string> = {};
+    const record = (event: string) => void (seen[event] ??= storage.getStore() ?? "(no store)");
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+
+    const server = createServer(socket => {
+      record("server 'connection'");
+      // The store of the listener does not reach the events either: an EventEmitter does not bind its listeners.
+      storage.run("connection listener", () => {
+        socket.on("data", () => {
+          record("accepted socket 'data'");
+          socket.end("bye");
+        });
+        socket.on("end", () => record("accepted socket 'end'"));
+        socket.on("close", () => {
+          record("accepted socket 'close'");
+          server.close(() => {
+            record("server.close() callback");
+            onClosed();
+          });
+        });
+      });
+    });
+    server.on("listening", () => record("server 'listening'"));
+    server.on("close", () => record("server 'close'"));
+    storage.run("listen", () =>
+      server.listen(0, "127.0.0.1", () => {
+        // In no store, so that nothing but the listen() call could have given the accepted socket one.
+        const client = storage.exit(() => connect((server.address() as AddressInfo).port, "127.0.0.1"));
+        client.on("connect", () => client.write("hello"));
+        client.resume();
+      }),
+    );
+    await closed;
+
+    expect(seen).toEqual({
+      "server 'listening'": "listen",
+      "server 'connection'": "listen",
+      "accepted socket 'data'": "(no store)",
+      "accepted socket 'end'": "(no store)",
+      "accepted socket 'close'": "(no store)",
+      "server 'close'": "(no store)",
+      "server.close() callback": "(no store)",
+    });
+  });
+
+  // Bun.listen(), which a net.Server listens with, is not node's: all of its handlers are the caller's. They continue
+  // the call that gave them, for every socket the listener accepts.
+  it("Bun.listen() handlers run in the store of the Bun.listen() or reload() call that gave them", async () => {
+    const storage = new AsyncLocalStorage<string>();
+    const seen: Record<string, string> = {};
+    const waiting = new Map<string, () => void>();
+    const accepted: Bun.Socket[] = [];
+    const event = (name: string) => new Promise<void>(resolve => waiting.set(name, resolve));
+    const handlers = (given: string): Bun.SocketHandler => {
+      const record = (name: string) => {
+        seen[`${given}: ${name}`] ??= storage.getStore() ?? "(no store)";
+        waiting.get(`${given}: ${name}`)?.();
+      };
+      return {
+        open(socket) {
+          accepted.push(socket);
+          record("open");
+        },
+        data: () => record("data"),
+        close: () => record("close"),
+      };
+    };
+    const client = { data() {}, open() {}, close() {} };
+
+    using listener = storage.run("listen", () =>
+      Bun.listen({ hostname: "127.0.0.1", port: 0, socket: handlers("Bun.listen()") }),
+    );
+    let heard = event("Bun.listen(): data");
+    const first = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: client });
+    first.write("a");
+    await heard;
+
+    // The table is the listener's: the socket accepted earlier gets the new handlers, in the store of reload().
+    storage.run("listener.reload", () => listener.reload({ socket: handlers("listener.reload()") }));
+    heard = event("listener.reload(): data");
+    first.write("b");
+    await heard;
+    heard = event("listener.reload(): open");
+    const second = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: client });
+    await heard;
+
+    // reload() of one accepted socket replaces the same table, so the other socket gets them too.
+    storage.run("socket.reload", () => accepted[0].reload({ socket: handlers("socket.reload()") }));
+    heard = event("socket.reload(): data");
+    second.write("c");
+    await heard;
+    heard = event("socket.reload(): close");
+    first.end();
+    await heard;
+    second.end();
+
+    using plain = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: handlers("Bun.listen() in no store") });
+    heard = event("Bun.listen() in no store: data");
+    const third = await storage.run("connect", () =>
+      Bun.connect({ hostname: "127.0.0.1", port: plain.port, socket: client }),
+    );
+    third.write("d");
+    await heard;
+    third.end();
+
+    expect(seen).toEqual({
+      "Bun.listen(): open": "listen",
+      "Bun.listen(): data": "listen",
+      "listener.reload(): data": "listener.reload",
+      "listener.reload(): open": "listener.reload",
+      "socket.reload(): data": "socket.reload",
+      "socket.reload(): close": "socket.reload",
+      "Bun.listen() in no store: open": "(no store)",
+      "Bun.listen() in no store: data": "(no store)",
+    });
   });
 });
 

@@ -77,7 +77,8 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* gl
         // We should only expose the "ptr" field when it's a JSCallback for bun:ffi.
         // Not for internal usages of this function type.
         // We should also consider a separate JSFunction type for our usage to not have this branch in the first place...
-        function->putDirect(vm, JSC::Identifier::fromString(vm, String("ptr"_s)), JSC::jsNumber(std::bit_cast<double>(functionPointer)), JSC::PropertyAttribute::ReadOnly | 0);
+        // `functionPointer` is the wrapper with the JSC host function ABI. "ptr" is the C function that it calls.
+        function->putDirect(vm, JSC::Identifier::fromString(vm, String("ptr"_s)), JSC::jsNumber(static_cast<double>(reinterpret_cast<uintptr_t>(symbolFromDynamicLibrary))), JSC::PropertyAttribute::ReadOnly | 0);
         function->symbolFromDynamicLibrary = symbolFromDynamicLibrary;
         return JSC::JSValue::encode(function);
     }

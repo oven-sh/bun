@@ -1863,7 +1863,7 @@ impl VirtualMachine {
         Bun__emitHandledPromiseEvent(global_object, promise)
     }
 
-    pub(crate) fn default_on_unhandled_rejection(
+    pub fn default_on_unhandled_rejection(
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
         value: JSValue,
@@ -2111,6 +2111,11 @@ impl VirtualMachine {
         !self.bun_watcher.is_null()
     }
 
+    /// `--hot` and `--watch` print an unhandled error and keep running until the next reload.
+    fn unhandled_errors_are_fatal(&self) -> bool {
+        !self.is_watcher_enabled()
+    }
+
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
     #[inline]
     pub fn set_is_main_thread_vm(value: bool) {
@@ -2192,7 +2197,10 @@ impl VirtualMachine {
             // and exit, like node's fatal-exception path. Main thread only:
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
-            if self.exit_on_uncaught_exception && self.is_main_thread() {
+            if self.exit_on_uncaught_exception
+                && self.is_main_thread()
+                && self.unhandled_errors_are_fatal()
+            {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
@@ -2203,7 +2211,9 @@ impl VirtualMachine {
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
-            self.unhandled_error_counter += 1;
+            if self.unhandled_errors_are_fatal() {
+                self.unhandled_error_counter += 1;
+            }
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
         }
@@ -4434,7 +4444,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Routes an unhandled promise rejection to the configured handler, bumping the unhandled-error counter.
+    /// Routes an unhandled promise rejection to the configured handler.
     pub fn unhandled_rejection(
         &mut self,
         global_object: &JSGlobalObject,
@@ -4553,7 +4563,9 @@ impl VirtualMachine {
                 }
             }
         }
-        self.unhandled_error_counter += 1;
+        if self.unhandled_errors_are_fatal() {
+            self.unhandled_error_counter += 1;
+        }
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 

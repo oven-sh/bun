@@ -1109,7 +1109,7 @@ mod _async_tasks {
         args::Cp<'static>,
     );
     impl_fs_argument!(
-        args::FdVectorIo,
+        args::Writev,
         args::FTruncate,
         args::Write<'static>,
         args::Fchown,
@@ -1132,6 +1132,18 @@ mod _async_tasks {
             if let args::ReadBuffer::PinnedBuffer(buffer) = &mut self.buffer {
                 buffer.write_back(bytes_read as usize);
             }
+        }
+    }
+    // SAFETY: same as `impl_fs_argument!`.
+    unsafe impl ThreadIsolatedArg for args::Readv {}
+    impl FsArgument for args::Readv {
+        #[inline]
+        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
+            args::Readv::from_js(ctx, arguments)
+        }
+        #[inline]
+        fn write_back(&mut self, bytes_read: u64) {
+            self.buffers.write_back(bytes_read as usize);
         }
     }
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
@@ -2854,17 +2866,16 @@ pub(crate) mod args {
         }
     }
 
-    /// Shared layout for `fs.writev` / `fs.readv` arguments. One concrete
-    /// struct; we re-export both
+    /// Shared layout for `fs.writev` / `fs.readv` arguments. We re-export both
     /// names as type aliases so every `args::Writev` / `args::Readv` caller
     /// (UVFSRequest params, `readv`/`writev`/`preadv_inner`/`pwritev_inner`,
     /// uv dispatch arms) is untouched.
-    pub(crate) struct FdVectorIo {
+    pub(crate) struct FdVectorIo<const READ: bool> {
         pub(crate) fd: FD,
         pub(crate) buffers: VectorArrayBuffer,
         pub(crate) position: Option<u64>, // u52
     }
-    impl FdVectorIo {
+    impl<const READ: bool> FdVectorIo<READ> {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
@@ -2878,6 +2889,7 @@ pub(crate) mod args {
                 // The iovec pointers outlive this call on the async path; root
                 // each element and pin its backing store until completion.
                 arguments.will_be_async,
+                READ,
             )?;
             let position: Option<u64> = arguments
                 .next_eat()
@@ -2890,8 +2902,8 @@ pub(crate) mod args {
             })
         }
     }
-    pub(crate) type Writev = FdVectorIo;
-    pub(crate) type Readv = FdVectorIo;
+    pub(crate) type Writev = FdVectorIo<false>;
+    pub(crate) type Readv = FdVectorIo<true>;
 
     pub(crate) struct FTruncate {
         pub(crate) fd: FD,
@@ -3812,7 +3824,12 @@ pub(crate) mod args {
             } else {
                 Flavor::Sync
             };
-            let buffer =
+            let buffer = if flavor == Flavor::Async && bv.js_type().is_array_buffer_like() {
+                // Bytes that can be freed while pinned are copied below, once `offset` and `length` say which ones.
+                StringOrBuffer::PinnedBuffer(
+                    PinnedArrayBuffer::root(ctx, bv).ok_or_else(|| ctx.throw_out_of_memory())?,
+                )
+            } else {
                 StringOrBuffer::from_js_maybe_async(ctx, bv, flavor, StringObjects::Allow)?
                     .ok_or_else(|| {
                         ctx.throw_invalid_argument_type_value(
@@ -3820,7 +3837,8 @@ pub(crate) mod args {
                             b"string or TypedArray",
                             bv,
                         )
-                    })?;
+                    })?
+            };
             if bv.is_string() && !bv.is_string_literal() {
                 return Err(ctx.throw_invalid_argument_type_value(
                     b"buffer",
@@ -3942,6 +3960,13 @@ pub(crate) mod args {
                             }
                         }
                     }
+                }
+            }
+            if let StringOrBuffer::PinnedBuffer(pinned) = &mut args.buffer {
+                pinned.narrow(args.offset as usize, args.length as usize);
+                args.offset = 0;
+                if !pinned.copy_if_freeable_while_pinned(ctx) {
+                    return Err(ctx.throw_out_of_memory());
                 }
             }
             Ok(args)

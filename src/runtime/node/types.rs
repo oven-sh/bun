@@ -1297,6 +1297,9 @@ pub(crate) struct VectorArrayBuffer {
     /// The collected elements, in order. Rooted (and their backing stores
     /// pinned), along with `value`, from `from_js(.., pin: true)` until drop.
     pub(crate) views: Vec<JSValue>,
+    /// The index of each pinned element over a non-shared `WebAssembly.Memory`, and the native
+    /// bytes its iovec points to. A pin doesn't stop `grow()` from freeing the memory's block.
+    wasm: Vec<(usize, Option<PinnedArrayBuffer>)>,
     pinned: bool,
 }
 
@@ -1325,6 +1328,7 @@ unsafe extern "C" {
             element: JSValue,
             data: *mut u8,
             byte_len: usize,
+            is_wasm_memory: bool,
         ),
     ) -> i32;
 }
@@ -1334,6 +1338,7 @@ unsafe extern "C" fn append_buffer_span(
     element: JSValue,
     data: *mut u8,
     byte_len: usize,
+    is_wasm_memory: bool,
 ) {
     // SAFETY: `ctx` is the `&mut VectorArrayBuffer` passed to
     // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
@@ -1346,6 +1351,9 @@ unsafe extern "C" fn append_buffer_span(
         // backing store, valid and unaliased for the duration of the callback.
         unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
     };
+    if is_wasm_memory {
+        out.wasm.push((out.views.len(), None));
+    }
     out.buffers.push(bun_sys::platform_iovec_create(slice));
     out.views.push(element);
 }
@@ -1358,16 +1366,19 @@ impl VectorArrayBuffer {
     ///
     /// `pin` is required when the spans outlive this call (async I/O): `val` and
     /// each element are rooted and each backing store is pinned against detach
-    /// until the value drops.
+    /// until the value drops. `read` says whether the I/O writes to the spans; if so, call
+    /// [`write_back`](Self::write_back) after it.
     pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         val: JSValue,
         pin: bool,
+        read: bool,
     ) -> JsResult<VectorArrayBuffer> {
         let mut out = VectorArrayBuffer {
             value: val,
             buffers: Vec::new(),
             views: Vec::new(),
+            wasm: Vec::new(),
             pinned: false,
         };
         bun_jsc::validation_scope!(scope, global_object);
@@ -1395,12 +1406,48 @@ impl VectorArrayBuffer {
             val.protect();
         }
         match status {
-            0 => Ok(out),
+            0 => {
+                for (index, native) in &mut out.wasm {
+                    let view = out.views[*index];
+                    let pinned = if read {
+                        PinnedArrayBuffer::root(global_object, view).map(|mut pinned| {
+                            let len = pinned.byte_len;
+                            pinned.write_to_scratch_if_wasm(0, len);
+                            pinned
+                        })
+                    } else {
+                        PinnedArrayBuffer::root_read_only(global_object, view)
+                    };
+                    let Some(pinned) = pinned else {
+                        return Err(global_object.throw_out_of_memory());
+                    };
+                    let mut bytes: jsc::ArrayBuffer = *pinned;
+                    out.buffers[*index] = bun_sys::platform_iovec_create(bytes.byte_slice_mut());
+                    *native = Some(pinned);
+                }
+                Ok(out)
+            }
             -1 => Err(jsc::JsError::Thrown),
             2 => Err(global_object.throw_out_of_memory()),
             _ => {
                 Err(global_object
                     .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")))
+            }
+        }
+    }
+
+    /// Runs on the JS thread after a read of `bytes_read` bytes, which filled the spans in order.
+    /// See [`PinnedArrayBuffer::write_back`].
+    pub(crate) fn write_back(&mut self, bytes_read: usize) {
+        let (mut start, mut counted) = (0, 0);
+        for (index, native) in &mut self.wasm {
+            start += self.buffers[counted..*index]
+                .iter()
+                .map(bun_sys::platform_iovec_len)
+                .sum::<usize>();
+            counted = *index;
+            if let Some(pinned) = native {
+                pinned.write_back(bytes_read.saturating_sub(start));
             }
         }
     }

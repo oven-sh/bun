@@ -854,6 +854,21 @@ body {
     },
   });
 
+  itBundled("html/image-inlined-by-stylesheet", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<link rel="stylesheet" href="./style.css"><img src="./logo.png">`,
+      "/style.css": `body { background: url("./logo.png"); }`,
+      "/logo.png": "png bytes",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/<img src="(.*?)">/)![1];
+      expect(src).toMatch(/^\.\/logo-\w+\.png$/);
+      expect(api.readFile("out/" + src)).toBe("png bytes");
+    },
+  });
+
   // Test that sourcemap comments are not included in HTML and CSS files
   itBundled("html/no-sourcemap-comments", {
     outdir: "out/",

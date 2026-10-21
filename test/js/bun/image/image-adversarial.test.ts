@@ -439,6 +439,13 @@ describe("malformed PNG structure", () => {
     const meta = await new Bun.Image(png).metadata();
     expect(meta.width).toBe(8);
   });
+
+  test("maxPixels also bounds what an iCCP chunk inflates to", async () => {
+    const iccp = Buffer.concat([Buffer.from("icc\0\0"), zlib.deflateSync(Buffer.alloc(1 << 20))]);
+    const png = Buffer.concat([tinyPng.subarray(0, 33), pngChunk("iCCP", iccp), tinyPng.subarray(33)]);
+    expect(await rgbaOf(png)).toStrictEqual(await rgbaOf(tinyPng));
+    await expect(new Bun.Image(png, { maxPixels: 64 }).png().bytes()).rejects.toThrow(/decode failed/);
+  });
 });
 
 // ─── 5. malformed JPEG / EXIF ────────────────────────────────────────────────

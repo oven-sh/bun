@@ -98,6 +98,48 @@ test.skipIf(isWindows)("removing all signal listeners uninstalls the handler (de
   expect(proc.signalCode).not.toBeNull();
 });
 
+// Like node:events, every on() / once() call adds a registration, also for a function that is already registered.
+test.skipIf(isWindows)("removing one registration of a function keeps its other registrations", async () => {
+  const script = /*js*/ `
+    const { promise, resolve } = Promise.withResolvers();
+    let calls = 0;
+    function handler() {
+      console.log("handled", ++calls, "listeners", process.listenerCount("SIGUSR2"));
+      if (calls === 2) process.kill(process.pid, "SIGUSR2");
+      if (calls === 3) resolve();
+    }
+
+    process.once("SIGUSR2", handler);
+    process.on("SIGUSR2", handler);
+    process.on("SIGUSR2", handler);
+    process.off("SIGUSR2", handler);
+    console.log("listeners", process.listenerCount("SIGUSR2"));
+
+    process.kill(process.pid, "SIGUSR2");
+    await promise;
+    console.log("done");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+"listeners 2
+handled 1 listeners 1
+handled 2 listeners 1
+handled 3 listeners 1
+done"
+`);
+  expect(exitCode).toBe(0);
+});
+
 // Re-adding a listener after all were removed should reinstall the handler.
 test.skipIf(isWindows)("re-adding a listener after removing all reinstalls the handler", async () => {
   const script = /*js*/ `

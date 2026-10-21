@@ -2102,3 +2102,18 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
+  // (type $s (struct (field (mut i32))))
+  // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+  // prettier-ignore
+  const bytes = new Uint8Array([
+    0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+    1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+    3, 2, 1, 1,
+    7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+    10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+  ]);
+  const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+  expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
+});

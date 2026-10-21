@@ -7628,3 +7628,37 @@ it("addTrailers() and end() don't crash on the response of a request that was up
   expect({ stdout, stderr }).toEqual({ stdout: "alive\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+it("a listener can cancel Readable.toWeb(req) and end the response in the same tick", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const { Readable } = require("node:stream");
+        const server = http.createServer((req, res) => {
+          const socket = req.socket;
+          req.on("error", () => {});
+          res.on("finish", () => console.log("keep-alive timeout", socket.timeout));
+          Readable.toWeb(req).cancel();
+          res.end("ok");
+        });
+        server.keepAliveTimeout = 4000;
+        server.keepAliveTimeoutBuffer = 0;
+        server.listen(0, "127.0.0.1", async () => {
+          const response = await fetch("http://127.0.0.1:" + server.address().port);
+          console.log(response.status, await response.text());
+          server.close();
+          server.closeAllConnections();
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "keep-alive timeout 4000\n200 ok\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

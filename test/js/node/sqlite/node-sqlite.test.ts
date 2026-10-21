@@ -2662,8 +2662,8 @@ describe("GC lifetime", () => {
   // The write commits when the statement finishes. An FTS5 index writes to its shadow tables at commit, which
   // calls the authorizer.
   describe("a write statement that iterate() stopped after its first row", () => {
-    const open = (file: string) => {
-      const db = new DatabaseSync(file);
+    const open = (file: string, options = {}) => {
+      const db = new DatabaseSync(file, options);
       db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
       db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next();
       return db;
@@ -2678,6 +2678,21 @@ describe("GC lifetime", () => {
       db.exec("SELECT 1");
       expect(asked).toContain("ft_data");
       db.close();
+    });
+
+    test.each([
+      ["serialize", "database is not open"],
+      ["loadExtension", "database is not open"],
+      ["exec", "database is not open"],
+      ["prepare", "database is not open"],
+      ["all", "statement has been finalized"],
+    ])("%s() throws if the authorizer closes the database", (method, message) => {
+      const db = open(":memory:", { allowExtension: true });
+      const target = method === "all" ? db.prepare("SELECT 1") : db;
+      db.setAuthorizer(() => (db[Symbol.dispose](), constants.SQLITE_OK));
+      Bun.gc(true);
+      expect(() => target[method]("SELECT 1")).toThrow(message);
+      expect(db.isOpen).toBe(false);
     });
 
     test("is rolled back when it's collected along with a database that has an authorizer", () => {

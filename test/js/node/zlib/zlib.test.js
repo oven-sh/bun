@@ -106,6 +106,21 @@ describe("zlib", () => {
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 
+  it("flush() takes a numeric string or a BigInt, and any kind after end()", async () => {
+    for (const kind of ["2", 2n]) {
+      const gzip = zlib.createGzip();
+      expect(Object.keys(gzip)).not.toContain("_flushBoundIdx");
+      const chunks = [];
+      gzip.on("data", chunk => chunks.push(chunk));
+      gzip.write("hello");
+      await new Promise(done => gzip.flush(kind, done));
+      const flushed = zlib.gunzipSync(Buffer.concat(chunks), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+      expect(flushed.toString()).toBe("hello");
+      gzip.end();
+      await new Promise(done => gzip.flush("none", done));
+    }
+  });
+
   describe("libdeflate level validation", () => {
     const data = Buffer.alloc(64, "a");
     // libdeflate_alloc_compressor returns NULL for level outside [0, 12]; that NULL must
@@ -1053,6 +1068,24 @@ describe("dictionary buffer lifetime", () => {
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
   });
+});
+
+it("params() between two writes changes the level for the second write", async () => {
+  const a = Buffer.alloc(32 * 1024, "a");
+  const b = Buffer.alloc(32 * 1024, "b");
+  const deflate = zlib.createDeflate({ level: 9 });
+  const order = [];
+  deflate.write(a, () => order.push("a"));
+  deflate.params(0, zlib.constants.Z_FILTERED, () => order.push("params"));
+  deflate.write(b, () => order.push("b"));
+  deflate.end();
+  const compressed = Buffer.concat(await deflate.toArray());
+  expect(order).toEqual(["a", "params", "b"]);
+  expect(deflate._level).toBe(0);
+  expect(zlib.inflateSync(compressed)).toEqual(Buffer.concat([a, b]));
+  // Level 0 stores "b".
+  expect(compressed.length).toBeGreaterThan(b.length);
+  expect(compressed.length).toBeLessThan(b.length + 200);
 });
 
 describe("crc32", () => {

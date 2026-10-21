@@ -1227,3 +1227,39 @@ it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the st
     exitCode: 0,
   });
 });
+
+it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exceptions", async flag => {
+  using dir = tempDir("hot-uncaught", {
+    "main.js": `
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          queueMicrotask(() => {
+            throw new Error("from " + new URL(req.url).pathname);
+          });
+          return new Response("ok");
+        },
+      });
+      (async () => {
+        for (let i = 1; i <= 3; i++) await fetch(new URL("/" + i, server.url));
+        setTimeout(() => console.log("timer fired"), 1);
+      })();
+    `,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("timer fired")).toBe(true);
+  expect(await stderr("error: from /3")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), `console.log("reloaded");\nprocess.exit(0);\n`);
+  expect(await stdout("reloaded")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});

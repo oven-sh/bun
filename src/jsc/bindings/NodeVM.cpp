@@ -1150,6 +1150,9 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
     if (!thisObject->m_sandbox) {
+        // An assignment to a bare name has the global object as its receiver. A setter's `this` is the proxy.
+        if (slot.thisValue() == thisObject)
+            slot.setThisValue(thisObject->globalThis());
         return Base::put(cell, globalObject, propertyName, value, slot);
     }
 
@@ -1201,6 +1204,12 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+
+    // The sandbox's prototype chain can lead back here.
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return false;
+    }
 
     if (JSObject* contextifiedObject = thisObject->contextifiedObject()) {
         slot.setThisValue(contextifiedObject);
@@ -1308,6 +1317,9 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
         slot.setThisValue(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+    } else if (slot.thisValue() == thisObject) {
+        // A read of a bare name has the global object as its receiver. A getter's `this` is the proxy.
+        slot.setThisValue(thisObject->globalThis());
     }
 
     RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(cell, globalObject, propertyName, slot));
@@ -1591,6 +1603,32 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     }
 
     RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+}
+
+bool NodeVMGlobalObject::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    bool didSet = Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    // JSC doesn't run a program while the prototype chain of its global object has a Proxy.
+    // Only the global's proxy keeps such a chain, and getPrototype() reads it from there.
+    for (JSValue next = object->getPrototypeDirect(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+        if (asObject(next)->type() == ProxyObjectType) {
+            object->setPrototypeDirect(vm, constructEmptyObject(vm, uncheckedDowncast<NodeVMGlobalObject>(object)->nullPrototypeObjectStructure()));
+            break;
+        }
+    }
+    return didSet;
+}
+
+JSValue NodeVMGlobalObject::getPrototype(JSObject* object, JSGlobalObject*)
+{
+    // The proxy doesn't exist yet while the global object is created.
+    JSObject* proxy = uncheckedDowncast<NodeVMGlobalObject>(object)->globalThis();
+    return (proxy ? proxy : object)->getPrototypeDirect();
 }
 
 static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin)

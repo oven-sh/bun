@@ -198,6 +198,7 @@ public:
                 // the depth bump so re-entrant calls from UDF/authorizer
                 // callbacks are skipped by the m_busyDepth guard.
                 db->sweepOrphanedSessions();
+                // This can run a callback that closes the database, so callers check that it's open after this.
                 if (++db->m_busyDepth == 1 && !db->m_orphanedStatements.isEmpty()) [[unlikely]]
                     db->finalizeOrphanedStatements();
             }

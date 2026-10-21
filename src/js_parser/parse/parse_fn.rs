@@ -80,6 +80,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut func = p.parse_fn(
             name,
+            async_range.map_or(loc, |range| range.loc),
             FnOrArrowDataParse {
                 needs_async_loc: loc,
                 allow_await: if is_async {
@@ -163,6 +164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parse_fn(
         &mut self,
         name: Option<js_ast::LocRef>,
+        start: bun_ast::Loc,
         opts: FnOrArrowDataParse,
     ) -> Result<G::Fn, Error> {
         let p = self;
@@ -400,42 +402,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
-        if p.has_react_hooks_suppression(|| func.open_parens_loc) {
+        if p.has_react_hooks_suppression(start) {
             func.flags.insert(Flags::Function::HasReactHooksSuppression);
         }
+        p.lexer.next()?;
 
         Ok(func)
     }
 
-    /// Whether a `react-hooks` eslint suppression covers the function that closes here. `start` is where it starts.
+    /// Decides `Flags::Function::HasReactHooksSuppression` for the function that starts at `start`. Call it where that function closes.
     #[inline]
-    fn has_react_hooks_suppression(&mut self, start: impl FnOnce() -> bun_ast::Loc) -> bool {
-        (self.lexer.has_react_hooks_suppression_before
-            && self.take_react_hooks_suppression(start()))
-            || self.lexer.has_react_hooks_block_suppression
-    }
-
-    /// next-line semantics: a suppression marks the enclosing top-level function and is consumed; it never reaches that function's siblings.
-    #[cold]
-    #[inline(never)]
-    fn take_react_hooks_suppression(&mut self, start: bun_ast::Loc) -> bool {
-        debug_assert!(self.current_scope.kind == js_ast::scope::Kind::FunctionArgs);
-        let covered = start.start <= self.lexer.react_hooks_suppression_taken_at;
-        if self.fn_or_arrow_data_parse.is_top_level {
-            let mut scope = self.current_scope.parent;
-            while let Some(outer) = scope
-                && outer.kind != js_ast::scope::Kind::FunctionArgs
-            {
-                scope = outer.parent;
-            }
-            if scope.is_none() {
-                self.lexer.has_react_hooks_suppression_before = false;
-            } else if covered {
-                // In a parameter list: the function that owns the list closes later and needs the suppression.
-                self.lexer.react_hooks_suppression_taken_at = self.lexer.loc().start;
-            }
+    fn has_react_hooks_suppression(&self, start: bun_ast::Loc) -> bool {
+        debug_assert!(start.start >= 0);
+        let until = self.lexer.react_hooks_suppressed_until;
+        if until == bun_ast::Loc::EMPTY {
+            return false;
         }
-        covered
+        bun_core::hint::cold();
+        start.start <= until.start
     }
 
     pub(crate) fn parse_fn_expr(
@@ -485,6 +469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let func = p.parse_fn(
             name,
+            loc,
             FnOrArrowDataParse {
                 needs_async_loc: loc,
                 allow_await: if is_async {
@@ -508,6 +493,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Function { func }, loc))
     }
 
+    /// Returns with the lexer on the `}` of the body: no comment after the function is scanned yet.
     pub(crate) fn parse_fn_body(
         &mut self,
         data: &mut FnOrArrowDataParse,
@@ -529,7 +515,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TOpenBrace)?;
         let mut opts = ParseStatementOptions::default();
         let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut opts)?;
-        p.lexer.next()?;
 
         if pushed_scope_for_function_body {
             p.pop_scope();
@@ -545,6 +530,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_arrow_body(
         &mut self,
+        start: bun_ast::Loc,
         args: &'a mut [G::Arg],
         data: &mut FnOrArrowDataParse,
     ) -> Result<E::Arrow, Error> {
@@ -577,11 +563,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
+            let has_react_hooks_suppression = p.has_react_hooks_suppression(start);
+            p.lexer.next()?;
             p.after_arrow_body_loc = p.lexer.loc();
-            let has_react_hooks_suppression = p.has_react_hooks_suppression(|| {
-                let first = args_slice.slice().first();
-                first.map_or(arrow_loc, |arg| arg.binding.loc)
-            });
             return Ok(E::Arrow {
                 args: args_slice,
                 body,
@@ -616,10 +600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
         p.pop_scope();
-        let has_react_hooks_suppression = p.has_react_hooks_suppression(|| {
-            let first = args_slice.slice().first();
-            first.map_or(arrow_loc, |arg| arg.binding.loc)
-        });
+        let has_react_hooks_suppression = p.has_react_hooks_suppression(start);
         Ok(E::Arrow {
             args: args_slice,
             prefer_expr: true,

@@ -274,7 +274,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 needs_async_loc: loc,
                 ..Default::default()
             };
-            let arrow_result = p.parse_arrow_body(args, &mut fn_or_arrow_data);
+            let arrow_result = p.parse_arrow_body(loc, args, &mut fn_or_arrow_data);
             p.pop_scope();
             return Ok(p.new_expr(arrow_result?, loc));
         }

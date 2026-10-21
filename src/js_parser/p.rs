@@ -8264,8 +8264,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.should_fold_typescript_constant_expressions =
             snapshot.should_fold_typescript_constant_expressions;
         self.fn_or_arrow_data_parse = snapshot.fn_or_arrow_data_parse;
-        // Not in a snapshot: a pending suppression covers every function again after this backtrack.
-        self.lexer.react_hooks_suppression_taken_at = i32::MAX;
         self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
         self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
         self.after_arrow_body_loc = snapshot.after_arrow_body_loc;

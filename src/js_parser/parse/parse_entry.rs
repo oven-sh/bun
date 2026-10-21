@@ -978,7 +978,8 @@ impl<'a> Parser<'a> {
                     .then(|| "ssr".to_owned()),
                 ..Default::default()
             };
-            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
+            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts)
+                || p.lexer.has_react_hooks_block_suppression();
             let import_bindings = bun_react_compiler::collect_import_bindings(
                 stmts,
                 p.import_records.items(),

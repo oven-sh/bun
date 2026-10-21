@@ -3454,7 +3454,9 @@ impl<'p, 's> Checker<'p, 's> {
                     // `checkExpressionForMutableLocation`. An assertion has the asserted type.
                     // `isConstContext` depends on the array's const context and also on the
                     // element's own contextual type, which only matters for a literal.
-                    let ty = if is_const
+                    let ty = if self.is_same_in_every_location(ty) {
+                        ty
+                    } else if is_const
                         || self.is_valid_const_assertion_argument(file, item)
                             && self.is_const_context(file, item)
                     {
@@ -5268,7 +5270,9 @@ impl<'p, 's> Checker<'p, 's> {
                 // and a `JsxExpression` is neither a valid argument of a const assertion nor an
                 // assertion.
                 let is_expression = expr.is_some() && jsx_expression_around(hir, expr).is_none();
-                let expression_type = if is_expression && self.is_const_context(file, expr) {
+                let expression_type = if self.is_same_in_every_location(ty) {
+                    ty
+                } else if is_expression && self.is_const_context(file, expr) {
                     self.regular(ty)
                 } else if is_expression
                     && matches!(hir[expr].kind, ExprKind::As { .. } | ExprKind::AsConst(_))

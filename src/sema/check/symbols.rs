@@ -4764,6 +4764,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// True if `checkExpressionForMutableLocation` returns `ty` in a const context and under every contextual type:
+    /// nothing in `ty` is widened or made regular. The caller then needs neither.
+    #[inline]
+    pub(super) fn is_same_in_every_location(&self, ty: TypeId) -> bool {
+        self.has_no_fresh_literal(ty) && self.types().member_flags(ty) & tf::UNIQUE_ES_SYMBOL == 0
+    }
+
     /// `getWidenedLiteralLikeTypeForContextualType`: a literal type is preserved where a literal
     /// type is expected.
     pub fn widen_literal_for_context(&mut self, ty: TypeId, contextual: Option<TypeId>) -> TypeId {

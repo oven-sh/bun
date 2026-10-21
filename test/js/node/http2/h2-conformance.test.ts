@@ -12,7 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, duplexPair, Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -56,14 +56,14 @@ function encodeFrame(type: number, flags: number, streamId: number, payload: Buf
 
 /** A minimal raw HTTP/2 client: send arbitrary frames, collect parsed inbound frames. */
 class RawH2 {
-  socket: net.Socket;
+  socket: Duplex;
   private buf: Buffer = Buffer.alloc(0);
   frames: Frame[] = [];
   closed = false;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  constructor(port: number) {
-    this.socket = net.connect(port, "127.0.0.1");
+  constructor(target: number | Duplex) {
+    this.socket = typeof target === "number" ? net.connect(target, "127.0.0.1") : target;
     this.socket.on("data", (d: Buffer) => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
@@ -2137,19 +2137,90 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
     expect(goawayErrorCode(await c.waitForGoaway(10_000))).toBe(ErrorCode.NO_ERROR);
   }
 
-  test("resets of streams opened after the server's GOAWAY are charged", async () => {
-    // nghttp2 can exempt every reset after its GOAWAY because it ignores the streams a client
-    // opens after that frame. This engine still opens them, so only the earlier streams are exempt.
-    // It also accepts ids below the held stream's, so the GOAWAY's last stream id is no criterion.
-    const { server, state } = respondingServer();
-    await withClient(server, async c => {
-      c.send(upload(4001));
-      await serverGoaway(c);
-      c.send(pairs(1200, 1, rstStream));
-      const goaway = await c.waitFor(calm, 10_000);
-      expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
-      expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+  // After the read that sent its GOAWAY, the server opens no request, so there is no reset to charge.
+  // The GOAWAY's last stream id is no criterion: the new ids can be below the held stream's.
+  test.each([
+    ["below", 4001, 1],
+    ["above", 1, 3],
+  ])(
+    "requests %s the held stream that arrive after the server's GOAWAY open no stream and are not charged",
+    async (_, held, first) => {
+      const state = { handlers: 0, sessionErrorCode: undefined as string | undefined };
+      const server = http2.createServer({ streamResetBurst: 2, streamResetRate: 1 });
+      server.on("sessionError", (e: any) => (state.sessionErrorCode = e.code));
+      server.on("session", s => s.on("error", () => {}));
+      // No response: node resets a request that it answered before the request ended.
+      server.on("stream", stream => {
+        state.handlers++;
+        stream.on("error", () => {});
+      });
+      await withClient(server, async c => {
+        c.send(upload(held));
+        await serverGoaway(c);
+        c.send(pairs(20, first, rstStream));
+        // The PING ACK means that the server processed every frame before it.
+        const opaque = Buffer.alloc(8, 0x42);
+        c.sendFrame(FrameType.PING, 0, 0, opaque);
+        const ack = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(opaque);
+        const frame = await c.waitFor(f => ack(f) || (f.type === FrameType.GOAWAY && goawayErrorCode(f) !== 0), 10_000);
+        expect(frame.type).toBe(FrameType.PING);
+        expect(c.frames.filter(f => f.type === FrameType.GOAWAY).map(goawayErrorCode)).toEqual([ErrorCode.NO_ERROR]);
+        expect(state).toEqual({ handlers: 1, sessionErrorCode: undefined });
+      });
+    },
+  );
+
+  // A request still opens in the read that sends a GOAWAY whose id covers it. node exempts its
+  // reset like every reset after a GOAWAY. This engine keeps the charge of #36230 for it.
+  test("resets of streams opened in the read of the server's GOAWAY are charged", async () => {
+    const state = { handlers: 0, sessionErrorCode: undefined as string | undefined };
+    const held = Promise.withResolvers<void>();
+    const flood = Promise.withResolvers<string>();
+    const server = http2.createServer({ streamResetBurst: 2, streamResetRate: 1 });
+    server.on("sessionError", (e: any) => {
+      state.sessionErrorCode = e.code;
+      flood.resolve("flood");
     });
+    server.on("session", s => {
+      s.on("error", () => {});
+      s.once("ping", () => s.goaway(http2.constants.NGHTTP2_NO_ERROR, 2 ** 31 - 1));
+    });
+    server.on("stream", stream => {
+      state.handlers++;
+      stream.on("error", () => {});
+      held.resolve();
+    });
+    // Over a Duplex pair one write of the client is exactly one read of the server.
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    const c = new RawH2(clientSide);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.send(upload(1));
+      await held.promise;
+      const barrier = Buffer.alloc(8, 0x43);
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 0x41)),
+          pairs(20, 3, rstStream),
+          encodeFrame(FrameType.PING, 0, 0, barrier),
+        ]),
+      );
+      // The ACK of the second PING arrives only if no reset was charged.
+      const ack = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(barrier);
+      const survived = c.waitFor(ack, 4000).then(
+        () => "survived",
+        () => "timeout",
+      );
+      expect(await Promise.race([flood.promise, survived])).toBe("flood");
+      // Burst 2: the reset of the third stream that opened after the GOAWAY ends the session.
+      expect(state).toEqual({ handlers: 4, sessionErrorCode: "ERR_HTTP2_ERROR" });
+    } finally {
+      c.destroy();
+      serverSide.destroy();
+      server.close();
+    }
   });
 
   test("server-sent resets stay charged after the server has sent its GOAWAY", async () => {

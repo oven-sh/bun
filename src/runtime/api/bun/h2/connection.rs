@@ -127,6 +127,8 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
+    /// The block would open a stream after a GOAWAY this side sent: nothing is sent (§6.8).
+    Ignored,
 }
 
 pub(crate) struct Feed {
@@ -219,9 +221,13 @@ pub(crate) trait Sink {
     fn can_open_stream(&self) -> bool {
         true
     }
-    /// Queried per use: a GOAWAY sent mid-dispatch counts for the rest of that read.
-    fn goaway_sent(&self) -> bool {
+    /// nghttp2's GOAWAY_SUBMITTED. Queried per use: a GOAWAY sent mid-read counts at once.
+    fn goaway_submitted(&self) -> bool {
         false
+    }
+    /// Lowest last-stream-id of the GOAWAYs this side sent, if any. Queried per use.
+    fn sent_goaway_last_stream_id(&self) -> Option<u32> {
+        None
     }
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
     fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
@@ -365,6 +371,8 @@ pub(crate) struct Connection {
     /// nghttp2's last_proc_stream_id: the highest peer stream that counts as processed (§6.8).
     last_proc_stream_id: u32,
     pub going_away: bool,
+    /// The embedder wrote a GOAWAY before this read (nghttp2's GOAWAY_SENT, set per read).
+    pub goaway_sent: bool,
 }
 
 impl Connection {
@@ -405,6 +413,7 @@ impl Connection {
             last_stream_id: 0,
             last_proc_stream_id: 0,
             going_away: false,
+            goaway_sent: false,
         }
     }
 
@@ -1016,6 +1025,24 @@ impl Connection {
 
     // ---- Stream-level inbound ------------------------------------------
 
+    /// A GOAWAY this side sent keeps the request `stream_id` from opening (RFC 9113 §6.8).
+    fn goaway_ignores_request(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        if self.goaway_sent {
+            return true;
+        }
+        // In the read that wrote the GOAWAY, a new id at or below the GOAWAY's id still opens.
+        sink.sent_goaway_last_stream_id()
+            .is_some_and(|last| stream_id > last || stream_id <= self.last_stream_id)
+    }
+
+    /// A request that this server saw and did not process. It has no entry.
+    fn is_unprocessed_request(&self, stream_id: u32) -> bool {
+        self.is_server
+            && !stream_id.is_multiple_of(2)
+            && stream_id > self.last_proc_stream_id
+            && stream_id <= self.last_stream_id
+    }
+
     /// RFC 9113 §6.2 HEADERS: strip padding/priority, then begin (or complete) the header block.
     fn handle_headers(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let mut off = 0usize;
@@ -1068,19 +1095,22 @@ impl Connection {
             );
             return true;
         }
-        let refused = is_new && self.is_server && !sink.can_open_stream();
-        let mut disposition = if refused {
+        let ignored = is_new && self.is_server && self.goaway_ignores_request(sink, hdr.stream_id);
+        let refused = is_new && !ignored && self.is_server && !sink.can_open_stream();
+        let mut disposition = if ignored {
+            BlockDisposition::Ignored
+        } else if refused {
             BlockDisposition::Refused
         } else {
             BlockDisposition::Deliver
         };
-        if !refused {
+        if !refused && !ignored {
             let s = self
                 .streams
                 .entry(hdr.stream_id)
                 .or_insert_with(|| Stream::new(send_init, recv_init));
             if is_new {
-                s.opened_after_goaway = sink.goaway_sent();
+                s.opened_after_goaway = sink.goaway_submitted();
             }
             let cur_state = s.state;
             let ev = if end_stream {
@@ -1132,15 +1162,17 @@ impl Connection {
                 self.last_stream_id = hdr.stream_id;
             }
             let processed = match disposition {
-                BlockDisposition::Deliver | BlockDisposition::StreamClosed => true,
-                // node counts a stream refused for memory, but not after a GOAWAY of ours (§6.8).
-                BlockDisposition::Refused => !sink.goaway_sent(),
+                // node counts a stream that it refused for memory.
+                BlockDisposition::Deliver
+                | BlockDisposition::StreamClosed
+                | BlockDisposition::Refused => true,
+                BlockDisposition::Ignored => false,
             };
             // A client's "new" HEADERS is the response to its own request: not a peer stream.
             if self.is_server && processed {
                 self.note_processed_stream(sink, hdr.stream_id);
             }
-            if !refused {
+            if !refused && !ignored {
                 sink.on_stream_open(hdr.stream_id);
             }
         }
@@ -1394,6 +1426,7 @@ impl Connection {
                 sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
                 return false;
             }
+            BlockDisposition::Ignored => return false,
             BlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
@@ -1522,8 +1555,11 @@ impl Connection {
         let mut discard = false;
         match self.streams.get_mut(&hdr.stream_id) {
             None => {
-                self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                // §6.8: DATA of an ignored request only counts toward the connection window.
+                if !self.is_unprocessed_request(hdr.stream_id) {
+                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
+                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                }
                 discard = true;
             }
             Some(st) => {
@@ -1660,8 +1696,14 @@ impl Connection {
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
         let decision = match self.streams.get_mut(&hdr.stream_id) {
-            // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
-            None => DataDecision::Rst(ErrorCode::StreamClosed),
+            None => {
+                // §6.8: DATA of an ignored request only counts toward the connection window.
+                if self.is_unprocessed_request(hdr.stream_id) {
+                    return false;
+                }
+                // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
+                DataDecision::Rst(ErrorCode::StreamClosed)
+            }
             Some(s) => {
                 if !stream::can_receive_data(s.state) {
                     DataDecision::Rst(ErrorCode::StreamClosed)
@@ -1759,8 +1801,8 @@ impl Connection {
         // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
         let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
             Some(s) if s.state != State::Idle => {
-                // nghttp2 exempts every reset after its GOAWAY, but it opens no stream after it.
-                let exempt = sink.goaway_sent() && !s.opened_after_goaway;
+                // Like nghttp2, exempt resets after our GOAWAY, except on a stream opened after it.
+                let exempt = sink.goaway_submitted() && !s.opened_after_goaway;
                 charged = s.state != State::Closed && !exempt;
                 s.state = State::Closed;
                 false
@@ -1883,7 +1925,7 @@ impl Connection {
             self.last_stream_id = promised;
         }
         // §6.8: the id in a GOAWAY must not rise above the id in an earlier one.
-        if !sink.goaway_sent() {
+        if !sink.goaway_submitted() {
             self.note_processed_stream(sink, promised);
         }
 
@@ -2168,7 +2210,7 @@ mod tests {
         proc_marks: RefCell<Vec<u32>>,
         /// Makes can_open_stream refuse every new peer stream (maxSessionMemory exhausted).
         refuse_streams: Cell<bool>,
-        /// What goaway_sent reports: the embedder wrote a GOAWAY of its own.
+        /// What goaway_submitted reports: the embedder wrote a GOAWAY of its own.
         embedder_goaway: Cell<bool>,
         /// Last-Stream-ID of that GOAWAY: clamp_goaway_last_stream_id lowers the engine's id to it.
         embedder_goaway_last_stream_id: Cell<Option<u32>>,
@@ -2198,8 +2240,11 @@ mod tests {
         fn can_open_stream(&self) -> bool {
             !self.refuse_streams.get()
         }
-        fn goaway_sent(&self) -> bool {
+        fn goaway_submitted(&self) -> bool {
             self.embedder_goaway.get()
+        }
+        fn sent_goaway_last_stream_id(&self) -> Option<u32> {
+            self.embedder_goaway_last_stream_id.get()
         }
         fn clamp_goaway_last_stream_id(&self, wanted: u32) -> u32 {
             self.embedder_goaway_last_stream_id
@@ -2656,7 +2701,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_refused_after_our_goaway_is_not_named() {
+    fn stream_refused_in_the_read_of_our_goaway_is_named() {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
@@ -2666,6 +2711,7 @@ mod tests {
             &frame(FrameType::Headers, flags, 1, &request_block()),
         );
         sink.embedder_goaway.set(true);
+        sink.embedder_goaway_last_stream_id.set(Some(3));
         sink.refuse_streams.set(true);
         c.receive(
             &sink,
@@ -2678,9 +2724,61 @@ mod tests {
         assert!(fed.fatal);
         assert_eq!(
             goaway_sent(&sink),
-            Some((1, ErrorCode::ProtocolError.as_u32()))
+            Some((3, ErrorCode::ProtocolError.as_u32()))
         );
-        assert_eq!(*sink.proc_marks.borrow(), vec![1]);
+        assert_eq!(*sink.proc_marks.borrow(), vec![1, 3]);
+    }
+
+    #[test]
+    fn request_after_the_read_of_our_goaway_is_ignored() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 1, &request_block()),
+        );
+        sink.embedder_goaway.set(true);
+        sink.embedder_goaway_last_stream_id.set(Some(0x7fff_ffff));
+        c.goaway_sent = true;
+        c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 3, &request_block()),
+        );
+        assert_eq!(*sink.opens.borrow(), vec![1]);
+        assert_eq!((c.last_stream_id, c.last_proc_stream_id), (3, 1));
+
+        let written = sink.out.borrow().len();
+        let reset = frame(FrameType::RstStream, 0, 3, &[0, 0, 0, 8]);
+        assert!(!c.receive(&sink, &reset).fatal);
+        let data = frame(FrameType::Data, 0, 3, b"body");
+        assert!(!c.receive(&sink, &data).fatal);
+        assert_eq!(sink.out.borrow().len(), written);
+        assert!(sink.resets.borrow().is_empty());
+    }
+
+    #[test]
+    fn request_in_the_read_of_our_goaway_opens_with_a_new_id_that_it_covers() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        c.receive(
+            &sink,
+            &frame(FrameType::Headers, flags, 3, &request_block()),
+        );
+        sink.embedder_goaway.set(true);
+        sink.embedder_goaway_last_stream_id.set(Some(7));
+        for id in [1, 5, 9, 7] {
+            c.receive(
+                &sink,
+                &frame(FrameType::Headers, flags, id, &request_block()),
+            );
+        }
+        // 1 is not new, 9 is above the GOAWAY's id, and 7 arrives behind 9.
+        assert_eq!(*sink.opens.borrow(), vec![3, 5]);
+        assert_eq!((c.last_stream_id, c.last_proc_stream_id), (9, 5));
     }
 
     #[test]

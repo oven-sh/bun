@@ -127,28 +127,6 @@ void JSNodeHTTPServerSocket::reset()
 template<bool SSL>
 static void onNodeHttpReadsResumable(us_socket_t* socket);
 
-/* The tunnel starts: in the dispatch of a CONNECT or of an Upgrade with no body, behind the body of any other Upgrade (HttpContext). */
-template<bool SSL>
-static void onNodeHttpTunnelStarted(us_socket_t* socket)
-{
-    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    // socket.unref() came before the tunnel.
-    if (auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData); cell && cell->tunnelUnrefed) [[unlikely]] {
-        cell->updateTunnelIdle();
-    }
-    /* resume() on a response does nothing in tunnel mode: lift what paused reads before it (req.pause(), flood prevention). */
-    onNodeHttpReadsResumable<SSL>(socket);
-}
-
-extern "C" void Bun__NodeHTTP__onTunnelStarted(int ssl, us_socket_t* socket)
-{
-    if (ssl) {
-        onNodeHttpTunnelStarted<true>(socket);
-    } else {
-        onNodeHttpTunnelStarted<false>(socket);
-    }
-}
-
 template<bool SSL>
 static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
 {
@@ -161,7 +139,8 @@ static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
         return;
     }
     httpResponseData->isConnectRequest = true;
-    onNodeHttpTunnelStarted<SSL>(socket);
+    /* resume() on a response does nothing in tunnel mode: lift what paused reads before it (req.pause(), flood prevention). */
+    onNodeHttpReadsResumable<SSL>(socket);
 }
 
 void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, JSNodeHTTPResponse* response)
@@ -219,12 +198,12 @@ void JSNodeHTTPServerSocket::applyTunnelReads()
 void JSNodeHTTPServerSocket::readStop()
 {
     // After the end of the stream no _read() comes to start the reads again.
-    if (tunnelReadsStopped || tunnelReadEnded || !isTunnel(this)) {
+    if (!isTunnel(this) || tunnelReadEnded) {
         return;
     }
     tunnelReadsStopped = true;
     applyTunnelReads();
-    refreshTunnelIdle();
+    updateTunnelIdle();
 }
 
 void JSNodeHTTPServerSocket::readStart()
@@ -232,18 +211,9 @@ void JSNodeHTTPServerSocket::readStart()
     if (!isTunnel(this)) {
         return;
     }
-    if (tunnelReadsStopped) [[unlikely]] {
-        tunnelReadsStopped = false;
-        // Before applyTunnelReads(): us_socket_resume() closes a socket whose poll it cannot arm again.
-        refreshTunnelIdle();
-    }
+    tunnelReadsStopped = false;
     applyTunnelReads();
-}
-
-void JSNodeHTTPServerSocket::setRef(bool ref)
-{
-    tunnelUnrefed = !ref;
-    refreshTunnelIdle();
+    updateTunnelIdle();
 }
 
 void JSNodeHTTPServerSocket::didDeliverQueuedTunnelBytes(size_t length)
@@ -411,11 +381,6 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool destroySoon)
 
 JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globalObject)
 {
-    // A FIN that usockets holds behind TLS bytes leaves with no writable event, and that event tells a tunnel that nothing is left to send: onDrain() sends the FIN.
-    if (is_ssl && isTunnel(this) && !reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained()) {
-        tunnelEndAwaitsDrain = true;
-        return JSValue::encode(JSC::jsUndefined());
-    }
     // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
     // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
     // re-add), without which macOS 26 does not deliver the peer's close.
@@ -919,24 +884,16 @@ extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* sock
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
 }
 
-void JSNodeHTTPServerSocket::refreshTunnelIdle()
+void JSNodeHTTPServerSocket::updateTunnelIdle()
 {
     if (!isTunnel(this)) {
         return;
     }
-    const bool idle = (tunnelReadEnded || tunnelReadsStopped || tunnelUnrefed) && streamBuffer.bufferedSize() == 0;
+    const bool idle = (tunnelReadEnded || tunnelReadsStopped) && streamBuffer.bufferedSize() == 0;
     if (is_ssl) {
         reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(idle && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
     } else {
         reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(idle && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
-    }
-}
-
-void JSNodeHTTPServerSocket::updateTunnelIdle()
-{
-    // A tunnel whose reads hold the event loop is not idle, and a write or a drain does not change that.
-    if (tunnelReadEnded || tunnelReadsStopped || tunnelUnrefed) {
-        refreshTunnelIdle();
     }
 }
 
@@ -950,10 +907,6 @@ void JSNodeHTTPServerSocket::onDrain()
 
     // A read pause or resume arms the writable event too: nothing was buffered, so nothing drained.
     if (this->streamBuffer.bufferedSize() == 0 && !heldWriteAwaitsDrain) {
-        if (tunnelEndAwaitsDrain) [[unlikely]] {
-            tunnelEndAwaitsDrain = false;
-            halfClose(globalObject);
-        }
         updateTunnelIdle();
         return;
     }

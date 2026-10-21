@@ -38,7 +38,6 @@
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
-extern "C" void Bun__NodeHTTP__onTunnelStarted(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
 
 namespace uWS {
@@ -714,8 +713,8 @@ private:
             }
             if constexpr (IsNodeHttp) {
                 if (switchToTunnelAfterThisChunk) {
-                    /* The response cannot resume reads in tunnel mode: this lifts the pause the body left. */
-                    Bun__NodeHTTP__onTunnelStarted(SSL, (struct us_socket_t *) user);
+                    /* The response cannot resume reads in tunnel mode: lift the pause the body left. */
+                    Bun__NodeHTTP__onReadsResumable(SSL, (struct us_socket_t *) user);
                     if (us_socket_is_closed((struct us_socket_t *) user)) {
                         return nullptr;
                     }

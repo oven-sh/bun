@@ -267,7 +267,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// ([`NewServer::is_drained`]); for Bun.serve it also holds the
     /// graceful-stop promise open ([`NewServer::is_closed`]).
     pub(crate) active_connection_count: core::cell::Cell<u32>,
-    /// The node:http tunnels in `active_connection_count` whose reads do not hold the loop (stopped, at EOF, or unref'd) and that have nothing left to send.
+    /// The node:http tunnels in `active_connection_count` that do not read (stopped or at EOF) and have nothing left to send.
     pub(crate) idle_tunnel_count: core::cell::Cell<u32>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
@@ -298,9 +298,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// A `.then(cb)` can reach the wrapper, so `deinit_if_we_can` moves the Strong into the task that resolves the promise.
     pub(crate) all_closed_promise: jsc::JSPromiseStrong,
 
-    pub poll_ref: bun_jsc::JsCell<KeepAlive>,
-    /// `server.unref()` with no `server.ref()` behind it: the loop ref stays dropped when a tunnel stops being idle.
-    pub(crate) user_unrefed: core::cell::Cell<bool>,
+    pub poll_ref: KeepAlive,
 
     pub(crate) flags: ServerFlags,
 
@@ -508,7 +506,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
     /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3` / `+3`: a node:http tunnel becomes idle / is not idle any more (`HttpResponse::setNodeHttpTunnelIdle`). `-4`: it closes idle.
+    /// `-3` / `+3`: a node:http tunnel becomes idle / reads or has bytes to send again. `-4`: it closes idle.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -530,8 +528,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 3 => {
                     this.note_tunnel_idle(false);
                     // With a listener open, the loop ref is the user's to drop (`server.unref()`).
-                    if !this.has_listener() && !this.user_unrefed.get() {
-                        this.ref_();
+                    if !this.has_listener() {
+                        // SAFETY: `this` is not used again, and a tunnel write or read start never runs inside `app.close()`.
+                        unsafe { &mut *user_data.cast::<Self>() }.ref_();
                     }
                     return;
                 }
@@ -1616,7 +1615,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         });
     }
 
-    /// An idle tunnel is open but, like a libuv handle that does not read or is unref'd, with no write pending, does not hold the loop.
+    /// An idle tunnel is open but, like a libuv handle that does not read and has no write pending, does not hold the loop.
     fn has_loop_holding_connections(&self) -> bool {
         self.active_connection_count.get() > self.idle_tunnel_count.get()
     }
@@ -1694,20 +1693,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    pub(crate) fn ref_(&self) {
+    pub(crate) fn ref_(&mut self) {
         // Once `is_closed()`, nothing is left that would ever `unref()` again
         // (`deinit_if_we_can` already dropped the loop ref), so a ref taken
         // here would pin the process forever.
-        if self.poll_ref.get().is_active() || self.is_closed() {
+        if self.poll_ref.is_active() || self.is_closed() {
             return;
         }
-        let loop_ctx = self.vm.loop_ctx();
-        self.poll_ref.with_mut(|poll_ref| poll_ref.ref_(loop_ctx));
+        self.poll_ref.ref_(self.vm.loop_ctx());
     }
 
-    pub(crate) fn unref(&self) {
-        let loop_ctx = self.vm.loop_ctx();
-        self.poll_ref.with_mut(|poll_ref| poll_ref.unref(loop_ctx));
+    pub(crate) fn unref(&mut self) {
+        self.poll_ref.unref(self.vm.loop_ctx());
     }
 
     pub(crate) fn stop_listening(&mut self, abrupt: bool) {
@@ -2214,8 +2211,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // ~816 KB mux pool; `listen()` materializes it on demand.
             mux_request_pool: core::ptr::null_mut(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
-            poll_ref: bun_jsc::JsCell::new(KeepAlive::default()),
-            user_unrefed: core::cell::Cell::new(false),
+            poll_ref: KeepAlive::default(),
             flags: ServerFlags::default(),
             plugins: None,
             user_routes: Vec::new(),

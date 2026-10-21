@@ -1,15 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  bunRun,
-  isLinux,
-  isWindows,
-  libcPathForDlopen,
-  nodeExe,
-  tempDir,
-  tls as tlsCert,
-} from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import http from "http";
 
 import { once } from "node:events";
@@ -1934,169 +1924,99 @@ test("a half-open tunnel with bytes left to send keeps the process alive until t
   }
 });
 
-async function runTunnelFixture(exe: string, fixture: string, env: Record<string, string> = {}) {
+// A socket that nothing reads stops the reads of its handle when its buffer is full. In Node.js a
+// handle that does not read and has nothing to send does not keep the process alive.
+async function runToExit(...args: string[]) {
   await using proc = Bun.spawn({
-    cmd: [exe, join(import.meta.dir, fixture)],
-    env: {
-      ...bunEnv,
-      CERT: tlsCert.cert,
-      KEY: tlsCert.key,
-      // bun test does not kill the child of a concurrent test that times out. With this, a
-      // child that hangs exits when the test process does.
-      BUN_FEATURE_FLAG_NO_ORPHANS: "1",
-      ...env,
-    },
+    cmd: [bunExe(), ...args],
+    // A child that hangs exits with the test process.
+    env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout: stdout && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode };
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
-const exitedByItself = { stderr: "", exitCode: 0, signalCode: null };
 
-// The fixtures below run under Node.js as they are, and "node" runs them there: every expectation
-// is Node v26.3.0's unless it says otherwise. Their peers send the bytes of a tunnel when they have
-// the listener's reply, so the socket gets them and not the `head` argument.
-describe.concurrent.each(["bun", "node"])("%s: what keeps the process alive after server.close()", runtime => {
-  const exe = runtime === "node" ? nodeExe() : bunExe();
-  const atRest = { events: [], received: 0 };
-
-  describe.skipIf(!exe).each(["http", "https"])("%s", proto => {
-    // The server parses the request on a re-emitted tunnel in JavaScript.
-    const requests = ["upgrade", "connect", "upgrade with a body"];
-    if (proto === "http") requests.push("upgrade on a re-emitted tunnel");
-
-    // In Node.js a socket stops the reads of its handle when its buffer is full, and a handle that
-    // does not read and has nothing to send is not active: it does not keep the process alive.
-    describe.each(["before", "after"])("server.close() %s the reads of the unread tunnels stop", close => {
-      const env = { PROTO: proto, CLOSE: close };
-
-      test("a tunnel that nothing reads does not keep the process alive", async () => {
-        // The sockets are still open, so neither they nor the server emit 'close'.
-        expect(await runTunnelFixture(exe!, "node-http-connect-read-stopped-fixture.js", env)).toEqual({
-          stdout: Object.fromEntries(
-            requests.flatMap(request => [
-              [`${request}, the peer leaves`, atRest],
-              [`${request}, the peer stays`, atRest],
-              [`${request}, the listener ended it at once`, atRest],
-              [`${request}, the listener ends it later`, atRest],
-              [`${request}, the listener writes to it later`, { events: ["write callback"], received: 0 }],
-              [`${request}, the listener ends it later with bytes`, { events: ["finish"], received: 0 }],
-            ]),
-          ),
-          ...exitedByItself,
-        });
-      });
-
-      test("a tunnel that reads keeps the process alive up to its 'close'", async () => {
-        const readers = { ...env, READERS: "1" };
-        expect(await runTunnelFixture(exe!, "node-http-connect-read-stopped-fixture.js", readers)).toEqual({
-          stdout: {
-            ...Object.fromEntries(
-              requests.flatMap(request => [
-                // The upload and "tail".
-                [
-                  `${request}, a reader that writes for every chunk`,
-                  { events: ["end", "close"], received: 8 * 1024 * 1024 + 4 },
-                ],
-                [`${request}, a reader comes later`, { events: ["end", "close"], received: 4 * 65536 }],
-              ]),
-            ),
-            server: "close",
-          },
-          ...exitedByItself,
-        });
-      });
-    });
-
-    describe("a tunnel that reads again behind server.unref()", () => {
-      const row = "upgrade, a reader comes later";
-      const toItsClose = {
-        stdout: { [row]: { events: ["end", "close"], received: 2 * 65536 }, server: "close" },
-        ...exitedByItself,
-      };
-      const run = (server: string) =>
-        runTunnelFixture(exe!, "node-http-connect-read-stopped-fixture.js", {
-          PROTO: proto,
-          CLOSE: "after",
-          SERVER: server,
-        });
-
-      test("keeps the process alive when server.ref() came behind it", async () => {
-        expect(await run("ref")).toEqual(toItsClose);
-      });
-
-      // In Node.js a socket keeps the process alive by itself. Here the server does it for its
-      // sockets, and server.unref() ends that: the reader gets only what the socket had buffered.
-      test("keeps the process alive only in Node.js", async () => {
-        expect(await run("unref")).toEqual(
-          runtime === "node" ? toItsClose : { stdout: { [row]: { events: [], received: 65536 } }, ...exitedByItself },
-        );
-      });
-    });
-
-    // Like those of a libuv handle: unref() takes the reads of a tunnel out of what keeps the
-    // process alive, ref() puts them back, and bytes left to send keep it alive in both states.
-    test("socket.unref() and socket.ref() on a tunnel", async () => {
-      expect(await runTunnelFixture(exe!, "node-http-connect-unref-fixture.js", { PROTO: proto })).toEqual({
-        stdout: {
-          "upgrade, unref() in the listener": atRest,
-          "connect, unref() in the listener": atRest,
-          "upgrade with a body, unref() in the listener": atRest,
-          "upgrade behind a request, unref() in the listener": atRest,
-          ...(proto === "http" && { "upgrade on a re-emitted tunnel, unref() in the listener": atRest }),
-          "upgrade, unref() while it reads": atRest,
-          "connect, unref() while it reads": atRest,
-          "upgrade with a body, unref() while it reads": atRest,
-          "upgrade, unref() before the request": atRest,
-          "upgrade with a body, unref() before the request": atRest,
-          "upgrade behind a request, unref() before the request": atRest,
-          "upgrade, unref(), then a write": { events: ["write callback"], received: 0 },
-          "upgrade, a write, then unref()": { events: ["write callback"], received: 0 },
-          "upgrade, unref(), then end() with bytes": { events: ["finish"], received: 0 },
-          "upgrade, ref() after its reads stopped": atRest,
-          // Node.js closes a TLS socket when its peer ends it. Here it stays half-open, like a TCP socket.
-          "upgrade, ref() at the end of the stream": {
-            events: runtime === "node" && proto === "https" ? ["end", "close"] : ["end"],
-            received: 0,
-          },
-          // It gets what the socket had buffered, and the process does not wait for more.
-          "upgrade, unref(), then its reads stop, then a reader": { events: [], received: 65536 },
-          // The process waits for the rest.
-          "upgrade, unref(), then its reads stop, then ref() and a reader": {
-            events: ["end", "close"],
-            received: 2 * 65536,
-          },
-          "upgrade, a reader, then unref(), then ref()": { events: ["end", "close"], received: 65536 },
-        },
-        ...exitedByItself,
-      });
-    });
-  });
-
-  // pipe() pauses the client's socket while the upstream is slow, and it does not resume it when
-  // the upstream goes away.
-  test.skipIf(!exe)("a CONNECT proxy by pipes exits when its upstream went away", async () => {
-    // The client's socket is still open, so the proxy does not emit 'close'.
-    expect(await runTunnelFixture(exe!, "node-http-connect-proxy-pipes-fixture.js")).toEqual({
-      stdout: { clientSocketIsPaused: true },
-      ...exitedByItself,
-    });
+test.concurrent("a CONNECT proxy by pipes exits after server.close() when its upstream went away", async () => {
+  // The client's socket is still open, so the proxy does not emit 'close'.
+  expect(await runToExit(join(import.meta.dir, "node-http-connect-proxy-pipes-fixture.js"))).toEqual({
+    stdout: '{"clientSocketIsPaused":true}\n',
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
   });
 });
 
-// TLS still holds bytes when such a socket ends, and usockets sends the FIN behind them with no
-// writable event for the tunnel. Not on Windows: the fixture makes the send buffer small through libc.
-test.concurrent.skipIf(isWindows).each(["unref", "stopped"])(
-  "https: a tunnel that ends with bytes behind a small send buffer does not keep the process alive (%s)",
-  async kind => {
-    const env = { KIND: kind, LIBC: libcPathForDlopen() };
-    expect(await runTunnelFixture(bunExe(), "node-http-connect-end-small-sndbuf-fixture.js", env)).toEqual({
-      stdout: { events: ["finish"] },
-      ...exitedByItself,
+describe.concurrent.each([
+  ["http", "connect", "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"],
+  ["https", "connect", "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"],
+  ["http", "upgrade", "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n"],
+  ["https", "upgrade", "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n"],
+])("%s '%s': a tunnel whose reads stopped, after server.close()", (proto, event, request) => {
+  // `listener` is the body of the listener and `onPeerData` gets the chunks of the peer behind the reply.
+  const run = (listener: string, onPeerData = "") =>
+    runToExit(
+      "-e",
+      `const server = require("node:${proto}").createServer(${JSON.stringify(proto === "https" ? tlsCert : {})});
+       const reply = "HTTP/1.1 200 OK\\r\\n\\r\\n";
+       const result = {};
+       server.on("${event}", (req, socket) => {
+         server.close();
+         ${listener}
+       });
+       server.listen(0, "127.0.0.1", () => {
+         const client = require("node:${proto === "https" ? "tls" : "net"}").connect({
+           port: server.address().port,
+           host: "127.0.0.1",
+           rejectUnauthorized: false,
+           allowHalfOpen: true,
+         });
+         // Only the server's side of the tunnel may keep the process alive.
+         client.unref();
+         client.write(${JSON.stringify(request)});
+         client.once("data", () => {
+           // What the socket buffers before it stops its reads.
+           client.write(Buffer.alloc(65536, "a"));
+           client.on("data", chunk => {
+             ${onPeerData}
+           });
+         });
+       });
+       process.on("exit", () => console.log(JSON.stringify(result)));`,
+    );
+
+  test("does not keep the process alive behind the listener's end()", async () => {
+    // No writable event comes for a socket behind its FIN.
+    expect(
+      await run(`socket.end(reply);
+                 process.on("beforeExit", () => (result.buffered = socket.readableLength));`),
+    ).toEqual({ stdout: '{"buffered":65536}\n', stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("keeps the process alive again while it sends and when it reads", async () => {
+    // More than a loopback socket takes in one write.
+    const size = 8 * 1024 * 1024;
+    expect(
+      await run(
+        `socket.write(reply);
+         Object.assign(result, { sent: false, serverReceived: 0, clientReceived: 0 });
+         // 'beforeExit': nothing keeps the process alive. It has to wait for what each step starts.
+         const steps = [
+           () => socket.write(Buffer.alloc(${size}, "x"), () => (result.sent = true)),
+           () => socket.on("data", chunk => (result.serverReceived += chunk.length)).on("end", () => socket.end()),
+         ];
+         process.on("beforeExit", () => steps.shift()?.());`,
+        `if ((result.clientReceived += chunk.length) === ${size}) client.end(Buffer.alloc(${size}, "b"));`,
+      ),
+    ).toEqual({
+      stdout: JSON.stringify({ sent: true, serverReceived: 65536 + size, clientReceived: size }) + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
     });
-  },
-);
+  });
+});
 
 // A listener with nothing to send ends its side in the listener. It still reads: an http.Server
 // socket has allowHalfOpen. Every expectation below is Node v26.3.0's.

@@ -1550,7 +1550,7 @@ describe("constructing a mock", () => {
         const promise = Object.assign(Promise.resolve(1), { constructor: { [Symbol.species]: mock(Symbol) } });
         try { promise.then(() => {}); } catch (e) { print(e.name); }
       `;
-      const proc = Bun.spawn({
+      await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
         env: bunEnv,
         stdout: "pipe",

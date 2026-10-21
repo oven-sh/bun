@@ -4086,6 +4086,8 @@ impl<'p, 's> Checker<'p, 's> {
             && (self.p.fn_return_types.get(&self.task, &(file, func))).is_none()
             && self.enter(Query::ReturnAtFirstLook(file, func))
         {
+            // The return type is stored for good, so `anyFunctionType` may not be part of it.
+            let check_mode = check_mode - CheckMode::SKIP_CONTEXT_SENSITIVE;
             let ty = self.return_type_of_fn_uncached(file, func, check_mode);
             // Under a check mode, `checkExpressionCachedEx` doesn't touch `flowLoopStack`, and a
             // return type derived from a loop's incomplete type is stored like any other. So

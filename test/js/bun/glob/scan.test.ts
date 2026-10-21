@@ -1256,13 +1256,17 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
       "a/lnkdir/./../f.ts": ["a/lnkdir/./../f.ts"],
       "./a/lnkdir/../f.ts": ["./a/lnkdir/../f.ts"],
       "a/lnkdir/../real/x.ts": ["a/lnkdir/../real/x.ts"],
+      "a/lnkdir/../lnkdir/x.ts": ["a/lnkdir/../lnkdir/x.ts"],
       "a/lnkdir/sub/../x.ts": ["a/lnkdir/sub/../x.ts"],
+      "a/lnkdir/sub/../../lnkdir/x.ts": ["a/lnkdir/sub/../../lnkdir/x.ts"],
       "up/../top.ts": ["up/../top.ts"],
+      "up/../up/f.ts": ["up/../up/f.ts"],
       "a/flink/../*.ts": [],
       "a/broken/../*.ts": [],
     };
     // Windows takes `..` off the path text before the open, so there `link\..` is the link's own parent.
     const elsewhere: Record<string, string[]> = {
+      "a/lnkdir/loop/../f.ts": ["a/lnkdir/loop/../f.ts"],
       "a/real/loop/../*.ts": ["a/real/loop/../f.ts"],
       "a/far/../*.ts": ["a/far/../o.ts"],
       "a/far/../deep/d.ts": ["a/far/../deep/d.ts"],
@@ -1296,11 +1300,12 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
       using dir = makeDotDotTree("glob-scan-symlink-dotdot-options");
       const cwd = String(dir);
       expect({
-        ...scanEach(cwd, ["a/l*/../x.ts", "a/l*/../f.ts"], { followSymlinks: true }),
+        ...scanEach(cwd, ["a/l*/../x.ts", "a/l*/../f.ts", "a/lnkdir/../*/x.ts"], { followSymlinks: true }),
         ...scanEach(cwd, ["a/lnkdir/../*"], { onlyFiles: false }),
       }).toEqual({
         "a/l*/../x.ts": [],
         "a/l*/../f.ts": ["a/lnkdir/../f.ts"],
+        "a/lnkdir/../*/x.ts": ["a/lnkdir/../lnkdir/x.ts", "a/lnkdir/../real/x.ts"],
         "a/lnkdir/../*": [
           "a/lnkdir/../broken",
           "a/lnkdir/../f.ts",
@@ -1316,6 +1321,52 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
         Object.entries(sibling).map(([pattern, listed]) => [pattern, norm(listed.map(it => path.join(cwd, it)))]),
       );
       expect(scanEach(cwd, Object.keys(sibling), { absolute: true })).toEqual(absolute);
+    });
+
+    // A `**` after the `..` goes through `lnkdir` again. The walk left the link's target, so that is no cycle.
+    test("`**` after the `..` lists what it lists after a directory", () => {
+      using dir = makeDotDotTree("glob-scan-symlink-dotdot-globstar");
+      const cwd = String(dir);
+      const forms = [
+        ["a/lnkdir/../**/*.ts", "a/real/../**/*.ts"],
+        ["a/lnkdir/sub/../../**/*.ts", "a/real/sub/../../**/*.ts"],
+      ];
+      for (const [throughLink, throughDirectory] of forms) {
+        const prefix = (pattern: string) => pattern.slice(0, pattern.indexOf("**"));
+        const listed = scanEach(cwd, [throughLink, throughDirectory], { followSymlinks: true });
+        expect(listed[throughDirectory]).toContain(prefix(throughDirectory) + "lnkdir/x.ts");
+        expect(listed[throughLink]).toEqual(
+          (listed[throughDirectory] as string[]).map(it => it.replace(prefix(throughDirectory), prefix(throughLink))),
+        );
+      }
+    });
+
+    test("a pattern without a wildcard lists its path exactly when stat finds a file there", () => {
+      using dir = makeDotDotTree("glob-scan-symlink-dotdot-literal");
+      const cwd = String(dir);
+      const root = fs.realpathSync(cwd);
+      const stat = (relative: string) => fs.statSync(`${cwd}/${relative}`, { throwIfNoEntry: false });
+      const folders = ["a", "real", "lnkdir", "loop", "sub", "far", "up", "other", "deep", ".", ".."];
+      const files = ["f.ts", "x.ts", "s.ts", "o.ts", "d.ts", "top.ts"];
+      const patterns: string[] = [];
+      const addBelow = (prefix: string, depth: number) => {
+        for (const file of files) patterns.push(prefix + file);
+        if (depth === 3) return;
+        for (const folder of folders) {
+          // A `..` in the cwd leaves the tree.
+          if (folder === ".." && fs.realpathSync(`${cwd}/${prefix}`) === root) continue;
+          if (stat(prefix + folder)?.isDirectory()) addBelow(`${prefix}${folder}/`, depth + 1);
+        }
+      };
+      addBelow("", 0);
+
+      const found = patterns.filter(pattern => stat(pattern)?.isFile());
+      expect(found).toEqual(expect.arrayContaining(["a/lnkdir/../f.ts", "a/lnkdir/loop/x.ts", "up/../top.ts"]));
+      const scanned = scanEach(cwd, patterns);
+      const wrong = patterns.filter(
+        pattern => !Bun.deepEquals(scanned[pattern], found.includes(pattern) ? [pattern] : []),
+      );
+      expect(Object.fromEntries(wrong.map(pattern => [pattern, scanned[pattern]]))).toEqual({});
     });
 
     // An absolute pattern starts its walk at the first wildcard, here in `a`.
@@ -1429,6 +1480,35 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     });
   });
 
+  // Only a `**` can walk into the target of a link without end. A name or a `*` is used up by one entry.
+  test("a link to a directory that the walk is inside of is entered by a name or a `*`", () => {
+    using dir = tempDir("glob-scan-symlink-reenter", {
+      "a/real/x.ts": "",
+      "m/f.ts": "",
+    });
+    const cwd = String(dir);
+    fs.symlinkSync("real", path.join(cwd, "a", "lnkdir"), "dir");
+    fs.symlinkSync(".", path.join(cwd, "a", "real", "loop"), "dir");
+    for (const self of ["l1", "l2", "l3"]) fs.symlinkSync(".", path.join(cwd, "m", self), "dir");
+    const scan = (pattern: string, opts: GlobScanOptions = {}) =>
+      norm(Array.from(new Glob(pattern).scanSync({ cwd, ...opts })));
+
+    expect({
+      "a/lnkdir/loop/x.ts": scan("a/lnkdir/loop/x.ts"),
+      "a/real/loop/loop/x.ts": scan("a/real/loop/loop/x.ts"),
+      "a/*/loop/x.ts": scan("a/*/loop/x.ts", { followSymlinks: true }),
+      "m/*/f.ts": scan("m/*/f.ts", { followSymlinks: true }).length,
+      "m/*/*/f.ts": scan("m/*/*/f.ts", { followSymlinks: true }).length,
+      "m/**/f.ts": scan("m/**/f.ts", { followSymlinks: true }),
+    }).toEqual({
+      "a/lnkdir/loop/x.ts": ["a/lnkdir/loop/x.ts"],
+      "a/real/loop/loop/x.ts": ["a/real/loop/loop/x.ts"],
+      "a/*/loop/x.ts": ["a/lnkdir/loop/x.ts", "a/real/loop/x.ts"],
+      "m/*/f.ts": 3,
+      "m/*/*/f.ts": 9,
+      "m/**/f.ts": ["m/f.ts", "m/l1/f.ts", "m/l2/f.ts", "m/l3/f.ts"],
+    });
+  });
 });
 
 // A directory the user can read but not write (RX-only grant) must still be

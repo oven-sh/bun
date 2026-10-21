@@ -742,11 +742,11 @@ impl FileSink {
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);
         #[cfg(unix)]
-        if is_tty_out {
+        {
             // TTY writes are synchronous, as in Node.
-            self.force_sync.set(true);
+            let force_sync = self.force_sync.get() || is_tty_out;
             // SAFETY(JsCell): single-field write; does not call into JS.
-            self.writer.with_mut(|w| w.force_sync = true);
+            self.writer.with_mut(|w| w.force_sync = force_sync);
         }
 
         let fd = match result {

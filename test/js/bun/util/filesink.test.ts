@@ -1539,17 +1539,26 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
   });
 
+  // /dev/ptmx is a TTY that opens by path with no terminal attached, and /proc/self/fd shows whether it was closed.
   it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a regular file", async () => {
     const result = await run(`
       const target = join(dir, "target.txt");
       const writer = Bun.file("/dev/ptmx").writer();
       writer.start({ path: target });
+      const ttys = fs.readdirSync("/proc/self/fd").filter(fd => {
+        try {
+          return fs.readlinkSync("/proc/self/fd/" + fd) === "/dev/ptmx";
+        } catch {
+          return false;
+        }
+      }).length;
       writer.write("short");
+      const buffered = read(target);
       await writer.end();
-      const out = { target: read(target) };
+      const out = { ttys, buffered, target: read(target) };
       console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
-    expect(result).toEqual({ target: "short", closed: "all" });
+    expect(result).toEqual({ ttys: 0, buffered: "", target: "short", closed: "all" });
   });
 
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {

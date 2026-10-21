@@ -1,5 +1,6 @@
 const { Duplex } = require("node:stream");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+const kHttp1NoReadStop = Symbol.for("::bunhttp1noreadstop::");
 
 interface NativeHandle {
   resume(): void;
@@ -37,6 +38,7 @@ type DuplexStream = import("node:stream").Duplex;
 
 interface TLSProxySocket extends DuplexStream {
   _ctx: UpgradeContextType;
+  [kHttp1NoReadStop]: true;
   _writeCallback: ((err?: Error | null) => void) | null;
   alpnProtocol: string | null;
   authorized: boolean;
@@ -313,6 +315,8 @@ function upgradeRawSocketToH2(
   // Create a Duplex stream that acts as the TLS "socket" from the H2 session's perspective.
   const tlsSocket = new Duplex() as TLSProxySocket;
   tlsSocket._ctx = new UpgradeContext(connectionListener, server, rawSocket);
+  // This stand-in has no timer, and its close does not reach a raw socket that is stopped.
+  tlsSocket[kHttp1NoReadStop] = true;
 
   // Duplex stream methods — `this` is tlsSocket, no bind needed
   tlsSocket._read = tlsSocketRead;

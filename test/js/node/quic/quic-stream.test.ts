@@ -1086,6 +1086,7 @@ describe("QuicStream.destroy before the first write", () => {
     describe.each(directions)("on a %s stream", direction => {
       test.each([
         ["stopSending()", (stream: any) => stream.stopSending(7n), 1],
+        ["stopSending() from its onerror", (stream: any) => void (stream.onerror = () => stream.stopSending(7n)), 1],
         ["resetStream()", (stream: any) => stream.resetStream(7n), 7],
         ["a read of stream.writer", (stream: any) => void stream.writer, 1],
       ] as const)(

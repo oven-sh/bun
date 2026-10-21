@@ -137,8 +137,8 @@ pub(crate) struct QuicStream {
     announce_suppressed: Cell<bool>,
     close_reported: Cell<bool>,
     destroyed: Cell<bool>,
-    /// An explicit `stopSending()` reached lsquic, or `destroy()` failed a
-    /// live writer: the frames of the destroy are never retracted.
+    /// The app called `stopSending()`, or `destroy()` failed a live writer:
+    /// the frames of the destroy are never retracted.
     abort_always_sent: Cell<bool>,
     /// A JS `destroy()` is between `abortForDestroy` and the native `destroy`.
     destroying: Cell<bool>,
@@ -892,6 +892,7 @@ impl QuicStream {
             if stop == NO_FRAME {
                 self.destroy_codes.set([code & CODE_MASK, reset]);
             }
+            self.abort_always_sent.set(true);
         } else if let Some(s) = self.ls() {
             s.stop_sending(code);
             self.abort_always_sent.set(true);

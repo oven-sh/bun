@@ -171,6 +171,7 @@ describe("emitBindgen", () => {
     const inDir = (name: string) => resolve(cfg.codegenDir, name);
     const cpp = ["GeneratedFmtJsc.cpp", "GeneratedNodeOs.cpp"].map(inDir);
     const headers = [
+      "GeneratedBindings+Classes.h",
       "GeneratedBindings+Counts.h",
       "GeneratedBindings+Tables.h",
       "GeneratedFmtJsc.h",

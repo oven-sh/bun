@@ -24,7 +24,7 @@ const PRIVATE_CONSTRUCTORS: u16 = 1 << 10;
 const PROTECTED_CONSTRUCTORS: u16 = 1 << 11;
 const DECORATED_FUNCTIONS: u16 = 1 << 12;
 const OVERRIDE_METHODS: u16 = 1 << 13;
-/// Not an option: typescript-eslint also looks at the decorators and the `override` of a constructor.
+/// Not an option. typescript-eslint also looks at a constructor's decorators and `override`.
 const CONSTRUCTORS_AS_METHODS: u16 = 1 << 14;
 
 /// The option `allow`: the kinds of functions that may be empty.
@@ -32,7 +32,8 @@ const CONSTRUCTORS_AS_METHODS: u16 = 1 << 14;
 pub struct Allow(u16);
 
 impl Allow {
-    /// typescript-eslint spells two of them with a hyphen. The other second names are oxlint's: no schema allows them.
+    /// typescript-eslint spells two of them with a hyphen. The other alternative names are oxlint's, and no schema
+    /// allows them.
     pub fn new(options: &Options) -> Allow {
         let allowed = options.object(0).strings("allow").into_iter();
         Allow(allowed.fold(0, |all, kind| {
@@ -56,7 +57,7 @@ impl Allow {
         }))
     }
 
-    pub fn of_typescript_eslint(options: &Options) -> Allow {
+    pub fn for_typescript_eslint(options: &Options) -> Allow {
         Allow(Allow::new(options).0 | CONSTRUCTORS_AS_METHODS)
     }
 
@@ -66,8 +67,7 @@ impl Allow {
     }
 }
 
-/// ESLint's `parent` of `func`, if that is a `MethodDefinition`: `func` is its function or its
-/// computed key.
+/// Returns `func`'s ESLint `parent` if that's a `MethodDefinition`, so `func` is its function or its computed key.
 fn method_definition_of(func: Func<'_>) -> Option<Member<'_>> {
     let member = match func.owner() {
         Node::Member(member) => member,
@@ -85,7 +85,7 @@ fn method_definition_of(func: Func<'_>) -> Option<Member<'_>> {
     is_method_definition.then_some(member)
 }
 
-/// The same for a `Property`, whose value `func` can be as well.
+/// Same for a `Property`, where `func` can also be the value.
 fn property_of(func: Func<'_>) -> Option<Prop<'_>> {
     match func.owner().parent() {
         Node::Prop(prop) => Some(prop),
@@ -93,10 +93,10 @@ fn property_of(func: Func<'_>) -> Option<Prop<'_>> {
     }
 }
 
-/// `None` for what ESLint does not have as a function.
+/// `None` for something that isn't a function in ESLint.
 fn get_kind(func: Func) -> Option<u16> {
     let is_method = match func.kind() {
-        // An accessor of an interface that has a body, which is an error.
+        // An interface accessor with a body, which is an error.
         _ if matches!(func.owner(), Node::Member(member) if member.is_signature()) => return None,
         FnKind::Arrow => return Some(ARROW_FUNCTIONS),
         FnKind::Decl => false,
@@ -151,9 +151,9 @@ fn is_allowed_empty_function(func: Func, kind: u16, allow: Allow) -> bool {
         || allow.includes(OVERRIDE_METHODS) && flags.contains(Flags::OVERRIDE)
 }
 
-/// oxlint's `get_function_name_and_kind`, as far as it says that the function may be empty. There `methods` is for all
-/// methods, `asyncFunctions` also for arrow functions, `overrideMethods` not for accessors, and nothing for
-/// `export default function () {}`.
+/// The part of oxlint's `get_function_name_and_kind` that decides whether the function may be empty. There `methods`
+/// covers all methods, `asyncFunctions` also covers arrow functions, `overrideMethods` doesn't cover accessors, and
+/// nothing covers `export default function () {}`.
 fn is_allowed_by_oxlint(func: Func, allow: Allow) -> bool {
     let (is_async, is_generator) = (func.is_async(), func.is_generator());
     let is_allowed_function = is_async && allow.includes(ASYNC_FUNCTIONS)
@@ -207,8 +207,7 @@ fn is_allowed_by_oxlint(func: Func, allow: Allow) -> bool {
     }
 }
 
-/// How oxlint calls the function.
-/// With what oxlint calls the function in its `help`.
+/// Returns oxlint's name for the function, and the name it uses in its `help`.
 fn name_for_oxlint(func: Func) -> (Vec<u8>, &'static [u8]) {
     const FUNCTION: &[u8] = b"function";
     let (kind, name) = match (func.name(), FunctionParent::of(func)) {
@@ -237,7 +236,7 @@ fn name_for_oxlint(func: Func) -> (Vec<u8>, &'static [u8]) {
     }
 }
 
-/// The whole rule, for a function, and typescript-eslint's rule of the same name.
+/// The whole rule for one function. typescript-eslint's rule of the same name uses it too.
 #[inline]
 pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
     if func.body_statements().is_some_and(|body| body.is_empty()) {
@@ -251,8 +250,8 @@ fn check_without_statements<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'
         return;
     };
     let inside = body.shrink(1, 1);
-    // There are no statements, so there is only whitespace, of which TypeScript knows more kinds,
-    // and comments.
+    // There are no statements, so the body can only contain comments and whitespace, of which TypeScript recognizes
+    // more kinds.
     let is_allowed = || match cx.language().is_oxlint {
         true => is_allowed_by_oxlint(func, allow),
         false => is_allowed_empty_function(func, kind, allow),

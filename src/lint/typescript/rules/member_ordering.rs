@@ -34,7 +34,7 @@ const INCORRECT_REQUIRED_MEMBERS_ORDER: Message = Message::new(
 /// One of `classes`, `classExpressions`, `default`, `interfaces`, `typeLiterals`.
 enum Setting {
     Unset,
-    /// `"never"`, or a configuration that checks nothing.
+    /// `"never"`, or a config that checks nothing.
     Never,
     Config(Config),
 }
@@ -91,7 +91,7 @@ const NODE_TYPES: [&[u8]; 11] = [
     b"static-initialization",
 ];
 
-// The first part of the name of a member group, counted from 1. 0: it has none.
+// The first part of a member group's name, numbered from 1. 0 means it has none.
 const ACCESSIBILITIES: [&[u8]; 4] = [b"public", b"protected", b"private", b"#private"];
 const PUBLIC: usize = 1;
 const PROTECTED: usize = 2;
@@ -107,12 +107,12 @@ const DECORATED: usize = 4;
 
 const GROUP_COUNT: usize = 5 * 5 * NODE_TYPES.len();
 
-/// The number of the member group `{accessibility}-{scope}-{ty}`.
+/// Returns the number of the member group `{accessibility}-{scope}-{ty}`.
 fn group(accessibility: usize, scope: usize, ty: NodeType) -> usize {
     (accessibility * 5 + scope) * NODE_TYPES.len() + ty as usize
 }
 
-/// Which of `prefixes`, counted from 1, `text` starts with before a `-`, and what follows that.
+/// Returns which of `prefixes` (numbered from 1) `text` starts with, followed by a `-`, and the rest after that.
 fn strip_one_of<'t>(text: &'t [u8], prefixes: &[&[u8]]) -> (usize, &'t [u8]) {
     for (i, prefix) in prefixes.iter().enumerate() {
         if let Some(rest) = text.strip_prefix(*prefix).and_then(|rest| rest.strip_prefix(b"-")) {
@@ -122,7 +122,7 @@ fn strip_one_of<'t>(text: &'t [u8], prefixes: &[&[u8]]) -> (usize, &'t [u8]) {
     (0, text)
 }
 
-/// The number of the member group that is written `text`.
+/// Returns the number of the member group written as `text`.
 fn parse_group(text: &[u8]) -> Option<usize> {
     let node_type = |text: &[u8]| NODE_TYPES.iter().position(|it| *it == text);
     let (accessibility, rest) = strip_one_of(text, &ACCESSIBILITIES);
@@ -134,11 +134,11 @@ fn parse_group(text: &[u8]) -> Option<usize> {
     Some((accessibility * 5 + scope) * NODE_TYPES.len() + node_type(rest)?)
 }
 
-/// `memberTypes`: a list whose elements are a member group or several.
+/// `memberTypes`: a list whose elements are one member group or several.
 struct MemberTypes {
-    /// For each member group, the index of the first element that has it. -1 if none has.
+    /// For each member group, the index of the first element that contains it, or -1.
     ranks: Box<[i16]>,
-    /// For each element, how a message names it.
+    /// For each element, its name in messages.
     labels: Vec<Vec<u8>>,
 }
 
@@ -231,7 +231,7 @@ impl MemberTypes {
 }
 
 impl Setting {
-    /// `is_default`: upstream's `defaultOptions` are merged into it.
+    /// `is_default` merges upstream's `defaultOptions` into it.
     fn parse(value: Option<&Json>, is_default: bool) -> Setting {
         let config = match value {
             None | Some(Json::Null) if !is_default => return Setting::Unset,
@@ -319,7 +319,7 @@ fn get_member_raw_name<'a>(key: Key<'a>, file: &File<'a>) -> Cow<'a, [u8]> {
             Cow::Borrowed(name.strip_prefix(b"#").unwrap_or(name))
         }
         KeyKind::ComputedString(name) => {
-            // A template is not a `Literal`: its name is its source text.
+            // A template isn't a `Literal`, so its name is its source text.
             let (text, brackets) = (file.text(), key.span(file));
             let start = skip_trivia(text, brackets.start + 1);
             match text.get(start as usize) {
@@ -373,8 +373,7 @@ fn is_member_optional(member: Member) -> bool {
         )
 }
 
-/// Upstream's `getMemberInitializer`: the `value` of a `PropertyDefinition` or an
-/// `AccessorProperty`.
+/// Upstream's `getMemberInitializer`: the `value` of a `PropertyDefinition` or an `AccessorProperty`.
 fn get_member_initializer(member: Member<'_>) -> Option<Expr<'_>> {
     if member.kind() != MemberKind::Property || member.flags().contains(Flags::ABSTRACT) {
         return None;
@@ -382,8 +381,8 @@ fn get_member_initializer(member: Member<'_>) -> Option<Expr<'_>> {
     member.init()
 }
 
-/// Upstream's `collectImmediateThisPropertyNames`: the `x` of every `this.x` that is evaluated
-/// with `initializer`, and not later in a function or in the body of a class.
+/// Upstream's `collectImmediateThisPropertyNames`: the `x` of every `this.x` that's evaluated along with `initializer`,
+/// not later in a function or a class body.
 fn collect_immediate_this_property_names(initializer: Expr<'_>) -> SmallVec<[Cow<'_, [u8]>; 4]> {
     let mut names = SmallVec::new();
     let mut stack = vec![Node::Expr(initializer)];
@@ -410,19 +409,19 @@ fn collect_immediate_this_property_names(initializer: Expr<'_>) -> SmallVec<[Cow
     names
 }
 
-/// The names of the members with an initializer among those that a member would have to be moved before.
+/// The names of the members with an initializer, among those a member would have to move in front of.
 #[derive(Default)]
 struct EarlierMembers<'a> {
     names: FxHashSet<Cow<'a, [u8]>>,
-    /// The positions of the members that `names` is about.
+    /// The positions of the members `names` covers.
     range: std::ops::Range<usize>,
 }
 
 impl<'a> EarlierMembers<'a> {
-    /// Upstream's `isBlockedByEarlierMemberReferences`. `earlier`: the positions in `members` of those that `member` would have
-    /// to be moved before. From one call to the next, it starts where it did or where it has ended or later: a member is looked
-    /// at once.
-    fn block(&mut self, member: Member<'a>, members: &[Member<'a>], earlier: std::ops::Range<usize>) -> bool {
+    /// Upstream's `isBlockedByEarlierMemberReferences`. `earlier` holds the positions in `members` of the members that
+    /// `member` would have to move in front of. From one call to the next, it starts either at the same position or at
+    /// or after the previous end, so each member is visited once.
+    fn is_blocked(&mut self, member: Member<'a>, members: &[Member<'a>], earlier: std::ops::Range<usize>) -> bool {
         let Some(initializer) = get_member_initializer(member) else {
             return false;
         };
@@ -441,8 +440,8 @@ impl<'a> EarlierMembers<'a> {
     }
 }
 
-/// Upstream's `getRank`: the index in `types` of the most specific member group of `member` that
-/// is listed. -1 if none is, and for an overload.
+/// Upstream's `getRank`: the index in `types` of `member`'s most specific member group that's listed. -1 if none is,
+/// and for an overload.
 fn get_rank(member: Member, types: &MemberTypes, supports_modifiers: bool) -> i32 {
     let flags = member.flags();
     let is_abstract = flags.contains(Flags::ABSTRACT);
@@ -517,8 +516,8 @@ fn get_rank(member: Member, types: &MemberTypes, supports_modifiers: bool) -> i3
     groups.iter().find_map(|&group| types.rank_of(group)).unwrap_or(-1)
 }
 
-/// Upstream's `groupMembersByType`, with all its quirks: the last member is in no group, and a
-/// member of the rank of the last group joins it from anywhere.
+/// Upstream's `groupMembersByType`, quirks included: the last member isn't in any group, and a member with the last
+/// group's rank joins it from anywhere.
 fn group_members_by_type<'a>(
     members: &[Member<'a>],
     types: &MemberTypes,
@@ -541,7 +540,7 @@ fn group_members_by_type<'a>(
     grouped
 }
 
-/// Upstream's `getLowestRank`: how a message names the lowest of `ranks` that is above `target`.
+/// Upstream's `getLowestRank`: the message name of the lowest of `ranks` above `target`.
 fn get_lowest_rank<'t>(ranks: &[i32], target: i32, types: &'t MemberTypes) -> &'t [u8] {
     let mut lowest = ranks.last().copied().unwrap_or(0);
     for &rank in ranks {
@@ -573,7 +572,7 @@ fn natural_out_of_order(name: &[u8], previous_name: &[u8], order: Order) -> bool
 
 // ───────────────────────────── the checks ─────────────────────────────
 
-/// Where the optionality of the members changes for the first time.
+/// Returns the index where the members' optionality first changes.
 fn find_switch_index(members: &[Member]) -> Option<usize> {
     let first = is_member_optional(*members.first()?);
     members.iter().position(|&member| is_member_optional(member) != first)
@@ -588,12 +587,12 @@ struct Validation<'c, 'a> {
 }
 
 impl<'a> Validation<'_, 'a> {
-    /// The members by group, if `wants_groups`. `None` if a group is not where it belongs.
+    /// Returns the members by group if `collect_groups`. `None` if a group is out of place.
     fn check_group_sort(
         &self,
         members: &[Member<'a>],
         types: &MemberTypes,
-        wants_groups: bool,
+        collect_groups: bool,
     ) -> Option<Vec<Vec<Member<'a>>>> {
         let mut previous_ranks: SmallVec<[i32; 16]> = SmallVec::new();
         let mut member_groups: Vec<Vec<Member<'a>>> = Vec::new();
@@ -618,7 +617,7 @@ impl<'a> Validation<'_, 'a> {
                 }
                 _ => {
                     previous_ranks.push(rank);
-                    if wants_groups {
+                    if collect_groups {
                         member_groups.push(vec![member]);
                     }
                 }
@@ -637,7 +636,7 @@ impl<'a> Validation<'_, 'a> {
                 continue;
             }
             if natural_out_of_order(&name, &previous_name, order) {
-                if earlier.block(member, members, previous_index..index) {
+                if earlier.is_blocked(member, members, previous_index..index) {
                     continue;
                 }
                 self.cx
@@ -650,7 +649,7 @@ impl<'a> Validation<'_, 'a> {
         }
     }
 
-    /// Whether the optional members and the required ones are each together, in the right order.
+    /// True if the optional members and the required members are each contiguous and in the right order.
     fn check_required_order(&self, switch_index: usize, order: OptionalityOrder) -> bool {
         let (Some(&first), Some(&switch)) = (self.members.first(), self.members.get(switch_index))
         else {
@@ -693,7 +692,7 @@ impl<'a> Validation<'_, 'a> {
         let Some(order) = order else {
             return;
         };
-        // As upstream, all the members and not only `member_set` if the groups are out of order.
+        // As upstream, if the groups are out of order this uses all the members, not only `member_set`.
         let grouped = grouped
             .unwrap_or_else(|| group_members_by_type(self.members, types, self.supports_modifiers));
         for group in &grouped {
@@ -741,7 +740,7 @@ impl MemberOrdering {
         let Some(config) = self.config(setting) else {
             return;
         };
-        // Nothing is ever reported about a single member.
+        // A single member is never reported.
         if members.len() < 2 {
             return;
         }

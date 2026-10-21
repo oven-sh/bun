@@ -8,7 +8,7 @@ use bun_lint_oxlint::ast_util::static_name;
 
 /// Disallow passing of children as props
 pub struct NoChildrenProp {
-    /// oxlint has no such option.
+    /// oxlint doesn't have this option.
     allow_functions: bool,
 }
 
@@ -33,7 +33,7 @@ const NO_CHILDREN_PROP: Message = Message::new("", "Avoid passing children using
 impl Rule for NoChildrenProp {
     const META: Meta = Meta::plugin(Plugin::React, "no-children-prop", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
-    /// The pragma. `None`: nobody has asked yet. oxlint knows none.
+    /// The pragma. `None` until it's first needed. Unused for oxlint, which has no pragma setting.
     type State<'a> = Option<&'a [u8]>;
 
     fn new(options: &Options) -> Self {
@@ -42,7 +42,7 @@ impl Rule for NoChildrenProp {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]);
-        // Upstream takes `React.#createElement` for `React.createElement`.
+        // Upstream treats `React.#createElement` as `React.createElement`.
         let is_private = || !file.language().is_oxlint && file.mentions("#createElement");
         if file.mentions("createElement") || is_private() { on.calls_named(&["createElement"]) } else { on }
     }
@@ -76,7 +76,7 @@ impl NoChildrenProp {
                 continue;
             };
             if is_oxlint {
-                // oxlint points at the name.
+                // oxlint reports the name.
                 cx.report(key.span(cx.file()), NO_CHILDREN_PROP);
             } else if !attribute.value().is_some_and(is_function_in_braces) {
                 cx.report(attribute, NEST_CHILDREN);
@@ -99,13 +99,13 @@ impl NoChildrenProp {
         };
         let is_oxlint = cx.language().is_oxlint;
         let arguments = call.args();
-        // oxlint has a node for parentheses.
+        // oxlint's AST has a node for parentheses.
         let Some(ExprKind::Object(properties)) =
             arguments.get(1).filter(|it| !is_oxlint || !it.is_parenthesized()).map(Expr::kind)
         else {
             return;
         };
-        // oxlint takes the `createElement` of everything but `document`.
+        // oxlint accepts any `createElement` except `document.createElement`.
         let is_creation = match is_oxlint {
             true => is_create_element_call(call),
             false => {
@@ -116,14 +116,14 @@ impl NoChildrenProp {
         if !is_creation {
             return;
         }
-        // oxlint: also `"children"`, and not `[children]`.
+        // oxlint also accepts `"children"`, but not `[children]`.
         let is_children = |key: &Key<'a>| match is_oxlint {
             true => static_name(*key).is_some_and(|name| name.is("children")),
             false => name_of_key(*key).is_some_and(|name| name == b"children"),
         };
         let children_prop = properties.iter().find_map(|it| Some((it, it.key().filter(is_children)?)));
         match children_prop {
-            // oxlint points at the key.
+            // oxlint reports the key.
             Some((_, key)) if is_oxlint => {
                 cx.report(key.inner_span(cx.file()), NO_CHILDREN_PROP);
             }

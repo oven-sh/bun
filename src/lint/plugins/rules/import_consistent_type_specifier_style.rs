@@ -19,7 +19,7 @@ enum Mode {
 
 const USE_TOP_LEVEL_FOR_DECLARATION_FILE_IMPORT: Message =
     Message::new("", "Type imports from declaration files must use top-level `import type` syntax.");
-// The plugin's `{{kind}}` is `type`: the `typeof` of Flow is not read here.
+// The plugin's `{{kind}}` is always `type` here: Flow's `typeof` imports aren't supported.
 const INLINE: Message = Message::new("", "Prefer using inline type specifiers instead of a top-level type-only import.");
 const TOP_LEVEL: Message = Message::new("", "Prefer using a top-level type-only import instead of inline type specifiers.");
 const TOP_LEVEL_IF_ONLY_TYPE_IMPORTS: Message = Message::new(
@@ -42,7 +42,7 @@ impl Rule for ConsistentTypeSpecifierStyle {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let language = file.language();
-        // oxlint goes by the name of the file. In the tree of espree nothing is a type.
+        // oxlint decides by the file name. espree's AST has no type nodes.
         let can_have_types = if language.is_oxlint { !file.is_javascript() } else { language.parser != Parser::Espree };
         can_have_types.then_some(())
     }
@@ -55,7 +55,7 @@ impl Rule for ConsistentTypeSpecifierStyle {
         if named.is_empty() {
             return;
         }
-        // oxlint wants `import type` for a declaration file, whatever the option.
+        // oxlint requires `import type` for a declaration file, regardless of the option.
         let is_declaration_file_import = || is_oxlint && is_declaration_file_import(import.spec().bytes());
         if import.is_type_only() {
             if mode == Mode::Inline && !is_declaration_file_import() {
@@ -78,23 +78,24 @@ impl Rule for ConsistentTypeSpecifierStyle {
         if !should_use_top_level {
             return;
         }
-        let fix = |fixer: Fixer<'a>| if is_oxlint { Some(print_anew(fixer, import)) } else { move_types_out(fixer, import) };
-        // The plugin reports a statement that has nothing but inline types once, oxlint with the option of its own.
-        let is_one_report =
+        let fix = |fixer: Fixer<'a>| if is_oxlint { Some(reprint_as_two_imports(fixer, import)) } else { move_types_out(fixer, import) };
+        // The plugin reports a statement once if it has only inline types. oxlint does that only in its own
+        // `TopLevelIfOnlyTypeImports` mode.
+        let reports_whole_statement =
             if is_oxlint { mode == Mode::TopLevelIfOnlyTypeImports && !is_declaration_file_import } else { !has_values() };
-        if is_one_report {
+        if reports_whole_statement {
             cx.report(stmt, if is_oxlint { TOP_LEVEL_IF_ONLY_TYPE_IMPORTS } else { TOP_LEVEL }).fix(fix);
             return;
         }
         let message = if is_declaration_file_import { USE_TOP_LEVEL_FOR_DECLARATION_FILE_IMPORT } else { TOP_LEVEL };
-        let mut made = None;
+        let mut cached_fix = None;
         for item in named.iter().filter(|it| it.is_type_only()) {
-            cx.report(item, message).fix(|fixer| made.get_or_insert_with(|| fix(fixer)).clone());
+            cx.report(item, message).fix(|fixer| cached_fix.get_or_insert_with(|| fix(fixer)).clone());
         }
     }
 }
 
-/// The fix of the plugin: the inline types leave the statement, and an `import type` of them comes after it.
+/// The plugin's fix: removes the inline types from the statement and adds an `import type` for them after it.
 #[cold]
 #[inline(never)]
 fn move_types_out<'a>(fixer: Fixer<'a>, import: Import<'a>) -> Option<Fix> {
@@ -104,7 +105,7 @@ fn move_types_out<'a>(fixer: Fixer<'a>, import: Import<'a>) -> Option<Fix> {
     for (index, specifier) in named.iter().filter(|it| it.is_type_only()).enumerate() {
         let (imported, local) = (specifier.imported(), specifier.local());
         new_import.extend_from_slice(if index == 0 { "" } else { ", " }.as_bytes());
-        // It asks for the `name` of what is written as a string.
+        // Upstream reads `.name`, which is `undefined` for a name written as a string literal.
         new_import.extend_from_slice(if imported.is_string() { &b"undefined"[..] } else { imported.bytes() });
         if imported.is_string() || imported.name() != local.name() {
             new_import.extend_from_slice(b" as ");
@@ -135,10 +136,10 @@ fn move_types_out<'a>(fixer: Fixer<'a>, import: Import<'a>) -> Option<Fix> {
     fixes.into_fix(file)
 }
 
-/// The fix of oxlint: the statement is printed anew, as one of the values and one of the types.
+/// oxlint's fix: reprints the statement as one import for the values and one for the types.
 #[cold]
 #[inline(never)]
-fn print_anew(fixer: Fixer, import: Import) -> Fix {
+fn reprint_as_two_imports(fixer: Fixer, import: Import) -> Fix {
     let (types, values): (Specifiers, Specifiers) = import.named().iter().partition(|it| it.is_type_only());
     let mut import_source = Vec::new();
     if import.default().is_some() || !values.is_empty() {
@@ -158,7 +159,7 @@ fn print_module_export_name(name: Ident, out: &mut Vec<u8>) {
     }
 }
 
-/// What `oxc_codegen` prints for an import of `default` and `named` from the module of `import`, with its attributes.
+/// Prints what `oxc_codegen` prints for an import of `default` and `named` from `import`'s module, with its attributes.
 fn gen_import_declaration(import: Import, default: Option<Ident>, named: &[ImportSpec], is_type: bool, out: &mut Vec<u8>) {
     out.extend_from_slice(if is_type { "import type " } else { "import " }.as_bytes());
     if let Some(default) = default {

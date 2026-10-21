@@ -19,7 +19,7 @@ const EXPECTED_ES6_CLASS: Message =
     Message::new("", "Components should use an ES2015 class instead of `createReactClass`.");
 
 pub struct State<'a> {
-    /// `None` for oxlint, which knows `React` and `createReactClass` alone.
+    /// `None` for oxlint, which only recognizes `React` and `createReactClass`.
     pragmas: Option<Pragmas<'a>>,
 }
 
@@ -47,14 +47,14 @@ impl Rule for PreferEs6Class {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        // oxlint passes over a file that cannot have JSX.
+        // oxlint skips files that can't contain JSX.
         let is_oxlint = file.language().is_oxlint;
         (!is_oxlint || is_jsx(file)).then(|| State { pragmas: (!is_oxlint).then(|| Pragmas::new(file)) })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(pragmas) = cx.state.pragmas else {
-            // oxlint points at what is called.
+            // oxlint reports at the callee.
             if react::is_es5_component(Node::Expr(e))
                 && let Some(callee) = e.callee()
             {
@@ -74,7 +74,7 @@ impl Rule for PreferEs6Class {
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         let Some(pragmas) = cx.state.pragmas else {
-            // oxlint points at the name, and knows a class expression too.
+            // oxlint reports at the name, and also checks class expressions.
             if react::is_es6_component(Node::Class(class)) {
                 cx.report(class.name().map_or_else(|| class.estree_span(), Ident::span), UNEXPECTED_ES6_CLASS);
             }

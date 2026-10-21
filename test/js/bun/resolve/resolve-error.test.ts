@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
 import path from "node:path";
 
 describe("ResolveMessage", () => {
@@ -269,6 +269,134 @@ describe.concurrent("long import path overflow", () => {
     using dir = makeDir();
     // Walk-up loop indexed into a fixed [256]DirEntryResolveQueueItem
     await run(String(dir), `\`/\${"a/".repeat(300)}x\``);
+  });
+});
+
+// The resolver builds every candidate path in a MAX_PATH_BYTES buffer and treats one that's too long as missing.
+describe.concurrent("candidate paths longer than a path buffer", () => {
+  const longName = Buffer.alloc(MAX_PATH_BYTES, "a").toString();
+
+  // package.json and node_modules/ keep the resolver from auto-installing the bare specifiers.
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("resolve-too-long", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "node_modules/.keep": "",
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  const helpers = `
+    const outcome = fn => { try { return "resolved: " + fn(); } catch (e) { return e.code; } };
+  `;
+
+  it("throws MODULE_NOT_FOUND for a missing file whose path length is near the limit", async () => {
+    const lengths = [-5, -4, -1, 0, 1, 300].map(delta => MAX_PATH_BYTES + delta);
+    expect(
+      await run({
+        "main.cjs": `${helpers}
+          const cwd = process.cwd();
+          const out = {};
+          for (const length of ${JSON.stringify(lengths)}) {
+            const file = cwd + "/" + Buffer.alloc(length - Buffer.byteLength(cwd) - 1, "f").toString();
+            out[length] = [outcome(() => require(file)), outcome(() => require.resolve(file))];
+          }
+          console.log(JSON.stringify(out));`,
+      }),
+    ).toEqual({
+      result: Object.fromEntries(lengths.map(length => [length, ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]])),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("throws when package.json main or module is too long", async () => {
+    expect(
+      await run({
+        "node_modules/relative/package.json": JSON.stringify({ name: "relative", main: `./${longName}` }),
+        "node_modules/absolute/package.json": JSON.stringify({ name: "absolute", module: `/${longName}` }),
+        "main.cjs": `${helpers}
+          import("absolute").then(() => "resolved", e => e.code).then(absolute => {
+            console.log(JSON.stringify({ relative: outcome(() => require("relative")), absolute }));
+          });`,
+      }),
+    ).toEqual({
+      result: { relative: "MODULE_NOT_FOUND", absolute: "ERR_MODULE_NOT_FOUND" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("throws MODULE_NOT_FOUND when a require.extensions key is too long", async () => {
+    expect(
+      await run({
+        "dir/.keep": "",
+        "main.cjs": `${helpers}
+          require.extensions[${JSON.stringify("." + longName)}] = () => {};
+          console.log(JSON.stringify({
+            file: outcome(() => require("./missing")),
+            directory: outcome(() => require("./dir")),
+          }));`,
+      }),
+    ).toEqual({
+      result: { file: "MODULE_NOT_FOUND", directory: "MODULE_NOT_FOUND" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("fails the build when the package.json browser field remaps main to a path that's too long", async () => {
+    expect(
+      await run({
+        "node_modules/m/package.json": JSON.stringify({
+          name: "m",
+          main: "./x.js",
+          browser: { "./x.js": `./${longName}` },
+        }),
+        "node_modules/m/x.js": "module.exports = 1;",
+        "entry.js": `import "m";`,
+        "main.cjs": `
+          Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false }).then(build => {
+            console.log(JSON.stringify({ success: build.success, messages: build.logs.map(log => log.message) }));
+          });`,
+      }),
+    ).toEqual({
+      result: { success: false, messages: ['Could not resolve: "m". Maybe you need to "bun install"?'] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("skips tsconfig.json extends, baseUrl and paths values that are too long", async () => {
+    // Each use.cjs uses the tsconfig.json next to it.
+    expect(
+      await run({
+        "extends/tsconfig.json": JSON.stringify({ extends: `./${longName}` }),
+        "extends/use.cjs": `module.exports = "loaded";`,
+        "baseUrl/tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: longName } }),
+        "baseUrl/use.cjs": `module.exports = require("x");`,
+        "paths/tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { x: [longName] } } }),
+        "paths/use.cjs": `module.exports = require("x");`,
+        "main.cjs": `${helpers}
+          console.log(JSON.stringify({
+            extends: outcome(() => require("./extends/use.cjs")),
+            baseUrl: outcome(() => require("./baseUrl/use.cjs")),
+            paths: outcome(() => require("./paths/use.cjs")),
+          }));`,
+      }),
+    ).toEqual({
+      result: { extends: "resolved: loaded", baseUrl: "MODULE_NOT_FOUND", paths: "MODULE_NOT_FOUND" },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

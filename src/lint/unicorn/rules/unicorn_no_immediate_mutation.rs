@@ -1,7 +1,7 @@
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_inner_expression_unless_chain, get_member_expr, is_global_reference, static_property_name,
 };
-use crate::unicorn::{outermost_wrapper_and_parent, statements_around};
+use crate::unicorn::{outermost_wrapper_and_parent, enclosing_statement_list};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::{SmallVec, smallvec};
@@ -39,8 +39,8 @@ impl Rule for NoImmediateMutation {
     }
 
     fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // Whether it is all of a statement, but for `as T` and the like, and the statement before gives the variable
-        // that is changed a new value of that kind.
+        // True if `expr` is a whole statement, apart from `as T` and the like, and the previous statement assigns a new
+        // value of that kind to the mutated variable.
         let is_initialized = |variable: Name<'a>, init_type: InitType| {
             let Some((_, Node::Stmt(statement))) = outermost_wrapper_and_parent(expr) else {
                 return false;
@@ -48,7 +48,7 @@ impl Rule for NoImmediateMutation {
             if statement.tag() != StmtTag::Expr {
                 return false;
             }
-            let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
+            let prev_stmt = enclosing_statement_list(statement).and_then(|it| it.before(statement.span().start));
             prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
         };
         let mutation = match expr.as_call() {
@@ -88,7 +88,7 @@ fn call_mutation<'a>(call: Call<'a>, is_initialized: impl Fn(Name<'a>, InitType)
         if !object.is_ident("Object") {
             return None;
         }
-        // `Object.assign(obj, ...spread)` cannot be moved.
+        // `Object.assign(obj, ...spread)` can't be moved.
         let variable = get_inner_expression(args.first()?).as_ident()?;
         let is_valid = args.len() >= 2
             && !args.get(1).is_some_and(is_spread)
@@ -123,10 +123,10 @@ fn property_assignment<'a>(
     (!is_self_reference).then_some(Mutation { message: OBJECT_PROPERTY, method: None })
 }
 
-/// The variable that `prev_stmt` gives a new array, object, set or map.
+/// The variable that `prev_stmt` assigns a new array, object, set or map to.
 fn get_prev_declaration(prev_stmt: Stmt<'_>) -> Option<(Name<'_>, InitType)> {
     match prev_stmt.kind() {
-        // The last declarator only. An exported declaration is another kind of statement for oxlint.
+        // Only the last declarator. An exported declaration is a different kind of statement in oxlint.
         StmtKind::Var(declarations) if !prev_stmt.is_exported() => {
             let declarator = declarations.last()?;
             Some((declarator.pat().as_ident()?, get_expression_init_type(declarator.init()?)?))
@@ -157,8 +157,8 @@ fn get_expression_init_type(expr: Expr) -> Option<InitType> {
     }
 }
 
-/// Whether the name `var_name` is in `expr`, where oxlint looks: not in an optional chain, a spread argument, a class, JSX, nor in the
-/// statements of a function but for the expressions and what is returned at its top level.
+/// True if `expr` mentions `var_name` anywhere oxlint looks. It doesn't look in an optional chain, a spread argument, a
+/// class or JSX, and in a function's statements it only looks at top-level expression statements and returned values.
 fn expression_references_variable<'a>(expr: Expr<'a>, var_name: Name<'a>) -> bool {
     let mut pending: SmallVec<[Expr<'a>; 16]> = smallvec![expr];
     while let Some(e) = pending.pop() {

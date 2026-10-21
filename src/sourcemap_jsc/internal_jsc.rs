@@ -12,7 +12,7 @@ impl TestingAPIs {
         let vlq_str = frame.argument(0).to_bun_string(global)?;
         let vlq = vlq_str.to_utf8();
 
-        let Ok(blob) = internal_source_map::from_vlq(vlq.slice(), 0) else {
+        let Ok(blob) = internal_source_map::from_vlq(vlq.slice()) else {
             return Err(global.throw(format_args!("InternalSourceMap.fromVLQ: invalid VLQ input")));
         };
         ArrayBuffer::create_uint8_array(global, &blob)

@@ -22962,8 +22962,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(4,31): error TS5114: Instantiations of type 'R' appear infinitely circular.
         a.ts(9,13): error TS2554: Expected 2 arguments, but got 0.
-        b.ts(4,31): error TS5115: Instantiations of the following types appear infinitely circular: 'Lowercase', 'L'.
-        "
+        b.ts(4,31): error TS5115: Instantiations of the following types appear infinitely circular: 'Lowercase', 'L'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -22977,8 +22976,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(2,127): error TS2589: Type instantiation is excessively deep and possibly infinite.
-        "
+        "a.ts(2,127): error TS2589: Type instantiation is excessively deep and possibly infinite."
       `);
       expect(exitCode).toBe(1);
     });

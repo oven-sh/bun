@@ -2059,7 +2059,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.mapped_constraints_in_progress
             .push((key, self.stack.len(), false));
-        let constraint = self.instantiated_constraint_of_mapped_param(file, node, mapper);
+        let (hits, limits, cycles) = (self.instantiation_limit_hits, self.limits, self.cycles);
+        let declared = self
+            .constraint_of_mapped_param(file, node)
+            .unwrap_or(TypeId::ERROR);
+        let constraint = self.instantiate(declared, mapper);
+        // `getConstraintFromTypeParameter` assigns `tp.constraint` once, even if an instantiation limit was hit.
+        if self.instantiation_limit_hits != hits
+            && self.limits == limits
+            && self.cycles == cycles
+            && self.instantiation_count < 5_000_000
+        {
+            (self.instantiations_up_to_a_limit).insert((declared, mapper), (0, constraint, false));
+        }
         // `!popTypeResolution()` in `getResolvedBaseConstraint`
         if (self.mapped_constraints_in_progress.pop()).is_some_and(|it| it.2) {
             (self.p.circular_mapped_constraints).insert(&self.task, key, (), Stored::new());
@@ -2084,16 +2096,7 @@ impl<'p, 's> Checker<'p, 's> {
         let declared = self
             .constraint_of_mapped_param(file, node)
             .unwrap_or(TypeId::ERROR);
-        let (hits, limits) = (self.instantiation_limit_hits, self.limits);
-        let constraint = self.instantiate(declared, mapper);
-        // `getConstraintFromTypeParameter` assigns `tp.constraint` once, even if an instantiation limit was hit.
-        if self.instantiation_limit_hits != hits
-            && self.limits == limits
-            && self.instantiation_count < 5_000_000
-        {
-            (self.instantiations_up_to_a_limit).insert((declared, mapper), (0, constraint, false));
-        }
-        constraint
+        self.instantiate(declared, mapper)
     }
 
     /// `getModifiersTypeFromMappedType`. Returns `T` as declared for `{ [P in keyof T]: X }`, and

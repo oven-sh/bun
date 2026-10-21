@@ -237,6 +237,10 @@ describe("Bun.Image", () => {
       ["slice(a, a + b - 200)", (file: Blob) => file.slice(a, a + b - 200), jpeg],
       ["slice(a + b, a + b + 30)", (file: Blob) => file.slice(a + b, a + b + 30), { message: "Image: decode failed" }],
       ["slice(a, a)", (file: Blob) => file.slice(a, a), { message: UNRECOGNISED }],
+      // A window that starts at or past the end of the file is empty.
+      ["slice(a + b + c)", (file: Blob) => file.slice(a + b + c), { message: UNRECOGNISED }],
+      ["slice(a + b + c + 10)", (file: Blob) => file.slice(a + b + c + 10), { message: UNRECOGNISED }],
+      ["slice(file.size)", (file: Blob) => file.slice(file.size), { message: UNRECOGNISED }],
     ] as const)("new Response(image) encodes what image.blob() encodes for %s", async (_, window, expected) => {
       using dir = threeIn();
       const sliced = () => window(three(String(dir))).image();
@@ -326,35 +330,30 @@ describe("Bun.Image", () => {
       const file = () => Bun.file(path);
       const inside = file().slice(1, 1 + cornersPng.length);
       expect(await typeAndShape(new Response(inside.image()))).toBe("image/png: png 4x3");
-      // One byte over the cap is refused before the read. The cap itself is read, and is no picture.
+      // A window of one byte over the cap is refused before the read.
       const overCap = file().slice(1);
       expect(() => new Response(overCap.image())).toThrow(TOO_LONG);
-      const atCap = file().slice(2);
-      expect(() => new Response(atCap.image())).toThrow(UNRECOGNISED);
       // Without a window the cap measures the file: an un-sliced body and a path string are refused, as before.
       expect(() => new Response(file().image())).toThrow(TOO_LONG);
       expect(() => new Response(new Bun.Image(path))).toThrow(TOO_LONG);
       await expect(new Bun.Image(path).metadata()).rejects.toThrow(TOO_LONG);
+      // A slice from byte 0 keeps no window (see "slice(0, n) ends the body at n"), so the cap measures the file.
+      const fromStart = file().slice(0, 1 + cornersPng.length);
+      expect(() => new Response(fromStart.image())).toThrow(TOO_LONG);
     });
 
-    // The window is measured against the file at each read. One that starts at or past the end is read as the
-    // whole file, as every window was before.
-    test("a slice that starts at or past the end of the file is the whole file", async () => {
+    // The window is measured against the file at each read, and it stays the window of that Image.
+    test("a slice is empty while the file ends before it", async () => {
       using dir = threeIn();
       const path = join(String(dir), "three.bin");
-      const atEnd = Bun.file(path).slice(a + b + c);
-      const pastEnd = Bun.file(path).slice(a + b + c + 10);
-      expect([
-        await typeAndShape(new Response(atEnd.image())),
-        await typeAndShape(new Response(pastEnd.image())),
-      ]).toEqual(["image/png: png 16x16", "image/png: png 16x16"]);
-
-      // The same Image, before and after the file loses the bytes of its window.
       const img = Bun.file(path).slice(a).image();
       expect(await typeAndShape(new Response(img))).toBe("image/jpeg: jpeg 64x64");
+      // The file loses the bytes of the window, then gets them back.
       fs.truncateSync(path, a);
-      expect(await typeAndShape(new Response(img))).toBe("image/png: png 16x16");
-      expect(await img.metadata()).toEqual({ width: 16, height: 16, format: "png" });
+      expect(() => new Response(img)).toThrow(UNRECOGNISED);
+      await expect(img.metadata()).rejects.toThrow(UNRECOGNISED);
+      await Bun.write(path, Buffer.concat(pictures));
+      expect(await typeAndShape(new Response(img))).toBe("image/jpeg: jpeg 64x64");
     });
 
     // A Bun.file() keeps the size it read once. A slice of it ends where that size says, for a body as for image.blob().
@@ -420,11 +419,18 @@ describe("Bun.Image", () => {
       expect(() => new Response(empty.image())).toThrow(UNRECOGNISED);
     });
 
-    // A negative index on a size that is not read yet gives an offset past the end of the file, so the body is the whole file.
+    // A negative index on a size that is not read yet counts back from the largest size a Blob can have, not from
+    // the end of the file. Its offset is in no file, so the body is the whole file.
     test.failing("slice(-n) of a Bun.file() with an unread size is the last n bytes", async () => {
       using dir = threeIn();
       const last = three(String(dir)).slice(-c);
       expect(await typeAndShape(new Response(last.image()))).toBe("image/png: png 4x3");
+    });
+
+    test("slice(-n) of a Bun.file() with an unread size is the whole file when n is over its size", async () => {
+      using dir = threeIn();
+      const all = three(String(dir)).slice(-(a + b + c + 10));
+      expect(await typeAndShape(new Response(all.image()))).toBe("image/png: png 16x16");
     });
 
     test("slice(-n) of a Bun.file() whose size was read is the last n bytes", async () => {

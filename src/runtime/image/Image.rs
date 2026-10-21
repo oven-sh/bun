@@ -1203,7 +1203,8 @@ impl Image {
                         let p = ZBox::from_bytes(path.slice());
                         // Only an offset proves a slice: an un-sliced `Bun.file()` caches a size as well (#4930).
                         let offset = blob.offset.get();
-                        let source = if offset > 0 {
+                        // `slice(-n)` on a size that is not read yet counts back from `MAX_SIZE`: no file has that offset.
+                        let source = if offset > 0 && offset <= crate::webcore::blob::MAX_SIZE / 2 {
                             Source::PathWindow(Box::new(PathWindow {
                                 path: p,
                                 offset,
@@ -1664,9 +1665,10 @@ impl PipelineTask {
                 return;
             }
             let file_size = u64::try_from(st.st_size.max(0)).expect("int cast");
-            // A window that starts at or past the end of the file reads the whole file: `slice(-n)` on an unread size has its offset near `MAX_SIZE`.
-            let window = window.filter(|w| w.offset < file_size);
-            let len = window.map_or(file_size, |w| (file_size - w.offset).min(w.size));
+            // A window that starts at or past the end of the file is empty.
+            let len = window.map_or(file_size, |w| {
+                file_size.saturating_sub(w.offset).min(w.size)
+            });
             if len > MAX_INPUT_FILE_BYTES {
                 self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                 return;

@@ -991,6 +991,17 @@ describe("#45782: a chunk read from one body is not aliased by its clone", () =>
     await expect(clone.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
   });
 
+  test("clone.body.tee(): the sub-branches do not alias the original body", async () => {
+    const original = new Response(makeStream());
+    const clone = original.clone();
+    const [x, y] = clone.body!.tee();
+    const a = (await x.getReader().read()).value as Uint8Array;
+    a[0] = 99;
+    const b = (await y.getReader().read()).value as Uint8Array;
+    const c = (await original.body!.getReader().read()).value as Uint8Array;
+    expect([a[0], b[0], c[0]]).toEqual([99, 1, 1]);
+  });
+
   test("ReadableStream.prototype.tee() still shares the chunk object per spec", async () => {
     const [a, b] = makeStream().tee();
     const x = (await a.getReader().read()).value as Uint8Array;

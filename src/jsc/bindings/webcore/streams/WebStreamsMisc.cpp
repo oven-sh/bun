@@ -261,9 +261,8 @@ JSValue structuredCloneStreamChunk(JSGlobalObject* globalObject, JSValue chunk)
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        // The view's own structure carries its prototype (Buffer, a subclass). A structure with
-        // own properties expects out-of-line storage the fresh cell has none of: then start from
-        // the intrinsic structure and set the prototype.
+        // Keep the view's structure (its prototype: Buffer, a subclass) unless it carries own
+        // properties, which a fresh cell has no storage for.
         TypedArrayType type = typedArrayType(view->type());
         Structure* structure = view->structure();
         bool reuseStructure = !structure->outOfLineCapacity() && !structure->isDictionary();

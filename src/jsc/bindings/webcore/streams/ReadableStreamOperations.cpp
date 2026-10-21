@@ -1235,9 +1235,8 @@ JSStreamTeeState* teeBranchIsolatingChunks(JSReadableStreamDefaultController* co
     return teeState;
 }
 
-// Spec tee step 16.1.2 for a copy that failed: error both branches now, then cancel the
-// source from a microtask (onDefaultTeeAbortMicrotask). The copy can run on a reader call's
-// stack (dequeueChunkForRead inside read()), where the source's user cancel() must not run.
+// Spec tee step 16.1.2 for a failed copy. The source's user cancel() runs from a microtask:
+// the copy can be on a reader call's stack.
 static void teeAbortDeferred(JSGlobalObject* globalObject, JSStreamTeeState* teeState, JSValue reason)
 {
     auto& vm = getVM(globalObject);
@@ -1261,8 +1260,7 @@ static EncodedJSValue defaultTeeAbortMicrotask(JSGlobalObject* globalObject, JSV
     RETURN_IF_EXCEPTION(scope, {});
     resolvePromise(globalObject, teeState->cancelPromise(), cancelResult);
     RETURN_IF_EXCEPTION(scope, {});
-    // Nobody holds cancelPromise unless a branch's cancel() was called, and a pending tee read
-    // settled it already: a source cancel() that rejects reports no unhandled rejection.
+    // Neither promise has a holder unless a branch's cancel() was called.
     markPromiseAsHandled(vm, cancelResult);
     markPromiseAsHandled(vm, teeState->cancelPromise());
     return JSValue::encode(jsUndefined());
@@ -1360,6 +1358,11 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGloba
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     std::pair<JSReadableStream*, JSReadableStream*> failure { nullptr, nullptr };
 
+    // A tee of a body-clone branch keeps isolating: read before the Native acquire below marks
+    // the branch's chunks shared.
+    bool isolateScriptDeliveries = cloneForBranch2;
+    if (auto* sourceController = teeBranchDefaultController(stream); sourceController && teeBranchIsolatingChunks(sourceController))
+        isolateScriptDeliveries = true;
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream, ReaderOwner::Native);
     RETURN_IF_EXCEPTION(scope, failure);
 
@@ -1367,7 +1370,7 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGloba
     teeState->setStream(vm, stream);
     teeState->setReader(vm, reader);
     teeState->setCancelPromise(vm, JSPromise::create(vm, globalObject->promiseStructure()));
-    teeState->m_isolateScriptDeliveries = cloneForBranch2;
+    teeState->m_isolateScriptDeliveries = isolateScriptDeliveries;
 
     auto* branch1 = createReadableStream(globalObject, SourceKind::TeeBranch, teeState, jsUndefined());
     RETURN_IF_EXCEPTION(scope, failure);

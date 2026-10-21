@@ -332,6 +332,12 @@ fn exit_with_conflicts<'a>(destination: &[u8], paths: impl Iterator<Item = &'a [
     Global::exit(1);
 }
 
+#[cold]
+fn exit_package_json_not_written(error: impl core::fmt::Display) -> ! {
+    pretty_errorln!("package.json failed to write due to error {}", error);
+    Global::exit(1);
+}
+
 pub(crate) struct CreateCommand;
 
 impl CreateCommand {
@@ -576,7 +582,7 @@ impl CreateCommand {
                     }
                 }
 
-                let _ = Archiver::extract_to_disk(
+                if let Err(err) = Archiver::extract_to_disk(
                     &tarball_buf_list,
                     destination,
                     Some(&mut archive_context),
@@ -585,16 +591,30 @@ impl CreateCommand {
                         depth_to_skip: 1,
                         ..Default::default()
                     },
-                )?;
+                ) {
+                    // The extractor read package.json and did not get it into its file.
+                    if archive_context
+                        .pluckers
+                        .first()
+                        .is_some_and(|plucker| plucker.found && !plucker.fd.is_valid())
+                    {
+                        node.end();
+                        progress.refresh();
+                        exit_package_json_not_written(bstr::BStr::new(
+                            bun_core::output::ErrName::name(&err),
+                        ));
+                    }
+                    return Err(err.into());
+                }
 
                 if !create_options.skip_package_json {
-                    let plucker = &archive_context.pluckers[0];
+                    let plucker = &mut archive_context.pluckers[0];
 
                     if plucker.found && plucker.fd.is_valid() {
                         node.name = b"Updating package.json";
                         progress.refresh();
 
-                        package_json_contents = plucker.contents.clone()?;
+                        package_json_contents = core::mem::take(&mut plucker.contents);
                         package_json_file = Some(bun_sys::File::from_fd(plucker.fd));
                     }
                 }
@@ -706,7 +726,9 @@ impl CreateCommand {
 
                 template_has_dot_gitignore =
                     bun_sys::exists_at(&template_dir, bun_core::zstr!(".gitignore"));
-                if bun_sys::exists_at(&template_dir, bun_core::zstr!("package.json")) {
+                if !create_options.skip_package_json
+                    && bun_sys::exists_at(&template_dir, bun_core::zstr!("package.json"))
+                {
                     package_json_file = destination_dir
                         .open_file(b"package.json", bun_sys::O::RDWR, 0)
                         .ok();
@@ -756,9 +778,6 @@ impl CreateCommand {
                         let cap = package_json_contents.list.capacity();
                         package_json_contents.list.resize(cap, 0);
 
-                        #[cfg(windows)]
-                        let prev_file_pos = pkg.get_pos()?;
-
                         if let Err(err) =
                             pkg.pread_all(package_json_contents.list.as_mut_slice(), 0)
                         {
@@ -772,10 +791,6 @@ impl CreateCommand {
                             );
                             break 'read_package_json;
                         }
-                        #[cfg(windows)]
-                        pkg.seek_to(prev_file_pos)?;
-                        // The printer doesn't truncate, so we must do so manually
-                        let _ = bun_sys::ftruncate(pkg.handle(), 0);
 
                         bun_ast::initialize_store();
                     }
@@ -827,21 +842,18 @@ impl CreateCommand {
 
         let mut start_command: &[u8] = b"bun dev";
 
-        'process_package_json: {
-            if create_options.skip_package_json {
-                package_json_file = None;
-            }
-
+        {
             if let Some(package_json_file) = &package_json_file {
                 bun_ast::initialize_store();
 
                 let source = bun_ast::Source::init_path_string(
-                    b"package.json",
+                    crate::cli::cli_dupe(bun_paths::resolve_path::join_abs::<
+                        bun_paths::platform::Auto,
+                    >(destination, b"package.json")),
                     package_json_contents.list.as_slice(),
                 );
 
-                // SAFETY: single-threaded CLI dispatch; no other borrow of `Cli::LOG_` is live in this scope.
-                let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
+                let mut log = bun_ast::Log::init();
                 let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
                 let parsed = match JSON::parse_package_json_utf8_with_opts(
                     JSON::JSONOptions {
@@ -849,29 +861,27 @@ impl CreateCommand {
                         ..JSON::JSONOptions::DEFAULT
                     },
                     &source,
-                    log,
+                    &mut log,
                     bump,
                 ) {
-                    Ok(r) => r,
-                    Err(_) => {
-                        if log.errors > 0 {
-                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    Ok(parsed) if parsed.root.data.is_e_object() => parsed,
+                    result => {
+                        if let Ok(parsed) = result {
+                            log.add_error(
+                                Some(&source),
+                                parsed.root.loc,
+                                "package.json root must be an object",
+                            );
                         }
-                        break 'process_package_json;
+                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        pretty_errorln!(
+                            "<blue>note<r><d>:<r> template files were written. <b>package.json<r> is as the template has it",
+                        );
+                        Global::exit(1);
                     }
                 };
                 let indentation = parsed.indentation;
                 let mut package_json_expr = parsed.root;
-
-                if package_json_expr.data.e_object().is_none() {
-                    break 'process_package_json;
-                }
-
-                if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-
-                    break 'process_package_json;
-                }
 
                 if let Some(name_expr) = package_json_expr.as_property(b"name")
                     && let Some(mut s) = name_expr.expr.data.e_string()
@@ -1025,17 +1035,13 @@ impl CreateCommand {
                         ..Default::default()
                     },
                 ) {
-                    bun_core::pretty_errorln!("package.json failed to write due to error {}", err,);
-                    break 'process_package_json;
+                    exit_package_json_not_written(err);
                 }
                 let written = package_json_writer.ctx.get_written();
-                if let Err(err) = package_json_file.write_all(written).and_then(|()| {
+                if let Err(err) = package_json_file.pwrite_all(written, 0).and_then(|()| {
                     bun_sys::ftruncate(package_json_file.handle, written.len() as i64)
                 }) {
-                    bun_core::pretty_errorln!(
-                        "package.json failed to write due to error {}",
-                        bstr::BStr::new(err.name()),
-                    );
+                    exit_package_json_not_written(bstr::BStr::new(err.name()));
                 }
             }
         }

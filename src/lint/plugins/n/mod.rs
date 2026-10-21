@@ -1,4 +1,4 @@
-//! What the rules `n/no-unsupported-features/*` share.
+//! Code shared by the `n/no-unsupported-features/*` rules.
 
 pub(crate) mod data;
 pub(crate) mod es_syntax;
@@ -18,7 +18,7 @@ use std::fmt::Write;
 use std::sync::OnceLock;
 use table::{Part, Roots};
 
-/// Since which versions of Node.js something is there: parts of [`data::VERSIONS`], the latest first.
+/// The Node.js versions that added something, as parts of [`data::VERSIONS`], latest first.
 pub(crate) struct Info {
     pub(crate) supported: Part,
     pub(crate) experimental: Part,
@@ -44,7 +44,7 @@ fn versions_to_string(versions: &[[u8; 3]]) -> String {
     text
 }
 
-/// With indices into [`data::INFOS`].
+/// Its infos are indices into [`data::INFOS`].
 type Member = table::Member<data::Builtin>;
 
 pub(crate) const NOT_EXPERIMENTAL_TILL: Message = Message::new(
@@ -72,11 +72,11 @@ pub(crate) fn version_range(option: Option<&Json>) -> Option<Range> {
     Range::parse(version_text(option)?)
 }
 
-/// What `getConfiguredNodeVersion` returns where nothing is configured.
+/// `getConfiguredNodeVersion`'s result if nothing is configured.
 pub(crate) const DEFAULT_NODE_VERSION: &[u8] = b">=16.0.0";
 
-/// `getConfiguredNodeVersion`, after the options of the rule. `parse`: `new Range(text)`, which is `None` where that throws.
-/// `None`: [`DEFAULT_NODE_VERSION`].
+/// `getConfiguredNodeVersion`, without the part that reads the rule's options. `parse` is `new Range(text)` and returns
+/// `None` where that throws. Returns `None` where upstream falls back to [`DEFAULT_NODE_VERSION`].
 pub(crate) fn configured_node_version_as<T>(
     file: &File,
     mut parse: impl FnMut(&[u8]) -> Option<T>,
@@ -109,10 +109,10 @@ fn is_in_range(feature: &[[u8; 3]], requested: &Range) -> bool {
     Range::since(feature).is_some_and(|range| requested.is_subset_of(&range))
 }
 
-/// What is reported with a range of versions.
+/// The messages to report for a given range of versions.
 pub(crate) struct Unsupported {
     version: Range,
-    /// For each of [`data::INFOS`].
+    /// The message for each entry of [`data::INFOS`], if it's reported.
     message: Vec<Option<Message>>,
 }
 
@@ -143,7 +143,7 @@ impl Unsupported {
         }
     }
 
-    /// What is said about a use with this info.
+    /// The message for a reference with this info.
     fn message_of(&self, info: u16) -> Option<Message> {
         self.message.get(usize::from(info)).copied().flatten()
     }
@@ -158,7 +158,7 @@ impl Unsupported {
         infos.any(|info| self.message_of(info).is_some())
     }
 
-    /// Adds the names of the members of `member`, and of theirs, that are reported.
+    /// Adds the names of `member`'s direct and nested members that are reported.
     fn add_reported(
         &self,
         member: &Member,
@@ -166,7 +166,7 @@ impl Unsupported {
         names: &mut Vec<&'static str>,
     ) {
         let members = member.members();
-        // Some refer to themselves.
+        // Some members contain themselves.
         if members.is_empty() || seen.contains(&members.as_ptr()) {
             return;
         }
@@ -179,7 +179,7 @@ impl Unsupported {
         }
     }
 
-    /// Those of `members` in which something is reported.
+    /// The entries of `members` that are reported or have a reported member.
     fn filter(&self, members: Part) -> Vec<Entry> {
         let entries = members.members::<data::Builtin>().iter().map(|member| {
             let mut reported = Vec::new();
@@ -205,41 +205,41 @@ struct Entry {
     member: &'static Member,
     /// [`mention_bit`] of the name.
     bit: u32,
-    /// To refer to it is reported.
+    /// True if a reference to it is reported.
     is_reported: bool,
-    /// [`mention_bit`] of the names of what is reported in it.
+    /// [`mention_bit`] of the names of its reported members.
     reported: Vec<u32>,
 }
 
-/// Those that the file mentions, with something in them that is reported. References, which cost far more, are only looked at for
-/// these.
-fn named_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Roots<data::Builtin> {
-    let named = entries.iter().filter(|it| is_named_in(file, it));
+/// The entries that the file mentions together with one of their reported members. Tracking references costs far more,
+/// so it's only done for these.
+fn mentioned_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Roots<data::Builtin> {
+    let named = entries.iter().filter(|it| is_mentioned_in(file, it));
     Roots(named.map(|it| it.member).collect())
 }
 
-fn is_named_in(file: &File, entry: &Entry) -> bool {
-    // `export * from "os"` is all of `os`.
+fn is_mentioned_in(file: &File, entry: &Entry) -> bool {
+    // `export * from "os"` uses all of `os`.
     file.mentions_bit(entry.bit)
         && (entry.is_reported
             || file.has_stmts([StmtTag::ExportStar])
             || entry.reported.iter().any(|it| file.mentions_bit(*it)))
 }
 
-/// The options of a rule, and what follows from them.
+/// A rule's options, and the tables derived from them.
 pub(crate) struct Builtins {
     globals: Part,
     modules: Part,
     import_meta: Part,
-    /// That of the options, as it is written.
+    /// The `version` option, verbatim.
     version: Option<Vec<u8>>,
     ignores: Vec<Box<[u8]>>,
     allows_experimental: bool,
-    /// The tables for a range of versions, by the text of the range. `None`: the text is no range.
+    /// A cache of the tables per version range, keyed by the range's text. `None` if the text isn't a valid range.
     known: [OnceLock<(Box<[u8]>, Option<Tables>)>; 8],
 }
 
-/// The tables for a file: of [`Builtins::known`], or made for it.
+/// The tables for a file, either from [`Builtins::known`] or built just for it.
 enum Found<'s> {
     Known(&'s Tables),
     Own(Box<Tables>),
@@ -285,7 +285,7 @@ impl Builtins {
         }
     }
 
-    /// The tables for the range of versions that `text` is, if it is one.
+    /// The tables for the version range `text`, if it's a valid range.
     fn tables_for(&self, text: &[u8]) -> Option<Found<'_>> {
         let tables = || Range::parse(text).map(|it| self.tables(it));
         for known in &self.known {
@@ -311,7 +311,7 @@ impl Builtins {
         }
     }
 
-    /// Whether the file mentions something that can be reported. If not, there is nothing to do for the rule.
+    /// True if the file mentions something that can be reported. If not, the rule has nothing to do.
     pub(crate) fn has_candidates<'a>(&self, file: &'a File<'a>) -> bool {
         let mut has_candidates = false;
         self.with_tables(file, |tables| {
@@ -320,12 +320,12 @@ impl Builtins {
                 .iter()
                 .chain(&tables.modules)
                 .chain(&tables.import_meta);
-            has_candidates = all.into_iter().any(|it| is_named_in(file, it));
+            has_candidates = all.into_iter().any(|it| is_mentioned_in(file, it));
         });
         has_candidates
     }
 
-    /// `checkUnsupportedBuiltinReferences`. `prefix`: what comes before the path.
+    /// `checkUnsupportedBuiltinReferences`. `prefix` is prepended to each path.
     fn report<'a, 'm, R: Rule>(
         &self,
         tables: &Tables,
@@ -346,8 +346,8 @@ impl Builtins {
             if self.ignores.iter().any(|it| **it == *name.as_bytes()) {
                 continue;
             }
-            let mut written_otherwise = data::WRITTEN_OTHERWISE.iter();
-            let supported = match written_otherwise.find(|it| it.0 == reference.info) {
+            let mut irregular_texts = data::WRITTEN_OTHERWISE.iter();
+            let supported = match irregular_texts.find(|it| it.0 == reference.info) {
                 Some(found) => found.1.to_owned(),
                 None => versions_to_string(versions(info.supported)),
             };
@@ -371,7 +371,7 @@ impl Builtins {
         let file = cx.file();
         self.with_tables(file, |tables| {
             let tracker = ReferenceTracker::new(file).with_mode(Mode::Legacy);
-            let modules = named_in(file, &tables.modules);
+            let modules = mentioned_in(file, &tables.modules);
             if !modules.0.is_empty() {
                 let modules: &dyn Trace<'_> = &modules;
                 if file.mentions("require") {
@@ -414,7 +414,7 @@ impl Builtins {
                 }
                 self.report(tables, &[], &tracker.iterate_esm_references(modules), cx);
             }
-            let globals = named_in(file, &tables.globals);
+            let globals = mentioned_in(file, &tables.globals);
             if !globals.0.is_empty() {
                 self.report(
                     tables,
@@ -424,7 +424,7 @@ impl Builtins {
                 );
             }
             let import_meta = if file.mentions("meta") {
-                named_in(file, &tables.import_meta)
+                mentioned_in(file, &tables.import_meta)
             } else {
                 Roots(Vec::new())
             };

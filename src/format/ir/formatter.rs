@@ -21,19 +21,19 @@ use std::num::NonZeroU32;
 pub(crate) trait Format<'a> {
     fn fmt(&self, f: &mut Formatter<'a>);
 
-    /// The text, if this is a keyword or a punctuator and nothing else.
+    /// Returns the text if this is just a keyword or punctuator.
     #[inline(always)]
     fn as_token(&self) -> Option<&'static str> {
         None
     }
 
-    /// The mode, if this is a line break and nothing else.
+    /// Returns the mode if this is just a line break.
     #[inline(always)]
     fn as_line(&self) -> Option<LineMode> {
         None
     }
 
-    /// The mode, if this is an `indent` with a line break and nothing else in it.
+    /// Returns the mode if this is an `indent` that contains only a line break.
     #[inline(always)]
     fn as_indented_line(&self) -> Option<LineMode> {
         None
@@ -76,7 +76,7 @@ impl<'a> Format<'a> for () {
     fn fmt(&self, _: &mut Formatter<'a>) {}
 }
 
-/// A keyword or a punctuator.
+/// A keyword or punctuator.
 impl<'a> Format<'a> for &'static str {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
@@ -89,7 +89,7 @@ impl<'a> Format<'a> for &'static str {
     }
 }
 
-/// What `format_args!` makes: a tuple of references, written one after the other.
+/// The value `format_args!` expands to: a tuple of references, written in order.
 #[derive(Copy, Clone)]
 pub(crate) struct Arguments<T>(pub(crate) T);
 
@@ -130,22 +130,21 @@ arguments!(A B C D E F G H I J K L M N O P Q R S T U V);
 arguments!(A B C D E F G H I J K L M N O P Q R S T U V W);
 arguments!(A B C D E F G H I J K L M N O P Q R S T U V W X);
 
-/// What elements refer to by index.
+/// The tables that elements index into.
 #[derive(Default)]
 pub(crate) struct Storage {
-    /// Every element of the document, in the order they are written. [`Interned`] is a range of
-    /// it.
+    /// Every element of the document, in the order written. An [`Interned`] is a range of it.
     pub(crate) pool: Vec<FormatElement>,
-    /// What [`BestFitting`] is a range of.
+    /// A [`BestFitting`] is a range of this.
     pub(crate) variants: Vec<Interned>,
-    /// What [`FormatElement::OwnedText`] is a range of.
+    /// A [`FormatElement::OwnedText`] is a range of this.
     pub(crate) text: Vec<u8>,
 }
 
-/// The first elements of every pool, which the printer needs to be somewhere.
+/// Every pool starts with a few fixed elements, because the printer can only queue ranges of the pool.
 pub(crate) const END_LINE_SUFFIX: Interned = Interned { start: 0, len: 1 };
 
-/// What is in a [`FormatElement::IndentedLineGroup`], and the end tag of the group.
+/// The content of a [`FormatElement::IndentedLineGroup`] plus the group's end tag.
 pub(crate) const REST_OF_INDENTED_LINE_GROUP: Interned = Interned {
     start: 1 + LineMode::ALL.len() as u32,
     len: 3,
@@ -161,7 +160,7 @@ pub(crate) const fn line_break(mode: LineMode) -> Interned {
 }
 
 impl Storage {
-    /// The number of elements that are in every pool.
+    /// Number of fixed elements at the start of every pool.
     const RESERVED: u32 = REST_OF_INDENTED_LINE_GROUP.start + REST_OF_INDENTED_LINE_GROUP.len;
 
     pub(crate) fn clear(&mut self) {
@@ -197,8 +196,8 @@ impl Storage {
         }
     }
 
-    /// What has been found out about `interned` when it was written: what it is on one line, and
-    /// whether it [will break](Storage::will_break).
+    /// Returns what was recorded about `interned` when it was written: its flat measurements and its
+    /// [`Storage::will_break`] result.
     #[inline]
     pub(crate) fn summary_of(&self, interned: Interned) -> (Flat, bool) {
         match self.summary_of_whole(interned) {
@@ -207,7 +206,7 @@ impl Storage {
         }
     }
 
-    /// `None` if `interned` is not all of what has been captured but a part of it.
+    /// Returns `None` if `interned` is only part of a capture.
     #[inline]
     fn summary_of_whole(&self, interned: Interned) -> Option<(Flat, bool)> {
         match (interned.start as usize)
@@ -230,9 +229,9 @@ impl Storage {
         (flat, self.will_break(self.interned(part)))
     }
 
-    /// Whether there is something in `part` that forces the groups around it to break.
+    /// True if something in `part` forces the enclosing groups to break.
     fn part_expands(&self, part: Interned) -> bool {
-        // The parts in it that have not been looked at.
+        // Nested parts still to visit.
         let mut parts = SmallVec::<[Interned; 4]>::new();
         parts.push(part);
         while let Some(part) = parts.pop() {
@@ -269,10 +268,10 @@ impl Storage {
         false
     }
 
-    /// Whether the printer is certain to print `elements` over several lines: there is a hard
-    /// line break, a text with a line break, or an expanded group.
+    /// True if the printer is certain to print `elements` over several lines, because they contain a hard line break, a
+    /// multiline text or an expanded group.
     pub(crate) fn will_break(&self, elements: &[FormatElement]) -> bool {
-        // The parts of captured content in it that have not been looked at.
+        // Nested parts of captures still to visit.
         let mut parts = SmallVec::<[&[FormatElement]; 4]>::new();
         parts.push(elements);
         while let Some(elements) = parts.pop() {
@@ -300,7 +299,7 @@ impl Storage {
                     }
                     _ if ignore_depth != 0 => continue,
                     FormatElement::ExpandParent => return true,
-                    // Not one that is only known to break because of what is in it: that is looked at.
+                    // `Propagated` groups don't count. The walk reaches whatever made them break.
                     FormatElement::Tag(Tag::StartGroup(group))
                         if group.mode() == GroupMode::Expand =>
                     {
@@ -326,9 +325,9 @@ impl Storage {
         false
     }
 
-    /// Whether there is any [`FormatElement::Line`] in `elements`.
+    /// True if `elements` contains any [`FormatElement::Line`].
     pub(crate) fn may_directly_break(&self, elements: &[FormatElement], flavor: Flavor) -> bool {
-        // What is in it and has not been looked at.
+        // Nested content still to visit.
         let mut rest = SmallVec::<[&[FormatElement]; 4]>::new();
         rest.push(elements);
         while let Some(elements) = rest.pop() {
@@ -349,7 +348,7 @@ impl Storage {
                         return true;
                     }
                     FormatElement::Interned(it) => rest.push(self.interned(*it)),
-                    // oxfmt does not look into it, and has no `FlattestIfStable`.
+                    // oxfmt doesn't look into a `BestFitting`, and it has no `FlattestIfStable`.
                     FormatElement::BestFitting(it)
                         if !flavor.is_oxfmt() || it.fallback == Fallback::FlattestIfStable =>
                     {
@@ -362,7 +361,7 @@ impl Storage {
         false
     }
 
-    /// Whether `elements` starts with the label.
+    /// True if `elements` starts with the label.
     pub(crate) fn has_label(&self, elements: &[FormatElement], label: LabelId) -> bool {
         let mut elements = elements.iter();
         while let Some(element) = elements.next() {
@@ -378,7 +377,7 @@ impl Storage {
     }
 }
 
-/// Moves on by what a [`FormatElement::Skip`] says.
+/// Advances past the elements that a [`FormatElement::Skip`] covers.
 #[inline]
 fn skip(elements: &mut std::slice::Iter<'_, FormatElement>, count: u32) {
     if count > 0 {
@@ -386,12 +385,12 @@ fn skip(elements: &mut std::slice::Iter<'_, FormatElement>, count: u32) {
     }
 }
 
-/// Some elements, with what it takes to look into them.
+/// A slice of elements plus the storage needed to follow their references.
 #[derive(Copy, Clone)]
 pub(crate) struct Elements<'f> {
     storage: &'f Storage,
     elements: &'f [FormatElement],
-    /// If it is known already.
+    /// Set if already known.
     will_break: Option<bool>,
 }
 
@@ -420,7 +419,7 @@ impl FormatElement {
     }
 }
 
-/// The vectors of a [`Formatter`], which keep their capacity from one file to the next.
+/// A [`Formatter`]'s vectors, reused across files to keep their capacity.
 #[derive(Default)]
 pub(crate) struct FormatterBuffers {
     pub(crate) storage: Storage,
@@ -434,21 +433,21 @@ pub(crate) struct FormatterBuffers {
 pub(crate) struct Formatter<'a> {
     /// `storage.pool` is the document so far.
     pub(crate) storage: Storage,
-    /// It is told about every element that is written.
+    /// Sees every element as it's written.
     tracker: Tracker,
-    /// Vectors for whoever needs one for a while: [`Formatter::take_vec`].
+    /// Scratch vectors. See [`Formatter::take_vec`].
     spare: Vec<Vec<FormatElement>>,
-    /// Interned content, and the same without soft line breaks.
+    /// Maps interned content to its copy without soft line breaks.
     cleaned: FxHashMap<Interned, Interned>,
     next_group_id: Cell<u32>,
     source: &'a [u8],
-    /// Of `source`.
+    /// Computed from `source`.
     odd_blocks: OddBlocks,
     context: JsFormatContext<'a>,
 }
 
 impl<'a> Formatter<'a> {
-    /// `source`: what [`FormatElement::SourceText`] is a range of.
+    /// `source` is the text that [`FormatElement::SourceText`] ranges index into.
     pub(crate) fn new(
         context: JsFormatContext<'a>,
         source: &'a [u8],
@@ -465,8 +464,7 @@ impl<'a> Formatter<'a> {
         tracker.clear();
         odd_blocks.mark(source);
         cleaned.clear();
-        // Measured by oxc on the sources of VS Code: the median is 0.19 elements per byte, and
-        // 95% of the files are below 0.4.
+        // oxc's measurements on the VS Code sources: a median of 0.19 elements per byte, with 95% of files below 0.4.
         storage.pool.reserve(source.len() * 2 / 5);
         Formatter {
             storage,
@@ -480,7 +478,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Returns where the document is, and the vectors.
+    /// Returns the document's range and the buffers for reuse.
     pub(crate) fn finish(self) -> (Interned, FormatterBuffers) {
         let root = Interned {
             start: Storage::RESERVED,
@@ -496,11 +494,12 @@ impl<'a> Formatter<'a> {
         (root, buffers)
     }
 
-    /// Calls `write` with a formatter for `source`, another text, that goes on with this document: a script in HTML.
+    /// Calls `write` with a formatter for a different text, `source`, that keeps appending to this document. Used for a
+    /// script in HTML, for example.
     ///
-    /// It has the elements, the ids of groups and what is known about the groups that are open, so that a forced line
-    /// break in what it writes breaks them. Ranges of the pool stay what they are. The ranges of `source` that it writes
-    /// become ranges of the source of this formatter if `source` is a part of that, and of a copy of `source` if not.
+    /// The inner formatter takes over the elements, the group id counter and the state of the open groups, so a forced
+    /// line break it writes still breaks them. Pool ranges stay valid. The `source` ranges it writes are rebased onto
+    /// this formatter's source if `source` is a slice of it, and otherwise onto a copy of `source`.
     pub(crate) fn write_embedded<'b, R>(
         &mut self,
         context: JsFormatContext<'b>,
@@ -514,7 +513,7 @@ impl<'a> Formatter<'a> {
         result
     }
 
-    /// The same, but what `write` has written only becomes part of the document if `write` returns true.
+    /// Same, but discards what `write` wrote unless it returns true.
     pub(crate) fn try_write_embedded<'b>(
         &mut self,
         context: JsFormatContext<'b>,
@@ -534,7 +533,7 @@ impl<'a> Formatter<'a> {
         is_written
     }
 
-    /// A formatter for `source` that has what this one has written.
+    /// Creates a formatter for `source` that takes over this one's state.
     fn start_embedded<'b>(
         &mut self,
         context: JsFormatContext<'b>,
@@ -554,7 +553,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Takes everything back from `inner`, which has written the elements from `first` on.
+    /// Takes the state back from `inner`, which wrote the elements from `first` on.
     fn end_embedded(&mut self, inner: Formatter<'_>, first: usize) {
         let source = inner.source;
         self.context.ran_out_of_stack |= inner.context.ran_out_of_stack;
@@ -586,7 +585,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    // ───────────────────────────── the context ─────────────────────────────
+    // ───────────────────────────── context ─────────────────────────────
 
     #[inline]
     pub(crate) fn context(&self) -> &JsFormatContext<'a> {
@@ -631,7 +630,7 @@ impl<'a> Formatter<'a> {
         SourceText::new(self.source)
     }
 
-    /// A new id. `_debug_name` says what the group is to whoever reads the code.
+    /// Returns a new id. `_debug_name` only documents the group at the call site.
     #[inline]
     pub(crate) fn group_id(&self, _debug_name: &'static str) -> GroupId {
         let id = self.next_group_id.get();
@@ -656,26 +655,26 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// The width of `text`, which can be anything.
+    /// Returns the width of `text`, which may contain anything.
     fn text_width(&self, text: &[u8]) -> TextWidth {
         let options = self.options();
         TextWidth::from_javascript(text, options.flavor, options.indent_width.value())
     }
 
-    /// The number of columns that `text` takes, which has no line break.
+    /// Returns the width in columns of `text`, which has no line break.
     #[inline]
     pub(crate) fn string_width(&self, text: &[u8]) -> u32 {
         super::width::string_width_as(text, self.options().flavor)
     }
 
-    /// Whether the source text of `span`, which has no line break and no tab, is as wide as it is
-    /// long and has no backslash. It can be so without this saying so.
+    /// True if the source text of `span`, which has no line break or tab, is as many columns wide as it has bytes and
+    /// has no backslash. False negatives are possible.
     #[inline]
     pub(crate) fn is_plain_source(&self, span: Span) -> bool {
         self.odd_blocks.is_plain(span.start, span.end)
     }
 
-    /// Writes the source text of `span`, which has no line break and no tab.
+    /// Writes the source text of `span`, which has no line break or tab.
     #[inline]
     pub(crate) fn write_source_token(&mut self, span: Span) {
         if !self.is_plain_source(span) {
@@ -701,8 +700,8 @@ impl<'a> Formatter<'a> {
         }));
     }
 
-    /// `\u0061b` is written `ab`: Prettier prints the name of an identifier, not its text. Returns
-    /// whether `text` is a name, with or without the `.` or `?.` before it.
+    /// Writes `\u0061b` as `ab`, because Prettier prints an identifier's name, not its source text. Returns false
+    /// without writing anything if `text` isn't a name, optionally preceded by `.` or `?.`.
     #[cold]
     fn write_name_without_escapes(&mut self, text: &[u8]) -> bool {
         if !matches!(
@@ -717,8 +716,7 @@ impl<'a> Formatter<'a> {
         true
     }
 
-    /// Writes `text`, which can be anything but has no `\r`. It is not copied if it is part of
-    /// the source text.
+    /// Writes `text`, which may contain anything except `\r`. It isn't copied if it's a slice of the source text.
     pub(crate) fn write_text(&mut self, text: &[u8], width: Option<TextWidth>) {
         let width = width.unwrap_or_else(|| self.text_width(text));
         let (source, part) = (self.source.as_ptr_range(), text.as_ptr_range());
@@ -743,14 +741,14 @@ impl<'a> Formatter<'a> {
         }));
     }
 
-    /// Writes what `build` appends to the vector it is given, as one text.
+    /// Writes whatever `build` appends to its vector as one text.
     pub(crate) fn write_built_text(&mut self, build: impl FnOnce(&mut Vec<u8>)) {
         let start = self.storage.text.len();
         build(&mut self.storage.text);
         self.write_owned_text_from(start);
     }
 
-    /// Writes what is in `storage.text` from `start` on, as one text.
+    /// Writes `storage.text[start..]` as one text.
     fn write_owned_text_from(&mut self, start: usize) {
         let text = self.storage.text.get(start..).unwrap_or_default();
         let width = self.text_width(text);
@@ -762,16 +760,16 @@ impl<'a> Formatter<'a> {
         }));
     }
 
-    // ───────────────────────────── looking at what is written ─────────────────────────────
+    // ───────────────────────────── inspecting written elements ─────────────────────────────
 
-    /// Everything that is written so far. Remember its length to look at what is written from
-    /// then on: `f.elements_from(start)`.
+    /// Everything written so far. Save its length to inspect what's written after that point with
+    /// `f.elements_from(start)`.
     #[inline]
     pub(crate) fn elements(&self) -> &[FormatElement] {
         &self.storage.pool
     }
 
-    /// What has been written since `f.elements().len()` was `start`.
+    /// Returns the elements written since `f.elements().len()` was `start`.
     pub(crate) fn elements_from(&self, start: usize) -> Elements<'_> {
         Elements {
             storage: &self.storage,
@@ -790,8 +788,8 @@ impl<'a> Formatter<'a> {
 
     // ───────────────────────────── interning ─────────────────────────────
 
-    /// Starts content that is not part of what is being written. Nothing is moved: it stays where
-    /// it is written, behind an element that tells whoever reads the pool to skip it.
+    /// Starts content that isn't part of what's being written. Nothing gets moved. The content stays where it's
+    /// written, after a [`FormatElement::Skip`] that tells readers of the pool to skip it.
     #[inline]
     pub(crate) fn start_capture(&mut self) -> usize {
         let slot = self.storage.pool.len();
@@ -800,7 +798,7 @@ impl<'a> Formatter<'a> {
         slot
     }
 
-    /// Ends the content that `slot` started.
+    /// Ends the capture that returned `slot`.
     pub(crate) fn end_capture(&mut self, slot: usize) -> Interned {
         let len = self.storage.pool.len().saturating_sub(slot + 1) as u32;
         let (_, flat, will_break) = self.tracker.end_skipped().unwrap_or_default();
@@ -820,22 +818,22 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Formats `content` without writing it. Returns where it is.
+    /// Formats `content` without writing it. Returns its range.
     pub(crate) fn capture(&mut self, content: &(impl Format<'a> + ?Sized)) -> Interned {
         let slot = self.start_capture();
         content.fmt(self);
         self.end_capture(slot)
     }
 
-    /// Formats `content` without writing it. The element that is returned stands for it, and can
-    /// be written any number of times. `None` if `content` writes nothing.
+    /// Formats `content` without writing it. The returned element represents it and can be written any number of times.
+    /// Returns `None` if `content` writes nothing.
     pub(crate) fn intern(&mut self, content: &(impl Format<'a> + ?Sized)) -> Option<FormatElement> {
         let slot = self.start_capture();
         content.fmt(self);
         self.end_intern(slot)
     }
 
-    /// The element that stands for what has been written since `start_capture` returned `slot`.
+    /// Returns an element that represents everything written since `start_capture` returned `slot`.
     fn end_intern(&mut self, slot: usize) -> Option<FormatElement> {
         if self.storage.pool.len() == slot + 2 {
             let only = self.storage.pool.pop();
@@ -847,7 +845,7 @@ impl<'a> Formatter<'a> {
         (interned.len > 0).then_some(FormatElement::Interned(interned))
     }
 
-    /// The same for elements that are already there.
+    /// Same, for existing elements.
     pub(crate) fn intern_slice(&mut self, elements: &[FormatElement]) -> Option<FormatElement> {
         match elements {
             [] => None,
@@ -862,9 +860,8 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// The element that lets the printer choose among `variants`, which are ordered from the
-    /// flattest to the most expanded. Each starts with a [`Tag::StartEntry`] and ends with a
-    /// [`Tag::EndEntry`].
+    /// Returns an element that lets the printer choose among `variants`, ordered from the flattest to the most
+    /// expanded. Each starts with a [`Tag::StartEntry`] and ends with a [`Tag::EndEntry`].
     pub(crate) fn best_fitting_of(&mut self, variants: &[Interned]) -> FormatElement {
         self.best_fitting_with(variants, Fallback::MostExpanded)
     }
@@ -884,8 +881,7 @@ impl<'a> Formatter<'a> {
         })
     }
 
-    /// An empty vector, which may have some capacity. Give it back with
-    /// [`Formatter::recycle_vec`].
+    /// Returns an empty vector that may already have capacity. Hand it back with [`Formatter::recycle_vec`].
     pub(crate) fn take_vec(&mut self) -> Vec<FormatElement> {
         self.spare.pop().unwrap_or_default()
     }
@@ -895,21 +891,21 @@ impl<'a> Formatter<'a> {
         self.spare.push(vec);
     }
 
-    // ───────────────────────────── without soft line breaks ─────────────────────────────
+    // ───────────────────────────── removing soft line breaks ─────────────────────────────
 
-    /// Writes `content` as it would be printed if the line were infinitely long: soft line
-    /// breaks are removed or replaced by spaces, what is written only if a group breaks is
-    /// removed, and of several variants the flattest is taken.
+    /// Writes `content` as it would print on an infinitely long line. Soft line breaks are removed or replaced by
+    /// spaces, content that's only printed when a group breaks is removed, and a `BestFitting` is replaced by its
+    /// flattest variant.
     pub(crate) fn write_without_soft_lines(&mut self, content: &(impl Format<'a> + ?Sized)) {
-        let written = self.capture(content);
-        self.remove_soft_lines(written, &mut Vec::new(), Variants::Flattest);
+        let captured = self.capture(content);
+        self.remove_soft_lines(captured, &mut Vec::new(), Variants::Flattest);
     }
 
-    /// Prettier's `removeLines`: the same, but the printer still chooses among the variants, and takes the most expanded one
-    /// if none fits.
+    /// Prettier's `removeLines`. Same, but the printer still chooses among the variants and falls back to the most
+    /// expanded one if none fits.
     pub(crate) fn write_with_lines_removed(&mut self, content: &(impl Format<'a> + ?Sized)) {
-        let written = self.capture(content);
-        self.remove_soft_lines(written, &mut Vec::new(), Variants::All);
+        let captured = self.capture(content);
+        self.remove_soft_lines(captured, &mut Vec::new(), Variants::All);
     }
 
     /// Writes the elements at `range` without their soft line breaks.
@@ -1003,7 +999,7 @@ impl<'a> Formatter<'a> {
         conditions: &mut Vec<PrintMode>,
         variants: Variants,
     ) -> Interned {
-        // What is kept is what has been cleaned the usual way.
+        // The cache only holds `Variants::Flattest` results.
         if variants == Variants::All {
             let slot = self.start_capture();
             self.remove_soft_lines(interned, conditions, variants);
@@ -1040,13 +1036,13 @@ impl<'a> Formatter<'a> {
             interned
         };
         self.cleaned.insert(interned, cleaned);
-        // What has been cleaned stays as it is.
+        // Cleaning cleaned content is a no-op.
         self.cleaned.insert(cleaned, cleaned);
         cleaned
     }
 }
 
-/// Formats its content once, however often it is written.
+/// Formats its content once, no matter how often it's written.
 pub(crate) struct Memoized<F> {
     inner: F,
     memory: Cell<Option<Interned>>,
@@ -1067,7 +1063,7 @@ impl<F> Memoized<F> {
         }
     }
 
-    /// The elements of the content, which is formatted now if it has not been.
+    /// Returns the content's elements, formatting it first if needed.
     pub(crate) fn inspect<'f, 'a>(&self, f: &'f mut Formatter<'a>) -> Elements<'f>
     where
         F: Format<'a>,
@@ -1089,8 +1085,7 @@ impl<'a, F: Format<'a>> Format<'a> for Memoized<F> {
 }
 
 pub(crate) trait MemoizeFormat<'a>: Format<'a> + Sized {
-    /// Its elements are computed the first time it is written or inspected, and reused after
-    /// that.
+    /// Computes the elements the first time it's written or inspected, and reuses them after that.
     fn memoized(self) -> Memoized<Self> {
         Memoized {
             inner: self,
@@ -1102,9 +1097,8 @@ pub(crate) trait MemoizeFormat<'a>: Format<'a> + Sized {
 impl<'a, T: Format<'a>> MemoizeFormat<'a> for T {}
 
 impl Formatter<'_> {
-    /// Keeps a place for a start tag of which it is not known yet whether it is needed, or what it
-    /// says: that depends on the content, which is written first. Returns what to pass to
-    /// [`Formatter::group_from`]. The content starts at the index after it.
+    /// Reserves a slot for a start tag when the content, which is written first, decides whether the tag is needed and
+    /// what it is. Pass the returned index to [`Formatter::group_from`]. The content starts at the next index.
     #[inline]
     pub(crate) fn reserve_tag(&mut self) -> usize {
         let reserved = self.storage.pool.len();
@@ -1113,7 +1107,7 @@ impl Formatter<'_> {
         reserved
     }
 
-    /// Makes what has been written since `reserved` was reserved a group.
+    /// Turns everything written since `reserved` was reserved into a group.
     pub(crate) fn group_from(&mut self, reserved: usize, should_expand: bool) {
         let mode = if should_expand {
             GroupMode::Expand
@@ -1129,8 +1123,7 @@ impl Formatter<'_> {
 }
 
 impl<'a> Formatter<'a> {
-    /// Appends an element that stands for what `content` writes to `out`, and nothing to what is
-    /// written so far.
+    /// Appends an element that represents `content` to `out` instead of to the document.
     pub(crate) fn write_into(
         &mut self,
         out: &mut Vec<FormatElement>,
@@ -1141,8 +1134,8 @@ impl<'a> Formatter<'a> {
 }
 
 impl<'a> Formatter<'a> {
-    /// The text that `content` is printed as by itself, at the start of a line without indentation.
-    /// For the rare case that how something is laid out depends on the text of its parts.
+    /// Prints `content` by itself, starting at column 0 with no indentation, and returns the text. For the rare case
+    /// where layout depends on the printed text of a part.
     pub(crate) fn print_to_text(&mut self, content: &(impl Format<'a> + ?Sized)) -> Vec<u8> {
         let document = self.capture(content);
         self.print_document(document)
@@ -1152,8 +1145,9 @@ impl<'a> Formatter<'a> {
         use super::printer::{PrinterBuffers, PrinterOptions, print};
         let source = self.source;
         let mut out = Vec::new();
-        // It is written to the document again, where a line break is `\n` whatever the file gets, and where the printer
-        // marks the line breaks of texts for Markdown. Prettier: `printDocToString(.., { endOfLine: "lf" })`.
+        // The text goes back into the document, where a line break is always `\n` regardless of the file's line ending,
+        // and the final print is what marks line breaks in texts for Markdown. Prettier:
+        // `printDocToString(.., { endOfLine: "lf" })`.
         let options = PrinterOptions {
             line_ending: crate::options::LineEnding::Lf,
             marks_line_breaks_in_texts: false,
@@ -1175,7 +1169,7 @@ impl<'a> Formatter<'a> {
     }
 }
 
-/// Which of the variants of a [`BestFitting`] are left when soft line breaks are removed.
+/// Selects the [`BestFitting`] variants to keep when soft line breaks are removed.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Variants {
     Flattest,

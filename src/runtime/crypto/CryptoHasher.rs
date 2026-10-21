@@ -7,10 +7,7 @@ use bun_jsc::{ErrorCode, JSGlobalObject};
 
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::crypto::{HMAC, create_crypto_error, evp};
-use crate::generated_bindgen::crypto_hasher::{
-    CryptoHasherClass, DigestOutput, MD4Class, MD5Class, SHA1Class, SHA224Class, SHA256Class,
-    SHA384Class, SHA512_256Class, SHA512Class,
-};
+use crate::generated_bindgen::crypto_hasher::DigestOutput;
 use crate::node::Encoding;
 use crate::webcore::encoding::BunStringEncode as _;
 use bun_sha_hmac::sha as hashers;
@@ -291,10 +288,8 @@ impl CryptoHasher {
     }
 }
 
-impl CryptoHasherClass for CryptoHasher {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn constructor<'a>(
+impl CryptoHasher {
+    pub(crate) fn constructor<'a>(
         heap: &JsHeap<'a>,
         algorithm: &'a [u8],
         hmac_key: Option<&'a [u8]>,
@@ -335,7 +330,10 @@ impl CryptoHasherClass for CryptoHasher {
             })
     }
 
-    fn algorithm<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, bun_core::String> {
+    pub(crate) fn get_algorithm<'a>(
+        &self,
+        heap: &JsHeap<'a>,
+    ) -> bindgen::Result<'a, bun_core::String> {
         let algorithm = match self {
             CryptoHasher::Evp(evp) => evp.algorithm(),
             CryptoHasher::Zig(zig) => zig.algorithm,
@@ -348,7 +346,7 @@ impl CryptoHasherClass for CryptoHasher {
         Ok(bun_core::String::static_(algorithm.tag_cstr().to_bytes()))
     }
 
-    fn byte_length<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, u32> {
+    pub(crate) fn get_byte_length<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, u32> {
         Ok(match self {
             CryptoHasher::Evp(evp) => evp.size() as u32,
             CryptoHasher::Hmac(hmac) => hmac
@@ -359,13 +357,13 @@ impl CryptoHasherClass for CryptoHasher {
         })
     }
 
-    fn algorithms() -> impl IntoIterator<Item = impl AsRef<[u8]>> {
+    pub(crate) fn get_algorithms() -> impl IntoIterator<Item = impl AsRef<[u8]>> {
         evp::ALL
             .iter()
             .map(|algorithm| algorithm.tag_cstr().to_bytes())
     }
 
-    fn copy<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
+    pub(crate) fn copy<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         let copied = match self {
             CryptoHasher::Evp(evp) => CryptoHasher::Evp(Box::new(evp.copy(engine_of(heap))?)),
             CryptoHasher::Hmac(hmac) => {
@@ -380,9 +378,9 @@ impl CryptoHasherClass for CryptoHasher {
         Ok(copied.into_js(heap))
     }
 
-    fn update_string<'a>(
+    pub(crate) fn update_string<'a>(
         &mut self,
-        this: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
         input: &bun_core::String,
         encoding: Option<&'a [u8]>,
@@ -401,20 +399,20 @@ impl CryptoHasherClass for CryptoHasher {
             }
             encoding => self.update(heap, &input.encode(encoding))?,
         }
-        Ok(this)
+        Ok(this_value)
     }
 
-    fn update_bytes<'a>(
+    pub(crate) fn update_bytes<'a>(
         &mut self,
-        this: JsWrapper<'a, Self>,
+        this_value: JsWrapper<'a, Self>,
         heap: &JsHeap<'a>,
         input: &'a [u8],
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
         self.update(heap, input)?;
-        Ok(this)
+        Ok(this_value)
     }
 
-    fn digest<'a>(
+    pub(crate) fn digest<'a>(
         &mut self,
         heap: &JsHeap<'a>,
         output: Option<DigestOutput<'a>>,
@@ -438,7 +436,7 @@ impl CryptoHasherClass for CryptoHasher {
         )
     }
 
-    fn hash<'a>(
+    pub(crate) fn hash<'a>(
         heap: &JsHeap<'a>,
         algorithm: &bun_core::String,
         input: &'a [u8],
@@ -670,33 +668,31 @@ fn already_digested<'a>(heap: &JsHeap<'a>, name: &str, to: &str) -> bindgen::Err
 }
 
 macro_rules! static_hasher {
-    ($name:ident, $class:ident) => {
+    ($name:ident) => {
         pub(crate) struct $name {
             hashing: hashers::$name,
             digested: bool,
         }
 
-        impl $class for $name {
-            type Error<'a> = bindgen::Error<'a>;
-
-            fn constructor() -> Self {
+        impl $name {
+            pub(crate) fn constructor() -> Self {
                 Self {
                     hashing: hashers::$name::init(),
                     digested: false,
                 }
             }
 
-            fn byte_length(&self) -> u32 {
+            pub(crate) fn get_byte_length(&self) -> u32 {
                 hashers::$name::DIGEST as u32
             }
 
-            fn static_byte_length() -> u32 {
+            pub(crate) fn get_static_byte_length() -> u32 {
                 hashers::$name::DIGEST as u32
             }
 
-            fn update<'a>(
+            pub(crate) fn update<'a>(
                 &mut self,
-                this: JsWrapper<'a, Self>,
+                this_value: JsWrapper<'a, Self>,
                 heap: &JsHeap<'a>,
                 input: &'a [u8],
             ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
@@ -704,10 +700,10 @@ macro_rules! static_hasher {
                     return Err(already_digested(heap, stringify!($name), "update"));
                 }
                 self.hashing.update(input);
-                Ok(this)
+                Ok(this_value)
             }
 
-            fn digest<'a>(
+            pub(crate) fn digest<'a>(
                 &mut self,
                 heap: &JsHeap<'a>,
                 output: Option<DigestOutput<'a>>,
@@ -724,7 +720,7 @@ macro_rules! static_hasher {
                 })
             }
 
-            fn hash<'a>(
+            pub(crate) fn hash<'a>(
                 heap: &JsHeap<'a>,
                 input: &'a [u8],
                 output: Option<DigestOutput<'a>>,
@@ -738,14 +734,14 @@ macro_rules! static_hasher {
     };
 }
 
-static_hasher!(MD4, MD4Class);
-static_hasher!(MD5, MD5Class);
-static_hasher!(SHA1, SHA1Class);
-static_hasher!(SHA224, SHA224Class);
-static_hasher!(SHA256, SHA256Class);
-static_hasher!(SHA384, SHA384Class);
-static_hasher!(SHA512, SHA512Class);
-static_hasher!(SHA512_256, SHA512_256Class);
+static_hasher!(MD4);
+static_hasher!(MD5);
+static_hasher!(SHA1);
+static_hasher!(SHA224);
+static_hasher!(SHA256);
+static_hasher!(SHA384);
+static_hasher!(SHA512);
+static_hasher!(SHA512_256);
 
 pub(crate) fn sha<'a>(
     heap: &JsHeap<'a>,

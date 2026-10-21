@@ -54,7 +54,7 @@ macro_rules! define_prefixes {
     };
 }
 
-// Not here yet: `ClipPath`, `TransformOrigin`, `PerspectiveOrigin`. Bun has no typed value for them.
+// Not here yet: `ClipPath` has no row. `TransformOrigin` and `PerspectiveOrigin` parse no valid value.
 define_prefixes! {
     TransformStyle,
     BackfaceVisibility,
@@ -81,10 +81,10 @@ pub struct PrefixHandler {
     floor: usize,
     /// The index in `dest` of the last declaration of each property.
     last: [usize; SLOT_COUNT],
-    /// The prefixes that the author wrote for each property since `start`.
+    /// The prefixes that the author wrote for each property and that no `all` has reset.
     written: [VendorPrefix; SLOT_COUNT],
-    /// The prefixes that the author wrote for each property in the other list of the block.
-    elsewhere: [VendorPrefix; SLOT_COUNT],
+    /// The prefixes that the `!important` list of the block writes. `all` in the normal list keeps them.
+    important: [VendorPrefix; SLOT_COUNT],
 }
 
 impl PrefixHandler {
@@ -106,7 +106,7 @@ impl PrefixHandler {
         let equal = previous.filter(|index| same_value(&dest[*index], property));
 
         // Unlike lightningcss: a written prefix stays, and a prefix the block already has is not added.
-        let mut covered = self.written[slot] | self.elsewhere[slot];
+        let mut covered = self.written[slot] | self.important[slot];
         if let Some(index) = equal {
             covered |=
                 slot_of(&dest[index]).map_or(VendorPrefix::empty(), |(_, prefixes, _)| prefixes);
@@ -135,36 +135,40 @@ impl PrefixHandler {
         true
     }
 
-    /// Records the prefixed names in the other list of the block (`!important` or not).
-    pub(crate) fn see_other_list(&mut self, declarations: &css::DeclarationList) {
-        for declaration in declarations.iter() {
-            if let Some((slot, written, _)) = slot_of(declaration) {
-                self.elsewhere[slot as usize] |= written.difference(VendorPrefix::NONE);
+    /// For the normal list's handler: what the `!important` list writes. That, or an `all` after it, beats a copy here.
+    pub(crate) fn see_important_list(&mut self, important: &css::DeclarationList) {
+        for declaration in important.iter() {
+            if let Some((slot, prefixes, _)) = slot_of(declaration) {
+                self.important[slot as usize] |= prefixes.difference(VendorPrefix::NONE);
+            }
+        }
+    }
+
+    /// For the `!important` list's handler: what the normal list writes after its last `all`. `all` here resets it.
+    pub(crate) fn see_normal_list(&mut self, normal: &css::DeclarationList) {
+        for declaration in normal.iter() {
+            if is_all(declaration) {
+                self.written = Default::default();
+            } else if let Some((slot, prefixes, _)) = slot_of(declaration) {
+                self.written[slot as usize] |= prefixes.difference(VendorPrefix::NONE);
             }
         }
     }
 
     /// `all` sets every property. An unknown name can be one more spelling (`-khtml-user-select`).
     fn see_other(&mut self, property: &Property, index: usize) {
-        match property {
-            Property::All(_) => self.close(),
-            Property::Unparsed(unparsed) if unparsed.property_id.tag() == PropertyIdTag::All => {
-                self.close()
-            }
-            Property::Custom(custom) => match &custom.name {
-                CustomPropertyName::Custom(_) => {}
-                name if strings::eql_case_insensitive_ascii_check_length(name.as_str(), b"all") => {
-                    self.close()
-                }
-                CustomPropertyName::Unknown(_) => self.floor = index + 1,
-            },
-            _ => {}
+        if is_all(property) {
+            self.close();
+        } else if let Property::Custom(custom) = property
+            && matches!(custom.name, CustomPropertyName::Unknown(_))
+        {
+            self.floor = index + 1;
         }
     }
 
     fn close(&mut self) {
         *self = Self {
-            elsewhere: self.elsewhere,
+            important: self.important,
             ..Self::default()
         };
     }
@@ -175,6 +179,18 @@ impl PrefixHandler {
         _context: &mut css::PropertyHandlerContext,
     ) {
         *self = Self::default();
+    }
+}
+
+fn is_all(property: &Property) -> bool {
+    match property {
+        Property::All(_) => true,
+        Property::Unparsed(unparsed) => unparsed.property_id.tag() == PropertyIdTag::All,
+        Property::Custom(custom) => {
+            matches!(custom.name, CustomPropertyName::Unknown(_))
+                && strings::eql_case_insensitive_ascii_check_length(custom.name.as_str(), b"all")
+        }
+        _ => false,
     }
 }
 

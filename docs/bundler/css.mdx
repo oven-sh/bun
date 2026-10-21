@@ -53,7 +53,7 @@ With the default browsers, Bun writes a prefix for these properties:
 
 Bun also prefixes these names inside `transition`, the size keywords `stretch` and `fit-content`, and `image-set()` in `background` and `border-image`.
 
-Bun keeps a prefixed declaration that you write, and does not add that prefix a second time.
+Bun keeps a prefixed declaration that you write, and does not add that prefix a second time. The exception is a prefixed declaration that a later `all` in the same rule resets.
 
 Bun does not add prefixes for the following yet. Write the prefixed form yourself if your browsers need it:
 

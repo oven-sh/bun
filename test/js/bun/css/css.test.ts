@@ -6,6 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
+  blocks_up_to,
+  changed_winners,
   cssTest,
   cssTestTodo,
   indoc,
@@ -8559,8 +8561,20 @@ describe("css tests", () => {
       `,
       defaults,
     );
+    // Merged rules are one rule for `all`: it resets the prefix that the first rule wrote, so the copy is added.
+    prefix_test(
+      ".a { -webkit-user-select: text; user-select: none !important } .a { all: unset }",
+      ".a { -webkit-user-select: text; all: unset; -webkit-user-select: none !important; user-select: none !important; }",
+      defaults,
+    );
+    // With a rule between them they are not merged, and each one stays as written.
+    prefix_test(
+      ".a { -webkit-user-select: text; user-select: none !important } .q { top: 0 } .a { all: unset }",
+      ".a { -webkit-user-select: text; user-select: none !important; } .q { top: 0; } .a { all: unset; }",
+      defaults,
+    );
 
-    // `transform-origin` has no typed value yet, so it is no barrier.
+    // `transform-origin` is a known name that this handler does not own, so it is no barrier.
     prefix_test(
       ".foo { -webkit-user-select: none; transform-origin: center; user-select: none }",
       indoc`
@@ -8598,6 +8612,54 @@ describe("css tests", () => {
       ".foo { user-select: none; -webkit-user-select: text !important; }",
       defaults,
     );
+    // Only that prefix of that property is not added.
+    prefix_test(
+      ".foo { -webkit-appearance: none; appearance: auto !important }",
+      ".foo { -webkit-appearance: none; -moz-appearance: auto !important; appearance: auto !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-appearance: none; user-select: none !important }",
+      ".foo { -webkit-appearance: none; -webkit-user-select: none !important; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-appearance: none !important; appearance: auto }",
+      ".foo { -moz-appearance: auto; appearance: auto; -webkit-appearance: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-appearance: none !important; user-select: none }",
+      ".foo { -webkit-user-select: none; user-select: none; -webkit-appearance: none !important; }",
+      defaults,
+    );
+    // `all` resets a written prefix of its own list, and `all !important` also one of the other list.
+    prefix_test(
+      ".foo { -webkit-user-select: text; all: unset; user-select: none !important }",
+      ".foo { -webkit-user-select: text; all: unset; -webkit-user-select: none !important; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-user-select: text; all: unset !important; user-select: none !important }",
+      ".foo { -webkit-user-select: text; all: unset !important; -webkit-user-select: none !important; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { all: unset; -webkit-user-select: text; user-select: none !important }",
+      ".foo { all: unset; -webkit-user-select: text; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-user-select: text !important; all: unset; user-select: none }",
+      ".foo { all: unset; user-select: none; -webkit-user-select: text !important; }",
+      defaults,
+    );
+    // A normal copy cannot beat `all !important`, so none is added.
+    prefix_test(
+      ".foo { -webkit-user-select: text !important; all: unset !important; user-select: none }",
+      ".foo { user-select: none; -webkit-user-select: text !important; all: unset !important; }",
+      defaults,
+    );
 
     // A rule is no duplicate of a rule that has the same properties with another importance.
     minify_test(".a{color:red!important}.b{top:0}.a{color:#00f}", ".a{color:red!important}.b{top:0}.a{color:#00f}");
@@ -8624,6 +8686,9 @@ describe("css tests", () => {
       expect(output).toEqualIgnoringWhitespace(expected);
     });
 
+    // Three kinds of browser: one reads only `user-select`, one reads both names, one reads only `-webkit-user-select`.
+    const names = { name: "user-select", prefixed: "-webkit-user-select" };
+
     test("two rules of one selector keep the winning declaration", () => {
       const atoms = [
         "user-select:none",
@@ -8633,63 +8698,13 @@ describe("css tests", () => {
         "-webkit-user-select:text",
         "-webkit-user-select:text!important",
       ];
-      const blocks = [...atoms.map(atom => [atom]), ...atoms.flatMap(first => atoms.map(second => [first, second]))];
+      const blocks = blocks_up_to(atoms, 2);
       const pairs = [
         ...blocks.flatMap(first => atoms.map(second => [first, [second]])),
         ...atoms.flatMap(first => blocks.filter(second => second.length === 2).map(second => [[first], second])),
       ];
-      const parse = (declaration: string) => {
-        const important = /\s*!important$/.test(declaration);
-        const [name, value] = declaration.replace(/\s*!important$/, "").split(":");
-        return { name: name.trim(), value: value.trim(), important };
-      };
-      type Declaration = ReturnType<typeof parse>;
-      const output = prefix_test_output(
-        pairs
-          .map(([first, second], i) => `.a${i}{${first.join(";")}}\n.q${i}{top:0}\n.a${i}{${second.join(";")}}`)
-          .join("\n"),
-        "",
-        defaults,
-      );
-      const printed = new Map<string, Declaration[]>();
-      for (const [, selectors, body] of output.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-        const declarations = body
-          .split(";")
-          .filter(declaration => declaration.trim())
-          .map(parse);
-        for (const selector of selectors.split(",")) {
-          printed.set(selector.trim(), [...(printed.get(selector.trim()) ?? []), ...declarations]);
-        }
-      }
-      // The declaration that a browser applies: the last `!important` one whose name it reads, or else the last one.
-      const winner = (declarations: Declaration[], names: string[]) => {
-        const read = declarations.filter(({ name }) => names.includes(name));
-        const last = read.findLast(({ important }) => important) ?? read.at(-1);
-        return last && `${last.value}${last.important ? "!important" : ""}`;
-      };
-      // Safari only reads the prefixed name. A rule that writes that name gets no copy after it, or with the other importance.
-      const forPrefixOnly = (rule: Declaration[]) =>
-        rule.map((declaration, i) => {
-          const written = rule.some(
-            (other, j) => other.name === "-webkit-user-select" && (other.important !== declaration.important || j < i),
-          );
-          return declaration.name === "user-select" && !written
-            ? { ...declaration, name: "-webkit-user-select" }
-            : declaration;
-        });
-      const wrong: string[] = [];
-      for (const [i, [first, second]] of pairs.entries()) {
-        const rules = [first.map(parse), second.map(parse)];
-        const out = printed.get(`.a${i}`) ?? [];
-        const same =
-          winner(out, ["user-select"]) === winner(rules.flat(), ["user-select"]) &&
-          winner(out, ["user-select", "-webkit-user-select"]) ===
-            winner(rules.flat(), ["user-select", "-webkit-user-select"]) &&
-          winner(out, ["-webkit-user-select"]) === winner(rules.flatMap(forPrefixOnly), ["-webkit-user-select"]);
-        if (!same) wrong.push(`${first.join(";")} | ${second.join(";")}`);
-      }
       expect(pairs.length).toBe(468);
-      expect(wrong).toEqual([]);
+      expect(changed_winners(pairs, defaults, names)).toEqual([]);
     });
 
     test("the prefixes change no winning declaration", () => {
@@ -8701,56 +8716,19 @@ describe("css tests", () => {
         "all:unset",
         "cursor:pointer",
       ];
-      const blocks: string[][] = [];
-      for (let length = 1, last: string[][] = [[]]; length <= 4; length++) {
-        last = last.flatMap(block => atoms.map(atom => [...block, atom]));
-        blocks.push(...last);
-      }
-      const output = prefix_test_output(
-        blocks.map((block, i) => `.r${i}{${block.join(";")}}`).join("\n"),
-        "",
-        defaults,
-      );
-      const printed = new Map<string, string[][]>();
-      for (const [, selectors, body] of output.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-        const declarations = body
-          .split(";")
-          .map(declaration => declaration.trim())
-          .filter(Boolean)
-          .map(declaration => [
-            declaration.slice(0, declaration.indexOf(":")),
-            declaration.slice(declaration.indexOf(":") + 1).trim(),
-          ]);
-        for (const selector of selectors.split(",")) printed.set(selector.trim(), declarations);
-      }
-      // The value that a browser applies: the last declaration whose name it reads. Every browser reads `all`.
-      const winner = (declarations: string[][], names: string[]) => {
-        const [name, value] = declarations.findLast(([name]) => name === "all" || names.includes(name)) ?? [];
-        return name === "all" ? "all" : value;
-      };
-      // Safari only reads the prefixed name: it gets a copy of each unprefixed declaration until the block writes that name.
-      const forPrefixOnly = (block: string[][]) => {
-        let written = false;
-        return block.flatMap(([name, value]) => {
-          if (name === "all") written = false;
-          if (name === "-webkit-user-select") written = true;
-          return name === "user-select" && !written ? [["-webkit-user-select", value]] : [[name, value]];
-        });
-      };
-      const wrong: string[] = [];
-      for (const [i, block] of blocks.entries()) {
-        const source = block.map(atom => [atom.slice(0, atom.indexOf(":")), atom.slice(atom.indexOf(":") + 1)]);
-        const out = printed.get(`.r${i}`) ?? [];
-        const same =
-          winner(out, ["user-select"]) === winner(source, ["user-select"]) &&
-          winner(out, ["user-select", "-webkit-user-select"]) ===
-            winner(source, ["user-select", "-webkit-user-select"]) &&
-          winner(out, ["-webkit-user-select"]) === winner(forPrefixOnly(source), ["-webkit-user-select"]) &&
-          winner(out, ["cursor"]) === winner(source, ["cursor"]);
-        if (!same) wrong.push(block.join(";"));
-      }
+      const blocks = blocks_up_to(atoms, 4).map(block => [block]);
       expect(blocks.length).toBe(1554);
-      expect(wrong).toEqual([]);
+      expect(changed_winners(blocks, defaults, { ...names, watch: ["cursor"] })).toEqual([]);
+    });
+
+    test("`!important` and `all` change no winning declaration", () => {
+      const atoms = ["user-select:none", "-webkit-user-select:text", "-webkit-user-select:none", "all:unset"];
+      const blocks = blocks_up_to(
+        atoms.flatMap(atom => [atom, `${atom}!important`]),
+        3,
+      ).map(block => [block]);
+      expect(blocks.length).toBe(584);
+      expect(changed_winners(blocks, defaults, names)).toEqual([]);
     });
 
     // No browser list (`--target=bun`): nothing is added.

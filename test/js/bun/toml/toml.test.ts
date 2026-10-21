@@ -62,6 +62,18 @@ describe("input types", () => {
     expect(TOML.parse(new Blob([doc]))).toEqual(expected);
   });
 
+  test("an asset of Bun.build() parses as its bytes, and one written to outdir is refused", async () => {
+    using dir = tempDir("toml-build-output", {
+      "entry.js": `import doc from "./doc.toml" with { type: "file" };\nconsole.log(doc);`,
+      "doc.toml": doc,
+    });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const assetOf = (build: Bun.BuildOutput) => build.outputs.find(output => output.kind === "asset")!;
+    expect(TOML.parse(assetOf(await Bun.build({ entrypoints })))).toEqual(expected);
+    const written = assetOf(await Bun.build({ entrypoints, outdir: join(String(dir), "out") }));
+    expect(() => TOML.parse(written)).toThrow("File blob cannot be used here");
+  });
+
   test("DataView over a SharedArrayBuffer", () => {
     const bytes = new TextEncoder().encode(doc);
     const sab = new SharedArrayBuffer(bytes.length);

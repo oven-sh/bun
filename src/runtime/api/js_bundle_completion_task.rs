@@ -27,7 +27,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string, platform};
 use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
@@ -66,7 +66,8 @@ pub(crate) struct JSBundleCompletionTask {
     pub(crate) context: jsc::ContextId,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub(crate) env: *mut bun_dotenv::Loader,
+    /// This build's copy of the VM's env. Boxed because the transpiler keeps a pointer to it.
+    pub(crate) env: Box<bun_dotenv::Loader>,
     pub(crate) log: bun_ast::Log,
     /// Set by the owner giving up on the result (HTMLBundle route torn down)
     /// or by the VM's stop phase; read by `on_complete` (skip delivery) and by
@@ -178,7 +179,10 @@ impl JSBundleCompletionTask {
             context,
             promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::init(),
-            env: global_this.bun_vm().transpiler.env,
+            // Copy on the JS thread because only the JS thread writes to the VM's loader.
+            env: Box::new(bun_core::handle_oom(
+                global_this.bun_vm().env_loader().clone_loaded(),
+            )),
             log: bun_ast::Log::init(),
             cancelled: core::sync::atomic::AtomicBool::new(false),
             bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),
@@ -204,7 +208,9 @@ impl JSBundleCompletionTask {
         let plugins = self.plugins;
         let completion = RefPtr::new(self).into_raw();
         if let Some(plugin) = plugins {
-            Plugin::opaque_mut(plugin.as_ptr()).set_config(completion.cast());
+            let plugin = Plugin::opaque_mut(plugin.as_ptr());
+            plugin.set_config(completion.cast());
+            plugin.freeze_filters();
         }
 
         // Ensure this exists before we spawn the thread to prevent any race
@@ -212,9 +218,9 @@ impl JSBundleCompletionTask {
         let _ = WorkPool::get();
 
         // Out on the bundle thread from here until it posts the completion: it
-        // reads this VM's env loader and the plugin cell, so it is cancelled and
-        // waited for (`bundle_ticket`) when the realm's context stops: at teardown,
-        // and at a `bun test --isolate` file swap.
+        // reads this VM's plugin cell, so it is cancelled and waited for
+        // (`bundle_ticket`) when the realm's context stops: at teardown, and at a
+        // `bun test --isolate` file swap.
         // SAFETY: `completion` is the live heap allocation; it leaves its
         // context in `on_complete_anytask`.
         unsafe {
@@ -240,23 +246,18 @@ fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
 
 /// Absolute, because the PE metadata operations need an absolute path.
 fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u8]> {
-    let mut outbuf = paths::path_buffer_pool::get();
     // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
     // initialized during VM startup before any `Bun.build` is reachable.
-    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let outdir_slice = &config.outdir.list;
     let outfile_slice = &compile.outfile.list;
     let joined: &[u8] = if !outdir_slice.is_empty() {
-        join_abs_string_buf::<platform::Auto>(
-            top_level_dir,
-            &mut outbuf[..],
-            &[outdir_slice, outfile_slice],
-        )
+        join_abs_string::<platform::Auto>(top_level_dir, &[outdir_slice, outfile_slice])
     } else if paths::is_absolute(outfile_slice) {
         outfile_slice
     } else {
         // For relative paths, ensure we make them absolute relative to the current working directory
-        join_abs_string_buf::<platform::Auto>(top_level_dir, &mut outbuf[..], &[outfile_slice])
+        join_abs_string::<platform::Auto>(top_level_dir, &[outfile_slice])
     };
     if compile.compile_target.os == OperatingSystem::Windows && !joined.ends_with(b".exe") {
         let mut v = Vec::with_capacity(joined.len() + 4);
@@ -454,10 +455,7 @@ impl JSBundleCompletionTask {
             root_dir.fd,
             module_prefix,
             outfile_for_executable,
-            // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
-            // construction; valid for the lifetime of the VirtualMachine, and
-            // nothing inside `to_executable` reaches it otherwise.
-            unsafe { &mut *self.env },
+            &mut self.env,
             self.config.format,
             &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,
@@ -765,7 +763,7 @@ impl JSBundleCompletionTask {
                 let dir = this.config.dir.list.clone();
                 // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
                 // initialized during VM startup before any `Bun.build` is reachable.
-                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
@@ -1167,8 +1165,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             {
                 match bun_standalone_graph::StandaloneModuleGraph::target_builtins(
                     &compile.compile_target,
-                    // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at construction; see `to_executable` below.
-                    unsafe { &mut *self.env },
+                    &mut self.env,
                     Some(&compile.executable_path.list[..]).filter(|p| !p.is_empty()),
                 ) {
                     Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
@@ -1279,7 +1276,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             // Relative to where the entry points are relative to, as for `--tsconfig-override`.
             tsconfig_override: (!config.tsconfig_override.list.is_empty()).then(|| {
                 let cwd = match config.dir.list.is_empty() {
-                    true => bun_resolver::fs::FileSystem::instance().top_level_dir,
+                    true => bun_resolver::fs::FileSystem::instance().top_level_dir(),
                     false => config.dir.list.as_slice(),
                 };
                 let path = config.tsconfig_override.list.as_slice();
@@ -1292,7 +1289,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        let t = Transpiler::init(bump, log, opts, Some(self.env))?;
+        let env: *mut bun_dotenv::Loader = &raw mut *self.env;
+        let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
         // Post-init field wiring.

@@ -349,6 +349,7 @@ pub(crate) fn codegen_function(
                     test: if_test,
                     yes: expr_stmt(call, Loc::EMPTY),
                     no: None,
+                    else_loc: Loc::EMPTY,
                 },
                 Loc::EMPTY,
             );
@@ -866,6 +867,7 @@ fn codegen_reactive_scope(
             test: test_condition,
             yes,
             no,
+            else_loc: Loc::EMPTY,
         },
         loc,
     );
@@ -901,6 +903,7 @@ fn codegen_reactive_scope(
                     loc,
                 ),
                 no: None,
+                else_loc: Loc::EMPTY,
             },
             loc,
         ));
@@ -1000,6 +1003,7 @@ fn codegen_terminal(
                     test: test_expr,
                     yes: body_stmt(consequent_block, stmt_loc),
                     no: alternate_stmt,
+                    else_loc: Loc::EMPTY,
                 },
                 stmt_loc,
             )))
@@ -1027,7 +1031,7 @@ fn codegen_terminal(
                     None => StmtNodeList::EMPTY,
                 };
                 switch_cases.push(Case {
-                    loc: stmt_loc,
+                    loc: convert_loc(case.loc),
                     value: test,
                     body: consequent,
                 });
@@ -1122,6 +1126,8 @@ fn codegen_terminal(
             block,
             handler_binding,
             handler,
+            handler_loc,
+            handler_body_loc,
             loc,
             ..
         } => {
@@ -1142,10 +1148,10 @@ fn codegen_terminal(
                     body_loc: stmt_loc,
                     body: leak_stmts(try_block),
                     catch: Some(Catch {
-                        loc: stmt_loc,
+                        loc: convert_loc(*handler_loc),
                         binding: catch_param,
                         body: leak_stmts(handler_block),
-                        body_loc: stmt_loc,
+                        body_loc: convert_loc(*handler_body_loc),
                     }),
                     finally: None,
                 },
@@ -3009,6 +3015,7 @@ fn codegen_object_pattern(
         b::Object {
             properties: StoreSlice::from_bump(properties),
             is_single_line: true,
+            close_brace_loc: Loc::EMPTY,
         },
         loc,
     ))
@@ -3610,6 +3617,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),
+                body_loc: loc,
             }),
         },
         loc,
@@ -3670,6 +3678,7 @@ fn create_function_body_hook_guard(
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),
+                body_loc: loc,
             }),
         },
         loc,

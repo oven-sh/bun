@@ -313,6 +313,18 @@ development:
           }
         });
 
+        test("an asset of Bun.build() parses as its bytes, and one written to outdir is refused", async () => {
+          using dir = tempDir("yaml-build-output", {
+            "entry.js": `import doc from "./doc.yaml" with { type: "file" };\nconsole.log(doc);`,
+            "doc.yaml": "name: test\ncount: 5",
+          });
+          const entrypoints = [join(String(dir), "entry.js")];
+          const assetOf = (build: Bun.BuildOutput) => build.outputs.find(output => output.kind === "asset")!;
+          expect(YAML.parse(assetOf(await Bun.build({ entrypoints })))).toEqual({ name: "test", count: 5 });
+          const written = assetOf(await Bun.build({ entrypoints, outdir: join(String(dir), "out") }));
+          expect(() => YAML.parse(written)).toThrow("File blob cannot be used here");
+        });
+
         test("parses a SharedArrayBuffer that another thread is writing", async () => {
           await using proc = Bun.spawn({
             cmd: [
@@ -5701,4 +5713,39 @@ test("parse rejects an input of 2**31 bytes or more instead of panicking", () =>
   expect(err?.message).toBe(
     'The value of "input.byteLength" is out of range. It must be <= 2147483647. Received 2147483650',
   );
+});
+
+// With Malloc=1 the builder's buffer comes from the system allocator, so ASAN's allocation cap makes it fail to grow.
+describe.concurrent.skipIf(!isASAN)("stringify throws when the string builder can't grow", () => {
+  test.each([
+    ["before a capacity reservation", `Bun.YAML.stringify([big, 1], null, 2)`],
+    ["before a UTF-16 key", `Bun.YAML.stringify({ a: big, "日本": 1 })`],
+  ])("%s", async (_name, expression) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const big = Buffer.alloc(3 * 1024 * 1024, "x").toString("latin1");
+          try {
+            console.log("returned", ${expression}.length);
+          } catch (e) {
+            console.log("threw", e.name, e.message);
+          }
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        Malloc: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=4", "detect_leaks=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("threw RangeError Out of memory\n");
+    expect(exitCode).toBe(0);
+  });
 });

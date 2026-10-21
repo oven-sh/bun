@@ -890,6 +890,43 @@ void test_uv_os_getppid(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+struct QueuedWork {
+  uv_work_t req;
+  Isolate *isolate;
+  Global<Function> callback;
+  int result = 0;
+};
+
+// Queues work the way Nan::AsyncQueueWorker does. after_work_cb only opens a
+// v8::HandleScope, like Nan::AsyncExecuteComplete.
+void queue_work_and_call(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  auto *work = new QueuedWork;
+  work->req.data = work;
+  work->isolate = isolate;
+  work->callback.Reset(isolate, info[0].As<Function>());
+  int rc = uv_queue_work(
+      node::GetCurrentEventLoop(isolate), &work->req,
+      [](uv_work_t *req) { static_cast<QueuedWork *>(req->data)->result = 42; },
+      [](uv_work_t *req, int status) {
+        auto *work = static_cast<QueuedWork *>(req->data);
+        Isolate *isolate = work->isolate;
+        {
+          HandleScope scope(isolate);
+          Local<Value> args[] = {
+              String::NewFromUtf8(isolate, "done").ToLocalChecked(),
+              Number::New(isolate, status),
+              Number::New(isolate, work->result),
+          };
+          Local<Function>::New(isolate, work->callback)
+              ->Call(isolate->GetCurrentContext(), Undefined(isolate), 3, args)
+              .ToLocalChecked();
+        }
+        delete work;
+      });
+  info.GetReturnValue().Set(Number::New(isolate, rc));
+}
+
 void test_v8_object_get_by_key(const FunctionCallbackInfo<Value> &info) {
   printf("Testing Object::Get(context, key)...\n");
 
@@ -1885,6 +1922,36 @@ void test_v8_exception(const FunctionCallbackInfo<Value> &info) {
   isolate->ThrowException(err);
 }
 
+void test_v8_exception_empty_message(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> empty = String::NewFromUtf8(isolate, "").ToLocalChecked();
+
+  Local<Value> errors[] = {Exception::Error(empty),
+                           Exception::TypeError(empty)};
+  info.GetReturnValue().Set(Array::New(isolate, errors, 2));
+}
+
+void test_v8_throw_error_empty_message(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "").ToLocalChecked());
+}
+
+// These return a Local, not a MaybeLocal, so an addon does not check them.
+void test_v8_new_values_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+
+  LOG_EXPR(Array::New(isolate, 3)->Length());
+  Local<Value> elements[] = {Number::New(isolate, 1), Number::New(isolate, 2)};
+  LOG_EXPR(Array::New(isolate, elements, 2)->Length());
+  Local<ArrayBuffer> buffer = ArrayBuffer::New(isolate, 16);
+  LOG_EXPR(Uint8Array::New(buffer, 0, 8)->IsUint8Array());
+  LOG_EXPR(Uint32Array::New(buffer, 0, 2)->IsObject());
+  LOG_EXPR(BigInt::New(isolate, 5)->IsBigInt());
+}
+
 void test_v8_aligned_pointer_in_internal_field(
     const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
@@ -2184,6 +2251,7 @@ void initialize(Local<Object> exports, Local<Value> module,
                   return_accessor_value_from_inner_scope);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
+  NODE_SET_METHOD(exports, "queue_work_and_call", queue_work_and_call);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",
                   test_v8_object_get_by_key);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_index",
@@ -2226,6 +2294,12 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_getfunction_memoized);
   NODE_SET_METHOD(exports, "test_v8_map", test_v8_map);
   NODE_SET_METHOD(exports, "test_v8_exception", test_v8_exception);
+  NODE_SET_METHOD(exports, "test_v8_exception_empty_message",
+                  test_v8_exception_empty_message);
+  NODE_SET_METHOD(exports, "test_v8_throw_error_empty_message",
+                  test_v8_throw_error_empty_message);
+  NODE_SET_METHOD(exports, "test_v8_new_values_with_pending_exception",
+                  test_v8_new_values_with_pending_exception);
   NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",
                   test_v8_aligned_pointer_in_internal_field);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);

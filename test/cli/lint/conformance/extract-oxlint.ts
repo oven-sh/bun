@@ -1,20 +1,22 @@
-// Turns the tests of the rules that oxlint has in its own plugins (`crates/oxc_linter/src/rules/<plugin>/<rule>.rs`) into
-// `<out>/<plugin>/<rule>.json`, in the format of README.md, with what the **binary of oxlint** reports for each case. What the
-// tests expect is not used.
+// Turns the tests of the rules in oxlint's own plugins (`crates/oxc_linter/src/rules/<plugin>/<rule>.rs`) into
+// `<out>/<plugin>/<rule>.json`, in the format README.md describes. Each case records what the **oxlint binary** reports
+// for it. The tests' own expectations aren't used.
 //
-//   export ESLINT_DIR=<eslint, installed>      # for `globals`, which says what an `env` of a case declares
+//   export ESLINT_DIR=<eslint, installed>      # for `globals`, which lists the globals of a case's `env`
 //   bun extract-oxlint.ts --oxc <oxc checkout> --oxlint <oxlint> --out <dir> [--more <dir>] [--jobs <n>] [<plugin>/<rule>..]
 //
-// A plugin is called what oxlint calls it in `--rules`, with `-` for `_`. Without names: every rule that is not in `eslint` or
-// `typescript`.
+// Plugin names are the ones `oxlint --rules` prints, with `-` for `_`. Without rule names, it extracts every rule
+// outside `eslint` and `typescript`.
 //
-// - Some tests build their cases with functions and macros, which the scanner of `extract-oxc.ts` cannot read. These cases were
-//   written out: `--more <dir>` adds the cases of `<dir>/<plugin>/<rule>.json`, a fixture, to those of the source. `oxlint/` of the
-//   bundle, extracted, is such a directory. So were the cases that are called `own #n`: oxlint has few for some rules.
-// - A message is where the first label of the diagnostic is, which is where oxlint prints it. It has no id.
-// - oxlint does not print its fixes. `output` is the code after `--fix`, `outputWithSuggestions` after `--fix --fix-suggestions`,
-//   and `outputDangerously` after these and `--fix-dangerously`, each `null` if it is the code before it in this list.
-// - The file of a case is called what oxlint's `Tester` calls it. The cases of `import` are files of `<out>/import-project`.
+// - Some tests build their cases with functions and macros, which the scanner in `extract-oxc.ts` can't read. Those
+//   cases were written out by hand. `--more <dir>` adds the cases in the fixture `<dir>/<plugin>/<rule>.json` to the
+//   ones from the source. The bundle's `oxlint/`, extracted, is such a directory. The cases named `own #n` were also
+//   written by hand, because oxlint has few tests for some rules.
+// - A message's location is the diagnostic's first label, which is where oxlint prints it. It has no id.
+// - oxlint doesn't print its fixes. `output` is the code after `--fix`, `outputWithSuggestions` after
+//   `--fix --fix-suggestions`, and `outputDangerously` after both plus `--fix-dangerously`. Each is `null` if it's the
+//   same as the one before it.
+// - A case's filename is the one oxlint's `Tester` gives it. The `import` cases are files in `<out>/import-project`.
 
 import { spawnSync } from "node:child_process";
 import {
@@ -58,7 +60,7 @@ const environments: Record<string, Record<string, unknown>> = process.env.ESLINT
   ? createRequire(join(resolve(process.env.ESLINT_DIR), "package.json"))("globals")
   : {};
 const rulesRoot = join(oxc, "crates/oxc_linter/src/rules");
-/** Where the `Tester` is: the files that the cases of `import` are next to. */
+/** The directory the `Tester` runs the `import` cases in. It has the files they import. */
 const importProject = join(oxc, "crates/oxc_linter/fixtures/import");
 
 interface Listed {
@@ -79,9 +81,9 @@ function rustFiles(path: string): string[] {
     .filter(file => file.endsWith(".rs"));
 }
 
-/** What the `Tester` of the test function around a case is told. */
+/** How one test function configures its `Tester`. */
 interface Harness {
-  /** Lines of the source. */
+  /** The function's line range in the source. */
   from: number;
   to: number;
   path?: string;
@@ -199,7 +201,7 @@ function record(rule: Listed) {
   const { cases, unparsed } = rawCasesOf(rule);
   const id = `${dash(rule.scope)}/${rule.value}`;
   const hasFixes = rule.fix !== "none" && rule.fix !== "pending";
-  // One run of oxlint for all cases with the same configuration.
+  // Run oxlint once for all the cases with the same config.
   const groups = new Map<string, number[]>();
   cases.forEach((it, index) => {
     const key = JSON.stringify([it.options ?? [], it.oxlintrc ?? {}, it.plugins]);
@@ -254,10 +256,10 @@ function record(rule: Listed) {
         return { line: lines.length, column: lines.at(-1)!.length + 1 };
       };
       const own = diagnostics.filter(it => it.filename === path);
-      const isOfRule = (it: Diagnostic) => it.code?.endsWith(`(${rule.value})`);
-      const fatal = own.find(it => !isOfRule(it));
+      const isFromRule = (it: Diagnostic) => it.code?.endsWith(`(${rule.value})`);
+      const fatal = own.find(it => !isFromRule(it));
       const messages = own
-        .filter(isOfRule)
+        .filter(isFromRule)
         .map(it => {
           const labels = it.labels.map(label => {
             const [start, end] = [position(label.span.offset), position(label.span.offset + label.span.length)];
@@ -302,7 +304,7 @@ function record(rule: Listed) {
           parserOptions: /\.(?:[jt]sx|[cm]?js)$/.test(raw.filename) ? { ecmaFeatures: { jsx: true } } : null,
         },
         settings: raw.settings ?? null,
-        // What else is in the `.oxlintrc.json`.
+        // The rest of the `.oxlintrc.json`.
         oxlintrc: raw.oxlintrc,
         plugins: raw.plugins.length > 0 ? raw.plugins : undefined,
         typeAware: false,
@@ -345,7 +347,7 @@ if (rules.some(it => it.scope === "import") && !process.env.EXTRACT_OXLINT_WORKE
 if (process.env.EXTRACT_OXLINT_WORKER) {
   for (const rule of rules) console.log(JSON.stringify(record(rule)));
 } else {
-  // A process for each share of the rules.
+  // Split the rules across `jobs` processes.
   const shares: string[][] = Array.from({ length: Math.max(1, Math.min(jobs, rules.length)) }, () => []);
   rules.forEach((rule, i) => shares[i % shares.length].push(`${dash(rule.scope)}/${rule.value}`));
   const flags = ["--oxc", oxc, "--oxlint", oxlint, "--out", out, ...(more ? ["--more", more] : [])];

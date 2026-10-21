@@ -43,8 +43,8 @@ impl Rule for NoForInArray {
         }
         let head = get_for_statement_head_loc(node);
         let file = node.file();
-        // tsgolint ends the head at the `)` before the body, also where the line of that `)` has a
-        // `//` in a template or in a regular expression, which `skip_trivia_back` takes for a comment.
+        // tsgolint ends the head at the `)` before the body. That has to work even if the `)`'s line has a `//` in a
+        // template or a regular expression, which `skip_trivia_back` mistakes for a comment.
         let close_paren = match file.language().is_oxlint {
             true => file.token_before(body),
             false => None,

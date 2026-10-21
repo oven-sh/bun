@@ -148,16 +148,17 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     if (flags == PopulateStackTraceFlags::OnlyPosition)
         return;
 
-    if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
-        // Search for the beginning of the line
-        unsigned int lineStart = location.byte_position;
+    if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit() && !sourceString.isEmpty()) {
+        unsigned int maxSearch = sourceString.length();
+
+        // Search for the beginning of the line. byte_position equals the source length when the expression ends at the end of the source.
+        unsigned int lineStart = std::min<unsigned int>(location.byte_position, maxSearch - 1);
         while (lineStart > 0 && sourceString[lineStart] != '\n') {
             lineStart--;
         }
 
         // Search for the end of the line
         unsigned int lineEnd = location.byte_position;
-        unsigned int maxSearch = sourceString.length();
         while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
             lineEnd++;
         }
@@ -495,16 +496,21 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     }
     if (except.type == SYNTAX_ERROR_CODE) {
         except.message = Bun::toStringRef(err->sanitizedMessageString(global));
-
-    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-        RETURN_IF_EXCEPTION(scope, );
-        except.message = Bun::toStringRef(global, message);
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-            return;
     } else {
-        RETURN_IF_EXCEPTION(scope, );
-
-        except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        // This one intentionally calls getters.
+        JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message);
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.clearExceptionExceptTermination())
+                return;
+            message = {};
+        }
+        if (message) {
+            except.message = Bun::toStringRef(global, message);
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                return;
+        } else {
+            except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        }
     }
 
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {

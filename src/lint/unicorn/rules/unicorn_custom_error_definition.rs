@@ -12,7 +12,7 @@ const PASS_MESSAGE_TO_SUPER: Message =
     Message::new("", "Pass the error message to `super()` instead of setting `this.message`.");
 const INVALID_EXPORT: Message = Message::new("", "Exported error name should match error class");
 
-/// `Error`, `TypeError`, `Http2Error`: words that start with a capital letter, the last of which is `Error`.
+/// `Error`, `TypeError`, `Http2Error`: capitalized words, the last of which is `Error`.
 fn is_valid_super_class_name(name: &[u8]) -> bool {
     name.strip_suffix(b"Error").is_some_and(|prefix| {
         prefix.first().is_none_or(u8::is_ascii_uppercase) && prefix.iter().all(u8::is_ascii_alphanumeric)
@@ -31,7 +31,7 @@ fn has_valid_super_class(class: Class) -> bool {
     name.is_some_and(|it| is_valid_super_class_name(it.bytes()))
 }
 
-/// The `a` of `exports.a = class ..`.
+/// The `a` in `exports.a = class ..`.
 fn get_export_assignment_info(class: Class<'_>) -> Option<Ident<'_>> {
     let Node::Expr(class) = class.owner() else {
         return None;
@@ -50,7 +50,7 @@ fn get_export_assignment_info(class: Class<'_>) -> Option<Ident<'_>> {
     }
 }
 
-/// `name` with a capital letter first and `Error` last.
+/// Capitalizes `name` and makes it end in `Error`.
 fn get_class_name(name: &[u8]) -> Vec<u8> {
     let Ok(name) = std::str::from_utf8(name) else {
         return name.to_vec();
@@ -66,7 +66,7 @@ fn get_class_name(name: &[u8]) -> Vec<u8> {
     uppered.into_bytes()
 }
 
-/// The `e` of the statement `e;`.
+/// The `e` in the statement `e;`.
 fn expression_of(stmt: Stmt<'_>) -> Option<Expr<'_>> {
     match stmt.kind() {
         StmtKind::Expr(e) if !e.is_parenthesized() && stmt.directive().is_none() => Some(e),
@@ -79,7 +79,7 @@ fn is_super_call(stmt: Stmt) -> bool {
     call.and_then(Expr::callee).is_some_and(|it| it.tag() == ExprTag::Super && !it.is_parenthesized())
 }
 
-/// The `a` of `this.prop_name = a;`.
+/// The `a` in `this.prop_name = a;`.
 fn this_assignment<'a>(stmt: Stmt<'a>, prop_name: &str) -> Option<Expr<'a>> {
     let ExprKind::Assign { target, value, .. } = expression_of(stmt)?.kind() else {
         return None;
@@ -111,7 +111,8 @@ impl Rule for CustomErrorDefinition {
         if file.has_classes() { Self::ON } else { On::new() }
     }
 
-    // The outer one first, as oxlint: a class that is the value of `name` is reported twice at one place.
+    // Visits the outer class first, like oxlint, because a class that's the value of `name` is reported twice at the
+    // same location.
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Class(class) = node else {
             return;
@@ -139,7 +140,7 @@ impl Rule for CustomErrorDefinition {
                 && !it.flags().intersects(Flags::STATIC | Flags::ACCESSOR)
                 && it.key().is_some_and(is_name)
         });
-        // Where the field says what the name is, if that is not the name of the class.
+        // The span of the `name` field's value, if it isn't the class's name.
         let invalid_name_property = name_property.and_then(|property| match property.init() {
             Some(value) => (!is_expected_string_literal(value, name)).then(|| value.outer_span()),
             None => Some(property.span()),

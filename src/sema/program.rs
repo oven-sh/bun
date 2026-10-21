@@ -20,8 +20,8 @@ use crate::resolve::{
     Options, PackageId, ParseOptions, ResolvedModule, Resolver, ScriptKind, ScriptTarget, Tracer,
     ancestors, contains_path, displayed_path, file_extension_is_one_of, file_path,
     format_by_extension, get_base_file_name, get_lib_file_name, has_ts_implementation_extension,
-    inside, is_javascript, is_javascript_file, is_network_path, is_relative, is_same_path, join,
-    path_is_relative, remove_file_extension, run_with_current_helpers, supported_extensions,
+    inside, is_javascript, is_javascript_file, is_refused_network_path, is_relative, is_same_path,
+    join, path_is_relative, remove_file_extension, run_with_current_helpers, supported_extensions,
     to_file_name_lower_case, to_path, to_path_in, typescript_path,
 };
 use crate::session::{
@@ -3177,6 +3177,9 @@ fn referenced_file(
     name: &[u8],
     from: &[u8],
 ) -> Result<Vec<u8>, u32> {
+    if is_refused_network_path(&displayed_path(name), &displayed_path(from)) {
+        return Err(5116);
+    }
     let found = source_file_from_reference(host, options, name)?;
     match is_same_path(&found, from, host.is_case_sensitive()) {
         true => Err(1006),
@@ -3184,15 +3187,13 @@ fn referenced_file(
     }
 }
 
-/// `getSourceFileFromReference`: the file at `name`, which may lack an extension, or else the error.
+/// `getSourceFileFromReference`, after its test for a network path: the file at `name`, which may lack an extension, or
+/// else the error.
 fn source_file_from_reference(
     host: &dyn Host,
     options: &Options,
     name: &[u8],
 ) -> Result<Vec<u8>, u32> {
-    if is_network_path(&displayed_path(name)) {
-        return Err(5116);
-    }
     let allow_non_ts_extensions = host.script_kind(name).is_some();
     let is_case_sensitive = host.is_case_sensitive();
     // With an extension, it's that exact file or nothing.
@@ -3656,6 +3657,12 @@ fn imports_helpers(options: &Options, hir: &File) -> bool {
 /// `addRootFileTask`: the file that's read for the root file `root`, or else the error. `Ok(None)`:
 /// a declaration file that hasn't been built.
 fn root_file_name(host: &dyn Host, options: &Options, root: &[u8]) -> Result<Option<Vec<u8>>, u32> {
+    // A name on the command line is relative to the current directory, one in the configuration file to that file.
+    let is_refused =
+        |base: &[u8]| is_refused_network_path(&displayed_path(root), &displayed_path(base));
+    if is_refused(&options.current_directory) && is_refused(&options.base_dir) {
+        return Err(5116);
+    }
     let found = source_file_from_reference(host, options, root)?;
     Ok(match options.parse_file_redirect(&found) {
         Some(output) => host.is_file(output).then(|| output.to_vec()),

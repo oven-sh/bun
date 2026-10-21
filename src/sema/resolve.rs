@@ -1560,13 +1560,32 @@ pub(crate) fn get_path_components(path: &[u8]) -> SmallVec<[&[u8]; 8]> {
 }
 
 /// `nativepath.IsNetworkPath`, for a path in TypeScript's format.
-pub fn is_network_path(path: &[u8]) -> bool {
+fn is_network_path(path: &[u8]) -> bool {
     let is_separator = |c: &u8| matches!(c, b'/' | b'\\');
     match path {
         [first, second, ..] if is_separator(first) && is_separator(second) => true,
         [first, b'?', b'?'] => is_separator(first),
         [first, b'?', b'?', fourth, ..] => is_separator(first) && is_separator(fourth),
         _ => false,
+    }
+}
+
+/// True if something in `base` may not name `path`, because that's a network path. TypeScript refuses them all, so it
+/// can't check a project on a share. Here the server that `base` is on is allowed, since it's in use anyway. Both paths
+/// are absolute, normalized and in TypeScript's format.
+pub fn is_refused_network_path(path: &[u8], base: &[u8]) -> bool {
+    let is_on_server_of_base = || match (unc_server(path), unc_server(base)) {
+        (Some(server), Some(server_of_base)) => server.eq_ignore_ascii_case(server_of_base),
+        _ => false,
+    };
+    is_network_path(path) && !is_on_server_of_base()
+}
+
+/// The `server` of `//server/share`. `//?/` and `//./` begin a device path, which can lead to any server.
+fn unc_server(path: &[u8]) -> Option<&[u8]> {
+    match &path[..unc_root_length(path)] {
+        [_, _, server @ ..] if !matches!(server, b"" | b"?" | b".") => Some(server),
+        _ => None,
     }
 }
 

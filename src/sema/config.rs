@@ -9,9 +9,9 @@ use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
     Host, Options, ancestors, combine_paths, contains_path, displayed_path,
     equate_string_case_insensitive, extra_supported_extensions, file_extension_is_one_of,
-    get_base_file_name, get_path_components, get_relative_path_from_directory, is_network_path,
-    is_rooted_disk_path, is_same_path, join, known_extension, remove_file_extension, root_length,
-    supported_extensions, to_path, typescript_path,
+    get_base_file_name, get_path_components, get_relative_path_from_directory,
+    is_refused_network_path, is_rooted_disk_path, is_same_path, join, known_extension,
+    remove_file_extension, root_length, supported_extensions, to_path, typescript_path,
 };
 use crate::session::Session;
 use crate::util::{FxHashSet, SharedSort};
@@ -427,7 +427,7 @@ fn substitute_if_template(value: &[u8], base: &[u8]) -> Option<Vec<u8>> {
 /// `isNetworkPathValue`
 pub fn is_network_path_value(value: &[u8], base: &[u8]) -> bool {
     let value = strings::replace_owned(value, b"\\", b"/");
-    is_network_path(&displayed_path(&join(base, &value)))
+    is_refused_network_path(&displayed_path(&join(base, &value)), &displayed_path(base))
 }
 
 /// `normalizeNonListOptionValue`, for an option that `IsFilePath`.
@@ -939,7 +939,11 @@ fn validate_specs(
         .into_iter()
         .filter(|spec| {
             // `?` is a wildcard in a spec, so `/??/` isn't a network path here.
-            let code = if displayed_path(&join(base, spec)).starts_with(b"//") {
+            let path = join(base, spec);
+            let path = displayed_path(&path);
+            let code = if path.starts_with(b"//")
+                && is_refused_network_path(&path, &displayed_path(base))
+            {
                 5116
             // `disallowTrailingRecursion`
             } else if key == b"include" && invalid_trailing_recursion(spec) {

@@ -23792,6 +23792,149 @@ export const results: never = [infer1(1), infer2({ a: 1 })];
       expect(fromReference.exitCode).toBe(1);
     });
 
+    // A path may begin with `//` on POSIX, where it means the same as with one `/`. TypeScript takes its first name for a
+    // server.
+    describe.skipIf(isWindows)("a project on a network share", () => {
+      const share = (files: Record<string, string>) =>
+        project({
+          "base.json": tsconfig,
+          "a.ts": `export const a: string = 1;\n`,
+          ...files,
+        });
+
+      test("is checked, with every kind of relative path", async () => {
+        using dir = share({
+          "tsconfig.json": `{
+  "extends": "./base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./out",
+    "declaration": true,
+    "declarationDir": "\${configDir}/declarations",
+    "incremental": true,
+    "tsBuildInfoFile": "./out/info",
+    "typeRoots": ["./types"],
+    "types": ["t"],
+    "rootDirs": ["./src", "./generated"],
+    "paths": { "@lib/*": ["./lib/*"] }
+  },
+  "files": ["src/a.ts"],
+  "exclude": ["out"],
+  "references": [{ "path": "./dep" }]
+}
+`,
+          "src/a.ts": `/// <reference path="../lib/global.d.ts" />
+import { fromPaths } from "@lib/x";
+import { fromRootDirs } from "./generated";
+import { fromReference } from "../dep";
+export const a: string = [fromPaths, fromRootDirs, fromReference, fromReferencePath, fromTypeRoots] as const;
+`,
+          "lib/global.d.ts": `declare const fromReferencePath: 1;\n`,
+          "lib/x.ts": `export const fromPaths = 2;\n`,
+          "generated/generated.ts": `export const fromRootDirs = 3;\n`,
+          "dep/tsconfig.json": `{ "extends": "../base.json", "compilerOptions": { "composite": true, "noEmit": false }, "files": ["index.ts"] }`,
+          "dep/index.ts": `export const fromReference = 4;\n`,
+          "types/t/index.d.ts": `declare const fromTypeRoots: 5;\n`,
+        });
+        const { stdout, exitCode } = await check(dir, ["-p", `/${dir}`]);
+        expect(stdout).toBe(
+          "/<dir>/src/a.ts(5,14): error TS2322: Type 'readonly [2, 3, 4, 1, 5]' is not assignable to type 'string'.",
+        );
+        expect(exitCode).toBe(1);
+      });
+
+      test("can't name a path on another server, or a device path", async () => {
+        using dir = share({
+          "tsconfig.json": `{
+  "extends": "//other/base.json",
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "types": [],
+    "outDir": "//other/out",
+    "rootDir": "\\\\\\\\other\\\\src",
+    "tsBuildInfoFile": "/??/info",
+    "typeRoots": ["types", "//?/types", "//./types"],
+    "paths": { "a": ["//other/a"], "b": ["/??/b"] }
+  },
+  "files": ["a.ts", "//other/b.ts", "/??/b.ts"],
+  "include": ["//other/*", "//*/*"],
+  "exclude": ["//other/*"],
+  "references": [{ "path": "//other/lib" }]
+}
+`,
+          "lib/tsconfig.json": `{ "extends": "../base.json", "files": ["b.ts"] }`,
+          "lib/b.ts": `/// <reference path="//other/c.ts" />\n/// <reference path="/??/c.ts" />\n`,
+        });
+        const [fromFile, fromFlag, fromReference] = await Promise.all([
+          check(dir, ["-p", `/${dir}`]),
+          check(dir, ["-p", `/${dir}/lib`, "--outDir", "//other/out"]),
+          check(dir, ["-p", `/${dir}/lib`]),
+        ]);
+        expect(fromFile.stdout).toMatchInlineSnapshot(`
+          "/<dir>/tsconfig.json(2,14): error TS5116: Network path '//other/base.json' is not supported.
+          /<dir>/tsconfig.json(6,15): error TS5116: Network path '//other/out' is not supported.
+          /<dir>/tsconfig.json(7,16): error TS5116: Network path '//other/src' is not supported.
+          /<dir>/tsconfig.json(8,24): error TS5116: Network path '/??/info' is not supported.
+          /<dir>/tsconfig.json(9,28): error TS5116: Network path '//?/types' is not supported.
+          /<dir>/tsconfig.json(9,41): error TS5116: Network path '//./types' is not supported.
+          /<dir>/tsconfig.json(10,22): error TS5116: Network path '//other/a' is not supported.
+          /<dir>/tsconfig.json(10,42): error TS5116: Network path '/??/b' is not supported.
+          /<dir>/tsconfig.json(12,21): error TS5116: Network path '//other/b.ts' is not supported.
+          /<dir>/tsconfig.json(12,37): error TS5116: Network path '/??/b.ts' is not supported.
+          /<dir>/tsconfig.json(13,15): error TS5116: Network path '//other/*' is not supported.
+          /<dir>/tsconfig.json(13,28): error TS5116: Network path '//*/*' is not supported.
+          /<dir>/tsconfig.json(14,15): error TS5116: Network path '//other/*' is not supported.
+          /<dir>/tsconfig.json(15,28): error TS5116: Network path '//other/lib' is not supported."
+        `);
+        expect(fromFile.exitCode).toBe(1);
+        expect(fromFlag.stdout).toBe("error TS5116: Network path '//other/out' is not supported.");
+        expect(fromFlag.exitCode).toBe(1);
+        expect(fromReference.stdout).toMatchInlineSnapshot(`
+          "/<dir>/lib/b.ts(1,22): error TS5116: Network path '//other/c.ts' is not supported.
+          /<dir>/lib/b.ts(2,22): error TS5116: Network path '/??/c.ts' is not supported."
+        `);
+        expect(fromReference.exitCode).toBe(1);
+      });
+
+      test("can name an absolute path on its own server, whose name ignores ASCII case", async () => {
+        using dir = share({ "b.ts": "" });
+        const [server, ...rest] = String(dir).slice(1).split("/");
+        const isLowerCase = (letter: string) => letter === letter.toLowerCase();
+        const otherCase = server.replace(/[a-z]/gi, it => (isLowerCase(it) ? it.toUpperCase() : it.toLowerCase()));
+        expect(otherCase).not.toBe(server);
+        writeFileSync(
+          join(String(dir), "tsconfig.json"),
+          JSON.stringify({
+            extends: `/${dir}/base.json`,
+            compilerOptions: { outDir: `//${otherCase}/${rest.join("/")}/out`, paths: { b: [`/${dir}/b.ts`] } },
+            files: [`/${dir}/a.ts`],
+          }),
+        );
+        writeFileSync(
+          join(String(dir), "a.ts"),
+          `/// <reference path="/${dir}/b.ts" />\nexport const a: string = 1;\n`,
+        );
+        const { stdout, exitCode } = await check(dir, ["-p", `/${dir}`]);
+        expect(stdout).toBe("/<dir>/a.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.");
+        expect(exitCode).toBe(1);
+      });
+
+      test("can't name a server if one of the two names is only the start of the other", async () => {
+        using dir = share({ "a.ts": "" });
+        const [server] = String(dir).slice(1).split("/");
+        const rootDirs = [`//${server}2/a`, `//${server.slice(0, -1)}/a`];
+        writeFileSync(
+          join(String(dir), "tsconfig.json"),
+          JSON.stringify({ extends: "./base.json", compilerOptions: { rootDirs }, files: ["a.ts"] }),
+        );
+        const { stdout, exitCode } = await check(dir, ["-p", `/${dir}`]);
+        expect(stdout.split("\n").map(line => line.slice(line.indexOf("error")))).toEqual(
+          rootDirs.map(path => `error TS5116: Network path '${path}' is not supported.`),
+        );
+        expect(exitCode).toBe(1);
+      });
+    });
+
     test("a file in `files` hides the files that `include` matches with the same name and a lesser extension", async () => {
       using dir = project({
         "tsconfig.json": `{ "compilerOptions": { "lib": ["esnext"], "types": [], "noEmit": true }, "files": ["a.ts", "./a.ts"], "include": ["a.*"] }`,

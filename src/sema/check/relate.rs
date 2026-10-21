@@ -6473,6 +6473,13 @@ impl<'p, 's> Checker<'p, 's> {
             return self.instantiate(of, a.1) == self.instantiate(of, b.1);
         }
         let (own_a, own_b) = (self.mapper_of_prop(a.0), self.mapper_of_prop(b.0));
+        // A type has an inherited property from an instantiation of its base type. Which one that is depends only on
+        // what becomes of the base type's type arguments.
+        if own_a == own_b && own_a != MapperId::IDENTITY {
+            let arguments = self.types().mapping(own_a);
+            return (arguments.iter())
+                .all(|pair| self.instantiate(pair.1, a.1) == self.instantiate(pair.1, b.1));
+        }
         let (a, b) = (self.compose(own_a, a.1), self.compose(own_b, b.1));
         // A mapper stores `H.this -> H.this`, which maps nothing.
         let types = &self.types();

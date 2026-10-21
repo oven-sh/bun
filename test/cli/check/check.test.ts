@@ -15800,6 +15800,33 @@ export const e9: never = (null! as F9<unknown>)._output;
       expect(exitCode).toBe(1);
     });
 
+    // `B<X, U, V>` and `B<Y, U, V>` both have `e` from `Base<"k", V>`, so it's one property, and comparing the two
+    // never asks for its type.
+    test("doesn't resolve the type of a property that two instantiations inherit from the same base type", async () => {
+      using dir = project({
+        "a.ts": `interface A<T, U, V> { a: (x: B<V, U, T>) => void; b?: <W>(x: W, y: C<V, U, T>) => W }
+interface B<T, U, V> extends Base<"k", V> { f(x: A<B<T, T, V>, [...T[], B<string, U, U>], V>): C<(this: B<string, { x: 1 }, T[]>) => void, "k", V>; c?: B<{ x: 1; y: 2 }, { x: 1 }, 1> extends B<{ x: 1 }, { x: 1 }, 1> ? keyof V : U }
+interface C<T, U, V> { d: { [K in keyof V]: B<T, "k", string> } }
+type Base<T, U> = { e: A<number, U, T> extends A<U, string, U> ? U : T };
+export {};
+`,
+        // Resolving it while the variances of `B` were measured took 6 s in a release build.
+        "b.ts": `interface A<T, U, V> { a: (x: B<V, U, T>) => void; b?: <W>(x: W, y: C<V, U, T>) => W }
+interface B<T, U, V> extends Base<"k", V> { g: (x: B<T, T, 1>) => void; f(x: A<B<T, T, V>, [...T[], B<string, U, U>], V>): C<(this: B<string, { x: 1 }, T[]>) => void, "k", V>; c?: B<{ x: 1; y: 2 }, { x: 1 }, 1> extends B<{ x: 1 }, { x: 1 }, 1> ? keyof V : U }
+interface C<T, U, V> { h: Partial<C<1, number, T>>; d: { [K in keyof V]: B<T, "k", string> } }
+type Base<T, U> = { i(x: Base<"k", "k">): B<string, number, "a"> extends B<string, number, string> ? U : U; e: A<number, U, T> extends A<U, string, U> ? U : T };
+export {};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,21): error TS2502: 'e' is referenced directly or indirectly in its own type annotation.
+        b.ts(4,43): error TS2577: Return type annotation circularly references itself.
+        b.ts(4,109): error TS2502: 'e' is referenced directly or indirectly in its own type annotation."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("resolves a conditional type passed as the type argument of a base class that refers to its own members", async () => {
       using dir = project({
         "a.ts": `declare abstract class Schema<Output = any> { readonly _output: Output; }

@@ -4495,7 +4495,12 @@ describe("backpressure", () => {
       const socket = onBudgetSocket((req, res, socket) => {
         socket.budget = Infinity;
         res.setHeader("Content-Length", 1 << 30);
-        res.on("drain", () => events.push(`drain, and write(100) in it returned ${res.write(Buffer.alloc(100, "b"))}`));
+        // The socket has emitted its own 'drain' by then: it owes none.
+        res.on("drain", () =>
+          events.push(
+            `drain, the socket owes one: ${socket.writableNeedDrain}, and write(100) in it returned ${res.write(Buffer.alloc(100, "b"))}`,
+          ),
+        );
         events.push(`write(1) returned ${res.write("a")}`);
         res.cork();
         events.push(
@@ -4510,7 +4515,7 @@ describe("backpressure", () => {
         expect(events).toEqual([
           "write(1) returned true",
           "write() under the cork returned false",
-          "drain, and write(100) in it returned true",
+          "drain, the socket owes one: false, and write(100) in it returned true",
         ]);
       } finally {
         socket.destroy();

@@ -580,6 +580,26 @@ it("rejects a dir with a null byte", () => {
   );
 });
 
+it.skipIf(isWindows)("has no routes from another directory that shares dir's resolver cache entry", async () => {
+  // The resolver's directory cache is keyed by the hash of the path without trailing slashes, so "/" is keyed as "".
+  const dir = "/ajgq" + Buffer.alloc(27, "a").toString() + "b\x05\x1db6@o\x084o.uNpJ0";
+  expect(Bun.hash(dir)).toBe(Bun.hash(""));
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.log(JSON.stringify(new Bun.FileSystemRouter({ dir: process.argv[1], style: "nextjs" }).routes))`,
+      dir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "{}\n", stderr: "", exitCode: 0 });
+});
+
 it("origin should be validated", async () => {
   const { dir } = make(["posts.tsx"]);
 

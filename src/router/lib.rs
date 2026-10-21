@@ -548,12 +548,23 @@ impl<'a> RouteLoader<'a> {
         // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`:
         // another thread (e.g. the bundler's resolver) rewrites this map in place
         // under that lock, so iterating it live would walk freed buckets.
-        let entry_ptrs: Vec<*mut Fs::Entry> = {
+        let (entries_dir, entry_ptrs): (&'static [u8], Vec<*mut Fs::Entry>) = {
             let _entries_lock = fs.fs.entries_mutex.lock_guard();
             match root_dir_info.get_entries_const() {
-                Some(entries) => entries.data.values().copied().collect(),
+                Some(entries) => (entries.dir, entries.data.values().copied().collect()),
                 None => return,
             }
+        };
+        // The listing's directory is `base_dir` or a subdirectory of it, cached with or
+        // without a trailing slash depending on which resolver spelled it first
+        // (`base_dir` always has one). Both spellings trim to the same `public_dir`.
+        // The resolver's caches match a path by its hash alone, so a hit can be the
+        // listing of an unrelated directory, which has no routes of this router.
+        let public_dir = match entries_dir.strip_prefix(&base_dir[..base_dir.len() - 1]) {
+            Some(rest) if rest.first().is_none_or(|c| bun_paths::resolve_path::is_sep_any(*c)) => {
+                rest
+            }
+            _ => return,
         };
         // NOTE: the guard is dropped before this loop on purpose — the
         // `read_dir_info_ignore_error` recursion below re-acquires `entries_mutex`.
@@ -602,21 +613,6 @@ impl<'a> RouteLoader<'a> {
 
                     for _extname in self.config.extensions.iter() {
                         if &extname[1..] == _extname.as_ref() {
-                            // `entry.dir()` is `base_dir` or a subdirectory of it, cached
-                            // with or without a trailing slash depending on which resolver
-                            // spelled it first (`base_dir` always has one). Both spellings
-                            // trim to the same `public_dir`.
-                            let entry_dir = entry.dir();
-                            debug_assert!(entry_dir.len() + 1 >= base_dir.len());
-                            if entry_dir.len() >= base_dir.len() {
-                                debug_assert!(bun_paths::resolve_path::is_sep_any(
-                                    entry_dir[base_dir.len() - 1]
-                                ));
-                            }
-
-                            // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
-                            let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
-
                             // SAFETY: `entry_ptr` is EntryStore-owned (process
                             // lifetime) with no other live `&mut` borrow here.
                             let route = unsafe {

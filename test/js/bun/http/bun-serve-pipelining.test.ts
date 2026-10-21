@@ -1112,11 +1112,12 @@ describe("a lingering close", () => {
   const lingeringCloseMaxBytes = 8 * 1024 * 1024;
 
   // The server drops what the client still sends, up to a byte limit, and then
-  // closes. The client writes twice the limit and counts what it gets out. A unix
-  // socket holds little in flight, so a write completes only when the server has
-  // read it: with the limit a write fails half way, and without it every write
-  // completes and the close comes later, on the timeout. A limit that is too low
-  // fails the test further up that uploads 4 MiB into a lingering close.
+  // closes. The client writes one megabyte at a time, two more than the limit,
+  // and counts the writes that complete. A unix socket holds little in flight
+  // (about 200 KB on Linux, less on macOS), so a write completes only when the
+  // server has read nearly all of it: the count ends within a megabyte of the
+  // limit. Without the limit every write completes, and the close comes later,
+  // on the timeout.
   it.concurrent.if(isPosix)("stops reading at its byte limit", async () => {
     using dir = tempDir("serve-pipelining", {});
     const unix = transports.find(transport => transport.name === "unix")!;
@@ -1129,7 +1130,7 @@ describe("a lingering close", () => {
     // connection closes.
     const chunk = Buffer.alloc(1024 * 1024, "a");
     let flushed = 0;
-    while (flushed < 2 * lingeringCloseMaxBytes) {
+    while (flushed < lingeringCloseMaxBytes + 2 * chunk.length) {
       const written = Promise.withResolvers<boolean>();
       client.socket.write(chunk, error => written.resolve(!error));
       if (!(await Promise.race([written.promise, client.closed.then(() => false)]))) break;
@@ -1145,7 +1146,8 @@ describe("a lingering close", () => {
       sawFin: true,
       responses: [ok("body of /hold"), ok("body of /closing")],
     });
-    expect(flushed).toBeLessThan(2 * lingeringCloseMaxBytes);
+    expect(flushed).toBeGreaterThanOrEqual(lingeringCloseMaxBytes - chunk.length);
+    expect(flushed).toBeLessThanOrEqual(lingeringCloseMaxBytes + chunk.length);
   });
 
   // A client that neither sends nor ends is closed by the timeout of the linger.

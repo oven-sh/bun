@@ -14,6 +14,7 @@ use crate::Subcommand;
 use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
 use crate::lockfile::{self, Lockfile, reachable};
 use crate::resolution::Tag as ResolutionTag;
+use crate::update_scope::{NamedBy, NamedRequests};
 use crate::update_transitive::{
     DirectDependencies, TransitiveUpdate, enqueue_peer_rows, moved_targets_after_clean,
     plannable_peer_rows, print_kept_patched, redirect_moved_edges,
@@ -1813,7 +1814,9 @@ fn enqueue_named_updates(
     for dependency_i in 0..dependencies_len {
         let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
         let package_id = manager.lockfile.buffers.resolutions[dependency_i];
-        let Some(request) = index_of_named_update(manager, &dependency, package_id) else {
+        let Some((request, _)) =
+            NamedRequests::of(manager).naming_row(&manager.lockfile, &dependency, package_id)
+        else {
             continue;
         };
         if !walkable.is_set(dependency_i) {
@@ -1851,33 +1854,6 @@ fn enqueue_named_updates(
     );
     enqueue_peer_rows(manager, &peer_rows, &mut named.moved)?;
     Ok(named)
-}
-
-fn index_of_named_update(
-    manager: &PackageManager,
-    dependency: &Dependency,
-    package_id: PackageID,
-) -> Option<usize> {
-    let buf = manager.lockfile.buffers.string_bytes.as_slice();
-    if let Some(i) =
-        manager.index_of_update_request(dependency.name_hash, dependency.name.slice(buf))
-    {
-        return Some(i);
-    }
-    if package_id != invalid_package_id {
-        let name_hash = manager.lockfile.packages.items_name_hash()[package_id as usize];
-        if name_hash == dependency.name_hash {
-            return None;
-        }
-        let name = manager.lockfile.packages.items_name()[package_id as usize].slice(buf);
-        return manager.index_of_update_request(name_hash, name);
-    }
-    let realname = dependency.realname();
-    if realname.eql(dependency.name, buf, buf) {
-        return None;
-    }
-    let realname = realname.slice(buf);
-    manager.index_of_update_request_named(realname)
 }
 
 #[cold]
@@ -1950,12 +1926,17 @@ fn workspaces_reaching_request<'a>(
     let mut owners = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
     let all_deps = lockfile.buffers.dependencies.as_slice();
     let all_resolutions = lockfile.buffers.resolutions.as_slice();
+    let requests = NamedRequests::of(manager);
     for (pkg_id, (dep_list, res_list)) in dep_lists.iter().zip(res_lists).enumerate() {
         if dep_list
             .get(all_deps)
             .iter()
             .zip(res_list.get(all_resolutions))
-            .any(|(dep, &res)| index_of_named_update(manager, dep, res) == Some(request_index))
+            .any(|(dep, &res)| {
+                requests
+                    .naming_row(lockfile, dep, res)
+                    .is_some_and(|(request, _)| request == request_index)
+            })
         {
             owners.set(pkg_id);
         }
@@ -1999,9 +1980,10 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     // borrow keeps the disjoint columns alive without raw pointers.
     let lockfile: &Lockfile = &manager.lockfile;
     let updating_packages = &mut manager.updating_packages;
+    let requests = NamedRequests::new(&manager.update_request_index, &manager.update_requests);
     let packages = lockfile.packages.slice();
     let resolutions = packages.items_resolution();
-    // Bare `-r`/`--filter` edits the targets' package.json files only after resolve (`package_json_write_back`), so their rows are registered here instead.
+    // Bare `-r`/`--filter` edits the targets' package.json files only after resolve (`package_json_write_back`), so their rows are registered here instead. So are the rows that name a request through `npm:`.
     let register_rows =
         manager.update_target_workspaces.is_some() && manager.update_requests.is_empty();
     let update_to_latest = manager
@@ -2049,7 +2031,12 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             }
 
             let name = dep.name.slice(&lockfile.buffers.string_bytes);
-            let entry_ptr = if register_rows {
+            let registers = register_rows
+                || matches!(
+                    requests.naming_row(lockfile, dep, package_id),
+                    Some((_, NamedBy::Alias))
+                );
+            let entry_ptr = if registers {
                 if dep.version.tag == DependencyVersionTag::DistTag && !update_to_latest {
                     continue;
                 }

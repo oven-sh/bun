@@ -66,6 +66,26 @@ pub struct UpdateRequestIndex(
     >,
 );
 
+impl UpdateRequestIndex {
+    /// `requests` is the slice that `set_update_requests` indexed, in the same order.
+    pub(crate) fn find(
+        &self,
+        requests: &[UpdateRequest],
+        name_hash: PackageNameHash,
+        name: &[u8],
+    ) -> Option<usize> {
+        let first = *self.0.get(&name_hash)? as usize;
+        let same_name = |r: &UpdateRequest| r.name.is_empty() || r.name == name;
+        if same_name(&requests[first]) {
+            return Some(first);
+        }
+        requests[first + 1..]
+            .iter()
+            .position(|r| r.name_hash == name_hash && same_name(r))
+            .map(|offset| first + 1 + offset)
+    }
+}
+
 /// Park CLI-lifetime bytes in a process-lifetime static so LSan sees them as
 /// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
 /// `RawSlice` views because they may later be repointed at lockfile buffers.
@@ -330,20 +350,8 @@ impl PackageManager {
         name_hash: PackageNameHash,
         name: &[u8],
     ) -> Option<usize> {
-        let first = *self.update_request_index.0.get(&name_hash)? as usize;
-        let same_name = |r: &UpdateRequest| r.name.is_empty() || r.name == name;
-        if same_name(&self.update_requests[first]) {
-            return Some(first);
-        }
-        self.update_requests[first + 1..]
-            .iter()
-            .position(|r| r.name_hash == name_hash && same_name(r))
-            .map(|offset| first + 1 + offset)
-    }
-
-    /// For callers that only have the name; lockfile-driven callers pass the hash they already hold.
-    pub(crate) fn index_of_update_request_named(&self, name: &[u8]) -> Option<usize> {
-        self.index_of_update_request(bun_semver::string::Builder::string_hash(name), name)
+        self.update_request_index
+            .find(&self.update_requests, name_hash, name)
     }
 
     #[inline]

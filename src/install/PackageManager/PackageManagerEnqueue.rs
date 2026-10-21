@@ -3945,8 +3945,7 @@ fn names_update_request(
     name: SemverString,
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    this.is_update_request(dependency.name_hash, dependency.name.slice(buf))
-        || (name_hash != dependency.name_hash && this.is_update_request(name_hash, name.slice(buf)))
+    crate::update_scope::NamedRequests::of(this).names(dependency, buf, name_hash, name.slice(buf))
 }
 
 /// Only applies to a dependency that keeps its declared specifier. If an override or a catalog

@@ -8,7 +8,7 @@ use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, UnwrapOrOom as _, pretty, strings};
 use bun_semver::string::Builder as StringBuilder;
 
-use crate::dependency::Behavior;
+use crate::dependency::{Behavior, DependencyExt as _, Tag as DependencyVersionTag};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, reachable};
 use crate::package_manager::Options::LogLevel;
@@ -17,7 +17,10 @@ use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::package_manager_real::command_line_arguments::UpdateGroups;
 use crate::package_manager_real::install_with_manager::loaded_lockfile_name;
 use crate::resolution::Tag as ResolutionTag;
-use crate::{DependencyID, PackageID, PackageManager, PackageNameHash, invalid_package_id};
+use crate::update_request::{UpdateRequest, UpdateRequestIndex};
+use crate::{
+    Dependency, DependencyID, PackageID, PackageManager, PackageNameHash, invalid_package_id,
+};
 
 /// Which workspaces a `bun update` may re-resolve and rewrite; a non-workspace package's rows are in scope when one of those workspaces reaches it.
 pub struct UpdateScope<'a> {
@@ -185,6 +188,111 @@ impl UpdateScope<'_> {
             }
         }
         walk
+    }
+}
+
+/// How a dependency row names a request of `bun update <name>…`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NamedBy {
+    /// `"<request>": "<range>"`.
+    Key,
+    /// `"<key>": "npm:<request>@<range>"`, the row's own spec.
+    Alias,
+    /// Only the package the row stands for is the request: an override, a catalog entry or an alias that another package.json declares put it there.
+    Package,
+}
+
+/// The requests of `bun update <name>…`. The resolver, the install summary and the package.json write-back all match rows here, so the rows that are re-resolved are the ones reported and rewritten.
+#[derive(Clone, Copy)]
+pub(crate) struct NamedRequests<'a> {
+    index: &'a UpdateRequestIndex,
+    requests: &'a [UpdateRequest],
+}
+
+impl<'a> NamedRequests<'a> {
+    pub(crate) fn of(manager: &'a PackageManager) -> Self {
+        Self::new(&manager.update_request_index, &manager.update_requests)
+    }
+
+    /// `requests` in the order that `set_update_requests` indexed; the write-back holds them outside the manager.
+    pub(crate) fn new(index: &'a UpdateRequestIndex, requests: &'a [UpdateRequest]) -> Self {
+        Self { index, requests }
+    }
+
+    /// The request that `dependency` names by its key, or else by `package`, the name of the package it stands for.
+    fn naming(
+        self,
+        dependency: &Dependency,
+        buf: &[u8],
+        package_hash: PackageNameHash,
+        package: &[u8],
+    ) -> Option<(usize, NamedBy)> {
+        let key = dependency.name.slice(buf);
+        if let Some(request) = self.index.find(self.requests, dependency.name_hash, key) {
+            return Some((request, NamedBy::Key));
+        }
+        if package_hash == dependency.name_hash {
+            return None;
+        }
+        let request = self.index.find(self.requests, package_hash, package)?;
+        Some((request, NamedBy::Package))
+    }
+
+    /// Whether `dependency` names a request while the resolver is about to look `package` up for it.
+    pub(crate) fn names(
+        self,
+        dependency: &Dependency,
+        buf: &[u8],
+        package_hash: PackageNameHash,
+        package: &[u8],
+    ) -> bool {
+        self.naming(dependency, buf, package_hash, package)
+            .is_some()
+    }
+
+    /// The request that the lockfile row `dependency` -> `package_id` names, and how. A row that is not resolved stands for the package its own spec names.
+    pub(crate) fn naming_row(
+        self,
+        lockfile: &Lockfile,
+        dependency: &Dependency,
+        package_id: PackageID,
+    ) -> Option<(usize, NamedBy)> {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let realname = dependency.realname();
+        let declared = realname.slice(buf);
+        let (package_hash, package) = if package_id == invalid_package_id {
+            (StringBuilder::string_hash(declared), declared)
+        } else {
+            (
+                lockfile.packages.items_name_hash()[package_id as usize],
+                lockfile.packages.items_name()[package_id as usize].slice(buf),
+            )
+        };
+        let (request, by) = self.naming(dependency, buf, package_hash, package)?;
+        let by_own_spec = by == NamedBy::Package
+            && matches!(
+                dependency.version.tag,
+                DependencyVersionTag::Npm | DependencyVersionTag::DistTag
+            )
+            && declared == package;
+        Some((request, if by_own_spec { NamedBy::Alias } else { by }))
+    }
+
+    /// The `NamedBy::Alias` rows of the root or workspace `package_id`: the package.json entries that the update moves besides the ones keyed by a request.
+    pub(crate) fn alias_rows(
+        self,
+        lockfile: &'a Lockfile,
+        package_id: PackageID,
+    ) -> impl Iterator<Item = DependencyID> + 'a {
+        let rows = lockfile.packages.items_dependencies()[package_id as usize];
+        (rows.begin()..rows.end()).filter(move |&row| {
+            let dependency = &lockfile.buffers.dependencies[row as usize];
+            let resolved = lockfile.buffers.resolutions[row as usize];
+            matches!(
+                self.naming_row(lockfile, dependency, resolved),
+                Some((_, NamedBy::Alias))
+            )
+        })
     }
 }
 

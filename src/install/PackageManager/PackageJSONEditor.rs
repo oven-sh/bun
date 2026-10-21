@@ -53,6 +53,11 @@ fn split_npm_alias(literal: &[u8]) -> Option<(&[u8], &[u8])> {
     ))
 }
 
+/// `npm:@foo/bar@~1.2.3` -> `@foo/bar`.
+pub(crate) fn npm_alias_name(literal: &[u8]) -> Option<&[u8]> {
+    split_npm_alias(literal).map(|(alias, _)| &alias[b"npm:".len()..])
+}
+
 /// `version` behind `from`'s `npm:<name>@` (if any), unless it already names a target.
 fn with_alias_of<'a>(arena: &'a bun_alloc::Arena, from: &[u8], version: &'a [u8]) -> &'a [u8] {
     match split_npm_alias(from) {
@@ -333,30 +338,6 @@ pub(crate) fn edit_update_no_args(
         current_package_json,
         options,
         &|_, _| true,
-    )
-}
-
-/// `bun update <name>`: entries declared as `<key>: npm:<name>@…` move like every entry of a bare update does.
-fn edit_update_aliases_of_requests(
-    manager: &mut PackageManager,
-    updates: &[UpdateRequest],
-    current_package_json: &mut Expr,
-    options: EditOptions,
-) -> Result<bool, bun_alloc::AllocError> {
-    let is_request = |name: &[u8]| updates.iter().any(|r| r.is_aliased && r.name == name);
-    let is_alias_of_request = |key: &[u8], literal: &[u8]| {
-        split_npm_alias(literal).is_some_and(|(alias, _)| is_request(&alias[b"npm:".len()..]))
-            && !is_request(key)
-    };
-    edit_update_entries(
-        &manager.lockfile,
-        &manager.ast_arena,
-        &mut manager.updating_packages,
-        manager.workspace_name_hash,
-        manager.options.do_.contains(Do::UPDATE_TO_LATEST),
-        current_package_json,
-        options,
-        &is_alias_of_request,
     )
 }
 
@@ -1004,8 +985,7 @@ pub(crate) fn edit(
             Global::crash();
         }
     }
-    let mut changed = manager.subcommand == Subcommand::Update
-        && edit_update_aliases_of_requests(manager, &**updates, current_package_json, options)?;
+    let mut changed = false;
 
     // `arena` is a disjoint-field borrow held across the `&mut manager.updating_packages` accesses below.
     let arena = &manager.ast_arena;

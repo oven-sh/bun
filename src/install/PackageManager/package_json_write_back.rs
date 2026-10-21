@@ -11,7 +11,8 @@ use crate::lockfile::override_map::OverrideMap;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Features, PackageID, PackageNameHash, invalid_package_id};
+use crate::update_scope::{NamedRequests, UpdateScope};
+use crate::{DependencyID, Features, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -258,15 +259,19 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<Synced
         let result = pending.edit_entries(manager, &mut updates);
         manager.pending_filtered_write = Some(pending);
         result
-    } else if let Some(targets) = manager.update_target_workspaces.take() {
-        let result = edit_update_targets(manager, &targets, &mut edited, exact);
-        manager.update_target_workspaces = Some(targets);
-        result
+    } else if manager.update_target_workspaces.is_some() {
+        edit_update_targets(manager, Entries::All, &mut edited, exact)
     } else if let Some(i) = cwd {
         edit_cwd(manager, &mut edited, i, &mut updates, exact)
     } else {
         Ok(())
     }
+    .and_then(|()| {
+        if manager.subcommand != Subcommand::Update || updates.is_empty() {
+            return Ok(());
+        }
+        edit_update_targets(manager, Entries::AliasesOf(&updates), &mut edited, exact)
+    })
     .and_then(|()| sync_lockfile(manager, &edited));
 
     if result.is_ok() && !updates.is_empty() {
@@ -281,17 +286,35 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<Synced
     result
 }
 
-/// Bare `bun update -r` / `bun update --filter`: every targeted root/workspace package.json (named requests take the `pending` branch instead).
+/// The package.json entries that `edit_update_targets` moves to the versions bun.lock resolved.
+#[derive(Clone, Copy)]
+enum Entries<'a> {
+    /// A bare `bun update -r` / `--filter`: every entry of every target.
+    All,
+    /// `bun update <name>`: the entries that name one of these requests through `npm:`. An entry keyed by a request is edited as that request (`edit`).
+    AliasesOf(&'a [UpdateRequest]),
+}
+
+/// The package.json of each root/workspace in the update's scope. A named update opens the ones that have an entry to move, and records the ones it changed.
 fn edit_update_targets(
     manager: &mut PackageManager,
-    targets: &[super::UpdateTargetWorkspace],
+    entries: Entries<'_>,
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
 ) -> crate::Result<()> {
     let top_level = FileSystem::instance().top_level_dir();
-    let mut selected: Vec<WorkspaceTarget> = Vec::new();
+    // Each target with its `NamedBy::Alias` rows, which `Entries::All` leaves empty.
+    let mut selected: Vec<(WorkspaceTarget, Vec<DependencyID>)> = Vec::new();
     {
+        let scope = UpdateScope::of(manager);
         let lockfile: &Lockfile = &manager.lockfile;
+        let requests = match entries {
+            Entries::All => None,
+            Entries::AliasesOf(requests) => Some(NamedRequests::new(
+                &manager.update_request_index,
+                requests,
+            )),
+        };
         let buf = lockfile.buffers.string_bytes.as_slice();
         let resolutions = lockfile.packages.items_resolution();
         let name_hashes = lockfile.packages.items_name_hash();
@@ -305,29 +328,52 @@ fn edit_update_targets(
                 _ => continue,
             };
             let name = names[pkg_id].slice(buf);
-            if !targets
-                .iter()
-                .any(|t| t.matches(name_hash.is_none(), name_hashes[pkg_id], name))
-            {
+            if !scope.contains_workspace(name_hash.is_none(), name_hashes[pkg_id], name) {
                 continue;
             }
-            selected.push(WorkspaceTarget {
-                name: Box::from(name),
-                name_hash,
-                package_json_path: join_abs_string_buf::<platform::Auto>(
-                    top_level,
-                    &mut path_buf.0,
-                    &[rel, b"package.json"],
-                )
-                .into(),
-            });
+            let alias_rows: Vec<DependencyID> = match requests {
+                None => Vec::new(),
+                Some(requests) => requests.alias_rows(lockfile, pkg_id as PackageID).collect(),
+            };
+            if requests.is_some() && alias_rows.is_empty() {
+                continue;
+            }
+            selected.push((
+                WorkspaceTarget {
+                    name: Box::from(name),
+                    name_hash,
+                    package_json_path: join_abs_string_buf::<platform::Auto>(
+                        top_level,
+                        &mut path_buf.0,
+                        &[rel, b"package.json"],
+                    )
+                    .into(),
+                },
+                alias_rows,
+            ));
         }
     }
 
     let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
-    for target in selected {
+    for (target, alias_rows) in selected {
         let mut ast = fetch_entry_root(manager, &target);
         let mut updating = bun_collections::StringArrayHashMap::default();
+        let lockfile: &Lockfile = &manager.lockfile;
+        let rows = lockfile.buffers.dependencies.as_slice();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let selects = |key: &[u8], literal: &[u8]| match entries {
+            Entries::All => true,
+            // A key can be in two dependency groups with the `npm:` spec in only one.
+            Entries::AliasesOf(_) => {
+                PackageJSONEditor::npm_alias_name(literal).is_some_and(|package| {
+                    alias_rows.iter().any(|&row| {
+                        let row = &rows[row as usize];
+                        row.name.slice(buf) == key && row.realname().slice(buf) == package
+                    })
+                })
+            }
+        };
+        let mut changed = false;
         for options in [
             EditOptions {
                 exact_versions: true,
@@ -338,19 +384,21 @@ fn edit_update_targets(
                 ..Default::default()
             },
         ] {
-            PackageJSONEditor::edit_update_entries(
-                &manager.lockfile,
+            changed |= PackageJSONEditor::edit_update_entries(
+                lockfile,
                 &manager.ast_arena,
                 &mut updating,
                 target.name_hash,
                 update_to_latest,
                 &mut ast,
                 options,
-                &|_, _| true,
+                &selects,
             )?;
         }
-        store_entry(manager, &target, ast);
-        push(edited, target, false);
+        if changed || matches!(entries, Entries::All) {
+            store_entry(manager, &target, ast);
+            push(edited, target, false);
+        }
     }
 
     if !manager.updating_catalogs.is_empty() {

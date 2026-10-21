@@ -161,6 +161,46 @@ describe("URLPattern", () => {
       // Should not throw
       new URLPattern(undefined, undefined);
     });
+
+    // A component compiles to one RegExp with the v flag. JavaScriptCore only syntax-checks a pattern of more than 64
+    // characters when it creates the RegExp, so a group that the syntax check alone did not refuse made a URLPattern
+    // that threw a SyntaxError from test() and exec(), or from the constructor on its first call only.
+    describe.each([
+      ["a negated class that holds an empty class string", "([^\\q{}])"],
+      ["a count that JavaScriptCore's RegExp offsets cannot hold", "(x{4294967295})"],
+    ])("a regexp group with %s", (_, group) => {
+      const long = Buffer.alloc(70, "a").toString();
+      const refused = "TypeError: Unable to create RegExp object regular expression from provided URLPattern string.";
+      const errorOf = (init: { pathname?: string; protocol?: string }) => {
+        try {
+          new URLPattern(init);
+        } catch (e) {
+          return `${(e as Error).name}: ${(e as Error).message}`;
+        }
+        return "no error";
+      };
+
+      test("in a short pathname", () => {
+        expect(errorOf({ pathname: "/:id" + group })).toBe(refused);
+      });
+
+      test("in a long pathname", () => {
+        expect(errorOf({ pathname: "/" + long + "/:id" + group })).toBe(refused);
+      });
+
+      test("in a long protocol, every time", () => {
+        const first = errorOf({ protocol: long + group });
+        const second = errorOf({ protocol: long + group });
+        expect([first, second]).toEqual([refused, refused]);
+      });
+    });
+
+    test("a long pathname with a valid regexp group", () => {
+      const long = Buffer.alloc(70, "a").toString();
+      const pattern = new URLPattern({ pathname: "/" + long + "/:id([^\\q{a}])" });
+      expect(pattern.test({ pathname: "/" + long + "/b" })).toBe(true);
+      expect(pattern.test({ pathname: "/" + long + "/a" })).toBe(false);
+    });
   });
 
   describe("hasRegExpGroups", () => {

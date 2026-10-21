@@ -784,8 +784,7 @@ impl TimerObjectInternals {
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
-        // `interval` is below 1 for `Bun.sleep(0)` and for a `setTimeout`
-        // with a sub-1ms delay armed under fake timers.
+        // `Bun.sleep(0)` and a fake `setTimeout(fn, 0)` have an `interval` below 1.
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
         let min_delay = unsafe { (*state).timer.fake_timers.min_delay_ms() };
         let scheduled_time = now.add_ms(i64::from(self.interval.get().max(min_delay)));

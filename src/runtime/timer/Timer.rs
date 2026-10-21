@@ -131,9 +131,9 @@ impl All {
         warn: bool,
     ) -> JsResult<u32> {
         // Both match arms below enforce the [0, i32::MAX] range (Clamp
-        // saturates to i32::MAX; OneMs yields `minimum_ms`, 1 for an
-        // overflow, or a value already validated to be <= i32::MAX), so
-        // callers always receive a value in that range.
+        // saturates to i32::MAX; OneMs yields either 1 or a value already
+        // validated to be <= i32::MAX), so callers always receive a value
+        // in that range.
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         let countdown_double = countdown.to_number(global_this)?;
@@ -244,9 +244,7 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
-        // As in @sinonjs/fake-timers, a fake timer without a delay is due now
-        // (1ms later while a fake timer's callback runs, see
-        // `FakeTimers::min_delay_ms()`). A real one is never below 1ms.
+        // A fake timer without a delay is due now, as in @sinonjs/fake-timers.
         let minimum_ms = if all.fake_timers.is_active() { 0 } else { 1 };
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
@@ -278,8 +276,7 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
-        // Never 0, on either clock: it would be due again at the time it
-        // fired, so advancing the fake clock would not end.
+        // Never 0: a 0 interval would be due again at the time it fired.
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,

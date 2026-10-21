@@ -27,7 +27,7 @@ impl Rule for PreferSetSize {
         if file.mentions("Array") && file.mentions("from") { Self::ON } else { On::new().exprs(&[ExprTag::Spread]) }
     }
 
-    /// `e`: the `...set` of `[...set]`, or `Array.from(set)`.
+    /// `e` is the `...set` in `[...set]`, or `Array.from(set)`.
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (obj, maybe_set) = match e.as_call() {
             Some(call) => (e, call.args().first().filter(|it| it.tag() != ExprTag::Spread && is_array_from_call(call))),
@@ -53,7 +53,7 @@ impl Rule for PreferSetSize {
         let (conversion, set) = (obj.span(), maybe_set.outer_span());
         let report = cx.report(name, PREFER_SET_SIZE);
         if cx.file().comments_in(conversion).len() <= cx.file().comments_in(set).len() {
-            // What oxlint calls its fix.
+            // oxlint's name for its fix.
             report
                 .help("Replace array conversion with direct `Set.size` access")
                 .fix(|fixer| [fixer.replace(conversion, fixer.file().slice(set)), fixer.replace(name, "size")]);

@@ -60,7 +60,7 @@ impl Rule for JsxIndent {
         }
         for child in jsx.children_with_whitespace() {
             match child {
-                // Not all of it is white space for a regular expression.
+                // A regular expression's `\s` doesn't match all of it.
                 JsxChild::Whitespace(node) => {
                     self.check_literal_node_indent(node, file.slice(node), start, cx)
                 }
@@ -82,7 +82,7 @@ impl Rule for JsxIndent {
         }
     }
 
-    /// A `return` of JSX is `isReturningJSX`.
+    /// A `return` of JSX satisfies `isReturningJSX`.
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Return(Some(argument)) = statement.kind() else {
             return;
@@ -119,12 +119,12 @@ impl Rule for JsxIndent {
 }
 
 impl JsxIndent {
-    /// `repeat(indentChar, needed)`, which has not thrown: see `report`.
+    /// `repeat(indentChar, needed)`. It can't throw here, because `report` has already checked the count.
     fn indent(&self, needed: i64, fixer: Fixer<'_>) -> Option<Vec<u8>> {
         fixer.repeat(self.indent_char, u64::try_from(needed).ok()?)
     }
 
-    /// `report`, without the fix. `getFixerFunction` repeats before anything is reported.
+    /// `report`, without the fix. `getFixerFunction` calls `repeat` before anything is reported.
     fn report<'a>(&self, node: Span, needed: i64, gotten: i64, cx: &Cx<'a, Self>) -> Report<'a> {
         cx.repeat_count(needed as f64, node);
         cx.report(node, WRONG_INDENT)
@@ -148,7 +148,7 @@ impl JsxIndent {
             .data("gotten", gotten)
     }
 
-    /// `report`, of what is neither text nor a `return`.
+    /// `report`, for a node that's neither text nor a `return`.
     fn report_first_in_line<'a>(
         &self,
         node: Span,
@@ -162,17 +162,17 @@ impl JsxIndent {
         })
     }
 
-    /// How many characters of the indentation `line` starts with.
+    /// Returns how many indentation characters `line` starts with.
     fn indent_of(&self, line: &[u8]) -> i64 {
         (line.len() - strings::trim_left(line, &[self.indent_char]).len()) as i64
     }
 
-    /// `getNodeIndent`, of what starts at `offset`.
+    /// `getNodeIndent`, for a node that starts at `offset`.
     fn get_node_indent(&self, file: &File<'_>, offset: u32) -> i64 {
         self.indent_of(file.line_text(file.line_of(offset)))
     }
 
-    /// `isRightInLogicalExp`, of what is directly in `element`.
+    /// `isRightInLogicalExp`, for a node whose parent is `element`.
     fn is_right_in_logical_exp(&self, element: Expr<'_>) -> bool {
         !self.indent_logical_expressions
             && matches!(element.parent(), Node::Expr(parent) if matches!(
@@ -181,7 +181,8 @@ impl JsxIndent {
             ))
     }
 
-    /// `checkNodesIndent`, of what is first in its line. `element`: its parent, if that is an element or a fragment.
+    /// `checkNodesIndent`, for a node that's first in its line. `element`: its parent, if that's an element or a
+    /// fragment.
     fn check_nodes_indent<'a>(
         &self,
         node: Span,
@@ -199,7 +200,7 @@ impl JsxIndent {
         }
     }
 
-    /// How long the first group of `/\n( *)[\t ]*\S/g`, or of the same for tabs, is in each match.
+    /// Returns the length of the first group in each match of `/\n( *)[\t ]*\S/g`, or of the same regex for tabs.
     fn node_indents_per_line(&self, value: &[u8]) -> impl Iterator<Item = i64> {
         let lines = strings::split(value, b"\n")
             .skip(1)
@@ -207,7 +208,7 @@ impl JsxIndent {
         lines.map(move |it| self.indent_of(it))
     }
 
-    /// `handleLiteral`, `checkLiteralNodeIndent`. `parent`: where the element starts.
+    /// `handleLiteral`, `checkLiteralNodeIndent`. `parent`: the start of the element.
     fn check_literal_node_indent(&self, node: Span, value: &[u8], parent: u32, cx: &Cx<'_, Self>) {
         if self.node_indents_per_line(value).next().is_none() {
             return;
@@ -226,7 +227,8 @@ impl JsxIndent {
         }
     }
 
-    /// `handleOpeningElement`. What is first in its line has the token before it, and what that is in, further up.
+    /// `handleOpeningElement`. A node that's first in its line has the previous token, and the node containing it, on
+    /// an earlier line.
     fn handle_opening_element<'a>(&self, element: Expr<'a>, node: Span, cx: &Cx<'a, Self>) {
         let file = cx.file();
         if !is_first_in_line(file, node) {
@@ -234,7 +236,8 @@ impl JsxIndent {
         }
         let (parent, parentheses) = (element.parent(), element.parens().next());
         let is_child = matches!(parent, Node::Expr(it) if it.tag() == ExprTag::Jsx);
-        // The token before a child is text here, and that in parentheses a `(`: the tokens are not looked at.
+        // The token before a child is JSX text, and the one before a parenthesized element is a `(`, so neither needs a
+        // token lookup.
         let prev = if is_child && element.jsx_container_span().is_none() {
             parent.span().start
         } else if let Some(parentheses) = parentheses {
@@ -270,7 +273,8 @@ impl JsxIndent {
         );
     }
 
-    /// `JSXExpressionContainer` for the value of an attribute, then `handleAttribute`. `name`: where the name starts.
+    /// `JSXExpressionContainer` for an attribute's value, then `handleAttribute`. `name`: the start of the attribute's
+    /// name.
     fn handle_attribute(&self, name: u32, container: Span, cx: &Cx<'_, Self>) {
         let file = cx.file();
         let is_container_first_in_line = is_first_in_line(file, container);
@@ -298,25 +302,25 @@ impl JsxIndent {
         let name_indent = self.get_node_indent(file, name);
         let node_indent = self.get_node_indent(file, first_in_line.start());
         if node_indent != name_indent {
-            // Of `a={}` it is the `{`, and upstream is at the attribute before it is at its value.
+            // For `a={}` it's the `{`, and upstream visits the attribute before its value.
             self.report_first_in_line(first_in_line.span(), name_indent, node_indent, cx)
                 .shorter_first();
         }
     }
 }
 
-/// `isNodeFirstInLine`. The tokens are looked at only where the text before `node` does not say it.
+/// `isNodeFirstInLine`. Only looks at the tokens if the text before `node` doesn't settle it.
 fn is_first_in_line<'a>(file: &'a File<'a>, node: Span) -> bool {
     let before = file.text().get(..node.start as usize).unwrap_or_default();
     match strings::trim_right(before, b" \t").last() {
         Some(b'\n') => true,
-        // Not the end of a comment, nor of a character reference, which can stand for white space.
+        // A `/` could end a comment, and a `;` could end a character reference, which can stand for whitespace.
         Some(it) if it.is_ascii_graphic() && !matches!(it, b'/' | b';') => false,
         _ => is_node_first_in_line(file, node),
     }
 }
 
-/// What follows `/^[\t ]*/` in `line`, if `\S` matches there.
+/// Returns what follows `/^[\t ]*/` in `line`, if `\S` matches there.
 fn after_indent(line: &[u8]) -> Option<&[u8]> {
     let rest = strings::trim_left(line, b" \t");
     (!rest.is_empty() && strings::js_whitespace_len(rest) == 0).then_some(rest)
@@ -340,7 +344,7 @@ fn with_indent(raw: &[u8], indent: &[u8]) -> Vec<u8> {
     fixed
 }
 
-/// Where the operand of the innermost `?:` around `offset` starts, and without one the `Program`.
+/// Returns the start of the operand of the innermost `?:` around `offset`, or of the `Program` if there is none.
 fn start_in_conditional_expression<'a>(file: &'a File<'a>, offset: u32) -> u32 {
     let mut node = get_node_by_range_index(file, offset);
     for parent in node.ancestors() {
@@ -349,7 +353,7 @@ fn start_in_conditional_expression<'a>(file: &'a File<'a>, offset: u32) -> u32 {
         }
         node = parent;
     }
-    // espree's is the whole text.
+    // espree's `Program` spans the whole text.
     if file.uses_typescript_parser() {
         file.program_span().start
     } else {

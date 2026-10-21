@@ -15,12 +15,12 @@ const UNSAFE_ARITHMETIC: Message = Message::new(
     "Unsafe arithmetic operation on optional chaining. It can result in NaN.",
 );
 
-/// What becomes of the value of an expression.
+/// How an expression's value is used.
 #[derive(Copy, Clone)]
 pub enum Outcome {
     /// `undefined` throws a `TypeError`.
     Unsafe,
-    /// `undefined` makes `NaN`.
+    /// `undefined` produces `NaN`.
     Arithmetic,
     Safe,
 }
@@ -33,12 +33,12 @@ fn is_destructuring_pattern(pattern: Pat) -> bool {
     matches!(pattern.tag(), PatTag::Object | PatTag::Array)
 }
 
-/// Upstream goes down from each of these places to the optional chains. This is the way up.
+/// Upstream walks down from each of these positions to the optional chains. This walks up instead.
 ///
-/// oxlint 1.87 sees through what only concerns types, as in `(a?.b as T).c` and `(a?.b)!.c`. It says nothing about a
-/// spread among arguments, about the default value of a parameter and about `#a in b?.c`.
+/// oxlint 1.87 looks through type-only wrappers, as in `(a?.b as T).c` and `(a?.b)!.c`. It doesn't report a spread
+/// argument, a parameter's default value or `#a in b?.c`.
 ///
-/// `None`: it is the value of the parent, or can be.
+/// Returns `None` if `e` is, or can be, the parent's value.
 fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Option<Outcome> {
     let unsafe_if = |is_unsafe: bool| Some(if is_unsafe { Outcome::Unsafe } else { Outcome::Safe });
     match e.parent() {
@@ -100,7 +100,7 @@ fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Option<Outcome> {
 }
 
 impl NoUnsafeOptionalChaining {
-    /// `chain` is the whole of an optional chain.
+    /// `chain` is the root of an optional chain.
     #[inline(never)]
     fn check<'a>(&self, chain: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;

@@ -1857,11 +1857,13 @@ impl<'bump> Parser<'bump> {
         )))
     }
 
+    #[inline]
     fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
+        let tok = IfClauseTok::from_text(self.text(range))?;
         if self.is_interpolated_position(range.start) {
             return None;
         }
-        IfClauseTok::from_text(self.text(range))
+        Some(tok)
     }
 
     fn advance(&mut self) -> Token {

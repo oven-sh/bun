@@ -453,13 +453,20 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         let mut front_stmts = BumpVec::<Stmt>::new_in(bump);
+        // Directives stay first in the wrapper, and stay directives.
+        let is_directive = |stmt: &&Stmt| matches!(stmt.data, StmtData::SDirective(_));
+        let front_at = all_stmts.iter().take_while(is_directive).count();
         if !functions.is_empty() {
+            let is_use_strict = |stmt: &Stmt| matches!(stmt.data, StmtData::SDirective(directive) if directive.value.slice() == b"use strict");
             // Direct eval and a lowered `using` declare inside the wrapper, and a strict Program hides its declarations from indirect eval.
             let in_wrapper = self.module_scope().contains_direct_eval
                 || self.will_wrap_module_in_try_catch_for_using
-                || self.module_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode;
+                || all_stmts[..front_at].iter().any(is_use_strict);
             for &function in functions.iter() {
-                self.repl_pin_name(function.name.ref_);
+                // Keeps the session's name under `minify.identifiers`. The chain of a pinned name is pinned already.
+                if !self.symbols[function.name.ref_.inner_index() as usize].must_not_be_renamed() {
+                    self.set_must_not_be_renamed_through_links(function.name.ref_);
+                }
                 if in_wrapper {
                     self.repl_assign_function(function, &mut hoisted_stmts, &mut front_stmts, bump);
                 } else {
@@ -475,9 +482,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         self.repl_wrap_last_expression_with_return(&mut inner_stmts[value_start..], bump);
 
         if !front_stmts.is_empty() {
-            // Directives stay first in the wrapper, and stay directives.
-            let is_directive = |stmt: &&Stmt| matches!(stmt.data, StmtData::SDirective(_));
-            let front_at = all_stmts.iter().take_while(is_directive).count();
             let mut body = BumpVec::with_capacity_in(front_stmts.len() + inner_stmts.len(), bump);
             body.extend_from_slice(&inner_stmts[..front_at]);
             body.extend_from_slice(&front_stmts);
@@ -695,22 +699,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             },
             loc,
         ));
-    }
-
-    /// Keeps the name of a top-level function under `minify.identifiers`: the renamer reads the flag on the root of the link chain.
-    fn repl_pin_name(&mut self, mut ref_: bun_ast::Ref) {
-        loop {
-            let symbol = &mut self.symbols[ref_.inner_index() as usize];
-            // An earlier declaration of the same name pinned the rest of the chain.
-            if symbol.must_not_be_renamed() {
-                return;
-            }
-            symbol.set_must_not_be_renamed(true);
-            if !symbol.has_link() {
-                return;
-            }
-            ref_ = symbol.link.get();
-        }
     }
 
     /// Convert named imports to individual var assignments from the dynamic import

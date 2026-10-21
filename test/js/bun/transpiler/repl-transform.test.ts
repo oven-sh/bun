@@ -313,7 +313,7 @@ function f() {
     });
 
     // Each input declares a binding beside a function. The same text runs as a plain script in a second context, and both must answer the same.
-    test("an input with a function gives what the same text gives as a script", async () => {
+    test.each(["", "await 0; "])("an input with a function gives what its text gives as a script (prefix %j)", async prefix => {
       type Form = { stmt: (b: string) => string; script?: (b: string) => string; read?: (b: string) => string };
       const call = (b: string) => `${b}()`;
       const variables: Form[] = [
@@ -398,7 +398,7 @@ function f() {
       };
       const differ: object[] = [];
       let rows = 0;
-      const run = async (form: Form, relation: Relation, prefix: string) => {
+      const run = async (form: Form, relation: Relation) => {
         const b = `b${rows}`;
         const f = `f${rows++}`;
         const read = (form.read ?? (b => b))(b);
@@ -418,16 +418,14 @@ function f() {
         }
         if (JSON.stringify(got) !== JSON.stringify(want)) differ.push({ input: steps[0][0], got, want });
       };
-      for (const prefix of ["", "await 0; "]) {
-        for (const relation of reads) {
-          for (const form of [...variables, ...functions, ...readOnly]) await run(form, relation, prefix);
-        }
-        for (const relation of names) {
-          for (const form of [...variables, ...functions]) await run(form, relation, prefix);
-        }
+      for (const relation of reads) {
+        for (const form of [...variables, ...functions, ...readOnly]) await run(form, relation);
+      }
+      for (const relation of names) {
+        for (const form of [...variables, ...functions]) await run(form, relation);
       }
       expect(differ).toEqual([]);
-      expect(rows).toBe(2 * (3 * 21 + 2 * 17));
+      expect(rows).toBe(3 * 21 + 2 * 17);
     });
 
     test("minify.identifiers keeps the name of a function", () => {

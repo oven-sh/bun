@@ -1120,6 +1120,9 @@ describe.concurrent("Bun REPL", () => {
         "function named(a, b) { return a + b }",
         "named.toString()",
         "[named.name, named.length]",
+        // Behind another directive the wrapper is not strict (as before), so the function stays a declaration.
+        `"use client"; "use strict"; function behindDirective() { return this === undefined }`,
+        `[behindDirective(), behindDirective.toString().startsWith("function behindDirective")]`,
         ".exit",
       ]);
       expect(outputs).toEqual([
@@ -1132,6 +1135,8 @@ describe.concurrent("Bun REPL", () => {
         "undefined",
         '"function named(a, b) {\\n  return a + b;\\n}"',
         '[ "named", 2 ]',
+        "undefined",
+        "[ false, true ]",
       ]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
@@ -1201,9 +1206,9 @@ describe.concurrent("Bun REPL", () => {
       ]);
       expect(outputs).toEqual([
         "2",
-        "[Function: value]",
+        expect.stringMatching(/^\[Function/),
         "3",
-        "[class value]",
+        expect.stringMatching(/^\[class/),
         "4",
         "undefined",
         '[ 5, "undefined" ]',

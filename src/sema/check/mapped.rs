@@ -1474,7 +1474,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mark = self.non_cacheable_mark();
         let ty = self.conditional_type_uncached(file, node, mapper, false, alias);
-        let is_repeatable = self.non_cacheable_mark() == mark;
+        // A call that ends at `tailCount == 1000` reports that every time.
+        let is_repeatable = self.non_cacheable_mark() == mark && !self.is_error_type(ty);
         match (self.leave(q), alias) {
             (Ok(stored), None) if is_member => {
                 if is_repeatable {
@@ -1616,7 +1617,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `tailCount` skips roots that aren't the body of a type alias. In tsgo,
             // `instantiationCount` ends a loop of those.
             if tail_count == 1000 || tail_roots.len() == 10_000 {
-                return self.excessively_deep();
+                return self.too_many_tail_calls();
             }
             let TypeNodeKind::Cond {
                 check,
@@ -1794,7 +1795,7 @@ impl<'p, 's> Checker<'p, 's> {
                         // The loop is deterministic, so a root that recurs under the same mapper
                         // recurs until a limit is hit.
                         if !tail_roots.insert(root) {
-                            return self.excessively_deep();
+                            return self.too_many_tail_calls();
                         }
                         // `newRoot.alias != nil`
                         let known = has_alias

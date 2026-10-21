@@ -12385,6 +12385,38 @@ export declare const a4: A4; export const n4: never = a4;
       expect(exitCode).toBe(1);
     });
 
+    test("reports TS2589 only once for a conditional type that ended at the limit of 1,000 tail calls", async () => {
+      using dir = project({
+        "a.ts": `type Tn<T, N extends number, A extends 0[] = []> = T extends unknown ? A["length"] extends N ? T : Tn<T, N, [...A, 0]> : never;
+interface C<T> { m<U>(a0: Tn<T, 1000>, a1: U): void }
+declare const r: C<string>;
+r.m<number>("x", 1);
+r.m<number>();
+r.m<boolean>("x", true);
+export const q: Tn<string, 1000> = "x";
+`,
+        "b.ts": `type Tn<T, N extends number, A extends 0[] = []> = T extends unknown ? A["length"] extends N ? T : Tn<T, N, [...A, 0]> : never;
+interface C<T> { m<U>(a0: Tn<T, 1000>, a1: U): void }
+declare const r: C<string>;
+r.m<number>();
+r.m<number>("x", 1);
+// \`getConditionalTypeInstantiation\` stores nothing for a member of the union that it distributes over.
+export type U1 = Tn<string | number, 1000>;
+export type U2 = Tn<string | boolean, 1000>;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,1): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        a.ts(5,3): error TS2554: Expected 2 arguments, but got 0.
+        b.ts(4,1): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        b.ts(4,3): error TS2554: Expected 2 arguments, but got 0.
+        b.ts(7,18): error TS2589: Type instantiation is excessively deep and possibly infinite.
+        b.ts(8,18): error TS2589: Type instantiation is excessively deep and possibly infinite."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("computes keyof of a mapped type with an `as` clause again after the intersection it reads is reduced", async () => {
       const filler = [0, 1, 2].map(
         i => `type F${i}<T> = T extends any ? { v${i}: T } : never;\ndeclare let f${i}: F${i}<N>;\n`,

@@ -492,6 +492,79 @@ test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", as
   expect(exitCode).toBe(0);
 });
 
+// On Windows, c-ares closes the UDP socket from inside its uv_poll_t's poll callback. A nested uv_run
+// must not run the close callback that frees the handle while libuv is still dispatching to it.
+test("dns.Resolver: a query's promise reaction can re-enter the event loop", async () => {
+  const rounds = 20;
+  const fixture = `
+    const dns = require("node:dns");
+    // Echoes the question back with one A record.
+    function answer(query) {
+      let off = 12;
+      while (off < query.length && query[off] !== 0) off += query[off] + 1;
+      off += 1 + 2 + 2;
+      const header = Buffer.alloc(12);
+      header[0] = query[0];
+      header[1] = query[1];
+      header[2] = 0x81; // QR=1, RD=1
+      header[3] = 0x80; // RA=1
+      header[5] = 1; // QDCOUNT
+      header[7] = 1; // ANCOUNT
+      const record = Buffer.from([
+        0xc0, 0x0c, // NAME: pointer to the question name
+        0x00, 0x01, // TYPE A
+        0x00, 0x01, // CLASS IN
+        0x00, 0x00, 0x00, 0x3c, // TTL 60
+        0x00, 0x04, // RDLENGTH
+        127, 0, 0, 1,
+      ]);
+      return Buffer.concat([header, query.subarray(12, off), record]);
+    }
+    const server = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data(sock, buf, port, addr) { sock.send(answer(Buffer.from(buf)), port, addr); } },
+    });
+    const resolver = new dns.promises.Resolver({ timeout: 5000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + server.port]);
+
+    // Bun.build() spins the event loop until the promise returned by a plugin's setup() settles.
+    let reentries = 0;
+    const builds = [];
+    function reenterEventLoop() {
+      const before = reentries;
+      builds.push(Bun.build({
+        entrypoints: ["/entry.js"],
+        files: { "/entry.js": "" },
+        plugins: [{
+          name: "spin",
+          setup: () => new Promise(resolve => setImmediate(() => { reentries++; resolve(); })),
+        }],
+      }));
+      if (reentries !== before + 1) throw new Error("Bun.build() returned without spinning the event loop");
+    }
+
+    // Each round uses a new name, because c-ares answers a repeated name from its cache without opening a socket.
+    for (let i = 0; i < ${rounds}; i++) {
+      const addresses = await resolver.resolve4("round" + i + ".example.test").then(addresses => {
+        reenterEventLoop();
+        return addresses;
+      });
+      if (addresses[0] !== "127.0.0.1") throw new Error("unexpected answer: " + addresses);
+    }
+    await Promise.all(builds);
+    server.close();
+    console.log("reentries=" + reentries);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: `reentries=${rounds}\n`, stderr: "", exitCode: 0 });
+});
+
 test("dns.getServers", () => {
   function parseResolvConf() {
     const servers = [];

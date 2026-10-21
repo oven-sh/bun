@@ -196,31 +196,6 @@ impl Members {
         }
     }
 
-    /// Removes the members that `keep` rejects.
-    pub fn retain(&mut self, mut keep: impl FnMut(&Member) -> bool) {
-        fn retain_inline<const N: usize>(
-            inline: &mut InlineMembers<N>,
-            mut keep: impl FnMut(&Member) -> bool,
-        ) {
-            let mut kept = 0;
-            for i in 0..inline.len as usize {
-                if keep(&inline.members[i]) {
-                    inline.hashes[kept] = inline.hashes[i];
-                    inline.members[kept] = inline.members[i];
-                    inline.names[kept] = inline.names[i];
-                    kept += 1;
-                }
-            }
-            inline.len = kept as u32;
-        }
-        match self {
-            Members::Empty => {}
-            Members::Small(inline) => retain_inline(inline, keep),
-            Members::Inline(inline) => retain_inline(inline, keep),
-            Members::Table(table) => table.retain(|entry| keep(&entry.member)),
-        }
-    }
-
     /// Room for about `n` members (the module scope, sized from the source).
     pub fn reserve(&mut self, n: usize) {
         if n > Self::INLINE_MAX {

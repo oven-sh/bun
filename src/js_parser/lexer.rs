@@ -223,16 +223,7 @@ pub struct Lexer<'a> {
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
-    /// A token mismatch backtracks, as it does while the log is disabled, but
-    /// the log stays on. Set for a speculative parse that is kept when it
-    /// succeeds, so that its diagnostics count
-    /// (`P::parse_possible_arrow_fn_after_question_and_before_colon`).
-    pub(crate) backtrack_on_mismatch: bool,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
-    /// How many of `comments_to_preserve_before` a statement or `import()` has
-    /// taken. They stay in the buffer, so a speculative parse that took them
-    /// gives them back by resetting this (`P::restore_parser_snapshot`).
-    pub(crate) comments_to_preserve_before_taken: usize,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
     pub(crate) jsx_pragma: JSXPragma,
@@ -1836,7 +1827,7 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn expected(&mut self, token: T) -> Result<(), Error> {
-        if self.is_log_disabled || self.backtrack_on_mismatch {
+        if self.is_log_disabled {
             return Err(Error::Backtrack);
         } else if !tokenToString_get(token).is_empty() {
             self.expected_string(tokenToString_get(token))
@@ -2277,9 +2268,7 @@ impl<'a> Lexer<'a> {
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
             is_log_disabled: false,
-            backtrack_on_mismatch: false,
             comments_to_preserve_before: Vec::new(),
-            comments_to_preserve_before_taken: 0,
             code_point: -1,
             identifier: b"",
             jsx_pragma: JSXPragma::default(),

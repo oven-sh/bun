@@ -3,7 +3,6 @@ import {
   bunEnv,
   bunExe,
   bunRun,
-  emptyProcessMaxRSS,
   hideFromStackTrace,
   integersThatNeedRounding,
   isASAN,
@@ -562,26 +561,28 @@ describe("Bun.Transpiler", () => {
       ).toContain('("design:type", typeof A === "undefined" ? Object : A)');
     });
 
-    it("nested arrow functions with return types between ? and : take memory in proportion to their depth", async () => {
-      // Each arrow function here has the next one in its body. Every body was
-      // parsed twice, so depth n took n * n / 2 parses of a level, and what a
-      // parse allocates stays until the file is done.
+    it("nested arrow functions between ? and : cost the same with return types as without", async () => {
+      // Each arrow function here has the next one in its body. With a return
+      // type, every body was parsed twice, so depth n took n * n / 2 parses of
+      // a level, and what a parse allocates stays until the file is done.
       const depth = isDebug || isASAN ? 256 : 640;
-      const fixture = /* js */ `
+      const fixture = returnType => /* js */ `
         let input = "d";
         let output = "d";
         for (let i = 0; i < ${depth}; i++) {
-          input = "a ? (b) : c => " + input + " : e";
+          input = "a ? (b)${returnType} => " + input + " : e";
           output = "a ? (b) => " + output + " : e";
         }
         const printed = new Bun.Transpiler({ loader: "ts" }).transformSync("x = " + input);
         console.log(JSON.stringify({ printed: printed === "x = " + output + ";\\n" }));
       `;
-      const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
-        runFixtureMaxRSS(fixture, { printed: true }),
-        emptyProcessMaxRSS(),
+      const [withReturnTypes, without] = await Promise.all([
+        runFixtureMaxRSS(fixture(" : c"), { printed: true }),
+        runFixtureMaxRSS(fixture(""), { printed: true }),
       ]);
-      expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 25 : 64);
+      // Peak RSS over the same input without return types. Before: 225 MB in
+      // release, 38 MB in a debug ASAN build. After: under 1 MB in both.
+      expect((withReturnTypes - without) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 10 : 32);
     });
 
     it("type-only import syntax", () => {

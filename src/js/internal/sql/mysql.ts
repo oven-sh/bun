@@ -51,11 +51,11 @@ interface MySQLDotZig {
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error) => void,
   ) => void;
-  createConnection: NativeCreateConnection<$ZigGeneratedClasses.MySQLConnection>;
+  createConnection: NativeCreateConnection<$Bindgen.MySQLConnection>;
   createQuery: NativeCreateQuery<$ZigGeneratedClasses.MySQLQuery>;
 }
 
-class MySQLAdapter extends BaseSQLAdapter<$ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery> {
+class MySQLAdapter extends BaseSQLAdapter<$Bindgen.MySQLConnection, $ZigGeneratedClasses.MySQLQuery> {
   readonly createNativeConnection = createMySQLConnection;
   protected readonly createNativeQuery = createMySQLQuery;
   readonly ErrorClass = MySQLError;

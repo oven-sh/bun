@@ -8,9 +8,8 @@ pub struct NoSequences {
 const UNEXPECTED_COMMA_EXPRESSION: Message =
     Message::new("unexpectedCommaExpression", "Unexpected use of comma operator.");
 
-/// How many pairs of parentheses around `e` show that the comma operator is meant. Those that the
-/// syntax of a statement requires are not around the expression. Those of the body of an arrow
-/// function are, and the syntax requires them too.
+/// Returns how many pairs of parentheses around `e` show that the comma operator is intentional. The parentheses a
+/// statement's syntax requires don't count as `e`'s. An arrow function body's do, and the syntax requires one pair.
 fn parentheses_needed(e: Expr<'_>) -> usize {
     match e.parent() {
         Node::Func(func) if func.is_arrow() => 2,
@@ -18,7 +17,7 @@ fn parentheses_needed(e: Expr<'_>) -> usize {
     }
 }
 
-/// `e` is the `init` or the `update` of a `for` statement.
+/// True if `e` is the `init` or the `update` of a `for` statement.
 fn is_init_or_update_of_for(e: Expr<'_>) -> bool {
     let Node::Stmt(parent) = e.parent() else {
         return false;
@@ -52,14 +51,14 @@ impl Rule for NoSequences {
             return;
         };
         let after_first = first.outer_span().end;
-        // oxlint points at all that is between the first two.
-        let place = match sequence.get(1).filter(|_| cx.language().is_oxlint) {
+        // oxlint points at everything between the first two expressions.
+        let location = match sequence.get(1).filter(|_| cx.language().is_oxlint) {
             Some(second) => first.outer_span().between(second.outer_span()),
             None => {
                 let comma = skip_trivia(cx.text(), after_first);
                 Span::new(comma, comma + 1)
             }
         };
-        cx.report(place, UNEXPECTED_COMMA_EXPRESSION);
+        cx.report(location, UNEXPECTED_COMMA_EXPRESSION);
     }
 }

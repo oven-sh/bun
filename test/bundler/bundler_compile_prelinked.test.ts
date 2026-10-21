@@ -871,4 +871,27 @@ describe.concurrent("bundler", () => {
     entries: ["/entry.ts", "/state.ts"],
     stdout: "1 1,1,/,function\ntrue 2 1,2,/,function",
   });
+
+  // The printer builds a chunk's module record, but it never sees the --banner and --footer text.
+  // These use the "api" backend because itBundled's "cli" backend wraps the text in quotes.
+  itBundled("compile/prelinked/BannerFooter/ImportMeta", {
+    backend: "api",
+    compile: true,
+    bytecode: true,
+    format: "esm",
+    banner: `console.log("banner", typeof import.meta.url);`,
+    footer: `console.log("footer", typeof import.meta.url);`,
+    files: { "/entry.ts": `console.log("entry");` },
+    run: eachMode(() => ({ stdout: "banner string\nentry\nfooter string", stderr: "" })),
+  });
+  itBundled("compile/prelinked/BannerFooter/TopLevelAwait", {
+    backend: "api",
+    compile: true,
+    bytecode: true,
+    format: "esm",
+    banner: `console.log("banner", await Promise.resolve("awaited"));`,
+    footer: `for await (const value of [Promise.resolve("awaited")]) console.log("footer", value);`,
+    files: { "/entry.ts": `console.log("entry");` },
+    run: eachMode(() => ({ stdout: "banner awaited\nentry\nfooter awaited", stderr: "" })),
+  });
 });

@@ -31,7 +31,7 @@ const TRIPLE_SLASH_REFERENCE: Message = Message::new(
     "Do not use a triple slash reference for {{module}}, use `import` style instead.",
 );
 
-/// A `/// <reference .. />` that is not simply allowed.
+/// A `/// <reference .. />` that isn't unconditionally allowed.
 pub struct Directive<'a> {
     comment: Token<'a>,
     module: &'a [u8],
@@ -39,8 +39,8 @@ pub struct Directive<'a> {
 }
 
 impl TripleSlashReference {
-    /// `/^\/\s*<reference\s*(types|path|lib)\s*=\s*["|'](.*)["|']/`: what applies to the first
-    /// group, and the second group.
+    /// `/^\/\s*<reference\s*(types|path|lib)\s*=\s*["|'](.*)["|']/`. Returns the policy for the
+    /// first group, and the second group.
     fn parse<'a>(&self, value: &'a [u8]) -> Option<(Policy, &'a [u8])> {
         let rest = strings::trim_js_whitespace_start(value.strip_prefix(b"/")?);
         let rest = strings::trim_js_whitespace_start(rest.strip_prefix(b"<reference")?);
@@ -67,9 +67,9 @@ impl TripleSlashReference {
             },
             _ => return,
         };
-        // For oxlint an import in a `declare module` does not count.
-        let is_passed_over = cx.language().is_oxlint && !matches!(stmt.parent(), Node::File(_));
-        if is_passed_over {
+        // oxlint ignores an import in a `declare module`.
+        let is_ignored = cx.language().is_oxlint && !matches!(stmt.parent(), Node::File(_));
+        if is_ignored {
             return;
         }
         let report = |directive: &Directive<'a>| {

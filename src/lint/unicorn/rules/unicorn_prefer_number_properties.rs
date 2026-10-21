@@ -19,7 +19,7 @@ const PREFER_NUMBER_PROPERTIES: Message = Message::new(
 const FUNCTIONS: [&str; 4] = ["isNaN", "isFinite", "parseFloat", "parseInt"];
 
 pub struct State<'a> {
-    /// The nearest unary expression around something.
+    /// Maps a node to the nearest unary expression around it.
     nearest_unary: AncestorMemo<'a, Expr<'a>>,
     functions: [Name<'a>; 4],
 }
@@ -200,7 +200,7 @@ impl PreferNumberProperties {
             .report(callee, PREFER_NUMBER_PROPERTIES)
             .called_with(e)
             .data("method_name", name);
-        // The whole call, so that this and the fix of `prefer-numeric-literals` are not both applied.
+        // Replaces the whole call, so that this fix and `prefer-numeric-literals`' fix overlap and aren't both applied.
         let fix = |fixer: Fixer<'a>| {
             let arguments = fixer.file().slice(Span::after(callee.span(), e.span().end));
             fixer.replace(e, [&b"Number."[..], name.bytes(), arguments].concat())
@@ -213,7 +213,7 @@ impl PreferNumberProperties {
     }
 }
 
-/// If `e` is directly the value or the computed key of a property of an object literal: whether that is `{ e }`.
+/// If `e` is directly the value or the computed key of an object literal's property, returns whether that's `{ e }`.
 fn is_shorthand_of_object_property(e: Expr) -> Option<bool> {
     let Node::Prop(prop) = e.parent() else {
         return None;

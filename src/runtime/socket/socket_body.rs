@@ -3400,7 +3400,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
 
-        let handlers = this.get_handlers();
+        // The "socket" getter can close this socket, which drops its handlers.
+        let Some(handlers) = this.handlers_opt() else {
+            return Ok(JSValue::UNDEFINED);
+        };
         // Parse and validate first: the option getters run user JS that can
         // close this socket and repoint its `Handlers`.
         let reloaded = Handlers::prepare_reload(global, socket_obj)?;
@@ -3469,11 +3472,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // adopt; the old `isDetached()/isNamedPipe()` guard let those
         // through and the `.connected` payload read below would then be
         // illegal-union-access on a `.connecting` socket.
-        let uws::InternalSocket::Connected(raw_socket) = this.socket.get().socket else {
+        if !matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgradeTLS requires an established socket"
             )));
-        };
+        }
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw(format_args!("Expected options object")));
         }
@@ -3608,6 +3611,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             default_data = v;
             default_data.ensure_still_alive();
         }
+
+        // An option getter can close this socket, or re-enter upgradeTLS and adopt its fd.
+        let uws::InternalSocket::Connected(raw_socket) = this.socket.get().socket else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "upgradeTLS requires an established socket"
+            )));
+        };
 
         let vm = handlers.vm;
 

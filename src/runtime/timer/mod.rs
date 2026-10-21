@@ -119,7 +119,7 @@ macro_rules! impl_timer_object {
             /// picks `kind`/`interval` and forwards here.
             pub(crate) fn init_with(
                 cx: &bun_jsc::JsThread<'_>,
-                id: i32,
+                id: u64,
                 kind: super::Kind,
                 interval: u32,
                 callback: ::bun_jsc::JSValue,
@@ -315,8 +315,8 @@ impl TimerHeap {
     }
 }
 
-/// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
-pub(crate) type TimeoutMap = ArrayHashMap<i32, *mut EventLoopTimer>;
+/// Keyed by the id that `+timer` returns in JavaScript.
+pub(crate) type TimeoutMap = ArrayHashMap<u64, *mut EventLoopTimer>;
 
 #[derive(Default)]
 pub(crate) struct Maps {
@@ -403,7 +403,9 @@ pub(crate) struct EventLoopDelayMonitor {
     /// `stop_active_handles` drops it before `~VM` (`All` outlives the heap).
     histogram: bun_jsc::Weak<()>,
     pub(crate) event_loop_timer: EventLoopTimer,
-    pub(crate) resolution_ms: i32,
+    /// Never 0. `on_fire` re-arms at the drain's fixed `now` plus this, and
+    /// `All::drain_timers` pops every node due at or before that `now`.
+    pub(crate) resolution_ms: u32,
     pub(crate) last_fire_ns: u64,
     pub(crate) enabled: bool,
 }
@@ -428,16 +430,17 @@ impl EventLoopDelayMonitor {
         &mut self,
         vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
-        resolution_ms: i32,
+        resolution_ms: f64,
     ) {
         self.disable();
         self.histogram = bun_jsc::Weak::create_passive(histogram, vm.global());
-        self.resolution_ms = resolution_ms;
+        // `as` saturates and maps NaN to 0.
+        self.resolution_ms = (resolution_ms as u32).max(1);
         self.enabled = true;
 
         // Schedule timer
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
-        let next = now.add_ms(i64::from(resolution_ms));
+        let next = now.add_ms(i64::from(self.resolution_ms));
         self.event_loop_timer.next = ElTimespec {
             sec: next.sec,
             nsec: next.nsec,
@@ -481,9 +484,7 @@ impl EventLoopDelayMonitor {
 
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
-            let expected_ns = u64::try_from(self.resolution_ms)
-                .expect("int cast")
-                .saturating_mul(1_000_000);
+            let expected_ns = u64::from(self.resolution_ms) * 1_000_000;
             let actual_ns = now_ns - self.last_fire_ns;
 
             if actual_ns > expected_ns {
@@ -582,7 +583,8 @@ pub(crate) use wtf_timer::WTFTimer;
 // ─── All ─────────────────────────────────────────────────────────────────────
 
 pub(crate) struct All {
-    pub(crate) last_id: i32,
+    /// Id of the next timer. Allocate ids with [`All::next_id`].
+    pub(crate) last_id: u64,
     pub(crate) thread_id: std::thread::ThreadId,
     pub(crate) timers: TimerHeap,
     pub(crate) active_timer_count: i32,
@@ -626,6 +628,14 @@ impl All {
             date_header_timer: DateHeaderTimer::default(),
             wtf_timers: Guarded::init(TimerHeap::default()),
         }
+    }
+
+    /// Returns a new timer id. Ids are positive and never repeat, because a 64-bit counter won't wrap.
+    #[inline]
+    pub(crate) fn next_id(&mut self) -> u64 {
+        let id = self.last_id;
+        self.last_id = id.wrapping_add(1);
+        id
     }
 
     #[inline]
@@ -1314,23 +1324,16 @@ pub(crate) enum CountdownOverflowBehavior {
 // type so `TimeoutObject`/`TimerObjectInternals` can call it as a method.
 pub(crate) use bun_event_loop::EventLoopTimer::{Kind, KindBig};
 
-/// Sized to be the same as one pointer.
-#[repr(C)]
 #[derive(Copy, Clone)]
 pub(crate) struct ID {
-    pub id: i32,
+    pub id: u64,
     pub kind: KindBig,
 }
 impl ID {
+    /// Returns the inspector's key for this timer, with the kind in the low two bits and the id above them.
     #[inline]
     fn async_id(self) -> u64 {
-        // Layout: 8 bytes, `id` (i32) then `kind` (u32). Reassemble via
-        // native-endian byte concat so the value is stable on every supported
-        // target without relying on struct-layout reinterpretation.
-        let mut bytes = [0u8; 8];
-        bytes[..4].copy_from_slice(&self.id.to_ne_bytes());
-        bytes[4..].copy_from_slice(&(self.kind as u32).to_ne_bytes());
-        u64::from_ne_bytes(bytes)
+        (self.id << 2) | self.kind as u64
     }
 }
 

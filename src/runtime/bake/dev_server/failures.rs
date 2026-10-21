@@ -136,12 +136,10 @@ impl DevServer {
                         bake::Side::Client => self.client_graph.insert_failure(
                             incremental_graph::InsertFailureKey::Index(index),
                             log,
-                            false,
                         )?,
                         bake::Side::Server => self.server_graph.insert_failure(
                             incremental_graph::InsertFailureKey::Index(index),
                             log,
-                            true,
                         )?,
                     }
                 }
@@ -197,7 +195,6 @@ impl DevServer {
             self.client_graph.insert_failure(
                 incremental_graph::InsertFailureKey::Index(file_index.get()),
                 &log,
-                false,
             )?;
         }
         Ok(())
@@ -351,30 +348,19 @@ impl DevServer {
                         // `failed` is cleared by the next successful bundle.
                         watch_for_route_file = !file.failed;
                         self.client_graph.insert_failure(
-                            incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                            incremental_graph::InsertFailureKey::AbsPath(abs_path, graph),
                             log,
-                            false,
                         )?;
                     }
                 }
             }
         } else {
+            let key = incremental_graph::InsertFailureKey::AbsPath(abs_path, graph);
             match graph {
-                bake::Graph::Server => self.server_graph.insert_failure(
-                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
-                    log,
-                    false,
-                )?,
-                bake::Graph::Ssr => self.server_graph.insert_failure(
-                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
-                    log,
-                    true,
-                )?,
-                bake::Graph::Client => self.client_graph.insert_failure(
-                    incremental_graph::InsertFailureKey::AbsPath(abs_path),
-                    log,
-                    false,
-                )?,
+                bake::Graph::Server | bake::Graph::Ssr => {
+                    self.server_graph.insert_failure(key, log)?
+                }
+                bake::Graph::Client => self.client_graph.insert_failure(key, log)?,
             }
         }
         // `track_resolution_failure` takes the graph lock itself.

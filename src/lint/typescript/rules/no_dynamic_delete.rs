@@ -14,7 +14,8 @@ fn is_acceptable_index_expression(property: Expr) -> bool {
     }
 }
 
-/// What oxlint accepts: also a template, with substitutions or not, and what is asserted to have a type. Not `-(1)`.
+/// True if oxlint accepts it. That includes a template, with or without substitutions, and a type assertion, but not
+/// `-(1)`.
 fn oxlint_is_acceptable_index_expression(property: Expr) -> bool {
     let property = property.skip_type_wrappers();
     match property.kind() {
@@ -42,7 +43,7 @@ impl Rule for NoDynamicDelete {
         };
         // ESLint has a `ChainExpression` around `a?.[b]`.
         let is_acceptable = match cx.language().is_oxlint {
-            // It does not look into parentheses: `delete (a[b])`.
+            // It doesn't look inside parentheses: `delete (a[b])`.
             true => operand.is_parenthesized() || oxlint_is_acceptable_index_expression(index),
             false => is_acceptable_index_expression(index),
         };

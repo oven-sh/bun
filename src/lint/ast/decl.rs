@@ -311,7 +311,8 @@ impl<'a> Func<'a> {
     /// Its `yield` expressions, excluding those in nested functions.
     pub fn yields(self) -> impl Iterator<Item = Expr<'a>> + 'a {
         let file = self.file;
-        let list = (file.bound.fns.get(self.id.idx())).map_or(hir::IdList::EMPTY, |f| f.yields);
+        let found = file.bound.yields.binary_search_by_key(&self.id, |it| it.0);
+        let list = found.map_or(hir::IdList::EMPTY, |at| file.bound.yields[at].1);
         let ids = file.bound.ids.get(list.range()).unwrap_or_default();
         ids.iter().map(move |&e| Expr::new(file, hir::ExprId(e)))
     }

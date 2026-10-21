@@ -149,6 +149,7 @@ slices! {
         param_fn: hir::FnId,
         type_param_scope: bind::ScopeId,
         fns: bind::FnInfo,
+        yields: (hir::FnId, hir::IdList<hir::ExprId>),
         class_owner: bind::ClassOwner,
         class_scope: bind::ScopeId,
         enum_member_owner: hir::EnumId,

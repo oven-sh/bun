@@ -163,10 +163,9 @@ impl<'l, S: Storage> Yields<'l, S> {
         }
         found.shared_sort_unstable_by_key(|it| (it.0.0, it.1));
         for yields_of_fn in found.chunk_by(|a, b| a.0 == b.0) {
-            if let Some(info) = self.b.fns.get_mut(yields_of_fn[0].0.idx()) {
-                info.yields = IdList::new(self.b.ids.len() as u32, yields_of_fn.len() as u32);
-                self.b.ids.extend(yields_of_fn.iter().map(|it| it.1));
-            }
+            let list = IdList::new(self.b.ids.len() as u32, yields_of_fn.len() as u32);
+            self.b.yields.push((yields_of_fn[0].0, list));
+            self.b.ids.extend(yields_of_fn.iter().map(|it| it.1));
         }
     }
 

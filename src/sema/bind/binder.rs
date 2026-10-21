@@ -2075,6 +2075,8 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.unchecked_exprs.as_mut_slice().sort_unstable();
         self.b.unchecked_types.as_mut_slice().sort_unstable();
         self.b.free_idents.sort_unstable_by_key(|f| f.0);
+        self.b.yields.sort_unstable_by_key(|it| it.0);
+        self.b.exits.sort_unstable_by_key(|it| it.0);
         self.b.alias_idents.sort_unstable_by_key(|a| a.0);
         self.b.arguments_objects.as_mut_slice().sort_unstable();
         // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is checked less
@@ -2112,10 +2114,9 @@ impl<'f, 's> Binder<'f, 's> {
             // on the order in which a hash map yields its entries.
             self.b.entries[start..].sort_unstable_by_key(|e| e.1);
             debug_assert!(self.b.entries[start..].is_sorted_by(|a, b| a.1 < b.1));
-            self.b.tables.push((start as u32, table.len() as u32));
+            self.b.tables.push(self.b.entries.len() as u32);
         }
-        let large_entries = large_table_entries(&self.b.tables, &self.b.entries);
-        self.b.large_tables.extend(large_entries);
+        fill_name_slots(&self.b.tables, &self.b.entries, &mut self.b.name_slots);
         self.b.nested_names = nested_names_of(&self.b.scopes, &self.b.tables, &self.b.entries);
         // Write out the labels' edges.
         let used_labels = self.label_edges.iter().filter(|it| it.node.is_some());
@@ -3642,11 +3643,15 @@ impl<'f, 's> Binder<'f, 's> {
             scope,
             enclosing: saved.7,
             returns: IdList::new(rs, rl),
-            yields: IdList::new(ys, yl),
             end,
-            exit,
             contains_this: self.seen_this,
         };
+        if yl != 0 {
+            self.b.yields.push((id, IdList::new(ys, yl)));
+        }
+        if exit.is_some() {
+            self.b.exits.push((id, exit));
+        }
         // `ContainerFlagsPropagatesThisKeyword`. An index signature isn't a control flow container
         // at all.
         let propagates = match f.kind {

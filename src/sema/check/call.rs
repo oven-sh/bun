@@ -306,7 +306,7 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         self.hir(file)[f].flags.contains(Flags::GENERATOR)
             && bound
-                .ids(bound.fns[f.idx()].yields)
+                .ids(bound.yields_of(f))
                 .any(|y| self.is_context_sensitive(file, y))
     }
 

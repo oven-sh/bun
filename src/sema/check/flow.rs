@@ -5922,7 +5922,7 @@ impl<'p, 's> Checker<'p, 's> {
         key: AccessKey,
         declared: TypeId,
     ) -> bool {
-        let exit = self.bound(file).fns[func.idx()].exit;
+        let exit = self.bound(file).exit_of(func);
         if exit.is_none() {
             return false;
         }
@@ -5957,7 +5957,7 @@ impl<'p, 's> Checker<'p, 's> {
         initial: TypeId,
         value_declaration: UntypedProperty,
     ) -> Option<TypeId> {
-        let exit = self.bound(file).fns[func.idx()].exit;
+        let exit = self.bound(file).exit_of(func);
         if exit.is_none() {
             return None;
         }

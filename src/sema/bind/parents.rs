@@ -13,9 +13,7 @@ pub(super) const NO_FUNCTION: FnInfo = FnInfo {
     scope: ScopeId::NONE,
     enclosing: FnId::NONE,
     returns: IdList::EMPTY,
-    yields: IdList::EMPTY,
     end: UNREACHABLE,
-    exit: FlowId::NONE,
     contains_this: false,
 };
 

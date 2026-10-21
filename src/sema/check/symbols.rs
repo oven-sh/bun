@@ -4429,7 +4429,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let is_async = f.flags.contains(Flags::ASYNC);
         let is_generator = f.flags.contains(Flags::GENERATOR);
-        let info = self.bound(file).fns[func.idx()];
         let mut ret = match f.body {
             // `getReturnTypeOfSignature`
             FnBody::None => return TypeId::ANY,
@@ -4509,7 +4508,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `checkAndAggregateYieldOperandTypes`
         let (mut yields, mut nexts) = (Vec::new(), Vec::new());
-        for e in self.bound(file).ids(info.yields) {
+        for e in self.bound(file).ids(self.bound(file).yields_of(func)) {
             let ExprKind::Yield { value, star } = hir[e].kind else {
                 continue;
             };

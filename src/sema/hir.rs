@@ -6,7 +6,7 @@
 
 use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
-use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
+use crate::session::{Arena, ArenaBox, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::borrow::Cow;
 use std::hint::cold_path;
@@ -354,7 +354,6 @@ pub trait Storage {
     type Ids<T: Id>: Ids<T> + Default;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]>;
-    type Map<K, V>;
     /// A map that is empty in most files.
     type FewMap<K: 'static, V: 'static>;
     /// A set that is empty in most files.
@@ -377,7 +376,6 @@ impl Storage for Growable {
     type Nodes<T: 'static> = Vec<T>;
     type Ids<T: Id> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
-    type Map<K, V> = FxHashMap<K, V>;
     type FewMap<K: 'static, V: 'static> = FxHashMap<K, V>;
     type FewSet<K: 'static> = FxHashSet<K>;
     type Owning<T: Clone + 'static> = Vec<T>;
@@ -395,7 +393,6 @@ impl<'s> Storage for InArena<'s> {
     type Nodes<T: 'static> = Fixed<'s, T>;
     type Ids<T: Id> = Narrow<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
-    type Map<K, V> = ArenaHashMap<'s, K, V>;
     type FewMap<K: 'static, V: 'static> = ArenaFewMap<'s, K, V>;
     type FewSet<K: 'static> = ArenaFewMap<'s, K, ()>;
     /// Owned until the program is loaded. A program's files are never dropped, so `Files::load` hands the list to

@@ -162,7 +162,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
         JSC::JSValue value, entry;
         while (iter2->nextKeyValue(global, value, entry)) {
             RETURN_IF_EXCEPTION(scope, fail("Failed to iterate over cjs map"_s));
-            // A data file that only an import loaded is an ES module.
+            // A data file that an import loaded first is in the list of ES modules only.
             if (auto* module = dynamicDowncast<Bun::JSCommonJSModule>(entry); module && module->dataFile == Bun::JSCommonJSModule::DataFile::Imported)
                 continue;
             cjs->addItem(value.toWTFString(global));

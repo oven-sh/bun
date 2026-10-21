@@ -406,6 +406,44 @@ describe.concurrent("a data file that is imported and required", () => {
     });
   });
 
+  it("delete require.cache[key] lets the value be collected, also after two loads of the file that overlapped", async () => {
+    const count = 10;
+    const files: Record<string, string> = {
+      "index.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        let collected = 0;
+        const registry = new FinalizationRegistry(() => collected++);
+        // import() of the file is in flight when require() of an ES module that imports the file loads it too.
+        async function load(i) {
+          const pending = import("./data" + i + ".json");
+          const viaModule = require("./wrapper" + i + ".mjs").default;
+          const value = (await pending).default;
+          registry.register(value, i);
+          delete require.cache[require.resolve("./data" + i + ".json")];
+          delete require.cache[require.resolve("./wrapper" + i + ".mjs")];
+          return value === viaModule;
+        }
+        const shared = [];
+        for (let i = 0; i < ${count}; i++) shared.push(await load(i));
+        for (let i = 0; i < 100 && collected < ${count}; i++) {
+          Bun.gc(true);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        console.log(JSON.stringify({ shared: shared.every(Boolean), collected }));
+      `,
+    };
+    for (let i = 0; i < count; i++) {
+      files[`data${i}.json`] = `{"i":${i}}`;
+      files[`wrapper${i}.mjs`] = `export { default } from "./data${i}.json";`;
+    }
+    expect(await run(files, "index.mjs")).toEqual({
+      printed: { shared: true, collected: count },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("a file that does not parse is an error for both, in both orders, and leaves no entry", async () => {
     const result = await run(
       {

@@ -1507,6 +1507,7 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
     auto* process = globalObject->processObject();
@@ -1515,8 +1516,7 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
 
     // A cancelled web event counts as handled, the same as an installed process listener.
     auto event = dispatchPromiseRejectionEvent(globalObject, WebCore::eventNames().unhandledrejectionEvent, promise, reason, true);
-    if (vm.hasPendingTerminationException()) [[unlikely]]
-        return true;
+    RETURN_IF_EXCEPTION(scope, true);
     bool handled = event && event->defaultPrevented();
 
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);

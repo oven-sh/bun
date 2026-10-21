@@ -770,6 +770,12 @@ pub(crate) mod command {
             }
         }
 
+        // `bun --cwd <dir> lint`: `<dir>` is the value of a flag.
+        let starts_with_flag = argv.get(1).is_some_and(|it| it.starts_with(b"-"));
+        if starts_with_flag && let Some(it) = super::script_or_command::command_after_flags() {
+            first_arg_name = it;
+        }
+
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
         let x = RootCommandMatcher::r#match(first_arg_name);
         // PERF: `if x == const` is a chain of compares rather than a jump
@@ -1291,7 +1297,7 @@ pub(crate) mod command {
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
-            lint_command::read_program_of_script(ctx);
+            lint_command::read_program_from_stdin(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
 
@@ -1404,16 +1410,8 @@ pub(crate) mod command {
         argv: &'a [&'static bun_core::ZStr],
         command: &[u8],
     ) -> &'a [&'static bun_core::ZStr] {
-        let mut args = argv.iter().enumerate();
-        while let Some((at, arg)) = args.next() {
-            match arg.as_bytes() {
-                arg if arg == command => return &argv[at + 1..],
-                // `bun --cwd lint lint`
-                b"--cwd" => _ = args.next(),
-                _ => {}
-            }
-        }
-        &[]
+        let at = super::script_or_command::place_of_command(command);
+        at.and_then(|at| argv.get(at + 1..)).unwrap_or_default()
     }
 
     /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
@@ -1429,8 +1427,8 @@ pub(crate) mod command {
             Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
             None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
         };
-        let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
-        let mut args: Vec<_> = before
+        let at = super::script_or_command::place_of_command(command).unwrap_or(argv.len());
+        let mut args: Vec<_> = (argv.iter().take(at).skip(1))
             .filter(|arg| arg.as_bytes().starts_with(b"-"))
             .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
             .copied()
@@ -1440,9 +1438,9 @@ pub(crate) mod command {
     }
 
     /// `bun --help lint`: prints the help of `command` and exits if `--help` or `-h` is among the flags of `bun`, which precede it.
-    fn print_help_if_asked_before(argv: &[&'static bun_core::ZStr], command: &[u8], tag: Tag) {
-        let mut before = (argv.iter().map(|it| it.as_bytes())).take_while(|arg| *arg != command);
-        if before.any(|arg| matches!(arg, b"--help" | b"-h")) {
+    fn print_help_if_asked_before(command: &[u8], tag: Tag) {
+        let before = super::script_or_command::arguments_before(command);
+        if before.iter().any(|arg| matches!(*arg, b"--help" | b"-h")) {
             tag_print_help(tag, false);
             Global::exit(0);
         }
@@ -1454,7 +1452,7 @@ pub(crate) mod command {
         // LintCommand parses its own argv.
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"lint", Tag::LintCommand);
+        print_help_if_asked_before(b"lint", Tag::LintCommand);
         let knows = super::lint_command::LintCommand::has_flag;
         super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint", knows))
     }
@@ -1465,7 +1463,7 @@ pub(crate) mod command {
         // FormatCommand parses its own argv.
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
-        print_help_if_asked_before(&argv, b"fmt", Tag::FormatCommand);
+        print_help_if_asked_before(b"fmt", Tag::FormatCommand);
         let knows = super::format_command::FormatCommand::has_flag;
         super::format_command::FormatCommand::exec(
             ctx,
@@ -1827,12 +1825,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                path_buf[..entry.len()].copy_from_slice(entry);
-                path_buf[entry.len()] = 0;
-                // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
-                let lockfile_path = bun_core::ZStr::from_buf(&path_buf[..], entry.len());
-                let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
+                let file = match bun_sys::File::openat(
+                    bun_sys::Fd::cwd(),
+                    &entry[..],
+                    bun_sys::O::RDONLY,
+                    0,
+                ) {
                     Ok(f) => f,
                     Err(err) => {
                         Output::err(err, "failed to open lockfile", ());
@@ -1887,7 +1885,7 @@ To create a project with the official Next.js scaffolding tool, run
     /// Printed at the end of `bun <command> --help` if the project has a script with the same name.
     fn print_note_about_script(command: &str) {
         use crate::cli::script_or_command::{Runs, runs};
-        if runs(command.as_bytes()) == Runs::Script {
+        if matches!(runs(command.as_bytes()), Ok(Runs::Script)) {
             pretty!(
                 "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command, or pass <b>--no-script<r>\n",
                 command,

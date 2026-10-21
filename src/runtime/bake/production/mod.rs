@@ -364,10 +364,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
-            let default = BakeGetDefaultExportFromModule(
+            let default = bake_get_default_export_from_module(
                 global,
                 config_entry_point_string.to_js(global).map_err(js_err)?,
-            );
+            )
+            .map_err(js_err)?;
 
             if !default.is_object() {
                 return Err(js_err(global.throw_invalid_arguments(format_args!(
@@ -515,6 +516,19 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         Global::crash();
     }
 
+    // Only the dev server puts the pages in the browser build and gives the client entry `route`.
+    if framework
+        .file_system_router_types
+        .iter()
+        .any(|fsr| fsr.client_pages)
+    {
+        bun_core::err_generic!(
+            "'fileSystemRouterTypes[n].clientPages' is not supported in a production build yet"
+        );
+        Output::flush();
+        Global::crash();
+    }
+
     bun_core::pretty_errorln!("Bundling routes");
     Output::flush();
 
@@ -539,7 +553,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     };
 
     for fsr in &framework.file_system_router_types {
-        let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, &fsr.root);
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined_root =
+            resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut buf[..], &[&fsr.root]);
         let Some(entry) = server_transpiler
             .resolver
             .read_dir_info_ignore_error(joined_root)
@@ -570,6 +586,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 .collect(),
             style: fsr.style,
             allow_layouts: fsr.allow_layouts,
+            client_pages: fsr.client_pages,
             server_file: OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| OpaqueFileId::init(f.get())),
             server_file_string: bun_jsc::StrongOptional::empty(),
@@ -577,14 +594,21 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     }
 
     let mut router = FrameworkRouter::init_empty(cwd, router_types.into_boxed_slice())?;
+    let mut route_scan = entry_points::RouteScan {
+        entry_points: &mut entry_points,
+        invalid_routes: 0,
+    };
     router.scan_all(
         &mut server_transpiler.resolver,
-        router::InsertionContext::wrap(&mut entry_points),
+        router::InsertionContext::wrap(&mut route_scan),
     )?;
+    if route_scan.invalid_routes > 0 {
+        Global::crash();
+    }
 
     // `bake::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `react_fast_refresh` /
-    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
+    // `built_in_modules` / `server_components` / `react_fast_refresh`
+    // via its lower-tier `bake_types::Framework` view.
     // (The two Framework types could only merge if `FileSystemRouterType` /
     // `router::Style` moved down to bun_bundler.)
     let bundler_framework = framework.as_bundler_view();
@@ -776,13 +800,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             }
         }
     }
-    // Write the runtime file to disk if there are any client chunks
-    {
-        let Some(runtime_file_index) = maybe_runtime_file_index else {
-            Output::panic(format_args!(
-                "Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub."
-            ));
-        };
+    // Write the runtime file to disk if there are any client chunks. The runtime
+    // file doesn't exist if no bundled module uses its helpers.
+    if let Some(runtime_file_index) = maybe_runtime_file_index {
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
                 && file.src_path.text != b"bun-framework-react/client.tsx"
@@ -838,17 +858,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
         let server_file = router_type.server_file;
         let server_entry_point = pt.load_bundled_module(server_file)?;
-        let server_render_func = 'brk: {
-            let Some(raw) = bake_get_on_module_namespace(global, server_entry_point, b"prerender")
-            else {
-                break 'brk None;
-            };
-            if !raw.is_callable() {
-                break 'brk None;
-            }
-            break 'brk Some(raw);
-        };
-        let Some(server_render_func) = server_render_func else {
+        let server_render_func =
+            bake_get_on_module_namespace(global, server_entry_point, b"prerender")
+                .map_err(js_err)?;
+        if !server_render_func.is_callable() {
             bun_core::err_generic!("Framework does not support static site generation");
             bun_core::note!(
                 "The file {} is missing the \"prerender\" export, which defines how to generate static files.",
@@ -858,34 +871,23 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 ))
             );
             Global::crash();
-        };
+        }
 
         let server_param_func = if router.dynamic_routes.count() > 0 {
-            let f = 'brk: {
-                let Some(raw) =
-                    bake_get_on_module_namespace(global, server_entry_point, b"getParams")
-                else {
-                    break 'brk None;
-                };
-                if !raw.is_callable() {
-                    break 'brk None;
-                }
-                break 'brk Some(raw);
-            };
-            match f {
-                Some(f) => f,
-                None => {
-                    bun_core::err_generic!("Framework does not support static site generation");
-                    bun_core::note!(
-                        "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
-                        bun_core::fmt::quote(resolve_path::relative(
-                            cwd,
-                            pt.input_file(server_file).abs_path()
-                        ))
-                    );
-                    Global::crash();
-                }
+            let f = bake_get_on_module_namespace(global, server_entry_point, b"getParams")
+                .map_err(js_err)?;
+            if !f.is_callable() {
+                bun_core::err_generic!("Framework does not support static site generation");
+                bun_core::note!(
+                    "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
+                    bun_core::fmt::quote(resolve_path::relative(
+                        cwd,
+                        pt.input_file(server_file).abs_path()
+                    ))
+                );
+                Global::crash();
             }
+            f
         } else {
             JSValue::NULL
         };

@@ -1,5 +1,5 @@
-//! `ExportMap` and `ExportMapBuilder` of eslint-plugin-import 2.32.0: what another file exports, as it is on the disk,
-//! for the settings, the resolvers and the `esModuleInterop` of the file that asks.
+//! `ExportMap` and `ExportMapBuilder` from eslint-plugin-import 2.32.0: the exports of another file as it is on disk,
+//! evaluated with the settings, resolvers and `esModuleInterop` of the file being linted.
 
 use crate::import_export_record::{self, Dependency, Entry, ExportRecord, Reexport, When};
 use crate::import_resolve::{Resolved, Resolvers};
@@ -16,7 +16,7 @@ use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-/// `reportErrors`: at `declaration.source`, with `source.value` and [`ExportMap::errors_text`].
+/// `reportErrors`. Reported at `declaration.source`, with `source.value` and [`ExportMap::errors_text`] as data.
 pub(crate) const PARSE_ERRORS: Message = Message::new(
     "",
     "Parse errors in imported module '{{source}}': {{errors}}",
@@ -24,13 +24,13 @@ pub(crate) const PARSE_ERRORS: Message = Message::new(
 
 const DEFAULT: &[u8] = b"default";
 
-/// A key that is `undefined`, where it is given as a name.
+/// How an `undefined` key is printed where a name is expected.
 const UNDEFINED: &[u8] = b"undefined";
 
-/// A key of `namespace` or of `reexports`. `None`: `undefined`.
+/// A key of `namespace` or `reexports`. `None` is `undefined`.
 type Key<'k> = Option<&'k [u8]>;
 
-/// A `set` of a `Map`.
+/// One `set` call on a `Map`.
 trait Keyed {
     fn key(&self) -> Key<'_>;
 }
@@ -47,30 +47,31 @@ impl Keyed for Reexport {
     }
 }
 
-/// A `Map`, out of the list of its `set`s: where in the list its values are.
+/// A `Map` reconstructed from the list of its `set` calls. It stores indices into that list.
 struct Table {
-    /// In the order of the `Map`: the last `set` of a key, at the place of the first.
+    /// In the `Map`'s iteration order: each key's last `set`, at the position of its first.
     in_order: Box<[u32]>,
-    /// The same, sorted by the key.
+    /// The same indices, sorted by key.
     by_key: Box<[u32]>,
 }
 
 impl Table {
-    /// `is_set`: whether a `set` is reached, where the `Map` has its key or has it not.
+    /// `is_set` decides whether a `set` call is executed. Its second argument tells whether the `Map` already has the
+    /// key.
     fn new<T: Keyed>(sets: &[T], is_set: &dyn Fn(&T, bool) -> bool) -> Table {
-        let mut places: FxHashMap<Key<'_>, usize> = FxHashMap::default();
+        let mut index_of_key: FxHashMap<Key<'_>, usize> = FxHashMap::default();
         let mut in_order: Vec<u32> = Vec::new();
         for (index, it) in sets.iter().enumerate() {
-            let place = places.get(&it.key()).copied();
-            if !is_set(it, place.is_some()) {
+            let existing = index_of_key.get(&it.key()).copied();
+            if !is_set(it, existing.is_some()) {
                 continue;
             }
-            let Some(place) = place else {
-                places.insert(it.key(), in_order.len());
+            let Some(existing) = existing else {
+                index_of_key.insert(it.key(), in_order.len());
                 in_order.push(index as u32);
                 continue;
             };
-            if let Some(value) = in_order.get_mut(place) {
+            if let Some(value) = in_order.get_mut(existing) {
                 *value = index as u32;
             }
         }
@@ -101,7 +102,7 @@ impl Table {
     }
 }
 
-/// What is kept of a file.
+/// The cached data for one file.
 struct Facts {
     record: ExportRecord,
     /// `namespace`, without `esModuleInterop` and with it.
@@ -120,7 +121,7 @@ fn read_boxed<'f>(file: &'f File<'f>) -> Box<dyn Any + Send + Sync> {
 }
 
 const READER: Reader = Reader {
-    wants: import_export_record::may_be_module,
+    should_parse: import_export_record::may_be_module,
     read: read_boxed,
 };
 
@@ -128,35 +129,36 @@ const READER: Reader = Reader {
 #[derive(Copy, Clone)]
 pub(crate) struct ExportMap<'a> {
     facts: &'a Facts,
-    /// The resolver gives its path from the working directory: upstream has another map for that `path`.
+    /// True if the resolver returned a path relative to the working directory. Upstream keeps a separate map for that
+    /// `path`.
     is_relative: bool,
 }
 
-/// What `path` is to upstream: who asks has one map for it.
+/// Plays the role of upstream's `path`. A linted file has one map per `Id`.
 type Id = (*const Facts, bool);
 
 /// A value of `namespace`.
 #[derive(Copy, Clone)]
 pub(crate) struct Exported<'a> {
-    /// Whose `namespace` has it.
+    /// The map whose `namespace` contains it.
     map: ExportMap<'a>,
     entry: &'a Entry,
 }
 
 /// An entry of `reexports`.
 pub(crate) struct Reexported<'a> {
-    /// `None`, here and in `local`: `undefined`.
+    /// `None` is `undefined`, here and in `local`.
     pub(crate) name: Option<&'a [u8]>,
     pub(crate) local: Option<&'a [u8]>,
     /// `getImport()`
     pub(crate) import: Option<ExportMap<'a>>,
 }
 
-/// What `get` returns.
+/// The return value of `get`.
 #[derive(Copy, Clone)]
 pub(crate) enum Got<'a> {
     Undefined,
-    /// It is exported again from a module that is ignored.
+    /// It's re-exported from an ignored module.
     Null,
     Meta(Exported<'a>),
 }
@@ -242,49 +244,49 @@ impl<'a> ExportMap<'a> {
     }
 }
 
-/// `dependencies` of a map, each called. `None`: `null`.
+/// The results of calling each of a map's `dependencies`. `None` is `null`.
 type Dependencies<'a> = Rc<[Option<ExportMap<'a>>]>;
 
-/// The dependencies that a call has not come to yet.
+/// The dependencies that a call hasn't visited yet.
 #[derive(Default)]
 struct Rest<'a> {
     dependencies: Dependencies<'a>,
-    asked: usize,
+    next_index: usize,
 }
 
 impl<'a> Iterator for Rest<'a> {
     type Item = Option<ExportMap<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let dep = self.dependencies.get(self.asked).copied();
-        self.asked += 1;
+        let dep = self.dependencies.get(self.next_index).copied();
+        self.next_index += 1;
         dep
     }
 }
 
-/// A call of `hasDeep` that is running.
+/// A stack frame of `hasDeep`.
 struct HasDeep<'a, 'n> {
     this: ExportMap<'a>,
     name: Key<'n>,
-    /// `None`: it returns what `imported.hasDeep` returns.
+    /// `None` if this call returns whatever `imported.hasDeep` returns.
     rest: Option<Rest<'a>>,
 }
 
 impl<'a> HasDeep<'a, '_> {
-    /// `path`, where the last of `running` returns.
+    /// The `path` that's returned when the last frame of `running` returns.
     fn path_of(running: &[Self]) -> Vec<ExportMap<'a>> {
         running.iter().map(|it| it.this).collect()
     }
 }
 
-/// A call of `size` that is running.
+/// A stack frame of `size`.
 struct Size<'a> {
     this: ExportMap<'a>,
     rest: Rest<'a>,
     size: usize,
 }
 
-/// The `ExportMapBuilder` of a file: `context`.
+/// The `ExportMapBuilder` for one linted file. Plays the role of upstream's `context`.
 pub(crate) struct ExportMaps<'a> {
     file: &'a File<'a>,
     modules: &'a dyn Modules,
@@ -292,13 +294,14 @@ pub(crate) struct ExportMaps<'a> {
     resolvers: Resolvers<'a>,
     /// `isEsModuleInterop`
     interop: OnceCell<bool>,
-    /// The language of `file`, read by espree and by `@typescript-eslint/parser`: for `import/parsers`.
+    /// `file`'s language options with the parser set to espree and to `@typescript-eslint/parser`, for
+    /// `import/parsers`.
     languages: [OnceCell<Box<LanguageOptions>>; 2],
     dependencies: RefCell<FxHashMap<Id, Dependencies<'a>>>,
 }
 
 impl<'a> ExportMaps<'a> {
-    /// `None`: there is nothing to report: no other file can be asked for, or a resolver is not known here.
+    /// `None` if there's nothing to report because there's no module graph, or a configured resolver isn't supported.
     pub(crate) fn of(file: &'a File<'a>) -> Option<ExportMaps<'a>> {
         Some(ExportMaps {
             file,
@@ -323,9 +326,9 @@ impl<'a> ExportMaps<'a> {
         })
     }
 
-    /// What `parse` reads the file at `path` with. `None`: a parser that is not known here.
+    /// The language options that `parse` uses for the file at `path`. `None` for an unsupported parser.
     fn language_of(&self, path: &[u8]) -> Option<&LanguageOptions> {
-        let own = self.file.language();
+        let own = self.file.configured_language();
         let other = self.settings.parser_for(path);
         let Some(parser) = other.filter(|it| *it != own.parser) else {
             return Some(own);
@@ -336,12 +339,7 @@ impl<'a> ExportMaps<'a> {
             Parser::TypeScript => typescript,
             Parser::Other => return None,
         };
-        let language: &LanguageOptions = language.get_or_init(|| {
-            Box::new(LanguageOptions {
-                parser,
-                ..own.clone()
-            })
-        });
+        let language: &LanguageOptions = language.get_or_init(|| Box::new(own.with_parser(parser)));
         Some(language)
     }
 
@@ -353,7 +351,7 @@ impl<'a> ExportMaps<'a> {
 
     /// `ExportMapBuilder.for(childContext(path, context))`
     pub(crate) fn at(&self, path: &[u8]) -> Option<ExportMap<'a>> {
-        // What it asks first is `hasValidExtension`.
+        // Upstream checks `hasValidExtension` first.
         if self.settings.is_ignored(path) {
             return None;
         }
@@ -371,7 +369,7 @@ impl<'a> ExportMaps<'a> {
         (!facts.record.is_null).then_some(ExportMap { facts, is_relative })
     }
 
-    /// `RemotePath.resolve`, in `map`. `None`: `null` or `undefined`.
+    /// `RemotePath.resolve`, in `map`. `None` is `null` or `undefined`.
     fn remote_path(&self, map: ExportMap, value: &[u8]) -> Option<Vec<u8>> {
         let from = map.path();
         match self
@@ -388,7 +386,7 @@ impl<'a> ExportMaps<'a> {
         self.at(&self.remote_path(map, value)?)
     }
 
-    /// One getter for a path: `captureDependency` returns the one that `imports` has.
+    /// There's one getter per path, because `captureDependency` returns the one that's already in `imports`.
     fn dependencies_of(&self, map: ExportMap<'a>) -> Dependencies<'a> {
         let star_exports = &map.facts.record.star_exports;
         if star_exports.is_empty() {
@@ -415,11 +413,11 @@ impl<'a> ExportMaps<'a> {
     fn rest_of(&self, map: ExportMap<'a>) -> Rest<'a> {
         Rest {
             dependencies: self.dependencies_of(map),
-            asked: 0,
+            next_index: 0,
         }
     }
 
-    /// `size`. A module that exports all of itself again, directly or not, counts once.
+    /// `size`. A module that re-exports all of itself, directly or transitively, is counted once.
     pub(crate) fn size(&self, map: ExportMap<'a>) -> usize {
         let interop = self.is_es_module_interop();
         if map.facts.record.star_exports.is_empty() {
@@ -430,7 +428,7 @@ impl<'a> ExportMaps<'a> {
             rest: self.rest_of(this),
             size: this.own_size(interop),
         };
-        // What has returned. Of a call that is running: nothing.
+        // The results of finished calls. A call that's still running has 0.
         let mut known: FxHashMap<Id, usize> = FxHashMap::default();
         known.insert(map.id(), 0);
         let mut running = vec![call(map)];
@@ -459,15 +457,15 @@ impl<'a> ExportMaps<'a> {
 
     pub(crate) fn has(&self, map: ExportMap<'a>, name: &[u8]) -> bool {
         let (interop, name) = (self.is_es_module_interop(), Some(name));
-        // The calls that are to come, the next last.
+        // A stack of pending calls, with the next one on top.
         let mut pending: SmallVec<[ExportMap<'a>; 8]> = smallvec![map];
-        let mut asked = FxHashSet::default();
+        let mut visited = FxHashSet::default();
         while let Some(this) = pending.pop() {
             if this.entry(interop, name).is_some() || this.reexport(name).is_some() {
                 return true;
             }
             // "default exports must be explicitly re-exported (#328)"
-            if name != Some(DEFAULT) && asked.insert(this.id()) {
+            if name != Some(DEFAULT) && visited.insert(this.id()) {
                 let dependencies = self.dependencies_of(this);
                 pending.extend(dependencies.iter().rev().flatten().copied());
             }
@@ -481,11 +479,12 @@ impl<'a> ExportMaps<'a> {
         map.entry(interop, Some(name)).is_some()
     }
 
-    /// `hasDeep`: `found`, `path`. What is asked again while it is asked is not found: upstream runs out of stack.
+    /// `hasDeep`. Returns `found` and `path`. A query that recurs while it's still running counts as not found, where
+    /// upstream overflows the stack.
     pub(crate) fn has_deep(&self, map: ExportMap<'a>, name: &[u8]) -> (bool, Vec<ExportMap<'a>>) {
         let interop = self.is_es_module_interop();
         let mut running: Vec<HasDeep<'a, '_>> = Vec::new();
-        let mut asked = FxHashSet::default();
+        let mut visited = FxHashSet::default();
         let mut call = Some((map, Some(name)));
         loop {
             if let Some((this, name)) = call.take() {
@@ -494,7 +493,7 @@ impl<'a> ExportMaps<'a> {
                 if this.entry(interop, name).is_some() {
                     return (true, HasDeep::path_of(&running));
                 }
-                let is_new = asked.insert((this.id(), name));
+                let is_new = visited.insert((this.id(), name));
                 if let Some(reexports) = this.reexport(name) {
                     // "if import is ignored, return explicit 'null'"
                     let Some(imported) = self.resolve_import(this, &reexports.source) else {
@@ -524,7 +523,7 @@ impl<'a> ExportMaps<'a> {
                 // "safeguard against cycles"
                 Some(Some(inner_map)) if inner_map.is(top.this) => {}
                 Some(Some(inner_map)) => call = Some((inner_map, top.name)),
-                // It has not found it, nor have those that return what it returns.
+                // This call didn't find it, and neither did the callers that just return its result.
                 None => match callers.iter().rposition(|it| it.rest.is_some()) {
                     Some(caller) => running.truncate(caller + 1),
                     None => return (false, HasDeep::path_of(&running)),
@@ -538,17 +537,17 @@ impl<'a> ExportMaps<'a> {
         self.get_key(map, Some(name))
     }
 
-    /// What is asked again while it is asked is `undefined`: upstream runs out of stack.
+    /// A query that recurs while it's still running returns `undefined`, where upstream overflows the stack.
     fn get_key(&self, map: ExportMap<'a>, name: Key) -> Got<'a> {
         let interop = self.is_es_module_interop();
-        // The calls that are to come, the next last. All return what the first that is not `undefined` returns.
+        // A stack of pending calls, with the next one on top. The result is the first one that isn't `undefined`.
         let mut pending: SmallVec<[(ExportMap<'a>, Key<'_>); 8]> = smallvec![(map, name)];
-        let mut asked = FxHashSet::default();
+        let mut visited = FxHashSet::default();
         while let Some((this, name)) = pending.pop() {
             if let Some(entry) = this.entry(interop, name) {
                 return Got::Meta(Exported { map: this, entry });
             }
-            if !asked.insert((this.id(), name)) {
+            if !visited.insert((this.id(), name)) {
                 continue;
             }
             if let Some(reexports) = this.reexport(name) {
@@ -577,28 +576,28 @@ impl<'a> ExportMaps<'a> {
         matches!(self.get_key(map, Some(DEFAULT)), Got::Meta(_))
     }
 
-    /// `forEach`: the value, which is `None` for `null` and `undefined`, and the name. A module that is reached on two
-    /// ways is gone through once: upstream says the same again.
+    /// `forEach`. The callback gets the value (`None` for `null` and `undefined`) and the name. A module that's
+    /// reachable in two ways is visited once, where upstream repeats its entries.
     pub(crate) fn for_each(
         &self,
         map: ExportMap<'a>,
         callback: &mut dyn FnMut(Option<Exported<'a>>, &'a [u8]),
     ) {
         let interop = self.is_es_module_interop();
-        // The calls that are to come, the next last.
+        // A stack of pending calls, with the next one on top.
         let mut pending: SmallVec<[ExportMap<'a>; 8]> = smallvec![map];
-        let mut asked = FxHashSet::default();
+        let mut visited = FxHashSet::default();
         while let Some(this) = pending.pop() {
-            if !asked.insert(this.id()) {
+            if !visited.insert(this.id()) {
                 continue;
             }
-            // Of a dependency: `n !== 'default'`.
-            let is_passed = |n: Key<'_>| this.is(map) || n != Some(DEFAULT);
-            for entry in this.entries(interop).filter(|it| is_passed(it.key())) {
+            // For a dependency, upstream checks `n !== 'default'`.
+            let is_forwarded = |n: Key<'_>| this.is(map) || n != Some(DEFAULT);
+            for entry in this.entries(interop).filter(|it| is_forwarded(it.key())) {
                 let v = Exported { map: this, entry };
                 callback(Some(v), entry.key().unwrap_or(UNDEFINED));
             }
-            for reexports in this.reexports().filter(|it| is_passed(it.key())) {
+            for reexports in this.reexports().filter(|it| is_forwarded(it.key())) {
                 // "can't look up meta for ignored re-exports (#348)"
                 let reexported = self.resolve_import(this, &reexports.source);
                 let v = match reexported.map(|it| self.get_key(it, reexports.local.as_deref())) {
@@ -617,7 +616,7 @@ impl<'a> ExportMaps<'a> {
         self.resolve_import(exported.map, exported.entry.namespace_of.as_deref()?)
     }
 
-    /// `reexports.get(name)`: `local`, `getImport()`.
+    /// `reexports.get(name)`. Returns `local` and `getImport()`.
     pub(crate) fn reexport(
         &self,
         map: ExportMap<'a>,
@@ -628,7 +627,7 @@ impl<'a> ExportMaps<'a> {
         Some((local, self.resolve_import(map, &reexports.source)))
     }
 
-    /// `reexports`, in its order.
+    /// `reexports`, in iteration order.
     pub(crate) fn reexports(&self, map: ExportMap<'a>) -> Vec<Reexported<'a>> {
         let entries = map.reexports().map(|it| Reexported {
             name: it.key(),
@@ -638,11 +637,11 @@ impl<'a> ExportMaps<'a> {
         entries.collect()
     }
 
-    /// `meta.doc.tags.find((t) => t.title === 'deprecated')`: its description.
+    /// The description of `meta.doc.tags.find((t) => t.title === 'deprecated')`.
     pub(crate) fn deprecation(&self, exported: Exported<'a>) -> Option<Option<&'a [u8]>> {
         let docs = &exported.entry.doc;
         let styles = self.settings.docstyle();
-        // `captureDoc` keeps what the last parser finds.
+        // `captureDoc` keeps the last parser's result.
         let doc = styles.iter().rev().find_map(|style| match style {
             DocStyle::Jsdoc => docs.jsdoc.as_ref(),
             DocStyle::Tomdoc => docs.tomdoc.as_ref(),
@@ -650,7 +649,7 @@ impl<'a> ExportMaps<'a> {
         doc.deprecated.as_ref().map(|it| it.as_deref())
     }
 
-    /// The same of `map.doc`.
+    /// The same for `map.doc`.
     pub(crate) fn module_deprecation(&self, map: ExportMap<'a>) -> Option<Option<&'a [u8]>> {
         let doc = map.facts.record.doc.as_ref()?;
         doc.deprecated.as_ref().map(|it| it.as_deref())
@@ -662,25 +661,25 @@ impl<'a> ExportMaps<'a> {
         entries.map(|it| it.key().unwrap_or(UNDEFINED)).collect()
     }
 
-    /// `dependencies`, each called.
+    /// The results of calling each of `dependencies`.
     pub(crate) fn dependencies(&self, map: ExportMap<'a>) -> Vec<Option<ExportMap<'a>>> {
         self.dependencies_of(map).to_vec()
     }
 
-    /// `imports`: the path as the resolver gives it, and `declarations`.
+    /// `imports`: each path as the resolver returns it, with its `declarations`.
     pub(crate) fn imports(&self, map: ExportMap<'a>) -> Vec<(Vec<u8>, Vec<&'a Dependency>)> {
-        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut index_of_path: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
         let mut imports: Vec<(Vec<u8>, Vec<&'a Dependency>)> = Vec::new();
         for declaration in &map.facts.record.imports {
             let Some(p) = self.remote_path(map, &declaration.specifier) else {
                 continue;
             };
-            let Some(place) = places.get(&p).copied() else {
-                places.insert(p.clone(), imports.len());
+            let Some(existing) = index_of_path.get(&p).copied() else {
+                index_of_path.insert(p.clone(), imports.len());
                 imports.push((p, vec![declaration]));
                 continue;
             };
-            if let Some((_, declarations)) = imports.get_mut(place) {
+            if let Some((_, declarations)) = imports.get_mut(existing) {
                 if declaration.is_dynamic {
                     declarations.clear();
                 }

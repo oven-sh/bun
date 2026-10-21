@@ -1,12 +1,12 @@
-//! Flow: its types and its declarations, as `flow-parser` reads them (`Dialect::flow`).
+//! Flow types and declarations, parsed the way `flow-parser` parses them (`Dialect::flow`).
 //!
-//! The HIR has no node of its own for any of it. Only a formatter gets such a file
-//! (`FileIn::is_flow`), and it prints from the nodes of TypeScript, which are used like this:
+//! The HIR has no Flow-specific nodes. Only a formatter ever gets such a file (`FileIn::is_flow`), and it prints from
+//! TypeScript's nodes, which are reused like this:
 //!
 //! | Flow | HIR |
 //! | --- | --- |
 //! | `mixed`, `empty`, `*` | `Ref` with that name |
-//! | `boolean`, `bool` | `Ref` with the name `boolean`: Prettier writes the one for the other |
+//! | `boolean`, `bool` | `Ref` with the name `boolean`, because Prettier prints `bool` as `boolean` |
 //! | `?T` | `JSDoc { Nullable, is_postfix: false }` |
 //! | `T?.[K]` | `IndexedAccess`. The token after `T` is the `?.` |
 //! | `renders T`, `renders? T`, `renders* T` | `Unique(T)`, which starts with the operator |
@@ -41,9 +41,9 @@
 //! | a pattern | an expression. `a \| b`: `BitOr`. `a as b`: `In`. `a if (b)`: `And`. `const a`: `Unary(Void)`, which starts with the keyword. `...`: a spread of `Missing`. `const a` in an object pattern: a property without a key. `A { b: c }`: as `R { a: 1 }` |
 //! | `record A implements B { a: T = b, c() { } }` | `Class` with the word as its last modifier. A property ends before its `,` |
 //!
-//! There is no second parser here to compare with. What is right is what Prettier 3.9.9 prints with
-//! `--parser flow` (flow-parser 0.322) and `--parser babel-flow`: its tests in `tests/format/flow`,
-//! and real files through the npm package.
+//! There's no second parser here to compare against. The source of truth is what Prettier 3.9.9 prints with
+//! `--parser flow` (flow-parser 0.322) and `--parser babel-flow`, both for its tests in `tests/format/flow` and for
+//! real files run through the npm package.
 
 use super::stmt::Start;
 use super::{Parser, ctx, take_span};
@@ -51,19 +51,19 @@ use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
-/// Which members an object type can have.
+/// The kind of an object type's body, which determines the members it can have.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Body {
     /// `{ }` as a type
     Type,
-    /// Of an interface
+    /// An interface body
     Interface,
-    /// Of `declare class`: `static` and `proto` are modifiers.
+    /// A `declare class` body, where `static` and `proto` are modifiers.
     Class,
 }
 
-/// A property of a record, as far as its name says. `name_token`: the first token of the name.
-fn property_of_record(
+/// Builds a record property from its name alone. `name_token` is the name's first token.
+fn record_property(
     name_token: T,
     (key, name_kind, name_pos): (PropKey, NameKind, u32),
     flags: Flags,
@@ -76,7 +76,7 @@ fn property_of_record(
     Member {
         kind: MemberKind::Property,
         key,
-        flags: flags | super::class::flags_of_member_name(name_token, name_kind, key),
+        flags: flags | super::class::member_name_flags(name_token, name_kind, key),
         ty: TypeNodeId::NONE,
         init: ExprId::NONE,
         func: FnId::NONE,
@@ -90,26 +90,26 @@ fn property_of_record(
 impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     // ───────────────────────────── tokens ─────────────────────────────
 
-    /// Whether the token is the name `word`, which is no keyword of TypeScript's.
+    /// True if the token is the name `word`, which isn't a TypeScript keyword.
     #[inline]
     fn is_word(&self, word: &[u8]) -> bool {
         self.token() == T::Identifier && !self.lx.has_escape && self.lx.text() == word
     }
 
-    /// Reads the first byte of the token as the token `first`.
+    /// Shrinks the token to its first byte, which becomes the token `first`.
     #[inline]
     fn split_token(&mut self, first: T) {
         self.lx.token = first;
         self.lx.end = self.lx.start + 1;
     }
 
-    /// Whether the token is directly followed by `byte`.
+    /// True if the token is directly followed by `byte`.
     #[inline]
-    fn is_directly_before(&self, byte: u8) -> bool {
+    fn is_directly_followed_by(&self, byte: u8) -> bool {
         self.lx.src.get(self.lx.end as usize) == Some(&byte)
     }
 
-    /// Pushes the token on the stack of modifiers.
+    /// Pushes the token on the modifier stack and consumes it.
     fn modifier_token(&mut self, flag: Flags) {
         let kind = ModifierKind::Keyword(flag);
         self.s.modifiers.push(Modifier {
@@ -119,7 +119,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.next();
     }
 
-    /// Any word, which is consumed: its text, its start and its end.
+    /// Consumes any word. Returns its text, start and end.
     fn word(&mut self) -> (Atom, u32, u32) {
         let end = self.lx.end;
         let (name, pos) = self.identifier_name();
@@ -128,12 +128,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     // ───────────────────────────── types ─────────────────────────────
 
-    /// A type.
+    /// Parses a type.
     pub(crate) fn flow_type(&mut self) -> TypeNodeId {
         self.flow_type_in(0)
     }
 
-    /// A type, in the context `context` beside that of all types.
+    /// Parses a type with the context bits `context`, in addition to the ones every type gets.
     fn flow_type_in(&mut self, context: u32) -> TypeNodeId {
         if self.is_too_deep() {
             return TypeNodeId::NONE;
@@ -166,10 +166,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         ty
     }
 
-    /// Whether the token is the `|` of a union: not that of `|}`.
+    /// True if the token is the `|` of a union and not the `|` of `|}`.
     #[inline]
     fn is_at_union_operator(&self) -> bool {
-        self.token() == T::Bar && !self.is_directly_before(b'}')
+        self.token() == T::Bar && !self.is_directly_followed_by(b'}')
     }
 
     fn flow_union_type(&mut self) -> TypeNodeId {
@@ -223,7 +223,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.flow_function_type_rest(start.pos, Span::EMPTY, (ParamId::NONE, params), start.pos)
     }
 
-    /// A parameter of a function type that is only the type `ty`.
+    /// Pushes a function type parameter that consists only of the type `ty`.
     fn push_unnamed_parameter(&mut self, start: Start, ty: TypeNodeId, flags: Flags) {
         self.s.params.push(Param {
             pat: PatId::NONE,
@@ -238,7 +238,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         });
     }
 
-    /// From the `=>` of a function type that starts at `start`. `anchor`: the `(` of its parameters.
+    /// Parses the rest of a function type that starts at `start`, from its `=>` on. `anchor` is the `(` of its
+    /// parameters.
     fn flow_function_type_rest(
         &mut self,
         start: u32,
@@ -293,8 +294,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.finish_type(kind, start)
     }
 
-    /// What follows the `:` after the parameters of a function with a body, of an arrow function
-    /// (`context`: no function type without parentheses) or of `declare function`.
+    /// Parses what follows the `:` after the parameters of a function with a body, an arrow function or a
+    /// `declare function`. For an arrow function, `context` disallows a function type without parentheses.
     fn flow_return_type_and_predicate(&mut self, context: u32) -> TypeNodeId {
         let start = self.pos();
         let ty = match self.token() {
@@ -335,12 +336,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.finish_type(kind, start)
     }
 
-    /// The return type of a function with a body.
+    /// Parses the return type of a function with a body.
     pub(crate) fn flow_return_type_of_function(&mut self) -> TypeNodeId {
         self.flow_return_type_and_predicate(0)
     }
 
-    /// The return type of an arrow function: in `(a): B => c` it is `B`.
+    /// Parses an arrow function's return type. In `(a): B => c` it's `B`.
     pub(crate) fn flow_return_type_of_arrow_function(&mut self) -> TypeNodeId {
         self.flow_return_type_and_predicate(ctx::NO_ANONYMOUS_FUNCTION_TYPE)
     }
@@ -453,11 +454,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.token_type(TypeNodeKind::Keyword(keyword))
     }
 
-    /// `renders T`, `renders? T`, `renders* T`. `is_of_declaration`: after the parameters of a
-    /// component that is declared, where `T` can be a union.
+    /// `renders T`, `renders? T`, `renders* T`. `is_of_declaration` is set after the parameters of a component
+    /// declaration, where `T` can be a union.
     fn flow_renders_type(&mut self, is_of_declaration: bool) -> TypeNodeId {
         let start = self.pos();
-        let has_mark = self.is_directly_before(b'?') || self.is_directly_before(b'*');
+        let has_mark = self.is_directly_followed_by(b'?') || self.is_directly_followed_by(b'*');
         self.next();
         if has_mark {
             if self.token() == T::QuestionQuestion {
@@ -481,7 +482,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             T::Extends => self.try_parse(|p| {
                 p.next();
                 let constraint = p.flow_union_type();
-                // In `infer A extends B ? C : D` it is the `extends` of the conditional type.
+                // In `infer A extends B ? C : D` it's the `extends` of the conditional type.
                 let is_constraint =
                     p.has_context(ctx::DISALLOW_CONDITIONAL_TYPES) || p.token() != T::Question;
                 is_constraint.then_some(constraint)
@@ -501,7 +502,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.finish_type(TypeNodeKind::Infer(param), start)
     }
 
-    /// The token as a reference to the type `name`.
+    /// Consumes the token and returns a reference to the type `name`.
     fn flow_type_called(&mut self, name: &[u8]) -> TypeNodeId {
         let name = self.atom(name);
         let name = self.f.entity_name([(name, self.pos())].into_iter());
@@ -565,7 +566,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.finish_type(TypeNodeKind::Intersection(parts), start)
     }
 
-    /// Type arguments, at the `<`.
+    /// Parses type arguments, at the `<`.
     pub(crate) fn flow_type_arguments(&mut self) -> IdList<TypeNodeId> {
         if self.token() == T::LessThanLessThan {
             self.split_token(T::LessThan);
@@ -583,13 +584,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.take_ids(base)
     }
 
-    /// The type arguments of a call or of a record expression, at the `<`, if that is what it is.
-    /// `is_in_new`: of a `new` expression, which needs no arguments.
+    /// At a `<`: parses the type arguments of a call or a record expression, if that's what this is. `is_in_new` is set
+    /// for a `new` expression, which doesn't need an argument list.
     pub(crate) fn flow_type_arguments_in_expression(
         &mut self,
         is_in_new: bool,
     ) -> Option<IdList<TypeNodeId>> {
-        // flow-parser takes `async<T>(` for the start of an arrow function, which this is not.
+        // flow-parser treats `async<T>(` as the start of an arrow function, and this isn't one.
         if !self.options.dialect.babel
             && let Some(&Expr {
                 kind: ExprKind::Ident(name),
@@ -609,7 +610,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         })
     }
 
-    /// Type parameters, at the `<`.
+    /// Parses type parameters, at the `<`.
     pub(crate) fn flow_type_parameters(&mut self) -> Span<TypeParamId> {
         if self.token() == T::LessThanLessThan {
             self.split_token(T::LessThan);
@@ -637,7 +638,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let variance = match self.token() {
             T::Plus => Flags::OUT,
             T::Minus => Flags::IN,
-            // Each can be the name.
+            // `in` and `out` can also be the parameter's name.
             T::In | T::Out
                 if self.peek().is_identifier_or_keyword() && self.peek() != T::Extends =>
             {
@@ -678,8 +679,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         });
     }
 
-    /// Whether the token is a name that a `:` or `?:` follows: that of a parameter of a function
-    /// type, of an element of a tuple, of an indexer.
+    /// True if the token is a name followed by `:` or `?:`, which labels a function type parameter, a tuple element or
+    /// an indexer.
     fn is_at_label(&mut self) -> bool {
         self.token().is_identifier_or_keyword()
             && self.token() != T::PrivateIdentifier
@@ -690,7 +691,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             })
     }
 
-    /// A parameter of a function type: `T`, `name: T`, `name?: T`, and each after `...`.
+    /// Parses a function type parameter: `T`, `name: T` or `name?: T`, each optionally after `...`.
     fn flow_function_type_parameter(&mut self) {
         let start = self.start();
         let mut flags = Flags::empty();
@@ -721,7 +722,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         });
     }
 
-    /// Takes the parameters on the stack from `base` on: the `this` parameter, and the others.
+    /// Takes the parameters on the stack from `base` on. Returns the `this` parameter and the others.
     fn take_function_type_parameters(&mut self, base: usize) -> (ParamId, Span<ParamId>) {
         let list: Span<ParamId> = take_span!(self, params, base);
         let first = self
@@ -739,7 +740,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The parameters of a function type, at the `(`.
+    /// Parses a function type's parameters, at the `(`.
     fn flow_function_type_parameters(&mut self) -> (ParamId, Span<ParamId>) {
         self.expect(T::OpenParen);
         let base = self.s.params.len();
@@ -823,7 +824,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             self.expect(T::Colon);
         }
-        // `...` alone: there can be more elements.
+        // A bare `...` means there can be more elements.
         if !(has_dots && name.is_none() && self.token() == T::CloseBracket) {
             ty = self.flow_type();
         }
@@ -840,8 +841,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         });
     }
 
-    /// Whether the token is `readonly` or `writeonly` before the name of a property, of an element
-    /// of a tuple, or before an indexer.
+    /// True if the token is `readonly` or `writeonly` before a property name, a tuple element name or an indexer.
     fn is_at_variance_keyword(&mut self) -> bool {
         (self.token() == T::Readonly || self.is_word(b"writeonly")) && {
             let next = self.peek();
@@ -850,7 +850,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The `+` or `-` before the name of a member of a class, which is no method.
+    /// Parses the `+` or `-` before a class member's name. The member can't be a method.
     pub(crate) fn flow_variance(&mut self) {
         self.flow_variance_token();
         let is_before_method = self.look_ahead_parsing(|p| {
@@ -862,7 +862,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// Pushes `+`, `-`, `readonly` or `writeonly` on the stack of modifiers, if the token is one.
+    /// Pushes `+`, `-`, `readonly` or `writeonly` on the modifier stack, if the token is one of them.
     fn flow_variance_token(&mut self) {
         match self.token() {
             T::Plus => self.modifier_token(Flags::OUT),
@@ -875,12 +875,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     // ───────────────────────────── object types ─────────────────────────────
 
-    /// The members of an object type, at the `{`.
+    /// Parses an object type's members, at the `{`.
     fn flow_object_type_members(&mut self, body: Body) -> Span<MemberId> {
         if self.is_too_deep() {
             return Span::EMPTY;
         }
-        let is_exact = self.is_directly_before(b'|');
+        let is_exact = self.is_directly_followed_by(b'|');
         self.expect(T::OpenBrace);
         let base = self.s.members.len();
         match self.token() {
@@ -908,7 +908,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         take_span!(self, members, base)
     }
 
-    /// From the type parameters of a method, an accessor or a call property to its return type.
+    /// Parses a method, accessor or call property from its type parameters to its return type.
     fn flow_method_signature(
         &mut self,
         kind: FnKind,
@@ -937,9 +937,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         })
     }
 
-    /// The name of a property of an object type. `@@iterator` is one.
+    /// Parses a property name in an object type. `@@iterator` is a valid name.
     fn flow_property_name(&mut self, member: &mut Member) {
-        if self.token() == T::At && self.is_directly_before(b'@') {
+        if self.token() == T::At && self.is_directly_followed_by(b'@') {
             let start = self.pos();
             self.next();
             self.next();
@@ -981,7 +981,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         };
         let first_modifier = self.s.modifiers.len();
         self.flow_object_type_member_rest(body, start, &mut member);
-        // No method, accessor or call property has a variance.
+        // A method, accessor or call property can't have a variance.
         let is_variance = |it: &Modifier| match it.kind {
             ModifierKind::Keyword(flag) if flag.is_empty() => {
                 self.lx.src.get(it.pos as usize) == Some(&b'w')
@@ -991,10 +991,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             ModifierKind::Decorator(_) => false,
         };
-        let written = self.s.modifiers.get(first_modifier..).unwrap_or_default();
+        let own_modifiers = self.s.modifiers.get(first_modifier..).unwrap_or_default();
         if member.func.is_some()
             && member.kind != MemberKind::IndexSignature
-            && written.iter().any(is_variance)
+            && own_modifiers.iter().any(is_variance)
         {
             self.fail();
         }
@@ -1009,7 +1009,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn flow_object_type_member_rest(&mut self, body: Body, start: Start, member: &mut Member) {
         if self.eat(T::DotDotDot) {
             member.flags |= Flags::REST;
-            // `...` alone: there can be more properties.
+            // A bare `...` means there can be more properties.
             if !matches!(
                 self.token(),
                 T::Comma | T::Semicolon | T::CloseBrace | T::Bar
@@ -1018,8 +1018,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             return;
         }
-        // `static` and `proto` are names before these, and everywhere but in `declare class`
-        // before the parameters of a method.
+        // `static` and `proto` are names before `:` and `?`. Before a method's parameters they're names too, except for
+        // `static` in `declare class`.
         let is_static = self.token() == T::Static;
         if is_static || self.is_word(b"proto") {
             let is_modifier = match self.peek() {
@@ -1138,7 +1138,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         });
     }
 
-    /// `[K in T]: V`, `[K in T]?: V`, at the `K`. `start`: of the member.
+    /// `[K in T]: V`, `[K in T]?: V`, at the `K`. `start` is the member's start.
     fn flow_mapped_type_property(&mut self, start: u32) -> TypeNodeId {
         let (name, pos) = self.identifier_name();
         self.expect(T::In);
@@ -1188,7 +1188,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     // ───────────────────────────── expressions ─────────────────────────────
 
-    /// `(e: T)`, at the `:`. `open`: the position of the `(`.
+    /// `(e: T)`, at the `:`. `open` is the position of the `(`.
     pub(crate) fn flow_type_cast(&mut self, open: u32, expr: ExprId) -> ExprId {
         self.next();
         let ty = self.flow_type();
@@ -1198,8 +1198,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     // ───────────────────────────── declarations ─────────────────────────────
 
-    /// Whether the token is a word that starts a declaration of Flow's and that is a name for
-    /// TypeScript: `opaque type`, `component A`, `hook useA`.
+    /// True if the token is a word that starts a Flow declaration but is a plain name in TypeScript: `opaque type`,
+    /// `component A`, `hook useA`.
     pub(crate) fn flow_is_at_declaration_word(&mut self) -> bool {
         if self.token() != T::Identifier {
             return false;
@@ -1214,8 +1214,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// What starts at `start` with `expression`, after which the token cannot end a statement: a
-    /// declaration, if the expression is one of the words that start one.
+    /// Called when `expression`, which starts at `start`, is followed by a token that can't end a statement. Parses a
+    /// declaration if the expression is one of the words that start one.
     pub(crate) fn flow_declaration_after_expression(
         &mut self,
         start: Start,
@@ -1259,8 +1259,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// A declaration whose modifiers, which are on the stack from `base` on, are followed by a word
-    /// for which `flow_is_at_declaration_word` holds.
+    /// Parses a declaration whose modifiers, which are on the stack from `base` on, are followed by a word that passes
+    /// `flow_is_at_declaration_word`.
     pub(crate) fn flow_declaration_at_word(
         &mut self,
         start: Start,
@@ -1276,7 +1276,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.flow_declaration_after_modifiers(start, base, flags, first)
     }
 
-    /// `first`: the first letter of the word, which is the last of the modifiers.
+    /// `first` is the first letter of the declaration word, which is the last modifier.
     fn flow_declaration_after_modifiers(
         &mut self,
         start: Start,
@@ -1300,17 +1300,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The modifiers on the stack from `base` on are before what has no decorators.
-    pub(crate) fn flow_refuse_decorators(&mut self, base: usize) {
+    /// Fails if there's a decorator among the modifiers on the stack from `base` on. They precede something that can't
+    /// have decorators.
+    pub(crate) fn flow_reject_decorators(&mut self, base: usize) {
         let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
-        let written = self.s.modifiers.get(base..).unwrap_or_default();
-        if written.iter().any(is_decorator) {
+        let own_modifiers = self.s.modifiers.get(base..).unwrap_or_default();
+        if own_modifiers.iter().any(is_decorator) {
             self.fail();
         }
     }
 
-    /// The modifiers on the stack from `base` on, whose flags are `flags`, are not all JavaScript's.
-    /// `declare` before `export` belongs to the `export`, not to what is exported: it gets no flag.
+    /// Called when the modifiers on the stack from `base` on, whose flags are `flags`, aren't all JavaScript modifiers.
+    /// A `declare` before `export` belongs to the `export`, not to what's exported, so its flag is cleared.
     pub(crate) fn flow_declare_before_export(&mut self, base: usize, flags: Flags) {
         if flags.contains(Flags::AMBIENT | Flags::EXPORT)
             && let Some(first) = self.s.modifiers.get_mut(base)
@@ -1320,7 +1321,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The name of a type that is declared, which is not that of a type of the language.
+    /// Parses the name of a declared type, which can't be the name of a built-in type.
     fn flow_type_name(&mut self) -> (Atom, u32) {
         if matches!(
             self.lx.text(),
@@ -1452,7 +1453,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `declare class A<T> extends B<T> mixins C implements D { }`, at `class`.
     pub(crate) fn flow_declare_class(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
-        self.flow_refuse_decorators(base);
+        self.flow_reject_decorators(base);
         if flags.contains(Flags::ABSTRACT) {
             self.fail();
         }
@@ -1466,12 +1467,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 let (name, name_pos, end) = self.word();
                 let kind = match extends.is_none() {
                     true => ExprKind::Ident(name),
-                    false => ExprKind::Dot {
-                        obj: extends,
-                        name,
-                        name_pos,
-                        chain: Chain::No,
-                    },
+                    false => self.f.dot((extends, Chain::No), (name, name_pos), end),
                 };
                 extends = self.add_expr(kind, first, end);
                 if !self.eat(T::Dot) {
@@ -1521,7 +1517,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.flow_declare_function_rest(start, base, flags)
     }
 
-    /// From the name of a function or a hook that is declared.
+    /// Parses a `declare function` or `declare hook`, from its name on.
     fn flow_declare_function_rest(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         let (name, name_pos) = self.identifier();
         let type_params = self.type_parameters();
@@ -1565,7 +1561,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_alias(start, base, Flags::AMBIENT, name, Span::EMPTY, ty)
     }
 
-    /// `declare export default T;`, at the `default`. `export` is not among the modifiers yet.
+    /// `declare export default T;`, at the `default`. `export` isn't among the modifiers yet.
     pub(crate) fn flow_declare_export_default_type(
         &mut self,
         start: Start,
@@ -1651,7 +1647,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => ctx::AWAIT,
             false => 0,
         };
-        // Where everything is declared, like in a `.js.flow` file, it has no body either.
+        // In an ambient context, such as a `.js.flow` file, it has no body either.
         let (body, open) = match self.token() {
             T::OpenBrace if !is_ambient => self.function_block(context),
             _ => {
@@ -1659,10 +1655,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 (FnBody::None, 0)
             }
         };
-        let kept = Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC;
+        let retained_flags = Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC;
         let func = self.f.add_fn(Func {
             kind: FnKind::Decl,
-            flags: flags & kept,
+            flags: flags & retained_flags,
             name,
             name_pos,
             type_params,
@@ -1680,7 +1676,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_stmt(StmtKind::Fn(func), start, modifiers)
     }
 
-    /// The parameters of a component with a body, at the `(`.
+    /// Parses the parameters of a component with a body, at the `(`.
     fn flow_component_parameters(&mut self) -> Span<ParamId> {
         self.expect(T::OpenParen);
         let base = self.s.params.len();
@@ -1690,7 +1686,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             if self.eat(T::DotDotDot) {
                 flags |= Flags::REST;
             } else if self.token() == T::String || self.peek() == T::As {
-                // The name that the caller gives it.
+                // The name that callers use for it.
                 self.next();
                 self.expect(T::As);
             }
@@ -1719,8 +1715,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         take_span!(self, params, base)
     }
 
-    /// The parameters of a component type, or of a component that is declared, at the `(`:
-    /// `a: A`, `'b'?: B`, `...C`, `...c: C`.
+    /// Parses the parameters of a component type or a `declare component`, at the `(`: `a: A`, `'b'?: B`, `...C`,
+    /// `...c: C`.
     fn flow_component_type_parameters(&mut self) -> Span<ParamId> {
         self.expect(T::OpenParen);
         let base = self.s.params.len();
@@ -1777,7 +1773,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     // ───────────────────────────── match ─────────────────────────────
 
-    /// Whether `e`, which was just parsed, is `match (a)`, `match (a, b)`.
+    /// True if `e`, which was just parsed, is `match (a)` or `match (a, b)`.
     fn flow_is_match_head(&self, e: ExprId) -> bool {
         let Some(&Expr {
             kind: ExprKind::Call(call),
@@ -1808,8 +1804,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && !self.is_parenthesized(e)
     }
 
-    /// At a `{` after `expression`, which starts at `start`: the match expression or the record
-    /// expression that the two are. `None`: the `{` is not part of the expression.
+    /// At a `{` after `expression`, which starts at `start`. Returns the match expression or record expression that the
+    /// two form, or `None` if the `{` isn't part of the expression.
     pub(crate) fn flow_braces_after_expression(
         &mut self,
         start: u32,
@@ -1819,7 +1815,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return None;
         }
         if self.flow_is_match_head(expression) {
-            // That is a statement.
+            // At the start of a statement it's a match statement.
             if start == self.flow_statement_start {
                 return None;
             }
@@ -1850,7 +1846,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 kind:
                     ExprKind::Instantiation {
                         expr,
-                        type_args: written,
+                        type_args: instantiation_args,
                     },
                 ..
             }) = self.f.exprs.last()
@@ -1859,7 +1855,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 return None;
             }
             self.pop_expr();
-            (constructor, type_args) = (expr, written);
+            (constructor, type_args) = (expr, self.f.list_at(instantiation_args));
         } else if !is_constructor(self, expression) {
             return None;
         }
@@ -1878,18 +1874,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let base = self.s.ids.len();
         self.s.ids.push(braces.0);
         let args = self.take_ids(base);
+        let type_args = self.f.store_list(type_args);
         let call = self.f.add_call(Call {
             callee: head,
             args,
             type_args,
             close_pos: u32::MAX,
             chain: Chain::No,
-            template: ExprId::NONE,
         });
         self.finish_expr(ExprKind::New(call), start)
     }
 
-    /// `match (a, b)` is `match ((a, b))`: the argument of `head`, which was just parsed, is one
+    /// `match (a, b)` means `match ((a, b))`. Rewrites `head`, which was just parsed, so that its argument is a single
     /// expression.
     fn flow_match_head(&mut self, head: ExprId) -> ExprId {
         let Some(&Expr {
@@ -1926,7 +1922,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_expr(ExprKind::Call(call), pos, end)
     }
 
-    /// `match (a) { b => c, d if (e) => f }`, at the `{`. `head`: the `match (a)`.
+    /// `match (a) { b => c, d if (e) => f }`, at the `{`. `head` is the `match (a)`.
     fn flow_match_expression(&mut self, start: u32, head: ExprId) -> ExprId {
         if self.is_too_deep() {
             return ExprId::NONE;
@@ -1962,7 +1958,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.flow_expression_with_braces(start, head, IdList::EMPTY, cases)
     }
 
-    /// `match (a) { b => { } c if (d) => { } }`, at the `{`. `head`: the `match (a)`.
+    /// `match (a) { b => { } c if (d) => { } }`, at the `{`. `head` is the `match (a)`.
     fn flow_match_statement(&mut self, start: Start, head: ExprId) -> StmtId {
         let head = self.flow_match_head(head);
         self.next();
@@ -2029,7 +2025,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         left
     }
 
-    /// A name that a pattern binds, or that it starts with.
+    /// Parses a name that a pattern binds or starts with.
     fn flow_match_name(&mut self) -> ExprId {
         let end = self.lx.end;
         let (name, pos) = self.identifier();
@@ -2044,7 +2040,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.finish_expr(ExprKind::Unary { op, operand }, start)
     }
 
-    /// `...`, `...const a`, at the `...`: what is after the dots.
+    /// `...`, `...const a`, at the `...`. Returns what follows the dots.
     fn flow_match_rest(&mut self) -> ExprId {
         self.next();
         match self.token() {
@@ -2109,14 +2105,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 loop {
                     let (obj, chain) = (pattern, Chain::No);
                     if self.eat(T::Dot) {
-                        let (name, name_pos) = self.identifier_name();
-                        let kind = ExprKind::Dot {
-                            obj,
-                            name,
-                            name_pos,
-                            chain,
-                        };
-                        pattern = self.finish_expr(kind, start);
+                        let name = self.identifier_name();
+                        pattern = self.finish_dot((obj, chain), name, start);
                     } else if self.eat(T::OpenBracket) {
                         if !matches!(self.token(), T::Number | T::BigInt | T::String) {
                             self.fail();
@@ -2181,10 +2171,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     // ───────────────────────────── records ─────────────────────────────
 
-    /// `record A<T> implements B { a: T = b, static c: U = d, e() { } }`, after `record`, which is
-    /// the last of the modifiers.
+    /// `record A<T> implements B { a: T = b, static c: U = d, e() { } }`, after `record`, which is the last modifier.
     fn flow_record(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
-        self.flow_refuse_decorators(base);
+        self.flow_reject_decorators(base);
         let (name, name_pos) = self.identifier();
         let type_params = self.type_parameters();
         let implements = match self.eat(T::Implements) {
@@ -2192,12 +2181,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => IdList::EMPTY,
         };
         self.expect(T::OpenBrace);
-        self.classes_around += 1;
+        self.class_depth += 1;
         let first = self.s.members.len();
         while self.is_in_list(T::CloseBrace) {
             self.flow_record_member();
         }
-        self.classes_around -= 1;
+        self.class_depth -= 1;
         self.expect(T::CloseBrace);
         let members = take_span!(self, members, first);
         let modifiers = self.take_modifiers(base);
@@ -2218,7 +2207,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_stmt(StmtKind::Class(class), start, modifiers)
     }
 
-    /// Whether the token, `static` or `async`, is a modifier and not a name.
+    /// True if the token, which is `static` or `async`, is a modifier and not a name.
     fn flow_is_at_modifier_in_record(&mut self) -> bool {
         !matches!(
             self.peek(),
@@ -2242,7 +2231,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let name_token = self.token();
         let name = self.property_name();
-        let mut member = property_of_record(name_token, name, flags, start.pos);
+        let mut member = record_property(name_token, name, flags, start.pos);
         let (key, flags, name_pos) = (member.key, member.flags, member.name_pos);
         let mut end = 0;
         if self.token() == T::Colon && !is_generator && !flags.contains(Flags::ASYNC) {

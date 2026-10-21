@@ -1,20 +1,19 @@
-//! `checkGrammarModifiers` (TypeScript 7.0.2, grammarchecks.go), on `node.Modifiers()` as stored in
-//! the HIR.
+//! `checkGrammarModifiers` (TypeScript 7.0.2, grammarchecks.go), on `node.Modifiers()` as stored in the HIR.
 
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent};
 use smallvec::SmallVec;
 
-/// The arguments of `grammarErrorOnNode`: the span of the node, the message code, and the message
-/// arguments. `""`: no argument. An `end` of 0 means the end of the token at `start`.
+/// The arguments of `grammarErrorOnNode`: the node's span, the message code, and the message arguments, where `""`
+/// means no argument. An `end` of 0 means the end of the token at `start`.
 #[derive(Copy, Clone)]
 pub(super) struct GrammarError {
     start: u32,
     end: u32,
     code: u32,
     args: [&'static str; 2],
-    /// `AddRelatedInfo(createDiagnosticForNode(firstDecorator, ..))`: the span of that decorator.
-    /// `(0, 0)`: there is no related information.
+    /// `AddRelatedInfo(createDiagnosticForNode(firstDecorator, ..))`: that decorator's span, or `(0, 0)` if there's no
+    /// related information.
     first_decorator: (u32, u32),
 }
 
@@ -82,7 +81,8 @@ impl Checker<'_, '_> {
         true
     }
 
-    /// The same for a statement that has modifiers, with the checks that depend on the result.
+    /// Same as `check_grammar_modifiers`, for a statement that has modifiers, plus the checks that depend on the
+    /// result.
     pub(super) fn check_grammar_modifiers_of_statement(&mut self, file: FileId, s: StmtId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if has_parse_diagnostics(hir) {
@@ -96,11 +96,10 @@ impl Checker<'_, '_> {
         let error = self.grammar_error_in_modifiers(file, s);
         // `checkInterfaceDeclaration`: `if !c.checkGrammarModifiers(node) { .. }`
         if error.is_some() && matches!(statement.kind, StmtKind::Interface(_)) {
-            self.take_back_grammar_errors_of_heritage_clauses(file, hir.node(s));
+            self.remove_heritage_clause_grammar_errors(file, hir.node(s));
         }
-        // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these accept
-        // no modifiers.
-        let takes_none = match (statement.kind, bound.stmt_parent[s.idx()]) {
+        // `checkImportDeclaration`, `checkExportDeclaration`, `checkExportAssignment`: these don't accept modifiers.
+        let modifiers_not_allowed = match (statement.kind, bound.parent_of_stmt(s)) {
             (StmtKind::Import(_), Parent::File | Parent::Module(_)) => 1191,
             (
                 StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
@@ -114,34 +113,34 @@ impl Checker<'_, '_> {
             }
             _ => 0,
         };
-        let takes_none = GrammarError::some(statement.start, 0, takes_none, ["", ""]);
-        if let Some(error) = error.or_else(|| takes_none.filter(|error| error.code != 0)) {
+        let modifiers_not_allowed =
+            GrammarError::some(statement.start, 0, modifiers_not_allowed, ["", ""]);
+        if let Some(error) = error.or_else(|| modifiers_not_allowed.filter(|error| error.code != 0))
+        {
             self.report_grammar_error(file, error);
         }
     }
 
-    /// `checkGrammarClassLikeDeclaration`, for a class that has modifiers. The front end reports
-    /// the heritage clauses and the type parameter list. No query may be in progress: it takes
-    /// diagnostics back.
+    /// `checkGrammarClassLikeDeclaration`, for a class that has modifiers. The front end reports the heritage clauses
+    /// and the type parameter list. It removes diagnostics, so no query may be in progress.
     pub(super) fn check_grammar_class_like_declaration(&mut self, file: FileId, class: ClassId) {
         // `checkGrammarClassDeclarationHeritageClauses`: `!c.checkGrammarModifiers(node) && ..`
         if !self.check_grammar_modifiers(file, class) {
             return;
         }
         let node = self.hir(file).node(class);
-        self.take_back_grammar_errors_of_heritage_clauses(file, node);
-        // `.. || c.checkGrammarTypeParameterList(..)`: the front end does not report the list after
-        // an error in the clauses that ends their check.
+        self.remove_heritage_clause_grammar_errors(file, node);
+        // `.. || c.checkGrammarTypeParameterList(..)`: the front end doesn't report the list after an error in the
+        // clauses that ends their check.
         self.check_grammar_type_parameter_list_of_class(file, class);
     }
 
-    /// Takes back what the front end reported for `node`, a class or an interface, in place of
-    /// `checkGrammarClassDeclarationHeritageClauses` or `checkGrammarInterfaceDeclaration`. That is
-    /// reported between the elements of the clauses, at the first token of an element, and for the
-    /// type arguments of the base class.
-    fn take_back_grammar_errors_of_heritage_clauses(&mut self, file: FileId, node: Node) {
+    /// Removes what the front end reported for `node`, a class or an interface, in place of
+    /// `checkGrammarClassDeclarationHeritageClauses` or `checkGrammarInterfaceDeclaration`. Those errors are between
+    /// the elements of the clauses, at the first token of an element, and on the base class's type arguments.
+    fn remove_heritage_clause_grammar_errors(&mut self, file: FileId, node: Node) {
         let hir = self.hir(file);
-        // The spans of what is checked on its own.
+        // The spans of the children that are checked separately.
         let mut others: SmallVec<[(u32, u32); 16]> = SmallVec::new();
         let mut open: SmallVec<[Node; 4]> = SmallVec::new();
         open.push(node);
@@ -165,9 +164,9 @@ impl Checker<'_, '_> {
         });
     }
 
-    /// `checkGrammarClassDeclarationHeritageClauses` returns at its first error. The front end
-    /// reports the `@augments` tags of a class (8023) apart from its clauses: this takes back what
-    /// the original does not get to. No query may be in progress.
+    /// `checkGrammarClassDeclarationHeritageClauses` returns at its first error. The front end reports a class's
+    /// `@augments` tags (8023) separately from its clauses, so this removes the errors that tsgo never gets to. No
+    /// query may be in progress.
     pub(super) fn check_grammar_augments_tags(&mut self, file: FileId) {
         let hir = self.hir(file);
         for &(class, tag) in hir.unmatched_augments_tags.iter() {
@@ -177,7 +176,7 @@ impl Checker<'_, '_> {
                 None => self.end_of_node(file, node),
             };
             let (clauses, extends) = (hir.start(node)..body, hir[hir[class].extends].pos);
-            // It reads the tags once the first `extends` clause has passed 1172, 1173 and 1174.
+            // tsgo reads the tags once the first `extends` clause has passed 1172, 1173 and 1174.
             let returns_before = self.reported.iter().any(|d| {
                 d.file == file
                     && clauses.contains(&d.start)
@@ -188,7 +187,7 @@ impl Checker<'_, '_> {
                     .retain(|d| d.file != file || d.code != 8023 || d.start != tag);
                 continue;
             }
-            self.take_back_grammar_errors_of_heritage_clauses(file, node);
+            self.remove_heritage_clause_grammar_errors(file, node);
             // `.. || c.checkGrammarTypeParameterList(..)`
             self.reported
                 .retain(|d| d.file != file || d.code != 1098 || !clauses.contains(&d.start));
@@ -211,11 +210,11 @@ impl Checker<'_, '_> {
             && self.grammar_error_at((file, open as u32, close as u32 + 1), 1098, &[])
     }
 
-    /// The same for a member that has modifiers.
+    /// Same as `check_grammar_modifiers`, for a member that has modifiers.
     pub(super) fn check_grammar_modifiers_of_member(&mut self, file: FileId, m: MemberId) {
         let member = &self.hir(file)[m];
-        // `checkGrammarIndexSignature`: `c.checkGrammarModifiers(node) || c.checkGrammarIndexSignatureParameters(node)`. The front
-        // end reports the parameters.
+        // `checkGrammarIndexSignature`: `c.checkGrammarModifiers(node) ||
+        // c.checkGrammarIndexSignatureParameters(node)`. The front end reports the parameters.
         if self.check_grammar_modifiers(file, m) && member.kind == MemberKind::IndexSignature {
             let signature = member.start..member.loc.end;
             self.reported.retain(|d| {
@@ -224,9 +223,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `HasDecorators(accessors.FirstAccessor) && node == accessors.SecondAccessor`, for the
-    /// accessor `m`: `GetAllAccessorDeclarationsForDeclaration`, among the declarations of
-    /// `getSymbolOfDeclaration(node)`.
+    /// `HasDecorators(accessors.FirstAccessor) && node == accessors.SecondAccessor`, for the accessor `m`:
+    /// `GetAllAccessorDeclarationsForDeclaration`, among the declarations of `getSymbolOfDeclaration(node)`.
     fn is_second_accessor_after_decorated_one(&mut self, file: FileId, m: MemberId) -> bool {
         let hir = self.hir(file);
         let other_kind = match hir[m].kind {
@@ -249,6 +247,7 @@ impl Checker<'_, '_> {
     }
 
     /// `grammarErrorOnNode(node, ..)`
+    #[cold]
     fn grammar_error_on(
         &self,
         file: FileId,
@@ -283,15 +282,15 @@ impl Checker<'_, '_> {
         let only_async;
         // `node.ModifierNodes()`
         let modifiers = match node {
-            NodeData::Stmt(s) => hir.modifier_list(hir[s].modifiers),
+            NodeData::Stmt(s) => hir.modifier_list(hir.stmt_modifiers(s)),
             NodeData::Member(m) => hir.modifier_list(hir[m].modifiers),
             NodeData::Prop(p) => hir.modifier_list(hir.prop_modifiers(p)),
             NodeData::Param(p) => hir.modifier_list(hir.param_modifiers(p)),
             NodeData::TypeParam(p) => hir.modifier_list(hir[p].modifiers),
             NodeData::Expr(e) => match hir[e].kind {
                 ExprKind::Class(class) => hir.modifier_list(hir[class].modifiers),
-                // `parseFunctionExpression`, `parseModifiersForArrowFunction`: `async`, which is
-                // the first token, is the only modifier there can be.
+                // `parseFunctionExpression`, `parseModifiersForArrowFunction`: the only possible modifier is `async`,
+                // which is the first token.
                 ExprKind::Fn(function) if hir[function].flags.contains(Flags::ASYNC) => {
                     only_async = [Modifier {
                         kind: ModifierKind::Keyword(Flags::ASYNC),
@@ -307,23 +306,23 @@ impl Checker<'_, '_> {
             return None;
         }
         let kind = hir.kind(location);
-        // The binder reports those of `export as namespace N`. `parseTypeMember` parses none before
-        // a signature without a name.
+        // The binder reports the modifiers of `export as namespace N`. `parseTypeMember` doesn't parse any before a
+        // signature without a name.
         if matches!(
             kind,
             Kind::NamespaceExportDeclaration | Kind::CallSignature | Kind::ConstructSignature
         ) {
             return None;
         }
-        // `node.Parent`, of a type parameter
+        // `node.Parent` of a type parameter
         let is_type_parameter = kind == Kind::TypeParameter;
-        let around = if is_type_parameter {
+        let parent_kind = if is_type_parameter {
             hir.kind(hir.parent(location))
         } else {
             Kind::Unknown
         };
         let parent = match node {
-            NodeData::Stmt(s) => bound.stmt_parent[s.idx()],
+            NodeData::Stmt(s) => bound.parent_of_stmt(s),
             _ => Parent::None,
         };
         // `IsClassLike(node.Parent)`
@@ -350,8 +349,8 @@ impl Checker<'_, '_> {
             matches!(parent, Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)));
         // `reportObviousModifierErrors`, `findFirstIllegalModifier`: the only modifier that may come first.
         let allowed_first = match kind {
-            // `checkGrammarModuleElementContext`: elsewhere the check of these bails out before
-            // their modifiers are checked.
+            // `checkGrammarModuleElementContext`: elsewhere the check of these bails out before their modifiers are
+            // checked.
             Kind::ModuleDeclaration
             | Kind::ImportDeclaration
             | Kind::ImportEqualsDeclaration
@@ -389,7 +388,7 @@ impl Checker<'_, '_> {
         {
             return GrammarError::some(first.pos, 0, 1184, ["", ""]);
         }
-        // `node.Name()`, of a parameter
+        // `node.Name()` of a parameter
         let parameter_name = match node {
             NodeData::Param(p) => hir.pats.get(hir[p].pat.idx()).map(|name| name.kind),
             _ => None,
@@ -400,7 +399,7 @@ impl Checker<'_, '_> {
         }
         // `node.Parent.Flags&NodeFlagsAmbient`
         let is_parent_ambient = || hir.is_ambient(hir.parent(location));
-        // `blockScopeKind`: the code for a modifier that a `using` or an `await using` declaration cannot have.
+        // `blockScopeKind`: the code for a modifier that a `using` or an `await using` declaration can't have.
         let on_using = match node {
             NodeData::Stmt(s) => match hir[s].kind {
                 StmtKind::Var(decls) => match decls.iter().next().map(|d| hir[d].kind) {
@@ -418,15 +417,15 @@ impl Checker<'_, '_> {
         let mut first_decorator = None;
         let (mut saw_export_before_decorators, mut has_leading_decorators) = (false, false);
         for &Modifier {
-            kind: written,
+            kind: modifier_kind,
             pos: start,
         } in modifiers
         {
-            let modifier = match written {
+            let modifier = match modifier_kind {
                 ModifierKind::Keyword(modifier) => modifier,
                 ModifierKind::Decorator(e) => {
                     // `!NodeCanBeDecorated(..)`
-                    if bound.refused_decorators.contains(&e) {
+                    if bound.rejected_decorators.contains(&e) {
                         let function = hir.fns.get(hir.function_of(location).idx());
                         let is_overload =
                             kind == Kind::MethodDeclaration && !function.is_some_and(has_body);
@@ -461,8 +460,7 @@ impl Checker<'_, '_> {
                     continue;
                 }
             };
-            // `modifier.Flags&NodeFlagsReparsed == 0`. A modifier synthesized from a JSDoc tag has
-            // the length of the tag.
+            // `modifier.Flags&NodeFlagsReparsed == 0`. A modifier synthesized from a JSDoc tag has the tag's length.
             let is_written = !modifier.contains(Flags::REPARSED);
             let end = match is_written {
                 true => 0,
@@ -494,10 +492,10 @@ impl Checker<'_, '_> {
                     return self.grammar_error_on(file, location, 1248, [text, ""]);
                 }
                 if is_type_parameter
-                    && !around.is_function_like_declaration()
-                    && !around.is_class_like()
+                    && !parent_kind.is_function_like_declaration()
+                    && !parent_kind.is_class_like()
                     && !matches!(
-                        around,
+                        parent_kind,
                         Kind::FunctionType
                             | Kind::ConstructorType
                             | Kind::CallSignature
@@ -688,9 +686,9 @@ impl Checker<'_, '_> {
                 }
                 last_async = start;
             } else if modifier == Flags::IN || modifier == Flags::OUT {
-                if !around.is_class_like()
+                if !parent_kind.is_class_like()
                     && !matches!(
-                        around,
+                        parent_kind,
                         Kind::InterfaceDeclaration
                             | Kind::TypeAliasDeclaration
                             | Kind::JSTypeAliasDeclaration

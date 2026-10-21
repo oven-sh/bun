@@ -39,9 +39,9 @@ fn use_splice<'a>(fixer: Fixer<'a>, node: Expr<'a>, object: Expr<'a>, key: Span,
     fixer.replace(node, suggestion)
 }
 
-/// What tsgolint suggests: the `delete` goes, the `[` becomes `.splice(` and the `]` becomes `, 1)`.
-/// For `a?.[b]` tsgolint puts `.splice(` over the `?.` and keeps the `[`, which does not parse: here
-/// the `[` goes and the `?.` stays. Nor does tsgolint add the `;` without which a `(` or `[` continues the line before.
+/// tsgolint's suggestion: remove the `delete`, turn the `[` into `.splice(` and the `]` into `, 1)`. For `a?.[b]`
+/// tsgolint overwrites the `?.` with `.splice(` and keeps the `[`, which doesn't parse. Here the `[` is removed and the
+/// `?.` stays. tsgolint also doesn't add the `;` that stops a leading `(` or `[` from continuing the previous line.
 fn use_splice_as_tsgolint<'a>(
     fixer: Fixer<'a>,
     node: Expr<'a>,
@@ -87,17 +87,17 @@ impl Rule for NoArrayDelete {
         };
         let (argument, is_oxlint) = (argument.with_jsdoc_cast(), cx.language().is_oxlint);
         let (object, key, is_sequence) = match argument.kind() {
-            // tsgolint looks at `a[b]` only.
+            // tsgolint only looks at `a[b]`.
             ExprKind::Dot { .. } if is_oxlint => return,
             ExprKind::Dot { obj, name, .. } => (obj, name.span(), false),
             ExprKind::Index { obj, index, .. } => {
                 let is_sequence = matches!(index.kind(), ExprKind::Binary { op: BinOp::Comma, .. });
-                // The parentheses of `a[(b, c)]` stay in what tsgolint writes.
+                // tsgolint's output keeps the parentheses of `a[(b, c)]`.
                 (obj, index.span(), is_sequence && !(is_oxlint && index.is_parenthesized()))
             }
             _ => return,
         };
-        // A `ChainExpression` for ESLint. tsgolint looks at `a?.[b]` like at `a[b]`.
+        // A `ChainExpression` for ESLint. tsgolint treats `a?.[b]` like `a[b]`.
         if !is_oxlint && argument.is_in_optional_chain() {
             return;
         }
@@ -114,8 +114,8 @@ impl Rule for NoArrayDelete {
                 labels.push(keyword, "");
             });
         match is_oxlint {
-            true => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice_as_tsgolint(fixer, node, keyword, object, argument)),
-            false => report.suggest_change_of_behavior(USE_SPLICE, &[], |fixer| use_splice(fixer, node, object, key, is_sequence)),
+            true => report.suggest_behavior_change(USE_SPLICE, &[], |fixer| use_splice_as_tsgolint(fixer, node, keyword, object, argument)),
+            false => report.suggest_behavior_change(USE_SPLICE, &[], |fixer| use_splice(fixer, node, object, key, is_sequence)),
         };
     }
 }

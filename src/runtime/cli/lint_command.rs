@@ -1,7 +1,6 @@
-//! `bun lint`: lints a project with the rules of ESLint and typescript-eslint. All of it is in
-//! `bun_lint_driver`. What is here is what that takes from the process: the arguments, the
-//! terminal, TypeScript's libraries, a way to run a configuration file that is a program, and
-//! (`lint_js.rs`) rules that are written in JavaScript.
+//! `bun lint`: lints a project with ESLint's and typescript-eslint's rules. The implementation is in `bun_lint_driver`.
+//! This file provides what the driver needs from the process: the arguments, the terminal, TypeScript's libraries, a
+//! way to run a configuration file that's a program, and (`lint_js.rs`) rules written in JavaScript.
 
 use bstr::BStr;
 
@@ -12,19 +11,20 @@ use bun_sys::File;
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
+use super::script_or_command::{arguments_before, directory_of_cwd, place_of_command};
 use bun_bunfig::Above;
 
 pub(crate) struct LintCommand;
 
 pub(crate) use bun_lint_driver::cli::HELP;
 
-/// Whether `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release
-/// build has none of it.
+/// True if `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release build doesn't have
+/// it.
 const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
 fn change_directory(cwd: &[u8]) {
-    // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
-    let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
+    // Free the copy here, because `exit` doesn't return and nothing would free it later.
+    let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory_of_cwd(cwd)));
     if let bun_sys::Result::Err(err) = changed {
         Output::err(
             err,
@@ -35,14 +35,11 @@ fn change_directory(cwd: &[u8]) {
     }
 }
 
-/// `--cwd` among the flags of `bun`, which precede `command`.
+/// Returns `--cwd` from `bun`'s own flags, which precede `command`.
 fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
     let mut found = None;
-    let mut args = bun_core::argv().into_iter();
+    let mut args = arguments_before(command).into_iter();
     while let Some(arg) = args.next() {
-        if arg == command {
-            break;
-        }
         let given = match arg.strip_prefix(b"--cwd") {
             Some(b"") => args.next(),
             Some(rest) => rest.strip_prefix(b"="),
@@ -53,59 +50,63 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
     found
 }
 
-/// `--config=<path>` among the flags of `bun`, which precede `command`. Without the `=` the path is taken for the command.
+/// Returns `--config=<path>` from `bun`'s own flags, which precede `command`. Without the `=`, the path is parsed as
+/// the command.
 fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
-    let flags = (bun_core::argv().into_iter()).take_while(|arg| *arg != command);
-    flags
+    (arguments_before(command).into_iter())
         .filter_map(|arg| {
             arg.strip_prefix(b"--config=")
                 .or_else(|| arg.strip_prefix(b"-c="))
         })
-        .last()
+        .next_back()
 }
 
-/// Has `read` read the bunfig.toml files that can say something to `command`, each with its path from the working directory
-/// and whether `--config` names it: the one in the working directory, then those above it, from the nearest, for as long as
-/// `read` wants the next. With `--config` there is only that file. Call this after `--cwd`.
+/// Calls `read` with each bunfig.toml that can apply to `command`, its path relative to the working directory, and
+/// whether `--config` specified it. It starts with the file in the working directory and continues with the parent
+/// directories, nearest first, until `read` doesn't want the next one. With `--config` it only reads that file. Call
+/// this after applying `--cwd`.
 pub(crate) fn read_bunfigs(
     ctx: &mut ContextData,
     tag: Tag,
     command: &[u8],
-    read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::Refusal>,
+    read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::BunfigError>,
 ) {
-    let named = bunfig_before(command);
+    let config_path = bunfig_before(command);
     let mut read = |file: &bun_ast::Expr, path: &[u8]| {
-        read(file, path, named.is_some()).map_err(|refusal| (refusal.at, refusal.message))
+        read(file, path, config_path.is_some())
+            .map_err(|rejection| (rejection.at, rejection.message))
     };
     let mut above = Above::Needed;
     let here = &mut |file: &bun_ast::Expr| {
-        above = read(file, named.unwrap_or(b"bunfig.toml"))?;
+        above = read(file, config_path.unwrap_or(b"bunfig.toml"))?;
         Ok(())
     };
-    if let Err(err) = bun_bunfig::load_config_for_tool(tag, named, ctx, Some(here)) {
+    if let Err(err) = bun_bunfig::load_config_for_tool(tag, config_path, ctx, Some(here)) {
         Output::err(err, "failed to load bunfig", ());
         Global::exit(2);
     }
-    if named.is_none() && above != Above::Unwanted {
+    if config_path.is_none() && above != Above::Unwanted {
         bun_bunfig::load_config_above_for_tool(tag, ctx, above, &mut read);
     }
 }
 
-/// `--disallow-code-generation-from-strings` among the flags of `bun`, which precede `command`: it holds for the plugins and
-/// the configuration files.
+/// Applies `--disallow-code-generation-from-strings` from `bun`'s own flags, which precede `command`. It also covers
+/// the plugins and the configuration files.
 fn disallow_code_generation_before(command: &[u8]) {
     let argv = bun_core::argv().to_vec();
-    let flags = argv.iter().take_while(|it| it.as_bytes() != command);
+    let flags = argv
+        .iter()
+        .take(place_of_command(command).unwrap_or(argv.len()));
     super::arguments::disallow_code_generation_from_strings_as_compiled(
         &flags.copied().collect::<Vec<_>>(),
     );
 }
 
-/// What `-e` has in a process that `run_script` starts.
+/// The `-e` argument of a process that `run_script` starts.
 const PROGRAM_IS_ON_STDIN: &[u8] = b"\x1e--bun-lint-program--\x1e";
 
-/// In such a process: reads the program.
-pub(crate) fn read_program_of_script(ctx: &mut ContextData) {
+/// In such a process, reads the program from stdin.
+pub(crate) fn read_program_from_stdin(ctx: &mut ContextData) {
     let mut program = Vec::new();
     if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
         && File::stdin().read_to_end_into(&mut program).is_ok()
@@ -114,18 +115,19 @@ pub(crate) fn read_program_of_script(ctx: &mut ContextData) {
     }
 }
 
-/// Runs `script` with this executable, to its end.
+/// Runs `script` with this executable and waits for it to exit.
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(b"Could not find the path of the running executable.".to_vec());
     };
     let mut argv: Vec<Box<[u8]>> = vec![
         Box::from(exe.as_bytes()),
-        // What is not installed is missing: nothing is fetched to read a configuration.
+        // A package that isn't installed is simply missing. Reading a configuration never downloads anything.
         Box::from(&b"--no-install"[..]),
-        // It ends with this process, however that ends: a configuration can wait, or spin, for ever.
+        // The child exits with this process no matter how this process ends, because a configuration can wait or spin
+        // forever.
         Box::from(&b"--no-orphans"[..]),
-        // Node, in which ESLint, Prettier and oxlint read a configuration, reads no `.env`.
+        // ESLint, Prettier and oxlint read a configuration in Node, which doesn't read `.env`.
         Box::from(&b"--no-env-file"[..]),
     ];
     use bun_core::CodeGenerationFromStrings as Level;
@@ -140,12 +142,13 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
             ));
         }
     }
-    // Nor a bunfig.toml, whose `preload` would run before the configuration. Windows has no file that is empty wherever one is.
+    // Node doesn't read a bunfig.toml either, and its `preload` would run before the configuration. Windows has no path
+    // that's always an empty file.
     if cfg!(not(windows)) {
         argv.push(Box::from(&b"--config=/dev/null"[..]));
     }
-    // Not the program: the command line of a process has room for 32,767 characters on Windows, and an argument for 128 KB on
-    // Linux.
+    // The program isn't passed as an argument, because a command line is limited to 32,767 characters on Windows, and a
+    // single argument to 128 KB on Linux.
     argv.push(Box::from(&b"-e"[..]));
     argv.push(Box::from(PROGRAM_IS_ON_STDIN));
     let parts = script.source.iter().map(|it| it.text());
@@ -188,8 +191,8 @@ fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
     }
 }
 
-/// Runs `argv` in `cwd` with `input` on its stdin, and waits for it to exit. The child gets this process's environment after
-/// `adapt` has changed it. `adapt` returns false if it couldn't. `Err` says why the command didn't run.
+/// Runs `argv` in `cwd` with `input` on its stdin, and waits for it to exit. The child gets this process's environment
+/// after `adapt` has changed it. `adapt` returns false if it couldn't. `Err` holds the reason the command didn't run.
 fn run_to_end(
     argv: Vec<Box<[u8]>>,
     cwd: &[u8],
@@ -205,20 +208,20 @@ fn run_to_end(
     else {
         return Err(b"Could not start a process: out of memory".to_vec());
     };
-    let [read, written] = match bun_sys::pipe() {
+    let [read_end, write_end] = match bun_sys::pipe() {
         Ok(ends) => ends.map(File::from_fd),
         Err(err) => return Err([&b"Could not start a process: "[..], err.name()].concat()),
     };
-    // The process is not to have the end that is written to: it would wait for itself to close it.
+    // The child must not inherit the write end, or it would wait for itself to close it.
     #[cfg(unix)]
-    for end in [&read, &written] {
+    for end in [&read_end, &write_end] {
         let _ = bun_sys::set_close_on_exec(end.handle());
     }
     let options = SpawnOptions {
         argv,
         stdout: SyncStdio::Buffer,
         stderr: SyncStdio::Buffer,
-        stdin: SyncStdio::Pipe(read.handle()),
+        stdin: SyncStdio::Pipe(read_end.handle()),
         cwd: Box::<[u8]>::from(cwd),
         envp: Some(envp.as_ptr()),
         #[cfg(windows)]
@@ -230,12 +233,12 @@ fn run_to_end(
         },
         ..Default::default()
     };
-    // It is written while what the program prints is read, so neither waits for the other.
+    // Write the input while reading the program's output, so that neither side blocks the other.
     let spawned = std::thread::scope(|scope| {
-        scope.spawn(move || input.iter().try_for_each(|it| written.write_all(it)));
+        scope.spawn(move || input.iter().try_for_each(|it| write_end.write_all(it)));
         let spawned = spawn(&options);
-        // Who still writes is told that nobody reads any more.
-        drop(read);
+        // Closing the read end makes a writer that's still writing fail instead of blocking.
+        drop(read_end);
         spawned
     });
     match spawned {
@@ -245,16 +248,38 @@ fn run_to_end(
     }
 }
 
-/// Reports that the command line of `bun <command>` cannot be used.
+/// Reports an invalid `bun <command>` command line.
 pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
     Output::err_generic("{}", (BStr::new(message),));
     bun_core::note!("run 'bun {} --help' for more information", command);
-    // As ESLint.
+    // Like ESLint.
     Global::exit(2);
 }
 
-/// Calls `run` with what it takes from this process, prints what it returns, and exits.
-/// `command`: `lint` or `format`. `cwd`: its `--cwd`.
+/// Prints the output of `bun lint`, `bun fmt` or `bun check` and returns the exit code. `stdout` is the requested
+/// output: the formatted text, the report, a list. `Output` drops write errors, and with exit code 0 a script like
+/// `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So that's an error here.
+/// A reader that has gone away (`| head`) isn't.
+pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
+    let write_result = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
+    let _ = Output::error_writer().write_all(stderr);
+    let exit_code = match write_result {
+        Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
+            let why = error.msg().unwrap_or(b"unknown error");
+            Output::err_generic(
+                "Cannot write standard output: {}: {}",
+                (BStr::new(error.name()), BStr::new(why)),
+            );
+            2
+        }
+        _ => exit_code,
+    };
+    Output::flush();
+    exit_code
+}
+
+/// Calls `run` with what it needs from this process, prints what it returns, and exits. `command` is `lint` or
+/// `format`, and `cwd` is its `--cwd`.
 pub(crate) fn run_and_exit(
     command: &[u8],
     cwd: Option<&[u8]>,
@@ -267,19 +292,19 @@ pub(crate) fn run_and_exit(
     if let Some(cwd) = cwd {
         change_directory(cwd);
     }
-    // One at a time: a process is started with state that threads share.
-    let turn = bun_threading::Guarded::new(());
+    // Start one process at a time, because spawning uses state that threads share.
+    let spawn_lock = bun_threading::Guarded::new(());
     let run_script = |script: &Script| {
-        let _turn = turn.lock();
+        let _spawn_guard = spawn_lock.lock();
         run_script(script)
     };
     let run_git = |command: &git::Command| {
-        let _turn = turn.lock();
+        let _spawn_guard = spawn_lock.lock();
         run_git(command)
     };
     let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
     let js_engine = super::lint_js::Engines::default();
-    // `path.win32.resolve` asks for it where a path names another drive than its base.
+    // `path.win32.resolve` needs it when a path is on a different drive than its base.
     bun_paths::fs::FileSystem::init(&working_directory());
     let environment = Environment {
         cwd: bun_lint_driver::from_native_path(&working_directory()),
@@ -304,20 +329,18 @@ pub(crate) fn run_and_exit(
     };
     let outcome = run(&environment);
     // The report is the output. Everything else is printed separately.
-    let _ = Output::writer().write_all(&outcome.stdout);
-    let _ = Output::error_writer().write_all(&outcome.stderr);
-    Output::flush();
+    let exit_code = print(&outcome.stdout, &outcome.stderr, outcome.exit_code);
     js_engine.end_all();
-    Global::exit(u32::from(outcome.exit_code));
+    Global::exit(u32::from(exit_code));
 }
 
 impl LintCommand {
-    /// Whether `bun lint <flag>` is a valid command line.
+    /// True if `bun lint <flag>` is a valid command line.
     pub(crate) fn has_flag(flag: &[u8]) -> bool {
         Options::parse(&[flag]).is_ok()
     }
 
-    /// `args`: what follows `lint`.
+    /// `args` is what follows `lint`.
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
@@ -352,7 +375,7 @@ impl LintCommand {
         let options = match Options::parse(&args) {
             Ok(options) => options,
             Err(UsageError(message)) => run_and_exit(b"lint", None, |environment| {
-                bun_lint_driver::refuse_command_line(&message, environment)
+                bun_lint_driver::reject_command_line(&message, environment)
             }),
         };
         if options.help {
@@ -360,8 +383,9 @@ impl LintCommand {
             Global::exit(0);
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
-            // `[fmt]` is for the rule that holds a file against what `bun fmt` prints: it is the one that `bun fmt` would read.
-            let (mut defaults, mut of_bun_format) = (None, None);
+            // `[fmt]` is for the rule that compares a file with `bun fmt`'s output. It's the same `[fmt]` that
+            // `bun fmt` would read.
+            let (mut defaults, mut bun_format_defaults) = (None, None);
             read_bunfigs(
                 ctx,
                 Tag::LintCommand,
@@ -369,29 +393,30 @@ impl LintCommand {
                 &mut |file, path, is_named| {
                     if defaults.is_none() {
                         defaults = bunfig::lint(file)?
-                            .map(|it| it.of_bunfig_at(path, is_named, &environment.cwd));
+                            .map(|it| it.from_bunfig_at(path, is_named, &environment.cwd));
                     }
-                    if of_bun_format.is_none() {
-                        of_bun_format =
-                            bunfig::format(file)?.map(|it| it.of_bunfig_at(path, is_named));
+                    if bun_format_defaults.is_none() {
+                        bun_format_defaults =
+                            bunfig::format(file)?.map(|it| it.from_bunfig_at(path, is_named));
                     }
-                    Ok(match (&defaults, &of_bun_format) {
+                    Ok(match (&defaults, &bun_format_defaults) {
                         (Some(_), Some(_)) => Above::Unwanted,
-                        (Some(it), None) if it.names_a_format_rule() => Above::Needed,
-                        (Some(_), None) if options.names_a_format_rule() => Above::Needed,
+                        (Some(it), None) if it.mentions_format_rule() => Above::Needed,
+                        (Some(_), None) if options.mentions_format_rule() => Above::Needed,
                         (Some(_), None) => Above::Optional,
                         (None, _) => Above::Needed,
                     })
                 },
             );
-            if let Some(of_bun_format) = of_bun_format {
-                defaults.get_or_insert_default().of_bun_format = Some(Box::new(of_bun_format));
+            if let Some(bun_format_defaults) = bun_format_defaults {
+                defaults.get_or_insert_default().bun_format_defaults =
+                    Some(Box::new(bun_format_defaults));
             }
-            match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
+            match defaults.map(|defaults| Options::parse_with_defaults(defaults, &args)) {
                 None => bun_lint_driver::run(&options, environment),
                 Some(Ok(options)) => bun_lint_driver::run(&options, environment),
                 Some(Err(UsageError(message))) => {
-                    bun_lint_driver::refuse_command_line(&message, environment)
+                    bun_lint_driver::reject_command_line(&message, environment)
                 }
             }
         })

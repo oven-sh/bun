@@ -46,7 +46,7 @@ impl Rule for NoNegationInEqualityCheck {
             let prefix = if matches!(argument_text.first(), Some(b'(' | b'[')) && could_be_asi_hazard(e) {
                 ";"
             } else if text::last_code_point(before).is_some_and(bun_core::lexer::is_identifier_start) {
-                // `return!foo` is `return foo`.
+                // `return!foo` becomes `return foo`.
                 " "
             } else {
                 ""

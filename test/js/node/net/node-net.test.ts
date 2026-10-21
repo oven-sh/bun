@@ -10,7 +10,6 @@ import {
   gc,
   isASAN,
   isDebug,
-  isMacOS,
   isMusl,
   isWindows,
   nodeExe,
@@ -1629,7 +1628,8 @@ describe("Socket fd adoption", () => {
   });
 
   // node's _final hands the shutdown of the socket to libuv, which issues it from the event loop:
-  // the peer reads end-of-file before 'prefinish', the end() callback and 'finish'.
+  // the peer reads end-of-file before 'prefinish', the end() callback and 'finish'. bun issues it
+  // one tick after end(), as for a socket that has a handle.
   // socket-fd-end-fixture.js runs under node unchanged. The reports are what node v26.3.0 gives.
   describe.skipIf(isWindows)("end() on an adopted socket fd", () => {
     const fixture = join(import.meta.dir, "socket-fd-end-fixture.js");
@@ -1672,7 +1672,7 @@ describe("Socket fd adoption", () => {
     //   socket and the TCP socket are ones that this process made and holds. `afterExit`: looked at
     //   when the child is gone.
     // - `data` and `eof` for any other scenario: what the other end of the child's fd got.
-    async function reportOf(exe: string, group: string, expected: Report, afterExit = false, env = bunEnv) {
+    async function reportOf(exe: string, group: string, expected: Report, afterExit = false) {
       const names = Object.keys(expected);
       const made = [datagramScenario, tcpScenario];
       const held = names.filter(name => !made.includes(name) && "halfClosed" in expected[name]);
@@ -1712,7 +1712,7 @@ describe("Socket fd adoption", () => {
         }
         await using child = Bun.spawn({
           cmd: [exe, fixture, group],
-          env,
+          env: bunEnv,
           stdio: [
             "pipe",
             "pipe",
@@ -1792,23 +1792,16 @@ describe("Socket fd adoption", () => {
         eof: true,
       },
       "autoDestroy is off": { events: ["prefinish", "end callback", "finish"], late: "EPIPE", data: "x", eof: true },
-      "a fake clock holds the immediates": { events: ["prefinish", "finish", "close"], held: 0, data: "x", eof: true },
       "another process holds the socket": { events: ["prefinish", "finish", "close"], halfClosed: true },
-      // destroy() does not close fd 1.
-      "the fd is 1": { events: ["prefinish", "finish", "close"], late: "EPIPE", data: "x" },
+      "the fd is held as a double": { events: ["prefinish", "finish", "close"], halfClosed: true },
       // shutdown(2) fails on a FIFO: its reader gets end-of-file when the fd closes.
       [fifoScenario]: { events: ["prefinish", "uncaughtException"], late: "written", data: "xlate", eof: false },
     };
-    // Nothing of end() is pending at 'close': libuv completes a cancelled shutdown before it.
+    // Nothing of end() is pending at 'close'.
     const cancelled = { events: ["end callback ERR_STREAM_DESTROYED", "close"], pendingcb: 0, halfClosed: false };
     const completed = { events: ["prefinish", "end callback", "finish", "close"], pendingcb: 0, halfClosed: true };
     const destroy: Report = {
       "destroy() in the block of end()": cancelled,
-      "destroy() on the next tick": cancelled,
-      "destroy() in a microtask": cancelled,
-      "destroy() after an await": cancelled,
-      // The loop issues the shutdown before it runs the immediate.
-      "destroy() in setImmediate": completed,
       "write() after end()": {
         events: [
           "write callback ERR_STREAM_WRITE_AFTER_END",
@@ -1829,24 +1822,28 @@ describe("Socket fd adoption", () => {
         data: "",
         eof: true,
       },
-      "the 'finish' of another socket destroys it": cancelled,
     };
-    // Where the shutdown comes among what the place that calls end() queued: an immediate before end(),
-    // a nextTick and a microtask after it. libuv issues it from its pending queue, and bun from its task queue.
-    const queued = (events: string[]) => ({ events: ["end() returned", ...events], data: "x", eof: true });
-    const shutdown = ["prefinish", "end callback in store", "finish", "setImmediate"];
-    const fromPlace = queued(["nextTick", "microtask", ...shutdown]);
-    const order: Report = {
-      "from the main script": fromPlace,
-      "from a nextTick": fromPlace,
-      "from a microtask": queued(["microtask", "nextTick", ...shutdown]),
-      "from a timer": fromPlace,
-      "from a socket callback": fromPlace,
-      "from an fs callback": fromPlace,
-      "from an immediate": fromPlace,
-      "from the 'finish' of another socket": fromPlace,
+    const ended = { events: ["prefinish", "finish", "close"], pendingcb: 0, halfClosed: true };
+    const loop: Report = {
+      "destroy() in setImmediate": completed,
       "an immediate that was queued before end() calls destroy()": completed,
-      "an fs callback that was complete before end() calls destroy()": completed,
+      "end() in a socket callback, destroy() in a timer that is due": completed,
+      "end() in an immediate, destroy() in a socket callback that is ready": completed,
+      "destroy() in the end() callback of a socket that has a handle": completed,
+      "pipe() from a file ends it, finished() of the file destroys it": ended,
+      "pipeline() from a file ends it": { ...ended, pipeline: "over" },
+      "destroySoon()": ended,
+    };
+    const tcp: Report = { [tcpScenario]: { events: ["prefinish", "finish", "close"], halfClosed: true } };
+    // process.exit() comes before the shutdown: neither runtime issues it.
+    const exit: Report = { "process.exit() in the block of end()": { events: [], halfClosed: false } };
+    // What node gives where bun differs. libuv issues the shutdown after every tick of the place that called
+    // end(), so a destroy() on one of those ticks cancels it, and a write on one of them still goes through.
+    // bun issues it on the first of those ticks, as for a socket that has a handle.
+    const laterInNode: Report = {
+      "destroy() on the next tick": cancelled,
+      "destroy() in a microtask": cancelled,
+      "destroy() after an await": cancelled,
       "writes through the fd after end()": {
         events: ["prefinish", "finish"],
         late: { block: "written", nextTick: "written", await: "written", finish: "EPIPE" },
@@ -1854,103 +1851,62 @@ describe("Socket fd adoption", () => {
         eof: true,
       },
     };
-    // The loop of bun is not libuv's: between end() and the shutdown it runs the timers that are due after a poll,
-    // and the poll after its immediates. A socket that has a handle ends on ticks. A destroy() from there finds
-    // the shutdown still queued in bun. In node, and on a bun without this shutdown, the socket has finished.
-    const phases = (report: object): Report => ({
-      "end() in a socket callback, destroy() in a timer that is due": report,
-      "end() in an immediate, destroy() in a socket callback that is ready": report,
-      "destroy() in the end() callback of a socket that has a handle": report,
-    });
-    // Not in node: its connect() takes no fd and keeps the handle of an adopted fd, it reads an fd that has no
-    // `readable: false`, it refuses a datagram socket, and it has no Bun.gc() and no Bun.ModuleGraph.
-    const onlyBun: Report = {
-      // The fd is not end()'s to shut down: _final completes inside end(), as on any socket that has no handle.
+    // What bun adopts and does not shut down stays as it was: 'prefinish' comes inside end(). Not in node: its
+    // connect() takes no fd, it reads an fd that has no `readable: false`, it shuts fd 1 down, 'prefinish' comes
+    // after end() returns for a FIFO too, and it refuses a datagram socket.
+    const unarmed: Report = {
       "connect({ fd }) gave the fd to a handle": { events: ["prefinish", "end() returned"], data: "", eof: true },
-      // The shutdown is cancelled, and the life that end() was called in finishes: 'prefinish' comes inside connect().
-      "connect() in the block of end()": {
-        events: ["prefinish", "connect() returned", "end callback", "finish", "close"],
-        pendingcb: 0,
-        halfClosed: false,
-      },
-      // The stream ends this socket by itself: no shutdown.
       "`readable` is omitted": { events: ["prefinish", "finish", "close"], halfClosed: false },
-      // A FIFO keeps the order it had. In node, 'prefinish' comes after end() returns for a FIFO too.
+      // process.stdout and process.stderr write to fd 0-2 too.
+      "the fd is 1": { events: ["prefinish", "end() returned", "finish", "close"], late: "written", data: "xlate" },
       [fifoScenario]: { events: ["prefinish", "end() returned", "finish", "close"], data: "x", eof: true },
-      // No shutdown: this process can still send on the socket.
+      // This process can still send on the socket.
       [datagramScenario]: { events: ["prefinish", "end() returned", "finish", "close"], halfClosed: false },
-      "nothing else refers to the socket": { events: ["finish"], data: "x", eof: true },
-      // The script of the graph hears nothing more, and the peer of the socket still gets the end-of-file.
-      "the Bun.ModuleGraph that called end() is disposed": { events: [], halfClosed: true },
-      // Half of them are cancelled by a destroy().
-      "200 requests leave no handle": { events: [], handles: 0, data: "" },
     };
 
-    it("half-closes the fd from the event loop", async () => {
+    it("half-closes the fd one tick after end()", async () => {
       expect(await reportOf(bunExe(), "end", end)).toEqual({ report: end, stderr: "", exitCode: 0 });
     });
 
-    it("a destroy() before the half-close cancels it", async () => {
+    it("a destroy() in the block of end() cancels the half-close", async () => {
       expect(await reportOf(bunExe(), "destroy", destroy)).toEqual({ report: destroy, stderr: "", exitCode: 0 });
     });
 
-    it("issues the shutdown after the ticks of the place that calls end(), ahead of the immediates", async () => {
-      expect(await reportOf(bunExe(), "order", order)).toEqual({ report: order, stderr: "", exitCode: 0 });
+    it("what the loop runs after the block of end() finds the socket finished", async () => {
+      expect(await reportOf(bunExe(), "loop", loop)).toEqual({ report: loop, stderr: "", exitCode: 0 });
     });
 
-    it("a destroy() from a later phase of the loop turn, or from a socket that has a handle, cancels it", async () => {
-      const cancels = phases(cancelled);
-      expect(await reportOf(bunExe(), "phases", cancels)).toEqual({ report: cancels, stderr: "", exitCode: 0 });
-    });
-
-    const tcp: Report = { [tcpScenario]: { events: ["prefinish", "finish", "close"], halfClosed: true } };
     it("half-closes a TCP socket fd", async () => {
       expect(await reportOf(bunExe(), "tcp", tcp)).toEqual({ report: tcp, stderr: "", exitCode: 0 });
     });
 
-    // The exit of the process comes before the loop, and issues no shutdown. The exit of a worker issues it.
-    const exit: Report = {
-      "a worker exits in the block of end()": { events: [], halfClosed: true },
-      "process.exit() in the block of end()": { events: [], halfClosed: false },
-    };
-    it("the exit of a worker issues the shutdown, and the exit of the process does not", async () => {
+    it("process.exit() in the block of end() issues no shutdown", async () => {
       expect(await reportOf(bunExe(), "exit", exit, true)).toEqual({ report: exit, stderr: "", exitCode: 0 });
     });
 
-    it("the exit of the process issues no shutdown when it runs the teardown of a worker", async () => {
-      const teardown = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" };
-      expect(await reportOf(bunExe(), "exit", exit, true, teardown)).toEqual({ report: exit, stderr: "", exitCode: 0 });
+    it.failing("gives node's reports for a destroy() or a write on a later tick of end()", async () => {
+      expect(await reportOf(bunExe(), "later", laterInNode)).toEqual({ report: laterInNode, stderr: "", exitCode: 0 });
     });
 
-    it("the cases that node does not have", async () => {
-      expect(await reportOf(bunExe(), "bun", onlyBun)).toEqual({ report: onlyBun, stderr: "", exitCode: 0 });
+    it("leaves the fds that it does not shut down as they were", async () => {
+      expect(await reportOf(bunExe(), "unarmed", unarmed)).toEqual({ report: unarmed, stderr: "", exitCode: 0 });
     });
 
-    // kqueue reports the write side that end() shut down, and the handle takes that for a reset: the darwin lanes
-    // of build 125164 got "error ECONNRESET" and "close" after "finish".
-    it.todoIf(isMacOS)("connect({ fd }) gives the fd to a handle after the shutdown", async () => {
-      const handle: Report = {
-        "connect({ fd }) after the shutdown": { events: ["prefinish", "finish"], data: "x", eof: true },
-      };
-      expect(await reportOf(bunExe(), "handle", handle)).toEqual({ report: handle, stderr: "", exitCode: 0 });
-    });
-
-    it.skipIf(!nodeExe())("node gives the same reports, and finishes where the loop of bun differs", async () => {
-      const finishes = phases(completed);
+    it.skipIf(!nodeExe())("node gives the same reports", async () => {
       expect([
         await reportOf(nodeExe()!, "end", end),
         await reportOf(nodeExe()!, "destroy", destroy),
-        await reportOf(nodeExe()!, "order", order),
-        await reportOf(nodeExe()!, "phases", finishes),
+        await reportOf(nodeExe()!, "loop", loop),
         await reportOf(nodeExe()!, "tcp", tcp),
         await reportOf(nodeExe()!, "exit", exit, true),
+        await reportOf(nodeExe()!, "later", laterInNode),
       ]).toEqual([
         { report: end, stderr: "", exitCode: 0 },
         { report: destroy, stderr: "", exitCode: 0 },
-        { report: order, stderr: "", exitCode: 0 },
-        { report: finishes, stderr: "", exitCode: 0 },
+        { report: loop, stderr: "", exitCode: 0 },
         { report: tcp, stderr: "", exitCode: 0 },
         { report: exit, stderr: "", exitCode: 0 },
+        { report: laterInNode, stderr: "", exitCode: 0 },
       ]);
     });
   });

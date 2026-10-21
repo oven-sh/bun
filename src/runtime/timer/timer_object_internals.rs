@@ -77,7 +77,7 @@ pub(crate) use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.
 unsafe extern "C" {
-    pub(crate) safe fn Bun__JSTimeout__call(
+    safe fn Bun__JSTimeout__call(
         global_object: &JSGlobalObject,
         timer: JSValue,
         callback: JSValue,

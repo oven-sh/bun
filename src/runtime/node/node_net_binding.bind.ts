@@ -17,4 +17,4 @@ export const setDefaultAutoSelectFamilyAttemptTimeout = b.fn({
 });
 
 export const newDetachedSocket = b.fn({ args: { isSSL: b.bool }, returns: b.any, capability: "js" });
-export const queueShutdownWriteFd = b.fn({ args: { request: b.any, callback: b.any }, capability: "heap" });
+export const shutdownWriteFd = b.fn({ args: { fd: b.i32 } });

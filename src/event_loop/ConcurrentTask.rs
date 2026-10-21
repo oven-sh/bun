@@ -100,7 +100,6 @@ pub mod task_tag {
         NativeBrotli,
         NativeZlib,
         NativeZstd,
-        NetFdShutdown,            // node:net `_final` of an fd that is written synchronously
         Open,
         PollPendingModulesTask,
         PosixSignalTask,

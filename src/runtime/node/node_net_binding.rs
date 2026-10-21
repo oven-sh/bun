@@ -4,14 +4,12 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_event_loop::{ContextId, Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, Strong};
+use bun_jsc::bindgen::JsScope;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
 
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
-use crate::timer::timer_object_internals::Bun__JSTimeout__call;
 
 static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
@@ -120,92 +118,10 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 }
 
 /// `shutdown(fd, SHUT_WR)`. The result is ignored, as in node: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L560-L566
-fn shutdown_write_fd(fd: i32) {
+pub(crate) fn shutdown_write_fd(fd: i32) {
     // fstat reports no socket on Windows, so node:net adopts none there, and a CRT fd is not a SOCKET.
     #[cfg(not(windows))]
     uws::socket_transfer::bsd_shutdown_socket(fd);
     #[cfg(windows)]
     let _ = fd;
-}
-
-/// What `Socket.prototype._final` queues for an fd that node:net writes synchronously: in node, a request on libuv's pending queue.
-pub(crate) struct FdShutdownTask {
-    /// `[fd, callback]`, which net.ts keeps. Slot 0 is `undefined` once `destroy()` or `connect()` cancelled it.
-    request: Strong,
-    /// The `_final` callback, in the async context of `end()`.
-    callback: Strong,
-    context: ContextId,
-    global: bun_ptr::BackRef<JSGlobalObject>,
-}
-
-pub(crate) fn queue_shutdown_write_fd<'a>(
-    heap: &JsHeap<'a>,
-    request: JsLocal<'a>,
-    callback: JsLocal<'a>,
-) {
-    // SAFETY: wrapping the callback allocates one cell, and queueing the task runs no JavaScript.
-    let global = unsafe { heap.global() };
-    let vm = global.bun_vm();
-    let task = Box::new(FdShutdownTask {
-        request: request.to_strong(heap),
-        callback: Strong::create(
-            callback.to_js().with_async_context_if_needed(global),
-            global,
-        ),
-        context: vm.context_of_caller_no_frame().id(),
-        global: bun_ptr::BackRef::new(global),
-    });
-    vm.as_mut().enqueue_task(Task::from_boxed(task));
-}
-
-impl FdShutdownTask {
-    /// The fd of a request that nothing cancelled.
-    fn fd(&self, global: &JSGlobalObject) -> JsResult<Option<i32>> {
-        let request = self.request.get();
-        if !request.is_array() {
-            return Ok(None);
-        }
-        let fd = request.get_index(global, 0)?;
-        Ok(fd.is_int32().then(|| fd.as_int32()))
-    }
-
-    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub(crate) fn run(self: Box<Self>) -> JsResult<()> {
-        let global = self.global.get();
-        let Some(fd) = self.fd(global)? else {
-            return Ok(());
-        };
-        self.request
-            .get()
-            .put_index(global, 0, JSValue::UNDEFINED)?;
-        shutdown_write_fd(fd);
-        // As a timer calls back: what the callback throws is reported inside its async context.
-        Bun__JSTimeout__call(
-            global,
-            JSValue::UNDEFINED,
-            self.callback.get(),
-            JSValue::UNDEFINED,
-        );
-        Ok(())
-    }
-}
-
-impl Taskable for FdShutdownTask {
-    const TAG: TaskTag = task_tag::NetFdShutdown;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract: boxed in `queue_shutdown_write_fd`.
-        let task = unsafe { bun_core::heap::take(this) };
-        let global = task.global.get();
-        let vm = global.bun_vm();
-        // Nobody is left to call back: a disposed `Bun.ModuleGraph`, or a Worker that exits. As in node, only the exit of the process issues no shutdown.
-        if vm.script_allowed() || !vm.is_main_thread {
-            if let Ok(Some(fd)) = task.fd(global) {
-                shutdown_write_fd(fd);
-            }
-        }
-    }
-    unsafe fn context(this: *const Self) -> ContextId {
-        // SAFETY: fn contract: live.
-        unsafe { (*this).context }
-    }
 }

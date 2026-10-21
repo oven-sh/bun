@@ -281,7 +281,7 @@ const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
 const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
 const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 // Created by the first stream socket fd that is adopted for synchronous writes, and by its end().
-let guessHandleType, queueShutdownWriteFd;
+let guessHandleType, shutdownWriteFd;
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -304,7 +304,7 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
-// true: end() shuts the write side of the kSyncWriteFd down. [fd, callback]: the request of that end(), with its fd while it is queued.
+// end() shuts the write side of the kSyncWriteFd down.
 const kSyncFdShutdown = Symbol("kSyncFdShutdown");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
@@ -445,18 +445,10 @@ function endNT(self, socket, callback) {
   (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
   callback();
 }
-// libuv issues node's shutdown from its pending queue, ahead of the immediates. The task queue stands in: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1175-L1184
-function finalSyncFd(self, callback) {
-  const request = (self[kSyncFdShutdown] = [self[kSyncWriteFd], callback]);
-  (queueShutdownWriteFd ??= $bindgen("node_net_binding.bind.ts", "queueShutdownWriteFd"))(request, callback);
-}
-// libuv cancels the shutdown request of a closing handle before 'close'. Left queued, _final would complete in the next life of the socket.
-function cancelSyncFdShutdown(self) {
-  const request = self[kSyncFdShutdown];
-  self[kSyncFdShutdown] = undefined;
-  if (!$isJSArray(request) || request[0] === undefined) return;
-  request[0] = undefined;
-  const callback = request[1];
+// endNT for a socket that wrote its fd synchronously. A destroy() since end() closed the fd, and there is then nothing to shut down.
+function endSyncFdNT(self, callback) {
+  const fd = self[kSyncWriteFd];
+  if (fd !== undefined) (shutdownWriteFd ??= $bindgen("node_net_binding.bind.ts", "shutdownWriteFd"))(fd);
   callback();
 }
 // shutdown(2) on a datagram or SEQPACKET socket stops the sends of every holder. node refuses such an fd.
@@ -2079,8 +2071,8 @@ function Socket(options?): void {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
-        // Not with `readable` omitted: the EOF pushed below ends that socket one tick from here, with no end() call.
-        if (optionsReadable === false && stats.isSocket() && isStreamSocketFd(fd)) this[kSyncFdShutdown] = true;
+        // Not fd 0-2, which process.stdout and process.stderr share. Not with `readable` omitted: the EOF pushed below ends that socket with no end() call.
+        if (optionsReadable === false && fd > 2 && stats.isSocket() && isStreamSocketFd(fd)) this[kSyncFdShutdown] = true;
         // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
         if (optionsReadable !== true && optionsReadable !== false) {
           this.push(null);
@@ -2320,8 +2312,6 @@ Socket.prototype[kCloseRawConnection] = function () {
 
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
-  // _undestroy() forgets that end() was called, so the _final of that end() completes first.
-  if ($isJSArray(this[kSyncFdShutdown])) cancelSyncFdShutdown(this);
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
@@ -2507,7 +2497,6 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   const syncFd = this[kSyncWriteFd];
   if (syncFd !== undefined) {
     this[kSyncWriteFd] = undefined;
-    cancelSyncFdShutdown(this);
     // Drop the instance overrides so a later connect() on this (reusable)
     // socket goes through the fresh handle's normal write path.
     delete this._write;
@@ -2603,7 +2592,7 @@ Socket.prototype._final = function _final(callback) {
 
   // already closed call destroy. A server-side wrap attaches its handle on the tick its constructor queued, ahead of endNT.
   if (!socket && !this[kupgraded]) {
-    if (this[kSyncFdShutdown] === true) return finalSyncFd(this, callback);
+    if (this[kSyncFdShutdown] === true) return process.nextTick(endSyncFdNT, this, callback);
     return callback();
   }
 

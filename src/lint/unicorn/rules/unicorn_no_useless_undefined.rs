@@ -14,9 +14,9 @@ const NO_USELESS_UNDEFINED: Message = Message::new("", "Do not use useless `unde
 
 pub struct State<'a> {
     undefined: Name<'a>,
-    /// Whether the function around something has a return type.
+    /// Caches whether the enclosing function has a return type.
     return_types: AncestorMemo<'a, bool>,
-    /// Where the first optional parameter of a function with many parameters starts.
+    /// The start of the first optional parameter, for a function with many parameters.
     first_optional_parameters: IdMap<Func<'a>, Option<u32>>,
 }
 
@@ -53,18 +53,21 @@ impl NoUselessUndefined {
     fn check_identifier<'a>(&self, undefined_literal: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let state = &mut cx.state;
         let end = undefined_literal.span().end;
-        let is_it = |e: Option<Expr<'a>>| e == Some(undefined_literal);
-        // What is replaced, and by what.
-        let (replaced, replacement) = match undefined_literal.parent() {
+        let is_this_undefined = |e: Option<Expr<'a>>| e == Some(undefined_literal);
+        // In TypeScript, a function that ends in `return;` returns `void`, not `undefined`, and `let a;` has no type.
+        let is_untyped = undefined_literal.file().is_javascript();
+        // The span to replace, the replacement, and whether the program still behaves the same and type checks
+        // afterwards.
+        let (replaced, replacement, is_safe) = match undefined_literal.parent() {
             // `return undefined`
             Node::Stmt(ret_stmt) if ret_stmt.tag() == StmtTag::Return => {
-                (Replaced::AfterReturn(ret_stmt), "")
+                (Replaced::AfterReturn(ret_stmt), "", is_untyped)
             }
             // `yield undefined`
             Node::Expr(yield_expr)
                 if matches!(yield_expr.kind(), ExprKind::Yield { star: false, .. }) =>
             {
-                (Replaced::Span(yield_expr.span()), "yield")
+                (Replaced::Span(yield_expr.span()), "yield", true)
             }
             // `foo(undefined)`
             Node::Expr(call) if self.check_arguments && call.tag() == ExprTag::Call => {
@@ -74,31 +77,38 @@ impl NoUselessUndefined {
             Node::Func(arrow)
                 if self.check_arrow_function_body && matches!(arrow.body(), FnBody::Expr(_)) =>
             {
-                (Replaced::Span(undefined_literal.outer_span()), "{}")
+                (
+                    Replaced::Span(undefined_literal.outer_span()),
+                    "{}",
+                    is_untyped,
+                )
             }
             // `let foo = undefined` / `var foo = undefined`
             Node::VarDecl(declarator)
-                if is_it(declarator.init()) && declarator.var_kind() != VarKind::Const =>
+                if is_this_undefined(declarator.init()) && declarator.var_kind() != VarKind::Const =>
             {
+                // A `var` without an initializer keeps its value from the previous loop iteration.
                 (
                     Replaced::Span(Span::new(declarator.pat().span().end, end)),
                     "",
+                    is_untyped && declarator.var_kind() == VarKind::Let,
                 )
             }
             // `const {foo = undefined} = {}`
-            Node::PatProp(property) if is_it(property.default()) => (
+            Node::PatProp(property) if is_this_undefined(property.default()) => (
                 Replaced::Span(Span::new(property.value().span().end, end)),
                 "",
+                true,
             ),
-            Node::PatElem(element) if is_it(element.default()) => match element.pat() {
-                Some(left) => (Replaced::Span(Span::new(left.span().end, end)), ""),
+            Node::PatElem(element) if is_this_undefined(element.default()) => match element.pat() {
+                Some(left) => (Replaced::Span(Span::new(left.span().end, end)), "", true),
                 None => return,
             },
             // `function foo(bar = undefined) {}`
             Node::Param(parameter)
-                if is_it(parameter.default()) && !undefined_literal.is_parenthesized() =>
+                if is_this_undefined(parameter.default()) && !undefined_literal.is_parenthesized() =>
             {
-                // Without the default it is required, which it cannot be after an optional parameter.
+                // Without the default the parameter is required, which isn't allowed after an optional parameter.
                 let Some(func) = parameter.func() else {
                     return;
                 };
@@ -120,7 +130,9 @@ impl NoUselessUndefined {
                 let left = parameter
                     .ty()
                     .map_or_else(|| parameter.pat().span().end, |it| it.annotation_span().end);
-                (Replaced::Span(Span::new(left, end)), "")
+                // A function's `length` counts the parameters before the first default, so removing a default can
+                // change it.
+                (Replaced::Span(Span::new(left, end)), "", false)
             }
             _ => return,
         };
@@ -134,7 +146,7 @@ impl NoUselessUndefined {
             return;
         }
         cx.report(undefined_literal, NO_USELESS_UNDEFINED)
-            .fix(|fixer| {
+            .fix_where_safe(|| is_safe, |fixer| {
                 let span = match replaced {
                     Replaced::Span(span) => span,
                     Replaced::AfterReturn(ret_stmt) => {
@@ -146,7 +158,9 @@ impl NoUselessUndefined {
                         Span::new(start, end)
                     }
                 };
-                (span.start <= span.end).then(|| fixer.replace(span, replacement))
+                (span.start <= span.end)
+                    .then(|| fixer.replace(span, replacement))
+                    .filter(|it| fixer.keeps_comments(it))
             });
     }
 }
@@ -154,7 +168,7 @@ impl NoUselessUndefined {
 #[derive(Copy, Clone)]
 enum Replaced<'a> {
     Span(Span),
-    /// From the `return`, or from the last comment in the statement.
+    /// Starts after the `return`, or after the last comment in the statement.
     AfterReturn(Stmt<'a>),
 }
 
@@ -190,7 +204,7 @@ const FUNCTION_NAMES: [&str; 27] = [
     "property",
     "propertyVal",
     "push",
-    // `ref(undefined)` of Vue
+    // Vue's `ref(undefined)`
     "ref",
     "same",
     "set",
@@ -215,7 +229,7 @@ fn should_ignore(callee: Expr) -> bool {
     !callee.is_parenthesized() && (name.bytes().starts_with(b"set") || name.is_any(&FUNCTION_NAMES))
 }
 
-/// `e`: a call that an `undefined` is directly in. It is looked at for the last argument only.
+/// `e` is a call that directly contains an `undefined`. It's only checked once, for the last argument.
 fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUselessUndefined>) {
     let Some(call_expr) = e.as_call() else {
         return;
@@ -233,7 +247,7 @@ fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUseles
     if undefined_count == 0 || should_ignore(call_expr.callee()) {
         return;
     }
-    // The arguments of `Function#bind()` are not looked at, but for `this`.
+    // Skip the arguments of `Function#bind()`, except `this`.
     if arguments.len() != 1
         && !call_expr.is_optional()
         && is_method_call(call_expr, None, Some(&["bind"]), None, None)
@@ -254,7 +268,8 @@ fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUseles
         .iter()
         .skip(remaining_count + 1)
         .fold(report, |report, it| report.label(it, ""));
-    report.fix(|fixer| {
+    // `String(undefined)` isn't `String()`, and a function can check `arguments.length`.
+    report.fix_dangerously(|fixer| {
         fixer.remove(
             match remaining_count
                 .checked_sub(1)
@@ -264,7 +279,7 @@ fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUseles
                     previous_argument.outer_span().end,
                     last_undefined.span().end,
                 ),
-                // With the comma at the end.
+                // Including the trailing comma.
                 None => Span::new(first_undefined.span().start, e.span().end.saturating_sub(1)),
             },
         )

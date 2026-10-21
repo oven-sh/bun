@@ -101,3 +101,28 @@ test.skipIf(!isLinux)("a child that exits does not interrupt a system call of th
   expect(stdout).toBe("1\n");
   expect(exitCode).toBe(0);
 });
+
+// The first spawn starts the waiter thread, which needs its own file descriptor.
+test.skipIf(!isLinux)("`exited` rejects when the waiter thread can't start, and the next spawn retries", async () => {
+  const script = `
+    const fs = require("node:fs");
+    const stdio = ["inherit", "inherit", "inherit"];
+    const held = [];
+    try {
+      for (;;) held.push(fs.openSync("/dev/null", "r"));
+    } catch {}
+    console.log(await Bun.spawn({ cmd: ["sleep", "0"], stdio }).exited.catch(e => e.code));
+    for (const fd of held) fs.closeSync(fd);
+    console.log(await Bun.spawn({ cmd: ["sleep", "0"], stdio }).exited);
+  `;
+  await using proc = spawn({
+    cmd: ["sh", "-c", 'ulimit -n 64 && exec "$0" -e "$1"', bunExe(), script],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("EMFILE\n0\n");
+  expect(exitCode).toBe(0);
+});

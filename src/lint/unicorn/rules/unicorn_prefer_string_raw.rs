@@ -12,7 +12,7 @@ impl Rule for PreferStringRaw {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-string-raw", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().string_literals();
-    /// Where the text has a `\\`, in order.
+    /// The offsets of each `\\` in the text, in order.
     type State<'a> = Vec<u32>;
 
     fn new(_: &Options) -> Self {
@@ -40,7 +40,7 @@ impl Rule for PreferStringRaw {
         if found
             .get(found.partition_point(|it| *it < span.start))
             .is_none_or(|it| *it >= span.end)
-            || is_where_no_template_can_be(string_literal)
+            || is_skipped_position(string_literal)
         {
             return;
         }
@@ -51,11 +51,11 @@ impl Rule for PreferStringRaw {
         else {
             return;
         };
-        // It is the value if there is no other escape.
+        // This is the string's value if there's no other escape.
         let Some(unescaped) = unescape_backslash(trimmed, *quote) else {
             return;
         };
-        // A last `\` would escape the backtick.
+        // A trailing `\` would escape the backtick.
         if unescaped
             .iter()
             .rev()
@@ -69,23 +69,27 @@ impl Rule for PreferStringRaw {
             return;
         }
         cx.report(string_literal, PREFER_STRING_RAW)
-            .called_with_the_name()
+            .called_with_name()
             .fix(|fixer| {
+                // Bun's runtime passes `\u00E9` to a tag as the raw text of `é`, so the string's value would change.
+                if !unescaped.is_ascii() {
+                    return None;
+                }
                 let before = fixer
                     .file()
                     .text()
                     .get(..string_literal.span().start as usize)
                     .unwrap_or_default();
                 let space: &[u8] = if ends_with_keyword(before) { b" " } else { b"" };
-                fixer.replace(
+                Some(fixer.replace(
                     string_literal,
                     [space, b"String.raw`", &unescaped, b"`"].concat(),
-                )
+                ))
             });
     }
 }
 
-/// `input` with `\` for `\\` and the quote for `\'`. `None` if it has another escape.
+/// Returns `input` with `\\` replaced by `\` and `\'` by the quote. `None` if it has any other escape.
 fn unescape_backslash(input: &[u8], quote: u8) -> Option<Vec<u8>> {
     let mut result = Vec::with_capacity(input.len());
     let mut rest = input;
@@ -101,8 +105,8 @@ fn unescape_backslash(input: &[u8], quote: u8) -> Option<Vec<u8>> {
     Some(result)
 }
 
-/// What oxlint leaves out, by the parent. The value of a property is among it unless the key is a string.
-fn is_where_no_template_can_be(string_literal: Literal) -> bool {
+/// The positions oxlint skips, judged by the parent. They include a property's value unless the key is a string.
+fn is_skipped_position(string_literal: Literal) -> bool {
     let is_string = |key: Option<Key>| {
         matches!(
             key.map(Key::kind),
@@ -123,7 +127,7 @@ fn is_where_no_template_can_be(string_literal: Literal) -> bool {
         Node::Prop(prop) => !prop.key().is_some_and(Key::is_computed),
         Node::Member(member) => member.is_signature(),
         Node::Type(ty) => ty.tag() != TypeTag::Import,
-        // Not the name of `declare module "a"`, nor what else a statement has.
+        // Only a module specifier. Not the name of `declare module "a"` or any other string in a statement.
         Node::Stmt(statement) => {
             statement.tag() != StmtTag::ImportEquals
                 && statement.module_specifier_span() == Some(string_literal.span())
@@ -133,7 +137,7 @@ fn is_where_no_template_can_be(string_literal: Literal) -> bool {
     }
 }
 
-/// By the text alone.
+/// Only looks at the text.
 fn ends_with_keyword(source: &[u8]) -> bool {
     const KEYWORDS: [&str; 47] = [
         "let",

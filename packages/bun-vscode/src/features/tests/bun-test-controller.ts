@@ -54,11 +54,28 @@ export class BunTestController implements vscode.Disposable {
   private executedTestCount: number = 0;
   private totalTestsStarted: number = 0;
 
+  // The value of `bun.test.filePattern` when the window loaded, or null for DEFAULT_TEST_PATTERN.
+  private readonly filePattern: string | null;
+
   constructor(
     private readonly testController: vscode.TestController,
     private readonly workspaceFolder: vscode.WorkspaceFolder,
     readonly isTest: boolean = false,
   ) {
+    this.filePattern = this.readFilePattern();
+    vscode.workspace.onDidChangeConfiguration(
+      async event => {
+        if (!event.affectsConfiguration("bun.test.filePattern")) return;
+        const reload = "Reload Window";
+        const choice = await vscode.window.showInformationMessage(
+          'Reload the window to apply the new "bun.test.filePattern".',
+          reload,
+        );
+        if (choice === reload) await vscode.commands.executeCommand("workbench.action.reloadWindow");
+      },
+      null,
+      this.disposables,
+    );
     if (isTest) return;
     this.setupTestController();
     this.setupWatchers();
@@ -136,9 +153,15 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private isTestFile(document: vscode.TextDocument): boolean {
-    return (
-      document?.uri?.scheme === "file" && /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mjs|mts|cts)$/.test(document.uri.fsPath)
-    );
+    if (document?.uri?.scheme !== "file") return false;
+    if (this.filePattern === null) {
+      return /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mjs|mts|cts)$/.test(document.uri.fsPath);
+    }
+
+    // As findFiles does, match the pattern against the path inside the workspace folder of the document.
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    const pattern = folder ? new vscode.RelativePattern(folder, this.filePattern) : this.filePattern;
+    return vscode.languages.match({ scheme: "file", pattern }, document) > 0;
   }
 
   private async discoverInitialTests(
@@ -155,8 +178,19 @@ export class BunTestController implements vscode.Disposable {
     }
   }
 
+  private readFilePattern(): string | null {
+    const pattern: unknown = vscode.workspace.getConfiguration("bun.test").get("filePattern", DEFAULT_TEST_PATTERN);
+    if (typeof pattern !== "string" || pattern.trim() === "") {
+      debug.appendLine(
+        `bun.test.filePattern is ${JSON.stringify(pattern)}, not a glob pattern. The default applies: ${DEFAULT_TEST_PATTERN}`,
+      );
+      return null;
+    }
+    return pattern === DEFAULT_TEST_PATTERN ? null : pattern;
+  }
+
   private customFilePattern(): string {
-    return vscode.workspace.getConfiguration("bun.test").get("filePattern", DEFAULT_TEST_PATTERN);
+    return this.filePattern ?? DEFAULT_TEST_PATTERN;
   }
 
   private async findTestFiles(cancellationToken?: vscode.CancellationToken): Promise<vscode.Uri[]> {
@@ -170,6 +204,9 @@ export class BunTestController implements vscode.Disposable {
       5_000,
       cancellationToken,
     );
+    if (tests.length === 0 && this.filePattern !== null) {
+      debug.appendLine(`bun.test.filePattern ${JSON.stringify(this.filePattern)} matches no file in the workspace.`);
+    }
 
     return tests.filter(test => {
       const normalizedTestPath = test.fsPath.replace(/\\/g, "/");
@@ -1478,6 +1515,7 @@ export class BunTestController implements vscode.Disposable {
       escapeTestName: this.escapeTestName.bind(this),
       shouldUseTestNamePattern: this.shouldUseTestNamePattern.bind(this),
 
+      discoverInitialTests: this.discoverInitialTests.bind(this),
       isTestFile: this.isTestFile.bind(this),
       customFilePattern: this.customFilePattern.bind(this),
       getBunExecutionConfig: this.getBunExecutionConfig.bind(this),

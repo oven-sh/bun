@@ -4,6 +4,7 @@ import "./vscode.mock";
 import { makeTestController, makeWorkspaceFolder } from "./vscode.mock";
 
 const { BunTestController } = await import("../bun-test-controller");
+const vscode = await import("vscode");
 
 const mockTestController: MockTestController = makeTestController();
 const mockWorkspaceFolder: MockWorkspaceFolder = makeWorkspaceFolder("/test/workspace");
@@ -570,6 +571,45 @@ describe("BunTestController - Test Discovery and Management", () => {
       expect(pattern).toContain("_test_");
       expect(pattern).toContain("_spec_");
       expect(pattern).toContain("{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
+    });
+  });
+
+  describe("bun.test.filePattern", () => {
+    const setFilePattern = (value: unknown) =>
+      vscode.workspace.getConfiguration("bun.test").update("filePattern", value);
+    // The controller reads the setting once, when it starts.
+    const controllerWith = async (value: unknown) => {
+      await setFilePattern(value);
+      const { isTestFile, customFilePattern } = new BunTestController(mockTestController, mockWorkspaceFolder, true)
+        ._internal;
+      const opened = (fsPath: string) => isTestFile({ uri: { scheme: "file", fsPath } } as any);
+      return { opened, customFilePattern };
+    };
+
+    afterEach(() => setFilePattern(undefined));
+
+    test("should decide which opened documents are test files", async () => {
+      const { opened, customFilePattern } = await controllerWith("**/*.test.ts");
+      expect(customFilePattern()).toBe("**/*.test.ts");
+      expect(opened("/test/workspace/src/a.test.ts")).toBe(true);
+      expect(opened("/test/workspace/src/a.spec.ts")).toBe(false);
+      expect(opened("/outside/src/a.test.ts")).toBe(true);
+    });
+
+    test("should match a pattern against the path in the workspace folder", async () => {
+      const { opened } = await controllerWith("src/**/*.test.ts");
+      expect(opened("/test/workspace/src/a.test.ts")).toBe(true);
+      expect(opened("/test/workspace/lib/src/a.test.ts")).toBe(false);
+      expect(opened("/outside/src/a.test.ts")).toBe(false);
+    });
+
+    test("should use the default pattern for a value that is not a glob pattern", async () => {
+      for (const value of ["", "  ", ["**/*.test.ts"]]) {
+        const { opened, customFilePattern } = await controllerWith(value);
+        expect(customFilePattern()).toBe("**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}");
+        expect(opened("/test/workspace/src/a.spec.ts")).toBe(true);
+        expect(opened("/outside/notes.md")).toBe(false);
+      }
     });
   });
 

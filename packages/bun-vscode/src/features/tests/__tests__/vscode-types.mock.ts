@@ -541,6 +541,8 @@ export enum MockConfigurationTarget {
 export class MockConfiguration implements MockConfiguration {
   private _values = new Map<string, any>();
 
+  constructor(private readonly _onDidUpdate?: (section: string) => void) {}
+
   get<T>(section: string, defaultValue?: T): T | undefined {
     return this._values.get(section) ?? defaultValue;
   }
@@ -560,7 +562,12 @@ export class MockConfiguration implements MockConfiguration {
   }
 
   async update(section: string, value: any, configurationTarget?: MockConfigurationTarget): Promise<void> {
-    this._values.set(section, value);
+    if (value === undefined) {
+      this._values.delete(section);
+    } else {
+      this._values.set(section, value);
+    }
+    this._onDidUpdate?.(section);
   }
 
   // Helper for testing

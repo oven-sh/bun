@@ -451,9 +451,6 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
             max_advance, arg_number
         )));
     }
-    // A `setTimeout(fn, 0)` armed under fake timers keeps a 0 interval
-    // (`js_value_to_countdown`) and is due at `current`, so an advance of 0
-    // fires it without moving the clock. Same as sinon's `tick(0)`.
     let target = current.add_ms_float(arg_number);
 
     let advanced = FakeTimers::execute_until(global, target);

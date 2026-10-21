@@ -18724,5 +18724,136 @@
       "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
     },
     "build": true
+  },
+  "this-key-in-parentheses-declares-a-property-of-the-class": {
+    "files": {
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./pkg\" }, { \"path\": \"./app\" }] }",
+      "pkg/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"checkJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"}}",
+      "pkg/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "pkg/index.js": "export class C {\n  declared = \"s\";\n  constructor() {\n    this[(\"a\")] = 1;\n    this[(('b'))] = \"s\";\n    this[(0x10)] = true;\n    this[(\"d-e\")] = 1;\n    /** @type {string | undefined} */\n    this[(\"documented\")] = undefined;\n    this[(\"twice\")] = 1;\n    this.twice = \"s\";\n    this[(\"x\")] = this[(\"y\")] = 1;\n    const later = () => {\n      this[(\"arrow\")] = 1;\n    };\n    later();\n  }\n  method() {\n    this[(\"declared\")] = \"t\";\n    this[(\"m\")] = 1;\n  }\n  static init() {\n    this[(\"s\")] = 1;\n  }\n  static {\n    this[(\"block\")] = 1;\n  }\n}\nexport class Derived extends C {\n  constructor() {\n    super();\n    this[(\"a\")] = 2;\n    this[(\"own\")] = 3;\n  }\n  static init() {\n    this[(\"a\")] = \"static\";\n    this[(\"declared\")] = \"same\";\n    this[(\"method\")] = 1;\n  }\n}\n",
+      "app/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"},\"references\":[{\"path\":\"../pkg\"}]}",
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "app/main.ts": "import { C, Derived } from \"../pkg/index.js\";\nconst c = new C();\nexport const a: never = c.a;\nexport const b: never = c.b;\nexport const hex: never = c[16];\nexport const dashed: never = c[\"d-e\"];\nexport const documented: never = c.documented;\nexport const twice: never = c.twice;\nexport const x: never = c.x;\nexport const y: never = c.y;\nexport const arrow: never = c.arrow;\nexport const declared: never = c.declared;\nexport const m: never = c.m;\nexport const s: never = C.s;\nexport const block: never = C.block;\nexport const own: never = new Derived().own;\nexport const inherited: never = new Derived().a;\nexport const staticA: never = Derived.a;\nexport const staticDeclared: never = Derived.declared;\nexport const staticMethod: never = Derived.method;\n"
+    },
+    "build": true
+  },
+  "this-key-in-parentheses-declares-nothing-unless-the-key-is-a-literal": {
+    "files": {
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./pkg\" }, { \"path\": \"./app\" }] }",
+      "pkg/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"checkJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"}}",
+      "pkg/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "pkg/index.js": "const k = \"named\";\nexport class C {\n  constructor() {\n    this[(\"constructor\")] = 1;\n    this[(k)] = 1;\n    (this[\"whole\"]) = 1;\n    this[(\"compound\")] ??= 1;\n  }\n}\n",
+      "app/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"},\"references\":[{\"path\":\"../pkg\"}]}",
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "app/main.ts": "import { C } from \"../pkg/index.js\";\nconst c = new C();\nexport const named: never = c.named;\nexport const whole: never = c.whole;\nexport const compound: never = c.compound;\n"
+    },
+    "build": true
+  },
+  "this-key-value-where-the-parenthesis-is-not-closed-declares-the-property": {
+    "files": {
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./pkg\" }, { \"path\": \"./app\" }] }",
+      "pkg/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"checkJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"}}",
+      "pkg/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "pkg/index.js": "export class C {\n  constructor() {\n    this[(\"a\"] = 1;\n  }\n}\n",
+      "app/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"},\"references\":[{\"path\":\"../pkg\"}]}",
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "app/main.ts": "import { C } from \"../pkg/index.js\";\nexport const a: never = new C().a;\n"
+    },
+    "build": true
+  },
+  "exports-key-in-parentheses-exports-the-name": {
+    "files": {
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./pkg\" }, { \"path\": \"./app\" }] }",
+      "pkg/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"checkJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"}}",
+      "pkg/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "pkg/index.cjs": "function g() {}\nexports[(\"a\")] = 1;\nmodule.exports[(\"b\")] = 2;\nmodule[(\"exports\")][((\"c\"))] = 3;\nexports[(0)] = 4;\nexports[(\"d-e\")] = 5;\nexports[(\"default\")] = 6;\nexports[(\"class\")] = 7;\nexports[(\"alias\")] = g;\nexports[(\"Box\")] = class {\n  size = 1;\n};\nexports[(\"twice\")] = 1;\nexports.twice = \"s\";\n{\n  exports[(\"nested\")] = 8;\n}\nObject.defineProperty(exports, (\"defined\"), { value: 9 });\nObject.defineProperty(exports, \"e\", { value: 10 });\nObject.defineProperty(exports, \"f-g\", { value: 11 });\nexports.of = class {\n  size = 1;\n};\nexports[\"from\"] = class {\n  size = 1;\n};\n",
+      "app/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"},\"references\":[{\"path\":\"../pkg\"}]}",
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "app/main.ts": "import lib = require(\"../pkg/index.cjs\");\nexport const a: never = lib.a;\nexport const b: never = lib.b;\nexport const c: never = lib.c;\nexport const zero: never = lib[0];\nexport const dashed: never = lib[\"d-e\"];\nexport const byDefault: never = lib.default;\nexport const keyword: never = lib.class;\nexport const alias: never = lib.alias;\nexport const size: never = new lib.Box().size;\nexport const twice: never = lib.twice;\nexport const nested: never = lib.nested;\nexport const defined: never = lib.defined;\nexport const e: never = lib.e;\nexport const dashedDefined: never = lib[\"f-g\"];\nexport const dotKeyword: never = new lib.of();\nexport const quotedKeyword: never = new lib.from();\nexport const box: never = new lib.Box();\n"
+    },
+    "build": true
+  },
+  "f-key-in-parentheses-declares-no-member-of-f": {
+    "files": {
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./pkg\" }, { \"path\": \"./app\" }] }",
+      "pkg/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"checkJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"}}",
+      "pkg/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "pkg/typed.ts": "export function f() {}\nf[(\"p\")] = 1;\nf[\"q\"] = 2;\nexport const arrow = () => {};\narrow[(\"p\")] = 1;\nexport const both = () => {};\nboth[((\"p\"))] = 1;\nboth.q = \"s\";\nfunction target() {}\nexport function chained() {}\nchained.first = chained.second = target;\n",
+      "pkg/untyped.js": "export function f() {}\nf[(\"p\")] = 1;\nf[\"q\"] = 2;\nexport const expression = function () {};\nexpression[(\"p\")] = 1;\nexport class K {}\nK[(\"p\")] = 1;\nK[\"q\"] = 2;\nfunction target() {}\nexport function aliased() {}\naliased[(\"p\")] = target;\n",
+      "app/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"},\"references\":[{\"path\":\"../pkg\"}]}",
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "app/main.ts": "import * as typed from \"../pkg/typed.js\";\nimport * as untyped from \"../pkg/untyped.js\";\nexport const f: never = typed.f;\nexport const fp: never = typed.f.p;\nexport const fq: never = typed.f.q;\nexport const arrow: never = typed.arrow;\nexport const both: never = typed.both;\nexport const bothP: never = typed.both.p;\nexport const first: never = typed.chained.first;\nexport const second: never = typed.chained.second;\nexport const g: never = untyped.f;\nexport const gp: never = untyped.f.p;\nexport const expression: never = untyped.expression;\nexport const kp: never = untyped.K.p;\nexport const kq: never = untyped.K.q;\nexport const aliased: never = untyped.aliased.p;\n"
+    },
+    "build": true
+  },
+  "f-key-where-a-constant-or-an-enum-member-is-the-key": {
+    "files": {
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./pkg\" }, { \"path\": \"./app\" }] }",
+      "pkg/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"checkJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"}}",
+      "pkg/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "pkg/index.ts": "export enum E {\n  A,\n}\nconst wide: string = \"w\";\nconst { bound } = { bound: \"b\" } as const;\nexport function f() {}\nf[E.A] = 1;\nf[wide] = 2;\nf[bound] = 3;\nf[later] = 4;\nf[1e500] = 5;\nconst later = \"l\";\nexport const arrow = () => {};\narrow[E.A] = 1;\n",
+      "pkg/nested.js": "export function f() {}\nf.inner = function () {};\nf.inner.deep = 1;\n",
+      "pkg/merged.ts": "export function f() {}\nexport namespace f {\n  export let p = 1;\n}\nconst k = \"p\";\nf[k] = 2;\n",
+      "pkg/alias.ts": "namespace N {\n  export let x: string | number = \"s\";\n}\nexport function f() {}\nexport namespace f {\n  export import p = N.x;\n}\nconst k = \"p\";\nf[k] = 2;\n",
+      "pkg/prototype.js": "const k = \"prototype\";\nexport class K {}\nK[k] = 1;\n",
+      "pkg/twice.ts": "export function f() {}\nconst k = \"p\";\nf[k] = 1;\nf[k] = \"s\";\n",
+      "app/tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"composite\":true,\"allowJs\":true,\"outDir\":\"out\",\"rootDir\":\".\"},\"references\":[{\"path\":\"../pkg\"}]}",
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "app/main.ts": "import { f, arrow } from \"../pkg/index.js\";\nimport * as nested from \"../pkg/nested.js\";\nimport * as merged from \"../pkg/merged.js\";\nimport * as alias from \"../pkg/alias.js\";\nimport { K } from \"../pkg/prototype.js\";\nimport * as twice from \"../pkg/twice.js\";\nexport const host: never = f;\nexport const A: never = f.A;\nexport const w: never = f.w;\nexport const b: never = f.b;\nexport const l: never = f.l;\nexport const infinity: never = f.Infinity;\nexport const other: never = arrow;\nexport const inner: never = nested.f.inner;\nexport const deep: never = nested.f.deep;\nexport const p: never = merged.f.p;\nexport const aliased: never = alias.f.p;\nexport const prototype: never = K.prototype;\nexport const both: never = twice.f.p;\n"
+    },
+    "build": true
+  },
+  "a-key-in-parentheses-where-the-type-of-the-value-cannot-be-named": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"declaration\":true,\"noEmit\":true,\"allowJs\":true,\"checkJs\":true}}",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "hidden.ts": "class Hidden {\n  private x = 1;\n}\nexport function make() {\n  return new Hidden();\n}\ninterface Recursive {\n  self: Recursive;\n}\nexport declare function recursive(): Recursive;\n",
+      "this.js": "import { make } from \"./hidden.js\";\nexport class C {\n  constructor() {\n    this[(\"a\")] = make();\n  }\n}\nexport class S {\n  static init() {\n    this[(\"s\")] = make();\n  }\n}\n",
+      "exports.cjs": "const { make } = require(\"./hidden.js\");\nexports[(\"a\")] = make();\nexports[\"k\"] = make();\nmodule.exports[(\"b\")] = make();\n",
+      "variable.js": "import { make } from \"./hidden.js\";\nexport const g = () => {};\ng[(\"p\")] = make();\n",
+      "function.ts": "import { recursive } from \"./hidden.js\";\nexport function f() {}\nf[(\"p\")] = recursive();\nf[\"q\"] = recursive();\n"
+    }
+  },
+  "a-private-assignment-where-the-type-of-the-value-cannot-be-named": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"declaration\":true,\"noEmit\":true,\"allowJs\":true,\"checkJs\":true}}",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "hidden.ts": "class Hidden {\n  private x = 1;\n}\nexport function make() {\n  return new Hidden();\n}\ninterface Recursive {\n  self: Recursive;\n}\nexport declare function recursive(): Recursive;\n",
+      "this.js": "import { make } from \"./hidden.js\";\nexport class C {\n  constructor() {\n    /** @private */\n    this[(\"a\")] = make();\n    /** @private */\n    this[\"b\"] = make();\n    /** @private */\n    this.c = make();\n  }\n}\nexport class Control {\n  constructor() {\n    /** @protected */\n    this.d = make();\n  }\n}\n",
+      "exports.cjs": "const { make } = require(\"./hidden.js\");\n/** @private */\nexports[(\"a\")] = make();\n/** @private */\nexports.b = make();\n/** @readonly */\nexports.control = make();\n",
+      "function.js": "import { make, recursive } from \"./hidden.js\";\nexport function f() {}\n/** @private */\nf.p = recursive();\nexport const g = () => {};\n/** @private */\ng.p = make();\n",
+      "control.ts": "import { recursive } from \"./hidden.js\";\nexport function f() {}\n/** @private */\nf.p = recursive();\n"
+    }
+  },
+  "a-key-in-parentheses-where-the-type-of-the-value-needs-an-import-that-cannot-be-written": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"declaration\":true,\"noEmit\":true,\"allowJs\":true,\"checkJs\":true}}",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "node_modules/outer/index.d.ts": "import { Inner } from \"inner\";\nexport declare function make(): Inner;\n",
+      "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner {\n  x: number;\n}\n",
+      "index.cjs": "const { make } = require(\"outer\");\nexports[(\"a\")] = make();\nexports[\"b\"] = make();\nexports.c = make();\nObject.defineProperty(exports, \"d\", { value: make() });\n",
+      "whole.cjs": "const { make } = require(\"outer\");\nmodule.exports = make();\n"
+    }
+  },
+  "exports-0-undefined-before-another-assignment-to-it": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"declaration\":true,\"noEmit\":true,\"allowJs\":true,\"checkJs\":true}}",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "index.cjs": "exports[0] = undefined;\nexports[0] = 1;\nexports[(\"a\")] = undefined;\nexports[(\"a\")] = 1;\n"
+    }
+  },
+  "f-key-in-parentheses-under-isolateddeclarations": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"declaration\":true,\"noEmit\":true,\"isolatedDeclarations\":true}}",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "index.ts": "export function f(): void {}\nf[(\"p\")] = 1;\nf[\"q\"] = 2;\nexport const g = (): void => {};\ng[(\"p\")] = 1;\nexport const h = (): void => {};\nh[\"q\"] = 1;\nexport function only(): void {}\nonly[(\"p\")] = 1;\n"
+    }
+  },
+  "f-key-under-isolateddeclarations-where-a-constant-or-an-enum-member-is-the-key": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\":{\"strict\":true,\"target\":\"esnext\",\"module\":\"nodenext\",\"moduleResolution\":\"nodenext\",\"noLib\":true,\"types\":[],\"declaration\":true,\"noEmit\":true,\"isolatedDeclarations\":true}}",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var Object: { defineProperty(o: unknown, key: string, descriptor: { value: unknown }): void };\n",
+      "index.ts": "const k = \"p\";\nconst wide: string = \"w\";\nexport enum E {\n  A,\n}\nexport function fk(): void {}\nfk[k] = 1;\nexport function fw(): void {}\nfw[wide] = 1;\nexport function fe(): void {}\nfe[E.A] = 1;\nexport function fl(): void {}\nfl[later] = 1;\nexport const ak = (): void => {};\nak[k] = 1;\nexport const ae = (): void => {};\nae[E.A] = 1;\nexport const al = (): void => {};\nal[later] = 1;\nconst later = \"l\";\n"
+    }
   }
 }

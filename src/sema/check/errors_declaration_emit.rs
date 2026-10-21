@@ -2734,7 +2734,9 @@ impl SymbolTrackerImpl {
         let location = self.error_location();
         let name = match self.error_name_node.is_some() {
             true => location,
-            false => hir.name(location),
+            // `module.exports = value` has no name.
+            false if is_module_exports_assignment(hir, location) => Node::NONE,
+            false => get_name_of_declaration(hir, location),
         };
         // `DeclarationNameToString`
         match (self.text(c, name), hir.data(location)) {
@@ -3257,7 +3259,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let file = self.file();
         let files = self.c.files();
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        for &e in bound.expando_declarations.iter() {
+        // The visitor is pre-order: the outer assignment of `f.a = f.b = v` is first. The binder lists the inner one first.
+        let mut declarations = std::borrow::Cow::Borrowed(&bound.expando_declarations[..]);
+        if !declarations.is_sorted_by_key(|&e| hir[e].pos) {
+            declarations.to_mut().shared_sort_by_key(|&e| hir[e].pos);
+        }
+        for &e in declarations.iter() {
             let ExprKind::Assign {
                 op: None,
                 target,
@@ -3329,23 +3336,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             // `tryGetPropertyName`
             let property = match hir[target].kind {
                 ExprKind::Dot { name, .. } => Some(name),
-                ExprKind::Index { index, .. } => match hir[index].kind {
-                    ExprKind::String(name) => Some(name),
-                    // `tryGetNameFromEntityNameExpression`
-                    _ if is_entity_name_expression(hir, index)
-                        && self
-                            .c
-                            .resolve_entity_name_expression(file, index, SymFlags::VALUE)
-                            .is_some_and(|sym| {
-                                files
-                                    .flags(sym)
-                                    .intersects(SymFlags::CONST | SymFlags::ENUM_MEMBER)
-                            }) =>
-                    {
-                        self.c.member_name(file, PropKey::Computed(index))
-                    }
-                    _ => None,
-                },
+                ExprKind::Index { index, .. } => self.c.literal_key(file, index),
                 _ => None,
             };
             let Some(property) =
@@ -3417,37 +3408,37 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     [self.name(right), b" as ", export_name].concat()
                 }));
             } else {
-                let holder = self.c.type_of_symbol(host);
-                if let Some(ty) = self.c.type_of_property(holder, property) {
+                // `ensureType(node)`: none for a `@private` assignment.
+                let mut ty = None;
+                if !hir.flags(hir.node(e)).contains(Flags::PRIVATE) {
+                    let of_symbol = self.c.type_of_expando(file, e);
                     self.tracker.error_name_node = Node::NONE;
                     // It's emitted in its host's namespace.
                     let host_parent = root.map_or(Parent::None, |root| bound.parent_of_stmt(root));
                     let outer = self.indent;
                     self.set_indent(self.indent_of_statements(host_parent) + 1);
-                    let ty = self.create_type_of_declaration(
-                        Some(hir.node(e)),
-                        ty,
-                        DECLARATION_EMIT_NODE_BUILDER_FLAGS,
-                    );
+                    let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
+                    ty = Some(self.create_type_of_declaration(Some(hir.node(e)), of_symbol, flags));
                     self.set_indent(outer);
-                    // "use exportName as localName if there won't be any conflicts or keyword issues"
-                    let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
-                    let scope = self.enclosing.scope;
-                    let local_name = if files.resolve_name(file, scope, property, any).is_some()
-                        || is_non_contextual_keyword(export_name)
-                    {
-                        // `NewGeneratedNameForNode` for the assignment
-                        self.temp_variable_name()
-                    } else {
-                        export_name.to_vec()
-                    };
-                    added.push(Statement::new(
-                        StatementKind::Other,
-                        [b"var ", &local_name[..], b": ", &ty[..], b";"].concat(),
-                    ));
-                    if local_name != export_name {
-                        added.push(export_of([&local_name[..], b" as ", export_name].concat()));
-                    }
+                }
+                // "use exportName as localName if there won't be any conflicts or keyword issues"
+                let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+                let scope = self.enclosing.scope;
+                let local_name = if files.resolve_name(file, scope, property, any).is_some()
+                    || is_non_contextual_keyword(export_name)
+                {
+                    // `NewGeneratedNameForNode` for the assignment
+                    self.temp_variable_name()
+                } else {
+                    export_name.to_vec()
+                };
+                let text = match &ty {
+                    Some(ty) => [b"var ", &local_name[..], b": ", &ty[..], b";"].concat(),
+                    None => [b"var ", &local_name[..], b";"].concat(),
+                };
+                added.push(Statement::new(StatementKind::Other, text));
+                if local_name != export_name {
+                    added.push(export_of([&local_name[..], b" as ", export_name].concat()));
                 }
             }
             if let Some(root) = root {
@@ -7064,6 +7055,17 @@ fn can_produce_diagnostics(kind: Kind) -> bool {
     )
 }
 
+/// Whether `node` is `module.exports = value` in a CommonJS module.
+fn is_module_exports_assignment(hir: &hir::File, node: Node) -> bool {
+    use crate::bind::{JsDeclarationKind, assignment_declaration_kind};
+    match hir.data(node) {
+        NodeData::Expr(e) => {
+            assignment_declaration_kind(hir, e) == JsDeclarationKind::ModuleExports
+        }
+        _ => false,
+    }
+}
+
 /// `GetNameOfDeclaration`
 fn get_name_of_declaration(hir: &hir::File, node: Node) -> Node {
     match hir.data(node) {
@@ -7077,6 +7079,11 @@ fn get_name_of_declaration(hir: &hir::File, node: Node) -> Node {
                 }
                 ExprKind::Index { .. } => hir.node(target),
                 _ => hir.name(hir.node(target)),
+            },
+            // The key of `Object.defineProperty(exports, "name", descriptor)`.
+            ExprKind::Call(_) => match crate::bind::define_property_call(hir, e) {
+                Some((_, key)) => hir.node(key),
+                None => hir.name(node),
             },
             _ => hir.name(node),
         },

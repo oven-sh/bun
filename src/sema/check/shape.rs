@@ -1950,6 +1950,19 @@ impl<'p, 's> Checker<'p, 's> {
         names[index]
     }
 
+    /// The name in `JsDeclarationKind::ExportsProperty(name)` of the assignment `e`, which has no text for a numeric key.
+    pub(super) fn exports_property_name(&self, file: FileId, e: ExprId, name: Atom) -> Atom {
+        let hir = self.hir(file);
+        if name.is_none()
+            && let ExprKind::Assign { target, .. } = hir[e].kind
+            && let ExprKind::Index { index, .. } = hir[target].kind
+            && let ExprKind::Number(n) = hir[index].kind
+        {
+            return self.number_name(hir.numbers[n as usize]);
+        }
+        name
+    }
+
     /// Adds the members declared in `members` (the static ones or the instance ones) to `b`.
     fn add_members(
         &mut self,

@@ -5670,6 +5670,12 @@ pub(crate) enum BlobName {
     Compare = 1,
 }
 
+/// The type and the subtype of a MIME type, without its parameters.
+fn mime_essence(content_type: &[u8]) -> &[u8] {
+    let end = strings::index_of_char_usize(content_type, b';').unwrap_or(content_type.len());
+    content_type[..end].trim_ascii()
+}
+
 /// `true` when the two blobs are known to differ. A blob on disk or in S3 is never read.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Blob__contentsDiffer(a: &Blob, b: &Blob, names: BlobName) -> bool {
@@ -5680,11 +5686,15 @@ pub(crate) extern "C" fn Bun__Blob__contentsDiffer(a: &Blob, b: &Blob, names: Bl
         return true;
     }
     // bun gives the blob of a body a type of its own, so a type counts only when both sides set one.
-    if a.content_type_was_set.get()
-        && b.content_type_was_set.get()
-        && a.content_type_slice() != b.content_type_slice()
-    {
-        return true;
+    if a.content_type_was_set.get() && b.content_type_was_set.get() {
+        let (essence, other_essence) = (
+            mime_essence(a.content_type_slice()),
+            mime_essence(b.content_type_slice()),
+        );
+        // Not every producer writes one type with the same letter case and the same charset.
+        if !strings::eql_case_insensitive_ascii(essence, other_essence, true) {
+            return true;
+        }
     }
     if names == BlobName::Compare {
         if let (Some(name), Some(other_name)) = (a.get_name_string(), b.get_name_string()) {

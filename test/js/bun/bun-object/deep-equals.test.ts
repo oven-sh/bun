@@ -365,15 +365,21 @@ describe("FormData, Blob, File, Bun.Cookie and Bun.CookieMap compare by their co
     expect([Bun.deepEquals(a(), b(), true), Bun.deepEquals(b(), a(), true)]).toEqual([false, false]);
   });
 
-  // bun does not write one type the same way everywhere, and the string `blob.type` gives is what counts.
-  it("a type that both sides set compares as blob.type reads", async () => {
-    const fromHeader = await new Response("x", { headers: { "content-type": "application/javascript" } }).blob();
-    const pairs = [
-      [new Blob(["x"], { type: "TEXT/PLAIN" }), new Blob(["x"], { type: "text/plain" })],
-      [new Blob(["x"], { type: "IMAGE/PNG" }), new Blob(["x"], { type: "image/png" })],
-      [fromHeader, new Blob(["x"], { type: "application/javascript" })],
+  // bun does not write one type the same way everywhere: the constructor adds a charset to
+  // `text/plain`, and the blob of a body keeps the letter case of its header.
+  it("a type that both sides set compares by its type and subtype", async () => {
+    const typed = (type: string) => new Blob(["x"], { type });
+    const fromHeader = await new Response("x", { headers: { "content-type": "Text/Plain" } }).blob();
+    const pairs: [Blob, Blob, boolean][] = [
+      [typed("TEXT/PLAIN"), typed("text/plain"), true],
+      [typed("text/plain; charset=utf-8"), typed("text/plain"), true],
+      [typed("text/plain;charset=utf-8"), typed("text/plain;charset=iso-8859-1"), true],
+      [fromHeader, typed("Text/Plain"), true],
+      [typed("text/plain"), typed("text/html"), false],
+      [typed("image/png"), typed("image/jpeg"), false],
+      [typed("application/x-a"), typed("application/x-ab"), false],
     ];
-    expect(pairs.map(([a, b]) => Bun.deepEquals(a, b))).toEqual(pairs.map(([a, b]) => a.type === b.type));
+    expect(pairs.map(([a, b]) => Bun.deepEquals(a, b))).toEqual(pairs.map(([, , equal]) => equal));
   });
 
   it("an empty FormData field equals its parsed form", async () => {

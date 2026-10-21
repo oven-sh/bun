@@ -3,6 +3,7 @@ import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import { Readable } from "node:stream";
 import { asyncIterableBodyShapes, handWrittenBodyShapes, settled } from "../streams/async-iterable-body-shapes";
+import { delegating, lazy } from "../streams/lazy-promise";
 
 test("Response.bytes() with async iterable body does not crash with null deref", async () => {
   await using proc = Bun.spawn({
@@ -307,5 +308,152 @@ describe.each(handWrittenBodyShapes)("%s is closed with return() before its firs
     controller.abort();
     await expect(response).rejects.toThrow("aborted");
     expect(await settled(shape)).toEqual(shape.expected);
+  });
+});
+
+// next() may hand back a promise whose then() is not the built-in one, for example one that only
+// starts its work there (Bun.$, a Bun.sql query). A body follows such a promise through then().
+describe("next() returns a promise with its own then()", () => {
+  const macrotask = () => new Promise<void>(resolve => setImmediate(resolve));
+  const decoder = new TextDecoder();
+  const consumers: [string, (body: AsyncIterable<string>) => Promise<string>][] = [
+    ["new Response(body).text()", body => new Response(body).text()],
+    [
+      "new Request(url, { body }).text()",
+      body => new Request("http://localhost/", { method: "POST", body, duplex: "half" } as any).text(),
+    ],
+    [
+      "a reader of new Response(body).body",
+      async body => {
+        let out = "";
+        for await (const chunk of new Response(body).body!) out += decoder.decode(chunk);
+        return out;
+      },
+    ],
+  ];
+  type Step = () => Promise<IteratorResult<string>>;
+  // A body of "hello " and "world". `wrap` makes what next() returns from the work that gives a result.
+  function iterable<P>(wrap: (step: Step) => P) {
+    const returned: P[] = [];
+    const chunks = ["hello ", "world"];
+    const body = {
+      [Symbol.asyncIterator]: () => ({
+        next() {
+          const n = returned.length;
+          // A next() that is called without end is a failure, not a hang.
+          if (n > 8) throw new Error("next() was called " + n + " times");
+          returned.push(
+            wrap(async () => {
+              await macrotask();
+              return n < chunks.length ? { done: false, value: chunks[n] } : { done: true, value: undefined };
+            }),
+          );
+          return returned[n];
+        },
+      }),
+    };
+    return { body: body as unknown as AsyncIterable<string>, returned };
+  }
+
+  describe.each<[string, (step: Step) => Promise<IteratorResult<string>> & { thenCalls: number }]>([
+    ["a pending promise that starts in then(), like Bun.$ or a Bun.sql query", step => lazy(step)],
+    ["a pending promise whose own state never carries the result", step => delegating(step, { settled: false })],
+    [
+      "a promise that is fulfilled when it is made and works in then(), like p-lazy",
+      step => delegating(step, { settled: true }),
+    ],
+  ])("%s", (_, wrap) => {
+    test.each(consumers)("%s calls then() once for each result", async (_, consume) => {
+      const { body, returned } = iterable(wrap);
+      expect({ text: await consume(body), thenCalls: returned.map(promise => promise.thenCalls) }).toEqual({
+        text: "hello world",
+        thenCalls: [1, 1, 1],
+      });
+    });
+  });
+
+  // There is nothing to call, so the state of the promise is what there is to wait on.
+  test.each(consumers)("%s waits on the state of a promise whose then is not callable", async (_, consume) => {
+    const { body, returned } = iterable(step => Object.assign(step(), { then: undefined }));
+    expect({ text: await consume(body), results: returned.length }).toEqual({ text: "hello world", results: 3 });
+  });
+
+  test("a then getter that cancels the body ends the iteration", async () => {
+    const calls: string[] = [];
+    const body = {
+      [Symbol.asyncIterator]: () => ({
+        next() {
+          calls.push("next");
+          const promise = macrotask().then(() => ({ done: false, value: "never read" }));
+          Object.defineProperty(promise, "then", {
+            get() {
+              calls.push("then getter");
+              void reader.cancel();
+              return Promise.prototype.then;
+            },
+          });
+          return promise;
+        },
+        return() {
+          calls.push("return");
+          return Promise.resolve({ done: true, value: undefined });
+        },
+      }),
+    };
+    const reader = new Response(body as any).body!.getReader();
+    expect({ read: await reader.read(), calls }).toEqual({
+      read: { done: true, value: undefined },
+      calls: ["next", "then getter", "return"],
+    });
+  });
+
+  // Once Promise.prototype.then is replaced, every plain promise has an observable then().
+  // Bun follows the promises that next() returned through it. The promise that Bun makes for
+  // each of its own pulls never reaches the replacement.
+  test("with Promise.prototype.then replaced, only the promises that next() returned reach the replacement", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const macrotask = () => new Promise(resolve => setImmediate(resolve));
+        const returned = new Set();
+        const body = {
+          [Symbol.asyncIterator]: () => ({
+            given: 0,
+            next() {
+              const n = this.given++;
+              const promise = (async () => {
+                await macrotask();
+                return n < 2 ? { done: false, value: "chunk" + n } : { done: true, value: undefined };
+              })();
+              returned.add(promise);
+              return promise;
+            },
+          }),
+        };
+        const receivers = [];
+        const then = Promise.prototype.then;
+        Promise.prototype.then = function (onFulfilled, onRejected) {
+          receivers.push(this);
+          return then.call(this, onFulfilled, onRejected);
+        };
+        let text = "";
+        for await (const chunk of new Response(body).body) text += new TextDecoder().decode(chunk);
+        Promise.prototype.then = then;
+        console.log(JSON.stringify({
+          text,
+          returned: returned.size,
+          callsOnReturned: receivers.filter(promise => returned.has(promise)).length,
+          callsOnOthers: receivers.filter(promise => !returned.has(promise)).length,
+        }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ text: "chunk0chunk1", returned: 3, callsOnReturned: 3, callsOnOthers: 0 });
+    expect(exitCode).toBe(0);
   });
 });

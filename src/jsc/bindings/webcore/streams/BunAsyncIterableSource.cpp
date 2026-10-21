@@ -284,7 +284,8 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
 
 // The pump loop. Synchronously-fulfilled next() results are consumed in place (writes batch
 // within the tick); a pending one suspends the loop on its reactions. A non-promise result
-// (including foreign thenables) is normalized through promise resolution, like `await`.
+// (including foreign thenables) is normalized through promise resolution, like `await`. So is
+// a promise whose then() is not the built-in one (promiseForReactions).
 static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
 {
     auto& vm = getVM(globalObject);
@@ -322,13 +323,12 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
         if (op->m_cancelled)
             RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
         JSPromise* nextPromise = asPromise(nextResult);
-        if (!nextPromise) {
-            // `await` semantics: adopt thenables; plain results become fulfilled promises.
-            nextPromise = promiseResolvedWith(globalObject, nextResult);
-            if (scope.exception()) [[unlikely]] {
-                op->abandonIterator();
-                return;
-            }
+        // `await` semantics: adopt thenables; plain results become fulfilled promises. A `then`
+        // getter that cancels the stream sets m_done, which the reactions below check.
+        nextPromise = nextPromise ? promiseForReactions(globalObject, nextPromise) : promiseResolvedWith(globalObject, nextResult);
+        if (scope.exception()) [[unlikely]] {
+            op->abandonIterator();
+            return;
         }
         auto status = nextPromise->status();
         if (status == JSPromise::Status::Fulfilled) {

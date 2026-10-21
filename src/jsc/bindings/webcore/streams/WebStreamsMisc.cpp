@@ -457,6 +457,18 @@ JSPromise* promiseResolvedWithFast(JSGlobalObject* globalObject, JSValue value)
     return promiseResolvedWith(globalObject, value);
 }
 
+JSPromise* promiseForReactionsSlow(JSGlobalObject* globalObject, JSPromise* promise)
+{
+    auto* follower = promiseResolvedWithFast(globalObject, promise);
+    // A follower that is fulfilled at once holds the cell itself: its `then` is not callable.
+    if (follower == promise || follower->status() == JSPromise::Status::Fulfilled)
+        return promise;
+    // The follower delivers a rejection from here on.
+    if (promise->status() == JSPromise::Status::Rejected)
+        promise->markAsHandled();
+    return follower;
+}
+
 JSPromise* promiseRejectedWith(JSGlobalObject* globalObject, JSValue reason)
 {
     return JSPromise::rejectedPromise(globalObject, reason);

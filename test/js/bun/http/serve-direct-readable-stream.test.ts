@@ -2285,16 +2285,16 @@ describe("direct stream edge cases over Bun.serve", () => {
     const finished = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
-      fetch: () =>
+      fetch: req =>
         new Response(
           (async function* () {
             try {
               yield "first";
               // The body yields until the server returns it. A count of turns cannot bound that:
               // the kernel decides when the abort reaches the server, and the macOS loopback
-              // delivers from another thread. The deadline only ends a server that never returns it.
-              const deadline = Date.now() + 10_000;
-              while (Date.now() < deadline) {
+              // delivers from another thread. A server that saw the abort and still resumes the
+              // body did not return it: only then does the loop end.
+              while (!req.signal.aborted) {
                 await later();
                 yield "more";
               }

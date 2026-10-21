@@ -451,15 +451,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// True if `ty` is the declared type of a class or interface whose `getBaseTypes` is in
-    /// progress, and it doesn't have `ObjectFlagsUnresolvedMembers`.
+    /// True if `ty` is the declared type of a class or interface whose `getBaseTypes` is in progress.
     fn is_resolving_base_types_of(&mut self, ty: TypeId) -> bool {
         let TypeData::Ref { target, .. } = *self.data(ty) else {
             return false;
         };
-        self.base_types_so_far.iter().any(|it| it.0 == target)
-            && !self.inheriting.iter().any(|it| it.0 == ty)
-            && self.declared_type(target) == ty
+        self.base_types_so_far.iter().any(|it| it.0 == target) && self.declared_type(target) == ty
     }
 
     fn get_literal_type_from_properties_uncached(

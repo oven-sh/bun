@@ -329,9 +329,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Looking a name up in an intersection that is being reduced creates its properties a second time. See
         // `reduce_apparent_type_of_intersection_in_progress`.
         let mut being_reduced = self.never_in_progress.iter();
-        // While `unresolved_members` is non-empty, `members` omits a type reference's inherited members.
-        self.unresolved_members.is_empty()
-            && !being_reduced.any(|&ty| self.task_facts.has(ty, task_fact::IS_IN_MEMBER_FACTS))
+        !being_reduced.any(|&ty| self.task_facts.has(ty, task_fact::IS_IN_MEMBER_FACTS))
     }
 
     /// True if a member's `Missing` value for this name can be reused for other names. Object types must never inherit

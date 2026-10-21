@@ -12673,7 +12673,7 @@ export class Book {
       expect(exitCode).toBe(1);
     });
 
-    test("has a class's own members in place while its base types are instantiated", async () => {
+    test("resolves a class's members again when the instantiation of its base types requests them", async () => {
       using dir = project({
         "a.ts": `declare abstract class Schema<Output = any> { readonly _output: Output; parse(): Output; }
 declare class RecordSchema<Value extends Schema> extends Schema<Record<string, Value["_output"]>> {}
@@ -12713,14 +12713,20 @@ export const mutual: never = (null! as FromA<unknown>)._output;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(14,14): error TS2322: Type 'Record<string, unknown>' is not assignable to type 'never'.
-        a.ts(15,14): error TS2322: Type 'Record<string, unknown>' is not assignable to type 'never'.
-        a.ts(19,14): error TS2322: Type 'unknown[]' is not assignable to type 'never'.
-        a.ts(23,14): error TS2322: Type '"own"' is not assignable to type 'never'.
+        "a.ts(8,70): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Record'.
+        a.ts(14,14): error TS2322: Type 'Record<string, any>' is not assignable to type 'never'.
+        a.ts(15,14): error TS2322: Type 'Record<string, any>' is not assignable to type 'never'.
+        a.ts(19,14): error TS2322: Type 'any[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][]' is not assignable to type 'never'.
+        a.ts(19,28): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Array'.
+        a.ts(23,14): error TS2322: Type 'keyof Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<...>>>>>>>>>>>' is not assignable to type 'never'.
+          Type '"_output"' is not assignable to type 'never'.
+        a.ts(23,28): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(24,14): error TS2322: Type 'keyof Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<Keys<...>>>>>>>>>>>' is not assignable to type 'never'.
           Type '"_output"' is not assignable to type 'never'.
-        a.ts(28,14): error TS2322: Type '[1, unknown]' is not assignable to type 'never'.
-        a.ts(34,14): error TS2322: Type '["a", ["b", unknown]]' is not assignable to type 'never'."
+        a.ts(28,14): error TS2322: Type '[1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, [1, any]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(28,27): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(34,14): error TS2322: Type '["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", [...]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(34,30): error TS5114: Instantiations of type 'Schema' appear infinitely circular."
       `);
       expect(exitCode).toBe(1);
     });
@@ -13371,7 +13377,7 @@ export const d: never = null! as import("./i").B1;
       expect(exitCode).toBe(1);
     });
 
-    test("resolves ten type references that each need a member of all the others for their base type", async () => {
+    test("reports TS5115 once for ten type references that each need a member of all the others for their base type", async () => {
       using dir = project({
         "a.ts": `// Ten type references that each need a member of all the others to instantiate their base type.
 declare abstract class Schema<Out = any> { readonly _output: Out; }
@@ -13395,9 +13401,9 @@ export const y: never = t._output;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(16,14): error TS2322: Type 'string | Record<string, unknown>' is not assignable to type 'never'.
-          Type 'string' is not assignable to type 'never'.
-        a.ts(18,14): error TS2322: Type 'Record<string, unknown>' is not assignable to type 'never'."
+        "a.ts(5,11): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Record'.
+        a.ts(16,14): error TS2322: Type 'any' is not assignable to type 'never'.
+        a.ts(18,14): error TS2322: Type 'Record<string, any>' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -13445,7 +13451,7 @@ export type B7 = S7<[U7]>;
       expect(exitCode).toBe(1);
     });
 
-    test("accepts a recursive conversion between two families of generic classes", async () => {
+    test("reports TS5115 for a recursive conversion between two families of generic classes", async () => {
       using dir = project({
         "a.ts": `// A conversion from validators to schemas, both recursive. The key of a record is a union of ten, so each level has ten \`SRec\` references.
 type Opt = "o" | "r";
@@ -13470,8 +13476,10 @@ export function convert<X extends GV>(schema: Schema): From<X> { return schema a
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toBe("");
-      expect(exitCode).toBe(0);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(16,88): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Record'."`,
+      );
+      expect(exitCode).toBe(1);
     });
 
     test("reports TS7022 for a class field whose initializer compares `this` with a type", async () => {
@@ -15363,6 +15371,23 @@ export function u7() { const o = { a: [g(), h()] }; const { a } = o; function g(
       expect(exitCode).toBe(1);
     });
 
+    test("finishes when the type argument of a base class doubles with every circular instantiation", async () => {
+      // tsc 7.1 doesn't finish this one.
+      using dir = project({
+        "a.ts": `declare abstract class Schema<Output = any> { readonly _output: Output; }
+declare class C9<Value extends Schema> extends Schema<Value extends { _output: infer O } ? [O, Value["_output"]] : "no"> {}
+type F9<V> = V extends string ? Schema<V> : C9<F9<V>>;
+export const e9: never = (null! as F9<unknown>)._output;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(4,14): error TS2322: Type '[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[any, any], [any, any]], [[any, any], [any, any]]], [[[any, any], [...]], [...]]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [...]], [....' is not assignable to type 'never'.
+        a.ts(4,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("resolves a conditional type passed as the type argument of a base class that refers to its own members", async () => {
       using dir = project({
         "a.ts": `declare abstract class Schema<Output = any> { readonly _output: Output; }
@@ -15393,9 +15418,6 @@ export const e7: never = (null! as F7<unknown>)._output;
 declare class C8<Value extends Schema> extends Schema<[Value] extends [{ _output: number }] ? "yes" : "no"> {}
 type F8<V> = V extends string ? Schema<V> : C8<F8<V>>;
 export const e8: never = (null! as F8<unknown>)._output;
-declare class C9<Value extends Schema> extends Schema<Value extends { _output: infer O } ? [O, Value["_output"]] : "no"> {}
-type F9<V> = V extends string ? Schema<V> : C9<F9<V>>;
-export const e9: never = (null! as F9<unknown>)._output;
 declare class C10<Value extends Schema> extends Schema<Value extends Schema<infer O> ? [O] : "no"> {}
 type F10<V> = V extends string ? Schema<V> : C10<F10<V>>;
 export const e10: never = (null! as F10<unknown>)._output;
@@ -15415,21 +15437,32 @@ export const second: never = (null! as FromB<unknown>)._output;
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(4,14): error TS2322: Type '"no"' is not assignable to type 'never'.
+        "a.ts(4,14): error TS2322: Type '"yes"' is not assignable to type 'never'.
+        a.ts(4,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(7,14): error TS2322: Type '"yes"' is not assignable to type 'never'.
+        a.ts(7,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(10,14): error TS2322: Type '2' is not assignable to type 'never'.
+        a.ts(10,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(13,14): error TS2322: Type '1' is not assignable to type 'never'.
-        a.ts(16,14): error TS2322: Type '2' is not assignable to type 'never'.
+        a.ts(13,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(16,14): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(16,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(19,14): error TS2322: Type '"no"' is not assignable to type 'never'.
+        a.ts(19,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(22,14): error TS2322: Type '"yes"' is not assignable to type 'never'.
+        a.ts(22,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(25,14): error TS2322: Type '"no"' is not assignable to type 'never'.
+        a.ts(25,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
         a.ts(28,14): error TS2322: Type '"no"' is not assignable to type 'never'.
-        a.ts(31,14): error TS2322: Type '[unknown, unknown]' is not assignable to type 'never'.
-        a.ts(34,14): error TS2322: Type '[unknown]' is not assignable to type 'never'.
-        a.ts(37,14): error TS2322: Type '"no"' is not assignable to type 'never'.
-        a.ts(40,14): error TS2322: Type '{ readonly _output: 1; }' is not assignable to type 'never'.
-        a.ts(45,14): error TS2322: Type '["a", ["b", unknown]]' is not assignable to type 'never'.
-        a.ts(46,14): error TS2322: Type '["b", unknown]' is not assignable to type 'never'."
+        a.ts(28,26): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(31,14): error TS2322: Type '[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[any]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(31,27): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(34,14): error TS2322: Type '"yes"' is not assignable to type 'never'.
+        a.ts(34,27): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(37,14): error TS2322: Type '{ readonly _output: 1; }' is not assignable to type 'never'.
+        a.ts(42,14): error TS2322: Type '["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", [...]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'.
+        a.ts(42,29): error TS5114: Instantiations of type 'Schema' appear infinitely circular.
+        a.ts(43,14): error TS2322: Type '["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", ["a", ["b", [...]]]]]]]]]]]]]]]]]]]]]]]]' is not assignable to type 'never'."
       `);
       expect(exitCode).toBe(1);
     });
@@ -16479,7 +16512,7 @@ export function f(b: B<string>) { function g(a: A<string>) {} g(b); }
       expect(exitCode).toBe(1);
     });
 
-    test("accepts default type arguments that need a member of a union that's being resolved", async () => {
+    test("reports TS5115 once for default type arguments that need a member of a union that's being resolved", async () => {
       using dir = project({
         "a.ts": `// A conversion from validators to schemas, both recursive. The key of a record is a union of ten, so each level has ten \`SRec\` references.
 type Opt = "o" | "r";
@@ -16516,8 +16549,10 @@ export const converted = arr(conv(element));
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toBe("");
-      expect(exitCode).toBe(0);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(23,39): error TS5115: Instantiations of the following types appear infinitely circular: 'Schema', 'Record'."`,
+      );
+      expect(exitCode).toBe(1);
     });
 
     test("accepts `this` types in a class's JSDoc comments, and reports TS2526 where there's no `this` type", async () => {

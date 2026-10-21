@@ -1180,17 +1180,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// True if the checker's current state can't change the result or the side effects of a
     /// `cached_type_with_facts` computation in a way that `Traces` doesn't show. False in two states:
     /// - An instantiation is in progress. While a mapper is active, `instantiate` with that mapper
-    ///   counts only once per type. Also, `instantiate` and `members` check
-    ///   `index_infos_in_instantiation` and `unresolved_members` before they look in a table.
+    ///   counts only once per type. Also, `instantiate` checks `index_infos_in_instantiation` before it
+    ///   looks in a table.
     /// - The checker is idle. Every comparison then starts with `instantiation_count` at 0.
     fn can_cache_type_facts(&self) -> bool {
         let is_idle = self.stack.is_empty()
             && self.current_source_element.is_none()
             && self.outermost_comparison.is_none();
-        !is_idle
-            && self.instantiation_depth == 0
-            && self.index_infos_in_instantiation.is_empty()
-            && self.unresolved_members.is_empty()
+        !is_idle && self.instantiation_depth == 0 && self.index_infos_in_instantiation.is_empty()
     }
 
     /// `getAdjustedTypeWithFacts`

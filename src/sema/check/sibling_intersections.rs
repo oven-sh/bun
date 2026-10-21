@@ -230,9 +230,7 @@ struct BeforeRun {
 impl<'p, 's> Checker<'p, 's> {
     /// True if a call whose lookups all hit would count the same instantiations if it ran again now.
     pub(super) fn may_reuse_for_siblings(&self) -> bool {
-        self.instantiation_depth == 0
-            && self.index_infos_in_instantiation.is_empty()
-            && self.unresolved_members.is_empty()
+        self.instantiation_depth == 0 && self.index_infos_in_instantiation.is_empty()
     }
 
     /// `inference_disturbances`, except that other tasks' commits count only if they resolve a cycle. A task publishes

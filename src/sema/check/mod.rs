@@ -856,11 +856,8 @@ impl<'s> Program<'s> {
             recent_const_type_variables: Default::default(),
             recent_derived_sigs: Default::default(),
             known_mapped_prop_types: Default::default(),
-            unresolved_members: Vec::new(),
-            unresolved_members_hits: 0,
             members_in_place_hits: 0,
             members_in_place_hit_at: 0,
-            lowest_unresolved_members_hit: u32::MAX,
             active_mappers: Default::default(),
             limits: 0,
             instantiation_limit_hits: 0,
@@ -1432,10 +1429,8 @@ pub struct Checker<'p, 's> {
     /// `NodeCheckFlagsEnumValuesComputed`. Each comes with `enumMemberLinks.Get(member).value` of
     /// the members reached so far.
     enum_values_in_progress: Vec<((FileId, EnumId), Vec<decl::Evaluated>)>,
-    /// The classes and interfaces whose shapes are resolving the members of their base types, by shape key.
-    /// `resolveObjectTypeMembers` calls `setStructuredTypeMembers` with the declared members before that. The second
-    /// field is `t` of `resolveObjectTypeMembers`, because only that reference has `ObjectFlagsUnresolvedMembers`.
-    inheriting: Vec<(TypeId, TypeId)>,
+    /// The `resolveObjectTypeMembers` calls that are resolving the members of the base types.
+    inheriting: Vec<shape::Inheriting<'p>>,
     /// `resolvedBaseTypes` of each class or interface whose base types are being resolved.
     base_types_so_far: Vec<(Sym, Vec<TypeId>)>,
     /// The classes and interfaces whose members were resolved while their `getBaseTypes` was in
@@ -1590,30 +1585,16 @@ pub struct Checker<'p, 's> {
     /// and its name. It isn't a `Recent` because the properties of a union of a hundred `Omit<..>`
     /// are read in turn, over and over, and there are more of them than a `Recent` has slots.
     known_mapped_prop_types: FxHashMap<(TypeId, MapperId, Atom), TypeId>,
-    /// `ObjectFlagsUnresolvedMembers`. `resolveObjectTypeMembers` calls `setStructuredTypeMembers` with the members
-    /// that the class or interface declares before it instantiates the base types. A request for the type reference's
-    /// members in the meantime finds no inherited members. With `class C<T extends B> extends B<T["p"]>` and `R` =
-    /// `C<R>`, `R["p"]` is `unknown` there, and the base type of `R` is `B<unknown>` from then on.
-    ///
-    /// Here all references share the declared type's members, and the instantiated base type is
-    /// `compose(first, second)`, where `first` is the mapper of an inherited member and `second` is
-    /// the mapper of the reference's members. There's one entry per `compose` in progress:
-    /// `second`, and the height of `frames` when it began.
-    unresolved_members: Vec<(MapperId, u32)>,
-    /// How many times `members` skipped the inherited members. Each one also counts in `cycles`.
-    unresolved_members_hits: u64,
-    /// How many times a request for members got the members in place. That covers `unresolved_members_hits`,
-    /// a re-entered query that `has_members_in_place`, `has_no_members_in_place`, and a provisional result
-    /// that follows from any of them. Each one also counts in `cycles`, so no other memo stores what follows
-    /// from it. tsgo doesn't mark anything there. What tsgo assigns once, no matter what's in progress, is
-    /// stored here as well: `compose` (`resolveObjectTypeMembers`), `resolve_type_arguments`
-    /// (`getTypeArguments`) and `instantiate_index_infos` (`resolveAnonymousTypeMembers`). Otherwise n type
-    /// references that each need a member of the others are resolved n! times.
+    /// How many times a request for members got the members in place. That covers a re-entered query that
+    /// `has_members_in_place`, `has_no_members_in_place`, and a provisional result that follows from any of
+    /// them. Each one also counts in `cycles`, so no other memo stores what follows from it. tsgo doesn't mark
+    /// anything there. What tsgo assigns once, no matter what's in progress, is stored here as well: `compose`
+    /// (`resolveObjectTypeMembers`), `resolve_type_arguments` (`getTypeArguments`) and
+    /// `instantiate_index_infos` (`resolveAnonymousTypeMembers`). Otherwise n type references that each need a
+    /// member of the others are resolved n! times.
     members_in_place_hits: u64,
     /// `work` at the last of them.
     members_in_place_hit_at: u64,
-    /// The lowest index in `unresolved_members` that had a hit since the innermost `compose` in progress began.
-    lowest_unresolved_members_hit: u32,
     active_mappers: instantiate::ActiveMappers,
     /// How many times `error_at_current_node` had nothing to report since `check_file` began. The
     /// computation in progress at that point isn't cached.
@@ -1782,7 +1763,8 @@ pub struct Checker<'p, 's> {
     /// The deferred type references for which `resolve_type_arguments` is in
     /// `c.instantiateTypes(typeArguments, d.mapper)`, outermost first. A reference can appear many
     /// times, because no `Query` is in flight at that point (`popTypeResolution` has already run).
-    type_arguments_in_instantiation: Vec<TypeId>,
+    /// Each comes with `d.resolvedTypeArguments`, which a request in the meantime has assigned.
+    type_arguments_in_instantiation: Vec<(TypeId, Option<&'p [TypeId]>)>,
     /// `conditionalConstraintDepth`
     conditional_constraint_depth: u32,
     deepest_stack: std::cell::Cell<usize>,
@@ -3316,7 +3298,8 @@ impl<'p, 's> Checker<'p, 's> {
             _ => (5115, cat!(b"'", names.join(&b"', '"[..]), b"'")),
         };
         let args = self.stringify_args(&[Arg::Bytes(&names)]);
-        self.error_at_current_node_with(code, args);
+        // The same types are instantiated over and over, so no depth is enough. Everything is stored, as in tsgo.
+        self.report_at_current_node(code, args);
         TypeId::ERROR
     }
 
@@ -3406,13 +3389,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
-        self.error_at_current_node_with(code, sink::Args::default());
-    }
-
-    /// `error_at_current_node` for a message with arguments.
-    #[cold]
-    fn error_at_current_node_with(&mut self, code: u32, args: sink::Args) {
-        if !self.report_at_current_node(code, args) {
+        if !self.report_at_current_node(code, sink::Args::default()) {
             return;
         }
         // A query that began under an instantiation had less depth left than the same query has
@@ -3443,12 +3420,10 @@ impl<'p, 's> Checker<'p, 's> {
         // begins at the same position for an assignment, a variable declaration and a `return` statement.
         let at = match self.current_node() {
             Some(current) => Some(self.span_of_current_node(current)),
-            // A comparison without an `errorNode` that `check_source_file` makes: of a rest
-            // parameter with an array type (2370), of the two types of an assertion.
-            None => self.outermost_comparison.flatten().or_else(|| {
-                let current = self.current_source_element?;
-                Some(self.span_of_current_node(current))
-            }),
+            None => match self.current_source_element {
+                Some(current) => Some(self.span_of_current_node(current)),
+                None => self.outermost_comparison.flatten(),
+            },
         };
         let Some(at) = at.filter(|_| is_reported) else {
             // The result is the error type, to which everything is related, and tsgo reports 2589.

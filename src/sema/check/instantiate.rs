@@ -261,7 +261,7 @@ impl<'p, 's> Checker<'p, 's> {
         pairs.into()
     }
 
-    /// Returns the mapper that applies `first`, then `second`. See `unresolved_members`.
+    /// Returns the mapper that applies `first`, then `second`.
     #[inline(always)]
     pub fn compose(&mut self, first: MapperId, second: MapperId) -> MapperId {
         if first == MapperId::IDENTITY {
@@ -285,11 +285,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Err(spread) => spread,
         };
-        let scope = self.begin_scope();
-        self.unresolved_members.push((second, scope.frames));
-        let (hits, in_place) = (self.unresolved_members_hits, self.members_in_place_hits);
-        let hit_at = self.members_in_place_hit_at;
-        let lowest_below = std::mem::replace(&mut self.lowest_unresolved_members_hit, u32::MAX);
+        let (scope, in_place) = (self.begin_scope(), self.members_in_place_hits);
         let mut pairs: smallvec::SmallVec<[(TypeId, TypeId); 8]> = smallvec::SmallVec::new();
         for &(param, value) in self.mapping_in_declaration_order(first).iter() {
             pairs.push((param, self.instantiate(value, second)));
@@ -300,26 +296,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let composed = self.types().mapper_of(&pairs);
-        self.unresolved_members.pop();
-        let lowest = std::mem::replace(&mut self.lowest_unresolved_members_hit, lowest_below);
         // `resolveObjectTypeMembers` installs the members with the base types it has instantiated,
         // regardless of which members were installed in the meantime. See `members_in_place_hits`.
         let marks = self.members_in_place_hits - in_place;
         let is_open = self.non_cacheable_mark() != (scope.counters.0 + marks, scope.counters.1);
-        if !is_open
-            && marks != 0
-            && marks == self.unresolved_members_hits - hits
-            && lowest as usize >= self.unresolved_members.len()
-            && self.lowest_taint >= scope.frames as usize
-        {
-            // Only the members of this type reference were read unresolved. No caller has seen
-            // the marks.
-            (self.unresolved_members_hits, self.members_in_place_hits) = (hits, in_place);
-            (self.cycles, self.members_in_place_hit_at) = (scope.counters.0, hit_at);
-            self.lowest_taint = usize::MAX;
-        } else {
-            self.lowest_unresolved_members_hit = lowest_below.min(lowest);
-        }
         match self.end_scope_as(scope, is_open) {
             Ok(stored) => {
                 let key = (first, second);
@@ -357,6 +337,14 @@ impl<'p, 's> Checker<'p, 's> {
             return first;
         }
         self.types().mapper_of(&pairs)
+    }
+
+    /// `instantiate` with a mapper that tsgo has just created, so it isn't an active mapper.
+    pub(super) fn instantiate_with_new_mapper(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
+        self.active_mappers.push(mapper);
+        let instantiated = self.instantiate(ty, mapper);
+        self.active_mappers.pop();
+        instantiated
     }
 
     /// `c.instantiationStack = append(c.instantiationStack, t)`
@@ -937,8 +925,13 @@ impl<'p, 's> Checker<'p, 's> {
                     || self.types().deferred(ty).is_some();
                 let is_stored =
                     has_instantiations && self.instantiation_count < 5_000_000 && !is_tainted;
-                // Otherwise `cache[key] = result`, which `popActiveMapper` clears.
-                if self.cycles == cycles_before && hit_the_limit && (is_stored || serial != 0) {
+                // Otherwise `cache[key] = result`, which `popActiveMapper` clears. When two instantiations
+                // with the same key nest, the outer one assigns last.
+                if hit_the_limit
+                    && (is_stored || serial != 0)
+                    && (self.cycles == cycles_before
+                        || (self.instantiations_up_to_a_limit).contains_key(&(ty, mapper)))
+                {
                     let under = if is_stored { 0 } else { serial };
                     self.instantiations_up_to_a_limit
                         .insert((ty, mapper), (under, result, is_tainted));

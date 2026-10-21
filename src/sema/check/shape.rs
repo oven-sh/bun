@@ -484,6 +484,17 @@ pub(super) struct IndexInfosInInstantiation {
     hits: u64,
 }
 
+/// See `Checker::inheriting`.
+pub(super) struct Inheriting<'p> {
+    /// The key that the shape is stored under.
+    key: TypeId,
+    /// `t` of `resolveObjectTypeMembers`.
+    resolving: TypeId,
+    /// `resolveObjectTypeMembers` has no guard and calls `setStructuredTypeMembers` at the end. A request for the
+    /// members of `t` in the meantime resolves them again, and the next one finds what that one has set.
+    set_in_the_meantime: Option<&'p Resolved<'p>>,
+}
+
 /// A call of `resolveDeclaredMembers`. See `Checker::declared_index_infos_in_progress`.
 #[derive(Copy, Clone)]
 pub(super) struct Declaring {
@@ -747,6 +758,11 @@ impl<'p, 's> Checker<'p, 's> {
             return &[];
         };
         let (file, node, mapper) = (deferred.file, deferred.node, deferred.mapper);
+        let mut in_instantiation = self.type_arguments_in_instantiation.iter();
+        if let Some(&(_, Some(assigned))) = in_instantiation.rfind(|it| it.0 == ty) {
+            self.note_members_in_place();
+            return assigned;
+        }
         // This scope encloses the resolution frame, because the arguments are instantiated after
         // `popTypeResolution` and the result depends on that too.
         let scope = self.begin_scope();
@@ -799,8 +815,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `c.instantiateTypes(typeArguments, d.mapper)`. It may request the type arguments of `ty`
         // again, which is not a cycle. tsgo recurses until `instantiationDepth == 100`, every level
         // assigns, and the outermost assigns last. So only the outermost level stores.
-        let is_outermost = !self.type_arguments_in_instantiation.contains(&ty);
-        self.type_arguments_in_instantiation.push(ty);
+        let outer = (self.type_arguments_in_instantiation.iter()).rposition(|it| it.0 == ty);
+        self.type_arguments_in_instantiation.push((ty, None));
         let (before, in_place) = (self.non_cacheable_mark(), self.members_in_place_hits);
         let instantiated = self.instantiate_list(&declared, mapper);
         self.type_arguments_in_instantiation.pop();
@@ -809,14 +825,20 @@ impl<'p, 's> Checker<'p, 's> {
         // `members_in_place_hits`.
         let in_place = self.members_in_place_hits - in_place;
         let is_final = self.non_cacheable_mark() == (before.0 + in_place, before.1);
-        let is_open = !(is_frame_cacheable && is_outermost && is_final);
+        let is_open = !(is_frame_cacheable && outer.is_none() && is_final);
         match self.end_scope_as(scope, is_open) {
             Ok(stored) => {
                 (self.p.resolved_type_arguments)
                     .insert_ref(&self.task, ty, instantiated, stored)
                     .1
             }
-            Err(_) => self.provisional_type_arguments(ty, &instantiated),
+            Err(_) => {
+                let assigned = self.provisional_type_arguments(ty, &instantiated);
+                if let Some(outer) = outer {
+                    self.type_arguments_in_instantiation[outer].1 = Some(assigned);
+                }
+                assigned
+            }
         }
     }
 
@@ -1074,16 +1096,27 @@ impl<'p, 's> Checker<'p, 's> {
         // base types found so far.
         // Nor for a mapped type. `resolveMappedTypeMembers` starts with empty members, "such that recursive references
         // see an empty object type". Whatever was computed from them stays as it is.
-        // Nor when the declared members (`ObjectFlagsUnresolvedMembers`) or the early-bound members
-        // are in place.
+        // Nor when the early-bound members are in place.
         if (self.are_base_types_in_progress(key) || self.is_mapped_type(key))
             && self.stack[self.resolution_start..].contains(&Query::Shape(key))
-            || self.inheriting.iter().any(|it| it.0 == key)
             || binding == MemberBinding::Late && self.is_late_binding(key)
         {
             self.note_members_in_place_of(key);
             let shape = meanwhile(self);
             return self.provisional_shape(shape);
+        }
+        if let Some(at) = self.inheriting.iter().rposition(|it| it.key == key) {
+            self.note_members_in_place_of(key);
+            if let Some(resolved) = self.inheriting[at].set_in_the_meantime {
+                return Built {
+                    resolved,
+                    store_handle: None,
+                };
+            }
+            let shape = meanwhile(self);
+            let built = self.provisional_shape(shape);
+            self.inheriting[at].set_in_the_meantime = Some(built.resolved);
+            return built;
         }
         if let Some(built) = self.provisionally_cached_shape(Query::Shape(key)) {
             return built;
@@ -1259,7 +1292,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub fn members(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let recent = self.recent_members[ty.0 as usize % RECENT_MEMBERS];
-        if recent.ty == ty && self.unresolved_members.is_empty() {
+        if recent.ty == ty {
             return recent.resolved.map(|resolved| Members {
                 resolved,
                 mapper: recent.mapper,
@@ -1271,11 +1304,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// `members` for a type that wasn't queried recently.
     fn members_not_recent(&mut self, ty: TypeId) -> Option<Members<'p>> {
         if let Some(known) = self.p.members.get(&self.task, &ty) {
-            if !self.unresolved_members.is_empty()
-                && let Some(declared) = self.declared_members_if_unresolved(ty, known.mapper)
-            {
-                return Some(declared);
-            }
             let resolved = self.p.shapes.at(&self.task, known.shape);
             self.recent_members[ty.0 as usize % RECENT_MEMBERS] = RecentMembers {
                 resolved: Some(resolved),
@@ -1287,13 +1315,7 @@ impl<'p, 's> Checker<'p, 's> {
                 mapper: known.mapper,
             });
         }
-        let members = self.members_on_cache_miss(ty)?;
-        if !self.unresolved_members.is_empty()
-            && let Some(declared) = self.declared_members_if_unresolved(ty, members.mapper)
-        {
-            return Some(declared);
-        }
-        Some(members)
+        self.members_on_cache_miss(ty)
     }
 
     /// The members of `ty`, if they've already been resolved (`ObjectFlagsMembersResolved`).
@@ -1318,35 +1340,6 @@ impl<'p, 's> Checker<'p, 's> {
     fn has_stored_members(&self, ty: TypeId, members: Members<'p>) -> bool {
         self.resolved_members(ty).is_some_and(|stored| {
             std::ptr::eq(stored.resolved, members.resolved) && stored.mapper == members.mapper
-        })
-    }
-
-    /// `resolveStructuredTypeMembers` of a type reference that has `ObjectFlagsUnresolvedMembers`:
-    /// the members that its class or interface declares. `mapper` is the mapper of `ty`'s members.
-    /// `None` if `ty` isn't such a type reference. See `unresolved_members`.
-    #[cold]
-    #[inline(never)]
-    fn declared_members_if_unresolved(
-        &mut self,
-        ty: TypeId,
-        mapper: MapperId,
-    ) -> Option<Members<'p>> {
-        let at = (self.unresolved_members.iter()).position(|it| it.0 == mapper)?;
-        let &TypeData::Ref { target, .. } = self.data(ty) else {
-            return None;
-        };
-        if self.base_types(target).is_empty() {
-            return None;
-        }
-        // Anything derived from this result is only valid until that `compose` returns.
-        self.lowest_unresolved_members_hit = self.lowest_unresolved_members_hit.min(at as u32);
-        self.unresolved_members_hits += 1;
-        self.mark_tainted_by_pattern_from(self.unresolved_members[at].1 as usize);
-        self.note_members_in_place();
-        let shape = self.resolve_declared_members(target);
-        Some(Members {
-            resolved: self.provisional_shape(shape).resolved,
-            mapper,
         })
     }
 
@@ -1471,18 +1464,20 @@ impl<'p, 's> Checker<'p, 's> {
                 // All instantiations share the declared type's shape, unless their base types depend on the type
                 // arguments or on the type's members. In `interface D extends M<D>`, `D` can end up without the members
                 // of `M<D>` while `D` with a `this` argument has them.
-                // `ObjectFlagsUnresolvedMembers` and `ObjectFlagsMembersResolved` are per-reference flags. A different
+                // `ObjectFlagsMembersResolved` is a per-reference flag. A different
                 // reference that's requested while the shared shape is resolving the base types' members, or while
                 // `getBaseTypes` is resolving the base types, is resolved separately and keeps what it gets.
                 let is_other_inheriting =
-                    (self.inheriting.iter()).any(|it| it.0 == declared && it.1 != ty);
+                    (self.inheriting.iter()).any(|it| it.key == declared && it.resolving != ty);
                 // `baseTypes := c.getBaseTypes(source)` of `resolveObjectTypeMembers`
-                let inherits_from_type_arguments = declared != ty && {
-                    self.resolving_at_base_types.push(ty);
-                    let inherits = self.inherits_from_type_arguments(target);
-                    self.resolving_at_base_types.pop();
-                    inherits
-                };
+                self.resolving_at_base_types.push(ty);
+                let inherits = declared != ty && self.inherits_from_type_arguments(target);
+                let may_request_members =
+                    declared != ty && !inherits && self.base_types_request_members(target);
+                self.resolving_at_base_types.pop();
+                let inherits_from_type_arguments = inherits
+                    || may_request_members
+                        && self.is_requested_by_base_types(ty, target, mapper, this);
                 // `thisArgument` of `resolveObjectTypeMembers` is `t` itself for the reference that inherits. With a
                 // `this` type in its place, this isn't the reference that keeps these members.
                 let is_at_base_types = !matches!(self.data(this), TypeData::ThisParam(_))
@@ -1561,14 +1556,14 @@ impl<'p, 's> Checker<'p, 's> {
                         if !is_bound {
                             c.note_members_from_early_symbols(target, false);
                         }
-                        let is_in_place = c.inheriting.iter().any(|it| it.0 == key);
-                        let (binding, bases) = if is_bound && is_in_place {
-                            (MemberBinding::Late, BaseMembers::Omitted)
-                        } else if is_bound && c.base_types_so_far.iter().any(|it| it.0 == target) {
-                            (MemberBinding::Late, BaseMembers::Inherited)
-                        } else {
-                            (MemberBinding::Early, BaseMembers::Inherited)
+                        let is_late = is_bound
+                            && (c.inheriting.iter().any(|it| it.key == key)
+                                || c.base_types_so_far.iter().any(|it| it.0 == target));
+                        let binding = match is_late {
+                            true => MemberBinding::Late,
+                            false => MemberBinding::Early,
                         };
+                        let bases = BaseMembers::Inherited;
                         c.build_declared_shape(target, under, binding, bases, None, Some(ty))
                     },
                 );
@@ -2870,6 +2865,72 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
+    /// True if resolving the members of a reference to the class or interface `sym` can request members while it
+    /// instantiates the base types, as in `class L<T> extends B<T["a"]>`.
+    fn base_types_request_members(&mut self, sym: Sym) -> bool {
+        for &base in self.base_types(sym).iter() {
+            if self.requests_members_when_instantiated(base)
+                || matches!(*self.data(base), TypeData::Ref { target, .. } if target != sym
+                    && self.has_type_variables(base)
+                    && self.base_types_request_members(target))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// True if `resolveObjectTypeMembers` of `ty`, a reference to `target`, reads members that aren't final or
+    /// reaches a limit while it resolves the base types. With `class X extends L<X>`, `L<X>` requests `X["a"]`,
+    /// which requests the members of `L<X>`. Otherwise "the members of a base type, instantiated" are "the members
+    /// of the instantiated base type".
+    fn is_requested_by_base_types(
+        &mut self,
+        ty: TypeId,
+        target: Sym,
+        mapper: MapperId,
+        this: TypeId,
+    ) -> bool {
+        if self.inheriting.iter().any(|it| it.key == ty) {
+            return true;
+        }
+        let before = (self.members_in_place_hits, self.instantiation_limit_hits);
+        self.inheriting.push(Inheriting {
+            key: ty,
+            resolving: ty,
+            set_in_the_meantime: None,
+        });
+        for &base in self.base_types(target).iter() {
+            let base = self.instantiate_with_new_mapper(base, mapper);
+            let base = self.type_with_this_argument(base, this);
+            let base = self.reduced_apparent_type_as_object(base);
+            self.members_with_this(base, this);
+        }
+        self.inheriting.pop();
+        before != (self.members_in_place_hits, self.instantiation_limit_hits)
+    }
+
+    /// True if `instantiateType` of `ty` does more than replace type parameters. The members of an object type are
+    /// instantiated when they're requested, its type arguments immediately.
+    fn requests_members_when_instantiated(&mut self, ty: TypeId) -> bool {
+        if !self.has_type_variables(ty) || self.types().deferred(ty).is_some() {
+            return false;
+        }
+        match self.data(ty) {
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) => false,
+            &TypeData::Anon { mapper, .. } | &TypeData::Fns { mapper, .. } => {
+                (self.types().mapping(mapper).iter())
+                    .any(|&(_, argument)| self.requests_members_when_instantiated(argument))
+            }
+            TypeData::Ref { .. } | TypeData::Tuple { .. } => (self.type_arguments(ty).iter())
+                .any(|&argument| self.requests_members_when_instantiated(argument)),
+            TypeData::Union(types) | TypeData::Intersection(types) => {
+                (types.iter()).any(|&it| self.requests_members_when_instantiated(it))
+            }
+            _ => true,
+        }
+    }
+
     /// True if a mapped type whose members are being resolved is a base type of the class or interface `sym`, or of one
     /// of its base types. `resolveMappedTypeMembers` starts with no members in place.
     fn has_base_type_in_progress(&mut self, sym: Sym) -> bool {
@@ -2978,9 +3039,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let own = b.shape.props.len();
         let inherits = base_members == BaseMembers::Inherited;
-        self.inheriting.extend(in_place.zip(resolving));
+        if let (Some(key), Some(resolving)) = (in_place, resolving) {
+            self.inheriting.push(Inheriting {
+                key,
+                resolving,
+                set_in_the_meantime: None,
+            });
+        }
         for base in bases.iter().copied().filter(|_| inherits) {
-            let base = self.instantiate(base, under);
+            let base = self.instantiate_with_new_mapper(base, under);
             self.inherit(&mut b, base, this);
         }
         if in_place.is_some() {

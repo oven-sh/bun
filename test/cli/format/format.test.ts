@@ -15,9 +15,12 @@ import {
 import {
   chmodSync,
   chownSync,
+  closeSync,
+  constants,
   existsSync,
   linkSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -26,6 +29,7 @@ import {
   truncateSync,
   utimesSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -41,10 +45,10 @@ const anError = /^error: /m;
 const env = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined };
 
 /**
- * How `bun fmt` says why a file can't be formatted, with any configuration. It is how Bun prints every error: the line,
- * a caret under the place, the message, and where it is. Without `at` the error is about the whole file. The white space
- * at the end of the line is not shown, and neither is a line without anything else. The caret is right if every
- * character before it is one column wide. A blank line follows, which is not in here.
+ * The text that `bun fmt` prints when a file can't be formatted, with any configuration. It's Bun's usual error format:
+ * the source line, a caret under the position, the message and the location. Without `at` the error is about the whole
+ * file. Trailing whitespace on the source line isn't shown, and a line with nothing else on it is omitted. The caret is
+ * only right if every character before it is one column wide. A blank line follows, which isn't included here.
  */
 function problem(file: string, message: string, at?: [line: number, column: number, text: string]) {
   if (!at) return `error: ${message}\n    at ${file}`;
@@ -54,11 +58,11 @@ function problem(file: string, message: string, at?: [line: number, column: numb
   return `${shown}error: ${message}\n    at ${file}:${line}:${column}`;
 }
 
-/** Matches a syntax error in `file`, whatever it says: an error with a line and a column. */
+/** Matches a syntax error in `file` with any message: an error with a line and a column. */
 const syntaxErrorIn = (file: string) =>
   new RegExp(`^error: .+\\n    at ${file.replaceAll(".", "\\.")}:[0-9]+:[0-9]+$`, "m");
 
-/** What is said about an end tag in HTML that closes nothing, in the words of Prettier. */
+/** Prettier's message for an HTML end tag that doesn't close anything. */
 const closingTag = (name: string) =>
   `Unexpected closing tag "${name}". It may happen when the tag has already been closed by another tag. For more info see https://www.w3.org/TR/html5/syntax.html#closing-elements-that-have-implied-end-tags`;
 
@@ -69,7 +73,7 @@ const wide = `const value = someFunction(argumentNumberOne, argumentNumberTwo, a
 type Options = {
   cwd?: string;
   stdin?: string;
-  /** Files to read when the command has run. */
+  /** Files to read after the command has run. */
   reads?: string[];
   /** Called with the directory before the command runs. */
   before?: (dir: string) => void;
@@ -95,26 +99,32 @@ async function format(files: Record<string, string>, args: string[], options: Op
     stdout: normalizeBunSnapshot(stdout, String(dir)),
     stderr: normalizeBunSnapshot(stderr, String(dir)),
     exitCode,
-    /** The seconds of the processor that it took: on a busy machine the clock says little. */
+    /** CPU time in seconds. Wall-clock time means little on a busy machine. */
     cpu: Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6,
     files: Object.fromEntries((options.reads ?? []).map(name => [name, read(name)])),
   };
 }
 
+/** Runs `format` once `--debug-check`, which writes nothing, confirms that formatting keeps the files' meaning. */
+async function formatChecked(files: Record<string, string>, args: string[], options: Options = {}) {
+  expect(await format(files, ["--debug-check", ...args])).toMatchObject({ stderr: "", exitCode: 0 });
+  return format(files, ["--log-level=warn", ...args], options);
+}
+
 /**
- * How many times the processor time of `plain` the run `odd` took. Windows counts that time in ticks of 1/64 s, so a
- * short run can report 0: anything below a tick counts as one.
+ * The CPU time of the run `odd` as a multiple of `plain`'s. Windows measures CPU time in ticks of 1/64 s, so a short
+ * run can report 0. Anything below one tick counts as one tick.
  */
 const slowdown = (odd: { cpu: number }, plain: { cpu: number }) =>
   odd.cpu / Math.max(plain.cpu, isWindows ? 1 / 64 : 0);
 
-/** Whether the temporary directory is in a repository. */
+/** True if the temporary directory is inside a repository. */
 const isInRepository = (function look(directory: string): boolean {
   const isRoot = [".git", ".jj"].some(name => existsSync(join(directory, name)));
   return isRoot || (dirname(directory) !== directory && look(dirname(directory)));
 })(realpathSync(tmpdir()));
 
-/** The files that are not formatted, according to `-l`. */
+/** Returns the unformatted files that `-l` lists. */
 async function different(files: Record<string, string>, args: string[], options?: Options) {
   const { stdout } = await format(files, ["-l", ...args], options);
   return stdout.split("\n").filter(Boolean);
@@ -134,9 +144,9 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // By runs of Prettier 3.9.9 and oxfmt 0.72.0, which start with "[error] " and "Error: ". Both say it before they look at the
-  // files, the patterns or the configuration.
-  describe("flags that say what the run does, and exclude each other", () => {
+  // Taken from runs of Prettier 3.9.9 and oxfmt 0.72.0, whose messages start with "[error] " and "Error: ". Both report
+  // this before they look at the files, the patterns or the configuration.
+  describe("mutually exclusive mode flags", () => {
     const together = "error: Cannot use --check and --list-different together.";
     const twice = (flag: string) => `error: argument \`${flag}\` cannot be used multiple times in this context`;
     const second = (flag: string, first: string) =>
@@ -176,14 +186,14 @@ describe.concurrent("bun fmt", () => {
       ["oxfmt", oxfmt, ["--check", "--stdin-filepath=a.js"], second("--stdin-filepath", "--check")],
       ["oxfmt", oxfmt, ["--init", "--check"], second("--check", "--init")],
       ["oxfmt", { ".oxfmtrc.json": "{" }, ["--list-different", "--write", "."], second("--write", "--list-different")],
-    ])("%s: %j %j", async (_, configuration, args, stderr) => {
+    ])("rejected with %s: %j %j", async (_, configuration, args, stderr) => {
       const files = { ...configuration, "good.js": formatted, "bad.js": ugly };
       const result = await format(files, args, { reads: Object.keys(files), stdin: ugly });
       expect({ ...result, cpu: 0, raw: "" }).toEqual({ raw: "", stdout: "", stderr, exitCode: 1, cpu: 0, files });
     });
 
     test.each<[Record<string, string>, string[], string, number, string]>([
-      // The last word on a flag counts.
+      // The last occurrence of a flag wins.
       [prettier, ["--check", "--list-different", "--no-check", "bad.js"], "bad.js", 1, ugly],
       [
         prettier,
@@ -200,9 +210,9 @@ describe.concurrent("bun fmt", () => {
         0,
         ugly,
       ],
-      // `-c` with a path behind it is `--config` for oxfmt.
+      // In oxfmt, `-c` followed by a path is `--config`.
       [oxfmt, ["-c", ".oxfmtrc.json", "--list-different", "bad.js"], "bad.js", 1, ugly],
-    ])("these do not: %j %j", async (configuration, args, stdout, exitCode, bad) => {
+    ])("accepted: %j %j", async (configuration, args, stdout, exitCode, bad) => {
       const result = await format({ ...configuration, "good.js": formatted, "bad.js": ugly }, args, {
         reads: ["bad.js"],
       });
@@ -212,7 +222,8 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  // By runs of Prettier 3.9.9: what is on the command line is `Number(text)`; an integer is what is its own `Math.floor`.
+  // Taken from runs of Prettier 3.9.9. A command-line value is parsed with `Number(text)`, and an integer is a number
+  // that equals its own `Math.floor`.
   describe("printWidth and tabWidth", () => {
     const text = `f(${"a, ".repeat(40)}a);\nif (a) {\n\tb(c, { d: 1 });\n}\n`;
     test.each<[Record<string, string>, string[], string]>([
@@ -263,7 +274,7 @@ describe.concurrent("bun fmt", () => {
         [],
         "98cd880581dcf1c45c95ee04ee491afe161db8d6",
       ],
-    ])("take what Prettier takes: %j %j", async (configuration, args, sha1) => {
+    ])("accept the values that Prettier accepts: %j %j", async (configuration, args, sha1) => {
       const result = await format(configuration, [...args, "--stdin-filepath", "a.js"], { stdin: text });
       expect(result.stderr).toBe("");
       expect(new Bun.CryptoHasher("sha1").update(result.raw).digest("hex")).toBe(sha1);
@@ -349,7 +360,7 @@ describe.concurrent("bun fmt", () => {
         "error: Invalid --print-width value. Expected an integer, but received 2.5.",
         1,
       ],
-    ])("are refused in the words of Prettier: %j %j", async (configuration, args, stderr, exitCode) => {
+    ])("reject invalid values with Prettier's message: %j %j", async (configuration, args, stderr, exitCode) => {
       const result = await format(configuration, [...args, "--stdin-filepath", "a.js"], { stdin: text });
       expect({ stdout: result.raw, stderr: result.stderr.split("\n")[0], exitCode }).toEqual({
         stdout: "",
@@ -359,7 +370,7 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(exitCode);
     });
 
-    test("the run ends at the first file whose configuration has one that is no integer", async () => {
+    test("stop the run at the first file whose configuration has a non-integer value", async () => {
       const files = { ".prettierrc": `{ "printWidth": 1.5 }`, "a.js": ugly, "b.js": ugly };
       const result = await format(files, ["--check", "a.js", "b.js"]);
       expect(result.stdout).toBe("Checking formatting...");
@@ -368,13 +379,14 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  // Prettier's `listDifferent`: it has nothing to say about what is going to be written, and then nothing is printed either.
+  // Prettier's `listDifferent` doesn't report a file that's about to be written, and then the code isn't printed
+  // either.
   test.each([
     ["--check", "--write"],
     ["--write", "--check"],
     ["-l", "--write"],
     ["--check", "--write", "--log-level", "warn"],
-  ])("standard input with %s %s: nothing is said, and nothing is printed", async (...args) => {
+  ])("stdin with %s %s prints nothing at all", async (...args) => {
     const result = await format({ ".prettierrc": "{}" }, [...args, "--stdin-filepath", "a.js"], { stdin: ugly });
     expect({ stdout: result.raw, stderr: result.stderr, exitCode: result.exitCode }).toEqual({
       stdout: "",
@@ -383,7 +395,7 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  test("does not touch a file that is formatted", async () => {
+  test("doesn't rewrite a file that's already formatted", async () => {
     let before = 0;
     using dir = tempDir("bun-format", { "a.js": formatted });
     before = statSync(join(String(dir), "a.js")).mtimeMs;
@@ -392,10 +404,11 @@ describe.concurrent("bun fmt", () => {
     expect(statSync(join(String(dir), "a.js")).mtimeMs).toBe(before);
   });
 
-  // Prettier and oxfmt write into the file (`fs.writeFile`, `fs::write`): all but its text stays as it is.
-  describe("the file that is written", () => {
+  // Prettier and oxfmt write into the existing file (`fs.writeFile`, `fs::write`), so everything but its text stays the
+  // same.
+  describe("a written file", () => {
     const isRoot = process.getuid?.() === 0;
-    /** `bun fmt` in `dir`, which is still there afterwards. `before`: what starts the command. */
+    /** Runs `bun fmt` in `dir`, which isn't deleted afterwards. `before` is a prefix for the command. */
     async function write(dir: string, args: string[], before: string[] = []) {
       await using proc = spawn({
         cmd: [...before, ...command, ...args],
@@ -410,7 +423,7 @@ describe.concurrent("bun fmt", () => {
     }
     const read = (dir: string, name: string) => readFileSync(join(dir, name), "utf8");
 
-    test("is still the file that its other names stand for", async () => {
+    test("keeps its hard links", async () => {
       using dir = tempDir("bun-format", { "a.js": ugly });
       linkSync(join(String(dir), "a.js"), join(String(dir), "other-name.txt"));
       const { exitCode } = await write(String(dir), ["a.js"]);
@@ -420,8 +433,53 @@ describe.concurrent("bun fmt", () => {
       expect(exitCode).toBe(0);
     });
 
-    // What a new file gets is less, unless the mask of the process is 0.
-    test.skipIf(isWindows)("keeps its mode, whatever the mask of the process", async () => {
+    // Two threads once formatted such a file at the same time. One read a partial write from the other, which was
+    // writing in place, and wrote that back.
+    test("isn't corrupted when the run reaches it through two hard links", async () => {
+      const count = 100;
+      const text = Array.from({ length: 150 }, (_, i) => `*   item ${i} with   some text\n`).join("");
+      const wanted = text.replaceAll("*   item", "- item").replaceAll("with   some", "with some");
+      const names = (kind: string) => Array.from({ length: count }, (_, i) => `${i}-${kind}.md`);
+      using dir = tempDir(
+        "bun-format",
+        Object.fromEntries([...names("first"), ...names("only")].map(name => [name, text])),
+      );
+      for (let i = 0; i < count; i++) linkSync(join(String(dir), `${i}-first.md`), join(String(dir), `${i}-second.md`));
+      const all = [...names("first"), ...names("second"), ...names("only")];
+      const damaged = () => all.filter(name => read(String(dir), name) !== wanted);
+      const once = await write(String(dir), ["--threads=8"]);
+      expect(damaged()).toEqual([]);
+      // Both names are counted, whichever came first.
+      expect(once.stderr).toContain(`Formatted ${all.length} files, 0 unchanged`);
+      const again = await write(String(dir), ["--threads=8"]);
+      expect(damaged()).toEqual([]);
+      expect(again.stderr).toContain(`Formatted 0 files, ${all.length} unchanged`);
+      expect([once.exitCode, again.exitCode]).toEqual([0, 0]);
+    });
+
+    // A file with a second hard link is written in place.
+    test("is truncated when it's written in place and gets shorter", async () => {
+      using dir = tempDir("bun-format", { "a.js": "const a      =      1;\n\n\n\n" });
+      linkSync(join(String(dir), "a.js"), join(String(dir), "other-name.txt"));
+      const { exitCode } = await write(String(dir), ["a.js"]);
+      expect(read(String(dir), "a.js")).toBe("const a = 1;\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // With `ulimit -f 16` a write fails with EFBIG once it's 8 KB into a file, much like on a full disk.
+    test.skipIf(isWindows)("keeps its old text when writing it in place fails partway", async () => {
+      const text = `{${Array.from({ length: 3000 }, (_, i) => `"k${i}":   [1,2,3]`).join(",")}}\n`;
+      using dir = tempDir("bun-format", { "a.json": text });
+      linkSync(join(String(dir), "a.json"), join(String(dir), "other-name.txt"));
+      const { stderr, exitCode } = await write(String(dir), ["a.json"], ["sh", "-c", 'ulimit -f 16; exec "$0" "$@"']);
+      expect(statSync(join(String(dir), "a.json")).size).toBe(text.length);
+      expect(read(String(dir), "a.json")).toBe(text);
+      expect(stderr).toStartWith('error: Unable to write file "a.json":\nEFBIG: File too large\n');
+      expect(exitCode).toBe(2);
+    });
+
+    // A new file would get fewer permission bits, unless the process's umask is 0.
+    test.skipIf(isWindows)("keeps its mode regardless of the umask", async () => {
       using dir = tempDir("bun-format", { "a.js": ugly, "b.js": ugly });
       chmodSync(join(String(dir), "a.js"), 0o664);
       chmodSync(join(String(dir), "b.js"), 0o777);
@@ -431,8 +489,8 @@ describe.concurrent("bun fmt", () => {
       expect(exitCode).toBe(0);
     });
 
-    // Prettier and oxfmt write there. Nobody reads the links of a project that he has checked out.
-    test("is not one that a link leads to out of the repository", async () => {
+    // Prettier and oxfmt write there. People don't audit the symlinks in a project that they've checked out.
+    test("can't be reached through a symlink that leaves the repository", async () => {
       const git = "ref: refs/heads/main\n";
       const link = (dir: string) => symlinkSync(join(dir, "outside", "c"), join(dir, "project", "c"), "junction");
       const options = { cwd: "project", before: link, reads: ["outside/c/d.js"] };
@@ -449,7 +507,7 @@ describe.concurrent("bun fmt", () => {
       }
     });
 
-    test("can be one that a link leads to in the repository", async () => {
+    test("can be reached through a symlink that stays in the repository", async () => {
       const result = await format(
         { ".git/HEAD": "ref: refs/heads/main\n", "shared/d.js": ugly, "packages/a/a.js": formatted },
         ["shared/d.js"],
@@ -463,21 +521,28 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    // A name has 255 bytes at most, so no other file can be called after this one. On Windows the path is too long besides.
-    test.skipIf(isWindows)("can have a name that nothing can be added to", async () => {
-      const name = `${Buffer.alloc(246, "a")}.tsx`;
-      const result = await format({ [name]: ugly }, [], { reads: [name] });
-      expect(result.files).toEqual({ [name]: formatted });
-      expect(result.exitCode).toBe(0);
-    });
+    // A file name can have at most 255 bytes. On Windows the path would also be too long.
+    test.skipIf(isWindows)(
+      "can have the longest possible name, and is still replaced rather than written in place",
+      async () => {
+        const name = `${Buffer.alloc(252, "a")}.ts`;
+        using dir = tempDir("bun-format", { [name]: ugly });
+        const before = statSync(join(String(dir), name)).ino;
+        const { exitCode } = await write(String(dir), []);
+        expect(read(String(dir), name)).toBe(formatted);
+        expect(statSync(join(String(dir), name)).ino).not.toBe(before);
+        expect(readdirSync(String(dir))).toEqual([name]);
+        expect(exitCode).toBe(0);
+      },
+    );
 
-    // In a container, say, with the project of a user mounted into it.
+    // For example in a container with a user's project mounted into it.
     test.skipIf(!isRoot)("keeps its owner if root formats it", async () => {
       using dir = tempDir("bun-format", { "a.js": ugly });
       try {
         chownSync(join(String(dir), "a.js"), 12345, 12345);
       } catch {
-        // The root of a container that does not have these.
+        // Root in a container that doesn't have these ids.
         return;
       }
       const { exitCode } = await write(String(dir), []);
@@ -486,8 +551,8 @@ describe.concurrent("bun fmt", () => {
       expect(exitCode).toBe(0);
     });
 
-    // Prettier needs nothing of the directory.
-    test.skipIf(isWindows || isRoot)("can be in a directory that nothing can be added to", async () => {
+    // Prettier doesn't need write access to the directory.
+    test.skipIf(isWindows || isRoot)("can be in a read-only directory", async () => {
       using dir = tempDir("bun-format", { "src/a.js": ugly });
       chmodSync(join(String(dir), "src"), 0o555);
       try {
@@ -500,9 +565,9 @@ describe.concurrent("bun fmt", () => {
       }
     });
 
-    // `fs.writeFile` fails with EACCES, on Windows with EPERM. A version control system that hands out files read-only until
-    // they are checked out means it.
-    test.skipIf(isRoot)("is not replaced if it is read-only, and that is an error", async () => {
+    // `fs.writeFile` fails with EACCES, or EPERM on Windows. A version control system that keeps files read-only until
+    // they're checked out does that on purpose.
+    test.skipIf(isRoot)("isn't replaced if it's read-only, which is an error", async () => {
       using dir = tempDir("bun-format", { "a.js": ugly, "b.js": ugly });
       chmodSync(join(String(dir), "a.js"), 0o444);
       try {
@@ -517,8 +582,41 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  test("a path that is longer than any system takes is not there", async () => {
-    // Linux takes 4,096 bytes, macOS 1,024, Windows 32,767 characters, which is also all that its command line has.
+  // Every write to /dev/full fails with ENOSPC, as on a full disk.
+  describe.skipIf(!isLinux)("standard output", () => {
+    /** Runs `bun fmt` wrapped in the shell `script`, where `"$0" "$@"` is the command. */
+    async function inShell(script: string, args: string[]) {
+      using dir = tempDir("bun-format", { "a.js": ugly });
+      await using proc = spawn({
+        cmd: ["sh", "-c", script, ...command, ...args],
+        env,
+        cwd: String(dir),
+        stdin: Buffer.from(ugly),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    test.each([[["--stdin-filepath", "a.js"]], [["--list-files"]], [["-l"]]])(
+      "exits with 2 if it can't be written: %j",
+      async args => {
+        const { stderr, exitCode } = await inShell('exec "$0" "$@" > /dev/full', args);
+        expect(stderr).toContain("error: Cannot write standard output: ENOSPC: ");
+        expect(exitCode).toBe(2);
+      },
+    );
+
+    test("isn't an error if the reader has closed it", async () => {
+      const { stderr } = await inShell('{ "$0" "$@"; echo "exit code $?" >&2; } | :', ["--stdin-filepath", "a.js"]);
+      expect(stderr).toBe("exit code 0\n");
+    });
+  });
+
+  test("reports a path longer than the OS limit as not found", async () => {
+    // The limit is 4,096 bytes on Linux, 1,024 on macOS and 32,767 characters on Windows, which is also the limit for
+    // its command line.
     const long = Buffer.alloc(isWindows ? 30_000 : 40_000, "a/").toString() + "a.js";
     const result = await format({ "a.js": ugly }, [long, "a.js"], { reads: ["a.js"] });
     expect(result.stderr).toStartWith('error: No files matching the pattern were found: "a/a/');
@@ -526,7 +624,7 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  test("--check writes nothing and exits with 1", async () => {
+  test("--check doesn't write and exits with 1", async () => {
     const files = { ".prettierrc": "{}\n", "a.js": ugly, "b.js": formatted, "c.js": ugly };
     const result = await format(files, ["--check"], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": ugly });
@@ -549,11 +647,11 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("in a project of oxfmt, what is said about a run is what oxfmt says", async () => {
+  test("in an oxfmt project, prints oxfmt's run messages", async () => {
     const files = { "a.js": ugly, "b.js": formatted, "src/c.js": ugly, ".oxfmtrc.json": "{}\n" };
-    const said = (text: string) => text.replace(/\d+ms/g, "0ms").replace(/\d+ threads/, "1 threads");
+    const normalize = (text: string) => text.replace(/\d+ms/g, "0ms").replace(/\d+ threads/, "1 threads");
     const check = await format(files, ["--check"]);
-    expect(said(check.raw)).toBe(
+    expect(normalize(check.raw)).toBe(
       "Checking formatting...\n\na.js (0ms)\nsrc/c.js (0ms)\n\n" +
         "Format issues found in above 2 files. Run without `--check` to fix.\n" +
         "Finished in 0ms on 4 files using 1 threads.\n",
@@ -561,13 +659,13 @@ describe.concurrent("bun fmt", () => {
     expect(check.stderr).toBe("");
     expect(check.exitCode).toBe(1);
     const clean = await format({ "b.js": formatted, ".oxfmtrc.json": "{}\n" }, ["--check"]);
-    expect(said(clean.raw)).toBe(
+    expect(normalize(clean.raw)).toBe(
       "Checking formatting...\n\nAll matched files use the correct format.\n" +
         "Finished in 0ms on 2 files using 1 threads.\n",
     );
     expect(clean.exitCode).toBe(0);
     const written = await format(files, [], { reads: ["a.js"] });
-    expect(said(written.raw)).toBe("Finished in 0ms on 4 files using 1 threads.\n");
+    expect(normalize(written.raw)).toBe("Finished in 0ms on 4 files using 1 threads.\n");
     expect(written.stderr).toBe("");
     expect(written.files["a.js"]).toBe(formatted);
     expect(written.exitCode).toBe(0);
@@ -576,7 +674,7 @@ describe.concurrent("bun fmt", () => {
     expect(listed.stderr).toBe("");
     expect(listed.exitCode).toBe(1);
     const broken = await format({ ...files, "d.js": "d = (\n" }, ["--check"]);
-    expect(said(broken.raw)).toBe("Checking formatting...\n\na.js (0ms)\nsrc/c.js (0ms)\n");
+    expect(normalize(broken.raw)).toBe("Checking formatting...\n\na.js (0ms)\nsrc/c.js (0ms)\n");
     expect(broken.stderr).toEndWith("Error occurred when checking code style in the above files.");
     expect(broken.exitCode).toBe(2);
     const none = await format(files, ["--check", "nothing.js"]);
@@ -584,7 +682,7 @@ describe.concurrent("bun fmt", () => {
     expect(none.exitCode).toBe(2);
   });
 
-  test("--list-different", async () => {
+  test("--list-different prints the unformatted files and exits with 1", async () => {
     const result = await format({ "a.js": ugly, "b.js": formatted, "src/c.js": ugly }, ["-l"], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": ugly });
     expect(result.raw).toBe("a.js\nsrc/c.js\n");
@@ -592,15 +690,15 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  test("a syntax error is reported, the other files are formatted, and the exit code is 2", async () => {
+  test("reports a syntax error, formats the other files and exits with 2", async () => {
     const result = await format({ "a.js": "const = 1;\n", "b.js": ugly }, [], { reads: ["a.js", "b.js"] });
     expect(result.files).toEqual({ "a.js": "const = 1;\n", "b.js": formatted });
     expect(result.stderr).toStartWith(problem("a.js", "Variable declaration expected.", [1, 7, "const = 1;"]) + "\n\n");
     expect(result.exitCode).toBe(2);
   });
 
-  test("a syntax error says what is wrong and where, in every language", async () => {
-    // One for each language and kind of refusal: the file, what is said about it, and the line and the column.
+  test("a syntax error has a message and a position in every language", async () => {
+    // One case per language and kind of error: the file, its text, the message, the line and the column.
     const cases: [string, string, string, number, number][] = [
       ["string.css", 'a {\n  b: "x\n}\n', "Unclosed string", 2, 6],
       ["block.css", "a {\n  b: c;\n", "Unclosed block", 1, 1],
@@ -686,6 +784,7 @@ describe.concurrent("bun fmt", () => {
       ["directive-end.yaml", "%YAML 1.2\n", "Unexpected token", 2, 1],
       ["bad-directive.yaml", "%YAML a b\n---\n", "Unexpected character", 1, 7],
       ["header.yaml", "a: |x\n  b\n", "Unexpected character", 1, 5],
+      ["blank-in-header.yaml", "a: | 2\n    b\n  c\n", "Unexpected character", 1, 6],
       ["tag.yaml", "a: !b!c d\n", "This tag cannot be resolved", 1, 5],
       ["alias.yaml", "a: &b *c\n", "Unexpected token", 1, 7],
       ["anchor.yaml", "a: & b\n", "Unexpected character", 1, 5],
@@ -717,7 +816,7 @@ describe.concurrent("bun fmt", () => {
       ["sign-before-a-word.json5", "-null\n", "Unexpected token", 1, 2],
     ];
     const result = await format(Object.fromEntries(cases.map(([name, text]) => [name, text])), []);
-    // `format` makes a `/` of every backslash in what is printed.
+    // `format` turns every backslash in the output into a `/`.
     const expected = cases.map(([name, text, message, line, column]) =>
       problem(name, message, [line, column, text.split("\n")[line - 1].replaceAll("\\", "/")]),
     );
@@ -725,10 +824,10 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  test("a syntax error is printed as Bun prints every error: the line, a caret, the message, and where it is", async () => {
+  test("prints a syntax error in Bun's usual format: the line, a caret, the message and the location", async () => {
     const files = {
-      // A byte order mark does not count, `\r\n` is one line break, and a column is a UTF-16 code unit.
-      // The caret is as far to the right as the characters before it are wide. A tab counts as one column.
+      // A byte order mark isn't counted, `\r\n` is one line break, and a column is a UTF-16 code unit. The caret is
+      // indented by the display width of the characters before it. A tab counts as one column.
       "a.css": '\uFEFFa {\r\n  /* é😀 */ b: "x\r\n}\r\n',
       "b.css": 'a {\n  b: c;\n}\n\n\nd {\n  e: "f\n}\n\ng {\n  h: i;\n}\nj {\n}\n',
       "c.js": "const a = ;\n",
@@ -767,7 +866,7 @@ describe.concurrent("bun fmt", () => {
           at a.css:1:1"
     `);
     expect(stdin.exitCode).toBe(2);
-    // The configuration of another tool makes no difference.
+    // Another tool's configuration makes no difference.
     for (const configuration of [{ ".prettierrc": "{}\n" }, { ".oxfmtrc.json": "{}\n" }]) {
       const result = await format({ ...configuration, "b.css": files["b.css"] }, ["b.css"]);
       expect(result.stderr).toStartWith(problem("b.css", "Unclosed string", [7, 6, '  e: "f']) + "\n\n");
@@ -775,15 +874,15 @@ describe.concurrent("bun fmt", () => {
     }
   });
 
-  // `bun lint` and `bun build` count the lines like this too, and don't count the mark either.
+  // `bun lint` and `bun build` count lines the same way, and don't count the byte order mark either.
   test.each<[string, string, number, number, string]>([
     ["\\r\\n is one line break", "let b;\r\nlet c;\r\nconst a = ; let d;\r\n", 3, 11, "const a = ; let d;"],
     ["\\r is a line break", "let b;\rlet c;\rconst a = ; let d;\r", 3, 11, "const a = ; let d;"],
-    ["a byte order mark does not count", "\uFEFFconst a = ; let d;\n", 1, 11, "const a = ; let d;"],
-    ["nor on a later line", "\uFEFFlet b;\r\nconst a = ; let d;\r\n", 2, 11, "const a = ; let d;"],
+    ["a byte order mark isn't counted", "\uFEFFconst a = ; let d;\n", 1, 11, "const a = ; let d;"],
+    ["the mark doesn't shift later lines", "\uFEFFlet b;\r\nconst a = ; let d;\r\n", 2, 11, "const a = ; let d;"],
     ["U+2028 is a line break", "let b;\u2028let c;\u2028const a = ; let d;\n", 3, 11, "const a = ; let d;"],
     ["U+2029 is a line break", "let b;\u2029const a = ; let d;\n", 2, 11, "const a = ; let d;"],
-  ])("where a syntax error in JavaScript is: %s", async (_, text, line, column, shown) => {
+  ])("position of a JavaScript syntax error: %s", async (_, text, line, column, shown) => {
     for (const name of ["a.js", "a.ts"]) {
       const result = await format({}, ["--stdin-filepath", name], { stdin: text });
       expect(result.stderr).toBe(problem(name, "Expression expected.", [line, column, shown]));
@@ -791,7 +890,7 @@ describe.concurrent("bun fmt", () => {
     }
   });
 
-  test("a syntax error in TOML is in the words of Bun's parser, and a warning: oxfmt passes over such a file", async () => {
+  test("a TOML syntax error uses Bun's parser message and is only a warning, because oxfmt skips such a file", async () => {
     const files = { "a.toml": 'a = 1\nb = "c\n', ".oxfmtrc.json": "{}\n" };
     const warning = [
       '2 | b = "c',
@@ -807,26 +906,27 @@ describe.concurrent("bun fmt", () => {
     }
   });
 
-  describe("without semicolons, a statement that would go on with the line before it starts with one", () => {
-    // Prettier 3.9.9 writes none before these, which makes `c(..)` of two statements, and `let c` of two others.
+  describe("--no-semi puts a `;` before a statement that would otherwise continue the previous line", () => {
+    // Prettier 3.9.9 doesn't add one before these, which turns two statements into `c(..)`, and two others into
+    // `let c`.
     test.each([
       [
-        "the parentheses of --experimental-ternaries around a condition",
+        "before the parentheses that --experimental-ternaries puts around a condition",
         ["--experimental-ternaries"],
         "a ? b : c;\n(d ? e : f) ? g : h;\n",
         "a ? b : c\n;(\n  d ? e : f\n) ?\n  g\n: h\n",
         "a ? b : c\n(\n  d ? e : f\n) ?\n  g\n: h\n",
       ],
       [
-        "the same around a condition that does not fit on the line",
+        "before those parentheses around a condition that doesn't fit on the line",
         ["--experimental-ternaries", "--print-width=20"],
         "a;\nbbbbbbbbbb && cccccccccc ? d : e;\nf && g ? h : i;\n",
         "a\n;(\n  bbbbbbbbbb &&\n  cccccccccc\n) ?\n  d\n: e\nf && g ? h : i\n",
         "a\n(\n  bbbbbbbbbb &&\n  cccccccccc\n) ?\n  d\n: e\nf && g ? h : i\n",
       ],
-      ["a variable that is called let", [], "a;\nlet;\nc;\n", "a\n;(let)\nc\n", "a\nlet\nc\n"],
-    ])("%s", async (_, flags, text, right, ofPrettier) => {
-      expect(right).not.toBe(ofPrettier);
+      ["before a variable named let", [], "a;\nlet;\nc;\n", "a\n;(let)\nc\n", "a\nlet\nc\n"],
+    ])("%s", async (_, flags, text, right, byPrettier) => {
+      expect(right).not.toBe(byPrettier);
       const result = await format({ "a.js": text }, ["--no-semi", ...flags], { reads: ["a.js"] });
       expect(result.files).toEqual({ "a.js": right });
       expect(result.exitCode).toBe(0);
@@ -838,8 +938,8 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  test("in TypeScript no line ends with what looks like type arguments", async () => {
-    // Prettier 3.9.9 prints `a <\n  b >\n  c;`, which is `a<b>; c;`.
+  test("in TypeScript, never ends a line with something that looks like type arguments", async () => {
+    // Prettier 3.9.9 prints `a <\n  b >\n  c;`, which parses as `a<b>; c;`.
     const files = { "a.ts": "a < b > c;\n", "b.js": "a < b > c;\n" };
     const flags = ["--print-width=5"];
     const result = await format(files, flags, { reads: ["a.ts", "b.js"] });
@@ -850,7 +950,7 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
-  test("two comments before the `=>` of an arrow function are on its line", async () => {
+  test("keeps two comments before an arrow function's `=>` on the same line", async () => {
     // Prettier 3.9.9 prints `(a) /* b */\n/* c */ => d`, and no line break is allowed before `=>`.
     const files = {
       "a.js": "const f = a /* b */ /* c */ => d;\nuseEffect(() /* b */ /* c */ => { a(); }, [d]);\n",
@@ -870,22 +970,32 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
-  test("a vertical tab next to a comment is white space", async () => {
+  test("treats a vertical tab next to a comment as whitespace", async () => {
     const text = "function a(b\v/* c */) {}\nfunction d(/* e */\vf) {}\nconst g = /* h */\vi;\n";
     const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": text.replaceAll("\v", " ") });
     expect(result.exitCode).toBe(0);
   });
 
-  test.each(["\v", "\f"])("%j between a comment and a type is white space", async space => {
+  test.each(["\v", "\f"])("treats %j between a comment and a type as whitespace", async space => {
     const text = `let a: /* b */${space}C;\nfunction d(e: /* f */${space}G) {}\n`;
     const result = await format({ "a.ts": text }, [], { reads: ["a.ts"] });
     expect(result.files).toEqual({ "a.ts": text.replaceAll(space, " ") });
     expect(result.exitCode).toBe(0);
   });
 
-  // Where a comment makes the tool print another program, or none. The extension, the text, what is printed,
-  // and what the tool prints.
+  // Option+Space on a Mac, and the space typed with a Chinese or Japanese input method.
+  test.each(["\u00a0", "\u3000"])("treats %j next to `prettier-ignore` as whitespace", async space => {
+    const files = {
+      "a.ts": `//${space}prettier-ignore\nconst  a  =  1;\n/* prettier-ignore${space}*/\nconst  b  =  2;\n`,
+      "b.jsx": `<a>\n  {/*${space}prettier-ignore */}\n  <b   c="d"   />\n</a>;\n`,
+      "c.graphql": `#${space}prettier-ignore\ntype  A  { a:  Int }\n`,
+    };
+    expect(await different(files, [])).toEqual([]);
+  });
+
+  // Cases where a comment makes the other tool print a different program or invalid code. Each row is the extension,
+  // the input, `bun fmt`'s output and the other tool's output.
   describe.each([
     [
       "Prettier 3.9.9 adds a `;` to a declaration in the head of a `for`",
@@ -912,7 +1022,7 @@ describe.concurrent("bun fmt", () => {
       ],
     ],
     [
-      "Prettier 3.9.9 leaves out the parentheses of what it writes as it is, where only its text needs them",
+      "Prettier 3.9.9 drops the parentheses around code it prints verbatim, where only the verbatim text needs them",
       {},
       [
         [
@@ -1008,7 +1118,7 @@ describe.concurrent("bun fmt", () => {
       ],
     ],
     [
-      "oxfmt 0.72 leaves out the parentheses of what it writes as it is",
+      "oxfmt 0.72 drops the parentheses around code it prints verbatim",
       { ".oxfmtrc.json": "{}" },
       [
         [
@@ -1086,7 +1196,7 @@ describe.concurrent("bun fmt", () => {
       ],
     ],
     [
-      "Prettier 3.9.9 moves a comment of several lines before the `[]` of an array type, where a line break ends the type",
+      "Prettier 3.9.9 moves a multi-line comment before the `[]` of an array type, where a line break ends the type",
       {},
       [
         ["ts", "type A = B[ /* a\n b */ ];\n", "type A = B[] /* a\n b */;\n", "type A = B /* a\n b */[];\n"],
@@ -1099,7 +1209,7 @@ describe.concurrent("bun fmt", () => {
       ],
     ],
     [
-      "oxfmt 0.72 moves a comment of several lines before the `[]` of an array type, where a line break ends the type",
+      "oxfmt 0.72 moves a multi-line comment before the `[]` of an array type, where a line break ends the type",
       { ".oxfmtrc.json": "{}" },
       [
         [
@@ -1129,7 +1239,7 @@ describe.concurrent("bun fmt", () => {
       [["ts", "type A = `${B}-${ // c\nC}`;\n", "type A = `${\n  B // c\n}-${C}`;\n", "type A = `${B // c}-${C}`;\n"]],
     ],
     [
-      "Prettier 3.9.9 writes what a class without a name implements after a line comment",
+      "Prettier 3.9.9 writes an anonymous class's `implements` list after a line comment",
       {},
       [
         [
@@ -1147,7 +1257,7 @@ describe.concurrent("bun fmt", () => {
       ],
     ],
   ])("%s", (_, config, rows) => {
-    test("and `bun fmt` does not", async () => {
+    test("`bun fmt` doesn't", async () => {
       const names = rows.map(([extension], index) => `${index}.${extension}`);
       const texts = Object.fromEntries(rows.map(([, text], index) => [names[index], text]));
       const result = await format({ ...config, ...texts }, [], { reads: names });
@@ -1156,17 +1266,18 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  // An object type that does not fit breaks, and one that is broken in the source stays broken. Prettier 3.9.9 and oxfmt 0.72
-  // give the only parameter of a function a line of its own unless the return type is written to break, so they print
+  // An object type that doesn't fit breaks, and one that's broken in the source stays broken. Prettier 3.9.9 and oxfmt
+  // 0.72 put a function's only parameter on its own line unless the return type is already broken in the source, so
+  // they print
   //
   //   m(
   //     a: string,
   //   ): {
   //
-  // the first time and `m(a: string): {` from then on, which is what is printed here.
-  describe("the only parameter of a function, before a return type with an object type in it", () => {
+  // the first time and `m(a: string): {` from then on. `bun fmt` prints the latter right away.
+  describe("a function's only parameter before a return type that contains an object type", () => {
     const members = ["aaaaaaaaaaaaaaa: number", "bbbbbbbbbbbbbbbb: number", "cccccccccccccccccc: number"];
-    // An object type that does not fit on a line, as it is written and as it is printed.
+    // An object type that doesn't fit on one line, as written and as printed.
     const flat = `{ ${members.join(", ")} }`;
     const broken = (indent = "", end = ";") => `{\n${members.map(it => `${indent}  ${it}${end}\n`).join("")}${indent}}`;
     const flavors = [
@@ -1175,7 +1286,7 @@ describe.concurrent("bun fmt", () => {
     ] as const;
     type Row = [extension: string, text: string, printed: string, flavor?: "Prettier"];
 
-    /** Formats the texts, and what they are printed as once more. oxfmt does not read Flow. */
+    /** Formats the texts, then formats the output again. oxfmt doesn't support Flow. */
     async function printedTwice(flavor: string, config: Record<string, string>, all: Row[]) {
       const rows = all.filter(row => flavor === "Prettier" || (row[0] !== "js" && row[3] === undefined));
       const names = rows.map(([extension], index) => `${index}.${extension}`);
@@ -1186,7 +1297,7 @@ describe.concurrent("bun fmt", () => {
       return { first: first.files, second: second.files, expected };
     }
 
-    // The second pass of both tools.
+    // What both tools print on their second pass.
     const sameLine: Row[] = [
       [
         "ts",
@@ -1233,12 +1344,12 @@ describe.concurrent("bun fmt", () => {
       ["ts", `type F = (a: string) => B<${flat}>;\n`, `type F = (a: string) => B<${broken()}>;\n`],
       ["ts", `type F = new (a: string) => B<${flat}>;\n`, `type F = new (a: string) => B<${broken()}>;\n`],
       ["ts", `type F = { m(a: string): B<${flat}> };\n`, `type F = {\n  m(a: string): B<${broken("  ")}>;\n};\n`],
-      // Whatever the parameter is.
+      // For any kind of parameter.
       ["ts", `function f(this: A): B<${flat}> {}\n`, `function f(this: A): B<${broken()}> {}\n`],
       ["ts", `function f(...a: string[]): B<${flat}> {}\n`, `function f(...a: string[]): B<${broken()}> {}\n`],
       ["ts", `function f({ a, b }: A): B<${flat}> {}\n`, `function f({ a, b }: A): B<${broken()}> {}\n`],
       ["ts", `function f(a: { b: 1 }): B<${flat}> {}\n`, `function f(a: { b: 1 }): B<${broken()}> {}\n`],
-      // Wherever the object type is.
+      // Wherever the object type appears.
       ["ts", `function f(a: string): A & ${flat} {}\n`, `function f(a: string): A & ${broken()} {}\n`],
       ["ts", `function f(a: string): ${flat}[] {}\n`, `function f(a: string): ${broken()}[] {}\n`],
       ["ts", `function f(a: string): a is ${flat} {}\n`, `function f(a: string): a is ${broken()} {}\n`],
@@ -1254,7 +1365,7 @@ describe.concurrent("bun fmt", () => {
         `function f(a: string): C | D | ${flat} {}\n`,
         `function f(a: string):\n  | C\n  | D\n  | ${broken("    ")} {}\n`,
       ],
-      // The object type that did not fit behind the `)` is broken, though it fits where it is now.
+      // The object type that didn't fit after the `)` stays broken, even though it fits where it is now.
       [
         "ts",
         `function fffffffffffffffffffff(a: string): (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb: number) => { ccccccccccccc: 1; ddddddddddddd: 2 } {}\n`,
@@ -1308,27 +1419,27 @@ describe.concurrent("bun fmt", () => {
         `// @flow\ndeclare class A {\n  m(a: string): B<${broken("  ", ",")}>;\n}\n`,
       ],
     ];
-    test.each(flavors)("is on the line of the function if the object type breaks: %s", async (flavor, config) => {
+    test.each(flavors)("stays on the function's line if the object type breaks: %s", async (flavor, config) => {
       const { first, second, expected } = await printedTwice(flavor, config, sameLine);
       expect(first).toEqual(expected);
       expect(second).toEqual(expected);
     });
 
-    // What both tools print, every time.
-    const asTheToolsPrint: Row[] = [
-      // The object type fits once the parameter has a line of its own.
+    // What both tools print on every pass.
+    const ownLine: Row[] = [
+      // The object type fits once the parameter is on its own line.
       [
         "ts",
         `function ffffffffffffffffffffffffffffff(aaaaaaaaaaaaaaaaaaaaaaaaaaaa: string): Promise<{ a: number; b: string }> {}\n`,
         `function ffffffffffffffffffffffffffffff(\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaa: string,\n): Promise<{ a: number; b: string }> {}\n`,
       ],
-      // The return type breaks, and no object type in it does.
+      // The return type breaks, but no object type in it does.
       [
         "ts",
         `function f(a: string): Bbbbbbbbbbbbbbbbbbbb<Array<{ id: string; name: string; other: string }>, C<{ message: string }>> {}\n`,
         `function f(\n  a: string,\n): Bbbbbbbbbbbbbbbbbbbb<\n  Array<{ id: string; name: string; other: string }>,\n  C<{ message: string }>\n> {}\n`,
       ],
-      // These parameters break with the return type, however that is written.
+      // These parameters break together with the return type, however it's written.
       [
         "ts",
         `function f(a: string, b: number): B<${flat}> {}\n`,
@@ -1352,13 +1463,13 @@ describe.concurrent("bun fmt", () => {
         `// @flow\nconst f = (\n  a: string,\n): B<${broken("", ",")}> => null;\n`,
       ],
     ];
-    test.each(flavors)("has a line of its own otherwise: %s", async (flavor, config) => {
-      const { first, second, expected } = await printedTwice(flavor, config, asTheToolsPrint);
+    test.each(flavors)("gets its own line otherwise: %s", async (flavor, config) => {
+      const { first, second, expected } = await printedTwice(flavor, config, ownLine);
       expect(first).toEqual(expected);
       expect(second).toEqual(expected);
     });
 
-    test("function types in each other take time in proportion to their number", async () => {
+    test("nested function types take linear time", async () => {
       const times = (text: string, count: number) => Buffer.alloc(text.length * Math.floor(count), text).toString();
       const nested = `type F = ${times("(a: A) => ", isDebug || isASAN ? 1_000 : 4_000)}${flat};\n`;
       const ordinary = "type F = (a: A) => B;\n";
@@ -1368,7 +1479,7 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  test("a comment in what a `prettier-ignore` comment leads is copied with it, once", async () => {
+  test("copies a comment inside code under `prettier-ignore` once, along with the code", async () => {
     const text = "x = <a {\n  // prettier-ignore\n  ...b\n  // c1\n  .c} />;\n";
     const result = await format({ "a.jsx": text }, [], { reads: ["a.jsx"] });
     expect(result.files).toEqual({
@@ -1377,7 +1488,7 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("a `prettier-ignore` comment before an empty body is printed", async () => {
+  test("prints a `prettier-ignore` comment before an empty body", async () => {
     // Prettier 3.9.9 moves the comment into the body, copies the body, and throws: 'Comment "prettier-ignore" was not printed.'
     const rows = [
       ["class A // prettier-ignore\n{  }\n", "class A // prettier-ignore\n{  }\n"],
@@ -1395,31 +1506,32 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("a comment that no printer writes is written after its statement", async () => {
-    // The file used to be refused: "The formatter failed". When this input gets a printer for `/* a */`, which is right, take
-    // another one that `bun fmt --debug-unprinted-comments <directory> <file>` has a line for.
+  test("writes a comment that no printer handles after its statement", async () => {
+    // The file used to be rejected with "The formatter failed". Once a printer handles this input's `/* a */`, which
+    // would be the right fix, switch to another input that `bun fmt --debug-unprinted-comments <directory> <file>`
+    // prints a line for.
     const text = "type N = keyof ( /* a */ B | C /* prettier-ignore */ );\ne;\n";
     const result = await format({ "a.ts": text }, [], { reads: ["a.ts"] });
     expect(result.files["a.ts"]).toBe("type N = keyof (B | C) /* prettier-ignore */; /* a */\ne;\n");
     expect(result.exitCode).toBe(0);
   });
 
-  test("a comment before the `:` in an object type of Flow stays there with the configuration of oxfmt", async () => {
-    // oxfmt has no Flow, so this is what Prettier prints.
+  test("keeps a comment before the `:` in a Flow object type in place with an oxfmt config", async () => {
+    // oxfmt doesn't support Flow, so this is Prettier's output.
     const files = { ".oxfmtrc.json": "{}", "a.js": "// @flow\ntype A = { a /* comment */ : B };\n" };
     const result = await format(files, ["--parser", "flow", "a.js"], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe("// @flow\ntype A = { a /* comment */: B };\n");
     expect(result.exitCode).toBe(0);
   });
 
-  test("`<!--` and `-->` comments in a script", async () => {
-    // What oxfmt 0.72 prints, unless it says otherwise. Prettier 3.9.9 does not parse these files.
+  test("formats `<!--` and `-->` comments in a script", async () => {
+    // This is oxfmt 0.72's output unless noted otherwise. Prettier 3.9.9 can't parse these files.
     const rows = [
       ["<!-- prettier-ignore\na(  b  );\nc(  d  );\n", "<!-- prettier-ignore\na(  b  );\nc(d);\n"],
       ["a;\n--> prettier-ignore\nb(  c  );\nd(  e  );\n", "a;\n--> prettier-ignore\nb(  c  );\nd(e);\n"],
       ["<!-- a comment\na(  b  );\n", "<!-- a comment\na(b);\n"],
-      // `-->` starts a comment at the start of a line only. oxfmt prints `var --> c`, which does not parse, and `x = a--> c`,
-      // which is `x = a-- > c.b.c()`.
+      // `-->` only starts a comment at the start of a line. oxfmt prints `var --> c`, which doesn't parse, and
+      // `x = a--> c`, which means `x = a-- > c.b.c()`.
       ["var\n--> c\na = b;\n", "var\n  --> c\n  a = b;\n"],
       ["x = a\n--> c\n.b.c();\n", "x = a\n--> c\n.b\n  .c();\n"],
     ];
@@ -1433,8 +1545,8 @@ describe.concurrent("bun fmt", () => {
     }
   });
 
-  test("a comment that waits for the end of the line is not written in the middle of the next one", async () => {
-    // Prettier 3.9.9 prints `a; /**⏎// b⏎ * c⏎ */`, and with `/* b */` on its own line what it prints does not parse.
+  test("doesn't write a comment deferred to the end of the line into the middle of the next comment", async () => {
+    // Prettier 3.9.9 prints `a; /**⏎// b⏎ * c⏎ */`, and with `/* b */` on its own line its output doesn't parse.
     const rows = [
       ["a // b\n; /**\n * c\n */\n", "a; // b\n/**\n * c\n */\n"],
       ["a\n/* b */\n; /**\n * c\n */\n", "a;\n/* b */ /**\n * c\n */\n"],
@@ -1446,7 +1558,7 @@ describe.concurrent("bun fmt", () => {
     const result = await format(texts, [], { reads: names });
     expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
     expect(result.exitCode).toBe(0);
-    // Nor in one that the option `jsdoc` writes.
+    // Nor into a comment that the `jsdoc` option rewrites.
     const text = 'import a // b\n/**\n * @returns   {U}   it\n * @param   {T}   x   text\n */ from "d";\n';
     const withOption = await format({ "a.js": text }, ["--jsdoc"], { reads: ["a.js"] });
     expect(withOption.files["a.js"]).toBe(
@@ -1455,7 +1567,7 @@ describe.concurrent("bun fmt", () => {
     expect(withOption.exitCode).toBe(0);
   });
 
-  test("a binding of Vue that is nothing but a comment stays as it is", async () => {
+  test("leaves a Vue binding that's only a comment unchanged", async () => {
     // oxfmt 0.72 prints `v-slot=""` and `v-for=" in xs"`.
     const text =
       '<template>\n  <a   v-slot="/* a */"   b="c" />\n  <a   v-for="(/* d */) in xs"   b="c" />\n</template>\n';
@@ -1466,7 +1578,7 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("Handlebars", async () => {
+  test("formats Handlebars", async () => {
     const result = await format({ "a.hbs": '<div   class="a  b">{{foo   bar}}</div>\n', "b.handlebars": "{{a}}" }, [], {
       reads: ["a.hbs", "b.handlebars"],
     });
@@ -1475,10 +1587,216 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  describe("a template of which Prettier changes the meaning", () => {
-    // The template, what Bun makes of it, and what Prettier 3.9.9 makes of it, which says something else or cannot be parsed
-    // any more. Where nothing else is clearly right, the smallest part around the place stays as it is written.
-    const templates: Record<string, [before: string, after: string, ofPrettier: string]> = {
+  // Prettier 3.9.9 drops the parentheses. The line break after the comment then ends the `yield`, so it yields nothing.
+  test.each([
+    ["a line comment", "yield (\n    // a\n    1\n  );"],
+    ["a block comment on its own line", "yield (\n    /* a */\n    1\n  );"],
+    ["a block comment that spans lines", "yield (\n    /* a\n     */ 1\n  );"],
+    ["an assignment", "const x = yield (\n    // a\n    1\n  );"],
+    ["a call argument", "f(\n    yield (\n      // a\n      1\n    ),\n  );"],
+    ["a function expression", "yield (\n    // a\n    function () {}\n  );"],
+  ])("keeps the parentheses around a yielded value that follows a comment: %s", async (_, body) => {
+    const code = `function* g() {\n  ${body}\n}\n`;
+    const result = await formatChecked({ "a.js": code }, [], { reads: ["a.js"] });
+    expect(result).toMatchObject({ stderr: "", files: { "a.js": code }, exitCode: 0 });
+  });
+
+  test("a comment after `yield` doesn't add parentheses where a line break is harmless", async () => {
+    const files = {
+      "same-line.js": "function* g() {\n  yield /* a */ 1;\n}\n",
+      "delegate.js": "function* g() {\n  yield* // a\n  h();\n}\n",
+      "two-statements.js": "function* g() {\n  yield; // a\n  1;\n}\n",
+      "member-chain.js": "function* a() {\n  yield task\n    // No extra parens\n    .run();\n}\n",
+    };
+    const result = await formatChecked(files, [], { reads: Object.keys(files) });
+    expect(result).toMatchObject({ stderr: "", files, exitCode: 0 });
+  });
+
+  // Prettier 3.9.9 prints `yield // comment⏎(a as any).b;`, and so on, which yields nothing.
+  test("keeps `yield` and its value together when the leftmost operand follows a comment", async () => {
+    // What follows `yield (⏎// comment⏎a as any⏎)`, and what's printed after the comment.
+    const shapes = [
+      ["", "a as any"],
+      [" + 1", "(a as any) + 1"],
+      [" ? 0 : 1", "(a as any)\n      ? 0\n      : 1"],
+      [".b", "(a as any).b"],
+      ["[a]", "(a as any)[a]"],
+      ["()", "(a as any)()"],
+      ["``", "(a as any)``"],
+      [" as any", "a as any as any"],
+      [" satisfies any", "a as any satisfies any"],
+      ["!", "(a as any)!"],
+    ];
+    const code = shapes.map(
+      ([rest], i) => `function* t${i}() {\n  yield (\n    // comment\n    a as any\n  )${rest};\n}\n`,
+    );
+    const printed = shapes.map(
+      ([, value], i) => `function* t${i}() {\n  yield (\n    // comment\n    ${value}\n  );\n}\n`,
+    );
+    const result = await formatChecked({ "a.ts": code.join("") }, [], { reads: ["a.ts"] });
+    expect(result).toMatchObject({ stderr: "", files: { "a.ts": printed.join("") }, exitCode: 0 });
+  });
+
+  // Prettier 3.9.9 drops the parentheses around `a` and adds none. The line break in the comment then ends the `return` or
+  // the `yield`, and after `throw` it's a syntax error.
+  describe.each(["return", "throw", "yield"])(
+    "a comment that spans lines at the start of the value after `%s`",
+    keyword => {
+      const inFunction = (body: string) => `function${keyword === "yield" ? "*" : ""} f() {\n  ${body}\n}\n`;
+
+      test.each(["prettier", "oxfmt"])("gets parentheses around it and the value: %s", async flavor => {
+        // What follows `(/* two⏎lines */ `, and what's printed after the comment.
+        const shapes: Record<string, [source: string, printed: string]> = {
+          "member.js": ["a).b", "a.b"],
+          "index.js": ["a)[0]", "a[0]"],
+          "call.js": ["a)()", "a()"],
+          "optional-member.js": ["a)?.b", "a?.b"],
+          "member-chain.js": ["a).b.c.d()", "a.b.c.d()"],
+          "member-of-a-call.js": ["a()).b", "a().b"],
+          "tagged-template.js": ["a)`x`", "a`x`"],
+          "postfix.js": ["a)++", "a++"],
+          "conditional.js": ["a) ? b : c", "a\n      ? b\n      : c"],
+          "as.ts": ["a) as any", "a as any"],
+          "satisfies.ts": ["a) satisfies B", "a satisfies B"],
+          "non-null.ts": ["a)!", "a!"],
+          "non-null-member.ts": ["a)!.b", "a!.b"],
+          "type-arguments.ts": ["a)<T>", "a<T>"],
+        };
+        const names = Object.keys(shapes);
+        const files = Object.fromEntries(
+          names.map(name => [name, inFunction(`${keyword} (/* two\n     lines */ ${shapes[name][0]};`)]),
+        );
+        const printed = Object.fromEntries(
+          names.map(name => [name, inFunction(`${keyword} (\n    /* two\n     lines */ ${shapes[name][1]}\n  );`)]),
+        );
+        const result = await formatChecked(files, [`--flavor=${flavor}`], { reads: names });
+        expect(result).toMatchObject({ stderr: "", files: printed, exitCode: 0 });
+      });
+
+      test("doesn't get its own parentheses where something else is printed first", async () => {
+        const shapes: Record<string, [source: string, printed: string]> = {
+          "assignment.js": ["(/* two\n     lines */ a) = b;", "(/* two\n     lines */ a = b);"],
+          "assignment-in-parentheses.js": ["((/* two\n     lines */ a) = b).c;", "(/* two\n     lines */ a = b).c;"],
+          "new.js": ["new (/* two\n     lines */ a)();", "new /* two\n     lines */ a();"],
+        };
+        const names = Object.keys(shapes);
+        const files = Object.fromEntries(names.map(name => [name, inFunction(`${keyword} ${shapes[name][0]}`)]));
+        const printed = Object.fromEntries(names.map(name => [name, inFunction(`${keyword} ${shapes[name][1]}`)]));
+        const result = await formatChecked(files, [], { reads: names });
+        expect(result).toMatchObject({ stderr: "", files: printed, exitCode: 0 });
+      });
+    },
+  );
+
+  test("a comment at the start of a returned value is unchanged in the cases that were already correct", async () => {
+    const shapes: Record<string, [source: string, printed: string]> = {
+      "one-line.js": ["return (/* one line */ a).b;", "return /* one line */ a.b;"],
+      "whole-value.js": ["return (/* two\n     lines */ a.b);", "return (\n    /* two\n     lines */ a.b\n  );"],
+      "binary.js": ["return (/* two\n     lines */ a) + b;", "return (\n    /* two\n     lines */ a + b\n  );"],
+      "line-comment.js": ["return (\n    // line\n    a).b;", "return (\n    // line\n    a.b\n  );"],
+    };
+    const names = Object.keys(shapes);
+    const files = Object.fromEntries(names.map(name => [name, `function f() {\n  ${shapes[name][0]}\n}\n`]));
+    const printed = Object.fromEntries(names.map(name => [name, `function f() {\n  ${shapes[name][1]}\n}\n`]));
+    const result = await formatChecked(files, [], { reads: names });
+    expect(result).toMatchObject({ stderr: "", files: printed, exitCode: 0 });
+  });
+
+  // Prettier 3.9.9 and oxfmt 0.72.0 print `static async // why⏎m() {}`. No line break is allowed after `async`, so that's a
+  // static field named `async` and a plain method `m`. The same goes for `accessor` and `readonly`.
+  test.each(["prettier", "oxfmt"])(
+    "moves a comment between two modifiers of a class member in front of them: %s",
+    async flavor => {
+      const members: Record<string, [source: string, printed: string]> = {
+        "line-comment.js": ["static // why\n  async m() {}", "// why\n  static async m() {}"],
+        "own-line.js": ["static\n  // why\n  async m() {}", "// why\n  static async m() {}"],
+        "spans-lines.js": ["static /* why\n  so */ async m() {}", "/* why\n  so */ static async m() {}"],
+        "private-name.js": ["static // why\n  async #m() {}", "// why\n  static async #m() {}"],
+        "accessor.js": ["static // why\n  accessor x = 1;", "// why\n  static accessor x = 1;"],
+        "accessor.ts": ["static // why\n  accessor x = 1;", "// why\n  static accessor x = 1;"],
+        "public.ts": ["public static // why\n  async m() {}", "// why\n  public static async m() {}"],
+        "override.ts": ["static // why\n  override async m() {}", "// why\n  static override async m() {}"],
+        "readonly.ts": ["static // why\n  readonly x = 1;", "// why\n  static readonly x = 1;"],
+      };
+      const names = Object.keys(members);
+      const files = Object.fromEntries(names.map(name => [name, `class A {\n  ${members[name][0]}\n}\n`]));
+      const printed = Object.fromEntries(names.map(name => [name, `class A {\n  ${members[name][1]}\n}\n`]));
+      const result = await formatChecked(files, [`--flavor=${flavor}`], { reads: names });
+      expect(result).toMatchObject({ stderr: "", files: printed, exitCode: 0 });
+    },
+  );
+
+  test("a comment between two modifiers of a class member stays where its line break is harmless", async () => {
+    const members: Record<string, [source: string, printed: string]> = {
+      "one-line.js": ["static /* why */ async m() {}", "static async /* why */ m() {}"],
+      "method.js": ["static // why\n  m() {}", "static // why\n  m() {}"],
+      "field.js": ["static // why\n  x = 1;", "static // why\n  x = 1;"],
+      "getter.js": ["static // why\n  get m() {}", "static get // why\n  m() {}"],
+      "declare.ts": ["static // why\n  declare x: number;", "declare static // why\n  x: number;"],
+      "decorator.ts": ["@dec static // why\n  async m() {}", "@dec // why\n  static async m() {}"],
+    };
+    const names = Object.keys(members);
+    const files = Object.fromEntries(names.map(name => [name, `class A {\n  ${members[name][0]}\n}\n`]));
+    const printed = Object.fromEntries(names.map(name => [name, `class A {\n  ${members[name][1]}\n}\n`]));
+    const result = await formatChecked(files, [], { reads: names });
+    expect(result).toMatchObject({ stderr: "", files: printed, exitCode: 0 });
+  });
+
+  // Prettier 3.9.9 writes no `;` there, because `x` needs no parentheses. But the statement is copied with the ones it has, so
+  // `const a = b⏎(x).bar()` calls `b`.
+  test.each(["prettier", "oxfmt"])(
+    "--no-semi guards an ignored statement that starts with a parenthesis it doesn't need: %s",
+    async flavor => {
+      const statements: Record<string, string> = {
+        "member.js": "(x).bar()",
+        "call.js": "(x)()",
+        "twice.js": "((x)).bar()",
+        "logical.js": "(x)   &&   y()",
+        "conditional.js": "(x) ? y() : z()",
+        "binary.js": "(a * b) + c",
+        "assignment.js": "(x.y) = 1",
+        "name.js": "(x)",
+        "non-null.ts": "(x)!.y()",
+      };
+      const names = Object.keys(statements);
+      const files = Object.fromEntries(
+        names.map(name => [name, `const a = b;\n// prettier-ignore\n${statements[name]};\n`]),
+      );
+      const printed = Object.fromEntries(
+        names.map(name => [name, `const a = b\n// prettier-ignore\n;${statements[name]}\n`]),
+      );
+      const result = await formatChecked(files, ["--no-semi", `--flavor=${flavor}`], { reads: names });
+      expect(result).toMatchObject({ stderr: "", files: printed, exitCode: 0 });
+    },
+  );
+
+  test.each(["prettier", "oxfmt"])("--no-semi doesn't guard any other ignored statement: %s", async flavor => {
+    const files = {
+      "name.js": "const a = b\n// prettier-ignore\nx  .bar()\n",
+      "array.js": "const a = b\n// prettier-ignore\n;[1,  2].forEach(f)\n",
+      "needed.js": "const a = b\n// prettier-ignore\n;(x  || y).bar()\n",
+      "increment.js": "const a = b\n// prettier-ignore\n++x\n",
+      // A `;` here would become the whole body of the `if` or the loop.
+      "if.js": "if (a)\n  // prettier-ignore\n  (x)  .bar()\nelse\n  // prettier-ignore\n  (y)  .bar()\n",
+      "for.js": "for (;;)\n  // prettier-ignore\n  (x)  .bar()\n",
+      "for-same-line.js": "for (;;) /* prettier-ignore */ (x)  .bar()\n",
+      "for-in.js": "for (a in b)\n  // prettier-ignore\n  (x)  .bar()\n",
+      "for-of.js": "for (a of b)\n  // prettier-ignore\n  (x)  .bar()\n",
+      "while.js": "while (a)\n  // prettier-ignore\n  (x)  .bar()\n",
+      "do.js": "do\n  // prettier-ignore\n  (x)  .bar()\nwhile (a)\n",
+      "with.js": "with (a)\n  // prettier-ignore\n  (x)  .bar()\n",
+      // In oxfmt 0.72.0 a comment after a label doesn't apply to anything.
+      "label.js":
+        flavor === "oxfmt" ? "l:\n// prettier-ignore\nx.bar()\n" : "l:\n  // prettier-ignore\n  (x)  .bar()\n",
+    };
+    const result = await formatChecked(files, ["--no-semi", `--flavor=${flavor}`], { reads: Object.keys(files) });
+    expect(result).toMatchObject({ stderr: "", files, exitCode: 0 });
+  });
+
+  describe("a Handlebars template whose meaning Prettier changes", () => {
+    // Each entry is the template, Bun's output and Prettier 3.9.9's output, which means something else or no longer
+    // parses. Where no other output is clearly right, the smallest part around the problem is left as written.
+    const templates: Record<string, [before: string, after: string, byPrettier: string]> = {
       "doctype": ["<!DOCTYPE html>\n<p   ></p>\n", "<!DOCTYPE html>\n<p></p>", "<p></p>"],
       "character-behind-less-than": ["a <3 b   ></b>\n", "a <3 b   ></b>\n", "a <b></b>"],
       "start-of-a-comment": ["<!---a--><p   ></p>\n", "<!---a--><p></p>", "<!-----><p></p>"],
@@ -1615,7 +1933,7 @@ describe.concurrent("bun fmt", () => {
         'a \u2028{{! b }}\n<p {{c}} d="e" {{f}} g></p>\n<!--  {{h} -->\n\u2029\u2029{{! prettier-ignore }\n {{  i  }\n{{! j }}\n{{k l}}\n{{! m }}',
       ],
     };
-    // These look like it, but Handlebars reads what Prettier prints as it reads the template.
+    // These look similar, but Handlebars reads Prettier's output the same way as the template.
     const harmless: Record<string, [before: string, after: string]> = {
       "inverted-block": ["{{^a   }}b{{else}}c{{/a}}\n", "{{#a}}c{{else}}b{{/a}}"],
       "block-parameter-in-brackets": ["{{#a   as |[b] c|}}{{/a}}\n", "{{#a as |[b] c|}}{{/a}}"],
@@ -1626,8 +1944,8 @@ describe.concurrent("bun fmt", () => {
     const files = Object.fromEntries(all.map(([name, it]) => [`${name}.hbs`, it[0]]));
     const written = Object.fromEntries(all.map(([name, it]) => [`${name}.hbs`, it[1]]));
 
-    test("says the same afterwards", async () => {
-      for (const [, after, ofPrettier] of Object.values(templates)) expect(after).not.toBe(ofPrettier);
+    test("keeps its meaning", async () => {
+      for (const [, after, byPrettier] of Object.values(templates)) expect(after).not.toBe(byPrettier);
       const result = await format(files, [], { reads: Object.keys(files) });
       expect(result.files).toEqual(written);
       expect(result.exitCode).toBe(0);
@@ -1637,13 +1955,13 @@ describe.concurrent("bun fmt", () => {
       ["no config", {}],
       [".prettierrc", { ".prettierrc": "{}\n" }],
       [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }],
-    ])("with %s", async (_, config: Record<string, string>) => {
+    ])("keeps its meaning with %s", async (_, config: Record<string, string>) => {
       const result = await format({ ...config, ...files }, Object.keys(files), { reads: Object.keys(files) });
       expect(result.files).toEqual(written);
       expect(result.exitCode).toBe(0);
     });
 
-    test("--debug-check has nothing to say about it", async () => {
+    test("passes --debug-check", async () => {
       const result = await format(files, ["--debug-check"], { reads: Object.keys(files) });
       expect(result.files).toEqual(files);
       expect(result.stderr).toBe("");
@@ -1651,11 +1969,11 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    test("what is written is formatted", async () => {
+    test("is stable when the output is formatted again", async () => {
       expect(await different(written, [])).toEqual([]);
     });
 
-    test("where white space does not count, a word and an escaped mustache stay two words", async () => {
+    test("with whitespace sensitivity off, a word and an escaped mustache stay two words", async () => {
       // Prettier 3.9.9 prints `p\\{{a}} {{q}}`.
       const flags = ["--html-whitespace-sensitivity=ignore"];
       const result = await format({ "a.hbs": "p \\{{a}} {{q   }}\n" }, flags, { reads: ["a.hbs"] });
@@ -1663,14 +1981,14 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    test("standard input", async () => {
+    test("keeps its meaning from stdin", async () => {
       const [before, after] = templates.doctype;
       const result = await format({}, ["--stdin-filepath", "a.hbs"], { stdin: before });
       expect(result.raw).toBe(after);
       expect(result.exitCode).toBe(0);
     });
 
-    test("in a block of code in Markdown", async () => {
+    test("keeps its meaning in a Markdown code block", async () => {
       const text = "#   a\n\n```hbs\n<!DOCTYPE html>\n<p   ></p>\n```\n\n```hbs\n<p   ></p>\n```\n";
       const result = await format({ "a.md": text }, [], { reads: ["a.md"] });
       expect(result.files).toEqual({
@@ -1680,25 +1998,26 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  describe("Markdown of which Prettier changes the meaning", () => {
-    // The text, what Bun makes of it, and what Prettier 3.9.9 makes of it: it gives two emphases that touch the same marker,
-    // which makes one of them, or none.
+  describe("Markdown whose meaning Prettier changes", () => {
+    // Each row is the text, Bun's output and Prettier 3.9.9's output. Prettier gives two adjacent emphases the same
+    // marker, which merges them into one or into none.
     test.each([
       ["x   *a*_b_\n", "x *a*_b_\n", "x _a__b_\n"],
       ["x   _a_*b*\n", "x _a_*b*\n", "x _a__b_\n"],
       ["x   **a**__b__\n", "x **a**__b__\n", "x **a****b**\n"],
       ["x   ***a******b***\n", "x ***a******b***\n", "x _**a**__**b**_\n"],
       ["-   *a*_b_*c*\n", "- *a*_b_*c*\n", "- _a__b__c_\n"],
-    ])("%j", async (before, after, ofPrettier) => {
-      expect(after).not.toBe(ofPrettier);
+      ["*b   **(a)**b c*\n", "*b **(a)**b c*\n", "*b **(a)*_b c_\n"],
+    ])("%j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
       const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
       expect(result.files).toEqual({ "a.md": after, "b.md": after });
       expect(result.exitCode).toBe(0);
     });
 
-    // Known: Bun prints what Prettier 3.9.9 prints for these, and a CommonMark parser reads that as something else. All are
-    // emphasis three deep, or runs of `*` and `_` that are text in an emphasis. Telling them from `*foo_bar*`, of which
-    // `_foo_bar_` is right, takes the rules for delimiter runs.
+    // Known issue: for these Bun prints what Prettier 3.9.9 prints, and a CommonMark parser reads that output
+    // differently. All are emphasis nested three deep, or runs of `*` and `_` that are text inside an emphasis. Telling
+    // them apart from `*foo_bar*`, where `_foo_bar_` is correct, requires the delimiter run rules.
     test.each([
       ["**a****a**\n", "**a\\****a**\n"],
       ["*b **a*b*** c*\n", "*b \\**a*b*** c*\n"],
@@ -1710,16 +2029,442 @@ describe.concurrent("bun fmt", () => {
       ["*b a__b__c c*\n", "_b a__b_\\_c c_\n"],
       ["*b __a__b c*\n", "_b \\__a_\\_b c_\n"],
       ["**b __a__b c**\n", "**b \\__a_\\_b c**\n"],
-      ["*b **(a)**b c*\n", "*b **(a)*_b c_\n"],
       ["*b _\u4e2d_a c*\n", "_b _\u4e2d_a c_\n"],
       ["*b a_\u4e2d_ c*\n", "_b a_\u4e2d_ c_\n"],
-    ])("known: %j", async (before, ofPrettier) => {
+    ])("known issue: %j", async (before, byPrettier) => {
       const result = await format({ "a.md": before }, [], { reads: ["a.md"] });
-      expect(result.files).toEqual({ "a.md": ofPrettier });
+      expect(result.files).toEqual({ "a.md": byPrettier });
+    });
+
+    describe("a file that starts with a line of four dashes", () => {
+      // Front matter is fenced by exactly three dashes, plus signs or dots. Prettier 3.9.9 and oxfmt 0.72.0 treat the
+      // first three characters of a longer line as the fence, and what's left of the closing line turns into a list
+      // item or into text. Each row has the text, Bun's output as Markdown and as MDX, and Prettier's output as both.
+      test.each([
+        [
+          "----\nNotice\n----\nbody\n",
+          "---\n\nNotice\n----\n\nbody\n",
+          "---\n\n## Notice\n\nbody\n",
+          "----\nNotice\n---\n\n-\n\nbody\n",
+          "----\nNotice\n---\n\n- body\n",
+        ],
+        [
+          "-----\nNotice\n-----\nbody\n",
+          "---\n\nNotice\n-----\n\nbody\n",
+          "---\n\n## Notice\n\nbody\n",
+          "-----\nNotice\n---\n\n--\nbody\n",
+          "-----\nNotice\n---\n\n--\nbody\n",
+        ],
+        [
+          "---\ntitle: x\n----\nbody\n",
+          "---\n\ntitle: x\n----\n\nbody\n",
+          "---\n\n## title: x\n\nbody\n",
+          "---\ntitle: x\n---\n\n-\n\nbody\n",
+          "---\ntitle: x\n---\n\n- body\n",
+        ],
+        [
+          "++++\nNotice\n++++\nbody\n",
+          "++++\nNotice\n++++\nbody\n",
+          "++++\nNotice\n++++\nbody\n",
+          "++++\nNotice\n+++\n\n-\n\nbody\n",
+          "++++\nNotice\n+++\n\n- body\n",
+        ],
+        [
+          "---\ntitle: x\n....\nbody\n",
+          "---\n\ntitle: x\n....\nbody\n",
+          "---\n\ntitle: x\n....\nbody\n",
+          "---\ntitle: x\n...\n\n.\nbody\n",
+          "---\ntitle: x\n...\n\n.\nbody\n",
+        ],
+      ])("%j", async (before, markdown, mdx, prettierMarkdown, prettierMdx) => {
+        const html = Bun.markdown.html(before);
+        expect(Bun.markdown.html(markdown)).toBe(html);
+        expect(Bun.markdown.html(mdx)).toBe(html);
+        expect(Bun.markdown.html(prettierMarkdown)).not.toBe(html);
+        expect(Bun.markdown.html(prettierMdx)).not.toBe(html);
+        const files = { "a.md": before, "b.md": markdown, "a.mdx": before, "b.mdx": mdx };
+        const names = Object.keys(files);
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: names }),
+          format(files, ["--flavor=oxfmt"], { reads: names }),
+        ]);
+        expect(result.files).toEqual({ "a.md": markdown, "b.md": markdown, "a.mdx": mdx, "b.mdx": mdx });
+        expect(result.exitCode).toBe(0);
+        // That flavor writes a rule at the start of a file as `***`.
+        expect(names.map(name => Bun.markdown.html(asOxfmt.files[name]!))).toEqual(names.map(() => html));
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      test("three dashes are still front matter", async () => {
+        const texts = [
+          "---\na: 1\n---\n\nbody\n",
+          "---yaml\na: 1\n---\n\nbody\n",
+          "+++\na = 1\n+++\n\nbody\n",
+          "---\na: 1\n...\n\nbody\n",
+          "---\n---\n\nbody\n",
+          "---\na: |\n  ----\n---\n\nbody\n",
+        ];
+        const files = Object.fromEntries(texts.flatMap((text, i) => [`${i}.md`, `${i}.mdx`].map(name => [name, text])));
+        const result = await format({ ...files, "ugly.md": "---\na:   1\n---\n*body*\n" }, [], {
+          reads: [...Object.keys(files), "ugly.md"],
+        });
+        expect(result.files).toEqual({ ...files, "ugly.md": "---\na: 1\n---\n\n_body_\n" });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("an underlined MDX heading with several lines of text", () => {
+      // `## text` ends at the first line break, so the heading keeps its underline as long as its text has one.
+      // Prettier 3.9.9 reads all of these as a paragraph. It puts an empty line above `---`, which makes that a rule, and
+      // with `always` or `never` it pulls `===` up into the text.
+      // Each row has the formatted text, and the output with `--prose-wrap=always` or `never`.
+      const headings = [
+        [
+          "two lines above ---",
+          "Bun runs on Render.\nThis guide deploys a server.\n---\n",
+          "## Bun runs on Render. This guide deploys a server.\n",
+        ],
+        ["two lines above ===", "first line\nsecond line\n===\n", "# first line second line\n"],
+        ["three lines above ---", "one\ntwo\nthree\n---\n", "## one two three\n"],
+        ["three lines above ===", "one\ntwo\nthree\n===\n", "# one two three\n"],
+        ["emphasis across the lines", "_first\nsecond_\n===\n", "# _first second_\n"],
+        ["code across the lines", "`first\nsecond`\n---\n", "## `first second`\n"],
+        ["in a block quote", "> first\n> second\n> ---\n", "> ## first second\n"],
+        // A hard break stays a line break regardless of `proseWrap`.
+        ["a hard break with two spaces", "first  \nsecond\n---\n", "first  \nsecond\n---\n"],
+        ["a hard break with a backslash", "first\\\nsecond\n===\n", "first\\\nsecond\n===\n"],
+        ["a hard break and a plain line break", "first\\\nsecond\nthird\n---\n", "first\\\nsecond third\n---\n"],
+      ] as const;
+      const html = (text: string) => Bun.markdown.html(text).replace(/\s+/g, " ");
+
+      test.each(headings)("%s", async (_, text) => {
+        const files = { "a.mdx": text, "a.md": text };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual(files);
+        expect(result.exitCode).toBe(0);
+      });
+
+      test.each(headings.flatMap(row => (["always", "never"] as const).map(proseWrap => [proseWrap, ...row] as const)))(
+        "--prose-wrap=%s: %s",
+        async (proseWrap, _, text, joined) => {
+          expect(html(joined)).toBe(html(text));
+          const result = await format({ "a.mdx": text, "b.mdx": joined }, [`--prose-wrap=${proseWrap}`], {
+            reads: ["a.mdx", "b.mdx"],
+          });
+          expect(result.files).toEqual({ "a.mdx": joined, "b.mdx": joined });
+          expect(result.exitCode).toBe(0);
+        },
+      );
+
+      test("still formats the text and keeps the underline's length", async () => {
+        const files = { "a.mdx": "*first\nsecond*\n===\n", "b.mdx": "first   line\nsecond line\n-----\n" };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({
+          "a.mdx": "_first\nsecond_\n===\n",
+          "b.mdx": "first line\nsecond line\n-----\n",
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("text that ends up on one line gets ##", async () => {
+        // `2.` at the start of a line looks like a list, so that line is joined to the one above.
+        const files = { "a.mdx": "first\n2. second\n---\n", "b.mdx": "one line\n---\n" };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.mdx": "## first 2. second\n", "b.mdx": "## one line\n" });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("the fence of a code block", () => {
+      // Each row is the text, Bun's output and Prettier 3.9.9's output. A backtick fence can't have a backtick after it
+      // on its line, and it ends at the first line with as many backticks. Where Prettier writes one anyway, the code
+      // turns into prose and what follows it into code.
+      test.each([
+        [
+          "~~~js title=`a`\nlet a;\n~~~\n\nafter\n",
+          "~~~js title=`a`\nlet a;\n~~~\n\nafter\n",
+          "```js title=`a`\nlet a;\n```\n\nafter\n",
+        ],
+        ["~~~~~txt `\n~~~\n~~~~~\n", "~~~~txt `\n~~~\n~~~~\n", "```txt `\n~~~\n```\n"],
+        ["~~~txt `\n```\n~~~\n", "~~~txt `\n```\n~~~\n", "````txt `\n```\n````\n"],
+        // Prettier is right about these.
+        ["~~~txt\n```\na\n```\n~~~\n", "````txt\n```\na\n```\n````\n", null],
+        ["```txt\n~~~\na\n~~~\n```\n", "```txt\n~~~\na\n~~~\n```\n", null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        expect(Bun.markdown.html(after)).toBe(Bun.markdown.html(before));
+        const files = { "a.md": before, "b.md": after, "a.mdx": before, "b.mdx": after };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after, "a.mdx": after, "b.mdx": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("is longer than the fences that formatting the code puts in it", async () => {
+        // Prettier 3.9.9 counts the backticks in the code before it's formatted, and writes three.
+        const after = "````md\n```txt\na\n```\n````\n";
+        const files = { "a.md": "```md\n~~~txt\na\n~~~\n```\n", "b.md": after };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("spaces and tabs at the end of a line of code", () => {
+      // They're part of the code. Prettier 3.9.9 and oxfmt 0.72.0 remove them.
+      const blocks = {
+        "the empty context line of a patch": "```diff\n a\n \n-b\n+c\n```\n",
+        "a hard break that is shown": "```md\nline one  \nline two\n```\n",
+        "a tab": "```txt\nname\t\nvalue \t\n```\n",
+        "a fence without a language": "```\nabc  \n```\n",
+        "indented code": "    abc  \n    def\n",
+        "the last line of indented code": "    abc  \n\nafter\n",
+        "a whitespace-only line in indented code": "    abc\n      \n    def\n",
+        "in a list item": "- ```\n  abc  \n  ```\n",
+        "in a list item, next to an empty line": "- ```diff\n   a\n   \n\n  -b\n  ```\n",
+        "indented code in a list item": "- a\n\n      abc  \n\n- b\n",
+        "in a block quote": "> ```\n> abc  \n>\n> def\t\n> ```\n",
+      };
+      test.each(
+        Object.entries(blocks).flatMap(([title, text]) =>
+          [[], ["--embedded-language-formatting=off"], ["--flavor=oxfmt"]].map(args => [title, args, text] as const),
+        ),
+      )("%s %j", async (_, args, text) => {
+        const files = { "a.md": text, "a.mdx": text };
+        const result = await format(files, [...args], { reads: Object.keys(files) });
+        expect(result.files).toEqual(files);
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("the rest of the file is still formatted", async () => {
+        const before = "#   a\n\n```txt\nb  \n```\n*   c\n\n        d  \n";
+        const after = "# a\n\n```txt\nb  \n```\n\n- c\n\n      d  \n";
+        expect(Bun.markdown.html(after)).toBe(Bun.markdown.html(before));
+        const result = await format({ "a.md": before, "a.mdx": before }, [], { reads: ["a.md", "a.mdx"] });
+        expect(result.files).toEqual({ "a.md": after, "a.mdx": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      describe("indented code in a template", () => {
+        const template = (title: string, code: string[], item: string) =>
+          [
+            "const a = markdown`",
+            `  ${title}`,
+            "",
+            ...code.map(line => `      ${line}`),
+            "",
+            `  ${item}`,
+            "`;",
+            "",
+          ].join("\n");
+
+        test.each([
+          ["none", ["abc", "def"]],
+          ["before the last line", ["abc  ", "def"]],
+        ])("%s: the template is formatted", async (_, code) => {
+          const result = await format({ "a.js": template("#  a", code, "*  b") }, [], { reads: ["a.js"] });
+          expect(result.files).toEqual({ "a.js": template("# a", code, "- b") });
+          expect(result.exitCode).toBe(0);
+        });
+
+        test("at the end of the last line: the template is left unformatted", async () => {
+          const text = template("#  a", ["abc", "def \t"], "*  b");
+          const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
+          expect(result.files).toEqual({ "a.js": text });
+          expect(result.exitCode).toBe(0);
+        });
+      });
+
+      describe("before an empty line of the code, in a template", () => {
+        const indented = (by: string, lines: string[]) => lines.map(line => line && by + line);
+        /** The tag and the lines of a template with the heading `title` and a block of `code`. */
+        const shapes: Record<string, (title: string, code: string[]) => [string, string[]]> = {
+          "indented": (title, code) => ["markdown", [`  ${title}`, "", ...indented("      ", code), "", "  - b"]],
+          "tag-md": (title, code) => ["md", [`  ${title}`, "", ...indented("      ", code), "", "  - b"]],
+          "column-0": (title, code) => ["markdown", [title, "", ...indented("    ", code), "", "- b"]],
+          "in-a-list-item": (title, code) => [
+            "markdown",
+            [`  ${title}`, "", "  - b", "", ...indented("        ", code)],
+          ],
+          "at-the-end": (title, code) => ["markdown", [`  ${title}`, "", ...indented("      ", code)]],
+          "fenced": (title, code) => [
+            "markdown",
+            [`  ${title}`, "", "  ~~~txt", ...indented("  ", code), "  ~~~", "", "  - b"],
+          ],
+          "fenced-column-0": (title, code) => ["markdown", [title, "", "~~~txt", ...code, "~~~"]],
+          "fenced-in-a-list-item": (title, code) => [
+            "markdown",
+            [`  ${title}`, "", "  - ~~~txt", ...indented("    ", code), "    ~~~"],
+          ],
+        };
+        const blanks = { "two-blanks": "  ", "one-blank": " ", "tab": "\t" };
+        /** Every shape, with each kind of trailing whitespace and with one and two empty lines. */
+        const templates = (title: string) =>
+          Object.fromEntries(
+            Object.entries(shapes).flatMap(([shape, make]) =>
+              Object.entries(blanks).flatMap(([kind, blank]) =>
+                [[""], ["", ""]].map(empty => {
+                  const [tag, lines] = make(title, [`abc${blank}`, ...empty, "def"]);
+                  return [`${shape}-${kind}-${empty.length}.js`, [`const a = ${tag}\``, ...lines, "`;", ""].join("\n")];
+                }),
+              ),
+            ),
+          );
+
+        // Prettier 3.9.9 prints each of these the same way, except for the trailing whitespace.
+        test("keeps the empty lines, and a second run changes nothing", async () => {
+          const [before, after] = [templates("#  a"), templates("# a")];
+          const reads = Object.keys(before);
+          const first = await format(before, [], { reads });
+          expect(first.files).toEqual(after);
+          const second = await format(after, [], { reads });
+          expect(second.files).toEqual(after);
+          expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
+        });
+      });
+    });
+
+    /** The rendered HTML, with every run of whitespace collapsed to one space. */
+    const rendered = (text: string) => Bun.markdown.html(text).replace(/\s+/g, " ");
+
+    describe("stars next to a space in MDX", () => {
+      // Each row is the text, Bun's output and Prettier 3.9.9's output. Prettier's MDX parser pairs up any two stars,
+      // so a product turns into emphasis, and real emphasis further on loses its partner. A star that's text is written
+      // `\*` in MDX, which is also what Prettier does when there's only one.
+      test.each([
+        [
+          "The volume is width * height * depth.\n",
+          "The volume is width \\* height \\* depth.\n",
+          "The volume is width _ height _ depth.\n",
+        ],
+        ["2 * 3 * 4 = 24\n", "2 \\* 3 \\* 4 = 24\n", "2 _ 3 _ 4 = 24\n"],
+        ["- a * b * c\n", "- a \\* b \\* c\n", "- a _ b _ c\n"],
+        ["# a * b * c\n", "# a \\* b \\* c\n", "# a _ b _ c\n"],
+        [
+          "| a * b * c |\n| --------- |\n| 1 * 2 * 3 |\n",
+          "| a \\* b \\* c |\n| ----------- |\n| 1 \\* 2 \\* 3 |\n",
+          "| a _ b _ c |\n| --------- |\n| 1 _ 2 _ 3 |\n",
+        ],
+        ["a *b * c\n", "a \\*b \\* c\n", "a _b _ c\n"],
+        ["a * b* c\n", "a \\* b\\* c\n", "a _ b_ c\n"],
+        ["/* d */\n", "/\\* d \\*/\n", "/_ d _/\n"],
+        [
+          "width * height is *important*.\n",
+          "width \\* height is _important_.\n",
+          "width * height is *important\\*.\n",
+        ],
+        ["a ** b **c** d\n", "a \\*\\* b **c** d\n", "a ** b **c\\*\\* d\n"],
+        // Prettier is right about these.
+        ["a * b\n", "a \\* b\n", null],
+        ["a *b* c\n", "a _b_ c\n", null],
+        ["e**.** f\n", "e**.** f\n", null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        expect(rendered(after)).toBe(rendered(before));
+        const result = await format({ "a.mdx": before, "b.mdx": after }, [], { reads: ["a.mdx", "b.mdx"] });
+        expect(result.files).toEqual({ "a.mdx": after, "b.mdx": after });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("a line that is text only because it's indented by four or more", () => {
+      // Each row is the text, Bun's output and Prettier 3.9.9's output. Prettier removes the indentation, so the line
+      // starts a code block, a rule, HTML or a table. Bun joins it to the line above, as both do with `- x`. After a
+      // hard break it keeps four spaces.
+      test.each([
+        [
+          "Run this:\n     ```\nthen read on.\n\nThe rest of the page.\n",
+          "Run this: ```\nthen read on.\n\nThe rest of the page.\n",
+          "Run this:\n```\nthen read on.\n\nThe rest of the page.\n",
+        ],
+        ["text\n     ~~~\nmore\n", "text ~~~\nmore\n", "text\n~~~\nmore\n"],
+        ["text\n     ***\n", "text ***\n", "text\n***\n"],
+        ["text\n     ___\n", "text ___\n", "text\n___\n"],
+        ["text\n     <div>\nmore\n", "text <div>\nmore\n", "text\n<div>\nmore\n"],
+        ["text\n     <!-- c -->\nmore\n", "text <!-- c -->\nmore\n", "text\n<!-- c -->\nmore\n"],
+        [
+          "| a | b |\n     | - | - |\n| c | d |\n",
+          "| a | b | | - | - |\n| c | d |\n",
+          "| a | b |\n| - | - |\n| c | d |\n",
+        ],
+        ["> quote\n    ```\n    x\n", "> quote ```\n> x\n", "> quote\n> ```\n> x\n"],
+        ["text  \n     ```\nmore\n", "text  \n    ```\nmore\n", "text  \n```\nmore\n"],
+        ["text\\\n     ***\n", "text\\\n    ***\n", "text\\\n***\n"],
+        // Prettier is right about these.
+        ["text\n     - x\n", "text - x\n", null],
+        ["text\n     ===\n", "text\n\\===\n", null],
+        ["text\n     <span>\nmore\n", "text\n<span>\nmore\n", null],
+        ["text\n     ```a```\n", "text\n`a`\n", null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        expect(rendered(after)).toBe(rendered(before));
+        const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("a star left over from a longer run", () => {
+      // Each row is the text, Bun's output and Prettier 3.9.9's output. The first and the last star are text, because a
+      // run of two and a run of one can't pair. With `_a_` in between, the first is a run of one, and they can.
+      test.each([
+        ["**a*(*) x\n", "**a*(*) x\n", "_*a*(_) x\n"],
+        ["**a*{{*: x\n", "**a*{{*: x\n", "_*a*{{_: x\n"],
+        ["*a**(*) x\n", "*a**(*) x\n", "_a_*(*) x\n"],
+        // Nothing here for the star to pair with, and Prettier is right.
+        ["**a* b\n", "*_a_ b\n", null],
+        ["**a* b * c\n", "*_a_ b * c\n", null],
+        ["****a*\n", "***_a_\n", null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        expect(rendered(after)).toBe(rendered(before));
+        const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("--prose-wrap=always doesn't start a line with a word that would be markup there", () => {
+      const words = (count: number) => Array.from({ length: count }, () => "word").join(" ");
+      const url = "https://example.com/" + Buffer.alloc(70, "x").toString();
+      // Each row is the width, the text, Bun's output and Prettier 3.9.9's output, which has a heading, a rule, a code
+      // block or HTML.
+      const rows = [
+        [80, `${words(16)} = ${url}\n`, `${words(15)}\nword =\n${url}\n`, `${words(16)}\n=\n${url}\n`],
+        [80, `${words(16)} -- ${url}\n`, `${words(15)}\nword --\n${url}\n`, `${words(16)}\n--\n${url}\n`],
+        [13, "a is the the word a word ===\n", "a is the the\nword a\nword ===\n", "a is the the\nword a word\n===\n"],
+        [22, "x is is a is x is this ___\n", "x is is a is x is\nthis ___\n", "x is is a is x is this\n___\n"],
+        [
+          21,
+          "word a x the x then x ```\n\nnext paragraph\n",
+          "word a x the x then\nx ```\n\nnext paragraph\n",
+          "word a x the x then x\n```\n\nnext paragraph\n",
+        ],
+        [21, "word a x the x then x <div>\n", "word a x the x then\nx <div>\n", "word a x the x then x\n<div>\n"],
+        // With something after it on its line it's only a word, and Prettier is right.
+        [13, "aaaa bbbb ccc = dd\n", "aaaa bbbb ccc\n= dd\n", null],
+        [13, "aaaa bbbb ccc -- dd\n", "aaaa bbbb ccc\n-- dd\n", null],
+      ] as const;
+
+      test.each(rows)("at %d columns: %j", async (width, before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        expect(rendered(after)).toBe(rendered(before));
+        const args = ["--prose-wrap=always", `--print-width=${width}`];
+        const result = await format({ "a.md": before, "b.md": after }, args, { reads: ["a.md", "b.md"] });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test.each(rows)("with --flavor=oxfmt at %d columns: %j", async (width, before) => {
+        const args = ["--flavor=oxfmt", "--prose-wrap=always", `--print-width=${width}`];
+        const once = await format({ "a.md": before }, args, { reads: ["a.md"] });
+        const written = once.files["a.md"]!;
+        expect(rendered(written)).toBe(rendered(before));
+        expect(await different({ "a.md": written }, args)).toEqual([]);
+      });
     });
   });
 
-  test("a folded scalar of YAML that keeps its line breaks has as many with --prose-wrap=never", async () => {
+  test("--prose-wrap=never doesn't add a line break to a YAML folded scalar that keeps its line breaks", async () => {
     // Prettier 3.9.9 prints `k: >+\n  a\n  \n  \n\nl: m\n`, which has one more.
     const result = await format({ "a.yaml": "k: >+\n  a\n\n\nl:   m\n" }, ["--prose-wrap=never"], {
       reads: ["a.yaml"],
@@ -1728,10 +2473,10 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  describe("an escaped blank at the end of the parameters of an at-rule", () => {
-    // Prettier 3.9.9 prints `@extend .a\\;`: the backslash escapes the `;`.
+  describe("an escaped space at the end of an at-rule's parameters", () => {
+    // Prettier 3.9.9 prints `@extend .a\;`, where the backslash escapes the `;`.
     const names = ["extend", "include", "media", "supports", "container", "layer", "import", "custom"];
-    test.each(["a.css", "a.scss", "a.less"])("%s", async file => {
+    test.each(["a.css", "a.scss", "a.less"])("is kept in %s", async file => {
       const before = names.map(name => `x{@${name}   .a\\ ;}\n@${name} .a\\ ;\n`).join("") + "@last .a\\ ";
       const after = names.map(name => `x {\n  @${name} .a\\ ;\n}\n@${name} .a\\ ;\n`).join("") + "@last .a\\ ;\n";
       const result = await format({ [file]: before }, [], { reads: [file] });
@@ -1740,8 +2485,8 @@ describe.concurrent("bun fmt", () => {
       expect(await different({ [file]: after }, [])).toEqual([]);
     });
 
-    test("before a parenthesis, and not twice where Prettier has one", async () => {
-      // Prettier 3.9.9 prints `@media (a\\) {`. What it prints for the second is right.
+    test("is kept before a parenthesis, and isn't doubled where Prettier already keeps it", async () => {
+      // Prettier 3.9.9 prints `@media (a\\) {`. Its output for the second rule is right.
       const files = { "a.scss": "@media (a\\ ){b{c:d}}\n@each   .a\\ ;\n" };
       const result = await format(files, [], { reads: ["a.scss"] });
       expect(result.files).toEqual({ "a.scss": "@media (a\\ ) {\n  b {\n    c: d;\n  }\n}\n@each .a\\ ;\n" });
@@ -1750,12 +2495,12 @@ describe.concurrent("bun fmt", () => {
   });
 
   describe("a selector without a namespace", () => {
-    // The selector, what Bun makes of it, and what Prettier 3.9.9 makes of it.
+    // Each row is the selector, Bun's output and Prettier 3.9.9's output.
     test.each([
       ["x |b", "x |b", "x|b"],
       ["x,|b,y", "x,\n|b,\ny", "x,\n,|b,\ny"],
-    ])("%j", async (before, after, ofPrettier) => {
-      expect(after).not.toBe(ofPrettier);
+    ])("%j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
       const written = `${after} {\n  c: d;\n}\n`;
       const result = await format({ "a.css": `${before}{c:d}\n`, "b.css": written }, [], { reads: ["a.css", "b.css"] });
       expect(result.files).toEqual({ "a.css": written, "b.css": written });
@@ -1763,11 +2508,12 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  describe("a backslash in a value of a style sheet", () => {
-    // The value, what Bun makes of it, and what Prettier 3.9.9 makes of it: it writes nothing behind a word with a backslash.
+  describe("a backslash in a CSS value", () => {
+    // Each row is the value, Bun's output and Prettier 3.9.9's output. Prettier drops the whitespace after a word with
+    // a backslash.
     test.each([
       ["Font\\ Awesome\\ 5", "Font\\ Awesome\\ 5", "Font\\Awesome\\5"],
-      ["a\\b   c", "a\\b c", "a\\bc"],
+      ["a\\g   c", "a\\g c", "a\\gc"],
       ["d\\  e", "d\\  e", "d\\e"],
       ["d\\ -5", "d\\ -5", "d\\-5"],
       ["d\\ ", "d\\ ", "d\\"],
@@ -1775,12 +2521,17 @@ describe.concurrent("bun fmt", () => {
       ["f(b a\\ )", "f(b a\\ )", "f(b a\\)"],
       ["f(a\\ , b)", "f(a\\ , b)", "f(a\\, b)"],
       ["a\\ , b", "a\\ , b", "a\\, b"],
-      // What the backslash escapes here is no blank, and Prettier is right.
+      // The backslash doesn't escape a space here, and Prettier is right.
       ["\\@a   1\\/3", "\\@a 1\\/3", null],
       ["d\\\\   e", "d\\\\ e", "d\\\\e"],
-      ["x d\\e   f g", "x d\\e f g", "x d\\ef g"],
-    ])("%j", async (before, after, ofPrettier) => {
-      expect(after).not.toBe(ofPrettier);
+      ["x d\\h   f g", "x d\\h f g", "x d\\hf g"],
+      // `\b` and `\e` are hexadecimal escapes, and the first space after one is part of it. With one space it's one
+      // word.
+      ["a\\b   c", "a\\b  c", "a\\bc"],
+      ["x d\\e   f g", "x d\\e  f g", "x d\\ef g"],
+      ["a\\b c", "a\\b c", "a\\bc"],
+    ])("%j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
       const files = Object.fromEntries(["a.css", "b.scss", "c.less"].map(name => [name, `a{b:${before}}\n`]));
       const result = await format(files, [], { reads: Object.keys(files) });
       const written = `a {\n  b: ${after};\n}\n`;
@@ -1790,9 +2541,9 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  describe("YAML of which Prettier changes a value", () => {
-    // The text, what Bun makes of it, and what Prettier 3.9.9 makes of it: a key with one line break more, a scalar that has
-    // become a marker, a byte order mark that was the start of a key, and a key that cannot be read.
+  describe("YAML whose values Prettier changes", () => {
+    // Each row is the text, Bun's output and Prettier 3.9.9's output, which has a key with an extra line break, a
+    // scalar that became a marker, a byte order mark that was the start of a key, or a key that can't be parsed.
     test.each([
       ["? |+\n  a\n\n:   m\n", "? |+\n  a\n\n: m\n", "? |+\n  a\n\n\n: m\n"],
       ["k:   l\n? >+\n  a\n\n", "k: l\n? >+\n  a\n\n", "k: l\n? >+\n  a\n\n\n"],
@@ -1800,17 +2551,174 @@ describe.concurrent("bun fmt", () => {
       ["---   ... x\n", "--- ... x\n", "---\n... x\n"],
       ["? \ufeffa\n:   m\n", "? \ufeffa\n: m\n", "\ufeffa: m\n"],
       ["? {a\n  b: c}\n:   m\n", "? { ? a\n      b\n    : c }\n: m\n", "{ ? a\n      b\n    : c }: m\n"],
-    ])("%j", async (before, after, ofPrettier) => {
-      expect(after).not.toBe(ofPrettier);
+      // Spaces and tabs at the end of a block scalar's last line are part of the string. Prettier drops them.
+      [
+        "prompt:   |-\n  Question: {q}\n  Answer: \n",
+        "prompt: |-\n  Question: {q}\n  Answer: \n",
+        "prompt: |-\n  Question: {q}\n  Answer:\n",
+      ],
+      [
+        "text:   |\n  one\n  two  \nnext: 1\n",
+        "text: |\n  one\n  two  \nnext: 1\n",
+        "text: |\n  one\n  two\nnext: 1\n",
+      ],
+      ["text:   >\n  one\n  two  \n", "text: >\n  one\n  two  \n", "text: >\n  one\n  two\n"],
+      ["text:   |\n  one\t\n", "text: |\n  one\t\n", "text: |\n  one\n"],
+      ["-   |\n  x \n- y\n", "- |\n  x \n- y\n", "- |\n  x\n- y\n"],
+      ["a:   |+\n  x \nb: 1\n", "a: |+\n  x \nb: 1\n", "a: |+\n  x\nb: 1\n"],
+      ["?   |\n  a \n: m\n", "? |\n  a \n: m\n", "? |\n  a\n: m\n"],
+      [
+        "text:   |\r\n  one\r\n  two  \r\nnext: 1\r\n",
+        "text: |\n  one\n  two  \nnext: 1\n",
+        "text: |\n  one\n  two\nnext: 1\n",
+      ],
+      // So is a last line that has nothing but spaces past the indentation.
+      ["a:   |\n  x\n      \n", "a: |\n  x\n      \n", "a: |\n  x\n"],
+      ["a:   |\n  x\n      \nb: 1\n", "a: |\n  x\n      \nb: 1\n", "a: |\n  x\n\nb: 1\n"],
+      ["--- >-\n ab\n \n  \n...\n", "---\n>-\n  ab\n\n   \n...\n", "---\n>-\n  ab\n...\n"],
+      // An indentation indicator counts from the key or the `-`. Prettier leaves the lines where they are when that moves.
+      ["a:\n- |2\n    x\n  yz\n", "a:\n  - |2\n      x\n    yz\n", "a:\n  - |2\n    x\n   z\n"],
+      ["a:\n- b: >1-\n    x\n   yz\n", "a:\n  - b: >1-\n      x\n     yz\n", "a:\n  - b: >1-\n    x\n   yz\n"],
+      [
+        "a:\n    b: |2\n          x\n      y\n",
+        "a:\n  b: |2\n        x\n    y\n",
+        "a:\n  b: |2\n          x\n      y\n",
+      ],
+      ["  a: |1\n    x\n   y\n", "a: |1\n  x\n y\n", "a: |1\n    x\n   y\n"],
+      ["-   - |1\n       x\n      y\n", "- - |1\n     x\n    y\n", "- - |1\n       x\n      y\n"],
+    ])("%j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
       expect(Bun.YAML.parse(after)).toEqual(Bun.YAML.parse(before));
       const result = await format({ "a.yaml": before, "b.yaml": after }, [], { reads: ["a.yaml", "b.yaml"] });
       expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });
       expect(result.exitCode).toBe(0);
+      const checked = await format({ "a.yaml": before }, ["--debug-check"]);
+      expect(checked.stderr).toBe("");
+      expect(checked.exitCode).toBe(0);
+    });
+
+    test.each(["always", "never"])(
+      "--prose-wrap=%s keeps the spaces at the end of a folded scalar",
+      async proseWrap => {
+        // Prettier 3.9.9 prints `text: >\n  one two\n`.
+        const files = { "a.yaml": "text: >\n  one\n  two  \n" };
+        const result = await format(files, [`--prose-wrap=${proseWrap}`], { reads: ["a.yaml"] });
+        expect(result.files).toEqual({ "a.yaml": "text: >\n  one two  \n" });
+        expect(result.exitCode).toBe(0);
+      },
+    );
+
+    test("--debug-check reports a scalar that would change", async () => {
+      // With no indentation, as in Prettier, the text of the scalar becomes the next key: `a: >\nb: c\n`.
+      const files = { "a.yaml": "a: >\n  b: c\n", "b.yaml": "a:   b\n" };
+      const result = await format(files, ["--debug-check", "--tab-width=0"], { reads: ["a.yaml", "b.yaml"] });
+      expect(result.files).toEqual(files);
+      expect(result.stderr).toBe(problem("a.yaml", "Not formatted, because formatting would change its contents"));
+      expect(result.stdout).toBe("b.yaml");
+      expect(result.exitCode).toBe(2);
+    });
+
+    describe.each([
+      ["before another key", "next: 1\n"],
+      ["at the end", ""],
+    ])("embedded in another file, %s", (_, rest) => {
+      // Prettier 3.9.9 prints `  Answer:` in all of them.
+      const before = "prompt:   |-\n  Question: {q}\n  Answer: \n" + rest;
+      const after = "prompt: |-\n  Question: {q}\n  Answer: \n" + rest;
+      test.each([
+        ["a.md", (yaml: string) => `---\n${yaml}---\n\n# a\n`],
+        ["a.mdx", (yaml: string) => `---\n${yaml}---\n\n# a\n`],
+        ["a.css", (yaml: string) => `---\n${yaml}---\n\na {\n  b: c;\n}\n`],
+        ["a.html", (yaml: string) => `---\n${yaml}---\n\n<p>c</p>\n`],
+        ["a.hbs", (yaml: string) => `---\n${yaml}---\n\n<p>c</p>`],
+        ["fence.md", (yaml: string) => "```yaml\n" + yaml + "```\n"],
+        ["fence-in-a-list.md", (yaml: string) => "- a\n\n  ```yaml\n" + yaml.replace(/^/gm, "  ") + "```\n"],
+      ])("%s", async (name, around) => {
+        const result = await format({ [name]: around(before) }, [], { reads: [name] });
+        expect(result.files).toEqual({ [name]: around(after) });
+        expect(result.exitCode).toBe(0);
+        expect(await different({ [name]: around(after) }, [])).toEqual([]);
+      });
     });
   });
 
+  describe("GraphQL whose values Prettier changes", () => {
+    const Q = '"""';
+    const type = "\ntype A {\n  b: C\n}\n";
+    const argument = (...lines: string[]) => `{\n  a(\n    ${lines.join("\n    ")}\n  )\n}\n`;
+    /** The specification's `BlockStringValue` for each block string in `text`. */
+    const values = (text: string) =>
+      Array.from(text.matchAll(/"""([^]*?)"""/g), ([, raw]) => {
+        const lines = raw.split("\n");
+        const indents = lines.slice(1).flatMap(line => (line.trim() ? [line.search(/[^ \t]/)] : []));
+        const dedented = lines.map((line, index) => (index ? line.slice(Math.min(...indents)) : line));
+        while (dedented.length && !dedented[0].trim()) dedented.shift();
+        while (dedented.length && !dedented.at(-1)!.trim()) dedented.pop();
+        return dedented.join("\n");
+      });
+
+    // Spaces and tabs at the end of a line in a block string are part of its value, and so are those at the start of
+    // the first line. Each row is the text, Bun's output (null if unchanged) and Prettier 3.9.9's output, which drops
+    // them. In the last row, Prettier puts a comment in the string.
+    test.each([
+      [`${Q}\nFirst line  \nsecond line\n${Q}${type}`, null, `${Q}\nFirst line\nsecond line\n${Q}${type}`],
+      [`${Q}\na  \n\n\nb\t\n\nc\n${Q}${type}`, null, `${Q}\na\n\n\nb\n\nc\n${Q}${type}`],
+      [`${Q}\na\n   \nb\n${Q}${type}`, null, `${Q}\na\n\nb\n${Q}${type}`],
+      [`${Q} Customer ${Q}${type}`, null, `${Q}\nCustomer\n${Q}${type}`],
+      [`{\n  a(b: ${Q}Answer: ${Q})\n}\n`, null, argument(`b: ${Q}`, "Answer:", Q)],
+      [`{\n  a(b: ${Q} d${Q})\n}\n`, null, argument(`b: ${Q}`, "d", Q)],
+      [`{\n  a(b: ${Q} d\n  ${Q})\n}\n`, argument(`b: ${Q} d`, Q), argument(`b: ${Q}`, "d", Q)],
+      [`{\n  a(b: ${Q}c  \nd${Q})\n}\n`, argument(`b: ${Q}`, "c  ", "d", Q), argument(`b: ${Q}`, "c", "d", Q)],
+      [`{\n  a(b # why\n  : ${Q}x${Q})\n}\n`, argument("b:  # why", Q, "x", Q), argument(`b: ${Q} # why`, "x", Q)],
+    ])("%j", async (before, changed, byPrettier) => {
+      const after = changed ?? before;
+      expect(values(after)).toEqual(values(before));
+      expect(values(byPrettier)).not.toEqual(values(before));
+      const files = { "a.graphql": before, "b.graphql": after };
+      const result = await format(files, [], { reads: ["a.graphql", "b.graphql"] });
+      expect(result.files).toEqual({ "a.graphql": after, "b.graphql": after });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // `Bun.YAML.parse` skips the space and reads `|2`, `>2`, `|-` and `|2-`. Prettier 3.9.9 and oxfmt 0.72 reject these
+  // too.
+  test.each([
+    ["a: | 2\n    four\n  abcdefgh\n", 6],
+    ["a: >  2\n    four\n  abcdefgh\n", 7],
+    ["- | -\n  four\n", 5],
+    ["a: |2 -\n    four\n  abcdefgh\n", 7],
+    ["a: | 2 # comment\n    four\n  abcdefgh\n", 6],
+  ])("a space inside the header of a YAML block scalar is a syntax error: %j", async (text, column) => {
+    const configs: Record<string, string>[] = [{}, { ".oxfmtrc.json": "{}\n" }];
+    const results = await Promise.all(
+      configs.map(config => format({ ...config, "a.yaml": text }, ["a.yaml"], { reads: ["a.yaml"] })),
+    );
+    for (const result of results) {
+      expect(result.files).toEqual({ "a.yaml": text });
+      expect(result.stderr).toStartWith(problem("a.yaml", "Unexpected character", [1, column, text.split("\n")[0]]));
+      expect(result.exitCode).toBe(2);
+    }
+  });
+
+  // This is what Prettier 3.9.9 prints.
+  test.each([
+    ["  a: 1\n  # x\n# y\n", "a: 1\n# x\n# y\n"],
+    ["  - a\n  # x\n# y\n# z\n", "- a\n# x\n# y\n# z\n"],
+    ["---\n  a: 1\n  # x\n# y\n---\nb: 2\n", "---\na: 1\n# x\n# y\n---\nb: 2\n"],
+    ["  a: 1\n # x\n# y\n", "a: 1\n# x\n# y\n"],
+    ["  a: 1\n  # x\n\n# y\n", "a: 1\n# x\n\n# y\n"],
+    ["  a: 1\n\n  # x\n# y\n", "a: 1\n\n# x\n# y\n"],
+    ["  a: 1\n   # w\n  # x\n# y\n", "a:\n  1\n  # w\n# x\n# y\n"],
+  ])("comments after indented top-level YAML stay in order: %j", async (before, after) => {
+    const result = await format({ "a.yaml": before, "b.yaml": after }, [], { reads: ["a.yaml", "b.yaml"] });
+    expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });
+    expect(result.exitCode).toBe(0);
+  });
+
   describe("front matter that would end early", () => {
-    // Prettier 3.9.9 formats the YAML, which puts the second `---` at the start of its line: there the front matter ends.
+    // Prettier 3.9.9 formats the YAML, which puts the second `---` at the start of its line, where it ends the front
+    // matter.
     const frontMatter = "---\n ---\na: b\n---\n";
     test.each([
       ["a.md", "\n#   c\n", "\n# c\n"],
@@ -1818,7 +2726,7 @@ describe.concurrent("bun fmt", () => {
       ["a.css", "a{b:c}\n", "\na {\n  b: c;\n}\n"],
       ["a.scss", "a{b:c}\n", "\na {\n  b: c;\n}\n"],
       ["a.html", "<p   >c</p>\n", "\n<p>c</p>\n"],
-    ])("%s", async (name, before, after) => {
+    ])("is left as written in %s", async (name, before, after) => {
       const result = await format({ [name]: frontMatter + before }, [], { reads: [name] });
       expect(result.files).toEqual({ [name]: frontMatter + after });
       expect(result.exitCode).toBe(0);
@@ -1826,7 +2734,7 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  test("HTML, Vue, Angular templates, MJML", async () => {
+  test("formats HTML, Vue, Angular templates and MJML", async () => {
     const files = {
       "a.html": '<div   class="b  a"><p>c</p><script>let d=1</script><style>e{f:g}</style></div>\n',
       "b.vue":
@@ -1847,9 +2755,10 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  describe("the options that HTML and Vue read, from wherever they are set", () => {
+  describe("the options that HTML and Vue use, from every source", () => {
     const long = Buffer.alloc(40, "j").toString();
-    // The option, its value, the flag, a file that is formatted without it, and the same with it.
+    // Each row is the option, its value, the flag, a file that's formatted without the option, and the same file
+    // formatted with it.
     const options = [
       [
         "vueIndentScriptAndStyle",
@@ -1905,8 +2814,8 @@ describe.concurrent("bun fmt", () => {
       "%s: %s",
       async (source, name, value, flag, without, withIt) => {
         const [files, args] = sources[source](name, value, flag);
-        // What is formatted with the option is not without it. The other way round too, except that nothing is wrong with
-        // formatted code that is left alone, or with no white space where it would count.
+        // A file that's formatted with the option isn't formatted without it. The reverse also holds, except that
+        // formatted code that's left alone is fine, and so is having no whitespace where it would be significant.
         const result = await format({ ...files, "a.vue": withIt, "b.vue": without }, [...args, "-l", "a.vue", "b.vue"]);
         const isOneWay = name === "embeddedLanguageFormatting" || name === "htmlWhitespaceSensitivity";
         const isForBoth = !source.startsWith("overrides") && !isOneWay;
@@ -1914,12 +2823,12 @@ describe.concurrent("bun fmt", () => {
       },
     );
 
-    // What is formatted with it is formatted without it too, so this is about what is not.
+    // A file that's formatted with it is also formatted without it, so this uses an unformatted file.
     test.each(Object.keys(sources))("%s: proseWrap", async source => {
       const [files, args] = sources[source]("proseWrap", "never", "--prose-wrap=never");
       const rename = (text: string) => text.replaceAll("a.vue", "a.md");
-      const named = Object.fromEntries(Object.entries(files).map(([name, text]) => [name, rename(text)]));
-      const result = await format({ ...named, "a.md": "a\nb\n" }, [...args, "-l", "a.md"]);
+      const renamed = Object.fromEntries(Object.entries(files).map(([name, text]) => [name, rename(text)]));
+      const result = await format({ ...renamed, "a.md": "a\nb\n" }, [...args, "-l", "a.md"]);
       expect(result.stdout.split("\n").filter(Boolean)).toEqual(["a.md"]);
       expect((await format({ "a.md": "a\nb\n" }, ["-l", "a.md"])).stdout).toBe("");
     });
@@ -1930,7 +2839,7 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  test("HTML with a syntax error is reported", async () => {
+  test("reports a syntax error in HTML", async () => {
     const result = await format({ "a.html": "<div></span>\n", "b.html": "<p   >a</p>\n" }, [], {
       reads: ["a.html", "b.html"],
     });
@@ -1940,7 +2849,7 @@ describe.concurrent("bun fmt", () => {
   });
 
   describe("a <pre> with an element in it and no end tag", () => {
-    // The text, what Bun makes of it, and what Prettier 3.9.9 makes of it: all that follows the start tag is lost.
+    // Each row is the text, Bun's output and Prettier 3.9.9's output, which loses everything after the start tag.
     test.each([
       ["<pre   ><b>a</b>\n", "<pre><b>a</b>\n", "<pre>>\n"],
       ["<pre   >a<b>c\n", "<pre>a<b>c\n", "<pre>>\n"],
@@ -1950,8 +2859,8 @@ describe.concurrent("bun fmt", () => {
         '<p>x</p>\n<pre class="y">>\n',
       ],
       ["<listing   ><b>a\n", "<listing><b>a\n", "<listing>>\n"],
-    ])("%j", async (before, after, ofPrettier) => {
-      expect(after).not.toBe(ofPrettier);
+    ])("%j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
       const result = await format({ "a.html": before, "b.html": after }, [], { reads: ["a.html", "b.html"] });
       expect(result.files).toEqual({ "a.html": after, "b.html": after });
       expect(result.exitCode).toBe(0);
@@ -1961,20 +2870,480 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  describe("a style sheet of which Prettier changes a letter", () => {
-    // Prettier 3.9.9 writes a media query in lower case, which makes a `k` of the Kelvin sign: `@media (ka)`. To CSS only
-    // the letters of ASCII are the same in both cases.
+  describe("an unquoted attribute value", () => {
+    /** The elements of `html` with their attributes, as a browser parses them. */
+    const elements = async (html: string) => {
+      const all: unknown[] = [];
+      const rewriter = new HTMLRewriter().on("*", {
+        element(element) {
+          all.push([element.tagName, ...element.attributes]);
+        },
+      });
+      await rewriter.transform(new Response(html)).text();
+      return all;
+    };
+
+    // In HTML it ends at whitespace or `>`, whatever else is in it. Each row is the text, Bun's output and Prettier
+    // 3.9.9's output, where the value ends at the first `=`, `/` or no-break space. `null` means Prettier rejects the
+    // file.
+    test.each([
+      [
+        "<meta name=viewport content=width=device-width,initial-scale=1>\n",
+        '<meta name="viewport" content="width=device-width,initial-scale=1" />\n',
+        '<meta name="viewport" content="width" ="device-width,initial-scale" ="1" />\n',
+      ],
+      ["<img src=a.png?v=1>\n", '<img src="a.png?v=1" />\n', '<img src="a.png?v" ="1" />\n'],
+      [
+        "<script src=a.js?v=2></script>\n",
+        '<script src="a.js?v=2"></script>\n',
+        '<script src="a.js?v" ="2"></script>\n',
+      ],
+      [
+        "<a href=?page=2&sort=name>next</a>\n",
+        '<a href="?page=2&sort=name">next</a>\n',
+        '<a href="?page" ="2&sort" ="name">next</a>\n',
+      ],
+      ["<p class=a=b id=c>x</p>\n", '<p class="a=b" id="c">x</p>\n', '<p class="a" ="b" id="c">x</p>\n'],
+      ["<input value=a/>\n", '<input value="a/" />\n', '<input value="a" />\n'],
+      ["<p title=a\u00a0b>x</p>\n", '<p title="a\u00a0b">x</p>\n', '<p title="a" b>x</p>\n'],
+      ["<a href=/x?a=1>x</a>\n", '<a href="/x?a=1">x</a>\n', null],
+      [
+        "<link href=https://fonts.googleapis.com/css?family=Roboto rel=stylesheet>\n",
+        '<link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet" />\n',
+        null,
+      ],
+      ["<a href=a/>x</a>\n", '<a href="a/">x</a>\n', null],
+      ['<p title=a"b>x</p>\n', "<p title='a\"b'>x</p>\n", null],
+      ["<p title=a'b>x</p>\n", '<p title="a\'b">x</p>\n', null],
+      ["<p title=a<b>x</p>\n", '<p title="a<b">x</p>\n', null],
+    ])("%j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
+      expect(await elements(after)).toEqual(await elements(before));
+      const result = await formatChecked({ "a.html": before, "b.html": after }, [], { reads: ["a.html", "b.html"] });
+      expect(result.files).toEqual({ "a.html": after, "b.html": after });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("in a Vue file", async () => {
+      // Prettier 3.9.9 prints `<img src="a.png?v" ="1" />`.
+      const files = { "a.vue": "<template><img src=a.png?v=1></template>\n" };
+      const result = await formatChecked(files, [], { reads: ["a.vue"] });
+      expect(result.files).toEqual({ "a.vue": '<template><img src="a.png?v=1" /></template>\n' });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("in an Angular template it ends where Angular ends it", async () => {
+      const files = { "a.component.html": "<img src=a.png?v=1>\n" };
+      const result = await formatChecked(files, [], { reads: ["a.component.html"] });
+      expect(result.files).toEqual({ "a.component.html": '<img src="a.png?v" ="1" />\n' });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("an SVG <text>", () => {
+    /** The text that `html` renders in its `<text>` elements, with whitespace runs collapsed to one space and trimmed. */
+    const shown = async (html: string) => {
+      let all = "";
+      const rewriter = new HTMLRewriter().on("text", {
+        text(chunk) {
+          all += chunk.text;
+        },
+      });
+      await rewriter.transform(new Response(html)).text();
+      return all.replace(/\s+/g, " ").trim();
+    };
+    const inSvg = (text: string) => `<svg>\n  ${text}\n</svg>\n`;
+    const onLines = (...lines: string[]) => inSvg(lines.join("\n  "));
+
+    // Each row is the text, Bun's output and Prettier 3.9.9's output. Prettier puts every element on its own line,
+    // which adds a space between adjacent elements and drops a space at the end of an element.
+    test.each([
+      [
+        '<svg><text x="0" y="10">H<tspan baseline-shift="sub">2</tspan>O</text></svg>\n',
+        inSvg('<text x="0" y="10">H<tspan baseline-shift="sub">2</tspan>O</text>'),
+        onLines('<text x="0" y="10">', "  H", '  <tspan baseline-shift="sub">2</tspan>', "  O", "</text>"),
+      ],
+      [
+        "<svg><text>H<tspan>2</tspan>O</text></svg>\n",
+        "<svg><text>H<tspan>2</tspan>O</text></svg>\n",
+        onLines("<text>", "  H", "  <tspan>2</tspan>", "  O", "</text>"),
+      ],
+      [
+        "<svg><text><tspan>a</tspan><tspan>b</tspan></text></svg>\n",
+        inSvg("<text><tspan>a</tspan><tspan>b</tspan></text>"),
+        onLines("<text>", "  <tspan>a</tspan>", "  <tspan>b</tspan>", "</text>"),
+      ],
+      [
+        '<svg><text>see<a href="x">here</a>.</text></svg>\n',
+        inSvg('<text>see<a href="x">here</a>.</text>'),
+        onLines("<text>", "  see", '  <a href="x">here</a>', "  .", "</text>"),
+      ],
+      [
+        '<svg><text><textPath href="#p">a</textPath>b</text></svg>\n',
+        inSvg('<text><textPath href="#p">a</textPath>b</text>'),
+        onLines("<text>", '  <textPath href="#p">a</textPath>', "  b", "</text>"),
+      ],
+      [
+        "<svg><text><tspan>a </tspan><tspan>b</tspan></text></svg>\n",
+        inSvg("<text><tspan>a </tspan><tspan>b</tspan></text>"),
+        onLines("<text>", "  <tspan>a</tspan>", "  <tspan>b</tspan>", "</text>"),
+      ],
+      [
+        "<svg><text>a<tspan> </tspan>b</text></svg>\n",
+        inSvg("<text>a<tspan> </tspan>b</text>"),
+        onLines("<text>", "  a", "  <tspan></tspan>", "  b", "</text>"),
+      ],
+    ])("%j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
+      expect(await shown(after)).toBe(await shown(before));
+      for (const flags of [[], ["--html-whitespace-sensitivity=strict"]]) {
+        const result = await format({ "a.html": before, "b.html": after }, flags, { reads: ["a.html", "b.html"] });
+        expect(result.files).toEqual({ "a.html": after, "b.html": after });
+        expect(result.exitCode).toBe(0);
+      }
+    });
+
+    test("in a Vue file", async () => {
+      const files = { "a.vue": "<template><svg><text>H<tspan>2</tspan>O</text></svg></template>\n" };
+      const result = await format(files, [], { reads: ["a.vue"] });
+      expect(result.files).toEqual({
+        "a.vue": "<template>\n  <svg><text>H<tspan>2</tspan>O</text></svg>\n</template>\n",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // This is what Prettier 3.9.9 prints.
+    test.each([
+      [
+        [],
+        "<svg><text>a <tspan>b</tspan> c</text></svg>\n",
+        onLines("<text>", "  a", "  <tspan>b</tspan>", "  c", "</text>"),
+      ],
+      [
+        [],
+        onLines(
+          '<text x="1">',
+          '  <tspan x="0">a</tspan>',
+          '  <tspan x="0" dy="1em">',
+          "    b",
+          "  </tspan>",
+          "</text>",
+        ),
+        onLines('<text x="1">', '  <tspan x="0">a</tspan>', '  <tspan x="0" dy="1em">b</tspan>', "</text>"),
+      ],
+      [
+        ["--html-whitespace-sensitivity=ignore"],
+        "<svg><text>H<tspan>2</tspan>O</text></svg>\n",
+        onLines("<text>", "  H", "  <tspan>2</tspan>", "  O", "</text>"),
+      ],
+    ])("every element still gets its own line where that renders the same: %j %j", async (flags, before, after) => {
+      const result = await format({ "a.html": before }, flags, { reads: ["a.html"] });
+      expect(result.files).toEqual({ "a.html": after });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("an element that takes up no space in its line", () => {
+    /** The text that `html` renders, with whitespace runs collapsed to one space and trimmed. */
+    const shown = async (html: string) => {
+      let all = "";
+      const rewriter = new HTMLRewriter().on("body", {
+        text(chunk) {
+          all += chunk.text;
+        },
+      });
+      await rewriter.transform(new Response(`<body>${html}</body>`)).text();
+      return all.replace(/\s+/g, " ").trim();
+    };
+
+    // Each row is the text, Bun's output and Prettier 3.9.9's output. Prettier treats these elements as blocks and puts
+    // them on their own line, which splits one word into two. A line still ends after a script, but inside its end tag.
+    test.each([
+      [
+        '<main><span>a</span><script src="x.js"></script><span>b</span></main>\n',
+        '<main>\n  <span>a</span\n  ><script src="x.js"></script\n  ><span>b</span>\n</main>\n',
+        '<main>\n  <span>a</span>\n  <script src="x.js"></script>\n  <span>b</span>\n</main>\n',
+      ],
+      [
+        '<main   >foo<script src="x.js"></script>bar</main>\n',
+        '<main>\n  foo<script src="x.js"></script\n  >bar\n</main>\n',
+        '<main>\n  foo\n  <script src="x.js"></script>\n  bar\n</main>\n',
+      ],
+      [
+        "<main   ><b>a</b><dialog></dialog><b>b</b></main>\n",
+        "<main><b>a</b><dialog></dialog><b>b</b></main>\n",
+        "<main>\n  <b>a</b>\n  <dialog></dialog>\n  <b>b</b>\n</main>\n",
+      ],
+      [
+        '<p   >a<script src="x.js"></script><script src="y.js"></script>b</p>\n',
+        '<p>\n  a<script src="x.js"></script\n  ><script src="y.js"></script\n  >b\n</p>\n',
+        '<p>\n  a\n  <script src="x.js"></script>\n  <script src="y.js"></script>\n  b\n</p>\n',
+      ],
+      [
+        '<span   >a<script src="x.js"></script></span>b\n',
+        '<span>a<script src="x.js"></script></span>b\n',
+        '<span\n  >a\n  <script src="x.js"></script></span\n>b\n',
+      ],
+    ])("%j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
+      expect(await shown(after)).toBe(await shown(before));
+      expect(await shown(byPrettier)).not.toBe(await shown(before));
+      const result = await formatChecked({ "a.html": before, "b.html": after }, [], { reads: ["a.html", "b.html"] });
+      expect(result.files).toEqual({ "a.html": after, "b.html": after });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // This is what Prettier 3.9.9 prints.
+    test.each([
+      [
+        '<body><div>a</div><script src="x.js"></script><script src="y.js"></script></body>\n',
+        '<body>\n  <div>a</div>\n  <script src="x.js"></script>\n  <script src="y.js"></script>\n</body>\n',
+      ],
+      ['<p>a <script src="x.js"></script>b</p>\n', '<p>\n  a\n  <script src="x.js"></script>\n  b\n</p>\n'],
+      ['<div><script src="x.js"></script>b</div>\n', '<div>\n  <script src="x.js"></script>\n  b\n</div>\n'],
+      [
+        '<video><source src="a.mp4"><source src="b.webm">c</video>\n',
+        '<video>\n  <source src="a.mp4" />\n  <source src="b.webm" />\n  c\n</video>\n',
+      ],
+    ])("still gets its own line where that renders the same: %j", async (before, after) => {
+      const result = await format({ "a.html": before }, [], { reads: ["a.html"] });
+      expect(result.files).toEqual({ "a.html": after });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // HTML splits a class list at ASCII whitespace. Prettier 3.9.9 splits at what JavaScript counts as whitespace, and
+  // prints `a b` for all of these.
+  test.each(["\u00a0", "\u3000", "\u2003", "\u2028", "\ufeff", "\v"])(
+    "%j in a class is part of its name",
+    async blank => {
+      const files = { "a.html": `<a class="  a${blank}b   c ">x</a>\n` };
+      const result = await formatChecked(files, [], { reads: ["a.html"] });
+      expect(result.files).toEqual({ "a.html": `<a class="a${blank}b c">x</a>\n` });
+      expect(result.exitCode).toBe(0);
+    },
+  );
+
+  // It's what a <pre> renders and a <textarea>'s value. Each row is the text, which stays unchanged, and Prettier
+  // 3.9.9's output.
+  test.each([
+    ["<textarea>\n\n</textarea>\n", "<textarea> </textarea>\n"],
+    ["<textarea>   </textarea>\n", "<textarea> </textarea>\n"],
+    ["<pre> </pre>\n", "<pre></pre>\n"],
+    ["<pre>\n\n</pre>\n", "<pre></pre>\n"],
+    ["<div><pre>  </pre></div>\n", "<div><pre></pre></div>\n"],
+  ])("keeps whitespace that's the whole content of a <pre> or <textarea>: %j", async (text, byPrettier) => {
+    expect(text).not.toBe(byPrettier);
+    const result = await formatChecked({ "a.html": text }, [], { reads: ["a.html"] });
+    expect(result.files).toEqual({ "a.html": text });
+    expect(result.exitCode).toBe(0);
+  });
+
+  describe("an element that is kept as written, next to another node", () => {
+    /** The elements of `html` with their attributes, and the text that it renders, as a browser parses them. */
+    const read = async (html: string) => {
+      const elements: unknown[] = [];
+      let text = "";
+      const rewriter = new HTMLRewriter()
+        .on("*", {
+          element(element) {
+            elements.push([element.tagName, ...element.attributes]);
+          },
+        })
+        .on("body", {
+          text(chunk) {
+            text += chunk.text;
+          },
+        });
+      await rewriter.transform(new Response(`<body>${html}</body>`)).text();
+      return { elements, text: text.replace(/\s+/g, " ").trim() };
+    };
+    const long = Buffer.alloc(60, "a").toString();
+    const strict = ["--html-whitespace-sensitivity=strict"];
+
+    // Each row is the text, and the output of both Bun and Prettier 3.9.9. `null` means it's unchanged.
+    test.each([
+      ["<label>x</label><textarea> </textarea>\n", null],
+      ["<div><b>a</b><textarea> </textarea></div>\n", null],
+      ["<b>a</b><textarea> </textarea><textarea> </textarea>\n", null],
+      ["<b>a</b><textarea> </textarea><b>c</b>\n", null],
+      ['<b>a</b><textarea   class="c"   > </textarea>\n', '<b>a</b><textarea class="c"> </textarea>\n'],
+      ["<form><input><textarea> </textarea></form>\n", "<form><input /><textarea> </textarea></form>\n"],
+      ["<br><textarea> </textarea>\n", "<br /><textarea> </textarea>\n"],
+      ["<img><textarea> </textarea><img>\n", "<img /><textarea> </textarea><img />\n"],
+      [
+        `<b>${long}</b><textarea class="c"> </textarea><b>${long}</b>\n`,
+        `<b>${long}</b\n><textarea class="c"> </textarea\n><b>${long}</b>\n`,
+      ],
+      ["<textarea> </textarea><b>a</b>\n", null],
+      ["<textarea> </textarea>x\n", null],
+      ["<span><textarea> </textarea></span>\n", null],
+      ["<label><textarea> </textarea></label>\n", null],
+      ["x<textarea> </textarea>\n", null],
+      ["<!-- c --><textarea> </textarea>\n", "<!-- c --><textarea\n> </textarea>\n"],
+      ["<b>a</b> <textarea> </textarea>\n", null],
+      ["<b>a</b><textarea>x</textarea>\n", null],
+      ["<b>a</b><textarea></textarea>\n", null],
+    ])("a <textarea> that contains one space: %j", async (before, changed) => {
+      const after = changed ?? before;
+      expect(await read(after)).toEqual(await read(before));
+      const result = await formatChecked({ "a.html": before, "b.html": after }, [], { reads: ["a.html", "b.html"] });
+      expect(result.files).toEqual({ "a.html": after, "b.html": after });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Each row is the flags, the text, Bun's output (`null` if unchanged) and Prettier 3.9.9's output, where the
+    // whitespace is one space or none.
+    test.each([
+      [[], "<b>a</b><textarea>  </textarea><i>b</i>\n", null, "<b>a</b><textarea> </textarea><i>b</i>\n"],
+      [
+        [],
+        "<b>a</b><textarea>\n\n</textarea><i>b</i>\n",
+        "<b>a</b\n><textarea>\n\n</textarea\n><i>b</i>\n",
+        "<b>a</b><textarea> </textarea><i>b</i>\n",
+      ],
+      [[], "<b>a</b><pre> </pre>\n", "<b>a</b>\n<pre> </pre>\n", "<b>a</b>\n<pre></pre>\n"],
+      [strict, "<b>a</b><pre>  </pre><b>c</b>\n", null, "<b>a</b><pre> </pre><b>c</b>\n"],
+    ])("more whitespace than one space: %j %j", async (flags, before, changed, byPrettier) => {
+      const after = changed ?? before;
+      expect(after).not.toBe(byPrettier);
+      expect(await read(after)).toEqual(await read(before));
+      const result = await formatChecked({ "a.html": before, "b.html": after }, flags, { reads: ["a.html", "b.html"] });
+      expect(result.files).toEqual({ "a.html": after, "b.html": after });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Each row is the flags, the text, Bun's output (`null` if unchanged) and Prettier 3.9.9's output. Prettier writes
+    // the end of a tag twice, which makes it text the second time, or takes `/>` from a tag that ends in `>`.
+    test.each([
+      [
+        strict,
+        "<b>a</b><pre><i>x</i></pre><b>c</b>\n",
+        "<b>a</b><pre><i>x</i></pre\n><b>c</b>\n",
+        "<b>a</b>><pre><i>x</i></pre\n><b>c</b>\n",
+      ],
+      [strict, "<b>a</b><pre   ><i>x</i>\n", "<b>a</b><pre><i>x</i>\n", "<b>a</b>><pre>>\n"],
+      [
+        [],
+        "<span><!--[if IE]><p>b<![endif]--></span>\n",
+        "<span\n  ><!--[if IE]><p>b<![endif]--></span\n>\n",
+        "<span\n  >><!--[if IE]><p>b<![endif]--></span</span\n>\n",
+      ],
+      [
+        [],
+        "<i>a</i><!--[if IE]><p>b<![endif]--><i>c</i>\n",
+        "<i>a</i\n><!--[if IE]><p>b<!\n[endif]--><i>c</i>\n",
+        "<i>a</i\n>><!--[if IE]><p>b<!\n[endif]--><i>c</i>\n",
+      ],
+      [[], "<a><!-- prettier-ignore --><b   ></b></a>\n", null, "<a><!-- prettier-ignore --><b   ></b>></a>\n"],
+      [
+        [],
+        "<a><!-- prettier-ignore --><b   ><i></i></b></a>\n",
+        "<a\n  ><!-- prettier-ignore --><b   ><i></i></b\n></a>\n",
+        "<a\n  ><!-- prettier-ignore --><b   ><i></i></b>\n></a>\n",
+      ],
+      [
+        [],
+        '<a><!-- prettier-ignore --><img   src="b" /></a>\n',
+        '<a><!-- prettier-ignore --><img   src="b"/></a>\n',
+        '<a><!-- prettier-ignore --><img   src="b" />/></a>\n',
+      ],
+      [[], "<a><!-- prettier-ignore --><img   src=b></a>\n", null, "<a><!-- prettier-ignore --><img   src=b>/></a>\n"],
+      [[], "<!-- prettier-ignore --><img   src=b><i>c</i>\n", null, "<!-- prettier-ignore --><img   src=/><i>c</i>\n"],
+      [
+        [],
+        "<!-- prettier-ignore -->\n<br><br>\n",
+        "<!-- prettier-ignore -->\n<br><br />\n",
+        "<!-- prettier-ignore -->\n<b/><br />\n",
+      ],
+      [
+        [],
+        "<p>\n  <!-- prettier-ignore -->\n  <input   type=text>x\n</p>\n",
+        null,
+        "<p>\n  <!-- prettier-ignore -->\n  <input   type=tex/>x\n</p>\n",
+      ],
+    ])("writes the end of a tag only once: %j %j", async (flags, before, changed, byPrettier) => {
+      const after = changed ?? before;
+      expect(await read(after)).toEqual(await read(before));
+      expect(await read(byPrettier)).not.toEqual(await read(before));
+      const result = await formatChecked({ "a.html": before, "b.html": after }, flags, { reads: ["a.html", "b.html"] });
+      expect(result.files).toEqual({ "a.html": after, "b.html": after });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("Vue", () => {
+    const inTemplate = (html: string) => `<template>\n  ${html}\n</template>\n`;
+
+    // Vue doesn't compile any of it: `{{name}}` is rendered as text, and `:b` is an ordinary attribute. Each row is the
+    // HTML, which stays unchanged, and Prettier 3.9.9's output.
+    test.each([
+      ["<code v-pre>{{name}}</code>", "<code v-pre>{{ name }}</code>"],
+      ["<p v-pre>Use {{msg}} and {{a+b}} here</p>", "<p v-pre>Use {{ msg }} and {{ a + b }} here</p>"],
+      ['<div v-pre><span :b="c  +d">t</span></div>', '<div v-pre><span :b="c + d">t</span></div>'],
+      ['<span v-pre :b="c  +d" @e="f( )">t</span>', '<span v-pre :b="c + d" @e="f()">t</span>'],
+    ])("doesn't format an element with v-pre or its content as code: %j", async (html, byPrettier) => {
+      expect(html).not.toBe(byPrettier);
+      const files = { "a.vue": inTemplate(html), "b.vue": inTemplate(html.replace(" v-pre", "")) };
+      const result = await formatChecked(files, [], { reads: ["a.vue", "b.vue"] });
+      expect(result.files).toEqual({ "a.vue": files["a.vue"], "b.vue": inTemplate(byPrettier.replace(" v-pre", "")) });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Prettier 3.9.9 prints the same.
+    test.each([
+      "<div><b>a</b><textarea> </textarea></div>",
+      "<p><label>x</label><textarea> </textarea><textarea> </textarea></p>",
+      "<div><textarea> </textarea><b>a</b></div>",
+      "<div>{{ a }}<textarea> </textarea></div>",
+      "<div><A /><textarea> </textarea></div>",
+      "<div><b>a</b><textarea>x</textarea></div>",
+    ])("a <textarea> that contains one space stays attached to its neighbors: %j", async html => {
+      const result = await formatChecked({ "a.vue": inTemplate(html) }, [], { reads: ["a.vue"] });
+      expect(result.files).toEqual({ "a.vue": inTemplate(html) });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("keeps a comment at the end of v-for inside the quotes", async () => {
+      // Prettier 3.9.9 prints `v-for="a in b" // c`, which it can't parse.
+      const files = { "a.vue": inTemplate('<div   v-for="a in b // c">x</div>') };
+      const result = await formatChecked(files, [], { reads: ["a.vue"] });
+      expect(result.files).toEqual({ "a.vue": inTemplate('<div v-for="a in b // c">x</div>') });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("keeps a comment after an object literal in an Angular binding inside the quotes", async () => {
+      // Prettier 3.9.9 and oxfmt 0.72.0 print `[x]="{ one: 1 }" // comment`, which turns the comment into attributes.
+      const html = '<a [x]="{ one: 1 } // comment"></a>\n<a [x]="{one:  1} // prettier-ignore"></a>\n';
+      const result = await formatChecked({ "a.component.html": html }, [], { reads: ["a.component.html"] });
+      expect(result.files).toEqual({ "a.component.html": html });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("prints a comment at the end of any other directive like Prettier", async () => {
+      const files = { "a.vue": inTemplate('<div :a="b // c">x</div>') };
+      const result = await format(files, [], { reads: ["a.vue"] });
+      expect(result.files).toEqual({
+        "a.vue": inTemplate('<div\n    :a="\n      b // c\n    "\n  >\n    x\n  </div>'),
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("a style sheet in which Prettier changes a letter", () => {
+    // Prettier 3.9.9 lowercases a media query, which turns the Kelvin sign into a `k`: `@media (ka)`. CSS is only
+    // case-insensitive for ASCII letters.
     const lossy = "<style>@media (\u212AA){a{b:c}}</style>\n";
     const written = "<style>\n  @media (\u212Aa) {\n    a {\n      b: c;\n    }\n  }\n</style>\n";
 
-    test("keeps it", async () => {
+    test("keeps the letter", async () => {
       const files = { "a.html": lossy, "b.css": "@media (\u212AA){a{b:c}}\n" };
       const result = await format(files, [], { reads: ["a.html", "b.css"] });
       expect(result.files).toEqual({ "a.html": written, "b.css": "@media (\u212Aa) {\n  a {\n    b: c;\n  }\n}\n" });
       expect(result.exitCode).toBe(0);
     });
 
-    test("--debug-check has nothing to say about it", async () => {
+    test("passes --debug-check", async () => {
       const result = await format({ "a.html": lossy }, ["--debug-check"], { reads: ["a.html"] });
       expect(result.files).toEqual({ "a.html": lossy });
       expect(result.stderr).toBe("");
@@ -1982,20 +3351,20 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    test.each([["--check"], ["-l"]])("%s says that it needs formatting", async flag => {
+    test.each([["--check"], ["-l"]])("%s reports it as unformatted", async flag => {
       const result = await format({ "a.html": lossy }, [flag], { reads: ["a.html"] });
       expect(result.files).toEqual({ "a.html": lossy });
       expect(result.stdout).toBe("a.html");
       expect(result.exitCode).toBe(1);
     });
 
-    test("standard input", async () => {
+    test("keeps the letter from stdin", async () => {
       const result = await format({}, ["--stdin-filepath", "a.html"], { stdin: lossy });
       expect(result.raw).toBe(written);
       expect(result.exitCode).toBe(0);
     });
 
-    test("in a template and in a block of code", async () => {
+    test("keeps the letter in a template literal and in a Markdown code block", async () => {
       const files = {
         "a.js": "const a = html`" + lossy.trim() + "`;\nconst   b = html`<p   >c</p>`;\n",
         "b.md": "#   a\n\n```html\n" + lossy + "```\n\n```html\n<p   >c</p>\n```\n",
@@ -2007,9 +3376,718 @@ describe.concurrent("bun fmt", () => {
       });
       expect(result.exitCode).toBe(0);
     });
+
+    describe("a Less variable with nothing between the colon and the value", () => {
+      // Each row is the code, Bun's output and Prettier 3.9.9's output. postcss reads `@a:1px` as the name of an
+      // at-rule, and Prettier reassembles the value without the whitespace that followed that name. oxfmt 0.72.0 keeps
+      // the space.
+      test.each([
+        ["@a:1px solid #ccc;\n", "@a: 1px solid #ccc;\n", "@a: 1pxsolid #ccc;\n"],
+        [
+          "@a:0 1px 2px rgba(0,0,0,.05);\n",
+          "@a: 0 1px 2px rgba(0, 0, 0, 0.05);\n",
+          "@a: 01px 2px rgba(0, 0, 0, 0.05);\n",
+        ],
+        ["@a:@b - @c;\n", "@a: @b - @c;\n", "@a: @b- @c;\n"],
+        ["@a:0 -@b;\n", "@a: 0 -@b;\n", "@a: 0-@b;\n"],
+        ["@a:-1px -2px;\n", "@a: -1px -2px;\n", "@a: -1px-2px;\n"],
+        ["@a:10px ./ 2;\n", "@a: 10px ./ 2;\n", "@a: 10px./ 2;\n"],
+        ["@a:screen and (min-width:1px);\n", "@a: screen and (min-width: 1px);\n", "@a: screenand (min-width: 1px);\n"],
+        ["@a:1px solid!important;\n", "@a: 1px solid!important;\n", "@a: 1pxsolid!important;\n"],
+        ["@a:1px\n  solid;\n", "@a: 1px solid;\n", "@a: 1pxsolid;\n"],
+        [
+          ".a{@b:1px solid red;c:@b}\n",
+          ".a {\n  @b: 1px solid red;\n  c: @b;\n}\n",
+          ".a {\n  @b: 1pxsolid red;\n  c: @b;\n}\n",
+        ],
+        [".a(){@b:1px solid;}\n", ".a() {\n  @b: 1px solid;\n}\n", ".a() {\n  @b: 1pxsolid;\n}\n"],
+        ["@a:{@b:1px solid}\n", "@a: {\n  @b: 1px solid;\n};\n", "@a: {\n  @b: 1pxsolid;\n};\n"],
+        ["@a:1px // b\n solid;\n", "@a: 1px // b\n  solid;\n", "@a: 1px  //\n  solid;\n"],
+        // Prettier is right about these.
+        ["@a:1px;\n", "@a: 1px;\n", null],
+        ['@a:~"b c" d;\n', '@a: ~"b c" d;\n', null],
+        ['@a:"b c" d;\n', '@a: "b c" d;\n', null],
+        ["@a:fade(@b, 10%) 1px;\n", "@a: fade(@b, 10%) 1px;\n", null],
+        ["@a:#fff #000;\n", "@a: #fff #000;\n", null],
+        ["@a:{b:c d}\n", "@a: {\n  b: c d;\n};\n", null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        const files = { "a.less": before, "b.less": after };
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: ["a.less", "b.less"] }),
+          format(files, ["--flavor=oxfmt"], { reads: ["a.less", "b.less"] }),
+        ]);
+        expect(result.files).toEqual({ "a.less": after, "b.less": after });
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual({ "a.less": after, "b.less": after });
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      test("SCSS isn't affected", async () => {
+        const result = await format({ "a.scss": "$a:1px solid;\n.b{$c:1px solid}\n" }, [], { reads: ["a.scss"] });
+        expect(result.files).toEqual({ "a.scss": "$a: 1px solid;\n.b {\n  $c: 1px solid;\n}\n" });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("a comment in the value of a Less variable", () => {
+      // Each row is the code, Bun's output and Prettier 3.9.9's output. postcss removes a comment with a space next to
+      // it from the text that Prettier parses. Prettier then reads the text of the remaining comments from the file, at
+      // the offsets they'd have if nothing were missing. oxfmt 0.72.0 keeps them all.
+      test.each([
+        ["@a: 1px /* why */ solid;\n", "@a: 1px /* why */ solid;\n", "@a: 1px solid;\n"],
+        [
+          '@a: "Helvetica Neue" /* mac */, Arial /* win */, sans-serif;\n',
+          '@a:\n  "Helvetica Neue" /* mac */,\n  Arial /* win */,\n  sans-serif;\n',
+          '@a: "Helvetica Neue", Arial, sans-serif;\n',
+        ],
+        ["@a: /* why */ 1px;\n", "@a: /* why */ 1px;\n", "@a: 1px;\n"],
+        ["@a: darken(@b, 10% /* why */);\n", "@a: darken(@b, 10% /* why */);\n", "@a: darken(@b, 10%);\n"],
+        ["@a: (1 /* why */ + 2);\n", "@a: (1 /* why */ + 2);\n", "@a: (1 + 2);\n"],
+        ["@a: red ! /* why */ important;\n", "@a: red ! /* why */ important;\n", "@a: red ! important;\n"],
+        ["@a: b /* c */ d/* e */f;\n", "@a: b /* c */ d /* e */ f;\n", "@a: b d  c */ d f;\n"],
+        ["@a : 1px /* why */ solid;\n", "@a: 1px /* why */ solid;\n", "@a: 1px solid;\n"],
+        ["x{@a: 1px /* why */ solid}\n", "x {\n  @a: 1px /* why */ solid;\n}\n", "x {\n  @a: 1px solid;\n}\n"],
+        ["@a:1px /* why */ solid;\n", "@a: 1px /* why */ solid;\n", "@a: 1pxsolid;\n"],
+        ["@a:1px/* why */solid;\n", "@a: 1px /* why */ solid;\n", "@a: 1pxsolid;\n"],
+        ["@a:b(c)/* d */e;\n", "@a: b(c) /* d */ e;\n", "@a: b(c) )/* d * e;\n"],
+        ["@a:darken(@b,10%/* why */);\n", "@a: darken(@b, 10% /* why */);\n", "@a: darken(@b, 10% %/* why *);\n"],
+        ["@a:b /* c */ d/* e */f;\n", "@a: b /* c */ d /* e */ f;\n", "@a: bd /* c */ f;\n"],
+        // Prettier is right about these.
+        ["@a: darken(@b,10%/* why */);\n", "@a: darken(@b, 10% /* why */);\n", null],
+        ["@a: 1px; /* why */\n", "@a: 1px; /* why */\n", null],
+        ["@a: 1px // why\n  solid;\n", "@a: 1px // why\n  solid;\n", null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        const files = { "a.less": before, "b.less": after };
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: ["a.less", "b.less"] }),
+          format(files, ["--flavor=oxfmt"], { reads: ["a.less", "b.less"] }),
+        ]);
+        expect(result.files).toEqual({ "a.less": after, "b.less": after });
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual({ "a.less": after, "b.less": after });
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+    });
+
+    describe("a comment between the head of a statement and its { or ;", () => {
+      // Each row is the language, the code, Bun's output and Prettier 3.9.9's output. Prettier cuts a comment that's
+      // the only thing after the name one character short, and it puts the `{` or `;` from the next line after a `//`
+      // comment, which makes it part of the comment.
+      test.each([
+        [
+          "scss",
+          "@if $a {\n  b: c;\n} @else /* why */ {\n  d: e;\n}\n",
+          "@if $a {\n  b: c;\n} @else /* why */ {\n  d: e;\n}\n",
+          "@if $a {\n  b: c;\n} @else  /* why * {\n  d: e;\n}\n",
+        ],
+        [
+          "scss",
+          "@else /* a */ /* b */ {\n}\n@function /* a */ {\n}\n@return /* a */;\n",
+          "@else /* a */ /* b */ {\n}\n@function /* a */ {\n}\n@return /* a */;\n",
+          "@else  /* a *  /* b * {\n}\n@function  /* a * {\n}\n@return  /* a *;\n",
+        ],
+        [
+          "scss",
+          "@if $a {\n  b: c;\n} @else // why\n{\n  d: e;\n}\n",
+          "@if $a {\n  b: c;\n} @else // why\n{\n  d: e;\n}\n",
+          "@if $a {\n  b: c;\n} @else  { // wh\n  d: e;\n}\n",
+        ],
+        [
+          "scss",
+          "@media (min-width: 1px) // Why\n{\n  a {\n    b: c;\n  }\n}\n",
+          "@media (min-width: 1px) // Why\n{\n  a {\n    b: c;\n  }\n}\n",
+          "@media (min-width: 1px) // Why {\n  a {\n    b: c;\n  }\n}\n",
+        ],
+        [
+          "less",
+          "@media (min-width: 1px) // Why\n{\n  a {\n    b: c;\n  }\n}\n",
+          "@media (min-width: 1px) // Why\n{\n  a {\n    b: c;\n  }\n}\n",
+          "@media (min-width: 1px) // Why {\n  a {\n    b: c;\n  }\n}\n",
+        ],
+        [
+          "scss",
+          "@media screen // Why\n  and (min-width: 1px) {\n  a {\n    b: c;\n  }\n}\n",
+          "@media screen // Why\n  and (min-width: 1px) {\n  a {\n    b: c;\n  }\n}\n",
+          "@media screen // Why and (min-width: 1px) {\n  a {\n    b: c;\n  }\n}\n",
+        ],
+        ["scss", "@if $a// why\n{\n  b: c;\n}\n", "@if $a // why\n{\n  b: c;\n}\n", "@if $a// why {\n  b: c;\n}\n"],
+        [
+          "scss",
+          "a {\n  @extend .b // why\n  ;\n  c: d\n}\n",
+          "a {\n  @extend .b; // why\n  c: d;\n}\n",
+          "a {\n  @extend .b // why;\n  c: d;\n}\n",
+        ],
+        [
+          "scss",
+          '@warn "a" // why\n;\n@b c // why\n;\n',
+          '@warn "a"; // why\n@b c; // why\n',
+          '@warn "a" // why;\n@b c // why;\n',
+        ],
+        ["scss", "$a: b// why\n;\n$c: 1;\n", "$a: b; // why\n$c: 1;\n", "$a: b// why;\n$c: 1;\n"],
+        ["scss", "a { b: c// why\n; d: e }\n", "a {\n  b: c; // why\n  d: e;\n}\n", "a {\n  b: c// why;\n  d: e;\n}\n"],
+        ["less", ".a() // why\n;\n.b();\n", ".a(); // why\n.b();\n", ".a() // why;\n.b();\n"],
+        // Before it parses Less, Prettier replaces every quote and `*` after a `//` with a space.
+        ["less", '.a() // "why"\n;\n.b();\n', '.a(); // "why"\n.b();\n', ".a() //  why;\n.b();\n"],
+        [
+          "less",
+          'a { b: c//"why"\n; d: e }\n',
+          'a {\n  b: c; //"why"\n  d: e;\n}\n',
+          "a {\n  b: c// why;\n  d: e;\n}\n",
+        ],
+        ["less", "@plugin \"a\" // 'why'\n;\n", "@plugin \"a\"; // 'why'\n", '@plugin "a" //  why;\n'],
+        // Prettier is right about these.
+        ["scss", "@if $a // why\n{\n  b: c;\n}\n", "@if $a // why\n{\n  b: c;\n}\n", null],
+        ["scss", "a // why\n{\n  b: c;\n}\n", "a // why\n{\n  b: c;\n}\n", null],
+        ["scss", "@a b // why\n{\n  c: d;\n}\n", "@a b // why\n{\n  c: d;\n}\n", null],
+        ["scss", "@include a // why\n;\n$b: c // why\n;\n", "@include a; // why\n$b: c; // why\n", null],
+        [
+          "scss",
+          "@media (min-width: 1px) /* Why */ {\n  a {\n    b: c;\n  }\n}\n",
+          "@media (min-width: 1px) /* Why */ {\n  a {\n    b: c;\n  }\n}\n",
+          null,
+        ],
+        [
+          "scss",
+          "@include a(url(http://b)) {\n  c: d;\n}\n@import url(http://b);\n",
+          "@include a(url(http://b)) {\n  c: d;\n}\n@import url(http://b);\n",
+          null,
+        ],
+      ])("%s: %j", async (language, before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        const files = { [`a.${language}`]: before, [`b.${language}`]: after };
+        const names = Object.keys(files);
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: names }),
+          format(files, ["--flavor=oxfmt"], { reads: names }),
+        ]);
+        const expected = Object.fromEntries(names.map(name => [name, after]));
+        expect(result.files).toEqual(expected);
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual(expected);
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+    });
+
+    describe("a selector or value in which a space is significant", () => {
+      /** Formats `before` and `after` as CSS, SCSS and Less, in both flavors, and expects `after` each time. */
+      async function expectFormatted(before: string, after: string) {
+        const files = Object.fromEntries(
+          ["css", "scss", "less"].flatMap(language => [
+            [`a.${language}`, before],
+            [`b.${language}`, after],
+          ]),
+        );
+        const names = Object.keys(files);
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: names }),
+          format(files, ["--flavor=oxfmt"], { reads: names }),
+        ]);
+        const expected = Object.fromEntries(names.map(name => [name, after]));
+        expect(result.files).toEqual(expected);
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual(expected);
+        expect(asOxfmt.exitCode).toBe(0);
+      }
+
+      // Each row is the selector, Bun's output and Prettier 3.9.9's output. oxfmt 0.72.0 is right about all of them.
+      test.each([
+        // With a space after the sign it isn't a valid selector, and the browser drops the rule.
+        [":nth-child(+n+3)", ":nth-child(+n + 3)", ":nth-child(+ n + 3)"],
+        [":nth-child(+3)", ":nth-child(+3)", ":nth-child(+ 3)"],
+        ["li:nth-child(+2n+1)", "li:nth-child(+2n + 1)", "li:nth-child(+ 2n + 1)"],
+        [":nth-last-child(+n + 2)", ":nth-last-child(+n + 2)", ":nth-last-child(+ n + 2)"],
+        [":nth-col(+2)", ":nth-col(+2)", ":nth-col(+ 2)"],
+        [":NTH-CHILD(+N+3 of .a)", ":nth-child(+N + 3 of .a)", ":nth-child(+ N + 3 of .a)"],
+        // The first space after `\31` ends the escape, so only the second one makes `.b` a descendant.
+        [".\\31  .b", ".\\31  .b", ".\\31 .b"],
+        ["#\\31  li", "#\\31  li", "#\\31 li"],
+        [".\\e9  a", ".\\e9  a", ".\\e9 a"],
+        [".\\31 \\30  .b", ".\\31 \\30  .b", ".\\31 \\30 .b"],
+        [".\\000031  b", ".\\000031  b", ".\\000031 b"],
+        ["a:not(.\\31  b)", "a:not(.\\31  b)", "a:not(.\\31 b)"],
+        [".\\31 \n.b", ".\\31  .b", ".\\31 .b"],
+        // The value is "x1i", and there's no flag.
+        ["[a=x\\31 i]", '[a="x\\31 i"]', '[a="x\\31" i]'],
+        // The value is "b c". Prettier prints an unterminated string.
+        ["[a=b\\ c]", '[a="b\\ c"]', '[a="b\\" c]'],
+        ["[a=b\\ c i]", '[a="b\\ c" i]', '[a="b\\" c i]'],
+        // Prettier is right about these.
+        [":nth-child(+ n)", ":nth-child(+ n)", null],
+        [":nth-child(-n+3)", ":nth-child(-n + 3)", null],
+        [":nth-child(2n+1)", ":nth-child(2n + 1)", null],
+        ["a:has(+b)", "a:has(+ b)", null],
+        [".\\31 .b", ".\\31 .b", null],
+        [".\\31 0", ".\\31 0", null],
+        [".\\31 > b", ".\\31 > b", null],
+        [".\\\\31  b", ".\\\\31 b", null],
+        [".a\\:b  c", ".a\\:b c", null],
+        ["[a=x\\31  i]", '[a="x\\31" i]', null],
+        ["[a=b i]", '[a="b" i]', null],
+        ["[a=b s]", '[a="b" s]', null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        await expectFormatted(`${before}{c:d}\n`, `${after} {\n  c: d;\n}\n`);
+      });
+
+      // The same for whole style sheets.
+      test.each([
+        [
+          "@keyframes x{+50%{a:b}}\n",
+          "@keyframes x {\n  +50% {\n    a: b;\n  }\n}\n",
+          "@keyframes x {\n  + 50% {\n    a: b;\n  }\n}\n",
+        ],
+        ["a{animation-name:\\31  x}\n", "a {\n  animation-name: \\31  x;\n}\n", "a {\n  animation-name: \\31 x;\n}\n"],
+        [
+          'a{b:\\31  x \\e9  "y" \\31 z}\n',
+          'a {\n  b: \\31  x \\e9  "y" \\31 z;\n}\n',
+          'a {\n  b: \\31 x \\e9"y" \\31 z;\n}\n',
+        ],
+        ["a{+b{c:d}}\n", "a {\n  + b {\n    c: d;\n  }\n}\n", null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        await expectFormatted(before, after);
+      });
+
+      // `\31 abc` is the single word "1abc". Each row is the start of a declaration that's too long for 80 columns, its
+      // end in Bun's output, and its end in Prettier 3.9.9's output, which splits it into "1" and "abc". oxfmt 0.72.0
+      // leaves the line unchanged.
+      test.each([
+        [`animation-name: ${"word ".repeat(11)}wo`, "\n    \\31 abcdefghijklmnop", " \\31\n    abcdefghijklmnop"],
+        [`--x: ${"word ".repeat(13)}wo`, "\n    \\31 abcdefghijklmnop", " \\31\n    abcdefghijklmnop"],
+        [`b: ${"word ".repeat(13)}wor`, "\n    x\\31 abcdefghijklmnop", " x\\31\n    abcdefghijklmnop"],
+      ])("%j", async (start, end, byPrettier) => {
+        expect(end).not.toBe(byPrettier);
+        const [onOneLine, after] = [`a {\n  ${start} ${end.trim()};\n}\n`, `a {\n  ${start}${end};\n}\n`];
+        const files = Object.fromEntries(
+          ["css", "scss", "less"].flatMap(language => [
+            [`a.${language}`, onOneLine],
+            [`b.${language}`, after],
+          ]),
+        );
+        const names = Object.keys(files);
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: names }),
+          format(files, ["--flavor=oxfmt"], { reads: names }),
+        ]);
+        expect(result.files).toEqual(Object.fromEntries(names.map(name => [name, after])));
+        expect(result.exitCode).toBe(0);
+        // It fits in 100 columns.
+        expect(asOxfmt.files).toEqual(Object.fromEntries(names.map(name => [name, onOneLine])));
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+    });
+
+    describe("a number right before a ${} in a template", () => {
+      // Each row is the declaration, which stays unchanged, and Prettier 3.9.9's output. With "px" for `u` and 5 for
+      // `n`, "100px" turns into "100 px" and "0.5" into "0 5". A number that touches a `${}` isn't normalized either:
+      // "1.50" and "5" make 1.505, but "1.5" and "5" make 1.55.
+      test.each([
+        ["width: 100${u};", "width: 100 ${u};"],
+        ["opacity: 0.${n};", "opacity: 0 ${n};"],
+        ["transition: all 0.${n}s;", "transition: all 0 ${n}s;"],
+        ["margin: -1${u} 0;", "margin: -1 ${u} 0;"],
+        ["margin: 0 -1${u};", "margin: 0 -1 ${u};"],
+        ["width: 1.50${n};", "width: 1.5 ${n};"],
+        ["width: 1E3${u};", "width: 1e3 ${u};"],
+        ["width: +.5${u};", "width: +0.5 ${u};"],
+        ["margin: 1PX${u};", "margin: 1px ${u};"],
+        ["z-index: 1${n};", "z-index: 1 ${n};"],
+        ["width: calc(1${u} + 2px);", "width: calc(1 ${u} + 2px);"],
+        ["grid-area: 1${a} / 2${b};", "grid-area: 1 ${a} / 2 ${b};"],
+        ["margin: 1${a}${b} 2${c};", "margin: 1 ${a}${b} 2 ${c};"],
+        // Prettier is right about these.
+        ["width: ${n}px;", null],
+        ["margin: ${a} ${b} ${a}${b};", null],
+        ["color: #f${n};", null],
+        ["width: 100 ${u};", null],
+      ])("%j", async (declaration, byPrettier) => {
+        expect(declaration).not.toBe(byPrettier);
+        const after = "x = styled.div`\n  " + declaration + "\n`;\n";
+        const files = { "a.js": "x = styled.div`" + declaration + "`;\n", "b.js": after };
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: ["a.js", "b.js"] }),
+          format(files, ["--flavor=oxfmt"], { reads: ["a.js", "b.js"] }),
+        ]);
+        expect(result.files).toEqual({ "a.js": after, "b.js": after });
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual({ "a.js": after, "b.js": after });
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      test("a number followed by a space is still normalized", async () => {
+        const result = await format({ "a.js": "x = styled.div`width: 1.50PX ${u};`;\n" }, [], { reads: ["a.js"] });
+        expect(result.files).toEqual({ "a.js": "x = styled.div`\n  width: 1.5px ${u};\n`;\n" });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("a name that only looks like a property", () => {
+      // Each row is the code, Bun's output and Prettier 3.9.9's output. Tailwind CSS 4 passes the contents of
+      // `@plugin`'s braces to the plugin as an object, and `font-variant-alternates: styleset(niceStyle)` looks up that
+      // exact name.
+      test.each([
+        [
+          '@plugin "@tailwindcss/typography" {className:wysiwyg}\n',
+          '@plugin "@tailwindcss/typography" {\n  className: wysiwyg;\n}\n',
+          '@plugin "@tailwindcss/typography" {\n  classname: wysiwyg;\n}\n',
+        ],
+        [
+          '@plugin "./my-plugin.js" {darkMode:class;maxWidth:10px}\n',
+          '@plugin "./my-plugin.js" {\n  darkMode: class;\n  maxWidth: 10px;\n}\n',
+          '@plugin "./my-plugin.js" {\n  darkmode: class;\n  maxwidth: 10px;\n}\n',
+        ],
+        [
+          "@font-feature-values Font One {@styleset {niceStyle:12} @swash {Fancy:1}}\n",
+          "@font-feature-values Font One {\n  @styleset {\n    niceStyle: 12;\n  }\n  @swash {\n    Fancy: 1;\n  }\n}\n",
+          "@font-feature-values Font One {\n  @styleset {\n    nicestyle: 12;\n  }\n  @swash {\n    fancy: 1;\n  }\n}\n",
+        ],
+        // Properties and descriptors are case-insensitive.
+        [
+          "@font-face {FONT-FAMILY:a}\na{COLOR:red}\n@media print{a{COLOR:red}}\n",
+          "@font-face {\n  font-family: a;\n}\na {\n  color: red;\n}\n@media print {\n  a {\n    color: red;\n  }\n}\n",
+          null,
+        ],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        const files = Object.fromEntries(
+          ["css", "scss", "less"].flatMap(language => [
+            [`a.${language}`, before],
+            [`b.${language}`, after],
+          ]),
+        );
+        const names = Object.keys(files);
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: names }),
+          format(files, ["--flavor=oxfmt"], { reads: names }),
+        ]);
+        const expected = Object.fromEntries(names.map(name => [name, after]));
+        expect(result.files).toEqual(expected);
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual(expected);
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      test("still lowercases the same name in a rule in the same file", async () => {
+        // A declaration's printed form is cached for the next one with the same text.
+        const result = await format(
+          { "a.css": '@plugin "a" {maxWidth:1px}\nb{maxWidth:1px}\n@plugin "a" {maxWidth:1px}\n' },
+          [],
+          {
+            reads: ["a.css"],
+          },
+        );
+        expect(result.files).toEqual({
+          "a.css": '@plugin "a" {\n  maxWidth: 1px;\n}\nb {\n  maxwidth: 1px;\n}\n@plugin "a" {\n  maxWidth: 1px;\n}\n',
+        });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("the value of a custom property", () => {
+      // Each row is the value, Bun's output, Bun's output in the oxfmt flavor, and Prettier 3.9.9's output.
+      // `getPropertyValue("--x")` returns what the author wrote, and `@container style(--x: #FFF)` compares against it.
+      // So colors, numbers, units, keywords and strings stay as written, and no space is added where there was none.
+      // The layout is still the tool's: whitespace is collapsed, and a long value is broken. oxfmt 0.72.0 rewrites what
+      // Prettier rewrites, except that it leaves `16:9`, `a*b` and `a+b` alone.
+      test.each([
+        ["#FFF", "#FFF", "#FFF", "#fff"],
+        ["#AbCdEf", "#AbCdEf", "#AbCdEf", "#abcdef"],
+        ["1E3", "1E3", "1E3", "1e3"],
+        ["1PX", "1PX", "1PX", "1px"],
+        [".50", ".50", ".50", "0.5"],
+        ["0.50em 1.0em", "0.50em 1.0em", "0.50em 1.0em", "0.5em 1em"],
+        ["+.5", "+.5", "+.5", "+0.5"],
+        ["1.", "1.", "1.", "1"],
+        ["INHERIT", "INHERIT", "INHERIT", "inherit"],
+        ["'a'", "'a'", "'a'", '"a"'],
+        ["\"a\",'b'", "\"a\",'b'", "\"a\",'b'", '"a", "b"'],
+        ["1,000", "1,000", "1,000", "1, 000"],
+        ["16:9", "16:9", "16:9", "16: 9"],
+        ["a,b", "a,b", "a,b", "a, b"],
+        ["a ,b", "a,b", "a,b", "a, b"],
+        ["a*b", "a*b", "a*b", "a * b"],
+        ["a+b", "a+b", "a+b", "a + b"],
+        ["a:b", "a:b", "a:b", "a: b"],
+        ["(a:b)", "(a:b)", "(a:b)", "(a: b)"],
+        ["rgba(0,0,0,.5)", "rgba(0,0,0,.5)", "rgba(0,0,0,.5)", "rgba(0, 0, 0, 0.5)"],
+        ["translate(1PX,2PX)", "translate(1PX,2PX)", "translate(1PX,2PX)", "translate(1px, 2px)"],
+        ["calc( 1PX + .50EM )", "calc(1PX + .50EM)", "calc(1PX + .50EM)", "calc(1px + 0.5em)"],
+        ['[{"a":1}]', '[{"a":1}]', '[{"a":1}]', '[{"a": 1}]'],
+        ["['red' ]", "['red']", "['red']", '[ "red"]'],
+        [
+          "[ 'red', 'green', 'blue' ]",
+          "[ 'red', 'green', 'blue']",
+          "['red', 'green', 'blue']",
+          '[ "red", "green", "blue"]',
+        ],
+        ["#FFF   RED", "#FFF RED", "#FFF RED", "#fff RED"],
+        ["#FFF,\n     #EEE", "#FFF, #EEE", "#FFF, #EEE", "#fff, #eee"],
+        // Prettier is right about these.
+        ["a  b", "a b", "a b", null],
+        ["a /* c */  b", "a /* c */ b", "a /* c */ b", null],
+        ["1px   2px", "1px 2px", "1px 2px", null],
+        ['[1,  "2",  [4]]', '[1, "2", [4]]', '[1, "2", [4]]', null],
+        ['"a:b"   c', '"a:b" c', '"a:b" c', null],
+        ["url(data:x)   c", "url(data:x) c", "url(data:x) c", null],
+        ["$a   b", "$a b", "$a b", null],
+        ["[ a ]", "[ a]", "[a]", null],
+        ["[ a b ]", "[ a b]", "[a b]", null],
+        ["f(x)  {  y  }", "f(x) {y}", "f(x)  {  y  }", null],
+        ["(a  ,  b)", "(a, b)", "(a  ,  b)", null],
+        ["1px   !foo", "1px !foo", "1px   !foo", null],
+        ["@a   b", "@a b", "@a   b", null],
+        ["a:  b", "a: b", "a:  b", null],
+        [
+          "rgb(from var(--color-text-on-media-of-the-page) r g b / var(--overlay-strength-secondary))",
+          "rgb(\n    from var(--color-text-on-media-of-the-page) r g b /\n      var(--overlay-strength-secondary)\n  )",
+          "rgb(from var(--color-text-on-media-of-the-page) r g b / var(--overlay-strength-secondary))",
+          null,
+        ],
+        ["Red", "Red", "Red", null],
+        ["calc(1px+2px)", "calc(1px+2px)", "calc(1px+2px)", null],
+        ["var(--Y)", "var(--Y)", "var(--Y)", null],
+        ['"a  b"', '"a  b"', '"a  b"', null],
+      ])("%j", async (value, after, afterAsOxfmt, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        // Where the flavors differ, so do the languages.
+        const languages = after === afterAsOxfmt ? ["css", "scss", "less"] : ["css"];
+        const sheets = (before: string, after: string) =>
+          Object.fromEntries(
+            languages.flatMap(language => [
+              [`a.${language}`, `a {\n  --x: ${before};\n}\n`],
+              [`b.${language}`, `a {\n  --x: ${after};\n}\n`],
+              [`c.${language}`, `a{--x:${before}}\n`],
+            ]),
+          );
+        const names = Object.keys(sheets(value, after));
+        const [result, asOxfmt] = await Promise.all([
+          format(sheets(value, after), [], { reads: names }),
+          format(sheets(value, afterAsOxfmt), ["--flavor=oxfmt"], { reads: names }),
+        ]);
+        expect(result.files).toEqual(Object.fromEntries(names.map(name => [name, `a {\n  --x: ${after};\n}\n`])));
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual(
+          Object.fromEntries(names.map(name => [name, `a {\n  --x: ${afterAsOxfmt};\n}\n`])),
+        );
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      // In a value that doesn't fit on the line, no line ends after a comma that has no space after it. Each row is the
+      // value, what follows `--x:` in Bun's output, the same in the oxfmt flavor, which has 100 columns, and the same
+      // in Prettier 3.9.9's output. oxfmt 0.72.0 adds the same spaces and line breaks as Prettier. A line break right
+      // inside a function's parentheses means nothing to CSS.
+      const thousands = Array(16).fill("1,000").join(",");
+      const fonts =
+        '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif,"Apple Color Emoji"';
+      const zeros = "0".repeat(21);
+      const [a, b, c, d] = ["a".repeat(25), "b".repeat(31), "c".repeat(24), "d".repeat(23)];
+      test.each([
+        [
+          thousands,
+          `\n    ${thousands}`,
+          `\n    ${thousands}`,
+          `\n    ${"1, 000, ".repeat(9)}1,\n    000, ${"1, 000, ".repeat(5)}1, 000`,
+        ],
+        [
+          fonts,
+          `\n    ${fonts}`,
+          `\n    ${fonts}`,
+          '\n    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",\n    Arial, "Noto Sans", sans-serif, "Apple Color Emoji"',
+        ],
+        [
+          '-apple-system, BlinkMacSystemFont,"Segoe UI", Roboto,"Helvetica Neue", Arial,"Noto Sans", sans-serif,"Apple Color Emoji"',
+          '\n    -apple-system, BlinkMacSystemFont,"Segoe UI", Roboto,"Helvetica Neue",\n    Arial,"Noto Sans", sans-serif,"Apple Color Emoji"',
+          '\n    -apple-system, BlinkMacSystemFont,"Segoe UI", Roboto,"Helvetica Neue", Arial,"Noto Sans",\n    sans-serif,"Apple Color Emoji"',
+          '\n    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",\n    Arial, "Noto Sans", sans-serif, "Apple Color Emoji"',
+        ],
+        [
+          `rgba(${zeros},${zeros},${zeros},${zeros},.5)`,
+          ` rgba(\n    ${zeros},${zeros},${zeros},${zeros},.5\n  )`,
+          ` rgba(\n    ${zeros},${zeros},${zeros},${zeros},.5\n  )`,
+          ` rgba(\n    ${zeros},\n    ${zeros},\n    ${zeros},\n    ${zeros},\n    0.5\n  )`,
+        ],
+        [
+          `f(${a},${b}, ${c},${d})`,
+          ` f(\n    ${a},${b},\n    ${c},${d}\n  )`,
+          ` f(\n    ${a},${b},\n    ${c},${d}\n  )`,
+          ` f(\n    ${a},\n    ${b},\n    ${c},\n    ${d}\n  )`,
+        ],
+        [
+          `f( ${a},${b},${c},${d} )`,
+          ` f(\n    ${a},${b},${c},${d}\n  )`,
+          ` f(\n    ${a},${b},${c},${d}\n  )`,
+          ` f(\n    ${a},\n    ${b},\n    ${c},\n    ${d}\n  )`,
+        ],
+      ])("too long: %j", async (value, after, afterAsOxfmt, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        const sheets = (after: string) =>
+          Object.fromEntries(
+            ["css", "scss", "less"].flatMap(language => [
+              [`a.${language}`, `a {\n  --x: ${value};\n}\n`],
+              [`b.${language}`, `a {\n  --x:${after};\n}\n`],
+            ]),
+          );
+        const names = Object.keys(sheets(after));
+        const [result, asOxfmt] = await Promise.all([
+          format(sheets(after), [], { reads: names }),
+          format(sheets(afterAsOxfmt), ["--flavor=oxfmt"], { reads: names }),
+        ]);
+        expect(result.files).toEqual(Object.fromEntries(names.map(name => [name, `a {\n  --x:${after};\n}\n`])));
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual(
+          Object.fromEntries(names.map(name => [name, `a {\n  --x:${afterAsOxfmt};\n}\n`])),
+        );
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      // JSON meant for a script stays unchanged. Prettier 3.9.9 and oxfmt 0.72.0 treat it as a set of declarations and
+      // put a `;` in it.
+      test.each([
+        ['{"a":1,"b":[1,2]}', '{\n    "a":1,"b": [1, 2];\n  }'],
+        ['{ "a": 1 }', '{\n    "a":1;\n  }'],
+      ])("%j", async (value, byPrettier) => {
+        expect(value).not.toBe(byPrettier);
+        const after = `a {\n  --x: ${value};\n}\n`;
+        const files = Object.fromEntries(
+          ["css", "scss", "less"].flatMap(language => [
+            [`a.${language}`, `a{--x:${value}}\n`],
+            [`b.${language}`, after],
+          ]),
+        );
+        const names = Object.keys(files);
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: names }),
+          format(files, ["--flavor=oxfmt"], { reads: names }),
+        ]);
+        const expected = Object.fromEntries(names.map(name => [name, after]));
+        expect(result.files).toEqual(expected);
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual(expected);
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      test("what's around the value is still formatted", async () => {
+        const result = await format(
+          { "a.css": "a{--X:   #FFF   !important;--y:#FFF!IMPORTANT;--z:a:b   c   !important;COLOR:#FFF}\n" },
+          [],
+          { reads: ["a.css"] },
+        );
+        expect(result.files).toEqual({
+          "a.css":
+            "a {\n  --X: #FFF !important;\n  --y: #FFF !important;\n  --z: a:b c !important;\n  color: #fff;\n}\n",
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("stays as written in a style attribute and in a template literal", async () => {
+        const files = {
+          "a.html": '<p style="--x:#FFF;COLOR:#FFF">a</p>\n',
+          "b.js": "x = css`a{--x:#FFF ${h};color:#FFF}`;\n",
+          "c.js":
+            "x = css`a{--x:0 0 0 1px ${(p) => p.theme.colors.main},   ${(p) => p.theme.boxShadowSoft}, ${l};}`;\n",
+        };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({
+          "a.html": '<p style="--x: #FFF; color: #fff">a</p>\n',
+          "b.js": "x = css`\n  a {\n    --x: #FFF ${h};\n    color: #fff;\n  }\n`;\n",
+          "c.js":
+            "x = css`\n  a {\n    --x:\n      0 0 0 1px ${(p) => p.theme.colors.main}, ${(p) => p.theme.boxShadowSoft},\n      ${l};\n  }\n`;\n",
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      // Each row is the languages, the value, which stays unchanged, and Prettier 3.9.9's output. Prettier treats `//`
+      // as the start of a comment, which it moves after the `;`. CSS has no such comment, and Less only recognizes one
+      // after a space.
+      test.each([
+        [["css", "less"], "https://Example.com/A", "https: ; //Example.com/A"],
+        // In CSS and SCSS, `/*` starts a comment here.
+        [["less"], "https://*.example.com/*", "https: ; //*.example.com/*"],
+        [["css", "less"], "https://example.com/a?b=\"c\"&d='e'", "https: ; //example.com/a?b=\"c\"&d='e'"],
+        [["css", "less"], 'http://x.y/z /* note */ "s"', 'http: ; //x.y/z /* note */ "s"'],
+        [["css", "less"], 'http://b/"c" !important', 'http:  !important; //b/"c"'],
+        [["css", "less"], '{"u":http://"c"}', '{\n    "u":http: ;//"c"\n  }'],
+        [["css"], "//Example.com/A", ";//Example.com/A"],
+        [["css"], "#FFF // b", "#fff; // b"],
+      ])("in %j: %j", async (languages, value, byPrettier) => {
+        expect(`${value};`).not.toBe(byPrettier);
+        const after = `a {\n  --x: ${value};\n  c: d;\n}\n`;
+        const files = Object.fromEntries(
+          languages.flatMap(language => [
+            [`a.${language}`, `a{--x:${value};c:d}\n`],
+            [`b.${language}`, after],
+          ]),
+        );
+        const names = Object.keys(files);
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: names }),
+          format(files, ["--flavor=oxfmt"], { reads: names }),
+        ]);
+        const expected = Object.fromEntries(names.map(name => [name, after]));
+        expect(result.files).toEqual(expected);
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual(expected);
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      test("stays as written with several URLs in a row", async () => {
+        // In CSS, everything from the first `/*` to the last `*/` is a comment.
+        const sheet =
+          "a {\n  --hosts: https://*.example.com/*;\n  --query: https://example.com/a?b=\"c\"&d='e';\n" +
+          '  --note: http://x.y/z /* note */ "s";\n}\n';
+        const files = { "a.css": sheet, "a.less": sheet };
+        const [result, asOxfmt] = await Promise.all([
+          format(files, [], { reads: Object.keys(files) }),
+          format(files, ["--flavor=oxfmt"], { reads: Object.keys(files) }),
+        ]);
+        expect(result.files).toEqual(files);
+        expect(result.exitCode).toBe(0);
+        expect(asOxfmt.files).toEqual(files);
+        expect(asOxfmt.exitCode).toBe(0);
+      });
+
+      test.each(['"see" https://b.example.com', "'see' https://b.example.com", "*see* https://b.example.com"])(
+        "after another one with a `//` on the same line: %j",
+        async value => {
+          const files = { "a.less": `a { --a: https://a.example.com; --b: ${value}; }\n` };
+          const after = { "a.less": `a {\n  --a: https://a.example.com;\n  --b: ${value};\n}\n` };
+          for (const flags of [[], ["--flavor=oxfmt"]]) {
+            const result = await format(files, flags, { reads: ["a.less"] });
+            expect(result.files).toEqual(after);
+            expect(result.exitCode).toBe(0);
+            const again = await format(after, flags, { reads: ["a.less"] });
+            expect(again.files).toEqual(after);
+            expect(again.exitCode).toBe(0);
+          }
+        },
+      );
+
+      // oxfmt 0.72.0 prints `http:; //y "// z";`.
+      test("a URL before a string with `//` stays as written in Less with the oxfmt flavor", async () => {
+        const files = { "a.less": 'a {\n  --x: http://y "// z";\n}\n' };
+        const result = await format(files, ["--flavor=oxfmt"], { reads: ["a.less"] });
+        expect(result.files).toEqual(files);
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("moves a // comment in SCSS and Less after the ;", async () => {
+        const files = { "a.scss": "a{--x:#FFF // c\n}\n", "a.less": "a{--x:#FFF // c\n}\n" };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        const after = "a {\n  --x: #FFF; // c\n}\n";
+        expect(result.files).toEqual({ "a.scss": after, "a.less": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("known issue: a set of declarations for @apply is laid out as a block, like in Prettier 3.9.9", async () => {
+        const result = await format({ "a.css": "a{--x:{COLOR:#FFF}}\n" }, [], { reads: ["a.css"] });
+        expect(result.files).toEqual({ "a.css": "a {\n  --x: {\n    color: #fff;\n  };\n}\n" });
+      });
+    });
   });
 
-  // What Prettier 3.9.9 does with the flag. oxfmt 0.72 does not have it. The comparison is Bun's own.
+  // This is what Prettier 3.9.9 does with the flag. oxfmt 0.72 doesn't have it. The comparison itself is Bun's own.
   describe.each([
     ["no config", {}, "error: "],
     [".prettierrc", { ".prettierrc": "{}\n" }, "error: "],
@@ -2017,11 +4095,11 @@ describe.concurrent("bun fmt", () => {
   ])("--debug-check with %s", (_, config: Record<string, string>, prefix) => {
     const files = { "a.js": formatted, "b.js": ugly };
     const names = Object.keys(files);
-    // Without the parentheses, which neither Prettier nor Bun writes, it means the same, but the tree is another. Prettier's
-    // check reports it too.
+    // Without the parentheses, which neither Prettier nor Bun prints, it means the same but has a different tree.
+    // Prettier's check reports it too.
     const lossy = "(a<b>)();\n";
 
-    test("every file that passes is named, formatted or not, and nothing is written", async () => {
+    test("lists every file that passes, formatted or not, and doesn't write", async () => {
       const result = await format({ ...config, ...files }, ["--debug-check", ...names], { reads: names });
       expect(result.files).toEqual(files);
       expect(result.stderr).toBe("");
@@ -2029,7 +4107,7 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    test("a file that would say something else is an error", async () => {
+    test("reports an error for a file whose meaning would change", async () => {
       const all = { "a.ts": lossy, "b.js": ugly };
       const result = await format({ ...config, ...all }, ["--debug-check", "a.ts", "b.js"], {
         reads: ["a.ts", "b.js"],
@@ -2040,7 +4118,7 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(2);
     });
 
-    test("-l names what needs formatting as well", async () => {
+    test("-l also lists unformatted files", async () => {
       const result = await format({ ...config, ...files }, ["--debug-check", "-l", ...names], { reads: names });
       expect(result.files).toEqual(files);
       expect(result.stdout.split("\n")).toEqual(["a.js", "b.js", "b.js"]);
@@ -2053,35 +4131,35 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(1);
     });
 
-    test("--write is refused", async () => {
+    test("rejects --write", async () => {
       const result = await format({ ...config, ...files }, ["--debug-check", "--write", ...names], { reads: names });
       expect(result.files).toEqual(files);
       expect(result.stderr.trim()).toBe(`${prefix}Cannot use --write and --debug-check together.`);
       expect(result.exitCode).toBe(1);
     });
 
-    test("standard input", async () => {
-      const [named, unnamed, looks, lost] = await Promise.all([
+    test("checks stdin", async () => {
+      const [withPath, withParser, checked, unsafe] = await Promise.all([
         format(config, ["--debug-check", "--stdin-filepath", "x.js"], { stdin: ugly }),
         format(config, ["--debug-check", "--parser", "babel"], { stdin: ugly }),
         format(config, ["--debug-check", "--check", "--stdin-filepath", "x.js"], { stdin: ugly }),
         format(config, ["--debug-check", "--stdin-filepath", "x.ts"], { stdin: lossy }),
       ]);
-      // The path, and no line break.
-      expect(named.raw).toEndWith(`${sep}x.js`);
-      expect(named.exitCode).toBe(0);
-      expect(unnamed.raw).toBe("(stdin)\n");
-      expect(unnamed.exitCode).toBe(0);
-      // oxfmt refuses --check with --stdin-filepath.
-      expect(looks.raw).toBe(".oxfmtrc.json" in config ? "" : "(stdin)\n");
-      expect(looks.exitCode).toBe(1);
-      expect(lost.raw).toBe("");
-      expect(lost.stderr).toBe(problem("x.ts", "Not formatted, because formatting would change what the code does"));
-      expect(lost.exitCode).toBe(2);
+      // The path, without a line break.
+      expect(withPath.raw).toEndWith(`${sep}x.js`);
+      expect(withPath.exitCode).toBe(0);
+      expect(withParser.raw).toBe("(stdin)\n");
+      expect(withParser.exitCode).toBe(0);
+      // oxfmt rejects --check with --stdin-filepath.
+      expect(checked.raw).toBe(".oxfmtrc.json" in config ? "" : "(stdin)\n");
+      expect(checked.exitCode).toBe(1);
+      expect(unsafe.raw).toBe("");
+      expect(unsafe.stderr).toBe(problem("x.ts", "Not formatted, because formatting would change what the code does"));
+      expect(unsafe.exitCode).toBe(2);
     });
   });
 
-  test("HTML in templates", async () => {
+  test("formats HTML in template literals", async () => {
     const result = await format(
       {
         "a.js":
@@ -2099,7 +4177,7 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("a template whose HTML cannot be parsed stays as it is, the rest of the file is formatted", async () => {
+  test("leaves a template whose HTML doesn't parse unchanged and formats the rest of the file", async () => {
     const result = await format({ "a.js": 'const a = html`<div   class="b"></p>`;\nconst   b = 1;\n' }, [], {
       reads: ["a.js"],
     });
@@ -2107,7 +4185,7 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("--embedded-language-formatting=off leaves HTML in templates and in Markdown as it is", async () => {
+  test("--embedded-language-formatting=off leaves HTML in templates and in Markdown unchanged", async () => {
     const files = {
       "a.js": 'const a = html`<div   class="b"></div>`;\n',
       "b.md": '```html\n<div   class="b"></div>\n```\n',
@@ -2117,9 +4195,10 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  describe("HTML in a template of which Prettier changes the substitutions", () => {
-    // The code, what Bun makes of it, and what Prettier 3.9.9 makes of it: it closes the element, so `b` is evaluated twice,
-    // and it does not find what stands for `${b}` again once that is in lower case. oxfmt 0.72 leaves both as they are.
+  describe("HTML in a template whose substitutions Prettier changes", () => {
+    // Each row is the code, Bun's output and Prettier 3.9.9's output. Prettier closes the element, so `b` is evaluated
+    // twice, and it can't find its placeholder for `${b}` again once that's been lowercased. oxfmt 0.72 leaves both
+    // unchanged.
     test.each([
       ["const   a = html`<${b}>c`;\n", "const a = html`<${b}>c`;\n", "const a = html`<${b}>c</${b}>`;\n"],
       [
@@ -2132,8 +4211,8 @@ describe.concurrent("bun fmt", () => {
         "const a = html`<style>\n  a {\n    ${b}: ${c};\n  }\n</style>`;\n",
         "const a = html`<style>\n  a {\n    prettier_html_placeholder_0_0_in_js: ${c};\n  }\n</style>`;\n",
       ],
-    ])("%j", async (before, after, ofPrettier) => {
-      expect(after).not.toBe(ofPrettier);
+    ])("%j", async (before, after, byPrettier) => {
+      expect(after).not.toBe(byPrettier);
       const [written, again, checked] = await Promise.all([
         format({ "a.js": before }, [], { reads: ["a.js"] }),
         different({ "a.js": after }, []),
@@ -2147,7 +4226,7 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  test("HTML and Vue in blocks of code in Markdown", async () => {
+  test("formats HTML and Vue in Markdown code blocks", async () => {
     const result = await format(
       {
         "a.md":
@@ -2163,7 +4242,7 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("MDX is formatted as Prettier formats it, with and without an .oxfmtrc.json", async () => {
+  test("formats MDX like Prettier, with and without an .oxfmtrc.json", async () => {
     const files = { "a.mdx": "import   A from 'a'\n\n#   b\n\n<A   c='d'/>\n" };
     const printed = 'import A from "a";\n\n# b\n\n<A c="d" />\n';
     const result = await format(files, [], { reads: ["a.mdx"] });
@@ -2174,7 +4253,7 @@ describe.concurrent("bun fmt", () => {
     expect(forOxfmt.exitCode).toBe(0);
   });
 
-  test("other languages are left alone, which is an error at the end, or a warning with --allow-unsupported", async () => {
+  test("skips unsupported languages and reports an error at the end, or a warning with --allow-unsupported", async () => {
     const left = { "a.astro": "<p   >a</p>\n", "b.astro": "<p   >b</p>\n" };
     const files = { ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n', ...left, "c.js": ugly };
     const reads = [...Object.keys(left), "c.js"];
@@ -2195,10 +4274,10 @@ describe.concurrent("bun fmt", () => {
     expect(allowed.exitCode).toBe(0);
   });
 
-  describe("a language that only a plugin of Prettier reads", () => {
-    // A run starts a VM, and the search for leaks at its end takes seconds with the threads of one.
+  describe("a language that only a Prettier plugin supports", () => {
+    // A run starts a VM, and the leak check at exit takes seconds with a VM's threads.
     const timeout = isDebug || isASAN ? 120_000 : 5_000;
-    // Stand-ins. This Prettier takes blanks away, and writes down what it is called with.
+    // Stand-ins. This Prettier collapses spaces and logs the arguments of each call.
     const packages = {
       "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
       "node_modules/prettier/index.cjs": `const fs = require("node:fs");
@@ -2224,7 +4303,7 @@ exports.format = async (text, options) => {
     const reads = ["a.astro", "b.js", "node_modules/prettier/calls.txt", "node_modules/prettier/paths.txt"];
 
     test(
-      "goes to the project's own Prettier, with its configuration file and the flags",
+      "is formatted by the project's own Prettier, with its configuration file and the flags",
       async () => {
         const result = await format(files, ["--tab-width", "8"], { reads });
         expect(result.files["a.astro"]).toBe("<p >a</p>\n");
@@ -2233,7 +4312,7 @@ exports.format = async (text, options) => {
         expect(calls.map(it => JSON.parse(it))).toEqual([
           { ...config, tabWidth: 8, filepath: expect.stringMatching(/[\\/]a\.astro$/) },
         ]);
-        // A plugin sees paths as the system writes them.
+        // A plugin sees native paths.
         const paths = [JSON.parse(calls[0]).filepath, ...result.files[reads[3]]!.trim().split("\n")];
         expect(paths.map(it => basename(it))).toEqual(["a.astro", "a.astro", ".prettierrc"]);
         expect(paths).toEqual(paths.map(it => resolve(it)));
@@ -2243,10 +4322,10 @@ exports.format = async (text, options) => {
       timeout,
     );
 
-    test("a path reaches Prettier and its plugins as the system writes it, also on Windows", async () => {
+    test("passes native paths to Prettier and its plugins, also on Windows", async () => {
       const worker = join(import.meta.dir, "../../../src/lint/js_plugin/worker");
       const head = { usesConfig: true, editorconfig: true, flags: {}, precedence: "cli-override" };
-      // What the file takes from the rest of the worker, with the paths of another system.
+      // Stubs for what the file uses from the rest of the worker, with another system's path module.
       const run = (system: string, path: string, config: string | null) => `(() => {
         const nodePath = require("node:path").${system};
         const [DONE, FAILED, NOT_INSTALLED, cwd, seen] = ["0", "1", "5", "/", []];
@@ -2285,7 +4364,7 @@ exports.format = async (text, options) => {
     });
 
     test(
-      "is checked, and listed",
+      "is covered by --check and -l",
       async () => {
         const checked = await format(files, ["--check"], { reads });
         expect(checked.files["a.astro"]).toBe(files["a.astro"]);
@@ -2300,7 +4379,7 @@ exports.format = async (text, options) => {
     );
 
     test(
-      "from standard input",
+      "is formatted from stdin",
       async () => {
         const result = await format(files, ["--stdin-filepath", "c.astro"], { stdin: "<p   >c</p>\n" });
         expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
@@ -2370,13 +4449,13 @@ exports.format = async (text, { parser }) => {
       expect(result.exitCode).toBe(2);
     });
 
-    // As Prettier 3.9.9 with a plugin that throws this.
+    // Same as Prettier 3.9.9 with a plugin that throws this.
     test.each<[string[], string, number]>([
       [[], "error: c.astro: SyntaxError: Unexpected token (1:2)", 2],
       [["--check"], "error: Unexpected token (1:2)", 0],
       [["--list-different"], "error: Unexpected token (1:2)", 0],
     ])(
-      "from standard input, and it does not parse: %j",
+      "from stdin, with code that doesn't parse: %j",
       async (flags, stderr, exitCode) => {
         const result = await format(files, [...flags, "--stdin-filepath", "c.astro"], { stdin: "<p>broken</p>\n" });
         expect(result).toMatchObject({ raw: "", stderr, exitCode });
@@ -2384,13 +4463,13 @@ exports.format = async (text, { parser }) => {
       timeout,
     );
 
-    // Who gets the text back with 0 takes it for formatted. Prettier 3.9.9 without the plugin: `Cannot find package`, and 2,
-    // whatever the flags.
+    // A caller that gets the text back with exit code 0 assumes it's formatted. Prettier 3.9.9 without the plugin
+    // prints `Cannot find package` and exits with 2, whatever the flags.
     describe.each([
       ["prettier, prettier-plugin-astro", []],
       ["prettier-plugin-astro", ["node_modules/prettier/package.json"]],
       ["prettier", ["node_modules/prettier-plugin-astro/package.json"]],
-    ])("from standard input, and not installed: %s", (missing, installed) => {
+    ])("from stdin, with %s not installed", (missing, installed) => {
       const project = {
         ".prettierrc": files[".prettierrc"],
         ...Object.fromEntries(installed.map(name => [name, "{}"])),
@@ -2421,9 +4500,9 @@ exports.format = async (text, { parser }) => {
       });
     });
 
-    // Each thread that hands a file over waits for the answer, and Prettier reads files on threads too.
+    // Each thread that hands off a file waits for the result, and Prettier also reads files on threads.
     test(
-      "more files than there are threads",
+      "handles more files than there are threads",
       async () => {
         const names = Array.from({ length: availableParallelism() + 1 }, (_, index) => `many/${index}.astro`);
         const reading = packages["node_modules/prettier/index.cjs"].replace(
@@ -2445,9 +4524,9 @@ exports.format = async (text, { parser }) => {
       timeout,
     );
 
-    // The first pattern that is compiled starts JavaScriptCore too, on the thread that formats the file.
+    // Compiling the first pattern also starts JavaScriptCore, on the thread that formats the file.
     test(
-      "beside files for which a pattern of the configuration is compiled",
+      "works alongside files that compile a pattern from the configuration",
       async () => {
         const sorter = "@ianvs/prettier-plugin-sort-imports";
         const result = await format(
@@ -2470,7 +4549,7 @@ exports.format = async (text, { parser }) => {
 
     // It runs in this process.
     test(
-      "a Prettier that ends the process ends the run, and every file is whole",
+      "a Prettier that exits the process ends the run without corrupting any file",
       async () => {
         const names = Array.from({ length: 8 }, (_, index) => `${index}.astro`);
         const exits = packages["node_modules/prettier/index.cjs"].replace(
@@ -2486,7 +4565,7 @@ exports.format = async (text, { parser }) => {
         await using proc = spawn({ cmd: [...command, "many"], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 7 });
-        // Another thread may be between writing a file under another name and giving it its name.
+        // Another thread may be between writing a temporary file and renaming it.
         const left = readdirSync(join(String(dir), "many")).filter(name => !name.endsWith(".tmp"));
         expect(left.sort()).toEqual([...names, "ends.astro"]);
         expect(readFileSync(join(String(dir), "many/ends.astro"), "utf8")).toBe("<p   >ends</p>\n");
@@ -2498,14 +4577,14 @@ exports.format = async (text, { parser }) => {
     );
 
     test(
-      "a promise that nothing can settle any more is an error for the file",
+      "a promise that can never settle is an error for the file",
       async () => {
-        const waits = packages["node_modules/prettier/index.cjs"].replace(
+        const hangs = packages["node_modules/prettier/index.cjs"].replace(
           "exports.format = async (text, options) => {",
           'exports.format = async (text, options) => {\n  if (text.includes("waits")) await new Promise(() => {});',
         );
         const result = await format(
-          { ...files, "node_modules/prettier/index.cjs": waits, "c.astro": "<p   >waits</p>\n" },
+          { ...files, "node_modules/prettier/index.cjs": hangs, "c.astro": "<p   >waits</p>\n" },
           [],
           { reads: ["a.astro", "c.astro"] },
         );
@@ -2517,7 +4596,7 @@ exports.format = async (text, { parser }) => {
     );
 
     test(
-      "what Prettier leaves running does not keep the run from ending",
+      "timers and servers that Prettier leaves running don't keep the run alive",
       async () => {
         const leaves = `setInterval(() => {}, 1000);
 require("node:net").createServer(() => {}).listen(0, "127.0.0.1");
@@ -2530,7 +4609,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     );
 
     test(
-      "what Prettier throws is shown as it shows it",
+      "shows an error thrown by Prettier the way Prettier shows it",
       async () => {
         const result = await format({ ...files, "a.astro": "broken\n" }, [], { reads });
         expect(result.files["a.astro"]).toBe("broken\n");
@@ -2541,7 +4620,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     );
 
     test(
-      "is left as it is if the plugin is not installed, and what would help is said",
+      "is left unformatted if the plugin isn't installed, with a hint to install it",
       async () => {
         const { "node_modules/prettier-plugin-astro/package.json": plugin, ...others } = files;
         const result = await format(others, [], { reads: ["a.astro"] });
@@ -2892,7 +4971,7 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "the same with npm-run-all --serial",
+        "scripts keep their order with npm-run-all --serial too",
         {
           "scripts": { "c": "c", "b": "echo && npm-run-all2 x --serial b:*; echo", "a": "a" },
           "devDependencies": { "npm-run-all2": "1" },
@@ -2903,12 +4982,12 @@ exports.format = async text => "by Prettier";
         },
       ],
       [
-        "but not if npm-run-all isn't a dependency",
+        "scripts are sorted if npm-run-all isn't a dependency",
         { "scripts": { "c": "c", "b": "run-s b:*", "a": "a" }, "devDependencies": { "other": "1" } },
         { "scripts": { "a": "a", "b": "run-s b:*", "c": "c" }, "devDependencies": { "other": "1" } },
       ],
       [
-        "and not without a pattern, or if they run in parallel",
+        "scripts are sorted without a pattern, or if they run in parallel",
         {
           "scripts": { "d": "npm-run-all -p b:*", "c": "run-s b a", "b": "xrun-s b:*", "a": "run-sx a:*" },
           "devDependencies": { "npm-run-all": "1" },
@@ -3161,7 +5240,7 @@ exports.format = async text => "by Prettier";
       ],
     ];
     // The plugin passes the text through `JSON.parse` and `JSON.stringify`. Bun only moves members.
-    const asWritten: [title: string, before: string, after: string, ofPlugin: string][] = [
+    const asWritten: [title: string, before: string, after: string, byPlugin: string][] = [
       [
         "keeps numbers as written",
         '{ "b": 1.0, "a": -0, "c": 1e400, "d": 1E5, "e": 12345678901234567890, "f": 0.10 }',
@@ -3169,7 +5248,7 @@ exports.format = async text => "by Prettier";
         '{\n  "a": 0,\n  "b": 1,\n  "c": null,\n  "d": 100000,\n  "e": 12345678901234567000,\n  "f": 0.1\n}\n',
       ],
       [
-        "keeps strings and keys as written, and compares what they stand for",
+        "keeps strings and keys as written, and compares their decoded values",
         '{ "b": "\\u00e9\\/\\ud83d\\ude00\\ud800", "\\u0061": "é", "n\\u0061me": "x", "keywords": ["\\u0062", "b", "a"] }',
         '{\n  "n\\u0061me": "x",\n  "keywords": [\n    "\\u0062",\n    "a"\n  ],\n  "\\u0061": "é",\n  "b": "\\u00e9\\/\\ud83d\\ude00\\ud800"\n}\n',
         '{\n  "name": "x",\n  "keywords": [\n    "b",\n    "a"\n  ],\n  "a": "é",\n  "b": "é/😀\\ud800"\n}\n',
@@ -3187,7 +5266,7 @@ exports.format = async text => "by Prettier";
         '{\n  "9": 1,\n  "10": 1,\n  "name": "a",\n  "scripts": {\n    "9": "",\n    "10": "",\n    "b": ""\n  },\n  "x": {\n    "1": 1,\n    "b": 1\n  }\n}\n',
       ],
       [
-        "leaves a file alone that isn't an object",
+        "doesn't sort a file that isn't an object",
         '[{ "b": 1, "a": 1 }, 1.0]',
         '[\n  {\n    "b": 1,\n    "a": 1\n  },\n  1.0\n]\n',
         '[\n  {\n    "b": 1,\n    "a": 1\n  },\n  1\n]\n',
@@ -3212,10 +5291,10 @@ exports.format = async text => "by Prettier";
       expect(await different({ ".prettierrc": prettierrc, ...again }, ["--config", ".prettierrc", "."])).toEqual([]);
     });
 
-    test.each(asWritten)("%s", async (_, before, after, ofPlugin) => {
-      expect(after).not.toBe(ofPlugin);
+    test.each(asWritten)("%s", async (_, before, after, byPlugin) => {
+      expect(after).not.toBe(byPlugin);
       // After the plugin's round trip, the two are the same.
-      expect(JSON.stringify(JSON.parse(after), null, 2) + "\n").toBe(ofPlugin);
+      expect(JSON.stringify(JSON.parse(after), null, 2) + "\n").toBe(byPlugin);
       const files = { ".prettierrc": prettierrc, "package.json": before };
       const result = await quiet(files, ["package.json"], { reads: ["package.json"] });
       expect(result).toMatchObject({ stderr: "", files: { "package.json": after }, exitCode: 0 });
@@ -3402,6 +5481,48 @@ exports.format = async text => "by Prettier";
       }
     });
 
+    // JavaScript decodes the file before it compares anything, so by then a truncated character is a single U+FFFD.
+    test.each<[string, string, string[], (a: string, b: string) => number]>([
+      [
+        "npm's order (localeCompare)",
+        "",
+        ["\xF0\x9F\x98b", "\xEF\xBF\xBDc", "\xEF\xBF\xBD\xEF\xBF\xBD\\ud800"],
+        (a, b) => a.localeCompare(b, "en"),
+      ],
+      [
+        "pnpm's order (code units)",
+        ',\n  "packageManager": "pnpm@9"',
+        ["\xF0A", "\xF1\x80\x80\x80", "\\udc00"],
+        (a, b) => (a < b ? -1 : 1),
+      ],
+    ])("dependencies whose names aren't valid UTF-8 sort consistently in %s", async (_, more, kinds, compare) => {
+      const all = kinds.flatMap(kind => Array.from({ length: 8 }, (_, digit) => kind + digit));
+      const text = (names: string[]) =>
+        `{\n  "name": "x",\n  "dependencies": {\n${names.map(name => `    "${name}": "1"`).join(",\n")}\n  }${more}\n}\n`;
+      const decode = (name: string): string => JSON.parse(`"${new TextDecoder().decode(Buffer.from(name, "latin1"))}"`);
+      const sorted = text(all.toSorted((a, b) => compare(decode(a), decode(b))));
+      for (const stride of [11, 7]) {
+        using dir = tempDir("bun-format", {
+          ".prettierrc": prettierrc,
+          "package.json": Buffer.from(text(all.map((_, i) => all[(i * stride) % all.length])), "latin1"),
+        });
+        for (const _ of ["sorts", "has nothing to sort"]) {
+          const cmd = [...command, "--log-level=warn", "package.json"];
+          await using proc = spawn({
+            // Don't leave a core file after a crash.
+            cmd: isWindows ? cmd : ["sh", "-c", 'ulimit -c 0; exec "$0" "$@"', ...cmd],
+            env,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          expect(readFileSync(join(String(dir), "package.json"), "latin1")).toBe(sorted);
+          expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+        }
+      }
+    });
+
     test("sortPackageJson, as a flag or in [fmt], overrides the plugin", async () => {
       const before = '{ "license": "MIT", "author": "a", "repository": "r" }\n';
       const text = (...names: string[]) =>
@@ -3421,8 +5542,8 @@ exports.format = async text => "by Prettier";
     });
 
     // In a package.json, a range formats the whole file except for the final line break, with or without the plugin.
-    // Prettier looks for the offsets in the text that the plugin wrote, so with some ranges it prints that text as it is:
-    // `{"name":"a","version":"1","files":["b","a"]}`.
+    // Prettier looks for the offsets in the text that the plugin wrote, so with some ranges it prints that text
+    // verbatim: `{"name":"a","version":"1","files":["b","a"]}`.
     test("sorts with a range too", async () => {
       const text = '{ "version": "1", "name": "a", "files": [ "b",   "a" ] }\n';
       const run = async (...flags: string[]) => {
@@ -3492,7 +5613,7 @@ exports.format = async text => "by Prettier";
     });
   });
 
-  test("with an .oxfmtrc.json TOML is formatted, and Svelte if the configuration has svelte", async () => {
+  test("with an .oxfmtrc.json, formats TOML, and Svelte if the config has `svelte`", async () => {
     const files = {
       "a.svelte": "<p   >a</p>\n",
       "b.toml": "a   = 1\n",
@@ -3510,7 +5631,7 @@ exports.format = async text => "by Prettier";
     expect(without.files).toEqual(after);
     expect(without.stderr).not.toContain("does not support");
     expect(without.exitCode).toBe(0);
-    // oxfmt 0.72 formats the one, and gives the other back.
+    // oxfmt 0.72 formats the first and returns the second unchanged.
     const piped = (config: string) =>
       format({ ".oxfmtrc.json": config }, ["--stdin-filepath", "a.svelte"], { stdin: files["a.svelte"] });
     expect(await piped('{ "svelte": {} }\n')).toMatchObject({ raw: "<p>a</p>\n", stderr: "", exitCode: 0 });
@@ -3525,12 +5646,13 @@ exports.format = async text => "by Prettier";
     expect(broken.exitCode).toBe(0);
   });
 
-  // Notepad and `Out-File -Encoding utf8` of Windows PowerShell write the mark. Git, Prettier 3.9.9 and oxfmt 0.72.0 pass over it.
+  // Notepad and Windows PowerShell's `Out-File -Encoding utf8` write the mark. Git, Prettier 3.9.9 and oxfmt 0.72.0
+  // skip it.
   test.each([
     ["\\r\\n", (text: string) => text.replaceAll("\n", "\r\n")],
     ["a byte order mark", (text: string) => "\uFEFF" + text],
     ["both", (text: string) => "\uFEFF" + text.replaceAll("\n", "\r\n")],
-  ])("%s in a file with patterns to ignore", async (_, written) => {
+  ])("handles %s in an ignore file", async (_, written) => {
     const files = { "dist/a.js": ugly, "b.gen.js": ugly, "keep.gen.js": ugly, "sub/c.js": ugly, "d.js": ugly };
     const patterns = written("dist\n# a comment\n\n*.gen.js\n!keep.gen.js\nsub/\n");
     const results = await Promise.all([
@@ -3546,7 +5668,7 @@ exports.format = async text => "by Prettier";
     expect(results.map(it => it.sort())).toEqual(results.map(() => ["d.js", "keep.gen.js"]));
   });
 
-  test(".prettierignore and .gitignore make no difference between upper and lower case, as for Prettier", async () => {
+  test(".prettierignore and .gitignore are case-insensitive, like in Prettier", async () => {
     const files = {
       ".prettierignore": "readme.md\nSUB/\n",
       ".gitignore": "*.JS\n",
@@ -3556,7 +5678,7 @@ exports.format = async text => "by Prettier";
       "other.md": "#   c\n",
     };
     expect(await different(files, [])).toEqual(["other.md"]);
-    // oxfmt does.
+    // In oxfmt they're case-sensitive.
     expect(await different({ ...files, ".oxfmtrc.json": "{}\n" }, [])).toEqual([
       "README.md",
       "c.js",
@@ -3565,12 +5687,12 @@ exports.format = async text => "by Prettier";
     ]);
   });
 
-  test("(a|b) in a pattern is a or b, as for Prettier", async () => {
+  test("(a|b) in a pattern matches a or b, like in Prettier", async () => {
     const files = { "src/a.ts": ugly, "test/x/b.ts": ugly, "lib/c.ts": ugly };
     expect(await different(files, ["(src|test)/**/*.ts"])).toEqual(["src/a.ts", "test/x/b.ts"]);
   });
 
-  test("ignorePatterns that ignore *.* do not ignore the directory that is searched", async () => {
+  test("ignorePatterns that match *.* don't ignore the directory being searched", async () => {
     const files = {
       ".oxfmtrc.json": '{ "ignorePatterns": ["*.*", "!*.css", "!*.ts"] }\n',
       "a.ts": ugly,
@@ -3592,15 +5714,15 @@ exports.format = async text => "by Prettier";
     ['{ "overrides": 1 }', '"overrides" must be an array of objects, each with "files"'],
     ['{ "overrides": [{ "options": {} }] }', '"overrides" must be an array of objects, each with "files"'],
     ['{ "overrides": [{ "files": 1 }] }', '"overrides" must be an array of objects, each with "files"'],
-  ])("a .prettierrc that Prettier cannot use is an error: %s", async (config, message) => {
+  ])("a .prettierrc that Prettier rejects is an error: %s", async (config, message) => {
     const result = await format({ ".prettierrc": config, "a.js": ugly }, ["a.js"], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe(ugly);
     expect(result.stderr).toContain(message);
     expect(result.exitCode).toBe(2);
   });
 
-  // It has holes for all its bytes. Node: "Cannot create a string longer than 0x1fffffe8 characters".
-  test("a file that JavaScript could not hold as a string is not read, and the others are", async () => {
+  // The file is entirely sparse. Node fails with "Cannot create a string longer than 0x1fffffe8 characters".
+  test("doesn't read a file too large for a JavaScript string, and still reads the others", async () => {
     const result = await format({ "a.json": "", "b.js": ugly }, ["--check", "."], {
       before: dir => truncateSync(join(dir, "a.json"), 2 ** 29),
     });
@@ -3610,7 +5732,7 @@ exports.format = async text => "by Prettier";
   });
 
   test.skipIf(isWindows)(
-    "/dev/null is a file without patterns to ignore, and a configuration without options",
+    "/dev/null works as an ignore file without patterns and as a configuration without options",
     async () => {
       const files = { ".prettierignore": "a.js\n", ".prettierrc": `{ "semi": false }\n`, "a.js": formatted };
       expect(await different(files, ["."])).toEqual([]);
@@ -3619,7 +5741,7 @@ exports.format = async text => "by Prettier";
     },
   );
 
-  // "Never break a line." Prettier takes every whole number from 0 on, and Infinity.
+  // This means "never break a line". Prettier accepts every integer from 0 up, and Infinity.
   test.each([
     [{ ".prettierrc": `{ "printWidth": 100000 }` }, []],
     [{ ".prettierrc.mjs": `export default { printWidth: Infinity };` }, []],
@@ -3643,8 +5765,8 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
-  // oxfmt 0.72: "Failed to load configuration file.", 1.
-  test("an infinite printWidth is none that oxfmt takes", async () => {
+  // oxfmt 0.72 prints "Failed to load configuration file." and exits with 1.
+  test("rejects an infinite printWidth in an oxfmt config", async () => {
     const result = await format(
       { "oxfmt.config.ts": `export default { printWidth: Infinity };`, "a.js": ugly },
       ["a.js"],
@@ -3657,7 +5779,7 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(1);
   });
 
-  test("an option that Prettier does not know is ignored with its warning, unless a plugin may know it", async () => {
+  test("ignores an option unknown to Prettier with Prettier's warning, unless a plugin may define it", async () => {
     const unknown = '"nonsense": 1, "other": [1, "a"], "tailwindConfig": "x", "$schema": "y"';
     const result = await format({ ".prettierrc": `{ ${unknown} }`, "a.js": ugly }, ["a.js"], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe(formatted);
@@ -3673,7 +5795,7 @@ exports.format = async text => "by Prettier";
     );
     expect(withPlugin.files["a.js"]).toBe(formatted);
     expect(withPlugin.stderr).not.toContain("Ignored unknown option");
-    // oxfmt says nothing about keys that it does not know, and null is as good as nothing.
+    // oxfmt silently ignores unknown keys, and treats null as unset.
     const oxfmt = await format({ ".oxfmtrc.json": '{ "semi": null, "nonsense": 1 }\n', "a.js": ugly }, ["a.js"], {
       reads: ["a.js"],
     });
@@ -3682,7 +5804,7 @@ exports.format = async text => "by Prettier";
     expect(oxfmt.exitCode).toBe(0);
   });
 
-  test("a plugin that may print files in another way: they are left as they are, which is an error, unless --allow-unsupported", async () => {
+  test("skips files that an unsupported plugin may print differently, which is an error unless --allow-unsupported is passed", async () => {
     const files = {
       ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style", "prettier-plugin-astro", "./own.js"] }\n',
       "a.js": ugly,
@@ -3723,7 +5845,7 @@ exports.format = async text => "by Prettier";
     expect(await format(files, args, { stdin: ugly })).toMatchObject({ raw: formatted, exitCode: 0 });
   });
 
-  test("such a plugin in an override: the files that the override is for are left as they are", async () => {
+  test("an unsupported plugin in an override only skips the files that the override matches", async () => {
     const overrides = [{ files: "legacy/**", options: { plugins: ["prettier-plugin-brace-style"] } }];
     const files = { ".prettierrc": JSON.stringify({ overrides }), "a.js": ugly, "legacy/b.js": ugly };
     const result = await format(files, [], { reads: ["a.js", "legacy/b.js"] });
@@ -3732,7 +5854,7 @@ exports.format = async text => "by Prettier";
       "error: 1 file was not formatted because the Prettier config uses plugins that bun fmt does not include: prettier-plugin-brace-style\n",
     );
     expect(result.exitCode).toBe(2);
-    // An override that empties the list takes its files out.
+    // An override that empties the plugin list exempts its files.
     const emptied = {
       plugins: ["prettier-plugin-brace-style"],
       overrides: [{ files: "legacy/**", options: { plugins: [] } }],
@@ -3769,7 +5891,7 @@ exports.format = async text => "by Prettier";
       },
     ],
     ["--plugin", {}, ["--plugin", "@prettier/plugin-oxc"]],
-  ])("the plugin that only reads with another parser, named by %s, changes nothing", async (_, files, flags = []) => {
+  ])("@prettier/plugin-oxc, set by %s, only swaps the parser and changes nothing", async (_, files, flags = []) => {
     const result = await format({ ...files, "a.js": ugly, "a.ts": "let  a: 1\n" }, ["--log-level=warn", ...flags], {
       reads: ["a.js", "a.ts"],
     });
@@ -3778,7 +5900,7 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
-  test("a plugin that only adds a language: the rest is formatted, and the files of that language are counted", async () => {
+  test("with a plugin that only adds a language, formats the rest and counts that language's files", async () => {
     const files = {
       ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n',
       "a.js": ugly,
@@ -3791,7 +5913,7 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
-  test("which names are read: Prettier's, or oxfmt's with an .oxfmtrc.json, which tells upper case from lower case", async () => {
+  test("recognizes the file names that Prettier does, or with an .oxfmtrc.json those that oxfmt does, which is case-sensitive", async () => {
     const script = "a  ;\n";
     const json = '{"a":   1}\n';
     const files = {
@@ -3827,7 +5949,7 @@ exports.format = async text => "by Prettier";
     ]);
   });
 
-  test("below an .oxfmtrc.json files are printed as oxfmt prints them, also if the run starts above it", async () => {
+  test("formats files under an .oxfmtrc.json like oxfmt, even if the run starts above it", async () => {
     const files = {
       "a.ts": "let a = // comment\n{\n  b: 1\n}\n",
       "packages/c/.oxfmtrc.json": "{}\n",
@@ -3842,7 +5964,7 @@ exports.format = async text => "by Prettier";
   });
 
   describe("without a configuration file", () => {
-    // 90 columns: one line for oxfmt, whose lines are 100 wide.
+    // 90 columns, which fits on one line in oxfmt's 100.
     const asOxfmt = `const value = someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree);\n`;
     const asPrettier = `const value = someFunction(\n  argumentNumberOne,\n  argumentNumberTwo,\n  argumentNumberThree,\n);\n`;
     const after = async (files: Record<string, string>, args: string[] = []) =>
@@ -3862,13 +5984,44 @@ exports.format = async text => "by Prettier";
       expect(both.stderr).toContain(
         "note: No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like oxfmt. Add a config file to change that.",
       );
-      // A configuration file says more than that.
+      // A configuration file takes precedence over the dependency.
       expect(
         await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0" } }\n', ".prettierrc": "{}\n" }),
       ).toBe(asPrettier);
     });
 
-    test("no registry is asked for what a configuration file imports", async () => {
+    // Monorepos list their tools in the root's package.json.
+    test("the dependency can be in a package.json above the nearest one", async () => {
+      const check = async (tools: object, cwd: string, file: (dir: string) => string) => {
+        using dir = tempDir("bun-format", {
+          "package.json": JSON.stringify({ workspaces: ["packages/*"], devDependencies: tools }),
+          "packages/app/package.json": '{ "name": "app", "dependencies": { "react": "19.0.0" } }\n',
+          "packages/app/src/a.ts": asOxfmt,
+        });
+        await using proc = spawn({
+          cmd: [...command, "--check", file(String(dir))],
+          env,
+          cwd: join(String(dir), cwd),
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        return await proc.exited;
+      };
+      const absolute = (dir: string) => join(dir, "packages", "app", "src", "a.ts");
+      const runs: [cwd: string, file: (dir: string) => string][] = [
+        [".", () => "packages/app/src/a.ts"],
+        [".", absolute],
+        ["packages/app", () => "src/a.ts"],
+        ["packages/app", absolute],
+        ["packages/app/src", () => "a.ts"],
+      ];
+      const exitCodes = (tools: object) => Promise.all(runs.map(([cwd, file]) => check(tools, cwd, file)));
+      expect(await exitCodes({ oxfmt: "0.72.0" })).toEqual([0, 0, 0, 0, 0]);
+      expect(await exitCodes({ "vite-plus": "1.0.0" })).toEqual([0, 0, 0, 0, 0]);
+      expect(await exitCodes({ typescript: "5.9.3" })).toEqual([1, 1, 1, 1, 1]);
+    });
+
+    test("doesn't contact a registry for a configuration file's imports", async () => {
       let requests = 0;
       using registry = Bun.serve({
         port: 0,
@@ -3891,7 +6044,7 @@ exports.format = async text => "by Prettier";
       expect(requests).toBe(0);
     });
 
-    test("a project that depends on Vite+ has its options in the fmt of the nearest vite.config.ts that has one", async () => {
+    test("a project that depends on Vite+ takes its options from `fmt` in the nearest vite.config.ts that has it", async () => {
       const files = {
         "package.json": '{ "devDependencies": { "vite-plus": "1.0.0" } }\n',
         "vite.config.ts":
@@ -3908,19 +6061,19 @@ exports.format = async text => "by Prettier";
       const result = await format(files, ["a.js", "c.js", "nested", "other/d.js"], { reads });
       expect(result.files).toEqual({ "a.js": "a\n", "c.js": "c  ;\n", "nested/b.js": "b\n", "other/d.js": "d\n" });
       expect(result.exitCode).toBe(0);
-      // From a directory whose own has no fmt, the one above counts.
+      // In a directory whose own vite.config has no `fmt`, the one above applies.
       const below = await format(files, ["d.js"], { reads, cwd: "other" });
       expect(below.files["other/d.js"]).toBe("d\n");
-      const named = await format(files, ["--config", "other/vite.config.mjs", "a.js"], { reads });
-      expect(named.stderr).toContain("Expected a `fmt` field in the default export of");
-      expect(named.files["a.js"]).toBe("a;\n");
-      expect(named.exitCode).toBe(1);
-      // Without the dependency the file is Vite's alone.
+      const explicit = await format(files, ["--config", "other/vite.config.mjs", "a.js"], { reads });
+      expect(explicit.stderr).toContain("Expected a `fmt` field in the default export of");
+      expect(explicit.files["a.js"]).toBe("a;\n");
+      expect(explicit.exitCode).toBe(1);
+      // Without the dependency, the file is only Vite's config.
       const without = await format({ ...files, "package.json": "{}\n" }, ["a.js"], { reads });
       expect(without.files["a.js"]).toBe("a;\n");
     });
 
-    test("--flavor says which", async () => {
+    test("--flavor picks the style", async () => {
       expect(await after({}, ["--flavor", "oxfmt"])).toBe(asOxfmt);
       expect(
         await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0" } }\n' }, ["--flavor=prettier"]),
@@ -3930,7 +6083,7 @@ exports.format = async text => "by Prettier";
       expect(result.exitCode).toBe(2);
     });
 
-    test("--config with a name that has oxfmt in it is a configuration file of oxfmt", async () => {
+    test("--config treats a file with oxfmt in its name as an oxfmt config", async () => {
       const files = { "config/oxfmtrc.json": "{}\n", "a.ts": asOxfmt, "pnpm-lock.yaml": "a:   1\n" };
       const result = await format(files, ["--config", "config/oxfmtrc.json"], { reads: ["a.ts", "pnpm-lock.yaml"] });
       expect(result.files).toEqual({ "a.ts": asOxfmt, "pnpm-lock.yaml": "a:   1\n" });
@@ -3938,7 +6091,7 @@ exports.format = async text => "by Prettier";
     });
   });
 
-  // As Prettier 3.9.9 and oxfmt 0.72.
+  // Same as Prettier 3.9.9 and oxfmt 0.72.
   test.each(["prettier.config.mjs", "oxfmt.config.ts"])(
     "`process.cwd()` in %s is where the command runs, not where the file is",
     async name => {
@@ -3946,17 +6099,17 @@ exports.format = async text => "by Prettier";
         [name]: `import { basename } from "node:path";\nexport default { semi: basename(process.cwd()) !== "sub" };\n`,
         "sub/a.js": "a\n",
       };
-      const [below, beside] = await Promise.all([
+      const [below, atRoot] = await Promise.all([
         format(files, ["a.js"], { cwd: "sub", reads: ["sub/a.js"] }),
         format(files, ["sub/a.js"], { reads: ["sub/a.js"] }),
       ]);
-      expect([below.files["sub/a.js"], beside.files["sub/a.js"]]).toEqual(["a\n", "a;\n"]);
+      expect([below.files["sub/a.js"], atRoot.files["sub/a.js"]]).toEqual(["a\n", "a;\n"]);
     },
   );
 
-  // As Prettier 3.9.9 and oxfmt 0.72, which read a configuration in Node.
+  // Same as Prettier 3.9.9 and oxfmt 0.72, which load a configuration in Node.
   test.each(["prettier.config.mjs", "oxfmt.config.ts"])(
-    "the .env of the project is not in `process.env` of %s, and what is inherited is",
+    "`process.env` in %s has inherited variables but not the project's .env",
     async name => {
       const files = {
         ".env": "FROM_FILE=1\n",
@@ -3968,9 +6121,9 @@ exports.format = async text => "by Prettier";
     },
   );
 
-  // As Prettier 3.9.9 and oxfmt 0.72, which read a configuration in Node. On Windows it still runs.
+  // Same as Prettier 3.9.9 and oxfmt 0.72, which load a configuration in Node. On Windows it still runs.
   test.skipIf(isWindows).each(["prettier.config.mjs", "oxfmt.config.ts"])(
-    "a `preload` of bunfig.toml does not run before %s",
+    "a `preload` in bunfig.toml doesn't run before %s",
     async name => {
       const files = {
         "bunfig.toml": 'preload = ["./preload.ts"]\n',
@@ -3985,8 +6138,8 @@ exports.format = async text => "by Prettier";
   );
 
   // Prettier 3.9.9 and oxfmt 0.72 read a configuration in their own process: `[node, <the tool>, ...arguments]`.
-  test.each(["prettier.config.mjs", "oxfmt.config.ts"])("`process.argv` of %s is the command line", async name => {
-    // `--cwd sub` once more would be `sub/sub`.
+  test.each(["prettier.config.mjs", "oxfmt.config.ts"])("`process.argv` in %s is the command line", async name => {
+    // Applying `--cwd sub` a second time would give `sub/sub`.
     const args = ["--cwd", "sub", "--no-color", "--", "a.js"];
     const files = {
       [`sub/${name}`]: `
@@ -4009,9 +6162,121 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a named pipe with the name of a script is passed over, as by Prettier", async () => {
+  test.skipIf(isWindows)("a named pipe whose name ends in .js is skipped, like in Prettier", async () => {
     const before = (dir: string) => expect(Bun.spawnSync(["mkfifo", join(dir, "pipe.js")]).exitCode).toBe(0);
     expect(await different({ "a.js": ugly }, [], { before })).toEqual(["a.js"]);
+  });
+
+  // Opening a pipe like this blocks until a writer opens it.
+  test
+    .skipIf(isWindows)
+    .each([".gitignore", ".git/info/exclude", ".prettierignore", ".editorconfig", ".prettierrc", "package.json"])(
+    "doesn't hang when %s is a link to a named pipe without a writer",
+    async name => {
+      const before = (dir: string) => {
+        expect(Bun.spawnSync(["mkfifo", join(dir, "pipe")]).exitCode).toBe(0);
+        symlinkSync(join(dir, "pipe"), join(dir, "project", name));
+      };
+      const files = { "project/a.js": ugly, "project/.git/info/a": "" };
+      expect(await different(files, [], { cwd: "project", before })).toEqual(["a.js"]);
+    },
+  );
+
+  test.skipIf(isWindows).each([
+    ["writes to it is read", "echo a.js", "b.js\n"],
+    ["closes it without writing is read as an empty file", ":", "a.js\nb.js\n"],
+  ])("a pipe whose writer %s", async (_, writer, expected) => {
+    using dir = tempDir("bun-format", { "a.js": ugly, "b.js": ugly });
+    await using proc = spawn({
+      cmd: ["sh", "-c", `${writer} | "$0" "$@"`, ...command, "-l", "--ignore-path", "/dev/stdin"],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(1);
+  });
+
+  describe.skipIf(isWindows)("a named pipe passed to a flag", () => {
+    const makePipes = (dir: string) =>
+      expect(Bun.spawnSync(["mkfifo", join(dir, "pipe"), join(dir, "pipe.json")]).exitCode).toBe(0);
+
+    // Reading the pipe as empty would silently disable the ignore list, and `a.js` would be rewritten, so it's an
+    // error. `bun fmt` doesn't block waiting for a writer either.
+    describe.each([
+      ["no config", {}],
+      [".prettierrc", { ".prettierrc": "{}\n" }],
+      [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }],
+    ])("without a writer is an error, with %s", (_, config: Record<string, string>) => {
+      test.each([
+        [["--ignore-path", "pipe"], "pipe"],
+        [["--ignore-path=.gitignore", "--ignore-path=./pipe"], "./pipe"],
+        [["--config", "pipe.json"], "pipe.json"],
+        [["--config=pipe"], "pipe"],
+      ])("%j", async (flags, name) => {
+        const files = { ...config, ".gitignore": "b.js\n", "a.js": ugly };
+        const result = await format(files, flags, { before: makePipes, reads: ["a.js"] });
+        expect(result.stderr).toBe(`error: cannot read ${name}: nothing is writing to this pipe`);
+        expect(result.raw).toBe("");
+        expect(result.files).toEqual({ "a.js": ugly });
+        expect(result.exitCode).toBe(2);
+      });
+    });
+
+    test("oxfmt's -c without a writer is an error", async () => {
+      const files = { ".oxfmtrc.json": "{}\n", "a.js": ugly };
+      const result = await format(files, ["-c", "pipe.json"], { before: makePipes, reads: ["a.js"] });
+      expect(result.stderr).toBe("error: cannot read pipe.json: nothing is writing to this pipe");
+      expect(result.files).toEqual({ "a.js": ugly });
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("a pipe set as ignorePath in bunfig.toml is still read as empty", async () => {
+      const files = { "bunfig.toml": '[fmt]\nignorePath = ["pipe"]\n', "a.js": ugly };
+      expect(await different(files, ["a.js"], { before: makePipes })).toEqual(["a.js"]);
+    });
+
+    /** Runs `bun fmt` with `args` in a directory with `files`, while `text` is written to the pipe called `name` there. */
+    async function formatWhileWriting(files: Record<string, string>, args: string[], name: string, text: string) {
+      using dir = tempDir("bun-format", files);
+      makePipes(String(dir));
+      // With a reader open, opening it for writing doesn't block, and the written data stays buffered until it's read.
+      const reader = openSync(join(String(dir), name), constants.O_RDONLY | constants.O_NONBLOCK);
+      const writer = openSync(join(String(dir), name), constants.O_WRONLY);
+      try {
+        await using proc = spawn({
+          cmd: [...command, ...args],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        writeSync(writer, text);
+        closeSync(writer);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      } finally {
+        closeSync(reader);
+      }
+    }
+
+    test("--ignore-path reads what a writer sends", async () => {
+      const files = { "a.js": ugly, "b.js": ugly };
+      const result = await formatWhileWriting(files, ["-l", "--ignore-path", "pipe"], "pipe", "a.js\n");
+      expect(result).toEqual({ stdout: "b.js\n", stderr: "", exitCode: 1 });
+    });
+
+    // `-c` is `--check` here. Finding that out takes one read of the configuration, and using it takes another.
+    test.each([[["-l"]], [["-c", "a.js"]]])("--config reads what a writer sends, with %j", async flags => {
+      const files = { "a.js": "a\n", "b.js": "b;\n" };
+      const args = [...flags, "--log-level=error", "--config", "pipe.json", "a.js"];
+      const result = await formatWhileWriting(files, args, "pipe.json", '{ "semi": false }\n');
+      expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
   });
 
   test("--experimental-cli is accepted", async () => {
@@ -4020,7 +6285,7 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
-  describe("a parser that Prettier does not have", () => {
+  describe("a parser that Prettier doesn't have", () => {
     const files = {
       "a.astro": '<p   class="a">hi</p>\n',
       "b.foo": "a:   1\n",
@@ -4033,7 +6298,7 @@ exports.format = async text => "by Prettier";
       { files: ["*.foo", "c.js"], options: { parser: "nonsense" } },
     ];
 
-    test("in the overrides of a .prettierrc: the files are left as they are, and counted", async () => {
+    test("in a .prettierrc's overrides: the files are skipped and counted", async () => {
       const config = JSON.stringify({ plugins: ["prettier-plugin-astro"], overrides });
       const result = await format({ ...files, ".prettierrc": config }, [], { reads });
       expect(result.files).toEqual({ ...files, "d.js": "d;\n" });
@@ -4051,14 +6316,14 @@ exports.format = async text => "by Prettier";
       expect(checked.exitCode).toBe(2);
     });
 
-    test("at the top of a .prettierrc: every file is left as it is", async () => {
+    test("at the top level of a .prettierrc: every file is skipped", async () => {
       const result = await format({ ...files, ".prettierrc": '{ "parser": "nonsense" }\n' }, [], { reads });
       expect(result.files).toEqual(files);
       expect(result.stderr).toContain("files were not formatted because bun fmt does not support their language yet");
       expect(result.exitCode).toBe(2);
     });
 
-    test("on standard input: an error, as for a file, and nothing is printed", async () => {
+    test("for stdin: an error, as for a file, and no output", async () => {
       const config = JSON.stringify({ overrides });
       const result = await format({ ".prettierrc": config }, ["--stdin-filepath", "a.astro"], {
         stdin: files["a.astro"],
@@ -4070,7 +6335,7 @@ exports.format = async text => "by Prettier";
       expect(result.exitCode).toBe(2);
     });
 
-    test("in an .oxfmtrc.json, which has no such option: it does not count", async () => {
+    test("in an .oxfmtrc.json, which has no such option: it's ignored", async () => {
       for (const config of [{ parser: "nonsense" }, { overrides }]) {
         const result = await format({ ...files, ".oxfmtrc.json": JSON.stringify(config) + "\n" }, [], { reads });
         expect(result.files).toEqual({ ...files, "c.js": "c;\n", "d.js": "d;\n" });
@@ -4078,7 +6343,7 @@ exports.format = async text => "by Prettier";
       }
     });
 
-    test("after --parser: an error, and nothing is written", async () => {
+    test("passed to --parser: an error, and nothing is written", async () => {
       const result = await format(files, ["--parser", "nonsense"], { reads });
       expect(result.files).toEqual(files);
       expect(result.stderr).toContain(`error: Couldn't resolve parser "nonsense".`);
@@ -4096,7 +6361,7 @@ exports.format = async text => "by Prettier";
       "objects",
       (depth: number) => Buffer.alloc(depth * 5, '{"a":').toString() + "1" + Buffer.alloc(depth, "}").toString(),
     ],
-  ])("JSON is not formatted into gigabytes: %s", async (_, make) => {
+  ])("doesn't format deeply nested JSON into gigabytes: %s", async (_, make) => {
     const files = { "ok.json": make(512), "huge.json": make(200_000) };
     const [ok, huge] = await Promise.all(Object.keys(files).map(name => format(files, ["--check", name])));
     expect(ok.stderr).not.toContain("error:");
@@ -4104,10 +6369,10 @@ exports.format = async text => "by Prettier";
     expect(huge.exitCode).toBe(2);
   });
 
-  // Neither Prettier nor oxfmt has a number for how deep something can be nested or how long it can be: Prettier ends where its
-  // stack does, or the longest string of JavaScript. What is expected is the SHA-1 of what Prettier 3.9.9 (run with
-  // `node --stack-size=50000`, or its stack ends sooner than ours) and oxfmt 0.72.0 print.
-  describe("as deep and as long as it is written", () => {
+  // Neither Prettier nor oxfmt has a fixed limit on nesting depth or length. Prettier's limits are its stack and
+  // JavaScript's maximum string length. Each expected value is the SHA-1 of what Prettier 3.9.9 (run with
+  // `node --stack-size=50000`, because otherwise its stack overflows before ours) and oxfmt 0.72.0 print.
+  describe("no limit on depth or length", () => {
     const nested = (before: string, open: string, middle: string, close: string, after: string, depth: number) =>
       before + open.repeat(depth) + middle + close.repeat(depth) + after;
     const oxfmtrc = { ".oxfmtrc.json": "{}" };
@@ -4128,7 +6393,7 @@ exports.format = async text => "by Prettier";
         "a78549a9394497bf5f8ec95622265c3a7e3044bb",
       ],
       [
-        "150 unions in each other",
+        "150 nested unions",
         "a.ts",
         {},
         nested("type A = ", `| ${"a".repeat(90)} | { a: `, "b", " }", ";", 150),
@@ -4225,9 +6490,9 @@ exports.format = async text => "by Prettier";
         nested("", "- ", "1", "", "", 150),
         "e1a8ea12ccc9716fce57009c7ca4c541033bc57d",
       ],
-      // Each one took twice the memory of the one in it.
+      // Each level used to take twice the memory of the level inside it.
       [
-        "YAML: 40 mappings with a comment behind the key",
+        "YAML: 40 mappings with a comment after the key",
         "a.yaml",
         {},
         Array.from({ length: 40 }, (_, i) => `${Buffer.alloc(i, " ").toString()}a: # c\n`).join("") +
@@ -4284,7 +6549,7 @@ exports.format = async text => "by Prettier";
         "3fbdb4e6fd57e141396b7e393fc1c7cad22b0eab",
       ],
       [
-        "HTML in a template that more than 1,024 bytes of its line are before",
+        "HTML in a template that starts more than 1,024 bytes into its line",
         "a.js",
         {},
         `function f() {\n  const ${"a".repeat(1_100)} = /* HTML */ \`<script type="application/json">\n      ["${"a".repeat(70)}", 1]\n    </script>\`;\n}\n`,
@@ -4332,7 +6597,7 @@ exports.format = async text => "by Prettier";
       expect(result.exitCode).toBe(0);
     });
 
-    // The frames of a debug build are larger, so its stack ends sooner.
+    // A debug build has larger stack frames, so it runs out of stack sooner.
     const tooDeep = isDebug || isASAN ? 100_000 : 1_000_000;
     test.each([
       ["a.toml", nested("a = ", "[", "1", "]", "", tooDeep)],
@@ -4352,9 +6617,9 @@ exports.format = async text => "by Prettier";
       ["a.vue", nested("<template>", "<div>", "a", "</div>", "</template>", tooDeep)],
       ["a.component.html", nested("", "@if (a) {", "b", "}", "", tooDeep)],
       ["b.component.html", nested("", "{a, select, b {", "c", "}}", "", tooDeep)],
-      // In a JSDoc comment, with `jsdoc` of oxfmt.
+      // In a JSDoc comment, with oxfmt's `jsdoc`.
       ["a.js", nested("/**\n * ", "> ", "a", "", "\n */ let a;", tooDeep)],
-    ])("what there is no stack for, or no string, is an error, and the file stays as it is: %s", async (name, text) => {
+    ])("too deep for the stack or too long for a string is an error that keeps the file: %s", async (name, text) => {
       const files = { ".oxfmtrc.json": `{ "jsdoc": {} }`, [name]: text };
       const result = await format(files, [name], { reads: [name] });
       expect(result.files[name]).toBe(text);
@@ -4366,11 +6631,11 @@ exports.format = async text => "by Prettier";
       expect(result.exitCode).toBe(2);
     });
 
-    // The guard of a case was written without asking whether there is stack for it: between the depth that the printer
-    // refuses and the one that the parser refuses it ran out. The threads that format files have stack to spare, so this
-    // is the main thread, with half of what it has.
+    // A case's guard used to be printed without a stack check, so the stack overflowed at depths between the printer's
+    // limit and the parser's. The threads that format files have stack to spare, so this uses the main thread with half
+    // of its usual stack.
     test.skipIf(isWindows || isDebug || isASAN).concurrent.each([4_500, 4_612, 4_728, 4_846, 4_967, 5_091])(
-      "Flow's match with %d guards in each other, on a stack of 4 MB",
+      "Flow's match with %d nested guards, on a 4 MB stack",
       async depth => {
         using dir = tempDir("bun-format-small-stack", {});
         await using proc = spawn({
@@ -4390,7 +6655,7 @@ exports.format = async text => "by Prettier";
       },
     );
 
-    test("a text that is longer than a string of JavaScript can be is refused", async () => {
+    test("rejects output longer than JavaScript's maximum string length", async () => {
       // 560 MB. Prettier prints 490 MB.
       const text = `<img srcset="${"u".repeat(70_000)} 1w${", a 2w".repeat(8_000)}">\n`;
       const result = await format({ "a.html": text }, ["a.html"], { reads: ["a.html"] });
@@ -4399,16 +6664,16 @@ exports.format = async text => "by Prettier";
       expect(result.exitCode).toBe(2);
     });
 
-    test("the line of a syntax error is shown, however long it is", async () => {
+    test("shows the line of a syntax error, however long it is", async () => {
       const text = `a{${Buffer.alloc(1000, "b:c;").toString()}}}`;
       const result = await format({ "a.css": text }, ["a.css"]);
       expect(result.stderr).toStartWith(problem("a.css", 'Unexpected "}"', [1, 1_004, text]) + "\n\n");
       expect(result.exitCode).toBe(2);
     });
 
-    // The time it takes is in proportion to the square of the number of differences: 84 s in Prettier.
+    // The time is quadratic in the number of differences: 84 s in Prettier.
     test.skipIf(isDebug || isASAN)(
-      "the cursor is found by comparing all of the text, whatever has changed",
+      "finds the cursor by diffing the whole text, however much has changed",
       async () => {
         const result = await format({}, ["--stdin-filepath", "a.yaml", "--cursor-offset", "71400"], {
           stdin: "- [a,]\n".repeat(20_400),
@@ -4421,9 +6686,10 @@ exports.format = async text => "by Prettier";
     );
   });
 
-  // How deep is too deep is up to the stack, and a thread has four times as much of it on Windows: there `keyof ` is formatted.
+  // The depth limit depends on the stack size, and a thread has four times as much stack on Windows, where `keyof ` is
+  // formatted.
   test.each(["@", "keyof ", "renders ", "infer A extends ", "component() renders "])(
-    "code that is nested very deeply is refused or formatted, and does not overflow the stack: 100,000 times `%s`",
+    "very deeply nested code is rejected or formatted without overflowing the stack: 100,000 times `%s`",
     async word => {
       const text = word === "@" ? word.repeat(100_000) : `// @flow\ntype A = ${word.repeat(100_000)}x;`;
       const result = await format({ "deep.js": text + "\n" }, ["--check", "deep.js"]);
@@ -4432,7 +6698,7 @@ exports.format = async text => "by Prettier";
     },
   );
 
-  // What a file is like while it is being written. TypeScript's parser goes on and leaves these to its checker.
+  // What a file looks like while it's being typed. TypeScript's parser recovers and leaves these to its checker.
   test.each([
     "let x = 1;\nconst",
     "var",
@@ -4448,7 +6714,7 @@ exports.format = async text => "by Prettier";
     "x = class extends {}",
     "class A<> {}",
     "function f<>() {}",
-  ])("JavaScript in which a name is missing is a syntax error, and the file stays as it is: %j", async code => {
+  ])("JavaScript with a missing name is a syntax error, and the file is unchanged: %j", async code => {
     const files = { "a.js": code + "\n", "b.mjs": code + "\n", "c.jsx": code + "\n" };
     const result = await format(files, [], { reads: Object.keys(files) });
     expect(result.files).toEqual(files);
@@ -4480,7 +6746,7 @@ exports.format = async text => "by Prettier";
     "function f(this) {}",
     "class A { get a?() {} }",
     "export export class A {}",
-  ])("what only TypeScript's parser reads is a syntax error in JavaScript: %j", async code => {
+  ])("syntax that only TypeScript's parser accepts is a syntax error in JavaScript: %j", async code => {
     const result = await format({ "a.js": code + "\n" }, ["a.js"], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": code + "\n" });
     expect(result.stderr).toMatch(syntaxErrorIn("a.js"));
@@ -4501,7 +6767,7 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
-  test("Flow: a function that is declared has no body", async () => {
+  test("Flow: a declared function has no body", async () => {
     const code = `// @flow
 declare function f(x: number): string;
 declare class A {
@@ -4517,8 +6783,8 @@ declare export function h(): void;
     expect(result.exitCode).toBe(0);
   });
 
-  // Prettier 3.9.9 does this with `--parser flow`. Babel's tree does not say which of the two is written, so with `babel`, which
-  // reads a `.js` file, and with `babel-flow` it prints `T: A` for `T extends A`.
+  // Prettier 3.9.9 does this with `--parser flow`. Babel's tree doesn't record which of the two was written, so with
+  // `babel`, which parses `.js` files, and with `babel-flow` it prints `T: A` for `T extends A`.
   test.each([[[]], [["--parser", "babel"]], [["--parser", "babel-flow"]], [["--parser", "flow"]]])(
     "Flow: the bound of a type parameter keeps its `extends` or its `:` with %j",
     async flags => {
@@ -4567,7 +6833,7 @@ type V = { m<T extends string>(x: T): T, n<T: string>(x: T): T };
   );
 
   test("Flow: a type guard as the return type of an arrow function gets no parentheses", async () => {
-    // Prettier 3.9.9 prints `(x: mixed): (x is { a: () => void }) => true`, which its `flow` parser does not read.
+    // Prettier 3.9.9 prints `(x: mixed): (x is { a: () => void }) => true`, which its `flow` parser can't parse.
     const code = `// @flow
 const a = (x: mixed): x is { a: () => void } => true;
 const b = (x: mixed): implies x is { a: () => void } => true;
@@ -4577,8 +6843,8 @@ const b = (x: mixed): implies x is { a: () => void } => true;
     expect(result.exitCode).toBe(0);
   });
 
-  // What oxfmt 0.72.0 does with each. It runs OXC's parser alone: what the pass that builds the scopes reports, oxlint refuses
-  // and oxfmt formats. Prettier formats a `const` without an initializer.
+  // This is what oxfmt 0.72.0 does with each. It only runs OXC's parser, so code with errors from the pass that builds
+  // the scopes is rejected by oxlint but formatted by oxfmt. Prettier formats a `const` without an initializer.
   test.each([
     ["a.ts", "const a: string;"],
     ["a.ts", "using a;"],
@@ -4607,7 +6873,7 @@ const b = (x: mixed): implies x is { a: () => void } => true;
     ["a.ts", "type T<in out A, const B_ = 1> = A;"],
     ["a.ts", "interface I<const A> {}"],
     ["a.ts", "function f<in A>() {}"],
-  ])("with an .oxfmtrc.json what OXC's parser refuses is a syntax error: %s: %j", async (name, code) => {
+  ])("with an .oxfmtrc.json, code that OXC's parser rejects is a syntax error: %s: %j", async (name, code) => {
     const files = { [name]: code + "\n" };
     const result = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [name], { reads: [name] });
     expect(result.files).toEqual(files);
@@ -4622,7 +6888,7 @@ const b = (x: mixed): implies x is { a: () => void } => true;
     ["a.ts", "export {};\nlet = 1;"],
     ["a.js", "export {};\nstatic = 1;"],
     ["a.js", "for (const a of b);"],
-    // typescript-estree and Babel refuse these.
+    // typescript-estree and Babel reject these.
     ["a.js", "function f(a = await g()) {}"],
     ["a.js", "function* a(x = yield 1) {}"],
     ["a.mts", "for (var i = 0 in {});"],
@@ -4631,13 +6897,13 @@ const b = (x: mixed): implies x is { a: () => void } => true;
     ["a.js", "if (a) label: function f() {}"],
     ["a.js", 'import("m", { with: { type: 1 } });'],
     ["a.ts", "class C<const A> {}\nfunction g<const A>() {}\ninterface I<in out A> {}"],
-  ])("with an .oxfmtrc.json what OXC's parser takes is formatted: %s: %j", async (name, code) => {
+  ])("with an .oxfmtrc.json, code that OXC's parser accepts is formatted: %s: %j", async (name, code) => {
     const result = await format({ [name]: code + "\n", ".oxfmtrc.json": "{}\n" }, ["--check", name]);
     expect(result.stderr).not.toMatch(anError);
     expect(result.exitCode).toBe(0);
   });
 
-  test("the modifiers of JavaScript where they can be", async () => {
+  test("accepts JavaScript's modifiers wherever they're valid", async () => {
     const code = `class A {
   static async *a() {}
   static accessor b = 1;
@@ -4665,14 +6931,14 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  test("a block of JavaScript in Markdown in which a name is missing stays as it is", async () => {
+  test("leaves a JavaScript code block in Markdown with a missing name unchanged", async () => {
     const files = { "a.md": "```js\nlet   x = 1;\nconst\n```\n" };
     const result = await format(files, [], { reads: ["a.md"] });
     expect(result.files).toEqual(files);
     expect(result.exitCode).toBe(0);
   });
 
-  test("YAML, GraphQL, Markdown", async () => {
+  test("formats YAML, GraphQL and Markdown", async () => {
     const result = await format(
       {
         "a.yaml": "a:   1\nb:   [ c,d ]\n",
@@ -4692,7 +6958,7 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  test("CSS", async () => {
+  test("formats CSS and SCSS", async () => {
     const result = await format({ "a.css": "a{color:red}\n", "b.scss": "a{b{color:RED}}\n" }, [], {
       reads: ["a.css", "b.scss"],
     });
@@ -4703,7 +6969,7 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  test("--end-of-line auto goes by the first \\r, also if lines before it end in \\n", async () => {
+  test("--end-of-line auto uses the first \\r, even if earlier lines end in \\n", async () => {
     const result = await format(
       { "a.js": "a;\nb;\r\nc;\n", "b.css": "a {\n}\nb {\n}\r", "c.js": "a;\nb;\n" },
       ["--end-of-line", "auto"],
@@ -4717,7 +6983,7 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  test("a value of 10,000 lines in a style sheet does not take quadratic time", async () => {
+  test("a 10,000-line CSS value doesn't take quadratic time", async () => {
     const result = await format({ "a.css": `a {\n  b:${Buffer.alloc(60_000, "\n    c").toString()};\n}\n` }, [], {
       reads: ["a.css"],
     });
@@ -4725,7 +6991,7 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  test("100,000 namespaces before a name in a selector do not take the stack", async () => {
+  test("100,000 namespaces before a name in a selector don't overflow the stack", async () => {
     for (const prefix of ["a|", "*|"]) {
       const result = await format({ "a.css": `${Buffer.alloc(200_000, prefix).toString()}a {\n}\n` }, [], {
         reads: ["a.css"],
@@ -4735,7 +7001,37 @@ try {
     }
   }, 60_000);
 
-  test("100,000 comments on a line of JSON do not take quadratic time", async () => {
+  test("80,000 private fields in a class don't take quadratic time", async () => {
+    const fields = Array.from({ length: 80_000 }, (_, i) => `  #p${i};\n`).join("");
+    const code = `class A {\n${fields}}\n`;
+    const result = await format({ "a.js": code }, [], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe(code);
+    // Wall-clock time is meaningless on a busy machine. It took 8 seconds in a release build when it was quadratic.
+    expect(result.cpu).toBeLessThan(isDebug || isASAN ? 30 : 3);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("12,000 nested labels don't take quadratic time", async () => {
+    const count = isDebug || isASAN ? 1_000 : 12_000;
+    const code = `${Array.from({ length: count }, (_, i) => `l${i}`).join(": ")}:;\n`;
+    const result = await format({ "a.js": code }, [], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe(code);
+    // Wall-clock time is meaningless on a busy machine. It took over a second in a release build when it was quadratic.
+    expect(result.cpu).toBeLessThan(isDebug || isASAN ? 30 : 0.6);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a label is only a duplicate if the first one encloses the second in the same function", async () => {
+    const fine = "a: {\n  b:;\n  b:;\n}\na: (function () {\n  a:;\n})();\n";
+    const result = await format({ "fine.js": fine, "twice.js": "a: {\n  b: {\n    c:;\n    a:;\n  }\n}\n" }, [], {
+      reads: ["fine.js"],
+    });
+    expect(result.files["fine.js"]).toBe(fine);
+    expect(result.stderr).toContain(problem("twice.js", "Label 'a' is already declared", [4, 5, "    a:;"]));
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("100,000 comments on a line of JSON don't take quadratic time", async () => {
     const comments = Buffer.alloc(400_000, "/**/").toString();
     const result = await format({ "a.json": `${comments}1\n`, "b.json": `[1${comments}, 2]\n` }, [], {
       reads: ["a.json", "b.json"],
@@ -4743,12 +7039,12 @@ try {
     expect(result.files["a.json"]?.replaceAll("/**/", "").trim()).toBe("1");
     expect(result.files["a.json"]?.split("/**/").length).toBe(100_001);
     expect(result.files["b.json"]?.split("/**/").length).toBe(100_001);
-    // The clock says nothing on a busy machine.
+    // Wall-clock time is meaningless on a busy machine.
     expect(result.cpu).toBeLessThan(isDebug || isASAN ? 20 : 5);
     expect(result.exitCode).toBe(0);
   }, 60_000);
 
-  test("insert_final_newline of an .editorconfig says nothing to Prettier, and nothing is said about it", async () => {
+  test("silently ignores insert_final_newline in an .editorconfig, like Prettier", async () => {
     const result = await format(
       { ".editorconfig": "root = true\n[*]\ninsert_final_newline = true\nindent_size = 4\n", "a.js": "if (a) b;\n" },
       ["--check", "a.js"],
@@ -4757,7 +7053,7 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  test("the first line says what a file without an extension is", async () => {
+  test("detects the language of a file without an extension from its shebang", async () => {
     const files = {
       "bin/a": "#!/usr/bin/env node\na  ;\n",
       "bin/b": "#!/usr/bin/env tsx\nlet a : number;\n",
@@ -4772,21 +7068,21 @@ try {
       "bin/d": "#!/usr/local/bin/node\na;\n",
     };
     const reads = Object.keys(files);
-    // In a directory the others are passed over.
+    // In a directory, the others are skipped.
     const directory = await format(files, ["bin"], { reads });
     expect(directory.files).toEqual(after);
     expect(directory.stderr).not.toMatch(anError);
     expect(directory.exitCode).toBe(0);
-    const named = await format(files, reads, { reads });
-    expect(named.files).toEqual(after);
-    expect(named.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(2);
-    expect(named.exitCode).toBe(2);
+    const byName = await format(files, reads, { reads });
+    expect(byName.files).toEqual(after);
+    expect(byName.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(2);
+    expect(byName.exitCode).toBe(2);
   });
 
-  // `prettier.getSupportInfo()` has `bun` and `deno` among the interpreters of JavaScript, of Flow and of TypeScript. The first
-  // language counts, so the parser is `babel`, and Prettier 3.9.9 refuses a type in such a file.
+  // `prettier.getSupportInfo()` lists `bun` and `deno` as interpreters for JavaScript, Flow and TypeScript. The first
+  // language wins, so the parser is `babel`, and Prettier 3.9.9 rejects a type annotation in such a file.
   test.each(["bun", "deno", "node", "zx"])(
-    "a file without an extension for %s is JavaScript, as for Prettier",
+    "a file without an extension and a %s shebang is JavaScript, like in Prettier",
     async interpreter => {
       const files = {
         "bin/a": `#!/usr/bin/env ${interpreter}\na  ;\n`,
@@ -4799,8 +7095,9 @@ try {
     },
   );
 
-  // linguist has them under JSON. Prettier 3.9.9 leaves them out of its language: `prettier.getSupportInfo()`.
-  test("what a tool has written and Prettier does not read", async () => {
+  // linguist lists them under JSON. Prettier 3.9.9 excludes them from its JSON language: see
+  // `prettier.getSupportInfo()`.
+  test("skips generated files that Prettier doesn't recognize", async () => {
     const names = ["composer.lock", "Pipfile.lock", "flake.lock", "deno.lock", "mcmod.info", "MODULE.bazel.lock"];
     const files = Object.fromEntries(names.map(name => [name, '{"a":   1}\n']));
     // Prettier reads glide.lock as YAML. Without a Prettier config, Bun skips it like every other lock file.
@@ -4809,16 +7106,16 @@ try {
     expect(directory.files).toEqual({ ...files, "glide.lock": "a: 1\n" });
     expect(directory.exitCode).toBe(0);
     expect((await format(all, [], { reads: [...names, "glide.lock"] })).files).toEqual(all);
-    const named = await format(files, names, { reads: names });
-    expect(named.files).toEqual(files);
-    expect(named.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(
+    const byName = await format(files, names, { reads: names });
+    expect(byName.files).toEqual(files);
+    expect(byName.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(
       names.length,
     );
-    expect(named.exitCode).toBe(2);
+    expect(byName.exitCode).toBe(2);
   });
 
-  // The exit codes of Prettier 3.9.9. `handleError` sets none under `--check`, and `formatFiles` counts the file as one with an
-  // error all the same.
+  // These are Prettier 3.9.9's exit codes. `handleError` doesn't set one under `--check`, but `formatFiles` still
+  // counts the file as having an error.
   test.each([
     [["--check"], 2],
     [["--list-different"], 2],
@@ -4826,10 +7123,10 @@ try {
     [["--check", "--ignore-unknown"], 0],
     [["--list-different", "--ignore-unknown"], 0],
     [["--write", "--ignore-unknown"], 0],
-  ])("a file that there is no parser for: %j", async (flags, exitCode) => {
+  ])("a file with no matching parser: %j", async (flags, exitCode) => {
     const files = { "FOO": "x   y\n", "a.xyz": "x   y\n" };
-    for (const named of ["FOO", "*.xyz"]) {
-      const result = await format(files, [...flags, named], { reads: Object.keys(files) });
+    for (const argument of ["FOO", "*.xyz"]) {
+      const result = await format(files, [...flags, argument], { reads: Object.keys(files) });
       expect(result.stderr.includes("error: No parser could be inferred for file")).toBe(exitCode === 2);
       expect(result.files).toEqual(files);
       expect(result.exitCode).toBe(exitCode);
@@ -4845,14 +7142,14 @@ try {
     [["--list-different", "--ignore-unknown"], 0, true],
     [["--ignore-unknown"], 0, false],
     [["--write", "--ignore-unknown"], 0, false],
-  ])("standard input that there is no parser for: %j", async (flags, exitCode, isSaid) => {
+  ])("stdin with no matching parser: %j", async (flags, exitCode, isReported) => {
     const result = await format({}, [...flags, "--stdin-filepath", "FOO"], { stdin: "x   y\n" });
     expect(result.raw).toBe("");
-    expect(result.stderr.includes("error: No parser could be inferred for file")).toBe(isSaid);
+    expect(result.stderr.includes("error: No parser could be inferred for file")).toBe(isReported);
     expect(result.exitCode).toBe(exitCode);
   });
 
-  // The exit codes of Prettier 3.9.9, whose `listDifferent` leaves the exit code as it is, and of oxfmt 0.72.0.
+  // These are the exit codes of Prettier 3.9.9, whose `listDifferent` doesn't set the exit code, and of oxfmt 0.72.0.
   test.each<[Record<string, string>, string[], number]>([
     [{}, [], 2],
     [{}, ["--write"], 2],
@@ -4862,10 +7159,10 @@ try {
     [{}, ["-l", "--write"], 0],
     [{ ".prettierrc": "{}" }, ["--check"], 0],
     [{ ".oxfmtrc.json": "{}" }, [], 2],
-  ])("standard input that does not parse: %j %j", async (configuration, flags, exitCode) => {
+  ])("stdin that doesn't parse: %j %j", async (configuration, flags, exitCode) => {
     const result = await format(configuration, [...flags, "--stdin-filepath", "a.ts"], { stdin: "let a: = 1;\n" });
     expect(result.raw).toBe("");
-    // The words of the parser of each tool.
+    // Each tool's own parser message.
     const why = ".oxfmtrc.json" in configuration ? "Unexpected token" : "Type expected.";
     expect(result.stderr).toBe(problem("a.ts", why, [1, 8, "let a: = 1;"]));
     expect(result.exitCode).toBe(exitCode);
@@ -4879,21 +7176,21 @@ try {
     ["a.vue", "<template><div></template>\n", closingTag("template"), 1, 16],
     ["a.graphql", "query {\n", "Unexpected end of file", 2, 1],
     ["a.hbs", "{{#if a}}\n", "Unclosed block", 1, 1],
-  ])("standard input that does not parse, with --check: %s", async (name, stdin, message, line, column) => {
+  ])("stdin that doesn't parse, with --check: %s", async (name, stdin, message, line, column) => {
     const result = await format({}, ["--check", "--stdin-filepath", name], { stdin });
     expect(result.raw).toBe("");
     expect(result.stderr).toBe(problem(name, message, [line, column, stdin.split("\n")[line - 1]]));
     expect(result.exitCode).toBe(0);
   });
 
-  test.each(["--check", "--list-different"])("a file that does not parse, with %s", async flag => {
+  test.each(["--check", "--list-different"])("a file that doesn't parse, with %s", async flag => {
     const result = await format({ "a.ts": "let a: = 1;\n" }, [flag, "a.ts"]);
     expect(result.stderr).toStartWith(problem("a.ts", "Type expected.", [1, 8, "let a: = 1;"]));
     expect(result.exitCode).toBe(2);
   });
 
-  test("JSX in a block of MDX in Markdown is formatted, though what is printed of it is no program", async () => {
-    // A number stays in its quotes there: the parser is not `babel`.
+  test("formats JSX in an MDX code block in Markdown, even though the output isn't a valid program", async () => {
+    // A numeric key keeps its quotes there, because the parser isn't `babel`.
     const result = await format({ "a.md": '```mdx\n<hi/>\n<hello\n/>\n\n<a b={{ "200": 1,  c: 2 }} />\n```\n' }, [], {
       reads: ["a.md"],
     });
@@ -4901,7 +7198,7 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  test("white space that is not ASCII at the end of a comment goes, and the file is written", async () => {
+  test("removes non-ASCII whitespace at the end of a comment and writes the file", async () => {
     const result = await format(
       { "a.js": "// a\u00a0\na;\n// b\u3000\nb;\n// c\u000b\nc;\n/**\n * d\u00a0\n */\nd;\n" },
       [],
@@ -4912,7 +7209,7 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  test("400,000 quoted scalars on a line of YAML do not take quadratic time", async () => {
+  test("400,000 quoted scalars on a line of YAML don't take quadratic time", async () => {
     const result = await format(
       {
         // A debug build is 30 times slower or more, and the machine can be busy.
@@ -4927,7 +7224,7 @@ try {
     expect(result.exitCode).toBe(2);
   });
 
-  test("40,000 nodes on a line of YAML that is not ASCII do not take quadratic time", async () => {
+  test("40,000 nodes on a non-ASCII line of YAML don't take quadratic time", async () => {
     const count = isDebug || isASAN ? 10_000 : 40_000;
     const result = await format(
       { "a.yaml": `[${"é, ".repeat(count)}a]\n`, "b.yaml": `{${"é: 😀, ".repeat(count)}a: b}\n` },
@@ -4940,9 +7237,9 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  // Each unit, repeated, is a file: what has once taken more than linear time, and what is like it. Many are refused, which has
-  // to be fast too. All of them together are compared with as many files with as many bytes of ordinary text, so that it holds
-  // on a busy machine and in a debug build.
+  // Each unit is repeated to make a file. They're inputs that once took more than linear time, and similar ones. Many
+  // are rejected, which has to be fast too. Their total time is compared with that of the same number of files with the
+  // same number of bytes of ordinary text, so the test holds on a busy machine and in a debug build.
   test.each<[string, string, string[]]>([
     [
       "css",
@@ -5045,7 +7342,7 @@ try {
       ],
     ],
   ])(
-    "takes time in proportion to the size of the text: .%s",
+    "takes linear time in the size of the text: .%s",
     async (extension, ordinary, units) => {
       const count = isDebug || isASAN ? 2_000 : 40_000;
       const repeated = (unit: string, times: number) =>
@@ -5069,11 +7366,12 @@ try {
     120_000,
   );
 
-  // What some part of reading or printing HTML once walked again for each repetition, and what is like it. All of it is weighed
-  // against as many bytes of ordinary HTML, by the time of the processor: that holds on a busy machine and in a debug build.
-  test("HTML, Vue and Angular take time in proportion to their size", async () => {
+  // Inputs that some part of parsing or printing HTML once rescanned for each repetition, and similar ones. Their CPU
+  // time is compared with that of the same number of bytes of ordinary HTML, which holds on a busy machine and in a
+  // debug build.
+  test("HTML, Vue and Angular take linear time", async () => {
     const count = isDebug || isASAN ? 2_000 : 40_000;
-    // The ending of the name, what is before, what is repeated, what is behind.
+    // Each row is the file extension, a prefix, the repeated unit and a suffix.
     const shapes: [string, string, string, string][] = [
       ["html", "", "<p>a</p>\n", ""],
       ["html", "", "<b>a</b> ", ""],
@@ -5159,10 +7457,11 @@ try {
     expect(slowdown(odd, plain)).toBeLessThan(6);
   }, 120_000);
 
-  // A comment in each repetition: what attaching or printing comments once walked again for each of them, and what is like it.
-  test("JavaScript with many comments takes time in proportion to its size", async () => {
+  // A comment in each repetition. These are inputs that attaching or printing comments once rescanned for each comment,
+  // and similar ones.
+  test("JavaScript with many comments takes linear time", async () => {
     const count = isDebug || isASAN ? 2_000 : 40_000;
-    // The ending of the name, what is before, what is repeated, what is after.
+    // Each row is the file extension, a prefix, the repeated unit and a suffix.
     const shapes: [string, string, string, string][] = [
       ["js", "", "a; // c\n", ""],
       ["js", "", "// c\na;\n", ""],
@@ -5268,8 +7567,8 @@ try {
     }
   }, 120_000);
 
-  // The same for what is repeated in something. Prettier takes the square of the number of parameters.
-  test("the parameters of @include, @mixin and @function take time in proportion to their number", async () => {
+  // The same for a unit repeated inside a construct. Prettier's time is quadratic in the number of parameters.
+  test("the parameters of @include, @mixin and @function take linear time", async () => {
     const count = isDebug || isASAN ? 2_000 : 40_000;
     const shapes: [string, string, string][] = [
       ["@include a(", "$b,", "$b);"],
@@ -5289,15 +7588,15 @@ try {
     expect(slowdown(odd, plain)).toBeLessThan(60);
   }, 120_000);
 
-  // What some part of reading or printing Markdown once walked again for each repetition, or took a thousand times too
-  // long for, and what is like it. All of it is weighed against as many bytes of prose, by the time of the processor: that
+  // Inputs that some part of parsing or printing Markdown once rescanned for each repetition, or took a thousand times
+  // too long for, and similar ones. Their CPU time is compared with that of the same number of bytes of prose, which
   // holds on a busy machine and in a debug build.
   test.each([
-    ["as Prettier prints it", "md", {}],
-    ["as oxfmt prints it", "md", { ".oxfmtrc.json": "{}\n" }],
+    ["Prettier flavor", "md", {}],
+    ["oxfmt flavor", "md", { ".oxfmtrc.json": "{}\n" }],
     ["MDX", "mdx", {}],
   ])(
-    "Markdown takes time in proportion to its size: %s",
+    "Markdown takes linear time: %s",
     async (_, extension, configuration) => {
       const count = isDebug || isASAN ? 1_000 : 40_000;
       const units = [
@@ -5337,7 +7636,7 @@ try {
     120_000,
   );
 
-  test("a syntax error in HTML is in the words of Prettier, at the place it gives", async () => {
+  test("a syntax error in HTML uses Prettier's message and position", async () => {
     const cases: [string, string, string, number, number][] = [
       [
         ".html",
@@ -5433,7 +7732,7 @@ try {
     expect(result.exitCode).toBe(2);
   });
 
-  test("an e after a dot or a digit is a letter like another, unless it is an exponent of zero", async () => {
+  test("an e after a dot or a digit is an ordinary letter, unless it's a zero exponent", async () => {
     const result = await format(
       {
         "a.html": "<script>e. e</script>\n",
@@ -5450,7 +7749,7 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  test("JSON", async () => {
+  test("formats JSON", async () => {
     const result = await format(
       {
         "a.json": '{"a":1,"b":[1,2]}',
@@ -5469,7 +7768,7 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
-  describe("which files", () => {
+  describe("file selection", () => {
     const files = {
       "a.js": ugly,
       "src/b.ts": ugly,
@@ -5480,7 +7779,7 @@ try {
       "notes.xyz": "?",
     };
 
-    test("the working directory by default, without node_modules", async () => {
+    test("defaults to the working directory, without node_modules", async () => {
       expect(await different(files, [])).toEqual([
         "a.js",
         "src/.hidden/d.js",
@@ -5525,24 +7824,27 @@ try {
       expect(withPrettier).toContain("package-lock.json");
     });
 
-    test("files, directories, patterns, and patterns that exclude", async () => {
+    test("accepts files, directories, patterns and negated patterns", async () => {
       expect(await different(files, ["src/deep", "a.js"])).toEqual(["src/deep/e.jsx", "a.js"]);
       expect(await different(files, ["src/*.{ts,mjs}"])).toEqual(["src/b.ts", "src/c.mjs"]);
       expect(await different(files, ["src", "!**/*.ts", "!src/deep/**"])).toEqual(["src/.hidden/d.js", "src/c.mjs"]);
     });
 
-    test("--with-node-modules", async () => {
+    test("--with-node-modules includes node_modules", async () => {
       expect(await different(files, ["--with-node-modules", "node_modules"])).toEqual(["node_modules/pkg/f.js"]);
     });
 
-    test(".prettierignore and .gitignore of the working directory", async () => {
+    // Prettier doesn't read any others, so a project with its config gets the same files from both tools.
+    test("with a Prettier config, only the working directory's .prettierignore and .gitignore apply", async () => {
       const ignoring = {
         ...files,
+        ".prettierrc": "{}\n",
         ".prettierignore": "src/deep\n",
         ".gitignore": "*.mjs\n",
         "src/.gitignore": "b.ts\n",
       };
       expect(await different(ignoring, [])).toEqual(["a.js", "src/.hidden/d.js", "src/b.ts"]);
+      expect(await different(ignoring, [], { cwd: "src" })).toEqual([".hidden/d.js", "c.mjs", "deep/e.jsx"]);
       expect(await different(ignoring, ["src/c.mjs", "a.js"])).toEqual(["a.js"]);
       expect(await different(ignoring, ["--ignore-path", "src/.gitignore"])).toEqual([
         "a.js",
@@ -5552,7 +7854,107 @@ try {
       ]);
     });
 
-    test("links are not followed", async () => {
+    describe("without another tool's config, every .gitignore in the repository applies", () => {
+      const json = '{"a":1,\n"b":2}\n';
+      const names = ["c.gen.json", "dist/b.json", "kept.gen.json", "out/d.json", "src/a.json", "top.json"];
+      const project = {
+        ".git/HEAD": "ref: refs/heads/main\n",
+        ".gitignore": "dist/\n*.gen.json\n/top.json\n",
+        "top.json": json,
+        "packages/app/.gitignore": "out/\n!kept.gen.json\n",
+        ...Object.fromEntries(names.map(name => [`packages/app/${name}`, json])),
+      };
+      // The `names` that `git status --ignored` doesn't list.
+      const left = ["kept.gen.json", "src/a.json", "top.json"];
+      const fromRoot = (names: string[]) => names.map(name => `packages/app/${name}`);
+      const inApp = { cwd: "packages/app" };
+
+      test("from whichever directory it's run", async () => {
+        expect(
+          await Promise.all([
+            different(project, []),
+            different(project, ["packages/app"]),
+            different(project, ["**/*.json"]),
+            different({ ...project, "bunfig.toml": "[fmt]\nsemi = true\n" }, []),
+            different(project, [], inApp),
+            different(project, ["**/*.json"], inApp),
+            different(project, [], { cwd: "packages/app/src" }),
+          ]),
+        ).toEqual([fromRoot(left), fromRoot(left), fromRoot(left), fromRoot(left), left, left, ["a.json"]]);
+      });
+
+      test("doesn't write an ignored file", async () => {
+        const result = await format(project, [], { ...inApp, reads: fromRoot(names) });
+        const written = Object.entries(result.files).filter(([, text]) => text !== json);
+        expect(written.map(([name]) => name)).toEqual(fromRoot(left));
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("skips an ignored file or directory even when it's passed by name", async () => {
+        expect(
+          await Promise.all([
+            different(project, ["dist/b.json", "c.gen.json", "out", "dist", "*.gen.json", "src/a.json"], inApp),
+            different(project, ["packages/app/out/d.json", "packages/app/kept.gen.json"]),
+          ]),
+        ).toEqual([["kept.gen.json", "src/a.json"], ["packages/app/kept.gen.json"]]);
+        const stdin = ["dist/b.json", "src/a.json"].map(name =>
+          format(project, ["--stdin-filepath", name], { ...inApp, stdin: json }),
+        );
+        expect((await Promise.all(stdin)).map(it => it.raw)).toEqual([json, '{ "a": 1, "b": 2 }\n']);
+      });
+
+      test("--ignore-path replaces all of them", async () => {
+        const files = { ...project, "packages/app/mine": "src\n" };
+        expect(await different(files, ["--ignore-path", "mine"], inApp)).toEqual(
+          names.filter(it => it !== "src/a.json"),
+        );
+      });
+
+      test("those above an inner repository's root don't apply inside it", async () => {
+        const files = { ...project, "vendor/lib/.git/HEAD": "", "vendor/lib/dist/i.json": json, "dist/o.json": json };
+        expect(await different(files, ["vendor", "dist"])).toEqual(["vendor/lib/dist/i.json"]);
+      });
+
+      test("one above the repository's root doesn't apply", async () => {
+        const inside = Object.entries(project).map(([name, text]) => [`repository/${name}`, text]);
+        const files = { ".gitignore": "src/\n", ...Object.fromEntries(inside) };
+        expect(await different(files, [], { cwd: "repository/packages/app" })).toEqual(left);
+      });
+
+      // Git ignores nothing there, and Prettier reads the one in the working directory.
+      test.skipIf(isInRepository)("outside a repository, none above the working directory applies", async () => {
+        const files = {
+          "home/.gitignore": "*.json\n",
+          "home/other/e.json": json,
+          "home/project/.gitignore": "dist/\n",
+          "home/project/a.json": json,
+          "home/project/dist/b.json": json,
+          "home/project/src/.gitignore": "c.json\n",
+          "home/project/src/c.json": json,
+          "home/project/src/d.json": json,
+        };
+        const inProject = { cwd: "home/project" };
+        expect(
+          await Promise.all([
+            different(files, [], inProject),
+            different(files, ["a.json", "dist/b.json", "src/c.json", "src/d.json"], inProject),
+            different(files, ["../other"], inProject),
+            different(files, [], { cwd: "home/project/src" }),
+            different(files, [], { cwd: "home" }),
+          ]),
+        ).toEqual([["a.json", "src/d.json"], ["a.json", "src/d.json"], ["../other/e.json"], ["d.json"], []]);
+      });
+
+      test("with a Prettier config they don't apply", async () => {
+        const files = { ...project, ".prettierrc": "{}\n" };
+        expect(await Promise.all([different(files, []), different(files, [], inApp)])).toEqual([
+          fromRoot(["out/d.json", "src/a.json", "top.json"]),
+          names.filter(it => it !== "out/d.json"),
+        ]);
+      });
+    });
+
+    test("doesn't follow symlinks", async () => {
       const before = (dir: string) => {
         symlinkSync(join("..", "a.js"), join(dir, "src/link.js"), "file");
         symlinkSync("src", join(dir, "linked"), "dir");
@@ -5566,22 +7968,22 @@ try {
       ]);
     });
 
-    test("an argument that matches nothing fails with 2", async () => {
+    test("exits with 2 if an argument matches nothing", async () => {
       const result = await format(files, ["nothing/*.js", "a.js"], { reads: ["a.js"] });
       expect(result.files).toEqual({ "a.js": formatted });
       expect(result.stderr).toContain('error: No files matching the pattern were found: "nothing/*.js".');
       expect(result.exitCode).toBe(2);
     });
 
-    test("a file without a parser fails with 2, unless -u", async () => {
+    test("exits with 2 for a file without a parser, unless -u is passed", async () => {
       const [plain, tolerant] = await Promise.all([format(files, ["notes.xyz"]), format(files, ["-u", "notes.xyz"])]);
       expect(plain.stderr).toContain("No parser could be inferred for file");
       expect({ plain: plain.exitCode, tolerant: tolerant.exitCode }).toEqual({ plain: 2, tolerant: 0 });
     });
   });
 
-  // What Prettier 3.9.9 lists.
-  test("a pattern that starts above the working directory finds what is in that too", async () => {
+  // This is what Prettier 3.9.9 lists.
+  test("a pattern that starts above the working directory also matches files inside it", async () => {
     const files = { ".prettierrc": "{}", "x.js": ugly, "here/x.js": ugly, "here/in/x.js": ugly, "there/x.js": ugly };
     const inHere = (pattern: string) => different(files, [pattern], { cwd: "here" });
     expect(await inHere("../**/x.js")).toEqual(["in/x.js", "x.js", "../there/x.js", "../x.js"]);
@@ -5589,35 +7991,35 @@ try {
     expect(await inHere("../*/x.js")).toEqual(["x.js", "../there/x.js"]);
   });
 
-  // A configuration file can be a program. Prettier 3.9.9 runs every one that a pattern leads to. oxfmt 0.72.0 takes no `..`, and
-  // looks for what a pattern matches in the working directory only.
+  // A configuration file can be a program. Prettier 3.9.9 runs every one that a pattern reaches. oxfmt 0.72.0 doesn't
+  // accept `..`, and only searches the working directory for a pattern's matches.
   describe("a pattern that leaves a working directory without a configuration file", () => {
     const noSemi = `{ semi: false }`;
-    const kinds: Record<string, (says: string) => string> = {
-      "prettier.config.js": says => `import fs from "node:fs";\n${says}\nexport default ${noSemi};\n`,
-      "prettier.config.cjs": says => `const fs = require("fs");\n${says}\nmodule.exports = ${noSemi};\n`,
-      ".prettierrc.mjs": says => `import fs from "node:fs";\n${says}\nexport default ${noSemi};\n`,
-      ".prettierrc.ts": says => `import fs from "node:fs";\n${says}\nexport default ${noSemi};\n`,
-      "oxfmt.config.ts": says => `import fs from "node:fs";\n${says}\nexport default ${noSemi};\n`,
+    const kinds: Record<string, (note: string) => string> = {
+      "prettier.config.js": note => `import fs from "node:fs";\n${note}\nexport default ${noSemi};\n`,
+      "prettier.config.cjs": note => `const fs = require("fs");\n${note}\nmodule.exports = ${noSemi};\n`,
+      ".prettierrc.mjs": note => `import fs from "node:fs";\n${note}\nexport default ${noSemi};\n`,
+      ".prettierrc.ts": note => `import fs from "node:fs";\n${note}\nexport default ${noSemi};\n`,
+      "oxfmt.config.ts": note => `import fs from "node:fs";\n${note}\nexport default ${noSemi};\n`,
     };
     /** The directory that has the file called `name`. */
-    const of = (name: string) => name.replaceAll(".", "-");
+    const dirOf = (name: string) => name.replaceAll(".", "-");
     const all = (where: string) =>
       Object.keys(kinds)
-        .map(it => `${where}/${of(it)}`)
+        .map(it => `${where}/${dirOf(it)}`)
         .sort();
 
-    /** The programs that ran, and the files that are not as their configuration has them: `a;` is as the defaults have it. */
+    /** Returns the programs that ran and how many files don't match their config. `a;` matches the defaults. */
     const run = async (args: string[], more: Record<string, string> = {}) => {
       using logs = tempDir("bun-format-ran", {});
       const log = join(String(logs), "ran.log");
       const files: Record<string, string> = { "w/empty/x.js": "a;\n", ...more };
       for (const where of ["beside", "empty/below"]) {
         for (const [name, text] of Object.entries(kinds)) {
-          const says = `fs.appendFileSync(${JSON.stringify(log)}, ${JSON.stringify(`${where}/${of(name)}\n`)});`;
+          const note = `fs.appendFileSync(${JSON.stringify(log)}, ${JSON.stringify(`${where}/${dirOf(name)}\n`)});`;
           Object.assign(files, {
-            [`w/${where}/${of(name)}/x.js`]: "a;\n",
-            [`w/${where}/${of(name)}/${name}`]: text(says),
+            [`w/${where}/${dirOf(name)}/x.js`]: "a;\n",
+            [`w/${where}/${dirOf(name)}/${name}`]: text(note),
           });
         }
       }
@@ -5627,29 +8029,29 @@ try {
     };
 
     test.each(["../**/x.js", "../beside/*/x.js", "../*/*/x.js"])(
-      "nothing runs of what %s merely leads to",
+      "doesn't run the programs that %s merely reaches",
       async pattern => {
         const { ran, different } = await run([pattern]);
         expect(ran.filter(it => it.startsWith("beside/"))).toEqual([]);
-        // Those below the working directory are not as their own configuration has them.
+        // The files below the working directory don't match their own configuration.
         expect(different).toBe(pattern === "../**/x.js" ? Object.keys(kinds).length : 0);
       },
     );
 
-    test("in and below the working directory each directory tells", async () => {
+    test("in and below the working directory, each directory's configuration applies", async () => {
       for (const args of [[], ["."], ["**/x.js"]]) {
         expect(await run(args)).toEqual({ ran: all("empty/below"), different: Object.keys(kinds).length, exitCode: 1 });
       }
     });
 
-    test.each(Object.keys(kinds))("what is named tells: %s", async name => {
-      const named = { ran: [`beside/${of(name)}`], different: 1, exitCode: 1 };
-      expect(await run([`../beside/${of(name)}`])).toEqual(named);
-      expect(await run([`../beside/${of(name)}/x.js`])).toEqual(named);
-      expect(await run([`../beside/${of(name)}`, "../beside/*/x.js"])).toEqual(named);
+    test.each(Object.keys(kinds))("a path passed by name uses its own configuration: %s", async name => {
+      const expected = { ran: [`beside/${dirOf(name)}`], different: 1, exitCode: 1 };
+      expect(await run([`../beside/${dirOf(name)}`])).toEqual(expected);
+      expect(await run([`../beside/${dirOf(name)}/x.js`])).toEqual(expected);
+      expect(await run([`../beside/${dirOf(name)}`, "../beside/*/x.js"])).toEqual(expected);
     });
 
-    test("what is named is all that is in it", async () => {
+    test("a directory passed by name covers everything in it", async () => {
       expect(await run(["../beside"])).toEqual({
         ran: all("beside"),
         different: Object.keys(kinds).length,
@@ -5657,8 +8059,8 @@ try {
       });
     });
 
-    // As Prettier.
-    test("with a configuration file in the working directory every directory tells", async () => {
+    // Same as Prettier.
+    test("with a configuration file in the working directory, every directory's configuration applies", async () => {
       const { ran } = await run(["../beside/*/x.js"], { "w/empty/.prettierrc": "{}" });
       expect(ran).toEqual(all("beside"));
     });
@@ -5684,19 +8086,19 @@ try {
       ["package.json", `{ "name": "p", "prettier": { "semi": false } }`],
       [".oxfmtrc.json", `{ /* comment */ "semi": false }`],
     ];
-    test.each(configs)("%s: %s", async (name, text) => {
+    test.each(configs)("reads %s: %s", async (name, text) => {
       const result = await format({ [name]: text, "src/a.ts": ugly }, ["src"], { reads: ["src/a.ts"] });
       expect(result.files).toEqual({ "src/a.ts": noSemi });
       expect(result.exitCode).toBe(0);
     });
 
-    // Both ways to a directory: it is walked into, and it is above a file that is named.
+    // Both ways of reaching a directory: walking into it, and looking above a file passed by name.
     test.each([
       ["package.json", ["."]],
       ["package.json", ["src/a.ts"]],
       [".prettierrc", ["."]],
       ["prettier.config.js", ["src/a.ts"]],
-    ])("a directory called %s is no configuration file: %j", async (name, args) => {
+    ])("a directory named %s isn't a configuration file: %j", async (name, args) => {
       const files = { ".prettierrc.json": `{ "semi": false }`, [`src/${name}/b.txt`]: "", "src/a.ts": ugly };
       const result = await format(files, args, { reads: ["src/a.ts"] });
       expect(result.stderr).toStartWith("Formatted ");
@@ -5710,14 +8112,15 @@ try {
       [".prettierrc.yaml", `a: b: c\n`],
       [".prettierrc.json5", `{ semi: }`],
       [".prettierrc.toml", `semi = \n`],
-    ])("%s that cannot be read: %s", async (name, text) => {
+    ])("%s that can't be parsed: %s", async (name, text) => {
       const result = await format({ [name]: text, "a.ts": ugly }, ["a.ts"], { reads: ["a.ts"] });
       expect(result.files).toEqual({ "a.ts": ugly });
       expect(result.stderr).toContain("Cannot load the configuration file");
       expect(result.exitCode).toBe(2);
     });
 
-    // Where Prettier 3.9.9 says "YAML Error in ..: Map keys must be unique at line .., column ..". A `.prettierrc` is YAML.
+    // Prettier 3.9.9 reports "YAML Error in ..: Map keys must be unique at line .., column .." for these. A
+    // `.prettierrc` is YAML.
     test.each<[string, string, number, number]>([
       [".prettierrc", `{"semi": false, "semi": true}\n`, 1, 17],
       [".prettierrc", `semi: false\nsemi: true\n`, 2, 1],
@@ -5731,7 +8134,7 @@ try {
       [".prettierrc", `? semi\n: false\n? semi\n: true\n`, 3, 3],
       [".prettierrc.yaml", `semi: false\nsemi: true\n`, 2, 1],
       [".prettierrc.yml", `semi: false\nsemi: false\n`, 2, 1],
-    ])("a key twice in %s: %j", async (name, text, line, column) => {
+    ])("a duplicate key in %s: %j", async (name, text, line, column) => {
       const result = await format({ [name]: text, "a.ts": ugly }, ["a.ts"], { reads: ["a.ts"] });
       expect(result.files).toEqual({ "a.ts": ugly });
       expect(result.stderr).toContain("Cannot load the configuration file");
@@ -5739,7 +8142,7 @@ try {
       expect(result.exitCode).toBe(2);
     });
 
-    test("a key twice in YAML is shown as Prettier shows it", async () => {
+    test("a duplicate key in YAML is reported the way Prettier reports it", async () => {
       const files = { ".prettierrc": `tabWidth: 2\noverrides:\n  - files: a\n    files: b\n`, "a.ts": ugly };
       const result = await format(files, ["a.ts"]);
       const lines = result.stderr.split("\n").map(line => line.replace(/^\[error\] ?/, ""));
@@ -5752,18 +8155,18 @@ try {
       ]);
     });
 
-    // Prettier 3.9.9 takes the last.
+    // Prettier 3.9.9 uses the last one.
     test.each([
       [".prettierrc.json", `{"semi": true, "semi": false}\n`],
       [".prettierrc.json5", `{semi: true, semi: false}\n`],
-    ])("a key twice in %s", async (name, text) => {
+    ])("the last duplicate key wins in %s", async (name, text) => {
       const result = await format({ [name]: text, "a.ts": ugly }, ["a.ts"], { reads: ["a.ts"] });
       expect(result.files).toEqual({ "a.ts": noSemi });
       expect(result.exitCode).toBe(0);
     });
 
     test.each([`prettier:\n  semi: false\n  semi: false\n`, `name: a\nname: b\nprettier:\n  semi: false\n`])(
-      "a package.yaml with a key twice has no configuration: %j",
+      "a package.yaml with a duplicate key is ignored as a configuration: %j",
       async text => {
         const result = await format({ "package.yaml": text, "a.ts": ugly }, ["a.ts"], { reads: ["a.ts"] });
         expect(result.files).toEqual({ "a.ts": formatted });
@@ -5771,14 +8174,14 @@ try {
       },
     );
 
-    test("a package.yaml that cannot be read has no configuration", async () => {
+    test("a package.yaml that can't be parsed is ignored as a configuration", async () => {
       const files = { "package.yaml": `name: [\n`, ".prettierrc": `semi: false\n`, "a.ts": ugly };
       const result = await format(files, ["a.ts"], { reads: ["a.ts"] });
       expect(result.files).toEqual({ "a.ts": noSemi });
       expect(result.exitCode).toBe(0);
     });
 
-    test("the nearest configuration file counts, and a package.json without one does not", async () => {
+    test("uses the nearest configuration file, skipping a package.json without a `prettier` key", async () => {
       const result = await format(
         {
           ".prettierrc": `{ "semi": false }`,
@@ -5794,7 +8197,7 @@ try {
       expect(result.files).toEqual({ "a.js": noSemi, "p/b.js": noSemi, "q/c.js": formatted.replaceAll('"', "'") });
     });
 
-    test("overrides", async () => {
+    test("applies overrides", async () => {
       const result = await format(
         {
           ".prettierrc": JSON.stringify({
@@ -5831,15 +8234,65 @@ try {
 
     test("--config and --no-config", async () => {
       const files = { ".prettierrc": `{ "semi": false }`, "other.json": `{ "singleQuote": true }`, "a.js": ugly };
-      const [named, none] = await Promise.all([
+      const [explicit, none] = await Promise.all([
         format(files, ["--config", "other.json", "a.js"], { reads: ["a.js"] }),
         format(files, ["--no-config", "a.js"], { reads: ["a.js"] }),
       ]);
-      expect(named.files).toEqual({ "a.js": formatted.replaceAll('"', "'") });
+      expect(explicit.files).toEqual({ "a.js": formatted.replaceAll('"', "'") });
       expect(none.files).toEqual({ "a.js": formatted });
     });
 
-    test("--find-config-path", async () => {
+    describe("--config doesn't load the config files of the project", () => {
+      // Each config writes a file next to itself when it's evaluated.
+      const program = (tabWidth: number) =>
+        `import { writeFileSync } from "node:fs";\nwriteFileSync(new URL("./evaluated", import.meta.url), "");\nexport default { tabWidth: ${tabWidth} };\n`;
+      const code = (indent: number) => `function f() {\n${" ".repeat(indent)}return 1;\n}\n`;
+      const reads = ["evaluated", "nested/evaluated", "a.js", "nested/b.js"];
+
+      test.each([".prettierrc.mjs", "prettier.config.ts", "oxfmt.config.ts"])("%s", async name => {
+        const files = {
+          [name]: program(8),
+          [`nested/${name}`]: program(6),
+          "own.json": `{ "tabWidth": 4 }\n`,
+          "a.js": code(0),
+          "nested/b.js": code(0),
+        };
+        const after = (evaluated: string | null, a: number, b: number) => ({
+          "evaluated": evaluated,
+          "nested/evaluated": evaluated,
+          "a.js": code(a),
+          "nested/b.js": code(b),
+        });
+        const [looked, none, own, missing, inNested] = await Promise.all([
+          format(files, ["."], { reads }),
+          format(files, ["--no-config", "."], { reads }),
+          format(files, ["--config=own.json", "."], { reads }),
+          format(files, ["--config=missing.json", "."], { reads }),
+          format(files, ["--config=../own.json", "."], { reads, cwd: "nested" }),
+        ]);
+        expect(looked.files).toEqual(after("", 8, 6));
+        expect(none.files).toEqual(after(null, 2, 2));
+        expect(own.files).toEqual(after(null, 4, 4));
+        expect(missing.files).toEqual(after(null, 0, 0));
+        expect(missing.exitCode).not.toBe(0);
+        expect(inNested.files).toEqual(after(null, 0, 4));
+      });
+
+      test.skipIf(isWindows)("/dev/null", async () => {
+        const files = { ".prettierrc.mjs": program(8), "a.js": code(0) };
+        const result = await format(files, ["--config=/dev/null", "."], { reads: ["evaluated", "a.js"] });
+        expect(result.files).toEqual({ "evaluated": null, "a.js": code(2) });
+      });
+
+      test("still uses the flavor of the tool that the project's config file is named after", async () => {
+        const files = { "oxfmt.config.ts": program(8), "own.json": "{}\n", "a.js": wide };
+        const result = await format(files, ["--config=own.json", "a.js"], { reads: ["evaluated", "a.js"] });
+        // oxfmt's lines are 100 wide.
+        expect(result.files).toEqual({ "evaluated": null, "a.js": wide });
+      });
+    });
+
+    test("--find-config-path prints the nearest config file", async () => {
       const result = await format({ ".prettierrc": "{}", "src/.prettierrc.json": "{}", "src/a.js": "" }, [
         "--find-config-path",
         "src/a.js",
@@ -5848,7 +8301,7 @@ try {
       expect(result.exitCode).toBe(0);
     });
 
-    test("an invalid value fails with 2", async () => {
+    test("exits with 2 for an invalid value", async () => {
       const result = await format({ ".prettierrc": `{ "trailingComma": "sometimes" }`, "a.js": ugly }, ["a.js"], {
         reads: ["a.js"],
       });
@@ -5857,7 +8310,7 @@ try {
       expect(result.exitCode).toBe(2);
     });
 
-    test(".oxfmtrc.json: lines are 100 wide, and ignorePatterns", async () => {
+    test(".oxfmtrc.json: 100-column lines and ignorePatterns", async () => {
       const result = await format(
         { ".oxfmtrc.json": `{ "ignorePatterns": ["generated/"] }`, "a.js": wide, "generated/b.js": ugly },
         [],
@@ -5900,13 +8353,13 @@ try {
         "src/deep/c.js": ugly,
       };
 
-      test("every .gitignore counts, ! is in the format of .gitignore, a pattern without a slash is for every directory", async () => {
+      test("every .gitignore applies, ! uses .gitignore syntax, and a pattern without a slash matches in every directory", async () => {
         expect(
           await Promise.all([different(project, []), different(project, ["!deep"]), different(project, ["*.ts"])]),
         ).toEqual([["a.js", "src/b.ts", "src/deep/c.js"], ["a.js", "src/b.ts"], ["src/b.ts"]]);
       });
 
-      // What oxfmt 0.72.0 does.
+      // This is what oxfmt 0.72.0 does.
       describe("a repository in a repository", () => {
         const [o, i, s] = ["dist/o.js", "vendor/lib/dist/i.js", "vendor/lib/src/s.js"];
         const tree = { ".oxfmtrc.json": "{}\n", [o]: ugly, [i]: ugly, [s]: ugly };
@@ -5917,17 +8370,17 @@ try {
           [{ "vendor/lib/.git": "gitdir: ../../.git/modules/lib\n", ".gitignore": "dist/\n" }, [i, s]],
           [{ ...inner, ".git/info/exclude": "src/\n" }, [o, i, s]],
           [{ ...inner, "vendor/lib/.git/info/exclude": "src/\n" }, [o, i]],
-        ])("the files of Git above its root do not count in it, and its own do: %j", async (files, expected) => {
+        ])("Git's ignore files above its root don't apply inside it, but its own do: %j", async (files, expected) => {
           expect(await different({ ...tree, ...outer, ...files }, [])).toEqual(expected);
         });
 
-        test.skipIf(isInRepository)("no root counts if a directory is in no repository", async () => {
+        test.skipIf(isInRepository)("outside a repository, an inner repository's root isn't a boundary", async () => {
           const files = { ...tree, ...inner, ".gitignore": "i.js\n" };
           expect(await different(files, ["vendor/lib", "dist"])).toEqual([o, s]);
         });
       });
 
-      test("nested configuration files, --disable-nested-config, .prettierrc is not read", async () => {
+      test("reads nested configuration files unless --disable-nested-config is passed, and never .prettierrc", async () => {
         const files = {
           ".oxfmtrc.json": `{ "semi": false }\n`,
           "src/.oxfmtrc.json": `{ "singleQuote": true }\n`,
@@ -5944,7 +8397,7 @@ try {
         expect(disabled.files).toEqual({ "src/a.js": noSemi, "lib/b.js": noSemi });
       });
 
-      test("insertFinalNewline, sortPackageJson", async () => {
+      test("supports insertFinalNewline and sorts package.json", async () => {
         const result = await format(
           {
             ".oxfmtrc.json": `{ "insertFinalNewline": false }`,
@@ -5957,14 +8410,14 @@ try {
         expect(result.files).toEqual({ "a.js": "a();", "package.json": '{\n  "name": "x",\n  "version": "1.0.0"\n}' });
       });
 
-      test("no file at all fails with 2", async () => {
+      test("exits with 2 if no file matches", async () => {
         const result = await format({ ".oxfmtrc.json": "{}\n" }, ["nothing.js"]);
         expect(result.stderr).toContain("Expected at least one target file.");
         expect(result.exitCode).toBe(2);
       });
     });
 
-    test("prettier-plugin-organize-imports: whether an unused import React stays is up to the nearest tsconfig.json", async () => {
+    test("prettier-plugin-organize-imports: the nearest tsconfig.json decides whether an unused React import stays", async () => {
       const jsx = `import React from "react";\nexport const a = <div />;\n`;
       const tsconfig = (compilerOptions: object) => JSON.stringify({ compilerOptions });
       const names = ["classic", "native", "extended", "automatic", "preserve", "none", "factory", "namespace"];
@@ -5987,7 +8440,7 @@ try {
         [],
         { reads: [...names.map(name => `${name}/a.tsx`), "classic/b.ts"] },
       );
-      // What Prettier 3 prints with the plugin and TypeScript 5.
+      // This is what Prettier 3 prints with the plugin and TypeScript 5.
       const without = "export const a = <div />;\n";
       expect(files).toEqual({
         "classic/a.tsx": jsx,
@@ -6002,8 +8455,9 @@ try {
       });
     });
 
-    // TypeScript 6.0.3 follows them all. Of two that extend each other it reports that, and has the options of both.
-    test("prettier-plugin-organize-imports: a tsconfig.json extends one that extends one, however many there are", async () => {
+    // TypeScript 6.0.3 follows them all. For two that extend each other, it reports the cycle and uses the options of
+    // both.
+    test("prettier-plugin-organize-imports: follows a chain of tsconfig.json `extends` of any length", async () => {
       const jsx = `import React from "react";\nexport const a = <div />;\n`;
       const { files } = await format(
         {
@@ -6024,7 +8478,7 @@ try {
       expect(files).toEqual({ "chain/a.tsx": jsx, "circle/a.tsx": jsx });
     });
 
-    test(".editorconfig", async () => {
+    test("reads .editorconfig unless --no-editorconfig is passed", async () => {
       const files = {
         ".editorconfig": "root = true\n[*]\nindent_style = space\nindent_size = 4\n[*.ts]\nindent_style = tab\n",
         "a.js": ugly,
@@ -6049,14 +8503,14 @@ try {
       });
     });
 
-    // What Prettier 3.9.9 does with each. In a worktree `.git` is a file.
+    // This is what Prettier 3.9.9 does with each. In a worktree `.git` is a file.
     describe.each<[string, Record<string, string>, boolean]>([
       ["nothing", {}, false],
-      ["a folder .git", { "repo/.git/HEAD": "" }, true],
-      ["a file .git", { "repo/.git": "gitdir: ../elsewhere\n" }, true],
-      ["a folder .hg", { "repo/.hg/store": "" }, true],
-      ["a file .hg", { "repo/.hg": "" }, false],
-      ["a folder .editorconfig", { "repo/.editorconfig/a": "root = true\n" }, false],
+      ["a .git directory", { "repo/.git/HEAD": "" }, true],
+      ["a .git file", { "repo/.git": "gitdir: ../elsewhere\n" }, true],
+      ["a .hg directory", { "repo/.hg/store": "" }, true],
+      ["a .hg file", { "repo/.hg": "" }, false],
+      ["an .editorconfig directory", { "repo/.editorconfig/a": "root = true\n" }, false],
     ])("an .editorconfig above a directory with %s", (_, marker, isRoot) => {
       const files = { ".editorconfig": "[*]\nindent_style = tab\n", "repo/src/a.js": ugly, ...marker };
       const expected = isRoot ? formatted : formatted.replace("  return", "\treturn");
@@ -6067,15 +8521,16 @@ try {
         expect(result.exitCode).toBe(0);
       });
 
-      test("standard input", async () => {
+      test("stdin", async () => {
         const result = await format(files, ["--stdin-filepath", "src/a.js"], { cwd: "repo", stdin: ugly });
         expect(result.raw).toBe(expected);
         expect(result.exitCode).toBe(0);
       });
     });
 
-    describe("how an .editorconfig is read", () => {
-      // The one above says whether the one that is read is a root: with it, the quotes are single.
+    describe("parsing an .editorconfig", () => {
+      // The parent .editorconfig shows whether the one under test is a root: if the parent applies, the quotes are
+      // single.
       const project = {
         ".git/HEAD": "",
         ".editorconfig": "[*]\nquote_type = single\n",
@@ -6083,15 +8538,15 @@ try {
       };
       const printed = (indent: string, quote: string) => `if (a) {\n${indent}b(${quote}c${quote});\n}\n`;
 
-      // What Prettier 3.9.9 prints. It has `editorconfig-without-wasm`, which knows no comment behind anything, and gives a
-      // file up at the first line that it does not understand.
+      // This is what Prettier 3.9.9 prints. It uses `editorconfig-without-wasm`, which doesn't support trailing
+      // comments and gives up on a file at the first line it doesn't understand.
       test.each([
-        ["a comment behind a section: nothing of the file counts", "[*] ; all\nindent_size = 4\n", "  ", "'"],
-        ["a comment behind a later section", "[*]\nindent_size = 4\n[*.js] # scripts\nindent_size = 8\n", "  ", "'"],
-        ["a comment behind a value is of the value", "[*]\nindent_size = 4 # c\n", "  ", "'"],
+        ["a comment after a section: the whole file is ignored", "[*] ; all\nindent_size = 4\n", "  ", "'"],
+        ["a comment after a later section", "[*]\nindent_size = 4\n[*.js] # scripts\nindent_size = 8\n", "  ", "'"],
+        ["a comment after a value is part of the value", "[*]\nindent_size = 4 # c\n", "  ", "'"],
         ["a colon", "[*]\nindent_size: 4\n", "  ", "'"],
-        ["a line that is nothing", "[*]\nindent_size = 4\ngarbage\n", "  ", "'"],
-        ["a section that is not closed", "[*]\nindent_size = 4\n[*.py\n", "  ", "'"],
+        ["an unparsable line", "[*]\nindent_size = 4\ngarbage\n", "  ", "'"],
+        ["an unclosed section", "[*]\nindent_size = 4\n[*.py\n", "  ", "'"],
         ["lines that end with a carriage return", "[*]\rindent_size = 4\r", "    ", "'"],
         ["no-break spaces", "\u00a0[*]\u00a0\n\u00a0indent_size\u00a0=\u00a04\u00a0\n", "    ", "'"],
         ["a byte order mark", "\ufeff[*]\nindent_size = 4\n", "    ", "'"],
@@ -6101,8 +8556,8 @@ try {
         ["root = 0", "root = 0\n[*]\nindent_size = 4\n", "    ", "'"],
         ['root = ""', 'root = ""\n[*]\nindent_size = 4\n', "    ", "'"],
         ["root = true, then false", "root = true\nroot = false\n[*]\nindent_size = 4\n", "    ", "'"],
-        ["a word that is not known in upper case", "[*]\nquote_type = Single\n", "  ", '"'],
-        ["a word that is known in upper case", "[*]\nindent_style = TAB\n", "\t", "'"],
+        ["quote_type = Single isn't recognized", "[*]\nquote_type = Single\n", "  ", '"'],
+        ["indent_style = TAB is recognized", "[*]\nindent_style = TAB\n", "\t", "'"],
         ["a word in quotes", '[*]\nindent_style = "tab"\n', "\t", "'"],
         ["a number in quotes", '[*]\nindent_size = "4"\n', "  ", "'"],
         ["04", "[*]\nindent_size = 04\n", "  ", "'"],
@@ -6111,12 +8566,12 @@ try {
         ["+4", "[*]\nindent_size = +4\n", "  ", "'"],
         ["4 // c", "[*]\nindent_size = 4 // c\n", "  ", "'"],
         [
-          "a section twice goes on where it was",
+          "a repeated section continues at its first position",
           "[*]\nindent_size = 2\n[*.js]\nindent_size = 4\n[*]\nindent_size = 8\n",
           "    ",
           "'",
         ],
-      ])("by Prettier: %s", async (_, text, indent, quote) => {
+      ])("like Prettier: %s", async (_, text, indent, quote) => {
         const result = await format({ ...project, "sub/.editorconfig": text }, ["a.js"], {
           cwd: "sub",
           reads: ["sub/a.js"],
@@ -6125,29 +8580,29 @@ try {
         expect(result.exitCode).toBe(0);
       });
 
-      // What oxfmt 0.72 prints. It has the crate `editorconfig-parser`, reads one file, and goes on behind what it does not
-      // understand. `indent_size` counts only if it is known that spaces are used.
+      // This is what oxfmt 0.72 prints. It uses the `editorconfig-parser` crate, reads a single file, and continues
+      // after anything it doesn't understand. `indent_size` only applies if it's known that spaces are used.
       test.each([
-        ["indent_size alone says nothing", {}, "[*]\nindent_size = 4\n", "  "],
+        ["indent_size on its own is ignored", {}, "[*]\nindent_size = 4\n", "  "],
         ["indent_size with indent_style", {}, "[*]\nindent_style = space\nindent_size = 4\n", "    "],
         ["indent_size with useTabs", { useTabs: false }, "[*]\nindent_size = 4\n", "    "],
         ["indent_size before tab_width", { useTabs: false }, "[*]\nindent_size = 4\ntab_width = 8\n", "    "],
-        ["tab_width alone", {}, "[*]\ntab_width = 4\n", "    "],
+        ["tab_width on its own", {}, "[*]\ntab_width = 4\n", "    "],
         [
-          "useTabs counts more than indent_style",
+          "useTabs takes precedence over indent_style",
           { useTabs: false },
           "[*]\nindent_style = tab\nindent_size = 4\n",
           "    ",
         ],
         [
-          "a comment behind a section: what follows is of the one before",
+          "a comment after a section: what follows belongs to the previous section",
           { useTabs: false },
           "[*]\nindent_size = 4\n[*.py] ; c\nindent_size = 8\n",
           "        ",
         ],
-        ["a comment behind a value", { useTabs: false }, "[*]\nindent_size = 4 # c\n", "  "],
+        ["a comment after a value", { useTabs: false }, "[*]\nindent_size = 4 # c\n", "  "],
         ["a colon", { useTabs: false }, "[*]\nindent_size: 4\n", "  "],
-        ["a line that is nothing", { useTabs: false }, "[*]\nindent_size = 4\ngarbage\n", "    "],
+        ["an unparsable line", { useTabs: false }, "[*]\nindent_size = 4\ngarbage\n", "    "],
         ["a byte order mark", { useTabs: false }, "\ufeff[*]\nindent_size = 4\n", "  "],
         ["no-break spaces", { useTabs: false }, "\u00a0[*]\u00a0\n\u00a0indent_size\u00a0=\u00a04\u00a0\n", "    "],
         ["a key in upper case", { useTabs: false }, "[*]\nINDENT_SIZE = 4\n", "  "],
@@ -6156,43 +8611,44 @@ try {
         ["0", { useTabs: false }, "[*]\nindent_size = 0\n", ""],
         ["260 is 4", { useTabs: false }, "[*]\nindent_size = 260\n", "    "],
         [
-          "a wrong value takes the place of a right one",
+          "an invalid value replaces an earlier valid one",
           { useTabs: false },
           "[*]\nindent_size = 4\nindent_size = x\n",
           "  ",
         ],
         [
-          "but not that of an earlier section",
+          "an invalid value doesn't replace one from an earlier section",
           { useTabs: false },
           "[*]\nindent_size = 4\n[*.js]\nindent_size = x\n",
           "    ",
         ],
         ["unset", { useTabs: false }, "[*]\nindent_size = 4\n[*.js]\nindent_size = unset\n", "  "],
         [
-          "a width that is not allowed and does not count",
+          "an out-of-range max_line_length that printWidth overrides",
           { printWidth: 80 },
           "[*]\nmax_line_length = 1000\ntab_width = 4\n",
           "    ",
         ],
-      ])("by oxfmt: %s", async (_, config, text, indent) => {
+      ])("like oxfmt: %s", async (_, config, text, indent) => {
         const files = { ...project, "sub/.oxfmtrc.json": JSON.stringify(config), "sub/.editorconfig": text };
         const result = await format(files, ["a.js"], { cwd: "sub", reads: ["sub/a.js"] });
         expect(result.files["sub/a.js"]).toBe(printed(indent, '"'));
         expect(result.exitCode).toBe(0);
       });
 
-      // globset with its default options, on the path from the directory of the file: a name is one file, `*` and `?` cross `/`.
+      // globset with its default options, matched against the path relative to the .editorconfig's directory: a plain
+      // name matches one file, and `*` and `?` cross `/`.
       test.each([
         ["a name", "a.js", "a.js", "    "],
         ["a name, for a file further down", "a.js", "deep/a.js", "  "],
         ["a name in braces, for a file further down", "{a.js,*.ts}", "deep/a.js", "  "],
         ["a star, for a file further down", "*.js", "deep/a.js", "    "],
-        ["a star behind a directory, for a file further down", "deep/*.js", "deep/er/a.js", "    "],
+        ["a star after a directory, for a file further down", "deep/*.js", "deep/er/a.js", "    "],
         ["a question mark for a slash", "deep?a.js", "deep/a.js", "    "],
         ["a slash in front", "/a.js", "a.js", "  "],
         ["a range of numbers", "{1..3}.js", "2.js", "  "],
-        ["braces that are not closed", "{a.js", "a.js", "  "],
-      ])("by oxfmt: a section is for %s", async (_, section, at, indent) => {
+        ["unclosed braces", "{a.js", "a.js", "  "],
+      ])("like oxfmt: section matching with %s", async (_, section, at, indent) => {
         const files = {
           "sub/.oxfmtrc.json": '{ "useTabs": false }',
           "sub/.editorconfig": `[${section}]\nindent_size = 4\n`,
@@ -6220,7 +8676,7 @@ try {
           "Invalid printWidth: The line width should be between 1 and 320",
           1,
         ],
-        // It is found out at the file.
+        // This is only detected when the file is formatted.
         [
           "tab_width in a later section",
           {},
@@ -6228,7 +8684,7 @@ try {
           "Invalid tabWidth: The indent width should be between 0 and 24",
           2,
         ],
-      ])("oxfmt refuses a width that is not allowed: %s", async (_, config, text, message, exitCode) => {
+      ])("like oxfmt, rejects an out-of-range width: %s", async (_, config, text, message, exitCode) => {
         const files = { ...project, "sub/.oxfmtrc.json": JSON.stringify(config), "sub/.editorconfig": text };
         const result = await format(files, ["a.js"], { cwd: "sub", reads: ["sub/a.js"] });
         expect(result.stderr).toContain(message);
@@ -6246,7 +8702,7 @@ try {
       expect(result.exitCode).toBe(0);
     });
 
-    test("the path decides the configuration, and whether the code is left alone", async () => {
+    test("the path decides the configuration and whether the code is ignored", async () => {
       const files = { "src/.prettierrc": `{ "semi": false }`, ".prettierignore": "ignored.js\n" };
       const [configured, ignored] = await Promise.all([
         format(files, ["--stdin-filepath", "src/new.js"], { stdin: ugly }),
@@ -6256,13 +8712,13 @@ try {
       expect(ignored.raw).toBe(ugly);
     });
 
-    // Prettier adds the line `node_modules` to every ignore file. oxfmt formats what it is handed.
-    test("the code of a package is left alone, as by Prettier, unless --with-node-modules says otherwise", async () => {
+    // Prettier adds the line `node_modules` to every ignore file. oxfmt formats whatever it's given.
+    test("skips node_modules like Prettier unless --with-node-modules is passed", async () => {
       const print = async (files: Record<string, string>, ...args: string[]) => {
         const { raw, stderr, exitCode } = await format(files, args, { stdin: ugly });
         return { raw, stderr, exitCode };
       };
-      const [alone, done] = [ugly, formatted].map(raw => ({ raw, stderr: "", exitCode: 0 }));
+      const [skipped, done] = [ugly, formatted].map(raw => ({ raw, stderr: "", exitCode: 0 }));
       const results = await Promise.all([
         print({}, "--stdin-filepath", "node_modules/x/a.js"),
         print({}, "--stdin-filepath", "sub/node_modules/y/a.js"),
@@ -6276,10 +8732,10 @@ try {
         print({ ".oxfmtrc.json": "{}" }, "--stdin-filepath", "node_modules/x/a.js"),
         print({}, "--flavor=oxfmt", "--stdin-filepath", "node_modules/x/a.js"),
       ]);
-      expect(results).toEqual([alone, alone, alone, alone, alone, done, done, done, done, done, done]);
+      expect(results).toEqual([skipped, skipped, skipped, skipped, skipped, done, done, done, done, done, done]);
     });
 
-    test("--check", async () => {
+    test("--check prints (stdin) and exits with 1", async () => {
       const result = await format({}, ["--check", "--stdin-filepath", "a.js"], { stdin: ugly });
       expect(result.raw).toBe("(stdin)\n");
       expect(result.exitCode).toBe(1);
@@ -6396,7 +8852,7 @@ try {
 
     test("uses the config of the working directory", async () => {
       const nested = { ...noSemi, "sub/.prettierrc": `{ "tabWidth": 8 }\n`, "sub/dir/a.txt": "", "other/a.txt": "" };
-      const [here, below, nearer, off, named] = await Promise.all([
+      const [here, below, nearer, off, explicit] = await Promise.all([
         pipe(noSemi),
         pipe(nested, [], { cwd: "other" }),
         pipe(nested, [], { cwd: "sub/dir" }),
@@ -6407,7 +8863,7 @@ try {
       expect(below.raw).toBe(withoutSemi);
       expect(nearer.raw).toBe(printed.replace("  return", "        return"));
       expect(off.raw).toBe(printed);
-      expect(named.raw).toBe(withoutSemi);
+      expect(explicit.raw).toBe(withoutSemi);
     });
 
     test.each([
@@ -6496,7 +8952,7 @@ try {
       [prettier, ["--ignore-unknown"], 1],
       [{}, [], 2],
       [{}, ["--check"], 2],
-    ])("a parser nobody has: %j %j", async (config, flags, exitCode) => {
+    ])("an unknown parser: %j %j", async (config, flags, exitCode) => {
       const result = await format({ ...files, ...config }, ["--parser", "nonsense", ...flags], { stdin: js, reads });
       expect(result).toMatchObject({
         raw: "",
@@ -6575,7 +9031,7 @@ try {
       expect(await pipe(prettier, flags, { stdin })).toMatchObject({ raw, stderr, exitCode: 0 });
     });
 
-    test("an empty --stdin-filepath is no file name either", async () => {
+    test("an empty --stdin-filepath doesn't count as a file name", async () => {
       expect(await pipe(noSemi, ["--stdin-filepath", ""])).toMatchObject({ raw: withoutSemi, stderr: "", exitCode: 0 });
     });
 
@@ -6724,7 +9180,7 @@ try {
   });
 
   describe("the command line", () => {
-    test("formatting options", async () => {
+    test("accepts formatting options", async () => {
       const result = await format(
         { "a.js": ugly + wide },
         ["--no-semi", "--single-quote", "--tab-width=4", "--print-width", "60", "--trailing-comma", "none"],
@@ -6747,21 +9203,24 @@ try {
       `);
     });
 
-    test("an unknown flag fails with 2", async () => {
-      const result = await format({ "a.js": ugly }, ["--chekc"], { reads: ["a.js"] });
+    test.each([
+      ["--chekc", "--check"],
+      ["--no-ignore", "--init"],
+    ])("exits with 2 for the unknown flag %s and quotes it as written", async (flag, closest) => {
+      const result = await format({ "a.js": ugly }, [flag], { reads: ["a.js"] });
       expect(result.files).toEqual({ "a.js": ugly });
-      expect(result.stderr).toContain("Invalid option '--chekc' - perhaps you meant '--check'?");
+      expect(result.stderr).toContain(`Invalid option '${flag}' - perhaps you meant '${closest}'?`);
       expect(result.exitCode).toBe(2);
     });
 
-    test("--log-level", async () => {
+    test("--log-level silent prints nothing", async () => {
       const result = await format({ "a.js": ugly }, ["--log-level", "silent", "--check"]);
       expect(result.raw).toBe("");
       expect(result.stderr).toBe("");
       expect(result.exitCode).toBe(1);
     });
 
-    test("--help", async () => {
+    test("--help prints the usage", async () => {
       const result = await format({}, ["--help"]);
       expect(result.stdout).toContain("bun fmt");
       expect(result.stdout).toContain("--check");
@@ -6770,15 +9229,15 @@ try {
   });
 });
 
-/** The files that are not formatted, according to `-l`, in a directory that is there. */
+/** Returns the unformatted files that `-l` lists in an existing directory. */
 async function differentIn(cwd: string, args: string[]) {
   await using proc = spawn({ cmd: [...command, "-l", ...args], env, cwd, stdout: "pipe", stderr: "ignore" });
   return (await proc.stdout.text()).split("\n").filter(Boolean);
 }
 
-describe.concurrent("what an ignore file has is not written, however it is come to", () => {
-  // What Prettier 3.9.9 does.
-  test("a directory that is ignored, and named", async () => {
+describe.concurrent("ignored files are never written, however they're reached", () => {
+  // This is what Prettier 3.9.9 does.
+  test("an ignored directory passed by name", async () => {
     const files = {
       ".prettierignore": "generated/\n/vendor\n",
       "generated/a.js": ugly,
@@ -6789,21 +9248,21 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     expect(
       await Promise.all([
         different(files, ["generated", join("generated", "deep"), "vendor", "src"]),
-        // The search for a pattern starts in the directory that all it matches is in.
+        // A pattern's search starts in the deepest directory that contains all of its matches.
         different(files, ["generated/*.js", "generated/deep/**", "vendor/**/*.js", "src"]),
         different(files, ["{generated,src}/*.js"]),
       ]),
     ).toEqual([["src/d.js"], ["src/d.js"], ["src/d.js"]]);
-    const kept = ["generated/a.js", "generated/deep/b.js", "vendor/c.js"];
-    const result = await format(files, ["generated", "generated/*.js", "vendor", "src"], { reads: kept });
+    const untouched = ["generated/a.js", "generated/deep/b.js", "vendor/c.js"];
+    const result = await format(files, ["generated", "generated/*.js", "vendor", "src"], { reads: untouched });
     expect(result.stdout).toBe("src/d.js");
     expect(result.stderr).not.toMatch(anError);
-    expect(result.files).toEqual(Object.fromEntries(kept.map(name => [name, ugly])));
+    expect(result.files).toEqual(Object.fromEntries(untouched.map(name => [name, ugly])));
     expect(result.exitCode).toBe(0);
   });
 
   test.each([["src"], ["src/*.js"], ["src", "src/*.js"]])(
-    "%s, of which every file is ignored, is no error",
+    "%s isn't an error if every file in it is ignored",
     async (...args) => {
       const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
       const result = await format(files, ["--check", ...args], { reads: ["src/a.js"] });
@@ -6813,7 +9272,7 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     },
   );
 
-  test("a pattern that matches nothing is an error beside a directory of which every file is ignored", async () => {
+  test("a pattern that matches nothing is still an error next to a directory whose files are all ignored", async () => {
     const files = { ".prettierignore": "src/a.js\n", "src/a.js": ugly };
     const result = await format(files, ["--check", "src", "none/*.js"]);
     expect(result.stderr).toContain(`error: No files matching the pattern were found: "none/*.js".`);
@@ -6821,8 +9280,9 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     expect(result.exitCode).toBe(2);
   });
 
-  // From the directory of the file they are `..`, which `.*` matches. Nobody asks about them: a file in the project is `src/a.js`.
-  test("a pattern says nothing about the directories that the ignore file is in", async () => {
+  // Relative to the ignore file's directory they're `..`, which `.*` matches. But they're never looked up: a file in
+  // the project is `src/a.js`.
+  test("a pattern doesn't apply to the ignore file's own ancestor directories", async () => {
     const files = { ".prettierignore": ".*\n", "src/a.js": ugly, "b.js": ugly, ".hidden.js": ugly };
     expect(await Promise.all([different(files, ["src", "b.js", ".hidden.js"]), different(files, ["."])])).toEqual([
       ["src/a.js", "b.js"],
@@ -6830,7 +9290,7 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     ]);
   });
 
-  const beside = {
+  const project = {
     "configs/ignored": "skipped.js\n*.gen.js\n/src/anchored.js\ndir/\n../lib/up.js\n**/src/any.js\nsrc/mid.js\n",
     "configs/hidden": ".*\n",
     "configs/skipped.js": ugly,
@@ -6846,15 +9306,16 @@ describe.concurrent("what an ignore file has is not written, however it is come 
   };
   const ignored = ["--ignore-path", join("configs", "ignored")];
 
-  // src/utilities/ignore.js: `ignore({ allowRelativePaths: true })` is asked about `path.relative(..)`, `../src/skipped.js`. A
-  // pattern without `/` finds the name in it, and `..` is a directory like any other.
-  test("a file beside the directory of the file that --ignore-path names", async () => {
+  // src/utilities/ignore.js passes `path.relative(..)`, here `../src/skipped.js`, to
+  // `ignore({ allowRelativePaths: true })`. A pattern without `/` matches the name in it, and `..` is treated like any
+  // other directory.
+  test("a file outside the directory of the --ignore-path file", async () => {
     expect(
       await Promise.all([
-        different(beside, [...ignored, "."]),
-        different(beside, [...ignored, "src/skipped.js", "src/dir/in.js", "src/kept.js"]),
-        different(beside, [...ignored, "src/dir"]),
-        different(beside, ["--ignore-path", join("configs", "hidden"), "."]),
+        different(project, [...ignored, "."]),
+        different(project, [...ignored, "src/skipped.js", "src/dir/in.js", "src/kept.js"]),
+        different(project, [...ignored, "src/dir"]),
+        different(project, ["--ignore-path", join("configs", "hidden"), "."]),
       ]),
     ).toEqual([
       ["src/anchored.js", "src/kept.js", "src/mid.js", "top.js"],
@@ -6864,10 +9325,11 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     ]);
   });
 
-  // What oxfmt 0.72.0 does. apps/oxfmt/src/core/global_ignore.rs: in a search `Gitignore::matched` gets the whole path, in which a
-  // pattern without `/` finds the name. For an argument, "a path outside the matcher's root is never ignored".
-  test("the same, like oxfmt", async () => {
-    const files = { ...beside, ".oxfmtrc.json": "{}\n" };
+  // This is what oxfmt 0.72.0 does. In apps/oxfmt/src/core/global_ignore.rs, a search passes the whole path to
+  // `Gitignore::matched`, so a pattern without `/` matches the name in it. For an argument, "a path outside the
+  // matcher's root is never ignored".
+  test("a file outside the directory of the --ignore-path file, like oxfmt", async () => {
+    const files = { ...project, ".oxfmtrc.json": "{}\n" };
     expect(
       await Promise.all([
         different(files, [...ignored, "."]),
@@ -6882,20 +9344,20 @@ describe.concurrent("what an ignore file has is not written, however it is come 
   });
 });
 
-// Prettier 3.9.9 does not read it. What is left out is what `git check-ignore` has.
-describe.concurrent("info/exclude of the repository that the working directory is in", () => {
+// Prettier 3.9.9 doesn't read it. The skipped files are the ones that `git check-ignore` reports.
+describe.concurrent("the info/exclude of the working directory's repository", () => {
   const names = ["a.js", "gen/b.js", "kept.js", "sub/a.js", "sub/anchored.js", "sub/named.js"];
   const tree = Object.fromEntries(names.map(name => [name, ugly]));
   const excludes = "# a comment\n/a.js\nnamed.js\ngen/\n/sub/anchored.js\n";
   const left = ["kept.js", "sub/a.js"];
-  /** `files`, in the directory `directory`. */
+  /** `files`, moved into `directory`. */
   const inside = (directory: string, files: Record<string, string>) =>
     Object.fromEntries(Object.entries(files).map(([name, text]) => [`${directory}/${name}`, text]));
 
   test.each([
     ["no configuration", {}],
     [".prettierrc", { ".prettierrc": "{}\n" }],
-  ])("its patterns start at the root of the working tree, with %s", async (_, configuration) => {
+  ])("its patterns are relative to the working tree's root, with %s", async (_, configuration) => {
     const files = { ...tree, ...configuration, ".git/info/exclude": excludes };
     expect(
       await Promise.all([
@@ -6903,14 +9365,14 @@ describe.concurrent("info/exclude of the repository that the working directory i
         different(files, [], { cwd: "sub" }),
         different(files, ["a.js", "sub/named.js", "gen", "gen/b.js", "sub/a.js"]),
         different(files, ["**/*.js"]),
-        // Like .gitignore, it is not read if the files to read are named.
+        // Like .gitignore, it isn't read if --ignore-path is passed.
         different({ ...files, "mine": "kept.js\n" }, ["--ignore-path", "mine"]),
         different({ ...tree, ...configuration, ".git/HEAD": "ref: refs/heads/main\n" }, []),
       ]),
     ).toEqual([left, ["a.js"], ["sub/a.js"], left, names.filter(it => it !== "kept.js"), names]);
   });
 
-  test("one that is there and can't be read is an error, like a .gitignore", async () => {
+  test("one that exists but can't be read is an error, like a .gitignore", async () => {
     const results = await Promise.all(
       [".git/info/exclude", ".gitignore"].map(name => format({ [`${name}/a`]: "", "a.js": ugly }, ["--check"])),
     );
@@ -6929,7 +9391,7 @@ describe.concurrent("info/exclude of the repository that the working directory i
     expect(results.map(it => it.exitCode)).toEqual([0, 0]);
   });
 
-  test("standard input with the name of a file that it has is printed as it is", async () => {
+  test("stdin with the name of an excluded file is printed unchanged", async () => {
     const files = { ".git/info/exclude": "/a.js\n" };
     const results = await Promise.all(
       ["a.js", "b.js"].map(name => format(files, ["--stdin-filepath", name], { stdin: ugly })),
@@ -6937,16 +9399,16 @@ describe.concurrent("info/exclude of the repository that the working directory i
     expect(results.map(it => it.raw)).toEqual([ugly, formatted]);
   });
 
-  test("what .gitignore says about a file comes first", async () => {
+  test(".gitignore takes precedence over it", async () => {
     const files = { "a.js": ugly, "b.js": ugly, "c.js": ugly, "dir/d.js": ugly };
     expect(
       await Promise.all([
         different({ ...files, ".git/info/exclude": "a.js\nb.js\n", ".gitignore": "!a.js\n" }, []),
         different({ ...files, ".git/info/exclude": "!a.js\n", ".gitignore": "a.js\n" }, []),
         different({ ...files, ".git/info/exclude": "*.js\n!a.js\n" }, []),
-        // Nothing takes a file out of a directory that is ignored.
+        // Nothing can un-ignore a file in an ignored directory.
         different({ ...files, ".git/info/exclude": "dir/\n", ".gitignore": "!dir/d.js\n" }, []),
-        // It is not of Git.
+        // .prettierignore isn't one of Git's files.
         different({ ...files, ".git/info/exclude": "!a.js\n", ".prettierignore": "a.js\n" }, []),
       ]),
     ).toEqual([
@@ -6958,7 +9420,7 @@ describe.concurrent("info/exclude of the repository that the working directory i
     ]);
   });
 
-  // `git worktree add` writes these, the first with an absolute path unless it is run `--relative-paths`.
+  // `git worktree add` writes these, the first with an absolute path unless it's run with `--relative-paths`.
   const worktree = {
     ...inside("wt", tree),
     "wt/.git": "gitdir: ../main/.git/worktrees/wt\n",
@@ -6966,7 +9428,7 @@ describe.concurrent("info/exclude of the repository that the working directory i
     "main/.git/info/exclude": excludes,
   };
 
-  test("in a working tree of `git worktree add`, it is that of the repository", async () => {
+  test("in a `git worktree add` working tree, uses the main repository's", async () => {
     const absolute = (dir: string) =>
       writeFileSync(join(dir, "wt", ".git"), `gitdir: ${join(dir, "main", ".git", "worktrees", "wt")}\n`);
     expect(
@@ -6978,7 +9440,7 @@ describe.concurrent("info/exclude of the repository that the working directory i
     ).toEqual([left, ["a.js"], left]);
   });
 
-  test("in a submodule, it is that of the submodule", async () => {
+  test("in a submodule, uses the submodule's", async () => {
     const files = {
       ...inside("vendor/lib", tree),
       ".git/info/exclude": "kept.js\n",
@@ -6990,7 +9452,7 @@ describe.concurrent("info/exclude of the repository that the working directory i
     ).toEqual([left, ["a.js"]]);
   });
 
-  test("in a repository that is in another one, it is that of the inner one", async () => {
+  test("in a nested repository, uses the inner one's", async () => {
     const files = {
       ...inside("inner", tree),
       ".git/info/exclude": "kept.js\n",
@@ -6999,7 +9461,7 @@ describe.concurrent("info/exclude of the repository that the working directory i
     expect(await different(files, [], { cwd: "inner/sub" })).toEqual(["a.js"]);
   });
 
-  test("it says nothing about a file that is not in the working tree", async () => {
+  test("doesn't apply to a file outside the working tree", async () => {
     const files = { "repo/.git/info/exclude": "*.js\n.*\n", "repo/a.js": ugly, "other/b.js": ugly };
     expect(
       await Promise.all([
@@ -7010,19 +9472,19 @@ describe.concurrent("info/exclude of the repository that the working directory i
     ).toEqual([["../other/b.js"], ["../other/b.js"], ["../other/b.js"]]);
   });
 
-  describe("--ignore-path names it", () => {
+  describe("passed to --ignore-path", () => {
     test.each([
       ["no configuration", {}],
       [".prettierrc", { ".prettierrc": "{}\n" }],
       [".oxfmtrc.json", { ".oxfmtrc.json": "{}\n" }],
-    ])("its patterns start at the root of the working tree, with %s", async (_, configuration) => {
+    ])("its patterns are relative to the working tree's root, with %s", async (_, configuration) => {
       const files = { ...tree, ...configuration, ".git/info/exclude": excludes };
       expect(
         await Promise.all([
           different(files, ["--ignore-path", ".git/info/exclude"]),
           different(files, ["--ignore-path", "../.git/info/exclude"], { cwd: "sub" }),
           different(files, ["--ignore-path", ".git/info/exclude", "a.js", "sub/named.js", "sub/a.js"]),
-          // The patterns of any other file start where the file is.
+          // Any other file's patterns are relative to that file's directory.
           different({ ...files, "sub/info/exclude": "/a.js\n", "sub/info/a.js": ugly }, [
             "--ignore-path",
             "sub/info/exclude",
@@ -7052,8 +9514,8 @@ describe.concurrent("info/exclude of the repository that the working directory i
   });
 });
 
-describe.concurrent("how a path is written", () => {
-  test("an absolute pattern", async () => {
+describe.concurrent("path handling", () => {
+  test("accepts an absolute pattern", async () => {
     using dir = tempDir("bun-format", {
       "src/a.js": ugly,
       "src/deep/b.js": ugly,
@@ -7074,8 +9536,8 @@ describe.concurrent("how a path is written", () => {
     ]);
   });
 
-  // The answer is looked up by them, and they have `/` on every system. `path.win32` makes `\\` of what it is asked about.
-  test("what the program that asks Tailwind answers has the paths of the question, also on Windows", async () => {
+  // The answers are looked up by these paths, which use `/` on every system. `path.win32` turns `/` into `\\`.
+  test("the Tailwind helper's answers echo the request's paths, also on Windows", async () => {
     const root = "C:/p/node_modules/tailwindcss";
     const groups = [
       { root, config: "C:/p/tailwind.config.js", classes: ["a"] },
@@ -7094,7 +9556,7 @@ describe.concurrent("how a path is written", () => {
       commandLine: [],
     };
     await using proc = spawn({
-      // As there: nothing is fetched.
+      // As in `run`: nothing is downloaded.
       cmd: [bunExe(), "--no-install", "-e", `const given = ${JSON.stringify(given)};\n${source}`],
       env,
       cwd: String(dir),
@@ -7104,14 +9566,14 @@ describe.concurrent("how a path is written", () => {
     });
     const stdout = await proc.stdout.text();
     const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
-    // Nothing is installed there, so each is answered with an error.
+    // Nothing is installed there, so each group gets an error.
     expect(config.groups.map(({ error, ...which }: { error: string }) => [typeof error, which])).toEqual(
       groups.map(({ classes, ...which }) => ["string", which]),
     );
   });
 
-  // Nothing in it is replaced: `normalizeBunSnapshot` makes `/` of every `\\`.
-  test("what cannot be used is named as the system writes it", async () => {
+  // This doesn't use `normalizeBunSnapshot`, which turns every `\\` into `/`.
+  test("error messages show native paths", async () => {
     using dir = tempDir("bun-format", { "src/a.js": ugly, "notes.foo": "a\n" });
     const firstLine = async (args: string[], stdin?: string) => {
       await using proc = spawn({
@@ -7134,8 +9596,9 @@ describe.concurrent("how a path is written", () => {
     ).toEqual([`error: No files matching the pattern were found: "${join("src", "*.foo")}".`, noParser, noParser]);
   });
 
-  // src/config/prettier-config/config-searcher.js and the package `editorconfig` ask the system for a file of that name.
-  test("a configuration file whose name is written in other capitals counts where the system finds it", async () => {
+  // src/config/prettier-config/config-searcher.js and the `editorconfig` package ask the file system for a file with
+  // that name.
+  test("a configuration file whose name differs in case is used on a case-insensitive file system", async () => {
     using dir = tempDir("bun-format", {
       "rc/.Prettierrc": '{ "semi": false }\n',
       "rc/a.js": "a  ;\n",
@@ -7151,8 +9614,8 @@ describe.concurrent("how a path is written", () => {
   });
 });
 
-describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
-  /** Formats the directory with `files`. The files afterwards, byte for byte: one character of the string is one byte. */
+describe.concurrent("a file that isn't UTF-8 or contains a NUL", () => {
+  /** Formats a directory with `files`. Returns the files afterwards as latin1 strings, one character per byte. */
   async function bytesAfter(files: Record<string, string | Buffer>) {
     using dir = tempDir("bun-format-bytes", files);
     await using proc = spawn({
@@ -7164,7 +9627,7 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     return {
-      // All that is printed about each error. A blank line follows it.
+      // Everything printed for each error. A blank line follows each one.
       errors: stderr
         .replaceAll("\r\n", "\n")
         .split("\n\n")
@@ -7192,11 +9655,11 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     "a.ts": "let a:number  =  1\r\n",
   };
 
-  // What `>` and `Out-File` of Windows PowerShell write.
+  // This is what Windows PowerShell's `>` and `Out-File` write.
   test.each([
     ["little", utf16le],
     ["big", utf16be],
-  ])("UTF-16, %s endian, is refused in every language and stays as it is", async (_, encode) => {
+  ])("UTF-16, %s endian, is rejected in every language and left unchanged", async (_, encode) => {
     const files = Object.fromEntries(Object.entries(texts).map(([name, text]) => [name, encode(text)]));
     const result = await bytesAfter(files);
     expect(result.files).toEqual(
@@ -7210,11 +9673,11 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  test("what follows a NUL in HTML is not dropped", async () => {
+  test("doesn't drop what follows a NUL in HTML", async () => {
     const files = {
       "a.html": "<p   a>b</p>\n<p>c\0d</p>\n<p>e</p>\n",
       "a.vue": "<template>\n<p>b\0c</p>\n</template>\n<script>\nlet a  = 1\n</script>\n",
-      // The template is no HTML then, and stays as it is.
+      // The template isn't treated as HTML then, and stays unchanged.
       "a.js": "x = html`<p   a>b</p><p>c\0d</p><p>e</p>`;\n",
     };
     const result = await bytesAfter(files);
@@ -7228,12 +9691,12 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  // Prettier 3.9.9 and oxfmt 0.72 fail here too, with these words.
+  // Prettier 3.9.9 and oxfmt 0.72 fail here too, with the same message.
   test.each([
-    ["the name of a tag", "<a\0b   >x</a\0b>\n", "a"],
-    ["the name of an attribute", '<p   a\0b="c">x</p>\n', "p"],
-    ["the value of an attribute without quotes", "<p   title=a\0b>x</p>\n", "p"],
-  ])("a NUL in %s", async (_, text, name) => {
+    ["a tag name", "<a\0b   >x</a\0b>\n", "a"],
+    ["an attribute name", '<p   a\0b="c">x</p>\n', "p"],
+    ["an unquoted attribute value", "<p   title=a\0b>x</p>\n", "p"],
+  ])("a NUL in %s is an error", async (_, text, name) => {
     expect(await bytesAfter({ "a.html": text })).toEqual({
       errors: [problem("a.html", `Opening tag "${name}" not terminated.`, [1, 1, text])],
       exitCode: 2,
@@ -7241,7 +9704,7 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     });
   });
 
-  test("a NUL where the text of HTML does not end with it stays", async () => {
+  test("keeps a NUL in places where it doesn't cut the HTML short", async () => {
     const result = await bytesAfter({
       "a.html": '<p   a="\0">b</p>\n<!-- \0 -->\n<script>a\0b</script>\n<p>e</p>\n',
     });
@@ -7252,7 +9715,7 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     });
   });
 
-  test("bytes that are Windows-1252 stay what they are", async () => {
+  test("leaves Windows-1252 bytes unchanged", async () => {
     const files = {
       "a.js": Buffer.from("// caf\xE9\nconst a  = 'd\xE9j\xE0';\n", "latin1"),
       "a.css": Buffer.from("/* caf\xE9 */\na{content:'\xE9'}\n", "latin1"),
@@ -7277,7 +9740,7 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
 describe.concurrent("line breaks, byte order marks and encodings", () => {
   type Files = Record<string, string | Buffer>;
 
-  /** Formats the directory with `files`. The files afterwards, byte for byte: one character of the string is one byte. */
+  /** Formats a directory with `files`. Returns the files afterwards as latin1 strings, one character per byte. */
   async function bytesAfter(files: Files, args: string[] = []) {
     using dir = tempDir("bun-format-bytes", files);
     await using proc = spawn({
@@ -7300,10 +9763,10 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     Object.fromEntries(Object.entries(files).map(([name, text]) => [name, change(text)]));
   const BOM = "\xEF\xBB\xBF";
 
-  // What all the others are compared with.
+  // The baseline that all the others are compared with.
   const withLineFeeds = bytesAfter(lineEndingInputs);
 
-  test("every input can be formatted, and no \\r comes from nowhere", async () => {
+  test("formats every input without introducing a \\r", async () => {
     const result = await withLineFeeds;
     expect(result.errors).toEqual([]);
     expect(Object.keys(result.files).filter(name => result.files[name].includes("\r"))).toEqual([]);
@@ -7321,7 +9784,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("lines that end in \\r\\n and in \\n in one file", async () => {
+  test("handles \\r\\n and \\n mixed in one file", async () => {
     const expected = await withLineFeeds;
     let count = 0;
     const result = await bytesAfter(
@@ -7331,7 +9794,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     expect(result.files).toEqual(expected.files);
   });
 
-  test("a byte order mark stays, and changes nothing else", async () => {
+  test("keeps a byte order mark, which changes nothing else", async () => {
     const expected = await withLineFeeds;
     const result = await bytesAfter(mapped(lineEndingInputs, text => "\uFEFF" + text));
     expect(result.errors).toEqual([]);
@@ -7343,7 +9806,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     ["cr", "\n", "\r"],
     ["auto", "\r\n", "\r\n"],
     ["auto", "\r", "\r"],
-  ])("--end-of-line %s: every line break that is written is that one, once", async (option, before, after) => {
+  ])("--end-of-line %s: writes exactly that line break everywhere", async (option, before, after) => {
     const expected = await withLineFeeds;
     const result = await bytesAfter(
       mapped(lineEndingInputs, text => text.replaceAll("\n", before)),
@@ -7354,7 +9817,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("a template over several lines that is a name", async () => {
+  test("a multi-line template as a computed key", async () => {
     const files = {
       "a.js": "const o = { [`a\r\nb`]: 1, c: 2 };\r\nclass A { [`a\r\nb`] = 1 }\r\n",
       "b.ts": "type D = { [`a\r\nb`]: 1 };\r\n",
@@ -7371,7 +9834,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     });
   });
 
-  test("a cell over several lines in the table of it.each", async () => {
+  test("a multi-line cell in an it.each table", async () => {
     const files = { "a.js": "it.each`\n  a | b\n  ${function(){a;b}} | ${`x\ny`}\n`('t', () => {});\n" };
     const printed = 'it.each`\n  a | b\n  ${function () {\n    a;\n    b;\n  }} | ${`x\ny`}\n`("t", () => {});\n';
     expect(await bytesAfter(files)).toEqual({ errors: [], exitCode: 0, files: { "a.js": printed } });
@@ -7389,12 +9852,12 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     });
   });
 
-  test("a string of JSON5 that goes on in the next line and gets other quotes", async () => {
+  test("a JSON5 string that continues on the next line and changes quotes", async () => {
     const result = await bytesAfter({ "a.json5": "{a:'x\\\ny','b\\\nc':1}\n" }, ["--end-of-line", "crlf"]);
     expect(result.files).toEqual({ "a.json5": '{\r\n  a: "x\\\r\ny",\r\n  "b\\\r\nc": 1,\r\n}\r\n' });
   });
 
-  describe("--range-start, --range-end and --cursor-offset count UTF-16 code units of the text as it is", () => {
+  describe("--range-start, --range-end and --cursor-offset count UTF-16 code units of the original text", () => {
     const onStdin = async (name: string, text: string, args: string[]) => {
       using dir = tempDir("bun-format-stdin", {});
       await using proc = spawn({
@@ -7405,20 +9868,20 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      // `text()` would leave out a byte order mark.
+      // `text()` would strip a byte order mark.
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
       return { printed: Buffer.from(stdout).toString("utf8"), cursor: stderr.trim(), exitCode };
     };
 
-    // Nothing in a style sheet or in YAML is formatted on its own: a range that is not all of the text formats nothing.
+    // Nothing in CSS or YAML can be formatted on its own, so a range that doesn't cover the whole text formats nothing.
     test.each([
       ["a.css", "a{b:c}\r\nd{e:f}\r\n", "a {\n  b: c;\n}\nd {\n  e: f;\n}\n"],
       ["a.yaml", "a:   1\r\nb:   2\r\n", "a: 1\nb: 2\n"],
     ])("%s with \\r\\n", async (name, text, whole) => {
-      const asItIs = text.replaceAll("\r\n", "\n");
-      // Before the last `\r\n`: not all of it.
-      expect((await onStdin(name, text, ["--range-end", "14"])).printed).toBe(asItIs);
-      // In the last `\r\n`, and behind it: all of it.
+      const unformatted = text.replaceAll("\r\n", "\n");
+      // Before the last `\r\n`: not the whole text.
+      expect((await onStdin(name, text, ["--range-end", "14"])).printed).toBe(unformatted);
+      // Inside the last `\r\n`, and after it: the whole text.
       expect((await onStdin(name, text, ["--range-end", "15"])).printed).toBe(whole);
       expect((await onStdin(name, text, ["--range-end", "16"])).printed).toBe(whole);
       // An empty range: not even the line breaks change.
@@ -7428,7 +9891,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     test.each([
       ["a.css", "a{b:'é'}\n", 'a {\n  b: "é";\n}\n'],
       ["a.yaml", "a:   é\n", "a: é\n"],
-    ])("%s with a character of two bytes", async (name, text, whole) => {
+    ])("%s with a two-byte character", async (name, text, whole) => {
       expect((await onStdin(name, text, ["--range-end", String(text.length)])).printed).toBe(whole);
       expect((await onStdin(name, text, ["--range-end", String(text.length - 1)])).printed).toBe(text);
     });
@@ -7441,12 +9904,12 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
       expect((await onStdin(name, text, ["--range-end", "7"])).printed).toBe(text);
     });
 
-    test("--insert-pragma inserts nothing if a part of a style sheet is formatted", async () => {
+    test("--insert-pragma inserts nothing if only part of a style sheet is formatted", async () => {
       const result = await onStdin("a.css", "a{b:c}\r\nd{e:f}\r\n", ["--range-end", "14", "--insert-pragma"]);
       expect(result.printed).toBe("a{b:c}\nd{e:f}\n");
     });
 
-    test("the cursor in HTML of which a part is formatted", async () => {
+    test("the cursor in HTML with a range", async () => {
       const range = ["--range-start", "12", "--range-end", "16"];
       expect(await onStdin("a.html", "<p>a</p>\r\n<p   b>c</p>\r\n", [...range, "--cursor-offset", "10"])).toEqual({
         printed: "<p>a</p>\n<p   b>c</p>\n",
@@ -7462,7 +9925,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
       });
     });
 
-    test("the cursor behind a character of several bytes, with a range", async () => {
+    test("the cursor after a multi-byte character, with a range", async () => {
       const range = ["--range-start", "3", "--range-end", "5", "--cursor-offset", "1"];
       expect(await onStdin("a.js", "\uFEFFa  =  1;\nb  =  2;\n", range)).toEqual({
         printed: "\uFEFFa = 1;\nb  =  2;\n",
@@ -7476,13 +9939,13 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
       });
     });
 
-    test("a range that ends behind the byte order mark is empty", async () => {
+    test("a range that ends right after the byte order mark is empty", async () => {
       const text = "\uFEFFa  =  1;\nb  =  2;\n";
       expect((await onStdin("a.js", text, ["--range-end", "1"])).printed).toBe(text);
     });
 
     test.each(["a.js", "a.json", "a.css"])(
-      "there is no cursor in %s if it is a byte order mark and blanks",
+      "prints no cursor for %s if it's only a byte order mark and whitespace",
       async name => {
         expect(await onStdin(name, "\uFEFF\r\n", ["--cursor-offset", "1"])).toEqual({
           printed: "\uFEFF",
@@ -7493,7 +9956,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     );
   });
 
-  test("--insert-pragma in a file whose first \\r stands alone", async () => {
+  test("--insert-pragma in a file whose first \\r isn't followed by \\n", async () => {
     const result = await bytesAfter({ "a.js": "/*\r * x\n */\nfoo;\n" }, ["--insert-pragma"]);
     expect(result.files).toEqual({ "a.js": "/**\n * x\n *\n * @format\n */\n\nfoo;\n" });
   });
@@ -7510,7 +9973,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     expect(result.files).toEqual({ "a.js": "a = 1;\rb;", "a.css": "a {\r  b: c;\r}" });
   });
 
-  test("U+2028 behind the { of an object is no line break to Prettier, and is one to oxfmt", async () => {
+  test("U+2028 after an object's { is a line break in oxfmt but not in Prettier", async () => {
     const files = { "a.ts": "const o = {\u2028a: 1 };\ntype A = {\u2028a: 1 };\n" };
     const asPrettier = await format(files, ["--no-config", "a.ts"], { reads: ["a.ts"] });
     expect(asPrettier.files).toEqual({ "a.ts": "const o = { a: 1 };\ntype A = { a: 1 };\n" });
@@ -7518,8 +9981,8 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     expect(asOxfmt.files).toEqual({ "a.ts": "const o = {\n  a: 1,\n};\ntype A = {\n  a: 1;\n};\n" });
   });
 
-  // ONLY WITH FIX G. oxfmt 0.72 writes `\r\r\n` here. See the finding: whether to follow it is to be decided.
-  test("a type over several lines in a JSDoc comment, with endOfLine: crlf", async () => {
+  // oxfmt 0.72 writes `\r\r\n` here. Bun writes each line break once.
+  test("a multi-line type in a JSDoc comment, with endOfLine: crlf", async () => {
     const config = JSON.stringify({ endOfLine: "crlf", jsdoc: true, printWidth: 40 });
     const result = await format(
       {
@@ -7534,7 +9997,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
   });
 });
 
-describe.concurrent("upper and lower case in the name of a file", () => {
+describe.concurrent("uppercase and mixed-case file names", () => {
   const files = {
     "A.JS": "a  =  1\n",
     "sub/B.TS": "let a:number  =  1\n",
@@ -7548,9 +10011,9 @@ describe.concurrent("upper and lower case in the name of a file", () => {
     "citation.CFF": "a:    1\n",
     "jakefile": "a  =  1\n",
     "K.GraphQL": "query   { a }\n",
-    // `shouldForceTrailingComma` asks `/\.ts$/` of the name as it is.
+    // `shouldForceTrailingComma` tests the name as written against `/\.ts$/`.
     "Q.TS": "const f = <T,>() => {}\n",
-    // These were taken for what they are before.
+    // These were already recognized before.
     "L.CSS": "a{b:c}\n",
     "README.MD": "*  a\n",
     "M.JSON": '{"a":\n1}\n',
@@ -7558,7 +10021,7 @@ describe.concurrent("upper and lower case in the name of a file", () => {
     "O.VUE": "<template><a   b /></template>\n",
     "P.HBS": "<a   b></a>\n",
   };
-  // What Prettier 3.9.9 prints: its `getLanguageByFileName` compares the name in lower case.
+  // This is what Prettier 3.9.9 prints. Its `getLanguageByFileName` compares lowercased names.
   const printed = {
     "A.JS": "a = 1;\n",
     "sub/B.TS": "let a: number = 1;\n",
@@ -7581,13 +10044,13 @@ describe.concurrent("upper and lower case in the name of a file", () => {
     "P.HBS": "<a b></a>",
   };
 
-  test("in a directory", async () => {
+  test("are recognized in a directory", async () => {
     const result = await format(files, ["--no-config", "."], { reads: Object.keys(files) });
     expect(result.files).toEqual(printed);
     expect(result.exitCode).toBe(0);
   });
 
-  test("as arguments", async () => {
+  test("are recognized as arguments", async () => {
     const result = await format(files, ["--no-config", ...Object.keys(files)], { reads: Object.keys(files) });
     expect(result.files).toEqual(printed);
     expect(result.stderr).not.toContain("No parser could be inferred");
@@ -7602,16 +10065,16 @@ describe.concurrent("upper and lower case in the name of a file", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // oxfmt tells upper case from lower case: `classify_file_kind`.
-  test("not with the configuration of oxfmt", async () => {
+  // oxfmt's `classify_file_kind` is case-sensitive.
+  test("aren't recognized with an oxfmt config", async () => {
     const result = await format({ ".oxfmtrc.json": "{}\n", "A.JS": "a  =  1\n", "b.js": "a  =  1\n" }, ["."], {
       reads: ["A.JS", "b.js"],
     });
     expect(result.files).toEqual({ "A.JS": "a  =  1\n", "b.js": "a = 1;\n" });
   });
 
-  // Real coverage on Windows and macOS, whose file systems find `a.ts` under the name `A.TS`.
-  test("a name that is typed in another case than the file has", async () => {
+  // This only tests something on Windows and macOS, whose file systems find `a.ts` under the name `A.TS`.
+  test("a name typed in a different case than the file's", async () => {
     using dir = tempDir("bun-format-case", { "a.ts": "let a:number  =  1\n" });
     if (!existsSync(join(String(dir), "A.TS"))) return;
     await using proc = spawn({
@@ -7624,7 +10087,7 @@ describe.concurrent("upper and lower case in the name of a file", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).not.toMatch(anError);
     expect(readFileSync(join(String(dir), "a.ts"), "utf8")).toBe("let a: number = 1;\n");
-    // The file that takes its place has its name, not the one that was typed.
+    // The replacement file gets the original name, not the one that was typed.
     expect(readdirSync(String(dir))).toEqual(["a.ts"]);
     expect(exitCode).toBe(0);
   });
@@ -7642,7 +10105,7 @@ describe.concurrent("a fmt script in package.json", () => {
   });
 
   // Most projects call theirs `format`.
-  test("a format script does not", async () => {
+  test("a format script doesn't win", async () => {
     const scripts = { format: "echo the script", preformat: "echo before", postformat: "echo after" };
     const files = { "package.json": JSON.stringify({ scripts }, null, 2) + "\n", "a.js": ugly };
     const result = await format(files, [], { reads: ["a.js"] });
@@ -7661,8 +10124,8 @@ describe.concurrent("a fmt script in package.json", () => {
   });
 });
 
-// What `bun fmt` meant before there was a formatter.
-describe.concurrent("what else is called fmt in the project", () => {
+// This is what `bun fmt` ran before the formatter existed.
+describe.concurrent("other things named fmt in the project", () => {
   test.each([
     ["a file", { "fmt.ts": 'console.log("the file");' }, "the file"],
     ["the index of a directory", { "fmt/index.js": 'console.log("the index");' }, "the index"],
@@ -7673,7 +10136,7 @@ describe.concurrent("what else is called fmt in the project", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("an executable of a package wins over the formatter, and nothing is rewritten", async () => {
+  test.skipIf(isWindows)("a package's executable wins over the formatter, and nothing is rewritten", async () => {
     const files = { "node_modules/.bin/fmt": "#!/bin/sh\necho the executable\n", "a.js": ugly };
     const result = await format(files, [], {
       reads: ["a.js"],
@@ -7684,14 +10147,14 @@ describe.concurrent("what else is called fmt in the project", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("a directory with nothing to run in it does not", async () => {
+  test("a directory with nothing to run in it doesn't win", async () => {
     const result = await format({ "fmt/notes.txt": "x", "a.js": ugly }, [], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": formatted });
     expect(result.exitCode).toBe(0);
   });
 
-  // On macOS a directory that can be searched is executable for `which`.
-  test("nor beside package.json", async () => {
+  // On macOS, `which` treats a searchable directory as executable.
+  test("such a directory doesn't win next to a package.json either", async () => {
     const files = { "package.json": "{}\n", "fmt/notes.txt": "x", "a.js": ugly };
     const result = await format(files, [], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": formatted });
@@ -7699,10 +10162,11 @@ describe.concurrent("what else is called fmt in the project", () => {
   });
 });
 
-// What the formatter takes from the process that it runs in: the terminal, the arguments, the streams, the stack, a way to run a
-// configuration file that is a program. Where `bun fmt` is developed something else is in Bun's place for each of these.
-describe.concurrent("what bun fmt takes from Bun", () => {
-  /** `bun ...args` in a directory with `files`. */
+// What the formatter needs from its host process: the terminal, the arguments, the streams, the stack, and a way to run
+// a configuration file that's a program. In `bun fmt`'s development setup, each of these is provided by something other
+// than Bun.
+describe.concurrent("what bun fmt gets from Bun", () => {
+  /** Runs `bun ...args` in a directory with `files`. */
   async function bun(files: Record<string, string>, args: string[], variables: Record<string, string> = {}) {
     using dir = tempDir("bun-format-process", files);
     await using proc = spawn({
@@ -7716,22 +10180,22 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     return { stdout, stderr, exitCode };
   }
 
-  test("colors are Bun's to decide: FORCE_COLOR, NO_COLOR, and none in a pipe", async () => {
+  test("colors follow Bun's rules: FORCE_COLOR, NO_COLOR, and no colors in a pipe", async () => {
     const files = { "a.js": ugly };
-    const ofPrettier = { ...files, ".prettierrc": "{}\n" };
-    const [forced, refused, piped, asOxfmt] = await Promise.all([
-      format(ofPrettier, ["--check"], { env: { FORCE_COLOR: "1" } }),
-      format(ofPrettier, ["--check"], { env: { NO_COLOR: "1" } }),
-      format(ofPrettier, ["--check"]),
+    const withPrettier = { ...files, ".prettierrc": "{}\n" };
+    const [forced, disabled, piped, asOxfmt] = await Promise.all([
+      format(withPrettier, ["--check"], { env: { FORCE_COLOR: "1" } }),
+      format(withPrettier, ["--check"], { env: { NO_COLOR: "1" } }),
+      format(withPrettier, ["--check"]),
       format({ ...files, ".oxfmtrc.json": "{}\n" }, ["--check", "a.js"], { env: { FORCE_COLOR: "1" } }),
     ]);
     expect(forced.stderr.split("\n")[0]).toBe("[\x1b[33mwarn\x1b[0m] a.js");
-    expect(refused.stderr.split("\n")[0]).toBe("[warn] a.js");
+    expect(disabled.stderr.split("\n")[0]).toBe("[warn] a.js");
     expect(piped.stderr.split("\n")[0]).toBe("[warn] a.js");
     expect(asOxfmt.raw.split("\n")[2]).toMatch(/^\x1b\[33ma\.js\x1b\[0m \(\d+ms\)$/);
   });
 
-  test("--cwd behind format, before it, and in BUN_OPTIONS, whose other flags are not the formatter's", async () => {
+  test("--cwd works after fmt, before it and in BUN_OPTIONS, whose other flags aren't passed to the formatter", async () => {
     const files = { "a.js": ugly, "sub/b.js": ugly };
     const results = await Promise.all([
       bun(files, ["fmt", "--cwd", "sub", "-l"]),
@@ -7747,15 +10211,16 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     ]);
   });
 
-  // The process that runs the configuration file starts in that directory. With BUN_OPTIONS it would look for `sub` in `sub`.
+  // The process that runs the configuration file starts in that directory. If it inherited BUN_OPTIONS, it would look
+  // for `sub` in `sub`.
   test("--cwd in BUN_OPTIONS, with a configuration file that is a program", async () => {
     const files = { "sub/.prettierrc.mjs": "export default { semi: false };\n", "sub/b.js": "b;\n" };
     const result = await bun(files, ["fmt", "-l", "b.js"], { BUN_OPTIONS: "--cwd=sub" });
     expect(result).toEqual({ stdout: "b.js\n", stderr: "", exitCode: 1 });
   });
 
-  // Prettier prints the names and never ends.
-  test("a configuration file that leaves a timer behind", async () => {
+  // Prettier prints the names and never exits.
+  test("exits despite a configuration file that leaves a timer running", async () => {
     const files = {
       "prettier.config.mjs": "setInterval(() => {}, 1000);\nexport default { semi: false };\n",
       "b.js": "b;\n",
@@ -7763,12 +10228,12 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     expect(await bun(files, ["fmt", "-l", "b.js"])).toEqual({ stdout: "b.js\n", stderr: "", exitCode: 1 });
   });
 
-  test("what the bunfig.toml of the project has for other commands is not read", async () => {
+  test("doesn't read the sections of bunfig.toml that are for other commands", async () => {
     const result = await bun({ "bunfig.toml": "[install]\nglobalDir = 1\n", "a.js": ugly }, ["fmt", "-l"]);
     expect(result).toEqual({ stdout: "a.js\n", stderr: "", exitCode: 1 });
   });
 
-  test("--config= before format names another file than bunfig.toml", async () => {
+  test("--config= before fmt selects a file other than bunfig.toml", async () => {
     const files = {
       "bunfig.toml": "[fmt]\nsemi = false\n",
       "other.toml": "[fmt]\nsingleQuote = true\n",
@@ -7789,7 +10254,7 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     expect(results[3].stderr).toContain(`while reading config "`);
   });
 
-  test("what is wrong with [fmt] is shown where it is, as for every other section", async () => {
+  test("an error in [fmt] is shown with its location, as for every other section", async () => {
     const files = { "bunfig.toml": `[fmt]\nsemi = false\nprintWidth = "wide"\n`, "a.js": ugly };
     const result = await bun(files, ["fmt", "-l"]);
     expect(result.stderr).toContain(`3 | printWidth = "wide"\n`);
@@ -7801,7 +10266,7 @@ describe.concurrent("what bun fmt takes from Bun", () => {
   const count = isDebug || isASAN ? 20_000 : 300_000;
   const long = `a(${Array.from({ length: count }, (_, i) => `"x${i}"`).join(",")});\n`;
 
-  test("more is printed than a pipe holds", async () => {
+  test("prints more output than fits in a pipe", async () => {
     const result = await format({}, ["--stdin-filepath", "a.js"], { stdin: long });
     const expected = `a(\n${Array.from({ length: count }, (_, i) => `  "x${i}",\n`).join("")});\n`;
     expect(result.raw.length).toBe(expected.length);
@@ -7809,7 +10274,7 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("nobody reads what is printed to its end", async () => {
+  test("exits with 0 if the reader closes the pipe early", async () => {
     using dir = tempDir("bun-format-process", {});
     await using proc = spawn({
       cmd: [...command, "--stdin-filepath", "a.js"],
@@ -7827,7 +10292,7 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(!isLinux)("a name that is not UTF-8, found in a directory and as an argument", async () => {
+  test.skipIf(!isLinux)("a file name that isn't UTF-8, found in a directory and passed as an argument", async () => {
     using dir = tempDir("bun-format-process", { "ok.js": formatted });
     const name = Buffer.concat([Buffer.from(String(dir) + "/n"), Buffer.from([0xff]), Buffer.from(".js")]);
     writeFileSync(name, ugly);
@@ -7848,7 +10313,7 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     expect(readFileSync(name, "utf8")).toBe(formatted);
   });
 
-  test("a configuration file that is a program in each of many directories, asked for by all threads at once", async () => {
+  test("many directories that each have a program as a configuration file, loaded by all threads at once", async () => {
     const directories = Array.from({ length: isDebug || isASAN ? 6 : 24 }, (_, i) => i);
     const files = Object.fromEntries(
       directories.flatMap(i => [
@@ -7869,9 +10334,9 @@ describe.concurrent("what bun fmt takes from Bun", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // Standard input is formatted on the main thread, whose stack is not that of a thread of the pool.
+  // Standard input is formatted on the main thread, whose stack differs from a pool thread's.
   test.each(["[", "a(", "{a:", "<a>"])(
-    "standard input that is nested too deeply is refused: 100,000 times `%s`",
+    "standard input that's nested too deeply is rejected: 100,000 times `%s`",
     async open => {
       const result = await format({}, ["--stdin-filepath", "deep.jsx"], { stdin: open.repeat(100_000) + "\n" });
       expect(result.raw).toBe("");
@@ -7881,15 +10346,16 @@ describe.concurrent("what bun fmt takes from Bun", () => {
   );
 });
 
-// What differs between Windows, macOS and Linux, for `bun fmt`: how a path is written, which names are the same file, how a line
-// ends, what a link is, what can be written. Nothing here is passed through `normalizeBunSnapshot`, which makes `/` of every `\`
-// and `\n` of every `\r\n`: what is printed is compared as it is printed.
+// The differences between Windows, macOS and Linux that matter to `bun fmt`: path syntax, which names refer to the same
+// file, line endings, links and write permissions. Nothing here goes through `normalizeBunSnapshot`, which turns every
+// `\` into `/` and every `\r\n` into `\n`, so the output is compared exactly as printed.
 //
-// A test that can only tell something on one system runs on all of them where it can: there it is a test that nothing else breaks.
+// A test that's only meaningful on one system still runs on the others where it can, to check that nothing else breaks
+// there.
 describe("bun fmt on Windows, macOS and Linux", () => {
   const env = { ...bunEnv, AGENT: "0", CLAUDECODE: undefined, NO_COLOR: "1", FORCE_COLOR: undefined };
 
-  // A drive letter that a test has taken would stay, for every process of the session, if the test ran out of time.
+  // If a test timed out, the drive letter it took would stay assigned for every process in the session.
   const drives = new Set<string>();
   const subst = (...args: string[]) => Bun.spawnSync({ cmd: ["subst", ...args] }).exitCode === 0;
   afterAll(() => {
@@ -7897,7 +10363,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
     for (const drive of drives) subst(drive, "/D");
   });
 
-  /** `subst` gives `directory` a drive letter, for as long as `use` runs. */
+  /** Uses `subst` to give `directory` a drive letter while `use` runs. */
   async function withDrive(directory: string, use: (drive: string) => Promise<void>) {
     const drive = [..."GHIJKLMNOP"]
       .map(letter => `${letter}:`)
@@ -7916,7 +10382,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
 
   type Directory = string | { toString(): string };
 
-  /** Runs `bun fmt <args>` in `cwd`. What it prints is returned as it is. */
+  /** Runs `bun fmt <args>` in `cwd`. Returns its output unmodified. */
   async function format(cwd: Directory, args: string[], stdin?: string, before: string[] = []) {
     const proc = spawn({
       cmd: [...before, bunExe(), "fmt", ...args],
@@ -7930,22 +10396,22 @@ describe("bun fmt on Windows, macOS and Linux", () => {
     return { stdout, stderr, exitCode };
   }
 
-  /** The files that are not formatted, according to `-l`, as they are printed. */
+  /** Returns the unformatted files that `-l` lists, exactly as printed. */
   const different = async (cwd: Directory, args: string[]) =>
     (await format(cwd, ["-l", ...args])).stdout.split("\n").filter(Boolean);
   const read = (dir: Directory, ...names: string[]) => readFileSync(join(String(dir), ...names), "utf8");
-  /** All names in `dir`, directories too, from `dir`, with `/`. */
+  /** Every name under `dir`, including directories, relative to `dir` and with `/`. */
   const everythingIn = (dir: Directory) =>
     (readdirSync(String(dir), { recursive: true }) as string[]).map(it => it.replaceAll(sep, "/")).sort();
   const swapCase = (text: string) =>
     text.replace(/[a-z]/gi, letter => (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()));
 
-  /** Sets and reads an extended attribute of a file, where a file in the temporary directory takes one. */
+  /** Sets and reads a file's extended attributes, if the temporary directory's file system supports them. */
   const attributes = (() => {
     if (!isLinux && !isMacOS) return undefined;
     const c = (text: string) => Buffer.from(`${text}\0`);
-    // macOS has a position in the attribute before the flags.
-    const ofMacOS = () => {
+    // On macOS, a position argument comes before the flags.
+    const onMacOS = () => {
       const { symbols } = dlopen("libSystem.B.dylib", {
         setxattr: { args: ["ptr", "ptr", "ptr", "u64", "u32", "i32"], returns: "i32" },
         getxattr: { args: ["ptr", "ptr", "ptr", "u64", "u32", "i32"], returns: "i64" },
@@ -7956,7 +10422,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
         get: (path: string, name: string, into: Buffer) => symbols.getxattr(c(path), c(name), into, into.length, 0, 0),
       };
     };
-    const ofLinux = () => {
+    const onLinux = () => {
       const machine = process.arch === "arm64" ? "aarch64" : "x86_64";
       const { symbols } = dlopen(isMusl ? `libc.musl-${machine}.so.1` : "libc.so.6", {
         setxattr: { args: ["ptr", "ptr", "ptr", "u64", "i32"], returns: "i32" },
@@ -7967,7 +10433,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
         get: (path: string, name: string, into: Buffer) => symbols.getxattr(c(path), c(name), into, into.length),
       };
     };
-    const { set, get } = isMacOS ? ofMacOS() : ofLinux();
+    const { set, get } = isMacOS ? onMacOS() : onLinux();
     const all = {
       set: (path: string, name: string, value: string) => set(path, name, Buffer.from(value)) === 0,
       get(path: string, name: string) {
@@ -7985,9 +10451,9 @@ describe("bun fmt on Windows, macOS and Linux", () => {
   const BOM = "\uFEFF";
   const crlf = (text: string) => text.replaceAll("\n", "\r\n");
 
-  describe.concurrent("how a path is written", () => {
+  describe.concurrent("path syntax", () => {
     // src/cli/format.js: `const fileNameToDisplay = normalizeToPosix(path.relative(cwd, filename))`
-    test("a name is printed from the working directory, with `/`, and a line ends with \\n", async () => {
+    test("prints names relative to the working directory with `/`, and ends lines with \\n", async () => {
       const files = { "a.js": ugly, "src/deep/b.ts": ugly, "src/c.js": formatted, "src/broken.js": "const = 1;\n" };
       using listed = tempDir("bun-format-platform", files);
       using checked = tempDir("bun-format-platform", files);
@@ -8007,7 +10473,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
     });
 
     // src/cli/expand-patterns.js: `fixWindowsSlashes`
-    test("arguments can be written as the system writes paths", async () => {
+    test("accepts native paths as arguments", async () => {
       using dir = tempDir("bun-format-platform", {
         "a.js": ugly,
         "src/b.js": ugly,
@@ -8034,10 +10500,10 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       ]);
     });
 
-    test("so can the paths that flags take", async () => {
+    test("accepts native paths as flag values", async () => {
       using dir = tempDir("bun-format-platform", {
         "configs/mine.json": `{ "semi": false }\n`,
-        // The patterns are from the directory of the file.
+        // The patterns are relative to the file's directory.
         "configs/ignored": "/src/skipped.js\n",
         "configs/src/a.js": formatted,
         "configs/src/skipped.js": ugly,
@@ -8061,7 +10527,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect(found.map(it => it.stdout)).toEqual(["src/.prettierrc\n", "src/.prettierrc\n"]);
     });
 
-    test("--stdin-filepath", async () => {
+    test("accepts a native path for --stdin-filepath", async () => {
       using dir = tempDir("bun-format-platform", {
         "src/deep/.prettierrc": `{ "semi": false }`,
         ".prettierignore": "src/ignored/\n",
@@ -8077,9 +10543,10 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect(results.map(it => it.stdout)).toEqual(["a\n", "a\n", ugly, ugly]);
     });
 
-    // What a URL would take for something else: a configuration file that is a program is imported by its URL.
+    // These characters have a special meaning in a URL, and a configuration file that's a program is imported by its
+    // URL.
     test(
-      "a project in a directory with blanks, `#`, `%41` and letters that are not ASCII",
+      "a project in a directory with spaces, `#`, `%41` and non-ASCII letters",
       async () => {
         using dir = tempDir("bun fmt #1 %41 é 日本", {
           ".prettierrc.mjs": `import shared from "./my configs/shared#1.mjs";\nexport default { ...shared };\n`,
@@ -8096,8 +10563,9 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       slow ? 120_000 : undefined,
     );
 
-    // 300 characters from the project: more than the 260 of Windows' MAX_PATH, and with what is before it less than the 1024 of macOS.
-    test("a path of more than 260 characters", async () => {
+    // 300 characters below the project: more than Windows' MAX_PATH of 260, and with the project's own path still less
+    // than macOS's 1024.
+    test("a path longer than 260 characters", async () => {
       using dir = tempDir("bun-format-platform", { ".prettierrc": `{ "semi": false }\n` });
       const names = Array.from({ length: 12 }, (_, index) => `directory-number-${String(index).padStart(2, "0")}-xxxx`);
       mkdirSync(join(String(dir), ...names), { recursive: true });
@@ -8108,9 +10576,9 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect(walked.stdout).toBe(`${names.join("/")}/a.js\n${names.join("/")}/b.js\n`);
       expect(read(dir, ...names, "a.js")).toBe("a\n");
       writeFileSync(join(String(dir), ...names, "b.js"), formatted);
-      const named = await format(dir, [join(...names, "b.js")]);
+      const byName = await format(dir, [join(...names, "b.js")]);
       expect(read(dir, ...names, "b.js")).toBe("a\n");
-      expect(named.exitCode).toBe(0);
+      expect(byName.exitCode).toBe(0);
     });
 
     // `subst` gives the directory a drive letter.
@@ -8131,7 +10599,8 @@ describe("bun fmt on Windows, macOS and Linux", () => {
             // The ignore files are those of the working directory, which has none.
             different(`${drive}\\sub`, [`${drive}\\a.js`, "ignored.js"]),
             different(`${drive}\\sub`, ["--ignore-path", `${drive}\\.prettierignore`, `${drive}\\a.js`, "ignored.js"]),
-            // From another drive: `path.relative()` has nothing to leave out. The configuration is in the root, above the file.
+            // From another drive, `path.relative()` has no common prefix to strip. The configuration is in the root,
+            // above the file.
             different(dir, [`${drive}\\a.js`, `${drive}\\sub\\b.js`]),
           ]),
         ).toEqual([
@@ -8145,8 +10614,8 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       });
     });
 
-    // The administrative share of the drive, as in test/js/node/fs/cp.test.ts. The same for `\\wsl.localhost\..` and the shared
-    // folders of a virtual machine.
+    // Uses the drive's administrative share, as in test/js/node/fs/cp.test.ts. `\\wsl.localhost\..` and a virtual
+    // machine's shared folders behave the same.
     test.skipIf(!isWindows)("a project on a network share", async () => {
       using dir = tempDir("bun-format-platform", {
         ".prettierrc": `{ "semi": false }\n`,
@@ -8160,7 +10629,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
         await Promise.all([
           different(share, []),
           different(share, [`${share}\\src`]),
-          // From the drive, of which `path.relative()` does not know that it is the same.
+          // From the drive, which `path.relative()` doesn't recognize as the same location.
           different(dir, [`${share}\\src\\a.js`]),
         ]),
       ).toEqual([["src/a.js"], ["src/a.js"], [`${share}/src/a.js`.replaceAll("\\", "/")]]);
@@ -8171,8 +10640,9 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect(everythingIn(dir)).toEqual([".prettierignore", ".prettierrc", "src", "src/a.js", "src/ignored.js"]);
     });
 
-    // By its address: a file URL does not keep the name `localhost`, in Node.js neither, so Prettier cannot import from there either.
-    // For Windows alone, and never run: whether Bun imports `file://127.0.0.1/C$/..` nobody has seen.
+    // Uses the IP address, because a file URL drops the host name `localhost`, in Node.js too, so Prettier can't import
+    // from there either. Windows only, and never run so far: it's untested whether Bun can import
+    // `file://127.0.0.1/C$/..`.
     test.todo(
       "a configuration file that is a program, on a network share",
       async () => {
@@ -8189,10 +10659,10 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       slow ? 120_000 : undefined,
     );
 
-    // src/utilities/ignore.js asks `path.relative()`, which on Windows takes `c:\A` and `C:\a` for the same. An editor hands out
-    // `c:\..`, a shell `C:\..`. A file that is ignored must not be written.
+    // src/utilities/ignore.js uses `path.relative()`, which treats `c:\A` and `C:\a` as equal on Windows. An editor
+    // passes `c:\..`, a shell `C:\..`. An ignored file must not be written.
     test.skipIf(!isWindows)(
-      "a path whose drive and directories are written in the other case is in the project",
+      "a path whose drive and directories are in the opposite case still belongs to the project",
       async () => {
         using dir = tempDir("bun-format-platform", {
           ".prettierignore": "src/ignored.js\ngenerated/\n",
@@ -8201,7 +10671,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
           "generated/b.js": ugly,
         });
         const other = swapCase(String(dir));
-        // The other way around, and what is not a file yet.
+        // The other way around, and a path that doesn't exist yet.
         const [from, piped] = await Promise.all([
           different(other, [join(String(dir), "src", "a.js"), join(String(dir), "src", "ignored.js")]),
           format(dir, ["--stdin-filepath", join(other, "src", "ignored.js")], ugly),
@@ -8222,7 +10692,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
     );
 
     // `path.resolve("\\proj\\a.js")` is on the drive of the working directory.
-    test.skipIf(!isWindows)("a path from the root of the drive", async () => {
+    test.skipIf(!isWindows)("a path that starts at the drive's root", async () => {
       using dir = tempDir("bun-format-platform", {
         "a.js": ugly,
         "ignored.js": ugly,
@@ -8233,20 +10703,20 @@ describe("bun fmt on Windows, macOS and Linux", () => {
     });
   });
 
-  describe.concurrent("which names are the same file", () => {
-    test("a file that is named in the other case is formatted if the system finds it", async () => {
+  describe.concurrent("names that refer to the same file", () => {
+    test("formats a file passed in a different case if the file system finds it", async () => {
       using dir = tempDir("bun-format-platform", { "src/Button.js": ugly });
       const foldsCase = existsSync(join(String(dir), "SRC", "bUTTON.JS"));
       const { stdout, stderr, exitCode } = await format(dir, [join("src", "Button.js"), join("SRC", "bUTTON.JS")]);
       expect(stdout.split("\n")[0]).toBe("src/Button.js");
       expect(read(dir, "src", "Button.js")).toBe(formatted);
       expect(everythingIn(dir)).toEqual(["src", "src/Button.js"]);
-      // With stderr, so that a failure says why.
+      // stderr is included so that a failure shows the reason.
       expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: foldsCase ? 0 : 2 });
     });
 
-    // macOS finds `é` whether it is written as one character or as `e` and an accent.
-    test("a file that is named in the other normalization form is formatted if the system finds it", async () => {
+    // macOS finds `é` whether it's written as one character or as `e` plus a combining accent.
+    test("formats a file passed in a different normalization form if the file system finds it", async () => {
       using dir = tempDir("bun-format-platform", { ["caf\u00e9.js"]: ugly });
       const decomposed = "cafe\u0301.js";
       const isFound = existsSync(join(String(dir), decomposed));
@@ -8256,7 +10726,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
     });
   });
 
-  describe.concurrent("how a line ends, and what a file starts with", () => {
+  describe.concurrent("line endings and byte order marks", () => {
     const code = "function f() {\n  return `a\nb`;\n}\n";
 
     // The default is `lf` on every system since Prettier 2.
@@ -8273,7 +10743,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
         const { stdout } = await format(dir, [...args, ...names]);
         return {
           changed: stdout.split("\n").filter(Boolean),
-          isAsBefore: names.map(name => read(dir, name) === files[name as "a.js"]),
+          isUnchanged: names.map(name => read(dir, name) === files[name as "a.js"]),
         };
       };
       const all = (value: boolean) => names.map(() => value);
@@ -8285,10 +10755,10 @@ describe("bun fmt on Windows, macOS and Linux", () => {
           after({ ".editorconfig": crlf("root = true\n[*]\nend_of_line = crlf\n") }),
         ]),
       ).toEqual([
-        { changed: names, isAsBefore: all(false) },
-        { changed: [], isAsBefore: all(true) },
-        { changed: [], isAsBefore: all(true) },
-        { changed: [], isAsBefore: all(true) },
+        { changed: names, isUnchanged: all(false) },
+        { changed: [], isUnchanged: all(true) },
+        { changed: [], isUnchanged: all(true) },
+        { changed: [], isUnchanged: all(true) },
       ]);
       using dir = tempDir("bun-format-platform", files);
       expect((await format(dir, ["--check", "a.js"])).exitCode).toBe(1);
@@ -8296,7 +10766,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect(read(dir, "a.js")).toBe(code);
     });
 
-    test("a byte order mark stays where it is", async () => {
+    test("keeps a byte order mark", async () => {
       const files = {
         "a.js": [`${BOM}a  ;\n`, `${BOM}a;\n`],
         "b.css": [`${BOM}a{b:c}\n`, `${BOM}a {\n  b: c;\n}\n`],
@@ -8327,7 +10797,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       ["package.json", '{\n  "prettier": {\n    "semi": false\n  }\n}\n'],
       [".oxfmtrc.json", '{\n  // a comment\n  "semi": false\n}\n'],
       [".editorconfig", "root = true\n\n[*.js]\nindent_style = tab\n"],
-    ])("\\r\\n in %s: %j", async (name, text) => {
+    ])("reads %s with \\r\\n: %j", async (name, text) => {
       const [before, after] =
         name === ".editorconfig" ? ["if (a) {\n  b;\n}\n", "if (a) {\n\tb;\n}\n"] : [formatted, "a\n"];
       using dir = tempDir("bun-format-platform", { [name]: crlf(text), "a.js": before });
@@ -8338,13 +10808,14 @@ describe("bun fmt on Windows, macOS and Linux", () => {
   });
 
   describe.concurrent("links", () => {
-    // A junction needs no privilege on Windows. Elsewhere the third argument says nothing, and it is a link to a directory.
+    // A junction doesn't need any privilege on Windows. Elsewhere the third argument is ignored, and it's a symlink to
+    // a directory.
     const link = (target: string, path: string) => symlinkSync(target, path, "junction");
 
     test.each([
       ["Prettier", {}],
       ["oxfmt", { ".oxfmtrc.json": "{}\n" }],
-    ])("a link to a directory is not followed, wherever it leads: like %s", async (_, config) => {
+    ])("doesn't follow a link to a directory, wherever it leads: like %s", async (_, config) => {
       using dir = tempDir("bun-format-platform", { ...config, "real/a.js": ugly, "pkg/deep/b.js": ugly });
       const at = (...names: string[]) => join(String(dir), ...names);
       link(at("real"), at("linked"));
@@ -8353,7 +10824,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect(await different(dir, [])).toEqual(["pkg/deep/b.js", "real/a.js"]);
     });
 
-    test("a link to a directory that is named is an error, as for Prettier", async () => {
+    test("a link to a directory passed by name is an error, like in Prettier", async () => {
       using dir = tempDir("bun-format-platform", { "real/a.js": ugly });
       link(join(String(dir), "real"), join(String(dir), "linked"));
       const { stderr, exitCode } = await format(dir, ["-l", "linked"]);
@@ -8361,7 +10832,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect(exitCode).toBe(2);
     });
 
-    test("from a working directory that is a link, the file is written that the link leads to", async () => {
+    test("from a working directory that's a link, writes the file in the link's target", async () => {
       using dir = tempDir("bun-format-platform", { "real/a.js": ugly });
       link(join(String(dir), "real"), join(String(dir), "linked"));
       const { exitCode } = await format(join(String(dir), "linked"), ["a.js"]);
@@ -8371,8 +10842,8 @@ describe("bun fmt on Windows, macOS and Linux", () => {
     });
   });
 
-  describe.concurrent("what is written", () => {
-    test("nothing but the file is left, and a file that is formatted is not touched", async () => {
+  describe.concurrent("writing files", () => {
+    test("leaves no temp files and doesn't rewrite a formatted file", async () => {
       using dir = tempDir("bun-format-platform", { "a.js": ugly, "src/b.js": ugly, "src/c.js": formatted });
       const before = everythingIn(dir);
       const time = new Date(Date.now() - 60_000);
@@ -8385,7 +10856,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect(exitCode).toBe(0);
     });
 
-    // A file that takes the name of another has none of its tags, nor its ACL. Prettier writes into every file.
+    // A file that's renamed over another one doesn't get its tags or its ACL. Prettier writes into the existing file.
     test.skipIf(attributes === undefined)("a file keeps its extended attributes", async () => {
       using dir = tempDir("bun-format-platform", { "tagged.js": ugly, "plain.js": ugly });
       const [tagged, plain] = ["tagged.js", "plain.js"].map(name => join(String(dir), name));
@@ -8395,15 +10866,15 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect([read(tagged), read(plain)]).toEqual([formatted, formatted]);
       expect(attributes!.get(tagged, "user.tag")).toBe("hello");
       expect(statSync(tagged).ino).toBe(before[0]);
-      // What the system gives every file, as a label of SELinux, is no reason to write in place.
+      // An attribute that the system gives every file, like an SELinux label, is no reason to write in place.
       if (isLinux) expect(statSync(plain).ino).not.toBe(before[1]);
       expect(everythingIn(dir)).toEqual(["plain.js", "tagged.js"]);
       expect(exitCode).toBe(0);
     });
 
-    // As `fopen` of the C runtime opens a file, and so Python and many editors: others may read and write it, and not rename or
-    // delete it. Prettier writes into it.
-    test.skipIf(!isWindows)("a file that another program has open", async () => {
+    // Opened the way the C runtime's `fopen` does, and therefore Python and many editors: others may read and write the
+    // file, but not rename or delete it. Prettier writes into it.
+    test.skipIf(!isWindows)("writes a file that another program has open", async () => {
       using dir = tempDir("bun-format-platform", { "a.js": ugly });
       const { symbols, close } = dlopen("kernel32.dll", {
         CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
@@ -8420,7 +10891,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
         0,
         null,
       );
-      // `INVALID_HANDLE_VALUE`: without the handle the test would pass whatever is done.
+      // `INVALID_HANDLE_VALUE`: without the handle, the test would pass no matter what.
       expect(handle).not.toBe(0xffffffffffffffffn);
       try {
         const { stderr, exitCode } = await format(dir, []);
@@ -8440,10 +10911,10 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       ["exports options", `export default { semi: false };`, true, 1],
       ["prints", `console.log("out"); console.error("err"); export default { semi: false };`, true, 1],
       ["sets process.exitCode", `process.exitCode = 5; export default { semi: false };`, true, 1],
-      ["exports an option that does not exist", `export default { semi: false, nonsense: 1 };`, true, 1],
-      ["exports a value that an option does not take", `export default { semi: "perhaps" };`, true, 2],
+      ["exports an option that doesn't exist", `export default { semi: false, nonsense: 1 };`, true, 1],
+      ["exports an invalid value for an option", `export default { semi: "perhaps" };`, true, 2],
       ["throws", `console.error("before"); throw new Error("boom");`, false, 2],
-      ["leaves with an error, and without a word", `process.exit(3);`, false, 2],
+      ["exits with an error code and no output", `process.exit(3);`, false, 2],
     ])(
       "one that %s",
       async (_, config, isLoaded, exitCode) => {
@@ -8453,7 +10924,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
           "a.js": "a;\n",
         });
         const result = await format(dir, ["--check", "a.js"]);
-        // What it prints is seen only if it fails.
+        // Its output is only shown if it fails.
         expect(result.stdout + result.stderr).not.toMatch(/\bout\b|\berr\b/);
         if (!isLoaded) expect(result.stderr).toMatch(/prettier\.config\.mjs:\r?\n./);
         expect(everythingIn(dir)).toEqual(["a.js", "node_modules", "node_modules/.keep", "prettier.config.mjs"]);
@@ -8463,7 +10934,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
     );
 
     test(
-      "every run evaluates it: a package that it looks for is found as soon as it is installed",
+      "is evaluated on every run: a package it imports is found as soon as it's installed",
       async () => {
         using dir = tempDir("bun-format-platform", {
           "node_modules/.keep": "",
@@ -8475,7 +10946,7 @@ describe("bun fmt on Windows, macOS and Linux", () => {
           "a.js": formatted,
         });
         const at = (...names: string[]) => join(String(dir), ...names);
-        // As old as a file that nobody is working on.
+        // Backdated, like a file that isn't being edited.
         const time = new Date(Date.now() - 60_000);
         utimesSync(at("prettier.config.mjs"), time, time);
         expect(await different(dir, ["a.js"])).toEqual(["a.js"]);
@@ -8490,9 +10961,9 @@ describe("bun fmt on Windows, macOS and Linux", () => {
   });
 });
 
-// A key of `[fmt]` is the default of the flag of the same name.
+// A `[fmt]` key sets the default for the flag with the same name.
 describe.concurrent("[fmt] in bunfig.toml", () => {
-  /** What a run leaves behind: what it prints but for the times, how it ends, and the files. */
+  /** Returns a run's results: its output with times normalized, its exit code and the files. */
   async function run(files: Record<string, string>, args: string[]) {
     const reads = Object.keys(files).filter(name => name !== "bunfig.toml");
     const result = await format(files, args, { reads });
@@ -8512,7 +10983,8 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
   const sum = `const total = ${Array(8).fill("someLongOperandName").join(" + ")};\n`;
   const choice = `const message = someCondition ? someValueThatIsRatherLong(withAnArgument) : anotherCondition ? anotherValue : last;\n`;
 
-  // An option of Prettier, a value that is not the default, another value, and a file that each of the two prints in its way.
+  // Each row is a Prettier option, a non-default value, another value, and a file that the two values print
+  // differently.
   const options: [key: string, value: unknown, other: unknown, name: string, source: string][] = [
     ["printWidth", 40, 120, "a.js", `${wide}const other = someFunction(argumentOne, argumentTwo, three);\n`],
     ["tabWidth", 4, 8, "a.js", "function f() {\n  return 1;\n}\n"],
@@ -8539,7 +11011,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     ["experimentalOperatorPosition", "start", "end", "a.js", sum],
   ];
 
-  test.each(options)("%s", async (key, value, other, name, source) => {
+  test.each(options)("the %s key matches its flag", async (key, value, other, name, source) => {
     const files = { [name]: source };
     const bunfig = { "bunfig.toml": `[fmt]\n${key} = ${toml(value)}\n` };
     const rc = { ".prettierrc": JSON.stringify({ [key]: other }) };
@@ -8560,7 +11032,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     expect(byKey.exitCode).toBe(0);
   });
 
-  // A key, the flags that say the same, flags that say otherwise, the files, and the arguments.
+  // Each row is a key, the equivalent flags, flags that override it, the files and the arguments.
   const semicolons = {
     ".prettierrc": `{ "semi": false }`,
     "other.json": `{ "singleQuote": true }`,
@@ -8631,7 +11103,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     ],
   ];
 
-  test.each(others)("%s", async (line, flags, opposite, files, args) => {
+  test.each(others)("%s matches its flags", async (line, flags, opposite, files, args) => {
     const bunfig = { "bunfig.toml": `[fmt]\n${line}\n` };
     // bunfig.toml gets formatted too, so every run has one to keep the outputs comparable.
     const empty = { "bunfig.toml": "# Nothing.\n" };
@@ -8647,7 +11119,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     expect(underFlag).toEqual(byOtherFlag);
   });
 
-  test("threads", async () => {
+  test("the threads key matches --threads, and 0 is rejected", async () => {
     const files = { "a.js": ugly, "b.js": ugly };
     const [byKey, byFlag, zero] = await Promise.all([
       run({ ...files, "bunfig.toml": "[fmt]\nthreads = 1\n" }, ["a.js", "b.js"]),
@@ -8659,7 +11131,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     expect(zero.exitCode).toBe(2);
   });
 
-  test.each(["67108864", "9007199254740991"])("%s threads are as many as there can be", async count => {
+  test.each(["67108864", "9007199254740991"])("%s threads are capped at the maximum", async count => {
     const files = { "a.js": ugly, "b.js": ugly };
     const [byKey, byFlag, few] = await Promise.all([
       run({ ...files, "bunfig.toml": `[fmt]\nthreads = ${count}\n` }, ["a.js", "b.js"]),
@@ -8670,21 +11142,21 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     expect(byFlag).toEqual(few);
   });
 
-  test("a list on the command line is added to the list of the file", async () => {
+  test("a list on the command line is appended to the file's list", async () => {
     const files = { "a.js": ugly, "b.js": ugly, "c.js": ugly, "bunfig.toml": `[fmt]\nignorePatterns = ["b.js"]\n` };
     expect(await different(files, ["--ignore-pattern=c.js", "."])).toEqual(["a.js"]);
   });
 
-  test("with configPrecedence = prefer-file the section counts only where there is no configuration file", async () => {
+  test("with configPrecedence = prefer-file, the section only applies where there's no configuration file", async () => {
     const bunfig = `[fmt]\nconfigPrecedence = "prefer-file"\nsemi = false\n`;
-    const [alone, beside] = await Promise.all([
+    const [withoutConfig, withConfig] = await Promise.all([
       run({ "bunfig.toml": bunfig, "a.js": "a;\n" }, ["a.js"]),
       run({ "bunfig.toml": bunfig, ".prettierrc": "{}", "a.js": "a;\n" }, ["a.js"]),
     ]);
-    expect([alone.files["a.js"], beside.files["a.js"]]).toEqual(["a\n", "a;\n"]);
+    expect([withoutConfig.files["a.js"], withConfig.files["a.js"]]).toEqual(["a\n", "a;\n"]);
   });
 
-  test("the file is that of the working directory, after --cwd", async () => {
+  test("reads the working directory's bunfig.toml, after --cwd is applied", async () => {
     const files = { "bunfig.toml": "[fmt]\nsemi = false\n", "sub/bunfig.toml": "[fmt]\nsingleQuote = true\n" };
     const source = { "a.js": `a("b");\n`, "sub/a.js": `a("b");\n` };
     const [above, below, inside] = await Promise.all([
@@ -8697,7 +11169,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     expect(inside.files["sub/a.js"]).toBe(`a('b');\n`);
   });
 
-  // The flags that say what one run does.
+  // Flags that describe a single run.
   test.each([
     ["check = true", "--check"],
     ["listDifferent = true", "--list-different"],
@@ -8712,7 +11184,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     ["color = true", "--color"],
     [`cwd = "sub"`, "--cwd"],
     ["script = false", "--no-script"],
-  ])("%s is refused, and nothing is written", async (line, flag) => {
+  ])("rejects %s and writes nothing", async (line, flag) => {
     const key = line.split(" ")[0];
     const result = await run({ "bunfig.toml": `[fmt]\n${line}\n`, "a.js": ugly }, ["a.js"]);
     expect(result.stderr).toContain(
@@ -8741,26 +11213,26 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
     ["printwidth = 80", `Unknown key "printwidth" in [fmt]\n  Did you mean "printWidth"?`],
     [`plugins = ["a"]`, `Unknown key "plugins" in [fmt]\n`],
     [`parser = "babel"`, `Unknown key "parser" in [fmt]\n`],
-  ])("%s is refused: %s", async (line, message) => {
+  ])("rejects %s: %s", async (line, message) => {
     const result = await run({ "bunfig.toml": `[fmt]\n${line}\n`, "a.js": ugly }, ["a.js"]);
     expect(result.stderr).toContain(message);
     expect(result.files["a.js"]).toBe(ugly);
     expect(result.exitCode).toBe(2);
   });
 
-  test("a file that is not TOML", async () => {
+  test("a bunfig.toml that isn't valid TOML is an error", async () => {
     const result = await run({ "bunfig.toml": "[fmt\nsemi = false\n", "a.js": ugly }, ["a.js"]);
     expect(result.files["a.js"]).toBe(ugly);
     expect(result.exitCode).toBe(2);
   });
 
-  test("fmt that is no table", async () => {
+  test("fmt that isn't a table is an error", async () => {
     const result = await run({ "bunfig.toml": `fmt = "prettier"\n`, "a.js": ugly }, ["a.js"]);
     expect(result.stderr).toContain("expected object but received string");
     expect(result.exitCode).toBe(2);
   });
 
-  test("every flag in the help is a key, or is refused as a key with its name", async () => {
+  test("every flag in --help is a key, or is rejected as a key with a message that names the flag", async () => {
     const help = await format({}, ["--help", "--all"]);
     const flags = [...help.stdout.matchAll(/^\s+(?:-\w, )?--([a-z-]+)/gm)].map(it => it[1]);
     expect(flags.length).toBeGreaterThan(60);
@@ -8769,7 +11241,7 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
         const positive = flag.replace(/^no-/, "");
         const key =
           positive === "ignore-pattern" ? "ignorePatterns" : positive.replace(/-(\w)/g, (_, it) => it.toUpperCase());
-        // Of a type that no key takes: one that exists says what it expects.
+        // A value of a type that no key accepts, so an existing key reports what it expects.
         const { stderr } = await run({ "bunfig.toml": `[fmt]\n${key} = [[]]\n` }, ["--list-files"]);
         return [flag, /expected [\w ]+ but received array|cannot be set in bunfig\.toml/.test(stderr)];
       }),

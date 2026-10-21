@@ -17,7 +17,7 @@ const USE_EXPORT_FROM: Message = Message::new("", "use `export ... from ...;`");
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The `export { .. } from` of the file, by the module.
+    /// The file's `export { .. } from` statements, by module.
     exports_from: Option<FxHashMap<Name<'a>, SmallVec<[Export<'a>; 1]>>>,
 }
 
@@ -43,11 +43,10 @@ impl Rule for PreferExportFrom {
     }
 }
 
-/// Whether the file exports anything in a way that the rule is about. Nothing is asked about variables in a file
-/// without one of these.
+/// True if the file has an export of a kind that the rule checks. Without one, the rule doesn't look at any variable.
 fn has_candidates<'a>(file: &'a File<'a>) -> bool {
     let is_identifier = |e: Expr| e.tag() == ExprTag::Ident;
-    // What a namespace exports is not looked for.
+    // A namespace's exports aren't searched, so assume it has one.
     file.has_stmts([StmtTag::Module])
         || file.body().iter().filter(|it| it.tag() != StmtTag::Import).any(|it| match it.kind() {
             StmtKind::ExportDefault(e) => is_identifier(e),
@@ -60,7 +59,7 @@ fn has_candidates<'a>(file: &'a File<'a>) -> bool {
 #[derive(Copy, Clone)]
 enum Specifier<'a> {
     Default(Ident<'a>),
-    /// With the range of `* as a`.
+    /// With the span of `* as a`.
     Namespace(Span),
     Named(ImportSpec<'a>),
 }
@@ -70,7 +69,7 @@ struct SpecifierSpec<'a> {
     symbol: Symbol<'a>,
     /// The local name.
     name: Name<'a>,
-    /// Something else is done with it than to export it.
+    /// It's used for something other than exporting it.
     is_locally_used: bool,
 }
 
@@ -81,13 +80,13 @@ struct Violation<'a> {
     is_namespace_export: bool,
     is_typescript_type: bool,
     needs_source: bool,
-    /// Which of the specifiers of the import it is.
+    /// Its index among the import's specifiers.
     specifier_index: usize,
-    /// The name where it is exported.
+    /// The name in the export.
     reference: Span,
 }
 
-/// What a reference to something imported is directly in.
+/// The node that directly contains a reference to an import.
 enum Usage<'a> {
     /// `export default a`
     ExportDefaultDeclaration(Stmt<'a>),
@@ -110,18 +109,18 @@ fn usage_of(reference: Reference<'_>) -> Usage<'_> {
     }
 }
 
-/// What oxlint has as the references to a symbol: not the name in a declaration with a value.
+/// oxlint's references to a symbol, which don't include the name in a declaration with an initializer.
 fn symbol_references(symbol: Symbol<'_>) -> impl Iterator<Item = Reference<'_>> {
     symbol.references().filter(|it| !it.is_jsx_pragma() && !matches!(it.node(), Node::Pat(_)))
 }
 
-/// The `export const ..` that `var_decl` is a part of.
+/// The `export const ..` that contains `var_decl`.
 fn exported_const_statement(var_decl: VarDecl<'_>) -> Option<Stmt<'_>> {
     let statement = Node::VarDecl(var_decl).parent().as_stmt()?;
     (var_decl.var_kind() == VarKind::Const && statement.is_exported()).then_some(statement)
 }
 
-/// As it is written if it is a string, with its quotes.
+/// A string name's source text, including its quotes.
 fn raw_name<'a>(file: &'a File<'a>, name: Ident<'a>) -> &'a [u8] {
     match name.is_string() {
         true => file.slice(name.span()),
@@ -175,7 +174,7 @@ impl PreferExportFrom {
     }
 }
 
-/// With `checkUsedVariables: false`: something else is done with it than what is reported.
+/// With `checkUsedVariables: false`: true if it has a use that the rule doesn't report.
 fn has_ignored_usage(specifier_spec: &SpecifierSpec) -> bool {
     let is_namespace = matches!(specifier_spec.specifier, Specifier::Namespace(_));
     symbol_references(specifier_spec.symbol).any(|reference| match usage_of(reference) {
@@ -188,7 +187,7 @@ fn has_ignored_usage(specifier_spec: &SpecifierSpec) -> bool {
 
 fn analyze_import_usage<'a>(specifiers: &mut [SpecifierSpec<'a>], import_decl: Import<'a>) -> Vec<Violation<'a>> {
     let mut violations = Vec::new();
-    // Whether the `export { .. }` that was looked at last has a `default`.
+    // Caches whether the last `export { .. }` that was checked has a `default`.
     let mut export_as_default: Option<(Export<'a>, bool)> = None;
     for (specifier_index, specifier_spec) in specifiers.iter_mut().enumerate() {
         let is_namespace = matches!(specifier_spec.specifier, Specifier::Namespace(_));
@@ -309,7 +308,7 @@ fn get_export_name<'a>(specifier_spec: &SpecifierSpec<'a>, export_specifier: Exp
     }
 }
 
-/// Whether both are strings in quotes which, taken for strings of JSON, have the same value.
+/// True if both are quoted strings that have the same value when parsed as JSON strings.
 fn is_strings_equal_std(s1: &[u8], s2: &[u8]) -> bool {
     fn clean(s: &[u8]) -> Option<Vec<u8>> {
         let [b'\'' | b'"', inner @ .., b'\'' | b'"'] = s else {
@@ -358,7 +357,7 @@ fn is_strings_equal_std(s1: &[u8], s2: &[u8]) -> bool {
     clean(s1).is_some_and(|s1| Some(s1) == clean(s2))
 }
 
-/// The first `export { .. } from` the same module, of the same kind and with the same attributes.
+/// The first `export { .. } from` with the same module, kind and attributes.
 fn find_corresponding_export<'a>(import_decl: Import<'a>, cx: &mut Cx<'a, PreferExportFrom>) -> Option<Export<'a>> {
     let file = cx.file();
     let exports_from = cx.state.exports_from.get_or_insert_with(|| {
@@ -380,7 +379,7 @@ fn find_corresponding_export<'a>(import_decl: Import<'a>, cx: &mut Cx<'a, Prefer
     })
 }
 
-/// From the end of `statement` to the next statement of the file.
+/// From the end of `statement` to the file's next statement.
 fn get_replace_span(statement: Stmt) -> Span {
     let span = statement.span();
     let next = match statement.parent() {
@@ -400,7 +399,7 @@ fn format_export_names(violations: &[Violation]) -> Vec<u8> {
     names
 }
 
-/// The violations of an import that are fixed together: those that export the namespace, or the others.
+/// An import's violations that are fixed together: either those that export the namespace, or the others.
 struct Group<'g, 'a> {
     import_decl: Import<'a>,
     specifiers: &'g [SpecifierSpec<'a>],
@@ -410,7 +409,7 @@ struct Group<'g, 'a> {
 }
 
 impl<'a> Group<'_, 'a> {
-    /// `with { type: "json" }`, with a space before it.
+    /// `with { type: "json" }`, preceded by a space.
     fn with_clause(&self) -> Vec<u8> {
         let Some(with_clause) = self.import_decl.attributes() else {
             return Vec::new();
@@ -427,7 +426,7 @@ impl<'a> Group<'_, 'a> {
         clause
     }
 
-    /// The statements that export the same from the module.
+    /// The statements that export the same names directly from the module.
     fn generate_export_format(&self) -> Vec<u8> {
         let after = concat(&[b" from '", self.import_decl.spec().bytes(), b"'", &self.with_clause(), b";\n"]);
         if !self.is_namespace {
@@ -489,7 +488,7 @@ impl<'a> Group<'_, 'a> {
                     let source = file.slice(re_export.spec_span()?);
                     rule_fixes.push(fixer.replace(import_span, concat(&[b"export ", &processed_exports_str, b" from ", source])));
                 } else {
-                    // Not the character after the specifier, but the one after that.
+                    // Like oxlint, this checks the second character after the specifier, not the first.
                     let has_comma = last_specifier.is_none_or(|specifier| {
                         let dot_index = (specifier.span().end + 1).saturating_sub(re_export.stmt().span().start);
                         re_export.stmt().text().chars().nth(dot_index as usize) == Some(',')
@@ -518,7 +517,7 @@ impl<'a> Group<'_, 'a> {
         Some(rule_fixes)
     }
 
-    /// The import with what is left of it.
+    /// The import with its remaining specifiers.
     fn build_new_import_declaration(&self, retained_specifiers: &[&SpecifierSpec<'a>]) -> Vec<u8> {
         let file = self.import_decl.stmt().file();
         let (mut default_import, mut namespace_import, mut named_imports) = (None, None, Vec::new());
@@ -531,7 +530,7 @@ impl<'a> Group<'_, 'a> {
         }
         let named_imports = (!named_imports.is_empty()).then(|| concat(&[b"{", &named_imports.join(&b", "[..]), b"}"]));
         let result_parts: Vec<&[u8]> = default_import.into_iter().chain(namespace_import).chain(named_imports.as_deref()).collect();
-        // Of the attributes oxlint keeps the braces only.
+        // oxlint only keeps the braces of the attributes.
         let with_clause = self.import_decl.attributes().map_or_else(Vec::new, |it| concat(&[b" ", file.slice(it.braces_span())]));
         let keyword: &[u8] = if self.import_decl.is_type_only() { b"import type " } else { b"import " };
         concat(&[

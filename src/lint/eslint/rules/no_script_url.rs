@@ -14,7 +14,7 @@ fn is_script_url(value: Name) -> bool {
     value.bytes().get(..SCHEME.len()).is_some_and(|start| start.eq_ignore_ascii_case(SCHEME))
 }
 
-/// `raw`: a string as it is written, with its quotes.
+/// `raw` is a string's source text, including its quotes.
 fn is_script_url_literal(raw: &[u8]) -> bool {
     let Some(start) = raw.get(1..=SCHEME.len()) else {
         return false;
@@ -30,7 +30,7 @@ fn is_script_url_literal(raw: &[u8]) -> bool {
             .all(|(unit, c)| u8::try_from(unit.code_unit).is_ok_and(|it| it.eq_ignore_ascii_case(c)))
 }
 
-/// Whether what follows a backtick of `text` is a script URL as far as it is written without an escape.
+/// True if some backtick in `text` is followed by the scheme, or by a prefix of the scheme and then an escape.
 fn may_have_script_url_in_template(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = strings::index_of_char_usize(rest, b'`') {
@@ -43,7 +43,7 @@ fn may_have_script_url_in_template(text: &[u8]) -> bool {
     false
 }
 
-/// `` [`a`] ``, which is a `TemplateLiteral` for ESLint and not an expression here.
+/// Checks `` [`a`] ``, which is a `TemplateLiteral` in ESLint but not an expression here.
 fn check_template_key<'a>(key: Option<Key<'a>>, cx: &Cx<'a, NoScriptUrl>) {
     if let Some(key) = key
         && let KeyKind::ComputedString(value) = key.kind()
@@ -84,7 +84,7 @@ impl Rule for NoScriptUrl {
     }
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
-        // After the quote: the `j`, an escape, or an entity in JSX.
+        // Fast check: the quote is followed by the `j`, an escape, or an entity in JSX.
         if !matches!(cx.text().get(literal.span().start as usize + 1), Some(b'j' | b'J' | b'\\' | b'&')) {
             return;
         }
@@ -92,7 +92,7 @@ impl Rule for NoScriptUrl {
             Node::Expr(e) if cx.language().is_oxlint && e.is_jsx_attribute_string() => {
                 literal.text().get(1..=SCHEME.len()).is_some_and(|start| start.eq_ignore_ascii_case(SCHEME))
             }
-            // The value of a JSX attribute is written differently.
+            // A JSX attribute's value has different escapes, so compare the parsed value.
             Node::Expr(e) => e.as_string().is_some_and(is_script_url),
             _ => is_script_url_literal(literal.text()),
         };

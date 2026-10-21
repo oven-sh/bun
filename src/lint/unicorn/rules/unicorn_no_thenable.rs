@@ -13,7 +13,7 @@ const CLASS: Message = Message::new("", "Do not add `then` to a class.");
 pub struct State<'a> {
     /// The name `then`.
     then: Name<'a>,
-    /// Whether the file has the string `"then"`, which a variable can be initialized with.
+    /// True if the file has the string `"then"`, which could initialize a variable.
     has_string: OnceCell<bool>,
 }
 
@@ -113,7 +113,7 @@ impl Rule for NoThenable {
                     Some(name) => (name.name() == cx.state.then).then(|| target.span()),
                     None => target.index().and_then(|it| check_expression(it, &cx.state)),
                 };
-                // Not the default value in a pattern.
+                // A default value in a pattern isn't an assignment.
                 if let Some(span) = span.filter(|_| !e.is_assignment_target()) {
                     cx.report(span, CLASS);
                 }
@@ -156,7 +156,7 @@ fn check_call_expression<'a>(call: Call<'a>, cx: &Cx<'a, NoThenable>) {
     }
 }
 
-/// Where the string `then` is written that `e` is, or that the variable `e` is initialized with.
+/// Returns the span of the string `then` if `e` is that string or a variable initialized with it.
 fn check_expression<'a>(e: Expr<'a>, state: &State<'a>) -> Option<Span> {
     if e.is_parenthesized() {
         return None;

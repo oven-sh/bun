@@ -1,12 +1,16 @@
-//! Sorting a run of imports while it is written.
+//! Sorts a run of imports while it's formatted.
 
 use super::super::compare::natord;
 use super::super::sort::stable_sort_by;
 use super::super::{How, SortImports};
 use super::options::{Modifier, Options, Selector};
 use crate::ir::element::{Interned, LineMode};
+use crate::pragma::{has_ignore_pragma, has_pragma};
 use crate::prelude::*;
 use crate::write;
+use bun_core::strings;
+use bun_lint::fix::is_file_level_comment;
+use bun_lint::linter::is_flow_file;
 use std::sync::Arc;
 
 impl SortImports {
@@ -18,16 +22,16 @@ impl SortImports {
     }
 }
 
-/// oxc's `SourceLine`. The ranges are of the formatter's pool.
+/// oxc's `SourceLine`. The ranges index the formatter's pool.
 #[derive(Copy, Clone)]
 enum Line {
-    /// An import, with the comments before and after it on its line. `index`: which of the run.
+    /// An import, with the comments before and after it on its line. `index` is its position in the run.
     Import {
         range: Interned,
         index: u32,
     },
     Empty,
-    /// Nothing but comments.
+    /// Only comments.
     Comment(Interned),
 }
 
@@ -44,21 +48,21 @@ impl Line {
     }
 }
 
-/// An import, and what oxc makes of what is written for it: it goes by the text in the document,
-/// where a comment is text like any other.
+/// An import, and how oxc reads its output: it goes by the text in the document, where a comment is text like any
+/// other.
 #[derive(Copy, Clone)]
-struct Written<'a> {
+struct PrintedImport<'a> {
     import: Import<'a>,
-    /// The first text after the `from`, or after the `import` if there is none.
+    /// The first text after the `from`, or after the `import` if there's no `from`.
     source: &'a [u8],
-    /// There is text before the `*`.
+    /// There's text before the `*`.
     has_comment_for_default: bool,
 }
 
-impl<'a> Written<'a> {
+impl<'a> PrintedImport<'a> {
     fn new(statement: Stmt<'a>, import: Import<'a>, f: &Formatter<'a>) -> Self {
         let source = import.spec_span().unwrap_or_default();
-        let mut written = Written {
+        let mut printed = PrintedImport {
             import,
             source: f.file().slice(source),
             has_comment_for_default: false,
@@ -66,7 +70,7 @@ impl<'a> Written<'a> {
         let before_source = Span::new(statement.span().start, source.start);
         if f.comments().has_comment_in_span(before_source) {
             let keyword_end = statement.span().start + "import".len() as u32;
-            // Without a `from`, everything is after it.
+            // Without a `from`, everything counts as after it.
             let mut is_after_from = import.is_side_effect();
             let mut position = if is_after_from {
                 keyword_end
@@ -87,44 +91,44 @@ impl<'a> Written<'a> {
                 });
             if let Some(comment) = comment {
                 let text = f.file().slice(comment.span());
-                written.source = bun_core::strings::index_of_char_usize(text, b'\n')
+                printed.source = bun_core::strings::index_of_char_usize(text, b'\n')
                     .map_or(text, |end| text[..end].trim_ascii_end());
             }
             let star = import
                 .namespace_span()
                 .filter(|_| import.default().is_none());
-            written.has_comment_for_default = star.is_some_and(|star| {
+            printed.has_comment_for_default = star.is_some_and(|star| {
                 !f.comments()
                     .comments_in_span(Span::before(keyword_end, star))
                     .is_empty()
             });
         }
-        written
+        printed
     }
 }
 
 /// oxc's `SortableImport`
 struct Unit<'a> {
-    /// The comments directly before it, without an empty line between: a range of the lines.
+    /// The comments directly before it, with no empty line between: a range of the lines.
     leading: std::ops::Range<usize>,
     line: Line,
     group: usize,
     source: &'a [u8],
     is_side_effect: bool,
-    /// It stays where it is.
+    /// It stays in place.
     is_ignored: bool,
 }
 
-/// Comments that an empty line separates from the next import. They stay where they are.
+/// Comments that an empty line separates from the next import. They stay in place.
 struct Orphan {
     lines: Vec<Line>,
-    /// After which import. `None`: before the first.
+    /// The import it follows. `None` means before the first.
     after_slot: Option<usize>,
 }
 
-/// `extract_source_path`: `"./a.js?b"` is `./a.js`.
-fn source_path(written: &[u8]) -> &[u8] {
-    let mut source = written;
+/// `extract_source_path`: `"./a.js?b"` becomes `./a.js`.
+fn source_path(raw_source: &[u8]) -> &[u8] {
+    let mut source = raw_source;
     for quote in *b"\"'" {
         while let [first, rest @ ..] = source
             && *first == quote
@@ -140,7 +144,7 @@ fn source_path(written: &[u8]) -> &[u8] {
     bun_core::strings::index_of_char_usize(source, b'?').map_or(source, |at| &source[..at])
 }
 
-/// `Path::new(source).extension()` is that of a style sheet.
+/// True if `Path::new(source).extension()` is a style sheet's.
 fn is_style(source: &[u8]) -> bool {
     let trimmed = source.len()
         - source
@@ -162,13 +166,13 @@ fn is_style(source: &[u8]) -> bool {
     }
 }
 
-/// `compute_import_metadata`: the group, and whether the import stays where it is.
-fn classify(written: Written, source: &[u8], options: &Options) -> (usize, bool) {
-    let import = written.import;
+/// `compute_import_metadata`: the group, and true if the import stays in place.
+fn classify(printed: PrintedImport, source: &[u8], options: &Options) -> (usize, bool) {
+    let import = printed.import;
     let (is_side_effect, is_style) = (import.is_side_effect(), is_style(source));
     let mut selectors = Selector::Import.bit();
     let mut add =
-        |selector: Selector, is_one: bool| selectors |= if is_one { selector.bit() } else { 0 };
+        |selector: Selector, applies: bool| selectors |= if applies { selector.bit() } else { 0 };
     add(Selector::SideEffectStyle, is_side_effect && is_style);
     add(Selector::SideEffect, is_side_effect);
     add(Selector::Style, is_style);
@@ -213,11 +217,11 @@ fn classify(written: Written, source: &[u8], options: &Options) -> (usize, bool)
         Modifier::Value.bit()
     };
     let mut add =
-        |modifier: Modifier, is_one: bool| modifiers |= if is_one { modifier.bit() } else { 0 };
+        |modifier: Modifier, applies: bool| modifiers |= if applies { modifier.bit() } else { 0 };
     add(Modifier::SideEffect, is_side_effect);
     add(
         Modifier::Default,
-        import.default().is_some() || written.has_comment_for_default,
+        import.default().is_some() || printed.has_comment_for_default,
     );
     add(Modifier::Wildcard, import.namespace().is_some());
     add(Modifier::Named, !import.named().is_empty());
@@ -244,7 +248,7 @@ fn sort_within_group(indices: &mut [usize], units: &[Unit], options: &Options) {
     if options.sort_side_effects {
         return by_source(indices);
     }
-    // Those with side effects keep their places among the others.
+    // Side-effect imports keep their positions among the others.
     let mut others: Vec<usize> = indices
         .iter()
         .copied()
@@ -312,10 +316,10 @@ fn should_insert_newline_between(
     })
 }
 
-/// Writes the lines of a chunk, in which nothing is a boundary, with its imports sorted.
+/// Writes the lines of a chunk, which has no boundary in it, with its imports sorted.
 fn write_sorted<'a>(
     lines: &[Line],
-    imports: &[Written<'a>],
+    imports: &[PrintedImport<'a>],
     options: &Options,
     is_before_boundary: bool,
     out: &mut Vec<FormatElement>,
@@ -324,7 +328,7 @@ fn write_sorted<'a>(
     let mut units: Vec<Unit<'a>> = Vec::with_capacity(imports.len());
     let mut orphans: Vec<Orphan> = Vec::new();
     let mut slot_had_leading_blank: Vec<bool> = Vec::with_capacity(imports.len());
-    // The lines since the last import up to the last empty line, and where those after it start.
+    // The lines since the last import up to the last empty line, and the index where the lines after it start.
     let mut orphan_pending: Vec<Line> = Vec::new();
     let mut current_pending = 0;
     for (at, &line) in lines.iter().enumerate() {
@@ -343,11 +347,11 @@ fn write_sorted<'a>(
                         after_slot,
                     });
                 }
-                let Some(&written) = imports.get(index as usize) else {
+                let Some(&printed) = imports.get(index as usize) else {
                     continue;
                 };
-                let (import, source) = (written.import, source_path(written.source));
-                let (group, is_ignored) = classify(written, source, options);
+                let (import, source) = (printed.import, source_path(printed.source));
+                let (group, is_ignored) = classify(printed, source, options);
                 units.push(Unit {
                     leading: current_pending..at,
                     line,
@@ -409,7 +413,7 @@ fn write_sorted<'a>(
 /// oxc's `transform`
 fn transform<'a>(
     lines: &[Line],
-    imports: &[Written<'a>],
+    imports: &[PrintedImport<'a>],
     options: &Options,
     out: &mut Vec<FormatElement>,
 ) {
@@ -436,22 +440,33 @@ fn transform<'a>(
         write_sorted(&lines[start..end], imports, options, end < lines.len(), out);
         start = end;
     }
-    // Every line is written with a line break after it. What comes after the run writes its own.
+    // Every line is written with a line break after it. Whatever follows the run writes its own.
     out.pop();
 }
 
-/// Sorts the runs of imports in a list of statements. Whoever writes the list says what it is
-/// about to write.
+/// Wraps [`is_file_level_comment`]. `// eslint-disable-next-line`, `// @ts-ignore` and `// @ts-expect-error` apply
+/// to the next statement, so they don't count.
+fn is_about_the_file(comment: Comment<'_>) -> bool {
+    let text = comment.text();
+    is_file_level_comment(text, comment.content())
+        // These pragmas decide how Prettier parses the file. It matches them loosely: `// @flow.` counts too.
+        || (strings::contains_char(text, b'@')
+            && (is_flow_file(text, b"") || has_pragma(text) || has_ignore_pragma(text)))
+}
+
+/// Sorts the runs of imports in a list of statements. The caller that prints the list announces each thing it's about
+/// to print.
 pub(crate) struct ImportRun<'a> {
-    /// `None`: imports are not sorted this way, and nothing here does anything.
+    /// `None` if imports aren't sorted this way. Everything here is then a no-op.
     how: Option<Arc<SortImports>>,
-    /// Where the capture of the run that is being written starts.
+    /// Where the capture of the current run starts.
     slot: Option<usize>,
-    /// Whether the next statement can be part of a run, if that is known.
+    /// True if the next statement can be part of a run, if that's known yet.
     is_next_sortable: Option<bool>,
+    has_seen_import: bool,
     lines: Vec<Line>,
-    imports: Vec<Written<'a>>,
-    /// Where the line that is being written starts.
+    imports: Vec<PrintedImport<'a>>,
+    /// Where the current line starts.
     line_start: usize,
 }
 
@@ -467,20 +482,21 @@ impl<'a> ImportRun<'a> {
                 .map(Arc::clone),
             slot: None,
             is_next_sortable: None,
+            has_seen_import: false,
             lines: Vec::new(),
             imports: Vec::new(),
             line_start: 0,
         }
     }
 
-    /// An import that is written as it is in the source ends a run.
+    /// An import that's copied verbatim from the source ends a run.
     fn is_sortable(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
         matches!(statement.kind(), StmtKind::Import(_))
             && !f.comments().is_ignored(statement.as_ast_nodes())
     }
 
-    /// To be called before the line break between the previous statement and `next` is written.
-    /// `is_plain`: all comments between the two are written with `next`.
+    /// Call this before printing the line break between the previous statement and `next`. `is_plain` means all
+    /// comments between the two are printed with `next`.
     #[inline]
     pub(crate) fn before_separator(
         &mut self,
@@ -493,7 +509,7 @@ impl<'a> ImportRun<'a> {
         }
     }
 
-    /// To be called before `statement` and the comments before it are written.
+    /// Call this before printing `statement` and the comments before it.
     #[inline]
     pub(crate) fn before_statement(&mut self, statement: Stmt<'a>, f: &mut Formatter<'a>) {
         if self.how.is_some() {
@@ -501,7 +517,7 @@ impl<'a> ImportRun<'a> {
         }
     }
 
-    /// To be called after the last statement.
+    /// Call this after the last statement.
     #[inline]
     pub(crate) fn finish(&mut self, f: &mut Formatter<'a>) {
         if self.how.is_some() {
@@ -556,8 +572,20 @@ impl<'a> ImportRun<'a> {
         let StmtKind::Import(import) = statement.kind() else {
             return;
         };
+        let is_first_of_file = !std::mem::replace(&mut self.has_seen_import, true)
+            && matches!(statement.parent(), Node::File(_));
         if !is_sortable {
             return;
+        }
+        // In `// @ts-nocheck⏎import b from "b";⏎import a from "a";` oxfmt moves the comment along with `b`, and
+        // TypeScript no longer reads it there. Here it stays at the top, along with every comment above it. They're
+        // printed before the run starts.
+        let mut comments = f.comments().of_node(statement.as_ast_nodes()).leading;
+        if is_first_of_file {
+            let count = comments.iter().rposition(is_about_the_file);
+            let (about_the_file, others) = comments.split_at(count.map_or(0, |last| last + 1));
+            write!(f, FormatLeadingComments::Comments(about_the_file));
+            comments = others;
         }
         match self.slot {
             None => self.slot = Some(f.start_capture()),
@@ -566,13 +594,12 @@ impl<'a> ImportRun<'a> {
             }
             Some(_) => {}
         }
-        self.imports.push(Written::new(statement, import, f));
+        self.imports.push(PrintedImport::new(statement, import, f));
         self.line_start = f.elements().len();
 
-        // One line at a time. What is left for the statement to write is its own line.
-        let mut comments = f.comments().of_node(statement.as_ast_nodes()).leading;
+        // One line at a time. What's left for the statement to print is its own line.
         while let Some(first) = comments.first() {
-            // Comments without anything between them belong together.
+            // Comments with nothing between them belong together.
             let mut end = first.span().end;
             let count = 1 + comments
                 .slice(1, usize::MAX)
@@ -584,7 +611,7 @@ impl<'a> ImportRun<'a> {
             let (now, later) = comments.split_at(count);
             comments = later;
             write!(f, FormatLeadingComments::Comments(now));
-            // oxc does not see the line break after a block comment that the file starts with.
+            // oxc doesn't see the line break after a block comment at the start of the file.
             let starts_file = |it: Comment<'_>| {
                 it.is_block()
                     && f.file().text()[..it.span().start as usize]

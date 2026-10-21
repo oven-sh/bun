@@ -105,12 +105,45 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
 
     newFrames.reserveInitialCapacity(frameCount);
     for (size_t i = 0; i < frameCount; i++) {
-        if (!isImplementationVisibilityPrivate(existingFrames.at(i))) {
-            newFrames.constructAndAppend(vm, existingFrames.at(i));
-        }
+        newFrames.constructAndAppend(vm, existingFrames.at(i));
     }
 
     return JSCStackTrace(newFrames);
+}
+
+void JSCStackTrace::removeImplementationVisibilityPrivateFrames()
+{
+    m_frames.removeAllMatching([](const JSCStackFrame& frame) {
+        return frame.isImplementationVisibilityPrivate();
+    });
+}
+
+void JSCStackTrace::detachFromCells()
+{
+    if (!m_frames.isEmpty())
+        firstFrameExecutableSourceURL();
+    for (auto& frame : m_frames)
+        frame.detachFromCells();
+}
+
+const WTF::String& JSCStackTrace::firstFrameExecutableSourceURL()
+{
+    if (!m_firstFrameExecutableSourceURL) {
+        auto& frame = m_frames.first();
+        m_firstFrameExecutableSourceURL = frame.m_stackFrame->sourceURL(frame.m_vm);
+    }
+    return m_firstFrameExecutableSourceURL;
+}
+
+size_t JSCStackTrace::sizeInBytes() const
+{
+    return sizeof(JSCStackTrace) + m_frames.sizeInBytes();
+}
+
+void JSCStackTrace::reconcileWeakReferencesAtGCEnd(JSC::VM&)
+{
+    for (auto& frame : m_frames)
+        frame.clearCalleeIfDead();
 }
 
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
@@ -184,6 +217,11 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         stackTrace.shrink(stackTraceLimit);
 }
 
+static WTF::String emptyIfNull(WTF::String&& string)
+{
+    return string.isNull() ? emptyString() : WTF::move(string);
+}
+
 static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
 {
     if (!codeBlock->ownerExecutable()) {
@@ -203,13 +241,20 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     , m_functionName()
     , m_isWasmFrame(false)
     , m_isAsync(frame.isAsyncFrame())
+    , m_hasLineAndColumnInfo(frame.hasLineAndColumnInfo())
+    , m_isImplementationVisibilityPrivate(Zig::isImplementationVisibilityPrivate(frame))
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
     m_callee = frame.callee();
+    if (m_callee) {
+        if (auto* object = m_callee->getObject())
+            m_calleeGlobalObject = object->globalObject();
+        if (auto* function = dynamicDowncast<JSC::JSFunction>(m_callee))
+            m_calleeIsScriptFunction = !function->isHostFunction();
+    }
 
     // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
     if (frame.isWasmFrame()) {
-        m_wasmFunctionIndexOrName = frame.wasmFunctionIndexOrName();
         m_isWasmFrame = true;
     } else if (auto* codeBlock = frame.codeBlock()) {
         auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
@@ -233,11 +278,40 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
             m_isFunctionOrEval = true;
         }
     }
+
+    m_isNative = !m_codeBlock;
+    if (m_codeBlock) {
+        auto* executable = m_codeBlock->ownerExecutable();
+        m_sourceID = executable->sourceID();
+        m_isStrict = executable->isInStrictContext();
+        m_isEval = m_codeBlock->codeType() == JSC::EvalCode || executable->evalContextType() != JSC::EvalContextType::None;
+        m_isConstructor = JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind();
+    }
 }
 
-intptr_t JSCStackFrame::sourceID() const
+void JSCStackFrame::detachFromCells()
 {
-    return m_codeBlock ? m_codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
+    if (!m_sourceURL)
+        m_sourceURL = retrieveSourceURL();
+    // An empty name is not null, so that it is not looked for again.
+    if (!m_functionName)
+        m_functionName = emptyIfNull(retrieveFunctionName());
+    getSourcePositions();
+    lineColumn();
+    frameSourceURL();
+    stackLineFunctionName();
+
+    if (auto* codeBlock = m_stackFrame->codeBlock())
+        m_sourceProvider = codeBlock->source().provider();
+    m_stackFrame = nullptr;
+    m_codeBlock = nullptr;
+    clearCalleeIfDead();
+}
+
+void JSCStackFrame::clearCalleeIfDead()
+{
+    if (m_callee && !m_vm.heap.isMarked(m_callee))
+        m_callee = nullptr;
 }
 
 JSC::JSString* JSCStackFrame::sourceURL()
@@ -252,10 +326,39 @@ JSC::JSString* JSCStackFrame::sourceURL()
 JSC::JSString* JSCStackFrame::functionName()
 {
     if (!m_functionName) {
-        m_functionName = retrieveFunctionName();
+        m_functionName = emptyIfNull(retrieveFunctionName());
     }
 
     return jsString(this->m_vm, m_functionName);
+}
+
+JSC::LineColumn JSCStackFrame::lineColumn()
+{
+    if (!m_lineColumn)
+        m_lineColumn = m_stackFrame->computeLineAndColumn();
+    return *m_lineColumn;
+}
+
+const WTF::String& JSCStackFrame::frameSourceURL()
+{
+    if (!m_frameSourceURL)
+        m_frameSourceURL = emptyIfNull(Zig::sourceURL(m_vm, *m_stackFrame));
+    return m_frameSourceURL;
+}
+
+const WTF::String& JSCStackFrame::stackLineFunctionName()
+{
+    if (!m_stackLineFunctionName) {
+        m_stackLineFunctionNameFlags = FunctionNameFlags::AddNewKeyword;
+        m_stackLineFunctionName = emptyIfNull(Zig::functionName(m_vm, *m_stackFrame, &m_stackLineFunctionNameFlags));
+    }
+    return m_stackLineFunctionName;
+}
+
+unsigned JSCStackFrame::stackLineFunctionNameFlags()
+{
+    stackLineFunctionName();
+    return m_stackLineFunctionNameFlags;
 }
 
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
@@ -311,7 +414,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 {
 
     if (m_isWasmFrame) {
-        return JSC::Wasm::makeString(m_wasmFunctionIndexOrName);
+        return JSC::Wasm::makeString(m_stackFrame->wasmFunctionIndexOrName());
     }
 
     if (m_callee) {

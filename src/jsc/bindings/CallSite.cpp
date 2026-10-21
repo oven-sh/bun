@@ -20,14 +20,9 @@ namespace Zig {
 
 const JSC::ClassInfo CallSite::s_info = { "CallSite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CallSite) };
 
-static JSC::JSFunction* calleeFunction(JSC::JSCell* callee)
-{
-    return callee ? dynamicDowncast<JSC::JSFunction>(callee) : nullptr;
-}
-
 static bool isUserFunction(JSC::JSCell* callee)
 {
-    auto* function = calleeFunction(callee);
+    auto* function = callee ? dynamicDowncast<JSC::JSFunction>(callee) : nullptr;
     if (!function || function->isHostFunction() || function->isBuiltinFunction()) {
         return false;
     }
@@ -47,14 +42,8 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
      * will return undefined.".
      * Thus, if we've already encountered a strict frame, we'll treat our frame as strict too. */
 
-    bool isStrictFrame = encounteredStrictFrame;
+    bool isStrictFrame = encounteredStrictFrame || stackFrame.isStrict();
     JSC::JSCell* callee = stackFrame.callee();
-    JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
-    if (!isStrictFrame) {
-        if (codeBlock) {
-            isStrictFrame = codeBlock->ownerExecutable()->isInStrictContext();
-        }
-    }
 
     // JSC::StackFrame has no receiver, so getThis() is always undefined.
     m_thisValue.set(vm, this, JSC::jsUndefined());
@@ -68,11 +57,8 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         m_function.set(vm, this, callee);
     }
     // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
-    if (!isStrictFrame) {
-        auto* function = calleeFunction(callee);
-        if (function && !function->isHostFunction()) {
-            m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
-        }
+    if (!isStrictFrame && stackFrame.calleeIsScriptFunction()) {
+        m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
     }
 
     m_functionName.set(vm, this, stackFrame.functionName());
@@ -93,7 +79,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (!stackFrame.codeBlock()) {
+    if (stackFrame.isNative()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
     if (stackFrame.isAsync()) {

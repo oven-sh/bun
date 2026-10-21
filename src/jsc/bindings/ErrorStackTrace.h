@@ -7,6 +7,7 @@
 
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/DebuggerPrimitives.h>
 #include <JavaScriptCore/WasmIndexOrName.h>
 
 #include "ZigGlobalObject.h"
@@ -33,8 +34,8 @@ namespace Zig {
  * - String properties are exposed (and cached) as JSStrings, instead of WTF::String.
  * - Helper functions like isEval and isConstructor.
  *
- * Note that this is not a heap allocated, garbage collected, JSCell. It must be stack allocated, as it doesn't
- * use any write barriers and rely on the GC to see the stored JSC object pointers on the stack.
+ * Note that this is not a garbage collected JSCell and uses no write barriers. Until detachFromCells(), it must be
+ * stack allocated and relies on the GC to see the stored JSC object pointers on the stack.
  */
 class JSCStackFrame {
 public:
@@ -44,25 +45,42 @@ public:
     };
 
 private:
+    friend class JSCStackTrace;
+
     JSC::VM& m_vm;
-    // Points into the vector this frame was built from (JSCStackTrace::fromExisting).
+    // Points into the vector this frame was built from (JSCStackTrace::fromExisting). Null once detached.
     const JSC::StackFrame* m_stackFrame;
     JSC::JSCell* m_callee { nullptr };
+    // Only compared, and only with a global object that is older than this frame and alive.
+    JSC::JSGlobalObject* m_calleeGlobalObject { nullptr };
 
     // May be null
     JSC::CodeBlock* m_codeBlock { nullptr };
     JSC::BytecodeIndex m_bytecodeIndex;
+    intptr_t m_sourceID { JSC::noSourceID };
+
+    // Once detached. ~SourceProvider drops the source map the positions are yet to go through.
+    RefPtr<JSC::SourceProvider> m_sourceProvider;
 
     // Lazy-initialized
+    WTF::String m_frameSourceURL;
     WTF::String m_sourceURL;
     WTF::String m_functionName;
+    WTF::String m_stackLineFunctionName;
+    unsigned m_stackLineFunctionNameFlags { 0 };
+    std::optional<JSC::LineColumn> m_lineColumn;
 
-    // m_wasmFunctionIndexOrName has meaning only when m_isWasmFrame is set
-    JSC::Wasm::IndexOrName m_wasmFunctionIndexOrName;
     bool m_isWasmFrame = false;
 
     bool m_isFunctionOrEval = false;
     bool m_isAsync = false;
+    bool m_isEval = false;
+    bool m_isConstructor = false;
+    bool m_isStrict = false;
+    bool m_isNative = false;
+    bool m_calleeIsScriptFunction = false;
+    bool m_hasLineAndColumnInfo = false;
+    bool m_isImplementationVisibilityPrivate = false;
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -76,11 +94,19 @@ private:
 public:
     JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame);
 
-    const JSC::StackFrame& stackFrame() const { return *m_stackFrame; }
-    JSC::JSCell* callee() const { return m_callee; }
-    JSC::CodeBlock* codeBlock() const { return m_codeBlock; }
+    // Reads what is still lazy, then lets go of the code block and of the JSC::StackFrame. Runs at the end of a
+    // collection, where they may be dead but are not swept yet. The callee stays, weakly: see clearCalleeIfDead().
+    void detachFromCells();
+    void clearCalleeIfDead();
 
-    intptr_t sourceID() const;
+    // Null if it was collected after detachFromCells().
+    JSC::JSCell* callee() const { return m_callee; }
+    // Null if the callee is not an object.
+    JSC::JSGlobalObject* calleeGlobalObject() const { return m_calleeGlobalObject; }
+    // A JSFunction that is not a host function, collected or not.
+    bool calleeIsScriptFunction() const { return m_calleeIsScriptFunction; }
+
+    intptr_t sourceID() const { return m_sourceID; }
     JSC::JSString* sourceURL();
     JSC::JSString* functionName();
 
@@ -88,49 +114,25 @@ public:
     bool isAsync() const { return m_isAsync; }
 
     bool hasBytecodeIndex() const { return (m_bytecodeIndex.offset() != UINT_MAX) && !m_isWasmFrame; }
-    JSC::BytecodeIndex bytecodeIndex() const
-    {
-        return m_bytecodeIndex;
-    }
 
     // Returns null if can't retrieve the source positions
     SourcePositions* getSourcePositions();
 
     bool isWasmFrame() const { return m_isWasmFrame; }
-    bool isEval()
-    {
-        if (m_codeBlock) {
-            if (m_codeBlock->codeType() == JSC::EvalCode) {
-                return true;
-            }
-            auto* executable = m_codeBlock->ownerExecutable();
-            if (!executable) {
-                return false;
-            }
+    bool isEval() const { return m_isEval; }
+    bool isConstructor() const { return m_isConstructor; }
+    bool isStrict() const { return m_isStrict; }
+    // No code block, or the one of a builtin without a source URL.
+    bool isNative() const { return m_isNative; }
+    bool isImplementationVisibilityPrivate() const { return m_isImplementationVisibilityPrivate; }
 
-            switch (executable->evalContextType()) {
-            case JSC::EvalContextType::None: {
-                return false;
-            }
-            case JSC::EvalContextType::FunctionEvalContext:
-            case JSC::EvalContextType::InstanceFieldEvalContext:
-                return true;
-            }
-        }
-
-        if (m_callee && m_callee->inherits<JSC::JSFunction>()) {
-            auto* function = uncheckedDowncast<JSC::JSFunction>(m_callee);
-            if (function->isHostFunction()) {
-                return false;
-            }
-        }
-
-        return false;
-    }
-    bool isConstructor() const
-    {
-        return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
-    }
+    // The JSC::StackFrame's own answers, and Zig::sourceURL() and Zig::functionName() of it.
+    bool hasLineAndColumnInfo() const { return m_hasLineAndColumnInfo; }
+    JSC::LineColumn lineColumn();
+    const WTF::String& frameSourceURL();
+    // With FunctionNameFlags::AddNewKeyword.
+    const WTF::String& stackLineFunctionName();
+    unsigned stackLineFunctionNameFlags();
 
 private:
     ALWAYS_INLINE String retrieveSourceURL();
@@ -152,9 +154,13 @@ private:
     bool calculateSourcePositions();
 };
 
-class JSCStackTrace {
+class JSCStackTrace final : public JSC::StackTraceSnapshot {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSCStackTrace);
+
 private:
     WTF::Vector<JSCStackFrame> m_frames;
+    // Lazy-initialized
+    WTF::String m_firstFrameExecutableSourceURL;
 
 public:
     JSCStackTrace()
@@ -169,11 +175,20 @@ public:
     size_t size() const { return m_frames.size(); }
     bool isEmpty() const { return m_frames.isEmpty(); }
     JSCStackFrame& at(size_t i) { return m_frames.at(i); }
+    // JSC::StackFrame::sourceURL() of at(0).
+    const WTF::String& firstFrameExecutableSourceURL();
 
     WTF::Vector<JSCStackFrame>&& frames() { return WTF::move(m_frames); }
 
-    // Drops private-visibility frames (present when Options::showPrivateScriptsInStackTraces() is on), so the result does not index like existingFrames.
+    // Reads existingFrames lazily, so they must outlive the result or its detachFromCells().
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
+
+    // Present when Options::showPrivateScriptsInStackTraces() is on. Call sites leave them out.
+    void removeImplementationVisibilityPrivateFrames();
+
+    void detachFromCells();
+    size_t sizeInBytes() const final;
+    void reconcileWeakReferencesAtGCEnd(JSC::VM&) final;
 
     static void getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit);
 

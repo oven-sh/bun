@@ -32,6 +32,7 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/VM.h"
 #include "ZigGlobalObject.h"
+#include "FormatStackTraceForJS.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 
@@ -584,8 +585,14 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         // we don't want to serialize JSC::StackFrame longer than we need to
         // so in this case, we parse the stack trace as a string
 
-        // This one intentionally calls getters.
-        JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
+        JSC::JSValue stackValue;
+        if (auto* snapshot = err->stackTraceSnapshot()) {
+            // As with the frames above, the stack stays unread: Error.prepareStackTrace is for whoever reads it.
+            stackValue = jsString(vm, Bun::formatStackTraceSnapshot(vm, *snapshot, err));
+        } else {
+            // This one intentionally calls getters.
+            stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
+        }
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (stackValue) {

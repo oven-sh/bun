@@ -942,9 +942,10 @@ describe("ModuleGraph matrix: many concurrent instances", () => {
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 // 7. error.stack × where the error is read × when it is first read × what became of the graph it
-//    came from. A stack is materialized on first access, or by JSC at the end of a collection that
-//    finds a frame of an unread trace dead; its text must be the same either way, from any reader,
-//    whether the graph whose modules are in the trace is alive, disposed or collected.
+//    came from. A stack is made on first access, from the trace's frames or from what JSC keeps of
+//    them at the end of a collection that finds one dead; it must be the same either way, as a string
+//    and as call sites, from any reader, whether the graph whose modules are in the trace is alive,
+//    disposed or collected.
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 describe("ModuleGraph matrix: error.stack reader × first read × origin graph", () => {
   // Throw and catch, and keep every call out of tail position: modules are strict, and a frame a
@@ -960,7 +961,7 @@ export function capture(message) {
     return error;
   }
 }
-// Two errors with the same trace: one to compare, one to find out how it was materialized.
+// Two errors with the same trace: one to read as a string, one to read as call sites.
 export function pair(message) {
   const errors = [capture(message), capture(message)];
   return errors;
@@ -986,16 +987,19 @@ import { join } from "node:path";
 const dir = import.meta.dir;
 const trace = process.argv[2];
 const tick = () => new Promise(resolve => setImmediate(resolve));
-// A collection that finds a frame of an unread trace dead makes the stack a string
+// A collection that finds a frame of an unread trace dead lets go of the frames
 // (ErrorInstance::reconcileWeakReferencesAtGCEnd); underDeadFrame() gives every trace such a frame.
 // Back to the event loop first, so nothing on the stack refers to what the cells dropped.
 async function collect() {
   await tick();
   Bun.gc(true);
 }
-// graph.run(...args) under a function that is garbage once it returns. Its frame is not one of the
-// graphs' modules, so graphFrames() leaves it out.
-const underDeadFrame = (graph, args) => new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}')(graph, args);
+// graph.run(...args) under a function that is garbage once it returns, and a WeakRef that tells when it
+// is collected. Its frame is not one of the graphs' modules, so graphFrames() leaves it out.
+const underDeadFrame = (graph, args) => {
+  const frame = new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}');
+  return [...frame(graph, args), new WeakRef(frame)];
+};
 
 // Whether a root reaches the graph that globalThis.__matrixProbe.weak points at. A WeakRef that still
 // derefs says only that the cell was marked, not that anything holds it; the debugging snapshot has
@@ -1037,9 +1041,9 @@ function rootReachesProbedGraph() {
 const other = new Bun.ModuleGraph();
 const otherModule = await other.import(join(dir, "other.mjs"));
 
-// Whether the collection materializes a given stack is not up to the test (it does when it finds one
-// of the trace's frames dead), so a cell that is read after the collection gets several pairs, each
-// under its own dead frame, and reports on the first one the collection materialized.
+// Whether the collection finds a frame of a given trace dead is not up to the test, so a cell that is
+// read after the collection gets several pairs, each under its own dead frame, and reports on the
+// first one whose frame was collected.
 const CANDIDATES = 4;
 
 // One origin graph per state, and CANDIDATES pairs of errors from it per cell. Everything that refers
@@ -1063,38 +1067,40 @@ const graphFrames = stack =>
     .filter((line, index) => index === 0 || /[\\/](origin|other)\.mjs:/.test(line))
     .map(line => line.replace(/\(?[^()]*[\\/]((?:origin|other)\.mjs:\d+:\d+)\)?/, "$1"));
 
-// How a first read finds a stack, seen on the error's twin (same trace, same dead frame): a
-// prepareStackTrace installed for the read is consulted only if the stack is not a string yet.
-function firstReadPath([, twin]) {
-  let consulted = false;
+// What a first read makes the stack from.
+const firstReadPath = ([, , frame]) => (frame.deref() === undefined ? "collected frames" : "frames");
+
+// The twin's stack as graphFrames() of the call sites an Error.prepareStackTrace gets.
+function callSites([, twin]) {
   const builtin = Error.prepareStackTrace;
-  Error.prepareStackTrace = () => ((consulted = true), "");
+  Error.prepareStackTrace = (error, sites) => [String(error), ...sites.map(site => "at " + site.getFunctionName() + " (" + site.getFileName() + ":" + site.getLineNumber() + ":" + site.getColumnNumber() + ")")].join("\n");
   try {
-    void twin.stack;
+    return graphFrames(twin.stack);
   } finally {
     Error.prepareStackTrace = builtin;
   }
-  return consulted ? "on access" : "early";
 }
 
 // A cell up to the point where the collection may pass over it. A cell with no collection is done here.
 function begin({ gc, firstRead, reader }, { keep, weak }, candidates) {
   const read = ([error]) => (reader === "origin" ? keep.origin.run(keep.originModule.read, error) : reader === "other" ? other.run(otherModule.read, error) : error.stack);
-  const state = { gc, firstRead, reader, read, weak, candidates, pair: undefined, path: undefined, before: undefined };
+  const state = { gc, firstRead, reader, read, weak, candidates, pair: undefined, path: undefined, before: undefined, sites: undefined };
   if (firstRead === "before" || gc === "none") {
     state.pair = candidates[0];
     state.path = firstReadPath(state.pair);
+    state.sites = callSites(state.pair);
   }
   if (firstRead === "before") state.before = read(state.pair);
   return state;
 }
 
-function finish({ gc, firstRead, reader, read, weak, candidates, pair, path, before }) {
+function finish({ gc, firstRead, reader, read, weak, candidates, pair, path, before, sites }) {
   for (const candidate of pair ? [] : candidates) {
     pair = candidate;
     path = firstReadPath(candidate);
-    if (path === "early") break;
+    if (path === "collected frames") break;
   }
+  sites ??= callSites(pair);
   const after = read(pair);
   // "alive": the WeakRef derefs. For an origin that was dropped, a WeakRef that still derefs is not
   // enough to call it kept (see rootReachesProbedGraph): "rooted" means something really holds it.
@@ -1104,7 +1110,7 @@ function finish({ gc, firstRead, reader, read, weak, candidates, pair, path, bef
     origin = rootReachesProbedGraph() ? "rooted" : "gone";
     delete globalThis.__matrixProbe;
   }
-  return { gc, firstRead, reader, path, stack: graphFrames(after), stable: before === undefined || before === after, origin };
+  return { gc, firstRead, reader, path, stack: graphFrames(after), sites, stable: before === undefined || before === after, origin };
 }
 
 // Every cell is set up first, and one collection passes over all of them.
@@ -1142,6 +1148,11 @@ void kept;
       "call other.mjs:2:18",
     ],
   };
+  // The twin is from the second capture() in pair().
+  const sites = {
+    "origin": frames["origin"].with(3, "pair origin.mjs:13:37"),
+    "origin+other": frames["origin+other"].with(3, "pair origin.mjs:13:37"),
+  };
 
   test.concurrent.each(["origin", "origin+other"] as const)("trace through %s", async trace => {
     await using proc = Bun.spawn({
@@ -1162,9 +1173,9 @@ void kept;
             gc,
             firstRead,
             reader,
-            // Only an unread stack that collections passed over is materialized by one.
-            path: firstRead === "after" && gc !== "none" ? "early" : "on access",
+            path: firstRead === "after" && gc !== "none" ? "collected frames" : "frames",
             stack: frames[trace],
+            sites: sites[trace],
             stable: true,
             origin: gc === "collected" ? "gone" : "alive",
           });

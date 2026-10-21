@@ -6196,7 +6196,12 @@ impl<'p, 's> Checker<'p, 's> {
         let files = self.files();
         let allows_ts = files.options.allow_importing_ts_extensions
             || is_declaration_file_name(files.module(importing).file_name());
-        if mode == ResolutionMode::Import && files.options.resolves_like_node {
+        let effective_mode = if mode == ResolutionMode::None {
+            files.default_resolution_mode_for_file(importing)
+        } else {
+            mode
+        };
+        if effective_mode == ResolutionMode::Import && files.options.resolves_like_node {
             return if allows_ts {
                 vec![Ending::Ts, Ending::Js]
             } else {

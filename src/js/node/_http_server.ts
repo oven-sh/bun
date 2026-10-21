@@ -87,10 +87,7 @@ const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
 const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
-// bun --hot: the http.Server that a native server with a hot id calls. Bun.serve() answers a listen() on an address
-// that such a server already serves with that server, and the http.Server of the earlier load keeps its handle.
-// null once the close() of an earlier http.Server stopped the native server. Not a property of the native server,
-// because console.log(server) prints those.
+// bun --hot: the http.Server that a native server with a hot id calls, or null once another http.Server stopped it.
 let nativeServerOwners: WeakMap<object, Server | null> | undefined;
 const SafeWeakMap = WeakMap;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
@@ -155,8 +152,7 @@ function markListenerGenerationClosed(self: Server, generation) {
 function emitCloseNTServer(this: Server, generation) {
   process.nextTick(markListenerGenerationClosed, this, generation);
 }
-// close() registers the reaction, so a server that listens holds none. 'close' still runs in the async context of
-// listen(). Node and net.Server run it in the context of close(): https://github.com/oven-sh/bun/pull/33719
+// 'close' keeps the async context of listen(). Node uses that of close(): https://github.com/oven-sh/bun/pull/33719
 function queueCloseNTServer(self: Server, stopped, generation) {
   const frame = generation.frame;
   generation.frame = undefined;
@@ -1224,8 +1220,7 @@ function lostListener(server: Server) {
   return owner !== undefined && owner !== server;
 }
 
-// bun --hot: `server` lost its listener. It keeps its handle and its connections, and checks their timeouts while it
-// has one.
+// bun --hot: `server` lost its listener. It checks the timeouts of its connections while it has one.
 function releaseListener(server: Server) {
   if (server[kTrackedConnections].size === 0) clearInterval(server[kConnectionsCheckingInterval]);
 }

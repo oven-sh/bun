@@ -72,7 +72,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "node_cluster_binding.rs": "runtime/node/node_cluster_binding.rs",
   "node_crypto_binding.rs": "runtime/node/node_crypto_binding.rs",
   "node_fs_binding.rs": "runtime/node/node_fs_binding.rs",
-  "node_http_binding.rs": "runtime/node/node_http_binding.rs",
   "node_net_binding.rs": "runtime/node/node_net_binding.rs",
   "node_quic_binding.rs": "runtime/node/node_quic_binding.rs",
   "node_zlib_binding.rs": "runtime/node/node_zlib_binding.rs",

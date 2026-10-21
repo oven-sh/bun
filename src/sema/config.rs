@@ -1343,7 +1343,7 @@ fn content_mappers(
             has_own_outputs,
         ) {
             problem.at = ConfigLocation::ContentMapper(index, b"package");
-            problems.push(problem);
+            problems.push(*problem);
             continue;
         }
         for source in &mapper.extensions {
@@ -1371,9 +1371,9 @@ fn resolve_content_mapper_manifest(
     containing_file: &[u8],
     mapper: &mut Mapper,
     has_own_outputs: bool,
-) -> Result<(), Problem> {
+) -> Result<(), Box<Problem>> {
     let package = mapper.package.clone();
-    let error = |code: u32| Problem::new(code, &[&package], ConfigLocation::Nowhere);
+    let error = |code: u32| Box::new(Problem::new(code, &[&package], ConfigLocation::Nowhere));
     let directory =
         crate::resolve::resolve_package_directory(host, session, &package, containing_file);
     let directory = directory.ok_or_else(|| error(18075))?;
@@ -1405,13 +1405,18 @@ fn resolve_content_mapper_manifest(
     for ExtensionRewrite { source, target } in &outputs {
         let mut both = [source, target].into_iter();
         if let Some(extension) = both.find(|it| content_mapper::contains_path_separator(it)) {
-            return Err(Problem::new(18123, &[extension], ConfigLocation::Nowhere));
+            let problem = Problem::new(18123, &[extension], ConfigLocation::Nowhere);
+            return Err(Box::new(problem));
         }
         if !content_mapper::is_valid_extension(source)
             || !content_mapper::is_valid_extension(target)
         {
             let args: [&[u8]; 3] = [&package, source, target];
-            return Err(Problem::new(18121, &args, ConfigLocation::Nowhere));
+            return Err(Box::new(Problem::new(
+                18121,
+                &args,
+                ConfigLocation::Nowhere,
+            )));
         }
     }
     mapper.name = text(b"name").to_vec();

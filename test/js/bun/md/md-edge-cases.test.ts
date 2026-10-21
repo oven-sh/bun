@@ -2012,6 +2012,7 @@ describe("loose and tight lists", () => {
       "<ul>\n<li>a</li>\n<li>\n<pre><code>code\n\nmore\n</code></pre>\ntext</li>\n</ul>\n",
     ],
     ["- ```\n  a\n\n- b\n", "<ul>\n<li>\n<pre><code>a\n\n</code></pre>\n</li>\n<li>b</li>\n</ul>\n"],
+    // cmark has this one loose, commonmark.js tight.
     ["- <pre>\n\n- b\n", "<ul>\n<li>\n<pre>\n\n</li>\n<li>b</li>\n</ul>\n"],
     // Nothing of the list is behind the blank line.
     ["- a\n-     code\n\nafter\n", `<ul>\n<li>a</li>\n<li>\n${code}</li>\n</ul>\n<p>after</p>\n`],

@@ -11,7 +11,6 @@ const UNUSED_EXPRESSION: Message = Message::new(
     "Expected an assignment or function call and instead saw an expression.",
 );
 
-/// The options.
 #[derive(Copy, Clone)]
 pub struct Config {
     allow_short_circuit: bool,
@@ -33,9 +32,9 @@ impl Config {
         }
     }
 
-    /// Whether evaluating `e` has no side effects. What is not known counts as having some.
+    /// True if evaluating `e` has no side effects. An unknown kind of expression counts as having some.
     fn is_disallowed(self, e: Expr) -> bool {
-        // It is disallowed if one of these is.
+        // `e` is disallowed if one of these is.
         let mut parts: SmallVec<[Expr; 4]> = smallvec![e];
         while let Some(e) = parts.pop() {
             let is_disallowed = match e.kind() {
@@ -96,13 +95,11 @@ fn looks_like_directive(statement: Stmt) -> bool {
     statement.as_expr().is_some_and(|e| e.as_string().is_some())
 }
 
-/// What has been asked about last, with where its first statement that does not look like a
-/// directive starts.
+/// Caches the last parent checked, with the start of its first statement that doesn't look like a directive.
 #[derive(Default)]
 pub struct Prologue<'a>(Option<(Node<'a>, u32)>);
 
-/// Whether `statement` is where a directive can be, even if the parser does not say that it is
-/// one, as for ES3.
+/// True if `statement` is where a directive can be, even if the parser doesn't mark it as one, as with ES3.
 fn is_in_directive_prologue<'a>(statement: Stmt<'a>, known: &mut Prologue<'a>) -> bool {
     if !looks_like_directive(statement) || !ast_utils::is_top_level_expression_statement(statement) {
         return false;
@@ -119,7 +116,7 @@ fn is_in_directive_prologue<'a>(statement: Stmt<'a>, known: &mut Prologue<'a>) -
     statement.span().start < end
 }
 
-/// The body of a program, a function or a namespace: what can start with directives.
+/// Returns the body of a program, function or namespace, which are the bodies that can start with directives.
 pub(super) fn body_with_directives(parent: Node<'_>) -> Option<List<'_, Stmt<'_>>> {
     match parent {
         Node::File(file) => Some(file.body()),
@@ -132,14 +129,13 @@ pub(super) fn body_with_directives(parent: Node<'_>) -> Option<List<'_, Stmt<'_>
     }
 }
 
-/// Whether [`check`] has nothing to say about `statement`, as about most: it is a call, an assignment or an `await`.
+/// Fast path: true if `statement` is a call, an assignment or an `await`, like most. [`check`] never reports those.
 #[inline]
-pub fn is_plainly_used(statement: Stmt) -> bool {
+pub fn is_obviously_used(statement: Stmt) -> bool {
     statement.as_expr().is_some_and(|e| matches!(e.tag(), ExprTag::Call | ExprTag::Assign | ExprTag::Await))
 }
 
-/// The whole rule, for an expression statement. typescript-eslint's rule of the same name is no
-/// different.
+/// The whole rule, for an expression statement. typescript-eslint's rule of the same name behaves the same.
 #[inline(never)]
 pub fn check<'a, R: Rule>(config: Config, statement: Stmt<'a>, prologue: &mut Prologue<'a>, cx: &Cx<'a, R>) {
     if let Some(e) = statement.as_expr()
@@ -173,7 +169,7 @@ impl Rule for NoUnusedExpressions {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if is_plainly_used(statement) {
+        if is_obviously_used(statement) {
             return;
         }
         let mut prologue = std::mem::take(&mut cx.state);

@@ -12,11 +12,11 @@ pub struct IdLength {
     properties: bool,
     exceptions: Vec<Box<[u8]>>,
     exception_patterns: Vec<Regex>,
-    /// An option of oxlint.
+    /// An oxlint option.
     check_generic: bool,
-    /// A name that starts with so many letters of ASCII has the right length, whatever follows them.
-    /// `usize::MAX`: no start tells.
-    enough: usize,
+    /// A name that starts with this many ASCII letters has a valid length, whatever follows them. `usize::MAX` if the
+    /// length can't be judged from a prefix.
+    sufficient_prefix_len: usize,
 }
 
 const TOO_SHORT: Message = Message::new(
@@ -36,7 +36,7 @@ const TOO_LONG_PRIVATE: Message = Message::new(
     "Identifier name '#{{name}}' is too long (> {{max}}).",
 );
 
-/// ESTree's `key.name`: the name of a key that is an `Identifier`, in brackets or not.
+/// ESTree's `key.name`: the name of a key that's an `Identifier`, computed or not.
 pub(super) fn key_identifier(key: Key<'_>) -> Option<Name<'_>> {
     match key.kind() {
         KeyKind::Ident(name) => Some(name),
@@ -45,7 +45,7 @@ pub(super) fn key_identifier(key: Key<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// Whether `head` is the `left` of the `for`-`in` or `for`-`of` loop `statement`.
+/// True if `head` is the `left` of the `for`-`in` or `for`-`of` loop `statement`.
 fn is_head_of<'a>(head: Stmt<'a>, statement: Stmt<'a>) -> bool {
     matches!(
         statement.kind(),
@@ -53,8 +53,7 @@ fn is_head_of<'a>(head: Stmt<'a>, statement: Stmt<'a>) -> bool {
     )
 }
 
-/// Whether `e` is the `left` of an assignment, of a default value in a pattern, or of a `for`-`in`
-/// or a `for`-`of` loop.
+/// True if `e` is the `left` of an assignment, of a default value in a pattern, or of a `for`-`in` or `for`-`of` loop.
 fn is_left(e: Expr) -> bool {
     match e.parent() {
         Node::Expr(parent) => parent.as_assign().is_some_and(|(_, target, _)| target == e),
@@ -72,8 +71,8 @@ fn is_left(e: Expr) -> bool {
     }
 }
 
-/// Whether `member`, an `a.b`, is what an assignment expression assigns to, or the value of a
-/// property of an object pattern that is not inside another pattern.
+/// True if `member`, an `a.b`, is the target of an assignment expression, or the value of a property in an object
+/// pattern that isn't nested in another pattern.
 fn is_assigned_member(member: Expr) -> bool {
     match member.parent() {
         Node::Expr(parent) => match parent.kind() {
@@ -91,7 +90,7 @@ fn is_assigned_member(member: Expr) -> bool {
     }
 }
 
-/// Whether `member` is a `MethodDefinition` or a `PropertyDefinition` of ESTree.
+/// True if `member` is an ESTree `MethodDefinition` or `PropertyDefinition`.
 fn is_definition(member: Member) -> bool {
     let flags = member.flags();
     !flags.contains(Flags::ABSTRACT)
@@ -107,24 +106,26 @@ fn is_definition(member: Member) -> bool {
 }
 
 impl IdLength {
-    /// Whether the name that `text` starts with has the right length by [`IdLength::enough`].
+    /// Fast path: true if [`IdLength::sufficient_prefix_len`] shows that the name at the start of `text` has a valid
+    /// length.
     #[inline]
-    fn is_right_by_its_start(&self, text: &[u8]) -> bool {
-        text.get(..self.enough)
+    fn has_valid_length_by_prefix(&self, text: &[u8]) -> bool {
+        text.get(..self.sufficient_prefix_len)
             .is_some_and(|it| it.iter().all(u8::is_ascii_alphabetic))
     }
 
-    /// The same for the name that is written at `start`.
+    /// Same for the name at offset `start`.
     #[inline]
-    fn is_right_at(&self, file: &File, start: u32) -> bool {
+    fn has_valid_length_at(&self, file: &File, start: u32) -> bool {
         file.text()
             .get(start as usize..)
-            .is_some_and(|it| self.is_right_by_its_start(it))
+            .is_some_and(|it| self.has_valid_length_by_prefix(it))
     }
 
-    /// What to report about an identifier named `name`, which is without its `#`, and the limit that the message names.
+    /// Returns what to report for an identifier named `name`, given without its `#`, and the limit that the message
+    /// mentions.
     fn problem(&self, name: &[u8], is_private: bool) -> Option<(Message, &'static str, f64)> {
-        if self.is_right_by_its_start(name) {
+        if self.has_valid_length_by_prefix(name) {
             return None;
         }
         let length = get_grapheme_count(name) as f64;
@@ -156,8 +157,8 @@ impl IdLength {
         (!is_exception).then_some(problem)
     }
 
-    /// Reports an identifier named `name` if its length is wrong. `at` is only asked then: where
-    /// to report it, or `None` if it is not in a place that the rule looks at.
+    /// Reports an identifier named `name` if its length is wrong. `at` is only called in that case. It returns where to
+    /// report, or `None` if the rule doesn't check the identifier in that position.
     #[inline]
     fn check<'a>(&self, cx: &mut Cx<'a, Self>, name: Name<'a>, at: impl Fn() -> Option<Span>) {
         if cx
@@ -168,7 +169,7 @@ impl IdLength {
         }
     }
 
-    /// `name` without its `#`, and its [`IdLength::problem`].
+    /// Returns `name` without its `#`, and its [`IdLength::problem`].
     #[inline(never)]
     fn problem_of<'a>(&self, name: Name<'a>) -> (&'a [u8], Option<(Message, &'static str, f64)>) {
         match name.bytes() {
@@ -177,20 +178,20 @@ impl IdLength {
         }
     }
 
-    /// What few names come to is not in the listeners.
+    /// Kept out of the listeners, because few names get this far.
     #[inline(never)]
     fn report<'a>(&self, cx: &Cx<'a, Self>, name: Name<'a>, at: &dyn Fn() -> Option<Span>) {
         if let (name, Some((message, limit, value))) = self.problem_of(name)
             && let Some(at) = at()
         {
-            let report = cx.report(at, message).called_with_the_name();
+            let report = cx.report(at, message).called_with_name();
             report
                 .data("name", name)
                 .data(limit, text::number_to_string(value));
         }
     }
 
-    /// The value `value`, named `name`, of a property of an object pattern with the key `key`.
+    /// Checks `value`, named `name`, the value of an object pattern property with the key `key`.
     fn property_of_pattern<'a>(
         &self,
         file: &File<'a>,
@@ -277,7 +278,7 @@ impl IdLength {
         });
     }
 
-    /// The key of a property of an object literal.
+    /// Checks the key of an object literal's property.
     #[inline]
     fn check_property<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         let Some(key) = prop.key() else {
@@ -288,7 +289,7 @@ impl IdLength {
         };
         let file = cx.file();
         self.check(cx, name, || {
-            // For oxlint the options of `import("a", { with: { type: "json" } })` are an object like another.
+            // For oxlint the options of `import("a", { with: { type: "json" } })` are an ordinary object.
             let is_attribute = match file.language().is_oxlint {
                 true => prop.is_import_attribute(),
                 false => is_import_attribute_key(prop),
@@ -300,8 +301,8 @@ impl IdLength {
         });
     }
 
-    /// The keys of `{ with: { key: "" } }` in `import("m", { with: { key: "" } })`, which ESLint has
-    /// as an object literal.
+    /// Checks the keys of `{ with: { key: "" } }` in `import("m", { with: { key: "" } })`, which is an object literal
+    /// in ESLint.
     #[inline(never)]
     fn check_import_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let Some(attributes) = ty.import_attributes() else {
@@ -338,12 +339,12 @@ impl IdLength {
     }
 }
 
-/// The rule of oxlint 1.87 is another one. It looks at every name that is declared, in types too, at every private name
-/// wherever it is written, and at the names of properties and members, but at no reference to a variable.
+/// oxlint 1.87's rule is a different one. It checks every declared name, including in types, every private name
+/// wherever it appears, and the names of properties and members, but no references to variables.
 impl IdLength {
     #[inline]
     fn check_ident<'a>(&self, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.is_right_at(cx.file(), name.start()) && !name.is_string() {
+        if !self.has_valid_length_at(cx.file(), name.start()) && !name.is_string() {
             self.check(cx, name.name(), || Some(name.span()));
         }
     }
@@ -382,7 +383,7 @@ impl IdLength {
         });
     }
 
-    /// The keys of an object pattern, but for `{ a: b }` and `{ a: { b } }`. `{ a = 1 }` is reported twice.
+    /// Checks the keys of an object pattern, except in `{ a: b }` and `{ a: { b } }`. `{ a = 1 }` is reported twice.
     #[inline(never)]
     fn check_keys_of_pattern<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let PatKind::Object(props) = pat.kind() else {
@@ -446,13 +447,13 @@ impl IdLength {
         }
     }
 
-    /// `e`: the target of an assignment, or the value of a property, which can be one of an object pattern. There are far
-    /// fewer of these than there are `a.b`.
+    /// `e` is the target of an assignment, or the value of a property, possibly in an object pattern. There are far
+    /// fewer of these than there are `a.b` expressions.
     #[inline]
     fn check_assigned<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(start) = e.member_name_start()
-            && !self.is_right_at(cx.file(), start)
-            // The rule of oxlint comes to a private name on its own.
+            && !self.has_valid_length_at(cx.file(), start)
+            // oxlint's rule visits private names separately.
             && !(cx.language().is_oxlint && e.is_private_member())
         {
             self.check_member_expression(e, cx);
@@ -472,7 +473,7 @@ impl IdLength {
         }
     }
 
-    /// `a.b`: a private name, or what an assignment or a property of an object pattern assigns to.
+    /// Checks `a.b`: a private name, or the target of an assignment or of an object pattern property.
     fn check_member_expression_as_oxlint<'a>(
         &self,
         e: Expr<'a>,
@@ -493,7 +494,7 @@ impl IdLength {
         });
     }
 
-    /// The names in types that refer to no variable.
+    /// Checks the names in types that don't refer to a variable.
     #[inline(never)]
     fn check_type_as_oxlint<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match ty.kind() {
@@ -563,7 +564,7 @@ impl Rule for IdLength {
         .type_params()
         .enum_members()
         .import_specs();
-    /// Whether the length of each name that has been seen is wrong.
+    /// For each name seen so far, whether its length is wrong.
     type State<'a> = ByName<bool>;
 
     fn new(options: &Options) -> Self {
@@ -583,7 +584,7 @@ impl Rule for IdLength {
                 .filter_map(|it| Regex::new(it, "u").ok())
                 .collect(),
             check_generic: options.bool_or("checkGeneric", true),
-            enough: match max == f64::INFINITY {
+            sufficient_prefix_len: match max == f64::INFINITY {
                 true => min.ceil() as usize,
                 false => usize::MAX,
             },
@@ -622,7 +623,7 @@ impl Rule for IdLength {
             if self.properties {
                 on = on.pats(&[PatTag::Object]).props().exprs(&[ExprTag::Assign]);
             }
-            // The private names, wherever they are written.
+            // Private names, wherever they appear.
             if strings::contains_char(file.text(), b'#') {
                 on = on.exprs(&[ExprTag::Dot, ExprTag::PrivateIdentifier]);
             }
@@ -682,7 +683,7 @@ impl Rule for IdLength {
 
     #[inline]
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        // As nearly all are that oxlint's rule is called with.
+        // Fast path, since nearly all the types that oxlint's rule is called with look like this.
         if ty.as_ref().is_some_and(|(name, _)| name.len() == 1) {
             return;
         }

@@ -12,6 +12,7 @@ const transferToNativeReadable = $newCppFunction(
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
+const { reportUncaughtException } = require("internal/shared");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -37,6 +38,7 @@ interface NativeReadable extends NodeReadable {
     buffer: unknown[];
     bufferIndex: number;
     length: number;
+    errorEmitted: boolean;
     emitClose: boolean;
   };
   $bunNativePtr: NativePtr | undefined;
@@ -79,13 +81,7 @@ function constructNativeReadable(
 
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;
-  if (nodeSource === "libuv-handle") {
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L414-L415
-    stream._readableState.emitClose = false;
-    stream._destroy = destroyHandle;
-  } else {
-    stream._destroy = destroy;
-  }
+  stream._destroy = nodeSource === "libuv-handle" ? destroyHandle : destroy;
 
   if (!!$debug) {
     stream.debugId = ++debugId;
@@ -274,36 +270,41 @@ function adjustHighWaterMark(stream: NativeReadable) {
   stream[kHasResized] = true;
 }
 
-function cancelSource(stream: NativeReadable, error: any) {
-  const ptr = stream.$bunNativePtr;
+function destroy(this: NativeReadable, error: any, cb: () => void) {
+  const ptr = this.$bunNativePtr;
   if (ptr) {
     ptr.cancel(error);
   }
-  dropReadAhead(stream);
-}
-
-function destroy(this: NativeReadable, error: any, cb: (error?: any) => void) {
-  cancelSource(this, error);
+  dropReadAhead(this);
   if (cb) {
     // `_destroy` reports its error through the callback.
     process.nextTick(cb, error);
   }
 }
 
-// As net.Socket, 'close' is armed before cb() and does not wait for 'error': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L897-L906
+// The stream layer emits 'error' and 'close' in one tick, so an 'error' emit that throws loses 'close'. A net.Socket
+// emits 'close' from its handle and does not lose it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L897-L906
 function destroyHandle(this: NativeReadable, error: any, cb: (error?: any) => void) {
-  cancelSource(this, error);
-  // Two ticks put 'close' behind 'error', where the stream layer emits it. An immediate (net.ts) keeps the loop alive after a fatal error.
-  process.nextTick(queueClose, this, !!error);
-  cb(error);
+  if (error) {
+    const finish = cb;
+    cb = () => {
+      // Runs right before the tick that finish() queues, which then has only 'close' left to emit.
+      process.nextTick(emitError, this, error);
+      finish(error);
+    };
+  }
+  destroy.$call(this, error, cb);
 }
 
-function queueClose(stream: NativeReadable, hadError: boolean) {
-  process.nextTick(emitClose, stream, hadError);
-}
-
-function emitClose(stream: NativeReadable, hadError: boolean) {
-  stream.emit("close", hadError);
+function emitError(stream: NativeReadable, error: any) {
+  const state = stream._readableState;
+  state.errorEmitted = true;
+  try {
+    stream.emit("error", error);
+  } catch (e) {
+    // Node exits at a fatal error, so no 'close' listener runs after one.
+    if (!reportUncaughtException(e)) state.emitClose = false;
+  }
 }
 
 // `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not.

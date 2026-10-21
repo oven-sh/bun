@@ -84,18 +84,18 @@ pub fn set_sampling_profiler_directory(this: &mut VirtualMachine, directory: &Bu
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 
+/// Returns false when nothing handled the error, which makes it fatal.
 // HOST_EXPORT(Bun__reportUnhandledError, c)
-pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
+pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> bool {
     crate::mark_binding!();
 
     // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
     // the frames still unwinding above the caller, up to the landing frame (WebCore::reportException alike).
-    if !value.is_termination_exception() {
-        let _ = global
+    value.is_termination_exception()
+        || global
             .bun_vm()
             .as_mut()
-            .uncaught_exception(global, value, false);
-    }
+            .uncaught_exception(global, value, false)
 }
 
 /// `ScriptExecutionContext::postTask` — the context addresses the thread's VM

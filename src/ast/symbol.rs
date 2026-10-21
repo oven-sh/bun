@@ -110,8 +110,8 @@ bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
         /// A nested scope declares this module-level `var` again, and the name
-        /// can resolve to this symbol there. That declaration can assign the
-        /// variable, and a read there can run before this symbol's declaration.
+        /// resolves to this symbol there. That declaration can assign the
+        /// variable.
         const REDECLARED_IN_NESTED_SCOPE = 1 << 0;
 
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;

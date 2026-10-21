@@ -3490,8 +3490,7 @@ describe("bundler", () => {
     },
   });
   // These files are wrapped in `__esm`, which moves a top-level `var x = value`
-  // above the wrapper. Not for a `var` that a block declares again: a read in
-  // that block can run before the top-level declaration does.
+  // above the wrapper if the value has no side effects.
   itBundled("dce/VarRedeclaredInNestedBlockOfWrappedFile", {
     files: {
       "/entry.js": /* js */ `
@@ -3506,14 +3505,10 @@ describe("bundler", () => {
         }
       `,
       "/imported.js": /* js */ `
+        export var moved = function () {};
         if (globalThis.process) {
-          var early;
-          console.log(typeof early);
-        }
-        export var early = function () {};
-        if (globalThis.process) {
-          var early;
-          console.log(typeof early);
+          var moved;
+          console.log(typeof moved);
         }
       `,
     },
@@ -3521,7 +3516,28 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("__esm(");
     },
     run: {
-      stdout: "required\nundefined\nfunction",
+      stdout: "required\nfunction",
+    },
+  });
+  // Not fixed: the value that `__esm` moves above the wrapper is there before
+  // the declaration runs, so this read prints "function". The same file
+  // without the block's `var` prints that too.
+  itBundled("dce/VarReadInNestedBlockBeforeItsDeclarationOfWrappedFile", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        await import("./imported.js");
+      `,
+      "/imported.js": /* js */ `
+        if (globalThis.process) {
+          var early;
+          console.log(typeof early);
+        }
+        export var early = function () {};
+      `,
+    },
+    run: {
+      stdout: "undefined",
     },
   });
   itBundled("dce/VarRedeclaredInNestedBlockMinified", {
@@ -3642,6 +3658,33 @@ describe("bundler", () => {
       },
     });
   }
+  // A block that declares a top-level function again as a `var` does not
+  // change how the blocks after it resolve their own `var`.
+  itBundled("dce/VarRedeclaredInNestedBlockAfterFunctionRedeclaredAsVar", {
+    files: {
+      "/entry.js": /* js */ `
+        var before = { v: "before" };
+        if (globalThis.process) {
+          var before;
+          console.log(before.v);
+        }
+
+        function f() {}
+        if (globalThis.process) {
+          var f;
+        }
+
+        var after = { v: "after" };
+        if (globalThis.process) {
+          var after;
+          console.log(after.v);
+        }
+      `,
+    },
+    run: {
+      stdout: "before\nafter",
+    },
+  });
   // Not fixed: a function declaration that a block declares again as a `var`.
   // The bundle drops the function, and `f()` throws "f is not a function".
   itBundled("dce/FunctionRedeclaredAsVarInNestedBlock", {
@@ -3677,6 +3720,34 @@ describe("bundler", () => {
     },
     run: {
       stdout: "10\n11",
+    },
+  });
+  // The importer of an `__esm`-wrapped file reads the first value of a `var`
+  // that the file declares again. A `for` head without initializer and a body
+  // without braces keep their own `var` inside the wrapper, so a store that
+  // stays in the wrapper does not reach the export.
+  itBundled("dce/VarRedeclaredInStatementThatKeepsItsVarOfWrappedFile", {
+    files: {
+      "/entry.js": /* js */ `
+        const imported = await import("./imported.js");
+        console.log(imported.inLoopHead, imported.inBodyWithoutBraces);
+      `,
+      "/imported.js": /* js */ `
+        export var inLoopHead = 10;
+        for (var inLoopHead; false; );
+
+        export var inBodyWithoutBraces = "kept";
+        if (globalThis.process) {
+          var inBodyWithoutBraces;
+        }
+        while (!globalThis.once) var inBodyWithoutBraces = ((globalThis.once = true), inBodyWithoutBraces);
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm(");
+    },
+    run: {
+      stdout: "10 kept",
     },
   });
   // A macro result is inlined as a constant. Not into a `var` that a nested

@@ -302,8 +302,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
 
-    /// Some symbol has `SymbolFlags::REDECLARED_IN_NESTED_SCOPE`.
-    pub(crate) has_var_redeclared_in_nested_scope: bool,
+    /// As above, with the `var` at the top level too. `hoist_symbols` sets the
+    /// flag above for a `var` in a nested block, part of the way through its walk.
+    pub(crate) has_top_level_function_and_var_of_one_name: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
@@ -3325,6 +3326,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
         }
 
+        self.has_top_level_function_and_var_of_one_name =
+            self.has_top_level_function_merged_with_var;
         self.hoist_symbols(self.module_scope_ref());
 
         let mut generated_symbols_count: u32 = 3;
@@ -3611,20 +3614,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // goes on up the scope chain, and a use in the block is a use
                                 // of the module scope's symbol. Left as they are: a sloppy
                                 // block-level function (another variable), a `var` in a file
-                                // where a top-level function and a `var` share a name (module
-                                // code rejects the function next to the block's relocated
-                                // `var`), and the CommonJS `module` and `exports`.
+                                // whose top level declares a function and a `var` of one name
+                                // (module code rejects that pair, so no use may keep it), and
+                                // the CommonJS `module` and `exports`.
                                 if _scope_ptr == self.module_scope
                                     && value.ref_ == original_member_ref
                                     && self.symbols[symbol_idx].kind
                                         == js_ast::symbol::Kind::Hoisted
                                     && existing_kind == js_ast::symbol::Kind::Hoisted
-                                    && !self.has_top_level_function_merged_with_var
+                                    && !self.has_top_level_function_and_var_of_one_name
                                     && (self.has_es_module_syntax
                                         || (name != b"module" && name != b"exports"))
                                 {
                                     self.symbols[existing_idx].set_redeclared_in_nested_scope(true);
-                                    self.has_var_redeclared_in_nested_scope = true;
                                     scope.members.remove_hashed(hash.unwrap(), name);
                                 }
 
@@ -9521,10 +9523,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// logic in `LinkerContext.generateCodeForFileInChunkJS`
     fn needs_wrapper_ref(&self, parts: &[js_ast::Part]) -> bool {
         debug_assert!(self.options.bundle);
-        // The linker keeps the initializer of such a `var` inside the wrapper.
-        if self.has_var_redeclared_in_nested_scope {
-            return true;
-        }
         for part in parts {
             // Part.stmts is an arena-owned slice valid for 'a.
             for stmt in part.stmts.iter() {
@@ -9770,7 +9768,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
-            has_var_redeclared_in_nested_scope: false,
+            has_top_level_function_and_var_of_one_name: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

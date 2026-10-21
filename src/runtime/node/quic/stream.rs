@@ -303,10 +303,11 @@ impl QuicStream {
     /// Sends one header block and returns whether the stream took it.
     ///
     /// A `frameless` block (see `send_headers`) is not handed to lsquic on a
-    /// request stream (bidirectional, on an HTTP/3 session) whose send side is
-    /// open: the one place lsquic is sure to take a header block. With `eos`
-    /// it also needs an earlier block, because lsquic resets a request stream
-    /// whose FIN comes before one. Anywhere else the call to lsquic decides.
+    /// bidirectional stream whose send side is open. With `eos` lsquic must
+    /// also have taken a block before: it resets a request stream whose FIN
+    /// comes before one, and it holds the FIN back while that block waits for
+    /// flow control. lsquic refuses a block during that wait, and a frameless
+    /// one is accepted here. Anywhere else the call to lsquic decides.
     fn put_header_block(
         &self,
         s: lsquic::Stream,
@@ -318,7 +319,6 @@ impl QuicStream {
         if frameless
             && (!eos || self.headers_sent.get())
             && self.stream_id() & STREAM_ID_UNI_BIT == 0
-            && self.session_ref().is_some_and(QuicSession::is_http)
             && self.with_state(|s| s.fin_sent == 0 && s.write_ended == 0)
         {
             return true;
@@ -1014,8 +1014,11 @@ impl QuicStream {
         let kind = kind_arg.coerce_to_i32(global)? as u32;
         let eos = kind == QUIC_STREAM_HEADERS_KIND_TRAILING
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
-        // As node's nghttp3 does, hints or trailers with no field lines put no
-        // HEADERS frame on the wire: hints send nothing, trailers only the FIN.
+        // Hints or trailers with no field lines put no HEADERS frame on the
+        // wire: hints send nothing, trailers only the FIN. A peer whose QPACK
+        // decoder fails an empty field section (ls-qpack without Bun's patch)
+        // closes the connection on that frame. Node sends none either.
+        // `put_header_block` has the conditions.
         let frameless = header_count == 0 && kind != QUIC_STREAM_HEADERS_KIND_INITIAL;
         let Some(s) = self.ls() else {
             self.pending_headers

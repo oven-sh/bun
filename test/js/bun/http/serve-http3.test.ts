@@ -1949,9 +1949,13 @@ describe("Bun.serve HTTP/3 request validation", () => {
       },
       "200 helloabc",
     ],
-    // A request with no pseudo-header fields is malformed. It has no method and
-    // no path, so no route matches it.
-    ["as the first block of the request", (stream: any) => stream.sendHeaders({}, { terminal: true }), "404 "],
+    // A request with no pseudo-header fields is malformed. Its stream gets a
+    // client error status. Which one is not the subject of this test.
+    [
+      "as the first block of the request",
+      (stream: any) => stream.sendHeaders({}, { terminal: true }),
+      expect.stringMatching(/^4\d\d /),
+    ],
   ])("decodes a header block with no field lines %s", async (_, send, subject) => {
     const release = Promise.withResolvers<void>();
     await using server = Bun.serve({

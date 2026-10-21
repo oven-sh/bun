@@ -646,11 +646,6 @@ impl QuicSession {
     pub(super) fn is_server(&self) -> bool {
         self.is_server.get()
     }
-    /// Whether the lsquic engine of this session runs in HTTP/3 mode.
-    pub(super) fn is_http(&self) -> bool {
-        self.endpoint_ref()
-            .is_some_and(|ep| ep.is_http(self.is_server.get()))
-    }
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
     }

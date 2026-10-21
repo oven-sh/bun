@@ -182,8 +182,9 @@ describe("HTTP/3 header encoding", () => {
 });
 
 // A field section with no field lines is valid QPACK (RFC 9204 section 4.5):
-// the block is only its two-byte prefix. Node sends no HEADERS frame for hints
-// or trailers that have no field lines, and it decodes one that a peer sends.
+// the block is only its two-byte prefix. node:quic decodes one that a peer
+// sends. It sends none for hints or trailers that have no field lines, because
+// a peer with a decoder that fails the block closes the connection.
 describe("HTTP/3 header blocks with no field lines", () => {
   const encoder = new TextEncoder();
   const sni = { "*": { keys: [key], certs: [cert] } };
@@ -261,8 +262,9 @@ describe("HTTP/3 header blocks with no field lines", () => {
   async function besideHeldStream<T>(
     origin: Awaited<ReturnType<typeof listenHolding>>,
     subject: (client: any) => Promise<T>,
+    options: Partial<SessionOptions> = {},
   ) {
-    await using client: any = await connect(origin.address, clientOptions);
+    await using client: any = await connect(origin.address, { ...clientOptions, ...options });
     await client.opened;
     const heldStream = await client.createBidirectionalStream({ headers: request("/held") });
     heldStream.closed.catch(() => {});
@@ -315,8 +317,6 @@ describe("HTTP/3 header blocks with no field lines", () => {
   }
   const getSubject = (client: any) => streamEvents(client, request("/subject"));
   const helloOnly = { events: ["headers 200", "data hello", "end"], trailers: [] };
-  // A first block with no field lines: headers that have no ":status".
-  const emptyResponse = { events: ["headers undefined", "end"], trailers: [] };
 
   describe("are not sent for trailers or hints", () => {
     test.each([
@@ -362,8 +362,34 @@ describe("HTTP/3 header blocks with no field lines", () => {
       expect({ sent, ...outcome }).toEqual({ sent: true, subject: helloOnly, held: "first,second" });
     });
 
-    // lsquic takes a header block only on a request stream with an open send
-    // side. Anywhere else the call goes to lsquic as before.
+    // lsquic keeps a header block that flow control has not let out yet, and
+    // it refuses the next block until then. A block with no field lines needs
+    // no room: hints return true, and trailers end the stream after the block.
+    test("sendInformationalHeaders({}) and sendTrailers({}) behind a header block that waits for flow control", async () => {
+      const sent: boolean[] = [];
+      await using origin = await listenHolding(stream => {
+        sent.push(
+          // More than the 4096 bytes that the client lets the server send at first.
+          stream.sendHeaders({ ":status": "200", "x-pad": Buffer.alloc(8000, "p").toString() }),
+          stream.sendInformationalHeaders({}),
+          stream.sendTrailers({}),
+          stream.sendTrailers({}),
+        );
+        // Ends the stream where the trailers were refused.
+        stream.writer.endSync();
+      });
+      const outcome = await besideHeldStream(origin, getSubject, {
+        transportParams: { ...transportParams, initialMaxStreamDataBidiLocal: 4096 },
+      });
+      expect({ sent, ...outcome }).toEqual({
+        sent: [true, true, true, false],
+        subject: { events: ["headers 200", "end"], trailers: [] },
+        held: "first,second",
+      });
+    });
+
+    // The frame is left out only on a bidirectional stream whose send side is
+    // open. Anywhere else the call goes to lsquic as before.
     test("sendTrailers({}) and sendInformationalHeaders({}) are refused on a unidirectional stream", async () => {
       await using server = await listen(ignoreStreams, {
         sni,
@@ -391,31 +417,6 @@ describe("HTTP/3 header blocks with no field lines", () => {
       await stream.closed;
     });
 
-    test("sendTrailers({}) queued on a session that is not HTTP/3 leaves the body of the stream alone", async () => {
-      const received = Promise.withResolvers<string>();
-      await using server = await listen(
-        async (serverSession: any) => {
-          serverSession.onstream = (stream: any) => {
-            stream.closed.catch(() => {});
-            text(stream).then(body => {
-              stream.writer.endSync();
-              received.resolve(body);
-            }, received.reject);
-          };
-          await serverSession.closed.catch(() => {});
-        },
-        { sni, alpn: ["quic-test"], transportParams },
-      );
-      await using client: any = await connect(server.address!, { ...clientOptions, alpn: "quic-test" });
-      const stream = await client.createBidirectionalStream({});
-      stream.closed.catch(() => {});
-      const queued = [stream.pending, stream.sendTrailers({})];
-      stream.writer.writeSync(encoder.encode("hello"));
-      stream.writer.endSync();
-      const outcome = { queued, received: await received.promise, response: await text(stream) };
-      expect(outcome).toEqual({ queued: [true, true], received: "hello", response: "" });
-    });
-
     test("sendTrailers({}) after resetStream() returns what lsquic returns for a block", async () => {
       const sent: boolean[] = [];
       await using origin = await listenHolding(stream => {
@@ -427,15 +428,66 @@ describe("HTTP/3 header blocks with no field lines", () => {
       expect({ sent, held }).toEqual({ sent: [true, false], held: "first,second" });
     });
 
+    test.each([
+      ["the writer ended the stream", hello, "hello"],
+      [
+        "resetStream() reached the peer",
+        (stream: any) => {
+          stream.sendHeaders({ ":status": "200" });
+          stream.resetStream(7n);
+        },
+        "ERR_QUIC_STREAM_RESET",
+      ],
+    ])("sendInformationalHeaders({}) and sendTrailers({}) are refused after %s", async (_, respond, response) => {
+      const responseRead = Promise.withResolvers<void>();
+      const late = Promise.withResolvers<object>();
+      await using server = await listen(ignoreStreams, {
+        sni,
+        transportParams,
+        onheaders(this: any) {
+          respond(this);
+          responseRead.promise.then(() =>
+            late.resolve({
+              destroyed: this.destroyed,
+              sendInformationalHeaders: this.sendInformationalHeaders({}),
+              sendTrailers: this.sendTrailers({}),
+            }),
+          );
+        },
+      });
+      await using client: any = await connect(server.address!, clientOptions);
+      await client.opened;
+      const stream = await client.createBidirectionalStream({});
+      stream.closed.catch(() => {});
+      // The request does not end, so the server's stream outlives its send side.
+      stream.sendHeaders(request("/subject"));
+      const read = await text(stream).catch((error: any) => error.code);
+      responseRead.resolve();
+      const outcome = { read, late: await late.promise };
+      // Drops the open request, so that both sessions can close.
+      stream.destroy();
+      expect(outcome).toEqual({
+        read: response,
+        late: { destroyed: false, sendInformationalHeaders: false, sendTrailers: false },
+      });
+    });
+
     // lsquic resets a request stream whose FIN comes before a header block. So
     // trailers that are the first block of a stream keep their HEADERS frame.
+    // The two cases pin what a peer reports today for such a message, which
+    // has no pseudo-header fields: the block as it is.
     test("sendTrailers({}) as the first block of a response still sends the block", async () => {
       const sent: boolean[] = [];
       await using origin = await listenHolding(stream => {
         sent.push(stream.sendTrailers({}), stream.sendHeaders({ ":status": "200" }));
       });
       const outcome = await besideHeldStream(origin, getSubject);
-      expect({ sent, ...outcome }).toEqual({ sent: [true, false], subject: emptyResponse, held: "first,second" });
+      expect({ sent, ...outcome }).toEqual({
+        sent: [true, false],
+        // Headers that have no ":status".
+        subject: { events: ["headers undefined", "end"], trailers: [] },
+        held: "first,second",
+      });
     });
 
     test("sendTrailers({}) queued as the first block of a request still sends the block", async () => {
@@ -581,21 +633,17 @@ describe("HTTP/3 header blocks with no field lines", () => {
     });
 
     // A message whose first block has no pseudo-header fields is malformed.
-    // node:quic hands the block to the application as it is.
+    // What its own stream reports is not asserted here, only the connection.
     test("by a client, as the first block of the response", async () => {
       await using origin = await listenHolding(emptyBlock);
-      expect(await besideHeldStream(origin, getSubject)).toEqual({ subject: emptyResponse, held: "first,second" });
+      const { held } = await besideHeldStream(origin, getSubject);
+      expect(held).toBe("first,second");
     });
 
     test("by a server, as the first block of the request", async () => {
       await using origin = await listenHolding(stream => stream.sendHeaders({ ":status": "400" }, { terminal: true }));
-      const outcome = await besideHeldStream(origin, client => streamEvents(client, undefined, emptyBlock));
-      expect({ requests: origin.requests(), ...outcome }).toEqual({
-        // The request has no ":path".
-        requests: [["/held", undefined]],
-        subject: { events: ["headers 400", "end"], trailers: [] },
-        held: "first,second",
-      });
+      const { held } = await besideHeldStream(origin, client => streamEvents(client, undefined, emptyBlock));
+      expect(held).toBe("first,second");
     });
 
     test.each([

@@ -350,6 +350,45 @@ describe("_idleStart", () => {
   });
 });
 
+it.each([
+  ["Timeout", () => setTimeout(() => {}, 1000)],
+  ["Immediate", () => setImmediate(() => {})],
+] as const)("new %s() throws", (name, create) => {
+  using timer = create();
+  expect(timer.constructor.name).toBe(name);
+  // @ts-expect-error
+  expect(() => new timer.constructor()).toThrow(
+    expect.objectContaining({ name: "TypeError", code: "ERR_ILLEGAL_CONSTRUCTOR", message: "Illegal constructor" }),
+  );
+});
+
+describe("symbol-keyed methods", () => {
+  const timeout = setTimeout(() => {}, 1000);
+  const immediate = setImmediate(() => {});
+  clearTimeout(timeout);
+  clearImmediate(immediate);
+
+  it.each([
+    ["Timeout", Symbol.dispose, timeout],
+    ["Timeout", Symbol.toPrimitive, timeout],
+    ["Immediate", Symbol.dispose, immediate],
+    // Not in Node.
+    ["Immediate", Symbol.toPrimitive, immediate],
+  ] as const)(
+    "%s.prototype[%p] has no name and no parameters, and is writable, configurable and not enumerable",
+    (name, symbol, timer) => {
+      const { value, ...attributes } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer), symbol)!;
+      expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+        name: "",
+        length: 0,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    },
+  );
+});
+
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {
   // TODO(@190n) #17901 did not fix this for Windows
   it.todoIf(isWindows && mode == "with")(

@@ -591,7 +591,7 @@ impl ShellSubprocess {
         let _ = &inherited_env_storage;
 
         // Until ownership transfers into Writable/Readable, deinit any caller-provided
-        // stdio resources (memfd, Blob) on early return so they aren't leaked
+        // stdio resources (Blob) on early return so they aren't leaked
         // (`redirect_stdout`/`redirect_stderr` drop with `spawn_args`). Defused via
         // `ScopeGuard::into_inner` once consumed.
         let mut stdio_guard = scopeguard::guard(&mut spawn_args.stdio, |stdio| {
@@ -949,8 +949,6 @@ pub enum Writable {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
     Inherit,
     Ignore,
 }
@@ -1038,7 +1036,7 @@ impl Writable {
                 Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
-                Stdio::Ipc | Stdio::Capture(_) => {
+                Stdio::Ipc | Stdio::Capture => {
                     return Ok(Writable::Ignore);
                 }
                 Stdio::SocketFd => {
@@ -1079,23 +1077,10 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )))
                 }
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                Stdio::Memfd(memfd) => {
-                    debug_assert!(memfd.is_valid());
-                    let fd = *memfd;
-                    // Ownership of the fd transfers to `Writable::Memfd`.
-                    // Swap in `Ignore` and suppress the old value's destructor
-                    // so `Stdio::Drop` doesn't close the fd we just took
-                    // (`stdio = Stdio::Ignore` alone would drop+close the old
-                    // `Stdio::Memfd`).
-                    let _ =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    Ok(Writable::Memfd(fd))
-                }
                 Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
                 Stdio::Inherit => Ok(Writable::Inherit),
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-                Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
+                Stdio::Ipc | Stdio::Capture => Ok(Writable::Ignore),
                 Stdio::ReadableStream(_) => {
                     // The shell never uses this
                     panic!("Unimplemented stdin readable_stream");
@@ -1126,11 +1111,6 @@ impl Writable {
                 // `buffer` drops here with the variant already `Ignore`, so a
                 // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd(fd) => {
-                fd.close();
-                *self = Writable::Ignore;
-            }
             Writable::Ignore => {}
             Writable::Fd(_) | Writable::Inherit => {}
         }
@@ -1143,8 +1123,6 @@ impl Writable {
 
 pub(crate) enum Readable {
     Fd,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
     Pipe(Rc<PipeReader>),
     Inherit,
     Ignore,
@@ -1231,7 +1209,7 @@ impl Readable {
     ) -> Readable {
         assert_stdio_result!(result);
 
-        debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture(_)));
+        debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture));
         let buffered_output = match redirect_buf {
             Some(buf) => BufferedOutput::ArrayBuffer { buf, i: 0 },
             None => BufferedOutput::default(),
@@ -1257,7 +1235,7 @@ impl Readable {
                     out_type,
                     interp,
                 )),
-                Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
+                Stdio::Capture => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
                     result,
@@ -1282,16 +1260,6 @@ impl Readable {
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                Stdio::Memfd(memfd) => {
-                    let fd = *memfd;
-                    // Ownership of the fd transfers to `Readable::Memfd`. Swap in
-                    // `Ignore` and suppress the old value's destructor so
-                    // `Stdio::Drop` doesn't close the fd we just took.
-                    let _ =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    Readable::Memfd(fd)
-                }
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
@@ -1301,7 +1269,7 @@ impl Readable {
                     out_type,
                     interp,
                 )),
-                Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
+                Stdio::Capture => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
                     result,
@@ -1319,11 +1287,6 @@ impl Readable {
 
     pub(crate) fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(fd) => {
-                *self = Readable::Closed;
-                fd.close();
-            }
             // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
             // a CowFd redirect; the owner closes it.
             Readable::Fd => {

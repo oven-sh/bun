@@ -1,5 +1,5 @@
 import { heapStats } from "bun:jsc";
-import { afterAll, expect, it, test } from "bun:test";
+import { afterAll, expect, it, jest, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import fs from "node:fs";
 import { join } from "node:path";
@@ -117,15 +117,46 @@ test("in a ShadowRealm, fs.readFileSync(file) is a Buffer", () => {
   expect(sharedRealm().evaluate(`fs.readFileSync(file) instanceof Buffer`)).toBe(true);
 });
 
-// Natives that do not complete through a thread-pool job still hand a ShadowRealm objects of the
-// main realm. Observed for both: "main realm".
-test.todo("in a ShadowRealm, the reason of AbortSignal.timeout() is an object of that realm", async () => {
+// A fetch() that fails for another reason than the timeout is rejected with an error of the realm
+// too, so the name is checked first.
+const timedOutFetch = args =>
+  `fetch(${args}).catch(error => (error.name === "TimeoutError" ? error : "rejected with " + error.name))`;
+
+// The timer of AbortSignal.timeout() is not a job either. It builds the reason in the realm of
+// the signal's wrapper, and fetch() rejects with that reason.
+test("in a ShadowRealm, the reason of AbortSignal.timeout() is an object of that realm", async () => {
   const reason = `new Promise(resolve => {
     const signal = AbortSignal.timeout(1);
     signal.addEventListener("abort", () => resolve(signal.reason));
   })`;
   expect(await settledIn(sharedRealm(), reason)).toBe("own realm");
+
+  await using server = Bun.serve({ port: 0, fetch: () => new Promise(() => {}) });
+  const rejection = timedOutFetch(`${JSON.stringify(server.url.href)}, { signal: AbortSignal.timeout(1) }`);
+  expect(await settledIn(sharedRealm(), rejection)).toBe("own realm");
 });
+
+// Natives that do not complete through a thread-pool job still hand a ShadowRealm objects of the
+// main realm. Observed for both: "main realm".
+// The first: a Request holds its signal without the signal's wrapper. Once that wrapper is
+// collected, the timer has only the VM's own global.
+test.todo(
+  "in a ShadowRealm, the reason of an AbortSignal.timeout() that only a Request holds is an object of that realm",
+  async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Promise(() => {}) });
+    jest.useFakeTimers();
+    try {
+      const request = `new Request(${JSON.stringify(server.url.href)}, { signal: AbortSignal.timeout(60_000) })`;
+      sharedRealm().evaluate(`globalThis.request = ${request}; 0`);
+      Bun.gc(true);
+      const rejection = settledIn(sharedRealm(), timedOutFetch("request"));
+      jest.advanceTimersByTime(60_000);
+      expect(await rejection).toBe("own realm");
+    } finally {
+      jest.useRealTimers();
+    }
+  },
+);
 test.todo("in a ShadowRealm, the message event of a Worker is an object of that realm", async () => {
   const message = `new Promise(resolve => {
     const worker = new Worker(dir + "/echo-worker.js");

@@ -258,6 +258,12 @@ void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReas
     if (aborted())
         return;
 
+    // The timer passes the VM's own global. The TimeoutError belongs to the realm of the signal.
+    if (reason == CommonAbortReason::Timeout) {
+        if (auto* wrapper = this->wrapper())
+            globalObject = wrapper->globalObject();
+    }
+
     // toJS() allocates a DOMException, which can GC. For an unobserved
     // timeout signal the wrapper is collectible at that point, so protect
     // `this` before the allocation rather than only inside signalAbort(JSValue).

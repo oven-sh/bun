@@ -1628,4 +1628,48 @@ describe("a macro import that is used outside of a call", () => {
       }
     },
   );
+
+  // A command that keeps dead code does not look for the reference, and still must not cache what a macro loaded:
+  // the call of a macro is not replaced there.
+  test.concurrent("a module that a macro loads is not cached where dead code is kept", async () => {
+    const testOf = (...lines: string[]) => [`import { expect, test } from "bun:test";`, ...lines, ``].join("\n");
+    using dir = tempDir("macro-value-use", {
+      "m.ts": macroFile,
+      "shared.ts": [
+        named,
+        `export function helper() { return "helper"; }`,
+        `export function viaMacro() { return m(); }`,
+        // Large enough for the transpiler cache to keep.
+        `// ${Buffer.alloc(8 * 1024, "-").toString()}`,
+        ``,
+      ].join("\n"),
+      "outer.ts": `import { helper } from "./shared.ts";\nexport function outer() { return helper(); }\n`,
+      "inside.test.ts": testOf(
+        `import { outer } from "./outer.ts" with { type: "macro" };`,
+        `test("inside", () => expect(outer()).toBe("helper"));`,
+      ),
+      "outside.test.ts": testOf(
+        `import { viaMacro } from "./shared.ts";`,
+        `test("outside", () => expect(viaMacro()).toBe(42));`,
+      ),
+      "cache": {},
+    });
+    const env = {
+      ...bunEnv,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: path.join(String(dir), "cache"),
+      // A debug build reads the cache only with this.
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    for (const file of ["./inside.test.ts", "./outside.test.ts"]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--coverage", file],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ file, stderr, exitCode }).toEqual({ file, stderr: expect.stringContaining(" 1 pass"), exitCode: 0 });
+    }
+  });
 });

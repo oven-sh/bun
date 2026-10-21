@@ -1,21 +1,162 @@
-//! Finds the identifiers that still name a macro import, for the location of `P::reject_macro_value_uses`'s error.
+//! The check that no use of a macro import is left outside of a call, and the walk that finds where such a use is.
+
+use std::io::Write as _;
 
 use bun_ast::expr::Data;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as ast, Expr, G, Loc, OpCode, Ref, Stmt, StmtOrExpr, b::B};
 use bun_collections::VecExt as _;
 
-use crate::parser::MacroRefs;
+use crate::lexer as js_lexer;
+use crate::parser::{MacroRefs, RuntimeFeatures};
+
+/// A replaced macro call un-counts its target, so a use that `ast` still counts is an error. `_parse` halts on it.
+#[cold]
+#[inline(never)]
+pub(crate) fn reject_macro_value_uses(
+    refs: &MacroRefs<'_>,
+    features: &RuntimeFeatures,
+    ast: &ast::Ast<'_>,
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+) {
+    let has_use = |r#ref: Ref| ast.symbols[r#ref.inner_index() as usize].use_count_estimate != 0;
+    if !refs.keys().iter().any(|r#ref| has_use(*r#ref)) {
+        return;
+    }
+    if features.is_macro_runtime {
+        // No call is replaced inside a macro, so this output must not answer a load outside of one.
+        #[cfg(not(target_arch = "wasm32"))]
+        if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
+            if let Some(cache) = features.runtime_transpiler_cache_mut() {
+                cache.input_hash = None;
+            }
+        }
+        return;
+    }
+    // With dead-code elimination off (`bun repl`, `bun -p`, `bun test --coverage`) the count has the code that never runs too.
+    if !features.dead_code_elimination {
+        return;
+    }
+    let located = locate_macro_refs(ast.parts.as_slice(), refs);
+    for (i, found) in located.iter().enumerate() {
+        let mut earlier = located[..i].iter().filter(|it| it.r#ref.eql(found.r#ref));
+        // The visit pass copies the computed key of a decorated member, so the walk finds that identifier twice.
+        let is_repeat = earlier.clone().any(|it| it.loc.start == found.loc.start);
+        if has_use(found.r#ref) && !is_repeat {
+            report(
+                refs,
+                ast,
+                source,
+                log,
+                found.r#ref,
+                Some(found),
+                earlier.next().is_none(),
+            );
+        }
+    }
+    // The visit pass can count a use and then fold its node away.
+    for r#ref in refs.keys() {
+        if has_use(*r#ref) && !located.iter().any(|it| it.r#ref.eql(*r#ref)) {
+            report(refs, ast, source, log, *r#ref, None, true);
+        }
+    }
+}
+
+/// `with_advice` is for the first error of a binding: what to write in place of the reference.
+fn report(
+    refs: &MacroRefs<'_>,
+    ast: &ast::Ast<'_>,
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    r#ref: Ref,
+    found: Option<&MacroRefUse>,
+    with_advice: bool,
+) {
+    let data = *refs.get(&r#ref).expect("a key of the map");
+    let symbol = &ast.symbols[r#ref.inner_index() as usize];
+    let name: &[u8] = symbol.original_name.slice();
+    // Only a binding that a macro remap replaces is declared as an import.
+    let is_remapped = symbol.kind == ast::symbol::Kind::Import;
+    let import_range = match ast.module_scope.members.get(name) {
+        Some(member) if member.ref_.eql(r#ref) => js_lexer::range_of_identifier(source, member.loc),
+        _ => bun_ast::Range::NONE,
+    };
+    let path = ast.import_records.as_slice()[data.import_record_id as usize]
+        .path
+        .text;
+    let export = bstr::BStr::new(data.name.unwrap_or(name));
+    let (name, path) = (bstr::BStr::new(name), bstr::BStr::new(path));
+
+    let mut notes = Vec::<bun_ast::Data>::with_capacity(2);
+    if found.is_some() {
+        let mut removed = Vec::<u8>::new();
+        let _ = if is_remapped {
+            write!(
+                &mut removed,
+                "Bun removes this import of \"{name}\" because a macro remap replaces it with \"{path}\""
+            )
+        } else {
+            write!(
+                &mut removed,
+                "Bun removes this macro import of \"{name}\" from \"{path}\""
+            )
+        };
+        notes.push(bun_ast::range_data(Some(source), import_range, removed));
+    }
+    if with_advice {
+        let mut advice = Vec::<u8>::new();
+        let _ = if found.is_some_and(|it| it.is_typeof_operand) {
+            write!(
+                &mut advice,
+                "\"typeof {name}\" is always \"undefined\" at runtime. Remove the test: Bun replaces each direct call of \"{name}\" with its result."
+            )
+        } else if is_remapped {
+            write!(
+                &mut advice,
+                "Bun replaces each direct call of a macro with its result. To use \"{export}\" of the package at runtime, read it from a namespace import of the package, or remove the macro remap."
+            )
+        } else {
+            write!(
+                &mut advice,
+                "Bun replaces each direct call of a macro with its result. To inline a value, call a macro that returns it. To use \"{name}\" at runtime, add a regular import of it under another name."
+            )
+        };
+        notes.push(bun_ast::range_data(None, bun_ast::Range::NONE, advice));
+    }
+
+    match found {
+        Some(found) => log.add_range_error_fmt_with_notes(
+            Some(source),
+            js_lexer::range_of_identifier(source, found.loc),
+            notes.into_boxed_slice(),
+            format_args!("\"{name}\" is a macro import and is not defined at runtime"),
+        ),
+        None => log.add_range_error_fmt_with_notes(
+            Some(source),
+            import_range,
+            notes.into_boxed_slice(),
+            format_args!(
+                "\"{name}\" is a macro import and is not defined at runtime, but this file uses it outside of a call"
+            ),
+        ),
+    }
+}
+
+/// A type that is named before the import statement is an unbound symbol linked to the binding.
+pub(crate) fn is_macro_ref(refs: &MacroRefs<'_>, symbols: &[ast::Symbol], r#ref: Ref) -> bool {
+    refs.contains_key(&ast::symbol::follow_symbols(symbols, r#ref))
+}
 
 /// Fits the smallest stack this runs on, as `function_identities::MAX_DEPTH` does.
 const MAX_DEPTH: u32 = 512;
 
 /// An identifier that still names a macro import.
 #[derive(Clone, Copy)]
-pub(crate) struct MacroRefUse {
-    pub r#ref: Ref,
-    pub loc: Loc,
-    pub is_typeof_operand: bool,
+struct MacroRefUse {
+    r#ref: Ref,
+    loc: Loc,
+    is_typeof_operand: bool,
 }
 
 struct Locator<'r, 'a> {
@@ -26,9 +167,7 @@ struct Locator<'r, 'a> {
 }
 
 /// Each identifier that names a key of `refs`, in statement order. One nested deeper than `MAX_DEPTH` is not in it.
-#[cold]
-#[inline(never)]
-pub(crate) fn locate_macro_refs(parts: &[ast::Part], refs: &MacroRefs<'_>) -> Vec<MacroRefUse> {
+fn locate_macro_refs(parts: &[ast::Part], refs: &MacroRefs<'_>) -> Vec<MacroRefUse> {
     let mut locator = Locator {
         refs,
         found: Vec::new(),

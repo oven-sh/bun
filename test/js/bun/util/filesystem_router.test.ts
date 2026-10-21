@@ -588,6 +588,25 @@ it("dir should be validated", async () => {
   }).toThrow("FileSystemRouterOptions.dir must be a string");
 });
 
+it.each([".", ""])("dir %j is the current directory", async dir => {
+  const cwd = make(["index.tsx", "posts/hey.tsx"]).dir;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.log(JSON.stringify(Object.keys(new Bun.FileSystemRouter({ dir: process.argv[1], style: "nextjs" }).routes).sort()))`,
+      dir,
+    ],
+    env: bunEnv,
+    // The resolver caches a Windows path with its drive letter in uppercase.
+    cwd: cwd[0].toLowerCase() + cwd.slice(1),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: `["/","/posts/hey"]\n`, stderr: "", exitCode: 0 });
+});
+
 it("rejects a dir with a null byte", () => {
   const { dir } = make(["index.tsx"]);
   expect(() => new FileSystemRouter({ style: "nextjs", dir: `${dir}\0suffix` })).toThrow(

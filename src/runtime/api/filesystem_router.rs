@@ -259,23 +259,19 @@ impl FileSystemRouterClass for FileSystemRouter {
         Valid::no_null_bytes(options.dir, "dir", "a string", global)?;
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
-        let mut root_dir_path = global.bun_vm().top_level_dir();
-        if !(options.dir.is_empty() || options.dir == b".") {
-            // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
-            let Some(joined) =
-                path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    Fs::FileSystem::instance().top_level_dir(),
-                    &mut out_buf,
-                    &[options.dir],
-                )
-            else {
-                return Err(cx.heap.error(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(options.dir)
-                )));
-            };
-            root_dir_path = joined;
-        }
+        // Every path is joined, absolute or empty: the loader needs the resolver's normalized spelling.
+        let Some(root_dir_path) =
+            path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                Fs::FileSystem::instance().top_level_dir(),
+                &mut out_buf,
+                &[options.dir],
+            )
+        else {
+            return Err(cx.heap.error(format_args!(
+                "Unable to find directory: {}",
+                bstr::BStr::new(options.dir)
+            )));
+        };
 
         let mut extensions: Vec<Box<[u8]>> = options
             .file_extensions

@@ -409,8 +409,6 @@ impl<'s> Storage for InArena<'s> {
 pub struct Fixed<'s, T>(FixedIn<'s, T>);
 
 enum FixedIn<'s, T> {
-    /// No block if it's empty, because a file without nodes can also be created by a thread that doesn't own the arena
-    /// (`File::empty_in`).
     Arena(ArenaBox<'s, [T]>),
     Lent(&'s mut [T]),
     Shared(&'s [T]),
@@ -564,8 +562,6 @@ impl<'s, T: Id> Narrow<'s, T> {
 /// `FileIn::lazy` of a loaded file.
 pub struct Lazy<'s> {
     pub(crate) session: &'s Session,
-    /// `File::arena`
-    pub(crate) arena: &'s Arena,
     pub(crate) cells: &'s LazyCells,
 }
 
@@ -2990,7 +2986,7 @@ macro_rules! long_lists {
 /// list that's empty in most files (`$few`), a list whose elements own memory (`$owning`), and the text
 /// (`$source_text`).
 macro_rules! file_in_arena {
-    ($this:ident, $arena:ident, $session:ident, $cells:expr, $long:ident, $few:ident, $owning:ident, $source_text:ident) => {
+    ($this:ident, $session:ident, $cells:expr, $long:ident, $few:ident, $owning:ident, $source_text:ident) => {
         File {
             kind: $this.kind,
             is_js: $this.is_js,
@@ -3079,7 +3075,6 @@ macro_rules! file_in_arena {
             bases: $this.bases,
             lazy: Lazy {
                 session: $session,
-                arena: $arena,
                 cells: $cells,
             },
             keyword_identifier_positions: $few!($this.keyword_identifier_positions),
@@ -3130,7 +3125,6 @@ impl FileBuilder {
         session: &'s Session,
         cells: &'s LazyCells,
     ) -> (File<'s>, FileBuilder) {
-        // An empty list doesn't allocate in the arena. See `File::empty_in`.
         macro_rules! copied {
             ($list:expr) => {{
                 let exact = Fixed::copied_in(arena, &$list);
@@ -3139,16 +3133,7 @@ impl FileBuilder {
             }};
         }
         moved_lists!(arena);
-        let file = file_in_arena!(
-            self,
-            arena,
-            session,
-            cells,
-            copied,
-            few,
-            owning,
-            source_text
-        );
+        let file = file_in_arena!(self, session, cells, copied, few, owning, source_text);
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
@@ -3167,16 +3152,7 @@ impl FileBuilder {
             };
         }
         moved_lists!(arena);
-        file_in_arena!(
-            self,
-            arena,
-            session,
-            &self.lazy,
-            lent,
-            few,
-            owning,
-            source_text
-        )
+        file_in_arena!(self, session, &self.lazy, lent, few, owning, source_text)
     }
 }
 
@@ -3207,7 +3183,6 @@ impl File<'_> {
         }
         file_in_arena!(
             self,
-            arena,
             session,
             self.lazy.cells,
             shared,
@@ -3219,18 +3194,12 @@ impl File<'_> {
 }
 
 impl<'s> File<'s> {
-    /// Returns a file without nodes. It allocates nothing, so any thread can create one for another thread's arena
-    /// (`Files::free_tree`). Only the thread that owns an arena can allocate in it.
+    /// Returns a file without nodes. It allocates nothing.
     pub fn empty_in(arena: &'s Arena, session: &'s Session) -> File<'s> {
         let no_nodes = FileBuilder::default();
         no_nodes
             .into_arena_with(arena, session, &EMPTY_FILE_CELLS)
             .0
-    }
-
-    /// The arena that holds the lists.
-    pub fn arena(&self) -> &'s Arena {
-        self.lazy.arena
     }
 }
 

@@ -706,9 +706,7 @@ impl Checker<'_, '_> {
         let files = self.files();
         let before = files.rank_of_file(file) as usize;
         files.order.iter().take(before).any(|&other| {
-            // A file with an `export *` isn't a leaf, and a leaf's data is freed after its task.
-            !files.module(other).is_leaf
-                && !self.bound(other).export_stars.is_empty()
+            !self.bound(other).export_stars.is_empty()
                 && files.module(other).is_module()
                 && self.is_checked_no_later_than(other, file)
                 && (files.exports_of_module(files.file_symbol(other))).contains(&(id, symbol))

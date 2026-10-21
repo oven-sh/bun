@@ -657,10 +657,6 @@ impl Checker<'_, '_> {
         let Some((file, decl)) = files.declaration_of_alias_symbol(sym) else {
             return;
         };
-        // A leaf's HIR is freed after its task.
-        if self.task.file != Some(file) && files.module(file).is_leaf {
-            return;
-        }
         let (hir, bound) = (self.hir(file), self.bound(file));
         let statement = statement_of_alias_declaration(hir, decl);
         // FOR SPEED: nothing stops the check of such a declaration, which reports the same errors.
@@ -954,10 +950,7 @@ impl Checker<'_, '_> {
             .iter()
             .take(until.saturating_add(1))
             .any(|&other| {
-                // A leaf's HIR is freed after its task. A file that imports from such an ambient module isn't a leaf,
-                // nor is one that comes before a file it imports from.
-                let is_freed = other != cx.file && files.module(other).is_leaf;
-                if is_freed || !self.is_checked_no_later_than(other, cx.file) {
+                if !self.is_checked_no_later_than(other, cx.file) {
                     return false;
                 }
                 let hir = self.hir(other);

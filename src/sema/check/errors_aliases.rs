@@ -308,9 +308,7 @@ impl Checker<'_, '_> {
             .take(files.rank_of_file(file) as usize + 1);
         self.are_module_exports_checked(module, file)
             || checked.copied().any(|other| {
-                // A leaf's data is freed after its task.
-                (other == file || !files.module(other).is_leaf)
-                    && self.is_checked_no_later_than(other, file)
+                self.is_checked_no_later_than(other, file)
                     && self.has_alias_from_exports_of_module(other, module)
             })
     }

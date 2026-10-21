@@ -2246,22 +2246,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         positions.sort_unstable();
         positions.dedup();
-        let mut modules: Vec<Sym> = (positions.iter())
+        (positions.iter())
             .map(|&position| files.file_symbol(files.order[position as usize]))
-            .collect();
-        // The file being checked is searched even if it's a leaf.
-        if let Some(file) = self.task.file
-            && files.module(file).is_leaf
-            && files.module(file).hir.has_module_syntax
-        {
-            let module = files.file_symbol(file);
-            if self.alias_for_symbol_in_container(module, symbol).is_some() {
-                let own = files.order.iter().position(|&it| it == file);
-                let at = positions.partition_point(|&it| Some(it as usize) < own);
-                modules.insert(at, module);
-            }
-        }
-        modules
+            .collect()
     }
 
     /// `buildExternalModuleContainerIndex`, on the first call.
@@ -2273,9 +2260,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut index = ExportingModules::default();
         for (position, &file) in (0..).zip(files.order) {
             let module = files.module(file);
-            // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
-            // `is_leaf`, which is immutable after loading, before reading `hir`.
-            if module.is_leaf || !module.hir.has_module_syntax {
+            if !module.hir.has_module_syntax {
                 continue;
             }
             index.positions.insert(file, position);

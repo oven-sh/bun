@@ -4367,12 +4367,6 @@ fn check_named_files(
         /// The files in which the native stack ran out.
         incomplete: Vec<FileId>,
     }
-    let free_trees = |files: Vec<FileId>| {
-        for file in files {
-            // SAFETY: the only task that reads the HIR has ended, and its files won't be rechecked.
-            unsafe { program.files.free_tree(file) };
-        }
-    };
     // Checks files outside the queue. Whatever the checker stores is dropped with it.
     let check_chunk = |files: &[FileId], expected: Requested| {
         let mut checker = new_checker(expected, None);
@@ -4626,7 +4620,6 @@ fn check_named_files(
             };
             checker.begin_task(round as u32, first as u32);
             checker.see_commits(is_last_round);
-            let mut trees_to_free = Vec::new();
             let (mut spent, mut index) = (0, first);
             let upcoming = loop {
                 let file = to_check[index];
@@ -4698,9 +4691,6 @@ fn check_named_files(
                     }
                 }
                 files_done.fetch_add(1, Ordering::Release);
-                if program.files.modules[file.idx()].is_leaf {
-                    trees_to_free.push(file);
-                }
                 accept(Outcome {
                     checked: vec![(file, checked)],
                     incomplete: incomplete.into_iter().collect(),
@@ -4714,9 +4704,7 @@ fn check_named_files(
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
             tasks_run.fetch_add(1, Ordering::Relaxed);
             checker.end_task_after_commits();
-            // The checker borrows the files' HIR, so it must be gone before their trees are freed.
             spares.lock().push((thread, checker.into_spare()));
-            free_trees(trees_to_free);
             upcoming
         };
         let first_files_worker = AtomicUsize::new(usize::MAX);

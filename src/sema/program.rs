@@ -219,9 +219,8 @@ pub struct Module<'s> {
     /// `IsSourceFileFromExternalLibrary`: `lowestDepth > 0`, meaning every task for it was reached
     /// through a step into a `node_modules`.
     pub is_from_external_library: bool,
-    /// No file refers to it, and it adds no globally visible declarations. So only the task that
-    /// checks it reads its HIR, which is freed at the end of that task (`Files::free_tree`), and
-    /// nothing that mentions one of its nodes is published.
+    /// No file refers to it, and it adds no globally visible declarations. So nothing that mentions
+    /// one of its nodes is published.
     pub is_leaf: bool,
     /// It adds no globally visible declarations, so it `is_leaf` if no file refers to it.
     adds_no_globals: bool,
@@ -395,49 +394,14 @@ fn read_to_load(
 }
 
 /// Entry in the list of all modules. A `Module` is thousands of bytes, so it's boxed in the arena of the thread that
-/// loaded it and never moved. The `UnsafeCell` lets `Files::free_tree` mutate it through `&Files`.
-pub struct ModuleCell<'s>(std::cell::UnsafeCell<ArenaBox<'s, Module<'s>>>);
-
-// SAFETY: a module is only mutated through `&mut Files`, or by `Files::free_tree`.
-unsafe impl Sync for ModuleCell<'_> {}
-
-impl<'s> std::ops::Deref for ModuleCell<'s> {
-    type Target = Module<'s>;
-    #[inline(always)]
-    fn deref(&self) -> &Module<'s> {
-        // SAFETY: see above.
-        unsafe { &*self.0.get() }
-    }
-}
-
-impl<'s> std::ops::DerefMut for ModuleCell<'s> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Module<'s> {
-        self.0.get_mut()
-    }
-}
+/// loaded it and never moved.
+pub type ModuleCell<'s> = ArenaBox<'s, Module<'s>>;
 
 /// Held while tasks on the I/O threads and tasks on the host's threads wait for each other. Both
 /// pools are bounded and process-wide. With two loads in flight, one load's readers could fill one
 /// pool and the other load's processors the other pool, and then each would wait for tasks that
 /// never start. Everything else that runs on the pools finishes without waiting.
 static WAITS_ACROSS_POOLS: Guarded<()> = Guarded::new(());
-
-/// Returns the stub that replaces a file's HIR when it's freed. The text is retained for the report.
-fn stub_of<'s>(hir: &mut hir::File<'s>) -> hir::File<'s> {
-    hir::File {
-        text: std::mem::take(&mut hir.text),
-        kind: hir.kind,
-        is_js: hir.is_js,
-        source_len: hir.source_len,
-        has_module_syntax: hir.has_module_syntax,
-        is_forced_module: hir.is_forced_module,
-        has_errors: hir.has_errors,
-        ran_out_of_stack: hir.ran_out_of_stack,
-        has_parse_diagnostics: hir.has_parse_diagnostics || hir.has_parse_or_grammar_diagnostics(),
-        ..hir::File::empty_in(hir.arena(), hir.lazy.session)
-    }
-}
 
 impl<'s> Module<'s> {
     /// `FileName()`: the file's name, as spelled where `collectFiles` first reaches it.
@@ -5866,10 +5830,8 @@ impl<'s> Files<'s> {
                     || !bound.ambient_modules.is_empty(),
             });
         });
-        let mut modules: ArenaVec<'s, ModuleCell<'s>> = vec_from_iter_in(
-            (modules.into_iter()).map(|module| ModuleCell(module.unwrap().into())),
-            arena,
-        );
+        let mut modules: ArenaVec<'s, ModuleCell<'s>> =
+            vec_from_iter_in((modules.into_iter()).map(|module| module.unwrap()), arena);
         let summaries: Vec<ModuleSummary<'s>> = (summaries.into_iter())
             .map(|mut summary| summary.get_mut().take().unwrap())
             .collect();
@@ -6641,22 +6603,6 @@ impl<'s> Files<'s> {
         let mut package_jsons: ArenaHashMap<'s, &'s [u8], &'s Json> = map_in(arena);
         package_jsons.extend(directories.into_iter().zip(jsons));
         (package_jsons, linked_directories)
-    }
-
-    /// Frees the HIR of `file`, which `is_leaf`. Its text is retained for the report.
-    ///
-    /// # Safety
-    /// Only the task that checks `file` may call this, and only at the end of the task, because an
-    /// entry of its buffer can hold a value that's bound to an earlier file of the task. No
-    /// reference into `hir` or `bound` of the file may be alive.
-    pub unsafe fn free_tree(&self, file: FileId) {
-        let cell = &self.modules[file.idx()];
-        debug_assert!(cell.is_leaf);
-        // SAFETY: no file refers to it, so no other task reads its HIR.
-        let module: &mut Module<'s> = unsafe { &mut *cell.0.get() };
-        module.hir = stub_of(&mut module.hir);
-        module.bound = Bound::empty_in(module.hir.arena());
-        module.transient_symbols.clear();
     }
 
     /// `arena`: the calling thread's arena in `session`. `text`: `None` if the file hasn't been read yet.

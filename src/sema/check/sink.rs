@@ -27,8 +27,7 @@
 //! dropped with a frame, like a diagnostic. `call_deferred_diagnostics` creates the message.
 //!
 //! A diagnostic that leaves its task is settled (`Checker::settled`): every field that only its
-//! file's HIR can provide has been filled in. The HIR of a file that nothing imports is freed at
-//! the end of its task, and `finish_file` doesn't read any HIR.
+//! file's HIR can provide has been filled in, and `finish_file` doesn't read any HIR.
 
 use super::explain::NOWHERE;
 use super::*;

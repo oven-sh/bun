@@ -401,6 +401,8 @@ let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
+// A client session's method: it gets each request that is destroyed before it has a stream id.
+const kPendingRequestDestroyed = Symbol("pendingRequestDestroyed");
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
@@ -2692,6 +2694,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+    } else if (session && this.#id === undefined) {
+      session[kPendingRequestDestroyed]?.(this);
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
@@ -5141,12 +5145,7 @@ class ClientHttp2Session extends Http2Session {
           // Deferred like close()'s own destroy: runs inside a native dispatch batch and
           // not-yet-dispatched frames must still reach JS. An outstanding settings() ACK or
           // ping gets bounded grace (scheduleSettingsAckGraceNT); its arrival completes destroy.
-          if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
-            scheduleSettingsAckGraceNT(self);
-          } else {
-            captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
-            setImmediate(destroyIfNotDestroyedNT, self);
-          }
+          self.#destroyAfterAckGrace();
         }
       } else if (state === 5) {
         // 5 = local closed aka write is closed
@@ -5454,7 +5453,24 @@ class ClientHttp2Session extends Http2Session {
 
   // node's kMaybeDestroy test: closed, no open stream, no request that waits for the connect.
   #closedWithNoStream() {
-    return this.#closed && this.#connections === 0 && this.#requestsBeforeConnect === null;
+    const waiting = this.#requestsBeforeConnect;
+    return this.#closed && this.#connections === 0 && (waiting === null || waiting.length === 0);
+  }
+
+  // A destroyed request leaves the list of the requests that wait for the connect, like node's pendingStreams.
+  [kPendingRequestDestroyed](req: Http2Stream) {
+    const waiting = this.#requestsBeforeConnect;
+    if (waiting === null) return;
+    for (let i = 0; i < waiting.length; i++) {
+      if (waiting[i].req === req) {
+        waiting.splice(i, 1);
+        // This request can be the last thing that a closed session waited for.
+        if (this.#closedWithNoStream() && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
+          this.#destroyAfterAckGrace();
+        }
+        return;
+      }
+    }
   }
 
   // Ends a closed session that has nothing left to do. An ACK that is due gets its grace first.

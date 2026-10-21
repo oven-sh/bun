@@ -485,6 +485,25 @@ describe("a request made before the connect", () => {
       );
     }));
 
+  for (const destroyFirst of [true, false]) {
+    const when = destroyFirst ? "before" : "after";
+    test(`does not keep a closed session open when it is destroyed ${when} close(), without its 'connect' listener`, () =>
+      withPeer({}, async (peer, own) => {
+        const session = own(http2.connect(peer.target.url));
+        const early = session.request({ ":path": "/early", authorization: "Bearer SECRET" });
+        early.on("error", () => {});
+        session.removeAllListeners("connect");
+        await once(session, "localSettings");
+        const sessionClosed = closed(session);
+        if (destroyFirst) early.destroy();
+        session.close();
+        if (!destroyFirst) early.destroy();
+        await sessionClosed;
+        await peer.gone;
+        assert.deepStrictEqual(peer.frames.filter(isHeaders), []);
+      }));
+  }
+
   test("is sent at once on a socket that is already connected", () =>
     withPeer({}, async (peer, own) => {
       const socket = net.connect(peer.port, "127.0.0.1");

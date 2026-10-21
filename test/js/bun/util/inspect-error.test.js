@@ -189,7 +189,8 @@ describe("error.code is a String object that has no primitive value", () => {
 
   describe.each(Object.entries(codes))("%s", (_, code) => {
     // The own-property printer converts a String object with `toString`, so
-    // both calls can throw that error to the caller.
+    // both calls can throw that error to the caller. A console call that throws
+    // writes nothing.
     test.concurrent("Bun.inspect and console.error return to the caller", async () => {
       const { stdout, stderr, exitCode, signalCode } = await run(`
         const e = new Error("boom");
@@ -198,8 +199,12 @@ describe("error.code is a String object that has no primitive value", () => {
         try { console.error(e); } catch {}
         console.log("survived");
       `);
-      expect(stderr).toContain("error: boom");
-      expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "survived\n", exitCode: 0, signalCode: null });
+      expect({ stdout, stderr, exitCode, signalCode }).toEqual({
+        stdout: "survived\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
     });
 
     test.concurrent.each([

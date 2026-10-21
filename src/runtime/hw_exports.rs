@@ -292,25 +292,22 @@ mod sql_hooks {
 
 // ─── entry-point promise reactions (used by `--print`) ───────────────────────
 
+/// What `--print` writes: the value as `console.log` prints it. No JS frame is above this call, so a
+/// conversion that throws is an uncaught exception.
+pub(crate) fn print_entry_point_result(vm: &mut VirtualMachine, result: JSValue) {
+    let global = vm.global();
+    if let Err(err) = bun_jsc::ConsoleObject::log(global, result) {
+        let exception = global.take_exception(err);
+        let _ = vm.uncaught_exception(global, exception, false);
+    }
+}
+
 // HOST_EXPORT(Bun__onResolveEntryPointResult)
 pub(crate) fn on_resolve_entry_point_result(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
-    let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
+    print_entry_point_result(global.bun_vm().as_mut(), callframe.argument(0));
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
@@ -320,20 +317,7 @@ pub(crate) fn on_reject_entry_point_result(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
-    let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
+    print_entry_point_result(global.bun_vm().as_mut(), callframe.argument(0));
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }

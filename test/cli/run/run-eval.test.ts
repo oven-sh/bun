@@ -141,6 +141,23 @@ describe("--print for cjs/esm", () => {
       expect(exitCode).toBe(0);
     });
   });
+  // The value is printed as console.log prints it: a conversion that throws leaves no text on stdout.
+  describe("a result whose inspect.custom throws is an uncaught exception", () => {
+    const value = `{ a: 1, b: { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom"); } } }`;
+    test.each([
+      ["a value", `(${value})`],
+      ["a settled promise", `Promise.resolve(${value})`],
+      ["a pending promise", `new Promise(resolve => setImmediate(resolve, ${value}))`],
+    ])("%s", (_, expr) => {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "-p", expr],
+        env: bunEnv,
+      });
+      expect(stdout.toString("utf8")).toBe("");
+      expect(stderr.toString("utf8")).toContain("error: boom");
+      expect(exitCode).toBe(1);
+    });
+  });
   test("forced cjs", async () => {
     let { stdout, stderr, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "--print", "module.exports; 123"],

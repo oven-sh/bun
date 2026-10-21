@@ -46,3 +46,28 @@ it("should log to console correctly", async () => {
 
   expect(outText.replace(/^\[.+?s\] /gm, "")).toBe(expectedText.replace(/^\[.+?s\] /gm, ""));
 });
+
+it.concurrent("console.timeLog writes its line after the last conversion", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const custom = Symbol.for("nodejs.util.inspect.custom");
+        const error = new Error("boom");
+        console.time("t");
+        let thrown;
+        try { console.timeLog("t", "a", { [custom]() { throw error; } }); } catch (e) { thrown = e; }
+        console.error(thrown === error ? "threw" : "did not throw");
+        console.timeLog("t", "a", { [custom]() { console.error("inner"); return "x"; } });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr.replace(/^\[.+?s\] /gm, "[time] ")).toBe("threw\ninner\n[time] t a x\n");
+  expect(exitCode).toBe(0);
+});

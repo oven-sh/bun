@@ -16,7 +16,7 @@
 //!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
 //!       → `src/runtime/webview/ChromeProcess.rs`
 //!   - `Bun__JSSourceMap__find`
-//!       → `src/sourcemap_jsc/JSSourceMap.rs`
+//!       → `src/runtime/api/JSSourceMap.rs`
 //!   - `Bun__Process__send`
 //!       → `bun_jsc::virtual_machine_exports`
 
@@ -341,5 +341,5 @@ pub(crate) fn on_reject_entry_point_result(
 // `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from
 // `crate::webview::chrome_process` (mod webview is declared in lib.rs).
 //
-// `Bun__JSSourceMap__find` — exported from `bun_sourcemap_jsc::js_source_map`
+// `Bun__JSSourceMap__find` — exported from `crate::api::js_source_map`
 // via `#[bun_jsc::host_fn(export = ...)]`.

@@ -364,6 +364,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_zlib_binding.bind.ts": null,
   "resolve_message.bind.ts": "{ ResolveMessage: Class<ResolveMessage>; BuildMessage: Class<BuildMessage> }",
   "socket_body.bind.ts": null,
+  "sourcemap.bind.ts": null,
   "udp_socket.bind.ts": null,
   "valkey.bind.ts": "typeof Bun",
 };

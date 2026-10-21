@@ -51,6 +51,8 @@ pub(crate) mod html_rewriter;
 pub(crate) mod js_bundle_completion_task;
 #[path = "api/JSBundler.rs"]
 pub(crate) mod js_bundler;
+#[path = "api/JSSourceMap.rs"]
+pub(crate) mod js_source_map;
 #[path = "api/JSTranspiler.rs"]
 pub(crate) mod js_transpiler;
 #[path = "api/JSON5Object.rs"]

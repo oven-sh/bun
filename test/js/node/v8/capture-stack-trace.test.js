@@ -1397,7 +1397,7 @@ test.concurrent.each([
   ["an accessor", `Object.defineProperty(Error, "stackTraceLimit", { get: () => 10 });`],
   ["deleted", `delete Error.stackTraceLimit;`],
 ])("Error.appendStackTrace does not crash when stackTraceLimit is %s", async (_, setup) => {
-  // An error made under such a limit has no frames, so appendStackTrace captures them first.
+  // An error made under such a limit has no frame list. appendStackTrace leaves such a destination alone.
   const src = `${setup}
     const source = new Error("source"), destination = new Error("destination");
     Error.appendStackTrace(source, destination);
@@ -1429,14 +1429,42 @@ test("Error.appendStackTrace keeps the stack trace when the source and destinati
 
 // Two places give an error frames that it did not capture. Native code that rejects a promise gives the error the
 // frames of the async function that awaits the promise. Error.appendStackTrace gives it the frames of another error.
+// Both do that only while nothing has decided the stack of the error.
 describe("frames from another place", () => {
   const missingFile = join(import.meta.dir, "capture-stack-trace.does-not-exist");
 
-  // Native code makes this error with no JavaScript on the stack. It has no frames and no `stack`.
+  // Native code makes this error with no JavaScript on the stack. It has a frame list with no frames, and no `stack`.
   async function errorWithNoFrames() {
     const { promise, resolve } = Promise.withResolvers();
     readFile(missingFile, resolve);
     return await promise;
+  }
+
+  // Under a limit of 0 an error has a frame list with no frames. Under a limit that is not a number it has no list.
+  function errorMadeUnderLimit(limit) {
+    const savedLimit = Error.stackTraceLimit;
+    Error.stackTraceLimit = limit;
+    try {
+      return new Error("made under a limit");
+    } finally {
+      Error.stackTraceLimit = savedLimit;
+    }
+  }
+
+  // The `throw` keeps `Error()` out of tail position. A tail call leaves no frame of these functions.
+  function makeSource() {
+    try {
+      throw new Error("source");
+    } catch (source) {
+      return source;
+    }
+  }
+  function makeDestination() {
+    try {
+      throw new Error("destination");
+    } catch (destination) {
+      return destination;
+    }
   }
 
   function functionNotOnTheStack() {}
@@ -1452,8 +1480,11 @@ describe("frames from another place", () => {
       () => "from the getter",
     ],
     [
-      "Error.captureStackTrace() that captures no frames",
-      error => Error.captureStackTrace(error, functionNotOnTheStack),
+      "a read of the stack that Error.captureStackTrace() made with no frames",
+      error => {
+        Error.captureStackTrace(error, functionNotOnTheStack);
+        return error.stack;
+      },
       error => `${error.name}: ${error.message}`,
     ],
     ["Object.freeze()", error => void Object.freeze(error), () => undefined],
@@ -1483,11 +1514,44 @@ describe("frames from another place", () => {
   }
   const read = stream => stream.getReader().read();
 
+  // Aborts a fetch() with `error` while the async function `awaits` awaits it. Returns what `awaits` catches.
+  async function abortFetchWhileAwaited(error) {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const controller = new AbortController();
+    async function awaits() {
+      try {
+        await fetch(server.url, { signal: controller.signal });
+      } catch (rejection) {
+        return rejection;
+      }
+    }
+    const pending = awaits();
+    controller.abort(error);
+    return await pending;
+  }
+
   test("an error with no frames and no stack takes the frames of the async function that awaits it", async () => {
     const error = await errorWithNoFrames();
     // A read of `stack` decides nothing.
     expect(error.stack).toBeUndefined();
     expect(Object.hasOwn(error, "stack")).toBe(false);
+    expect(await rejectWhileAwaited(error, read)).toBe(error);
+    expect(error.stack).toContain("at async awaits");
+  });
+
+  test("an error with frames of its own keeps them when native code rejects with it", async () => {
+    // Nothing reads the error before the rejection. A read formats the frames, and then a different test stops the attach.
+    const error = makeSource();
+    expect(await rejectWhileAwaited(error, read)).toBe(error);
+    expect(error.stack).toContain("at makeSource");
+    expect(error.stack).not.toContain("at async awaits");
+  });
+
+  // Error.captureStackTrace() also captures no frames when a tail call hid the function that it was given, as in
+  // zod 4's parse() (https://github.com/oven-sh/bun/issues/32132). So its unread lazy `stack` decides nothing.
+  test("an error with the unread stack of an Error.captureStackTrace() that captured no frames takes async frames", async () => {
+    const error = await errorWithNoFrames();
+    Error.captureStackTrace(error, functionNotOnTheStack);
     expect(await rejectWhileAwaited(error, read)).toBe(error);
     expect(error.stack).toContain("at async awaits");
   });
@@ -1508,14 +1572,7 @@ describe("frames from another place", () => {
     ["Error.stackTraceLimit = 0", 0],
     ["an Error.stackTraceLimit that is not a number", "none"],
   ])("an error made under %s keeps an assigned stack when native code rejects with it", async (_, limit) => {
-    const savedLimit = Error.stackTraceLimit;
-    Error.stackTraceLimit = limit;
-    let error;
-    try {
-      error = new Error("made with no frames");
-    } finally {
-      Error.stackTraceLimit = savedLimit;
-    }
+    const error = errorMadeUnderLimit(limit);
     error.stack = "assigned";
     const before = Object.getOwnPropertyDescriptors(error);
     expect(await rejectWhileAwaited(error, read)).toBe(error);
@@ -1542,21 +1599,10 @@ describe("frames from another place", () => {
   });
 
   test("an error with no frames keeps an assigned stack when it aborts a fetch()", async () => {
-    await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
     const error = await errorWithNoFrames();
     error.stack = "assigned";
     const before = Object.getOwnPropertyDescriptors(error);
-    const controller = new AbortController();
-    async function awaits() {
-      try {
-        await fetch(server.url, { signal: controller.signal });
-      } catch (rejection) {
-        return rejection;
-      }
-    }
-    const pending = awaits();
-    controller.abort(error);
-    expect(await pending).toBe(error);
+    expect(await abortFetchWhileAwaited(error)).toBe(error);
     expect(Object.getOwnPropertyDescriptors(error)).toEqual(before);
   });
 
@@ -1590,6 +1636,75 @@ describe("frames from another place", () => {
     expect(await pending).toBe(error);
     expect(Object.getOwnPropertyDescriptors(error)).toEqual(before);
   });
+
+  // An error with no frame list captured nothing (a limit that is not a number), or it holds its stack as a string:
+  // a structuredClone() copy, or an error whose frames a collection formatted.
+  test("a structuredClone() copy keeps its stack when native code rejects with it", async () => {
+    const original = makeDestination();
+    // Nothing reads the copy before the rejection: a read puts the string on the copy, and then it is materialized.
+    const copy = structuredClone(original);
+    expect(await rejectWhileAwaited(copy, read)).toBe(copy);
+    expect(copy.stack).toBe(original.stack);
+  });
+
+  test("a structuredClone() copy keeps its stack when it aborts a fetch()", async () => {
+    const original = makeDestination();
+    const copy = structuredClone(original);
+    expect(await abortFetchWhileAwaited(copy)).toBe(copy);
+    expect(copy.stack).toBe(original.stack);
+  });
+
+  test.concurrent(
+    "an error whose frames a collection formatted keeps that stack when native code rejects with it",
+    async () => {
+      const src = `
+      // Each pair is made at one place, by one call of a function that is garbage once it returns. An error holds
+      // the functions of its frames weakly, so a collection formats the frames of both errors into a string.
+      const pairs = Array.from({ length: 8 }, () =>
+        new Function(
+          '"use strict"; function thrower() { const pair = []; for (const message of ["forwarded", "twin"]) pair.push(new Error(message)); return pair; } try { return thrower(); } finally {}',
+        )(),
+      );
+      await new Promise(resolve => setImmediate(resolve));
+      Bun.gc(true);
+
+      async function forward(error) {
+        let controller;
+        const stream = new ReadableStream({ start(c) { controller = c; } });
+        async function consumer() {
+          try {
+            await stream.getReader().read();
+          } catch (caught) {
+            return caught;
+          }
+        }
+        const pending = consumer();
+        controller.error(error);
+        return await pending;
+      }
+      // The stack of the twin, if the collection formatted it: Error.prepareStackTrace is not asked for such a stack.
+      function formattedStack(twin) {
+        let asked = false;
+        Error.prepareStackTrace = () => ((asked = true), "");
+        const stack = twin.stack;
+        Error.prepareStackTrace = undefined;
+        return asked ? undefined : stack;
+      }
+
+      const kept = new Set();
+      for (const [error, twin] of pairs) {
+        const caught = await forward(error);
+        const stack = formattedStack(twin);
+        if (stack !== undefined) kept.add(caught.stack === stack.replace("Error: twin", "Error: forwarded"));
+      }
+      console.log(JSON.stringify([...kept]));`;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("[true]");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("an error with no frames keeps a stack that native code gave it", async () => {
     // The second warning of an unhandled rejection has no frames. Native code puts the stack of the reason on it.
@@ -1633,19 +1748,31 @@ describe("frames from another place", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The `throw` keeps `Error()` out of tail position. A tail call leaves no frame of this function.
-  function makeSource() {
-    try {
-      throw new Error("source");
-    } catch (source) {
-      return source;
-    }
-  }
-
   test("Error.appendStackTrace gives the frames of the source to a destination with no frames and no stack", async () => {
     const destination = await errorWithNoFrames();
     Error.appendStackTrace(makeSource(), destination);
     expect(destination.stack).toContain("at makeSource");
+  });
+
+  test("Error.appendStackTrace gives them to a destination with the unread stack of an Error.captureStackTrace() that captured no frames", async () => {
+    const destination = await errorWithNoFrames();
+    Error.captureStackTrace(destination, functionNotOnTheStack);
+    Error.appendStackTrace(makeSource(), destination);
+    expect(destination.stack).toContain("at makeSource");
+  });
+
+  test.each([
+    ["", () => {}],
+    [", also when it is not extensible", destination => void Object.preventExtensions(destination)],
+  ])("Error.appendStackTrace adds the frames of the source to a destination with frames of its own%s", (_, prepare) => {
+    const destination = makeDestination();
+    prepare(destination);
+    const source = makeSource();
+    Error.appendStackTrace(source, destination);
+    const stack = destination.stack;
+    expect(stack).toContain("at makeDestination");
+    expect(stack.indexOf("at makeSource")).toBeGreaterThan(stack.indexOf("at makeDestination"));
+    expect(source.stack).toBeUndefined();
   });
 
   test.each(decisions)(
@@ -1662,6 +1789,29 @@ describe("frames from another place", () => {
       expect(source.stack).toContain("at makeSource");
     },
   );
+
+  test.each([
+    ["an assigned stack", destination => void (destination.stack = "assigned")],
+    ["no stack", () => {}],
+  ])("Error.appendStackTrace adds no frames to a destination with no frame list and %s", (_, prepare) => {
+    const destination = errorMadeUnderLimit("none");
+    prepare(destination);
+    const before = Object.getOwnPropertyDescriptors(destination);
+    const source = makeSource();
+    Error.appendStackTrace(source, destination);
+    expect(Object.getOwnPropertyDescriptors(destination)).toEqual(before);
+    expect(source.stack).toContain("at makeSource");
+  });
+
+  test("Error.appendStackTrace adds no frames to a structuredClone() copy, which holds its stack as a string", () => {
+    const original = makeDestination();
+    // Nothing reads the copy before the call: a read puts the string on the copy, and then a different test returns.
+    const copy = structuredClone(original);
+    const source = makeSource();
+    Error.appendStackTrace(source, copy);
+    expect(copy.stack).toBe(original.stack);
+    expect(source.stack).toContain("at makeSource");
+  });
 });
 
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {

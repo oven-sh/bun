@@ -22,6 +22,7 @@ pub(crate) enum ScanError<'a> {
     Sys(syscall::Error),
     Runtime(crate::Error),
     CwdTooLong(&'static str),
+    NullBytes(&'static str, Box<[u8]>),
     Js(bindgen::Error<'a>),
 }
 impl<'a> IntoError<'a> for ScanError<'a> {
@@ -33,6 +34,13 @@ impl<'a> IntoError<'a> for ScanError<'a> {
             ScanError::CwdTooLong(fn_name) => heap.error(format_args!(
                 "{fn_name}: invalid `cwd`, longer than {MAX_PATH_BYTES} bytes"
             )),
+            ScanError::NullBytes(name, value) => heap.error_with_code(
+                bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The argument '{name}' must be a string without null bytes. Received {}",
+                    bun_core::fmt::quote(&value)
+                ),
+            ),
             ScanError::Js(err) => err,
         }
     }
@@ -59,6 +67,9 @@ impl ScanOpts {
         }
         if cwd.len() > MAX_PATH_BYTES {
             return Err(ScanError::CwdTooLong(fn_name));
+        }
+        if bun_core::strings::contains_char(cwd, 0) {
+            return Err(ScanError::NullBytes("cwd", Box::from(cwd)));
         }
         if resolve_path::Platform::AUTO.is_absolute(cwd) {
             return Ok(Some(Box::from(cwd)));
@@ -346,6 +357,12 @@ impl Glob {
         argument: Option<GlobScanArgument<'a>>,
         fn_name: &'static str,
     ) -> Result<AnyGlobWalker, ScanError<'a>> {
+        if bun_core::strings::contains_char(self.pattern.slice(), 0) {
+            return Err(ScanError::NullBytes(
+                "pattern",
+                Box::from(self.pattern.slice()),
+            ));
+        }
         let match_opts = ScanOpts::new(argument, fn_name)?;
 
         fn init_walker<'a, A: walk::Accessor>(

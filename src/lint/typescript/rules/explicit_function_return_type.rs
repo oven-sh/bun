@@ -17,8 +17,8 @@ pub struct ExplicitFunctionReturnType {
 const MISSING_RETURN_TYPE: Message =
     Message::new("missingReturnType", "Missing return type on function.");
 
-/// The name that `allowedNames` goes by: its own, or that of the variable, the method or the
-/// property that it is the value of.
+/// The name `allowedNames` is matched against: the function's own, or that of the variable, method or property it's the
+/// value of.
 fn name_of(func: Func<'_>) -> Option<Name<'_>> {
     if let Some(name) = func.name() {
         return Some(name.name());
@@ -52,19 +52,19 @@ fn name_of(func: Func<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// typescript-eslint's `isIIFE`, which also holds for an argument of a call.
+/// typescript-eslint's `isIIFE`, which is also true for a call's argument.
 fn is_iife(func: Func) -> bool {
     matches!(func.owner(), Node::Expr(e)
         if matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call))
 }
 
-/// oxlint's `ancestor_has_return_type`, which does not ask whether the function is returned: it is enough that it is
-/// somewhere in a function with a return type, or in the value of a variable or a property with a type annotation, with
-/// no statement that is an expression between.
+/// oxlint's `ancestor_has_return_type`, which doesn't check that the function is returned. It's enough that it's
+/// somewhere inside a function with a return type, or inside the value of a variable or property with a type
+/// annotation, with no expression statement in between.
 fn oxlint_ancestor_has_return_type<'a>(func: Func<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
     let answer = known.find(Node::Func(func), |_, ancestor| match ancestor {
         Node::Func(outer) if outer.return_type().is_some() => Some(true),
-        // The parameter of a `catch` is no declarator, an `accessor` no property.
+        // A `catch` parameter isn't a declarator, and an `accessor` isn't a property.
         Node::VarDecl(declaration) if !matches!(declaration.parent(), Node::Stmt(it) if it.tag() == StmtTag::Try) => {
             Some(declaration.ty().is_some())
         }
@@ -80,8 +80,8 @@ fn oxlint_ancestor_has_return_type<'a>(func: Func<'a>, known: &mut AncestorMemo<
     answer == Some(true)
 }
 
-/// `(a: () => void = () => {}) => {}`: for oxlint the type of the parameter says nothing about its default value.
-fn oxlint_is_default_of_parameter(func: Func) -> bool {
+/// `(a: () => void = () => {}) => {}`: oxlint doesn't apply the parameter's type to its default value.
+fn oxlint_is_parameter_default(func: Func) -> bool {
     let Node::Expr(mut e) = func.owner() else {
         return false;
     };
@@ -98,7 +98,7 @@ fn oxlint_is_default_of_parameter(func: Func) -> bool {
     }
 }
 
-/// `() => ({ a: 1 } as const)`: oxlint does not look into parentheses.
+/// `() => ({ a: 1 } as const)`: oxlint doesn't look inside parentheses.
 fn oxlint_hides_const_assertion(func: Func) -> bool {
     let FnBody::Expr(mut body) = func.body() else {
         return false;
@@ -112,7 +112,7 @@ fn oxlint_hides_const_assertion(func: Func) -> bool {
     true
 }
 
-/// The method that `func` is, or the property of a class that it is the value of. An `accessor` is none.
+/// Returns the method that `func` is, or the class property it's the value of. An `accessor` doesn't count.
 fn member_of(func: Func<'_>) -> Option<Member<'_>> {
     match func.owner() {
         Node::Member(member) => Some(member),
@@ -144,7 +144,7 @@ impl ExplicitFunctionReturnType {
         if func.return_type().is_some() {
             return;
         }
-        // oxlint also looks at a function and at a method of a class that have no body.
+        // oxlint also checks functions and class methods that have no body.
         let is_oxlint = cx.language().is_oxlint;
         let is_only_declared = is_oxlint
             && !func.has_body()
@@ -158,7 +158,7 @@ impl ExplicitFunctionReturnType {
         if !ast_utils::is_function_with_body(func) && !is_only_declared {
             return;
         }
-        // For oxlint a function that is only declared is allowed where a function expression is.
+        // oxlint allows a function without a body wherever it allows a function expression.
         let is_expression = func.kind() != FnKind::Decl || is_only_declared;
         if self.allow_concise_arrow_function_expressions_starting_with_void
             && func.is_arrow()
@@ -193,7 +193,7 @@ impl ExplicitFunctionReturnType {
             allow_typed_function_expressions: false,
             ..options
         };
-        let is_default = is_oxlint && oxlint_is_default_of_parameter(func);
+        let is_default = is_oxlint && oxlint_is_parameter_default(func);
         if is_expression
             && self.options.allow_typed_function_expressions
             && (is_valid_function_expression_return_type(
@@ -221,18 +221,18 @@ impl ExplicitFunctionReturnType {
             return;
         }
         check_function_return_type(func, options, |mut loc| {
-            // oxlint points at the decorators of a member.
+            // For a member, oxlint's span starts at the decorators.
             if is_oxlint && let Some(member) = member_of(func) {
                 loc.start = member.span().start;
             }
-            // And of a declaration up to the end of its name, without `<T>`.
+            // For a declaration, it ends after the name, without `<T>`.
             if is_oxlint
                 && func.kind() == FnKind::Decl
                 && let Some(name) = func.name()
             {
                 loc.end = name.span().end;
             }
-            // In place of the `=>`, at the two bytes that follow one byte after the parameters.
+            // Instead of the `=>`, it covers the two bytes that start one byte after the parameters.
             if is_oxlint
                 && func.arrow_span() == Some(loc)
                 && let Some(params) = func.params_span()
@@ -244,8 +244,8 @@ impl ExplicitFunctionReturnType {
     }
 }
 
-/// `does_immediately_return_function_expression` as oxlint has it for this rule: it looks through `as`, `satisfies` and
-/// `!` around what is returned.
+/// oxlint's `does_immediately_return_function_expression` for this rule. It looks through `as`, `satisfies` and `!`
+/// around the returned value.
 fn oxlint_returns_functions(func: Func) -> bool {
     let is_function = |value: Expr| value.skip_type_wrappers().as_fn().is_some();
     if let FnBody::Expr(body) = func.body() {
@@ -260,7 +260,7 @@ impl Rule for ExplicitFunctionReturnType {
     const META: Meta =
         Meta::typescript("explicit-function-return-type", Kind::Problem).reports_on_exit();
     const ON: On = On::new().funcs();
-    /// For oxlint: whether what is around a node has a return type.
+    /// For oxlint: caches whether a node's ancestors have a return type.
     type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {

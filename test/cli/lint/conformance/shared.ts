@@ -1,9 +1,9 @@
 // Code shared by `extract-eslint.ts` and `extract-typescript-eslint.ts`.
 //
-// Nothing in here knows how a RuleTester merges its configs. It only knows how
-// to turn what the real `Linter` reported into the fixture format, how to
-// compare that with what the upstream test asserted, and how to fan the work
-// out over child processes.
+// Nothing here depends on how a RuleTester merges its configs. This file
+// converts the real `Linter`'s reports to the fixture format, compares them
+// with the upstream test's assertions, and fans the work out over child
+// processes.
 
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -29,7 +29,7 @@ export interface FixtureSuggestion {
 
 export interface FixtureMessage {
   /**
-   * Only present when the message does not come from the rule under test: a
+   * Only present when the message doesn't come from the rule under test: a
    * rule enabled by an `/* eslint other-rule: 2 *\/` comment in the code, or
    * `null` for a problem ESLint itself reports about a directive comment.
    */
@@ -62,7 +62,7 @@ export interface FixtureCase {
   settings: Record<string, unknown> | null;
   typeAware: boolean;
   tsconfig: string | null;
-  /** The parser with a hard-coded AST that the upstream test names, if a real one took its place. */
+  /** The upstream test's hard-coded-AST parser, if the case was recorded with a real parser instead. */
   upstreamParser?: string | null;
   skip: string | null;
   messages: FixtureMessage[];
@@ -91,21 +91,21 @@ export interface Fixture {
 
 /**
  * Upstream has a few generated stress tests (a string literal of a million
- * backslashes). They would be megabytes of JSON each, so they are left out.
+ * backslashes). They'd be megabytes of JSON each, so they're skipped.
  */
 export const MAX_CODE_LENGTH = 50_000;
 
-/** One place where real ESLint and the upstream assertion do not agree. */
+/** One case where real ESLint and the upstream assertions disagree. */
 export interface Disagreement {
   rule: string;
-  /** Index into `cases` of the fixture. */
+  /** Index into the fixture's `cases`. */
   index: number;
   code: string;
   skip: string | null;
   problems: string[];
 }
 
-/** What a worker leaves behind for the parent, next to the fixture itself. */
+/** A worker writes one of these for the parent, in addition to the fixture. */
 export interface RuleReport {
   rule: string;
   disagreements: Disagreement[];
@@ -113,7 +113,7 @@ export interface RuleReport {
 }
 
 // ---------------------------------------------------------------------------
-// The slice of ESLint's API that is used
+// The parts of ESLint's API used here
 // ---------------------------------------------------------------------------
 
 export interface LintMessage {
@@ -170,7 +170,7 @@ export function toFixtureMessages(
   }));
 }
 
-/** One pass of `--fix`, or `null` if nothing is fixable. */
+/** Returns the code after one `--fix` pass, or `null` if nothing is fixable. */
 export function onePassOutput(code: string, messages: LintMessage[], fixer: SourceCodeFixer): string | null {
   return messages.some(m => m.fix) ? fixer.applyFixes(code, messages).output : null;
 }
@@ -193,9 +193,9 @@ export function toFixtureMeta(rule: RuleModule): FixtureMeta {
 }
 
 /**
- * The JSON-serializable part of a value: functions, class instances (a
+ * Returns the JSON-serializable part of a value. Functions, class instances (a
  * `ts.Program`, a parser object, ...) and `undefined` are dropped. `dropped`
- * collects the paths that were removed so the caller can decide to skip.
+ * collects the removed paths so the caller can decide to skip the case.
  */
 export function jsonPart(value: unknown, dropped: string[] = [], path = ""): unknown {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
@@ -223,7 +223,7 @@ export const nullIfEmpty = <T extends object>(value: T | null | undefined): T | 
   value && Object.keys(value).length > 0 ? value : null;
 
 // ---------------------------------------------------------------------------
-// Sanity check against what upstream asserted
+// Sanity check against upstream's assertions
 // ---------------------------------------------------------------------------
 
 export interface UpstreamCase {
@@ -332,8 +332,8 @@ function inline(value: unknown): string {
 
 /**
  * `JSON.stringify(value, null, 1)`, except that an array or object that fits
- * in `width` columns stays on one line. A third of the size, and a message or
- * a fix reads as one line in a diff.
+ * in `width` columns stays on one line. The output is a third of the size, and
+ * a message or a fix is one line in a diff.
  */
 export function stringify(value: unknown, width = 120, indent = ""): string {
   if (typeof value !== "object" || value === null) return JSON.stringify(value);

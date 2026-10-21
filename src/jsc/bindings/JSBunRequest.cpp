@@ -119,7 +119,9 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
         for (auto& property : propertyNames) {
             auto value = params->get(globalObject, property);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
-            paramsClone->putDirect(vm, property, value);
+            // User code can add an array-index key like "0" to `params`.
+            paramsClone->putDirectMayBeIndex(globalObject, property, value);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
         }
 
         clone->setParams(paramsClone);

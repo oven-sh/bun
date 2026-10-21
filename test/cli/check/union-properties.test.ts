@@ -5,10 +5,9 @@ import { linesOf, tsc } from "./differential";
 
 afterAll(endChildren);
 
-// To make a property of a short union, `bun check` asks every member for the name. In a union of 8 members or more it
-// keeps what it has found out about a member that it meets again. In one of 128 or more it comes to visit only the members
-// that have the name, with sets of members that have 64 to a word, and up to 128 without an allocation. So each program
-// here is checked with unions on both sides of such sizes, and the size must not change what is reported.
+// To create a property of a short union, `bun check` looks the name up in every member. In a union of 8 or more members
+// it caches what it learned about a member for the next lookup. So each program here is checked with unions on both
+// sides of that size, and the size must not change what's reported.
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -23,11 +22,11 @@ const tsconfig = JSON.stringify({
   },
 });
 
-/** `text(0)`, `text(1)` .. up to `count` of them. */
+/** Joins `text(0)` to `text(count - 1)`. */
 const each = (count: number, text: (i: number) => string, separator = " | ") =>
   Array.from({ length: count }, (_, i) => text(i)).join(separator);
 
-// `errors`: what TypeScript 7.0.2 reports about `program(count)`, for every `count` in `sizes`, after the name of the file.
+// `errors`: what TypeScript 7.0.2 reports for `program(count)`, for every `count` in `sizes`, without the file name.
 const cases: Record<string, { sizes?: number[]; program: (count: number) => string; errors: string }> = {
   "a property that all, some, one or none of the members have": {
     program: count => `
@@ -207,7 +206,7 @@ export {};
   "object literals": {
     sizes: [7, 8, 65],
     program: count => {
-      // Each has a property of its own, so that none is a subtype of another.
+      // Each has its own property, so that none is a subtype of another.
       const literals = `(${each(count - 1, i => `c === ${i} ? { p${i % 3}: ${i % 2 ? `"s"` : 1}, q${i}: 1 }`, " : ")} : { last: true }`;
       return `
 declare const c: number;
@@ -331,7 +330,7 @@ export {};
   Type '"1"' is not assignable to type 'never'.
 `,
   },
-  "the names of the properties of Object and Function": {
+  "names of Object's and Function's properties": {
     program: count => `
 type U = ${each(count, i => [`{ tag: ${i}; toString(): "own"; name: 1 }`, `{ tag: ${i} }`, `{ (x: number): ${i % 2}; tag: ${i} }`][i % 3])};
 type Functions = ${each(count, i => (i % 2 ? `((x: ${i % 4}) => void)` : `{ new (): object; call: "mine"; tag: ${i} }`))};
@@ -587,7 +586,7 @@ export {};
 (22,9): error TS2322: Type 'string' is not assignable to type 'never'.
 `,
   },
-  "one property after the other of the same union": {
+  "one property after another of the same union": {
     sizes: [7, 8, 65, 127, 128, 129, 200],
     program: count => `
 type Closed = ${each(count, i => (i === 3 ? `{ tag: 0; ${each(12, k => `s${k}: "three"`, "; ")} }` : `{ tag: ${i % 3}; own${i}: ${i % 3} }`))};
@@ -669,7 +668,7 @@ export {};
   Type '"index"' is not assignable to type 'never'.
 `,
   },
-  "unions that have members in common": {
+  "unions that share members": {
     sizes: [7, 8, 65, 127, 128, 129, 200],
     program: count => `
 type Closed = ${each(count, i => `{ tag: ${i}; group: ${i % 3}; own${i}: ${i}; some${i % 2}: 1 }`)};
@@ -743,7 +742,7 @@ export {};
   Type '"extra"' is not assignable to type 'never'.
 `,
   },
-  "a member that is being resolved while the union is asked": {
+  "a member that's being resolved during the lookup": {
     sizes: [7, 8, 65, 127, 128, 129, 200],
     program: count => `
 type Plain = ${each(count - 1, i => `{ kind: "k${i}"; x: ${i % 3}; own${i}: ${i} }`)};
@@ -794,8 +793,8 @@ export {};
 (22,7): error TS2322: Type 'any' is not assignable to type 'never'.
 `,
   },
-  // The contextual type of a property of an object literal comes from the members of the union that have the property or
-  // an index signature. The others are passed over once enough is known about them.
+  // An object literal property's contextual type comes from the union members that have the property or an index
+  // signature. The others are skipped once enough is known about them.
   "the contextual type of a property that all, two kinds, one or none of the members have": {
     sizes: [2, 8, 127, 128, 300],
     program: count => `
@@ -924,25 +923,25 @@ export {};
   },
 };
 
-// `program` with one more line at the top, which asks each of its unions for 12 names that no member has. After that,
-// `bun check` has kept all that it ever keeps about a union and its members.
-function afterOtherNames(program: string) {
+// Returns `program` with one more line at the top, which looks up 12 names that no member has in each of its unions.
+// After that, `bun check` has cached everything it ever caches about a union and its members.
+function afterUnrelatedLookups(program: string) {
   const aliases = Array.from(program.matchAll(/^type (\w+) =/gm), found => found[1]);
   const reads = aliases.flatMap(alias => Array.from({ length: 12 }, (_, i) => `(null! as ${alias}).other${i}`));
   return `// @ts-ignore\n[${reads.join(", ")}];${program}`;
 }
 
-test.concurrent.each(Object.keys(cases))("%s", async title => {
+test.concurrent.each(Object.keys(cases))("reports the same errors at every union size: %s", async title => {
   const { sizes = [7, 8, 65, 130], program, errors } = cases[title];
   using dir = tempDir("bun-check-union", {
     "tsconfig.json": tsconfig,
     ...Object.fromEntries(sizes.map(size => [`first${size}.ts`, program(size)])),
-    ...Object.fromEntries(sizes.map(size => [`later${size}.ts`, afterOtherNames(program(size))])),
+    ...Object.fromEntries(sizes.map(size => [`later${size}.ts`, afterUnrelatedLookups(program(size))])),
   });
   const byFile: Record<string, string[]> = {};
   let file = "";
   for (const line of await linesOf([bunExe(), "check"], String(dir), String(dir))) {
-    // The lines that explain an error come after it, indented.
+    // An error's elaboration lines follow it, indented.
     const error = /^((first|later)\d+)\.ts\((\d+)(.*)$/.exec(line);
     if (error) file = error[1];
     (byFile[file] ??= []).push(error ? `(${+error[3] - (error[2] === "later" ? 1 : 0)}${error[4]}` : line);
@@ -976,7 +975,7 @@ const kinds: ((i: number) => string)[] = [
 ];
 const names = [".a", ".b", ".c", ".tag", "[0]", `["data-x"]`, ".length", ".toString", ".call", "[Symbol.iterator]"];
 
-test.concurrent.skipIf(!tsc)("every kind of member and every kind of name, as in TypeScript", async () => {
+test.concurrent.skipIf(!tsc)("matches tsc for every kind of union member and property name", async () => {
   const functions: string[] = [];
   for (const size of [7, 8]) {
     for (const kind of kinds) {
@@ -990,7 +989,7 @@ test.concurrent.skipIf(!tsc)("every kind of member and every kind of name, as in
       }
     }
   }
-  // A debug build is 10 to 100 times slower, so it checks a sample. It is always the same sample.
+  // A debug build is 10 to 100 times slower, so it checks a sample, always the same one.
   const sample = functions.filter((_, index) => index % (isDebug || isASAN ? 7 : 1) === 0);
   using dir = tempDir("bun-check-union", {
     "tsconfig.json": tsconfig,
@@ -1006,14 +1005,14 @@ test.concurrent.skipIf(!tsc)("every kind of member and every kind of name, as in
   expect(ours).toEqual(theirs);
 });
 
-// A union keeps its members in one order, whatever it is made of. `bun check` doesn't sort what comes in order, as the
-// members of a union do: it merges that with the rest. Where all come from one union that was narrowed, it takes them
-// from that union by their positions. And it keeps the answers for lists of types that it has seen. An assignment that
-// fails prints the union, and the line after it names the first member.
+// A union keeps its members in a canonical order, whatever it's built from. `bun check` doesn't sort input that's
+// already ordered, like another union's members. It merges that with the rest. Where all the types come from one union
+// that was narrowed, it picks them from that union by position. It also caches the results for lists of types it has
+// seen. A failed assignment prints the union, and the line after it mentions the first member.
 
-// What TypeScript 7.0.2 reports about each program, with `noErrorTruncation`.
+// The expected output of each program is TypeScript 7.0.2's, with `noErrorTruncation`.
 const orders: Record<string, { program: string; errors: string }> = {
-  "unions whose members interleave, overlap, follow each other, are the same or are none": {
+  "unions whose members interleave, overlap, follow each other, are the same or are `never`": {
     program: `
 ${each(10, i => `interface A0${i} { a${i}: 1 }`, "\n")}
 interface Runs {
@@ -1073,7 +1072,7 @@ export {};
   Type 'undefined' is not assignable to type 'never'.
 `,
   },
-  "what a wider member, a pattern, a supertype or a constraint takes out of merged unions": {
+  "members that a wider member, a pattern, a supertype or a constraint removes from merged unions": {
     program: `
 interface A { a: 1 } interface B { b: 1 } interface C extends A { c: 1 } interface D extends B { d: 1 } interface E { e: 1 }
 enum Color { Red, Green = "green", Blue = 2 }
@@ -1191,8 +1190,8 @@ export {};
 (60,9): error TS2322: Type '{ shown: "x" | 1 | T | A | B | (U & "b"); }' is not assignable to type '0'.
 `,
   },
-  // What TypeScript 7.1 reports: 7.0 has them in the order of their creation.
-  "bigint literals are in the order of their values": {
+  // The expected output is TypeScript 7.1's. 7.0 orders them by creation.
+  "bigint literals, ordered by value": {
     program: `
 interface A { a: 1 } interface B { b: 1 }
 interface Runs {
@@ -1329,115 +1328,59 @@ export {};
 (36,20): error TS2322: Type '2' is not assignable to type '1'.
 `,
   },
-  "three types whose order goes in a circle, among others": {
+  "aliases with the same name, ordered by declaration as in TypeScript 7.1": {
     program: `
 interface A1 { a1: 1 } interface A2 { a2: 1 } interface K { k: 1 } interface M { m: 1 } interface P { p: 1 }
-interface W { w: 1 } interface Y { y: 1 } interface Z { z: 1 }
 interface Box<T> { value: T }
-// N.X<A1, P> comes before N.X<A2, K>, that one before O.X, and that one before N.X<A1, P>.
-namespace N { export type X<T, U> = U & T }
+// TypeScript 7.0 puts N.X<A1, P> before N.X<A2, K>, that one before O.X, and that one before N.X<A1, P>.
 namespace O { export type X = M & A1 }
-type V = W & A1;
-type Y2 = Y & A1;
+namespace N { export type X<T, U> = U & T }
+namespace I { export interface X { x: 1 } }
+namespace B { export type X<T> = Box<T> }
+namespace Again { export type X<T, U> = N.X<T, U> }
 interface Runs {
   both: N.X<A1, P> | N.X<A2, K>;
-  bothAndMore: A1 | N.X<A2, K> | V | Z | N.X<A1, P> | Y2 | "text";
-  bothAndMany: A1 | A2 | K | M | P | W | Y | Z | N.X<A1, P> | N.X<A2, K> | V | Y2;
   third: O.X | A2;
-  thirdAndMore: K | O.X | 1 | V | Y2 | undefined;
-  first: N.X<A1, P> | M;
-  second: N.X<A2, K> | P;
-  firstAndThird: N.X<A1, P> | O.X;
-  all: O.X | N.X<A2, K> | N.X<A1, P>;
-  boxes: Box<N.X<A1, P>> | Box<N.X<A2, K>> | Box<A1> | Box<Z>;
-  box: Box<O.X> | Box<A2>;
+  all: N.X<A2, K> | O.X | N.X<A1, P>;
+  boxes: Box<N.X<A1, P>> | Box<N.X<A2, K>> | Box<A1>;
 }
 const c1: never = null! as Runs["both"] | Runs["third"];
 const c2: never = null! as Runs["third"] | Runs["both"];
-const c3: never = null! as Runs["bothAndMore"] | Runs["thirdAndMore"];
-const c4: never = null! as Runs["thirdAndMore"] | Runs["bothAndMore"];
-const c5: never = null! as Runs["first"] | Runs["second"] | Runs["third"];
-const c6: never = null! as Runs["third"] | Runs["second"] | Runs["first"];
-const c7: never = null! as Runs["second"] | Runs["third"] | Runs["first"];
-const c8: never = null! as Runs["firstAndThird"] | Runs["second"];
-const c9: never = null! as Runs["second"] | Runs["firstAndThird"];
-const c10: never = null! as Runs["all"] | Z;
-const c11: never = null! as A1 | Runs["all"];
-const c12: never = null! as Runs["all"] | Runs["both"];
-const c13: never = null! as Runs["both"] | Runs["all"];
-const c14: never = null! as Runs["bothAndMore"] | O.X;
-const c15: never = null! as O.X | Runs["bothAndMore"];
-const c16: never = null! as Runs["bothAndMany"] | O.X;
-const c17: never = null! as O.X | Runs["bothAndMany"] | 1;
-const c18: never = null! as Runs["bothAndMany"] | Runs["thirdAndMore"] | Runs["all"];
-const c19: never = null! as Runs["boxes"] | Runs["box"];
-const c20: never = null! as Box<O.X> | Runs["boxes"] | Box<M>;
-const c21: never = null! as Runs["boxes"] | Box<M> | Box<O.X>;
-const c22: never = null! as Runs["first"] | Runs["second"] | Runs["third"];
-function narrowed(x: Runs["all"] | Z | W, y: Runs["bothAndMany"] | O.X) {
-  if ("z" in x) return;
-  const withoutZ: never = x;
-  if ("w" in x) x; else x;
+const c3: never = null! as A1 | Runs["all"];
+const c4: never = null! as N.X<A1, P> | O.X | N.X<A2, K>;
+const c5: never = null! as Runs["boxes"] | Box<O.X>;
+const c6: never = null! as B.X<1> | I.X | Box<0>;
+const c7: never = null! as Again.X<A1, K> | N.X<A2, K> | Again.X<A1, A2> | Runs["third"];
+function narrowed(x: Runs["all"] | Box<1>) {
+  if ("value" in x) return;
+  const withoutBox: never = x;
+  if ("m" in x) x; else x;
   const joined: never = x;
-  if ("z" in y || "y" in y) return;
-  const withoutTwo: never = y;
 }
 export {};
 `,
     errors: `
-(23,7): error TS2322: Type 'A2 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+(16,7): error TS2322: Type 'A2 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
   Type 'A2' is not assignable to type 'never'.
-(24,7): error TS2322: Type 'A2 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+(17,7): error TS2322: Type 'A2 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
   Type 'A2' is not assignable to type 'never'.
-(25,7): error TS2322: Type '"text" | 1 | A1 | K | Z | V | N.X<A1, P> | N.X<A2, K> | O.X | Y2 | undefined' is not assignable to type 'never'.
-  Type 'undefined' is not assignable to type 'never'.
-(26,7): error TS2322: Type '"text" | 1 | A1 | K | Z | V | N.X<A1, P> | N.X<A2, K> | O.X | Y2 | undefined' is not assignable to type 'never'.
-  Type 'undefined' is not assignable to type 'never'.
-(27,7): error TS2322: Type 'A2 | M | P | N.X<A1, P> | N.X<A2, K> | O.X' is not assignable to type 'never'.
-  Type 'A2' is not assignable to type 'never'.
-(28,7): error TS2322: Type 'A2 | M | P | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'A2' is not assignable to type 'never'.
-(29,7): error TS2322: Type 'A2 | M | P | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'A2' is not assignable to type 'never'.
-(30,7): error TS2322: Type 'P | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'P' is not assignable to type 'never'.
-(31,7): error TS2322: Type 'P | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'P' is not assignable to type 'never'.
-(32,7): error TS2322: Type 'Z | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'Z' is not assignable to type 'never'.
-(33,7): error TS2322: Type 'A1 | N.X<A1, P> | N.X<A2, K> | O.X' is not assignable to type 'never'.
+(18,7): error TS2322: Type 'A1 | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
   Type 'A1' is not assignable to type 'never'.
-(34,7): error TS2322: Type 'N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'X<A2, K>' is not assignable to type 'never'.
-(35,7): error TS2322: Type 'N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'X<A2, K>' is not assignable to type 'never'.
-(36,7): error TS2322: Type '"text" | A1 | Z | V | N.X<A1, P> | N.X<A2, K> | O.X | Y2' is not assignable to type 'never'.
-  Type '"text"' is not assignable to type 'never'.
-(37,7): error TS2322: Type '"text" | A1 | Z | V | N.X<A1, P> | N.X<A2, K> | O.X | Y2' is not assignable to type 'never'.
-  Type '"text"' is not assignable to type 'never'.
-(38,7): error TS2322: Type 'A1 | A2 | K | M | P | W | Y | Z | V | O.X | N.X<A1, P> | N.X<A2, K> | Y2' is not assignable to type 'never'.
-  Type 'A1' is not assignable to type 'never'.
-(39,7): error TS2322: Type '1 | A1 | A2 | K | M | P | W | Y | Z | V | O.X | N.X<A1, P> | N.X<A2, K> | Y2' is not assignable to type 'never'.
-  Type '1' is not assignable to type 'never'.
-(40,7): error TS2322: Type '1 | A1 | A2 | K | M | P | W | Y | Z | V | N.X<A2, K> | O.X | N.X<A1, P> | N.X<A2, K> | Y2 | undefined' is not assignable to type 'never'.
-  Type 'undefined' is not assignable to type 'never'.
-(41,7): error TS2322: Type 'Box<A1> | Box<A2> | Box<Z> | Box<X<A1, P>> | Box<X<A2, K>> | Box<X>' is not assignable to type 'never'.
+(19,7): error TS2322: Type 'O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+  Type 'X' is not assignable to type 'never'.
+(20,7): error TS2322: Type 'Box<A1> | Box<X> | Box<X<A1, P>> | Box<X<A2, K>>' is not assignable to type 'never'.
   Type 'Box<A1>' is not assignable to type 'never'.
-(42,7): error TS2322: Type 'Box<A1> | Box<M> | Box<Z> | Box<X<A2, K>> | Box<X> | Box<X<A1, P>>' is not assignable to type 'never'.
-  Type 'Box<A1>' is not assignable to type 'never'.
-(43,7): error TS2322: Type 'Box<A1> | Box<M> | Box<Z> | Box<X<A1, P>> | Box<X<A2, K>> | Box<X>' is not assignable to type 'never'.
-  Type 'Box<A1>' is not assignable to type 'never'.
-(44,7): error TS2322: Type 'A2 | M | P | N.X<A1, P> | N.X<A2, K> | O.X' is not assignable to type 'never'.
+(21,7): error TS2322: Type 'Box<0> | I.X | B.X<1>' is not assignable to type 'never'.
+  Type 'Box<0>' is not assignable to type 'never'.
+(22,7): error TS2322: Type 'A2 | O.X | N.X<A2, K> | Again.X<A1, A2> | Again.X<A1, K>' is not assignable to type 'never'.
   Type 'A2' is not assignable to type 'never'.
-(47,9): error TS2322: Type 'W | N.X<A2, K> | O.X | N.X<A1, P>' is not assignable to type 'never'.
-  Type 'W' is not assignable to type 'never'.
-(49,9): error TS2322: Type 'W | N.X<A1, P> | N.X<A2, K> | O.X' is not assignable to type 'never'.
-  Type 'W' is not assignable to type 'never'.
-(51,9): error TS2322: Type 'A1 | A2 | K | M | P | W | V | O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
-  Type 'A1' is not assignable to type 'never'.
+(25,9): error TS2322: Type 'O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+  Type 'X' is not assignable to type 'never'.
+(27,9): error TS2322: Type 'O.X | N.X<A1, P> | N.X<A2, K>' is not assignable to type 'never'.
+  Type 'X' is not assignable to type 'never'.
 `,
   },
-  "what narrowing has taken apart is put together again": {
+  "a union split by narrowing and joined again": {
     program: `
 ${each(12, i => `interface K${String(i).padStart(2, "0")} { kind: ${i}; group: ${i % 3}; }`, "\n")}
 type All = ${each(12, i => `K${String(i).padStart(2, "0")}`)};
@@ -1605,7 +1548,7 @@ export {};
   Type 'A1' is not assignable to type 'never'.
 `,
   },
-  "paths that join with parts of the initial type, and with types that a test has brought in": {
+  "control flow paths that join with parts of the initial type, and with types introduced by a test": {
     program: `
 class Base { base = 1 } class Left extends Base { left = 1 } class Right extends Base { right = 1 } class Other { other = 1 }
 interface A { k: "a" } interface B { k: "b" } interface C { k: "c" } interface D { k: "d" }
@@ -1691,7 +1634,7 @@ export {};
   Type 'undefined' is not assignable to type 'never'.
 `,
   },
-  "the same test for truthiness, null, undefined or typeof on the same type again": {
+  "a repeated test for truthiness, null, undefined or typeof on the same type": {
     program: `
 interface A { a: 1 } interface B { b: 1 }
 type Fn = () => void;
@@ -1873,7 +1816,7 @@ const untruncated = JSON.stringify({
   compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noErrorTruncation: true },
 });
 
-test.concurrent.each(Object.keys(orders))("%s", async title => {
+test.concurrent.each(Object.keys(orders))("orders union members like tsc: %s", async title => {
   const { program, errors } = orders[title];
   using dir = tempDir("bun-check-union", { "tsconfig.json": untruncated, "a.ts": program });
   const lines = await linesOf([bunExe(), "check"], String(dir), String(dir));
@@ -1882,7 +1825,9 @@ test.concurrent.each(Object.keys(orders))("%s", async title => {
 
 const named = (i: number) => `T${String(i).padStart(5, "0")}`;
 
-/** A union of `size` types next to one more type, which belongs before, among or after them, and next to unions. */
+/**
+ * Combines a union of `size` types with one more type, which sorts before, among or after them, and with other unions.
+ */
 function unionsOf(size: number) {
   const middle = size - (size % 2);
   const union = (count: number, index: (i: number) => number) => each(count, i => named(index(i)));
@@ -1918,7 +1863,7 @@ export {};
 `;
 }
 
-/** A union of `size` types that is narrowed, and joined again. */
+/** Narrows a union of `size` types and joins the parts again. */
 function narrowingOf(size: number) {
   const [first, middle, last] = [0, size >> 1, size - 1];
   return `
@@ -1969,7 +1914,10 @@ export function switched(x: All) {
 `;
 }
 
-/** What is made of each member of a union of `size` types: in the order of the members, in the opposite order, less. */
+/**
+ * Maps each member of a union of `size` types to another type: in the members' order, in reverse order, or to fewer
+ * types.
+ */
 function mappingOf(size: number) {
   return `
 ${each(size, i => `interface ${named(i)} { at: ${i}; }`, "\n")}
@@ -1993,12 +1941,15 @@ export {};
 `;
 }
 
-/** `size` types written in no order: alone, beside a union, beside a union as long as they are, and as `size` unions. */
+/**
+ * `size` types in no particular order: alone, next to a union, next to a union of the same length, and as `size`
+ * unions.
+ */
 function unorderedOf(size: number) {
   const shuffled = (i: number) => (i * 7919 + 13) % 10007;
   const literals = (from: number) => each(size, i => `"s${shuffled(from + i)}"`);
   const interfaces = each(size, i => named(shuffled(i) % (3 * size)));
-  // The same but for the one in the middle.
+  // The same except for the middle one.
   const almost = each(size, i => `"s${shuffled(i === size >> 1 ? size : i)}"`);
   const lists = [
     `Runs["two"] | ${literals(0)}`,
@@ -2027,7 +1978,7 @@ export {};
 `;
 }
 
-/** Unions that one file declares and others put together. */
+/** Unions that one file declares and other files combine. */
 const shared = {
   "shared.ts": `
 ${each(24, i => `export interface ${named(i)} { kind: ${i}; group: ${i % 3}; }`, "\n")}
@@ -2063,7 +2014,7 @@ export function narrowed(x: All, y: Rest<${named(file)}>) {
   ),
 };
 
-/** The lines about each file. The lines that explain an error come after it, indented. */
+/** Groups the lines by file. An error's elaboration lines follow it, indented. */
 function byFile(lines: string[]) {
   const found: Record<string, string[]> = {};
   let file = "";
@@ -2074,10 +2025,10 @@ function byFile(lines: string[]) {
   return found;
 }
 
-// A type is searched for in a union that is 8 times as long as what it comes with, and merged otherwise. Positions
-// are looked for in a union of up to 16 times as many members as two types have together: 48 for a union of two and
-// one more type.
-test.concurrent.skipIf(!tsc)("unions of 2 to 5,000 members, as in TypeScript", async () => {
+// Next to a union at least 8 times as long, types are inserted one by one by searching for their position. Otherwise
+// the two are merged. Positions are looked up in a union with up to 16 times as many members as the two types have
+// together, which is 48 for a union of two and one more type.
+test.concurrent.skipIf(!tsc)("matches tsc on unions of 2 to 5,000 members", async () => {
   const sizes = [2, 3, 7, 8, 9, 48, 49, 100, isDebug || isASAN ? 500 : 5000];
   using dir = tempDir("bun-check-union", {
     "tsconfig.json": untruncated,
@@ -2093,7 +2044,7 @@ test.concurrent.skipIf(!tsc)("unions of 2 to 5,000 members, as in TypeScript", a
   expect(byFile(ours)).toEqual(byFile(theirs));
 });
 
-test.concurrent.skipIf(!tsc)("what is made of each member of a union of 2 to 300, as in TypeScript", async () => {
+test.concurrent.skipIf(!tsc)("matches tsc on types mapped from each member of a union of 2 to 300", async () => {
   const sizes = [2, 3, 8, 9, 100, 300];
   using dir = tempDir("bun-check-union", {
     "tsconfig.json": untruncated,
@@ -2108,9 +2059,9 @@ test.concurrent.skipIf(!tsc)("what is made of each member of a union of 2 to 300
   expect(byFile(ours)).toEqual(byFile(theirs));
 });
 
-// Up to 8 unions are merged, more are sorted as one list. Of a list of more than 32 types, only the first and the last
-// 16 say where its answer is kept.
-test.concurrent.skipIf(!tsc)("3 to 300 types in no order, alone and beside unions, as in TypeScript", async () => {
+// Up to 8 unions are merged, and more are sorted as one list. For a list of more than 32 types, only the first and last
+// 16 are hashed for the cache lookup.
+test.concurrent.skipIf(!tsc)("matches tsc on 3 to 300 unordered types, alone and next to unions", async () => {
   const sizes = [3, 7, 8, 9, 10, 32, 33, 300];
   using dir = tempDir("bun-check-union", {
     "tsconfig.json": untruncated,
@@ -2125,7 +2076,7 @@ test.concurrent.skipIf(!tsc)("3 to 300 types in no order, alone and beside union
   expect(byFile(ours)).toEqual(byFile(theirs));
 });
 
-test.concurrent.skipIf(!tsc)("unions of another file, on any number of threads, as in TypeScript", async () => {
+test.concurrent.skipIf(!tsc)("matches tsc on another file's unions on any thread count", async () => {
   using dir = tempDir("bun-check-union", { "tsconfig.json": untruncated, ...shared });
   const root = String(dir);
   const [theirs, ...ours] = await Promise.all([
@@ -2136,22 +2087,22 @@ test.concurrent.skipIf(!tsc)("unions of another file, on any number of threads, 
   for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
 });
 
-// The members of an intersection are a list with a copy of every property of every constituent. If the constituents have
-// 32 properties or more, and share the names of no more than half of them, a lookup by name leaves the properties where
-// they are, until something lists them or there were a quarter as many lookups as names. A union looks a name up in each
-// member in that way, unless it is asked for all its properties. And a property of a mapped type gets the mapper that has
-// its key when its type is asked for. So each program here is checked with sizes on both sides of those numbers, on 1 and
-// on 8 threads, by name before the list and after it, and none of that must change what is reported.
+// An intersection's members are a list with a copy of every property of every constituent. If the constituents have 32
+// or more properties, and share the names of at most half of them, a lookup by name doesn't build that list, until
+// something enumerates the properties or there have been a quarter as many lookups as names. A union looks a name up in
+// each member that way, unless all its properties are requested. And a mapped type's property gets the mapper with its
+// key only when its type is requested. So each program here is checked with sizes on both sides of those numbers, on 1
+// and on 8 threads, by name before and after the enumeration, and none of that may change what's reported.
 
 /** `count` optional properties that no other type has. */
 const filler = (count: number, prefix = "f") => each(count, i => `${prefix}${i}?: ${i};`, " ");
-/** A line for each of `values`. `never` puts their types in the messages. */
+/** One line per value. Assigning to `never` makes the messages print their types. */
 const reads = (prefix: string, values: string[]) =>
   values.map((value, i) => `const ${prefix}${i}: never = ${value};`).join("\n");
 /** `owner.name`, `owner[0]`, `owner()` */
-const of = (owner: string, names: string[]) => names.map(name => `${owner}${/^\w/.test(name) ? "." : ""}${name}`);
+const accesses = (owner: string, names: string[]) => names.map(name => `${owner}${/^\w/.test(name) ? "." : ""}${name}`);
 
-// `errors`: what TypeScript 7.0.2 reports about `program(count)`, for every `count` in `sizes`, after the name of the file.
+// `errors`: what TypeScript 7.0.2 reports for `program(count)`, for every `count` in `sizes`, without the file name.
 const members: Record<string, { sizes: number[]; program: (count: number) => string; errors: string }> = {
   "names that one, two or all of the constituents have": {
     // The constituents have 21 properties besides the filler.
@@ -2159,7 +2110,7 @@ const members: Record<string, { sizes: number[]; program: (count: number) => str
     program: count => {
       const names = ["a", "b", "same", "both", "opt", "req", "ro", "rw", "fixed", "m", "p", "toString"];
       const byName = (v: string) => `
-${reads(v, of(v, names))}
+${reads(v, accesses(v, names))}
 ${v}.ro = 1;
 ${v}.rw = 1;
 ${v}.fixed = 1;
@@ -2244,7 +2195,7 @@ class D { private x = 1; w = 1; }
 type N = C & E & { n?: 1 };
 type Conflict = C & D;
 declare const n: N;
-${reads("n", of("n", ["x", "z", "e", "acc", "only"]))}
+${reads("n", accesses("n", ["x", "z", "e", "acc", "only"]))}
 n.acc = 1;
 n.only = 1;
 n.none;
@@ -2274,7 +2225,7 @@ export {};
 (19,97): error TS2341: Property 'x' is private and only accessible within class 'C'.
 `,
   },
-  "constituents that are not object types, or have more than properties": {
+  "constituents that aren't object types, or have more than properties": {
     sizes: [1, 30, 31, 100],
     program: count => `
 interface A { a: 1; ${filler(count)} }
@@ -2286,20 +2237,20 @@ declare const newable: A & (new () => A);
 declare const items: string[] & A;
 declare const pair: [1, 2] & A;
 declare const space: typeof Space & A;
-${reads("branded", of("branded", ["brand", "length", "none"]))}
-${reads("indexed", of("indexed", ["a", "anything", "toString", "f0"]))}
-${reads("callable", of("callable", ["a", "name", "(1)", "none"]))}
-${reads("newable", [...of("newable", ["a", "prototype", "none"]), "new newable()"])}
-${reads("items", of("items", ["a", "length", "[0]", "none"]))}
-${reads("pair", of("pair", ["a", "length", "[1]", "[2]", "none"]))}
-${reads("space", of("space", ["a", "value", "Only", "f0"]))}
+${reads("branded", accesses("branded", ["brand", "length", "none"]))}
+${reads("indexed", accesses("indexed", ["a", "anything", "toString", "f0"]))}
+${reads("callable", accesses("callable", ["a", "name", "(1)", "none"]))}
+${reads("newable", [...accesses("newable", ["a", "prototype", "none"]), "new newable()"])}
+${reads("items", accesses("items", ["a", "length", "[0]", "none"]))}
+${reads("pair", accesses("pair", ["a", "length", "[1]", "[2]", "none"]))}
+${reads("space", accesses("space", ["a", "value", "Only", "f0"]))}
 function generic<T extends { t: 1 }, U extends { u: 1 } | { u: 2; v: 3 }, K extends string>(
   one: T & A, union: U & A, text: K & A, all: T & U & A,
 ) {
-${reads("one", of("one", ["t", "a", "f0", "none"]))}
-${reads("union", of("union", ["u", "a", "v"]))}
-${reads("text", of("text", ["a", "length", "none"]))}
-${reads("all", of("all", ["t", "u", "a"]))}
+${reads("one", accesses("one", ["t", "a", "f0", "none"]))}
+${reads("union", accesses("union", ["u", "a", "v"]))}
+${reads("text", accesses("text", ["a", "length", "none"]))}
+${reads("all", accesses("all", ["t", "u", "a"]))}
   const keys: never = null! as Exclude<keyof (T & A), \`f\${number}\`>;
 }
 export {};
@@ -2377,10 +2328,10 @@ type N = ${each(count, i => `P${i}`, " & ")};
 type L = ${each(count, i => `P${i}`, " & ")} & { l?: 1 };
 declare const n: N;
 declare const l: L;
-${reads("n", of("n", names))}
+${reads("n", accesses("n", names))}
 const n_keys: never = null! as Exclude<keyof N, \`f\${string}\` | \`own\${number}\`>;
 const l_keys: never = null! as Exclude<keyof L, \`f\${string}\` | \`own\${number}\`>;
-${reads("l", of("l", names))}
+${reads("l", accesses("l", names))}
 export {};
 `;
     },
@@ -2415,7 +2366,7 @@ export {};
 (26,21): error TS2339: Property 'none' does not exist on type 'L'.
 `,
   },
-  "this types and generic base types": {
+  "`this` types and generic base types": {
     // `Leaf` has 5 properties besides the filler, `Mid` 4.
     sizes: [1, 25, 26, 27, 100],
     program: count => `
@@ -2426,11 +2377,11 @@ type N = Leaf & { n: 1 };
 type G<T> = Mid<T> & { g: T };
 declare const n: N;
 declare const g: G<number>;
-${reads("n", of("n", ["value", "self()", "self().self().n", "mid", "leaf", "map(x => x.length).value", "f0", "none"]))}
-${reads("g", of("g", ["value", "self()", "self().g", "mid", "g", "none"]))}
+${reads("n", accesses("n", ["value", "self()", "self().self().n", "mid", "leaf", "map(x => x.length).value", "f0", "none"]))}
+${reads("g", accesses("g", ["value", "self()", "self().g", "mid", "g", "none"]))}
 function generic<T>(one: G<T>, list: G<T[]>) {
-${reads("one", of("one", ["value", "self().g", "mid"]))}
-${reads("list", of("list", ["value", "self().g", "mid"]))}
+${reads("one", accesses("one", ["value", "self().g", "mid"]))}
+${reads("list", accesses("list", ["value", "self().g", "mid"]))}
 }
 const n_keys: never = null! as Exclude<keyof N, \`f\${number}\`>;
 const g_keys: never = null! as Exclude<keyof G<1>, \`f\${number}\`>;
@@ -2466,7 +2417,7 @@ export {};
   Type '"g"' is not assignable to type 'never'.
 `,
   },
-  "an intersection that is asked while a constituent is being resolved": {
+  "an intersection used while a constituent is being resolved": {
     sizes: [1, 30, 31, 32, 100],
     program: count => `
 interface Big { b: 1; ${filler(count)} }
@@ -2504,7 +2455,7 @@ export {};
 (15,10): error TS7023: 'f' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
 `,
   },
-  "a mapped type of which one property is read": {
+  "a mapped type with only one property read": {
     sizes: [1, 50, isDebug || isASAN ? 400 : 2000],
     program: count => `
 type Keys = "first" | ${each(count, i => `"k${i}"`)} | "last";
@@ -2532,7 +2483,7 @@ export {};
   Type '"first"' is not assignable to type 'never'.
 `,
   },
-  "as clauses and modifiers": {
+  "`as` clauses and modifiers": {
     sizes: [1, 50],
     program: count => `
 interface Source { a: 1; b: 2; c?: 3; readonly d: 4; readonly e?: 5; ${filler(count)} }
@@ -2546,10 +2497,10 @@ type None = { readonly [K in keyof Source]?: Source[K] };
 type Picked = Pick<Source, "c" | "d" | "f0">;
 type Named = { [K in "c" | "d" | "z"]: K };
 ${reads("r", [
-  ...of("(null! as Merged)", ["ab", "c", "a"]),
-  ...of("(null! as Dropped)", ["b", "a", "f0"]),
+  ...accesses("(null! as Merged)", ["ab", "c", "a"]),
+  ...accesses("(null! as Dropped)", ["b", "a", "f0"]),
   "null! as keyof Dropped",
-  ...of("(null! as Renamed)", ["get_c", "c"]),
+  ...accesses("(null! as Renamed)", ["get_c", "c"]),
   ...["Same", "Copy", "All", "None", "Picked", "Named"].map(alias => `(null! as ${alias}).c`),
   "(null! as Copy).e",
   "(null! as All).e",
@@ -2599,7 +2550,7 @@ export {};
 (37,7): error TS2741: Property 'd' is missing in type '{}' but required in type 'Picked'.
 `,
   },
-  "keys that are not strings, or spell one name": {
+  "keys that aren't strings, or that spell the same name": {
     sizes: [1],
     program: () => `
 enum E { A = "a", B = "b" }
@@ -2682,7 +2633,7 @@ export {};
   Type '"own"' is not assignable to type 'never'.
 `,
   },
-  "what is made of the properties of a mapped type": {
+  "types derived from a mapped type's properties": {
     sizes: [1, 40],
     program: count => `
 type Box<T> = { [K in "a" | "b" | ${each(count, i => `"f${i}"`)}]: { k: K; t: T } };
@@ -2759,7 +2710,7 @@ export {};
     Type 'number' is not assignable to type 'string'.
 `,
   },
-  "where a property of a mapped type is copied": {
+  "places that copy a mapped type's property": {
     sizes: [1, 40],
     program: count => `
 type Box<T> = { [K in "a" | "b" | ${each(count, i => `"f${i}"`)}]: { k: K; t: T } };
@@ -2810,8 +2761,8 @@ export {};
   Type '"a"' is not assignable to type 'never'.
 `,
   },
-  "a union of intersections that are asked by name": {
-    // Each intersection has 3 constituents besides, with 44 properties.
+  "a union of intersections looked up by name": {
+    // Each intersection also has 3 other constituents, with 44 properties.
     sizes: [0, 5, 6, 30],
     program: count => `
 interface Base { kind: string; call(): void; ${filler(40)} }
@@ -3040,18 +2991,18 @@ export {};
   },
 };
 
-// Whether an intersection reduces to `never` is decided name by name, from the properties that several constituents have.
-// Up to 8 constituents are compared pair by pair. A property of a union is created when it is asked for, with the types of
-// what it combines, so what asks for it by name must not list the others, and what lists them lists them in the order of
-// the constituents.
+// Whether an intersection reduces to `never` is decided property by property, from the properties that several
+// constituents share. Up to 8 constituents are compared pairwise. A union's property is created on request, which
+// resolves the types of the properties it combines. So a lookup by name must not enumerate the other properties, and an
+// enumeration has to list them in the constituents' order.
 
 /** `text(1)` .. `text(4)` */
 const four = (text: (i: number) => string) => [1, 2, 3, 4].map(text);
 
-// `errors`: what TypeScript 7.0.2 reports about `program(count)`, for every `count` in `sizes`, after the name of the file.
+// `errors`: what TypeScript 7.0.2 reports for `program(count)`, for every `count` in `sizes`, without the file name.
 const reduced: typeof members = {
   "an intersection of the same object types and one more that shares no name with them": {
-    // There are 4 constituents besides, with 8 properties.
+    // There are also 4 other constituents, with 8 properties.
     sizes: [0, 3, 4, 5, 40],
     program: count => `
 interface P { kind: "p"; same: string; a?: 1 }
@@ -3375,7 +3326,7 @@ export {};
 (28,7): error TS2322: Type 'any' is not assignable to type 'never'.
 `,
   },
-  "a property that the members of a union have from one type": {
+  "a property that a union's members all get from one type": {
     sizes: [2, 9, 130],
     program: count => {
       const union = (shared: (i: number) => string) => each(count, i => `({ t: ${i} } & ${shared(i)})`);
@@ -3391,12 +3342,12 @@ declare const differs: ${union(i => `G<${i % 2}>`)};
 declare const getters: ${union(() => "Get")};
 declare const mixed: ${union(i => (i === 1 ? "Plain" : "Get"))};
 ${reads("r", [
-  ...of("one", ["theme", "ro", "opt", "method()"]),
-  ...of("generic", ["g", "fixed", "maybe"]),
-  ...of("equal", ["g", "fixed"]),
-  ...of("differs", ["g", "fixed"]),
-  ...of("getters", ["value", "both", "plain"]),
-  ...of("mixed", ["value", "both", "plain"]),
+  ...accesses("one", ["theme", "ro", "opt", "method()"]),
+  ...accesses("generic", ["g", "fixed", "maybe"]),
+  ...accesses("equal", ["g", "fixed"]),
+  ...accesses("differs", ["g", "fixed"]),
+  ...accesses("getters", ["value", "both", "plain"]),
+  ...accesses("mixed", ["value", "both", "plain"]),
 ])}
 one.ro = 1;
 one.theme = 1;
@@ -3502,11 +3453,11 @@ export {};
 (38,7): error TS2322: Type 'unknown' is not assignable to type 'never'.
 `,
   },
-  "no property of a union is created that nothing asks for": {
+  "a union property that nothing requests isn't created": {
     sizes: [2, 9],
     program: count => {
-      // An index signature of the members, the type of a parameter, and what the type parameter is intersected with for
-      // the argument. Each is used in the initializer of a variable that the type of `shape` depends on.
+      // An index signature of the members, a parameter's type, and what the type parameter is intersected with for the
+      // argument. Each is used in the initializer of a variable that `shape`'s type depends on.
       const inInitializer = [
         ["[k: string]: unknown; ", "", ""],
         ["", "{ id: string } & { extra: number }", "{ extra: 1 }"],
@@ -3549,11 +3500,11 @@ const whole${n}: never = shapes${n};`,
 (49,7): error TS2322: Type '{ circle: 1; }' is not assignable to type 'never'.
 `,
   },
-  "the properties of the constraint of a type parameter are created where an intersection with it is reduced": {
+  "reducing an intersection with a type parameter creates the properties of its constraint": {
     sizes: [2, 9],
     program: count => {
-      // More type parameters of a function, and what it returns. Each is called in the initializer of a variable that the
-      // type of `shape` depends on.
+      // More type parameters of a function, and what it returns. Each is called in the initializer of a variable that
+      // `shape`'s type depends on.
       const inInitializer = [
         ["", "(null! as U & { extra: 1; id: string }).id"],
         ["", "(null! as U & { extra: 1; id: string }).extra"],
@@ -3640,7 +3591,7 @@ interface H { name: string; shape?: 2 }${programs.join("")}\nexport {};\n`;
 (97,7): error TS2322: Type 'any' is not assignable to type 'never'.
 `,
   },
-  "the properties of the constraint are created although no other member of the intersection has one of their names": {
+  "the constraint's properties are created even if no other member of the intersection shares a name with them": {
     sizes: [2, 9],
     program: count => {
       const inInitializer = [
@@ -3733,7 +3684,7 @@ interface F { name: string; other?: 2 }${programs.join("")}\nexport {};\n`;
 (83,7): error TS2322: Type '{ circle: keyof B15 | keyof E; }' is not assignable to type 'never'.
 `,
   },
-  "the properties of the constraint are created for a parameter that is such an intersection": {
+  "the constraint's properties are created for a parameter typed as such an intersection": {
     sizes: [2, 9],
     program: count => `
 interface C { id: string; other?: 1 }
@@ -3824,7 +3775,7 @@ declare function make<M>(): M;${programs.join("")}\nexport {};\n`;
 (143,7): error TS7022: 'routes34' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 `,
   },
-  "a parameter that is such an intersection or nothing": {
+  "a parameter typed as such an intersection or undefined": {
     sizes: [0],
     program: () => {
       const types = [
@@ -3922,7 +3873,7 @@ declare const other: { id: string };${programs.join("")}\nexport {};\n`;
 (199,7): error TS7022: 'routes48' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
 `,
   },
-  "the properties of the constraint are created where a union with such an intersection is reduced to its supertypes": {
+  "the constraint's properties are created when a union with such an intersection is reduced to its supertypes": {
     sizes: [2, 9],
     program: count => {
       const inInitializer = [
@@ -4117,8 +4068,8 @@ export {};
   Property 'shape' is optional in type 'A & { extra: 1; }' but required in type '{ id: string; extra: 1; shape: 1 | 2 | undefined; both: 1 | 2; }'.
 `,
   },
-  "intersections of the same object types and one more, again and again": {
-    // So many object types have each of the names.
+  "repeated intersections of the same object types and one more": {
+    // The number of object types that have each name.
     sizes: [2, 3, 4, 5, 12],
     program: count => `
 ${each(count, i => `interface H${i} { kind: "k"; same: string; n?: number; h${i}?: 1; ${filler(4, `h${i}_`)} }`, " ")}
@@ -4429,7 +4380,7 @@ export {};
 (84,20): error TS2615: Type of property 'b' circularly references itself in mapped type 'Pick<Loop & Big, "b">'.
 `,
   },
-  "a property of a mapped type that two keys spell, and copies of it": {
+  "a mapped type's property that two keys spell, and copies of it": {
     sizes: [0],
     program: () => `
 enum A { x = "k" }
@@ -4569,7 +4520,7 @@ namespace N${n} {
 (96,13): error TS2310: Type 'B' recursively references itself as a base type.
 `,
   },
-  "a mapped type with readonly or -readonly asks a union for its index signatures": {
+  "a mapped type with readonly or -readonly requests a union's index signatures": {
     sizes: [0],
     program: () => {
       const rows = [
@@ -4582,7 +4533,7 @@ namespace N${n} {
         ["readonly ", "B & { z: 1 }"],
         ["-readonly ", "B & { z: 1 }"],
       ];
-      // The type is not written in the initializer, where its type arguments would be compared with their constraints.
+      // The type isn't written in the initializer, where its type arguments would be checked against their constraints.
       const forms = [
         (type: string) => `const shapes = { circle: v["x"] };\n  declare const v: ${type};`,
         (type: string) => `const shapes = { circle: (null! as V)["x"] };\n  type V = ${type};`,
@@ -4654,7 +4605,7 @@ namespace N${n} {
 (168,13): error TS2310: Type 'B' recursively references itself as a base type.
 `,
   },
-  "a call that is reached again, through the type of a property, while it is resolved for the second time": {
+  "a call reached again, through a property's type, while it's being resolved for the second time": {
     sizes: [0],
     program: () => {
       const types = [
@@ -4740,7 +4691,7 @@ declare const given: { id: string; title?: string };${programs.join("")}\nexport
 
 const bySize = { ...members, ...reduced };
 
-test.concurrent.each(Object.keys(bySize))("%s", async title => {
+test.concurrent.each(Object.keys(bySize))("reports the same errors at any size and thread count: %s", async title => {
   const { sizes, program, errors } = bySize[title];
   using dir = tempDir("bun-check-members", {
     "tsconfig.json": tsconfig,
@@ -4777,7 +4728,7 @@ export type With<T> = Props & Pair<T> & { with: T };
         `(null! as With<${i % 2}>).k${i}`,
         `(null! as With<${i % 2}>).with`,
       ];
-      // Every fourth file lists what the others ask by name.
+      // Every fourth file enumerates the properties that the others look up by name.
       if (i % 4 === 3) {
         values.push("null! as Exclude<keyof Both, `k${number}` | `f${number}`>", "{ ...(null! as With<1>) }.first");
       }
@@ -4786,7 +4737,7 @@ export type With<T> = Props & Pair<T> & { with: T };
   ),
 };
 
-test.concurrent.skipIf(!tsc)("members of another file, on any number of threads, as in TypeScript", async () => {
+test.concurrent.skipIf(!tsc)("matches tsc on members of another file's types on any thread count", async () => {
   using dir = tempDir("bun-check-members", { "tsconfig.json": tsconfig, ...membersOfAnotherFile });
   const root = String(dir);
   const [theirs, ...ours] = await Promise.all([
@@ -4797,9 +4748,9 @@ test.concurrent.skipIf(!tsc)("members of another file, on any number of threads,
   for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
 });
 
-// The file that is checked first says where the cycle is entered: at the property, at the function or at the constant.
+// The file checked first decides where the cycle is entered: at the property, at the function or at the constant.
 test.concurrent(
-  "a table, the types of its entries and the function that makes them, in files in any order",
+  "accepts a table, its entry types and the function that builds the entries in three files, in any file order",
   async () => {
     const orders = ["abc", "acb", "bac", "bca", "cab", "cba"];
     const types = [
@@ -4850,8 +4801,9 @@ export const routes = { home: load(page) };
   },
 );
 
-// An imported file comes before the file that imports it, so the table is checked first here: there the cycle is an error.
-test.concurrent("a cycle through three files is reported alike in 1 and in 60 folders of one project", async () => {
+// An imported file comes before its importer, so the table is checked first here, and entered from there the cycle is
+// an error.
+test.concurrent("reports a cycle through three files the same way in 1 and in 60 folders of one project", async () => {
   const files = {
     "a.ts": `import type { Entry } from "./c";
 declare function register(entry: { id: string }): number;
@@ -4884,9 +4836,10 @@ export type Entry = Page | Link;
   }
 });
 
-// A new union or intersection takes its flags from its constituents, of which a type holds up to 7 itself. Here they are of
-// another file or of the file that asks, object types, mapped types with and without a type variable, intersections that
-// are and are not `never`, `null` and `undefined`, and fresh and regular literal types.
+// A new union or intersection derives its flags from its constituents, up to 7 of which are stored inline in the type.
+// Here they come from another file or from the requesting file, and they're object types, mapped types with and without
+// a type variable, intersections that are and aren't `never`, `null` and `undefined`, and fresh and regular literal
+// types.
 const constituentsOfAnotherFile = (count: number) => `
 ${each(count, i => `export interface P${i} { kind: ${i}; p${i}: string; all: ${i % 2 ? "string" : "number"} }`, "\n")}
 ${each(count, i => `export interface Q${i} { q${i}: ${i} }`, "\n")}
@@ -4930,7 +4883,7 @@ const pickedOwn${n}: never = pick${n}(${each(count, i => `{ v: ${i}, w: null }`,
 export {};
 `;
 
-test.concurrent.skipIf(!tsc)("2 to 9 constituents of this file and of another, as in TypeScript", async () => {
+test.concurrent.skipIf(!tsc)("matches tsc on 2 to 9 constituents from this file and from another", async () => {
   const sizes = [2, 7, 8, 9];
   using dir = tempDir("bun-check-constituents", {
     "tsconfig.json": tsconfig,
@@ -4949,9 +4902,9 @@ test.concurrent.skipIf(!tsc)("2 to 9 constituents of this file and of another, a
   for (const lines of ours) expect(byFile(lines)).toEqual(byFile(theirs));
 });
 
-// A type mapper has its pairs in the order in which the type parameters were created. The first one here has the last one
-// for its constraint, so that one is created first, and the pairs that are made in the order of the declaration have to be
-// sorted: up to 8 of them without an allocation.
+// A type mapper keeps its pairs in the order the type parameters were created in. Here the first type parameter's
+// constraint is the last one, so that one is created first, and the pairs, which are built in declaration order, have
+// to be sorted. Up to 8 of them are sorted without an allocation.
 const parametersOutOfOrder = (count: number) => `
 declare function last<${each(count, i => (i === 0 ? `T0 extends T${count - 1}` : `T${i}`), ", ")}>(${each(count, i => `t${i}: T${i}`, ", ")}): [${each(count, i => `T${count - 1 - i}`, ", ")}];
 const a: never = last(${each(count, i => (i % 2 ? `"s${i}"` : `${i}`), ", ")});
@@ -4970,7 +4923,7 @@ export {};
 `;
 
 test.concurrent.skipIf(!tsc)(
-  "2 to 21 type parameters that are not created in their order, as in TypeScript",
+  "matches tsc on 2 to 21 type parameters that aren't created in declaration order",
   async () => {
     const sizes = [2, 3, 4, 8, 9, 21];
     using dir = tempDir("bun-check-mappers", {
@@ -4987,9 +4940,9 @@ test.concurrent.skipIf(!tsc)(
   },
 );
 
-// The style rules of a theme: an indexed access into an interface of `count` props types, each an intersection, by a type
-// parameter, intersected with `Record<string, unknown>` and with object types that share none, one or all of their names.
-// One of the props types has an `ownerState` and a `theme` of its own.
+// A theme's style rules: an indexed access by a type parameter into an interface of `count` props types, each an
+// intersection, intersected with `Record<string, unknown>` and with object types that share none, one or all of their
+// names. One of the props types has its own `ownerState` and `theme`.
 const themed = (count: number) => `
 interface Common { className?: string; style?: { color?: string }; children?: unknown }
 interface Html { id?: string; kind?: string; title?: string; hidden?: boolean; className?: string }
@@ -5054,7 +5007,7 @@ const rule: Rules<"root", "C1", A> = { root: props => [props.kind, props.theme.a
 export {};
 `;
 
-test.concurrent.skipIf(!tsc)("the style rules of a theme for 3, 8 and 40 components, as in TypeScript", async () => {
+test.concurrent.skipIf(!tsc)("matches tsc on a theme's style rules for 3, 8 and 40 components", async () => {
   const sizes = [3, 8, 40];
   using dir = tempDir("bun-check-members", {
     "tsconfig.json": tsconfig,
@@ -5065,7 +5018,7 @@ test.concurrent.skipIf(!tsc)("the style rules of a theme for 3, 8 and 40 compone
     linesOf([tsc!, "-p", ".", "--pretty", "false"], root, root),
     ...[1, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
   ]);
-  // The types in the messages depend on the size. The lines with an error do not.
+  // The types in the messages depend on the size. The lines that have errors don't.
   const withErrors = Object.values(byFile(theirs)).map(about =>
     about.flatMap(it => /^\w+\.ts\((\d+),/.exec(it)?.[1] ?? []),
   );

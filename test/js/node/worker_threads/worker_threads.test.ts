@@ -138,6 +138,24 @@ test("markAsUncloneable and markAsUntransferable markers are private, unforgeabl
   expectDataCloneError(() => structuredClone(unmarkAttempt));
 });
 
+test("markAsUntransferable and markAsUncloneable ignore a WebAssembly GC reference", () => {
+  // (module (type $s (struct (field (mut i32))))
+  //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
+  // prettier-ignore
+  const bytes = new Uint8Array([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x0a, 0x02, 0x5f, 0x01, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00,
+    0x03, 0x02, 0x01, 0x01,
+    0x07, 0x06, 0x01, 0x02, 0x6d, 0x6b, 0x00, 0x00,
+    0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
+  ]);
+  const reference = (new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk as () => object)();
+  expect(markAsUntransferable(reference)).toBeUndefined();
+  expect(wt.markAsUncloneable(reference)).toBeUndefined();
+  expect(wt.isMarkedAsUntransferable(reference)).toBe(false);
+  expect(() => structuredClone(reference)).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+});
+
 test("all worker_threads worker instance properties are present", async () => {
   const worker = new Worker(new URL("./worker.js", import.meta.url));
   expect(worker).toHaveProperty("threadId");
@@ -715,6 +733,54 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
+});
+
+// Debug and ASAN builds assert on `vm.hasTerminationRequest()` if startup continues to its GC after the stop.
+const spinUntilTerminated = `require("node:worker_threads").parentPort.postMessage("in the handler"); for (;;) {}`;
+test.concurrent.each([
+  [
+    "process.exit() in an uncaughtException capture callback",
+    `process.setUncaughtExceptionCaptureCallback(() => process.exit(42)); throw new Error("boom");`,
+    "",
+    ["exit 42"],
+  ],
+  [
+    "terminate() during an uncaughtException capture callback",
+    `process.setUncaughtExceptionCaptureCallback(() => { ${spinUntilTerminated} }); throw new Error("boom");`,
+    `worker.on("message", () => worker.terminate());`,
+    ["exit 1"],
+  ],
+  // The GC formats the stack of an Error whose `stack` hasn't been read yet.
+  [
+    "process.exit() in a 'workerMessage' listener",
+    `globalThis.unreadStack = new Error("kept"); process.on("workerMessage", () => process.exit(7)); setInterval(() => {}, 1000);`,
+    `postMessageToThread(worker.threadId, "hello").catch(() => {});`,
+    ["exit 7"],
+  ],
+  [
+    "a pending getHeapSnapshot() rejects",
+    `process.setUncaughtExceptionCaptureCallback(() => process.exit(42)); throw new Error("boom");`,
+    `worker.getHeapSnapshot().then(() => console.log("snapshot resolved"), err => console.log("snapshot rejected", err.code));`,
+    ["exit 42", "snapshot rejected ERR_WORKER_NOT_RUNNING"],
+  ],
+])("a worker stopped in a handler during startup exits cleanly: %s", async (_name, source, parentCode, lines) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker, postMessageToThread } = require("node:worker_threads");
+       const worker = new Worker(${JSON.stringify(source)}, { eval: true });
+       worker.on("error", err => console.log("error", err.message));
+       worker.on("exit", code => console.log("exit", code));
+       ${parentCode}`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lines: stdout.trim().split("\n").sort(), stderr }).toEqual({ lines, stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 describe("getHeapSnapshot", () => {
@@ -1882,6 +1948,40 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
         join: "0,inherited,2",
         slice: [0, "inherited", 2],
         concat: [0, "inherited", 2],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A partial descriptor moves the entry from the shared store onto the JS object.
+  it("keeps an array-index env var readable after a partial defineProperty on the shared map", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         new Worker("1", { eval: true, env: SHARE_ENV }).on("exit", () => {
+           process.env[0] = "zero";
+           Object.defineProperty(process.env, "0", { enumerable: true });
+           console.log(JSON.stringify({
+             byIndex: process.env[0],
+             byString: process.env["0"],
+             listed: Object.keys(process.env).includes("0"),
+             descriptor: Object.getOwnPropertyDescriptor(process.env, "0"),
+           }));
+         });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      parsed: {
+        byIndex: "zero",
+        byString: "zero",
+        listed: true,
+        descriptor: { value: "zero", writable: true, enumerable: true, configurable: true },
       },
       stderr: "",
       exitCode: 0,
@@ -3157,4 +3257,86 @@ describe("no JS entry after a worker's termination has been thrown", () => {
       expect(after).toEqual(Object.fromEntries(names.map(n => [n, 0])));
     });
   }
+});
+
+test("the main thread never reads a torn cwd while a Web Worker calls process.chdir()", async () => {
+  using dir = tempDir("worker-chdir-cwd-readers", {
+    "x/.keep": "",
+    "yyyyyyyyyyyyyyyy/.keep": "",
+    "flip.cjs": /* js */ `
+      const path = require("node:path");
+      const A = path.join(__dirname, "x");
+      const B = path.join(__dirname, "yyyyyyyyyyyyyyyy");
+      let i = 0;
+      const tick = () => {
+        for (let k = 0; k < 200; k++) process.chdir(i++ & 1 ? A : B);
+        if (i === 200) postMessage("flipping");
+        setImmediate(tick);
+      };
+      tick();
+    `,
+    "run.mjs": /* js */ `
+      import fs from "node:fs";
+      import path from "node:path";
+      const base = path.dirname(import.meta.filename);
+      const A = fs.realpathSync(path.join(base, "x")), B = fs.realpathSync(path.join(base, "yyyyyyyyyyyyyyyy"));
+      process.chdir(A);
+      const ok = new Set([
+        A, B,
+        Bun.pathToFileURL(path.join(A, "rel")).href, Bun.pathToFileURL(path.join(B, "rel")).href,
+        path.join(A, "f"), path.join(B, "f"),
+      ]);
+      const workers = Array.from({ length: 4 }, () => new Worker(path.join(base, "flip.cjs")));
+      await Promise.all(workers.map(w => new Promise((resolve, reject) => {
+        w.onmessage = resolve;
+        w.onerror = e => reject(new Error("worker failed: " + e.message));
+      })));
+      const torn = new Set();
+      const check = value => { if (!ok.has(value)) torn.add(value); };
+      for (let i = 0; i < 2000; i++) {
+        try { check(fs.realpathSync(".")); } catch (e) { check("realpath: " + e.code); }
+        check(Bun.pathToFileURL("rel").href);
+        check(path.resolve("f"));
+      }
+      console.log(JSON.stringify([...torn]));
+      process.exit(0);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("[]\n");
+  expect(exitCode).toBe(0);
+});
+
+test("a ShadowRealm in a worker can import node:worker_threads", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(
+          'new ShadowRealm().importValue("node:worker_threads", "threadId").then(id => require("node:worker_threads").parentPort.postMessage(id))',
+          { eval: true },
+        );
+        worker.once("message", id => console.log(id === worker.threadId));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toBe("true\n");
+  expect(exitCode).toBe(0);
 });

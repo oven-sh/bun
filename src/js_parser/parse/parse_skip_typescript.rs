@@ -1646,6 +1646,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.is_log_disabled = true;
         // The outcome must not depend on the class around the ":". The real parse reports a private name outside a class.
         self.allow_private_identifiers = true;
+        // Metadata looks up type names, which adds unbound symbols to the module scope.
+        let emit_decorator_metadata =
+            core::mem::take(&mut self.options.features.emit_decorator_metadata);
 
         let mut data = arrow_data.clone();
         let result: Result<(), Error> = (|| {
@@ -1658,6 +1661,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })();
 
         self.restore_parser_snapshot(snapshot);
+        self.options.features.emit_decorator_metadata = emit_decorator_metadata;
         match result {
             Ok(()) => Ok(true),
             // Stack and memory exhaustion are not properties of the attempt

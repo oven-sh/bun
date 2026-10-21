@@ -16,8 +16,8 @@ fn is_truthy_literal(ty: Type) -> bool {
             }
 }
 
-/// `isPossiblyFalsy(type)`: some value of the type is falsy. An intersection such as `string & {}`
-/// is looked into.
+/// `isPossiblyFalsy(type)`: true if some value of the type is falsy. It looks into an intersection such as
+/// `string & {}`.
 pub fn is_possibly_falsy(ty: Type) -> bool {
     union_constituents(ty)
         .iter()
@@ -26,8 +26,8 @@ pub fn is_possibly_falsy(ty: Type) -> bool {
         .any(|t| t.has_flags(TypeFlags::POSSIBLY_FALSY) && !is_truthy_literal(t))
 }
 
-/// `isPossiblyTruthy(type)`: some value of the type is truthy. An intersection with a type that is
-/// always falsy, such as `"" & { __brand: string }`, is always falsy.
+/// `isPossiblyTruthy(type)`: true if some value of the type is truthy. An intersection with an always-falsy type, such
+/// as `"" & { __brand: string }`, is always falsy.
 pub fn is_possibly_truthy(ty: Type) -> bool {
     union_constituents(ty).iter().any(|union_part| {
         intersection_constituents(union_part)

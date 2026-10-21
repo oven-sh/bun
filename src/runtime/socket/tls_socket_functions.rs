@@ -200,8 +200,7 @@ pub(super) mod ffi {
         pub(crate) safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
         // Returns the borrowed parent CTX (always non-null for a live `SSL*`).
         pub(crate) safe fn SSL_get_SSL_CTX(ssl: &SSL) -> *mut SSL_CTX;
-        // usockets' openssl.c. `sid` must be readable for `sid_len` bytes; BoringSSL copies them.
-        // Returns 0 for a server when `ctx` has no certificate with its key.
+        // openssl.c: returns 0 for a server when `ctx` has no certificate with its key.
         pub(crate) fn us_ssl_use_ctx_identity(
             ssl: *mut SSL,
             ctx: *mut SSL_CTX,
@@ -851,10 +850,7 @@ pub(super) fn get_tls_peer_finished_message(
     Ok(buffer)
 }
 
-/// `tlsSocket.setKeyCert(secureContext)` - serve this connection with the
-/// identity of the given context and verify its peer against that context's
-/// CA (Node calls it from ALPNCallback / SNICallback). The connection keeps
-/// its own SSL_CTX: see `us_ssl_use_ctx_identity`.
+/// `tlsSocket.setKeyCert(secureContext)`: see `us_ssl_use_ctx_identity` in usockets' openssl.c.
 pub(crate) fn set_key_cert(
     this: &This,
     global: &JSGlobalObject,
@@ -887,8 +883,7 @@ pub(crate) fn set_key_cert(
         )
     };
     if applied == 0 {
-        // Node's message, for a server and a context without a certificate and its key:
-        // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1674-L1677
+        // Node's message: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1674-L1677
         return Err(global.throw(format_args!("SetKeyCert")));
     }
     Ok(JSValue::UNDEFINED)

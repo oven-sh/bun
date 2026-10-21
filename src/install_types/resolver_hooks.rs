@@ -393,7 +393,6 @@ pub struct TagInfo {
 #[derive(Clone, Copy)]
 pub struct TarballInfo {
     pub uri: URI,
-    pub package_name: SemverString,
 }
 
 impl TarballInfo {
@@ -485,21 +484,18 @@ impl DependencyVersion {
     // Tag-checked accessors for the untagged [`DependencyVersionValue`] union.
     // Every payload is POD/arena-backed (`SemverString` handles, `Repository`,
     // `ManuallyDrop<NpmInfo>` over an arena-owned linked list), so reading the
-    // "wrong" variant is not UB — it yields garbage. `_mut` variants let the
-    // handful of mutate-in-place call sites (`runTasks.rs` package-name
-    // back-patching, `Package.rs` workspace resolution) write through the
-    // active arm without an `unsafe` block apiece.
+    // "wrong" variant is not UB — it yields garbage.
     bun_core::extern_union_accessors! {
         tag: tag as DependencyVersionTag, value: value;
-        Npm       => npm: NpmInfo,            mut npm_mut;
-        DistTag   => dist_tag: TagInfo,       mut dist_tag_mut;
-        Tarball   => tarball: TarballInfo,    mut tarball_mut;
-        Folder    => folder: SemverString,    mut folder_mut;
-        Symlink   => symlink: SemverString,   mut symlink_mut;
-        Workspace => workspace: SemverString, mut workspace_mut;
-        Git       => git: Repository,         mut git_mut;
-        Github    => github: Repository,      mut github_mut;
-        Catalog   => catalog: SemverString,   mut catalog_mut;
+        Npm       => npm: NpmInfo;
+        DistTag   => dist_tag: TagInfo;
+        Tarball   => tarball: TarballInfo;
+        Folder    => folder: SemverString;
+        Symlink   => symlink: SemverString;
+        Workspace => workspace: SemverString;
+        Git       => git: Repository;
+        Github    => github: Repository;
+        Catalog   => catalog: SemverString;
     }
 
     #[inline]
@@ -966,7 +962,7 @@ negatable_names! { Architecture: u16, ARCHITECTURE_NAMES => [
 
 // ─── Repository (data) ────────────────────────────────────────────────────
 // MOVE_DOWN from `bun_install::repository` — the on-disk lockfile shape
-// (`extern struct` of five `Semver.String` handles). Install-tier behaviour
+// (`extern struct` of four `Semver.String` handles and eight reserved bytes). Install-tier behaviour
 // (git CLI exec, parse, fmt, download/checkout) stays in
 // `bun_install::repository::RepositoryExt`; only data + buffer-relative
 // comparators live here so [`ResolutionValue`] / [`DependencyVersionValue`]
@@ -979,7 +975,9 @@ pub struct Repository {
     pub repo: SemverString,
     pub committish: SemverString,
     pub resolved: SemverString,
-    pub package_name: SemverString,
+    /// An older bun.lockb has a package name here. Nothing reads it, and `clone` writes zeros.
+    #[doc(hidden)]
+    pub _reserved: [u8; 8],
 }
 
 // Manual `Clone` so the inherent buffer-relative `clone(&self, buf, builder)`
@@ -1016,7 +1014,6 @@ impl Repository {
         builder.count(self.repo.slice(buf));
         builder.count(self.committish.slice(buf));
         builder.count(self.resolved.slice(buf));
-        builder.count(self.package_name.slice(buf));
     }
 
     /// Re-interns each field
@@ -1028,7 +1025,7 @@ impl Repository {
             repo: builder.append::<SemverString>(self.repo.slice(buf)),
             committish: builder.append::<SemverString>(self.committish.slice(buf)),
             resolved: builder.append::<SemverString>(self.resolved.slice(buf)),
-            package_name: builder.append::<SemverString>(self.package_name.slice(buf)),
+            _reserved: [0; 8],
         }
     }
 

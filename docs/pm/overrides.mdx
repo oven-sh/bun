@@ -107,6 +107,13 @@ Bun warns about a `catalog:` rule whose package is not in the catalog. A depende
 
 A value of `"$name"` reuses the range you declared for `name` in your own dependencies, so `"bar": "$foo"` pins `bar` to whatever range you declared for `foo`.
 
+A rule replaces a dependency by the name it is declared under, which is the key in `"dependencies"`. That holds for every kind of specifier: a version range, a git repository, a `github:` shorthand, a tarball. For the dependency that a rule replaces, the `"name"` in the `package.json` of a package does not count:
+
+- `"bar": "github:me/bar-fork"` replaces every dependency declared as `bar`, also when the fork's `package.json` names it `@me/bar`. Bun installs the fork as `node_modules/bar`, and does not fetch the package it replaces.
+- A dependency declared as `"my-bar": "github:them/bar"` is not replaced by a rule for `bar`. Write the rule for `my-bar`. Bun prints a warning when it fetches such a dependency and a rule for the name in its `package.json` would have replaced it.
+
+`bun update` reads the tarball or repository that a rule names again, as it does for a dependency.
+
 ## Nested overrides
 
 You can scope a rule to one parent package, so it only applies to that package's direct dependency. Bun accepts the npm object form, the pnpm `>` form, and a parent with a version range:
@@ -126,6 +133,20 @@ You can scope a rule to one parent package, so it only applies to that package's
 ```
 
 `"."` inside an object overrides `micromatch` itself, like a top-level `"micromatch"` rule.
+
+The parent of a nested rule is the package that is installed. Bun matches it by the `"name"` in that package's own `package.json` and by its installed version, as pnpm does. If a rule replaces `micromatch` with a fork whose `package.json` names it `@me/micromatch`, write the rules for the fork's dependencies under `@me/micromatch`:
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "overrides": {
+    "micromatch": "github:me/micromatch-fork",
+    "@me/micromatch": {
+      "picomatch": "^2.3.2"
+    }
+  }
+}
+```
 
 `"resolutions"` accepts Yarn's path form. Bun accepts `**` for compatibility, but either way the rule only affects the parent's direct dependency:
 

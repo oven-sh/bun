@@ -491,7 +491,7 @@ fn bind_importer_dependency(
         // Overrides aren't consulted, because Yarn already applied them to the entries that the
         // candidates come from.
         let range = this.catalogs.resolve_range(string_bytes, dep);
-        let name_hash = lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes);
+        let name_hash = lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes)?;
         let resolutions = this.packages.items_resolution();
         let index = &this.package_index;
         // Nothing satisfies it, so use the highest version there is, like the peer pass of a fresh
@@ -677,13 +677,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 } else {
                     commit
                 };
-                let package_name = entry.git_repo_name.as_deref().unwrap_or(repo_str);
                 let mut repository = Repository {
                     owner: sbuf!(this).append(owner_str)?,
                     repo: sbuf!(this).append(repo_str)?,
                     committish: sbuf!(this).append(committish)?,
-                    resolved: SemverString::default(),
-                    package_name: sbuf!(this).append(package_name)?,
+                    ..Repository::default()
                 };
                 // `resolved` names the cache folder, and is the commit that a git checkout uses.
                 let value = if is_github {

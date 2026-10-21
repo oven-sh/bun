@@ -360,62 +360,88 @@ impl Drop for ReturnNetworkTask {
     }
 }
 
-/// `resolve_waiters_of_appended_package`, then tells the runtime if one of its imports was
-/// resolved.
-fn resolve_waiters_and_notify(
+/// `bind_waiters_of_appended_package`, then tells the runtime if one of its imports was resolved.
+fn bind_waiters_and_notify(
     cb: &ErasedCallbacks,
     manager: &mut PackageManager,
     extract_ctx: *mut (),
     task_id: Task::Id,
     pkg: &Package,
-    install_peer: bool,
-) -> crate::Result<()> {
+) {
     let any_root = Cell::new(false);
-    let result =
-        resolve_waiters_of_appended_package(manager, task_id, pkg, install_peer, &any_root);
+    bind_waiters_of_appended_package(manager, task_id, pkg, &any_root);
     if cb.has_on_resolve && any_root.get() {
         (cb.on_resolve)(extract_ctx);
     }
-    result
 }
 
-/// Resolves the dependencies that waited for `task_id` to `pkg`, and fills in the package's name
-/// where a dependency did not know it. Entries that a linker queued stay in the task's list.
-/// Sets `any_root` if an import of the runtime was resolved.
-pub(crate) fn resolve_waiters_of_appended_package(
+/// Binds the dependencies that waited for `task_id` to `pkg`. A linker's entries stay in the list.
+pub(crate) fn bind_waiters_of_appended_package(
     manager: &mut PackageManager,
     task_id: Task::Id,
     pkg: &Package,
-    install_peer: bool,
     any_root: &Cell<bool>,
-) -> crate::Result<()> {
+) {
     // Recorded for a dependency that's enqueued on the same task later. See
     // `AppendedTaskPackageMap`.
     manager.appended_task_packages.insert(task_id, pkg.meta.id);
     let Some(entry) = manager.task_queue.get_mut(&task_id) else {
-        return Ok(());
+        return;
     };
     // The dependencies are resolved before the onExtract callback is called
-    let mut result = Ok(());
-    for dep in core::mem::take(entry) {
-        match dep {
-            bun_install::TaskCallbackContext::Dependency(id)
-            | bun_install::TaskCallbackContext::RootDependency(id) => {
-                enqueue::name_resolved_row(
-                    &mut manager.lockfile.buffers.dependencies[id as usize].version,
-                    pkg.name,
-                    &pkg.resolution,
-                );
-                result = manager.process_dependency_list_item(&dep, Some(any_root), install_peer);
-                if result.is_err() {
-                    break;
+    for waiter in core::mem::take(entry) {
+        match waiter {
+            bun_install::TaskCallbackContext::Dependency(id) => {
+                manager.assign_resolution(id, pkg.meta.id);
+                if pkg.name_hash != manager.lockfile.buffers.dependencies[id as usize].name_hash
+                    && manager.lockfile.overrides.has_rule_for_name(pkg.name_hash)
+                {
+                    warn_rule_for_own_name(manager, id, pkg);
+                }
+            }
+            bun_install::TaskCallbackContext::RootDependency(id) => {
+                if manager.lockfile.buffers.resolutions[id as usize] == INVALID_PACKAGE_ID {
+                    manager.assign_root_resolution(id, pkg.meta.id);
+                    any_root.set(true);
                 }
             }
             // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-            _ => manager.task_queue.get_mut(&task_id).unwrap().push(dep),
+            _ => manager.task_queue.get_mut(&task_id).unwrap().push(waiter),
         }
     }
-    result
+}
+
+/// Warns if a rule keyed by the name that `pkg` gives itself would have replaced dependency `id`.
+#[cold]
+fn warn_rule_for_own_name(manager: &mut PackageManager, id: DependencyID, pkg: &Package) {
+    let lockfile = &*manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let row = &lockfile.buffers.dependencies[id as usize];
+    if (lockfile.overrides).rule_for(lockfile, id, row).is_some() {
+        return;
+    }
+    let under_own_name = bun_install::Dependency {
+        name: pkg.name,
+        name_hash: pkg.name_hash,
+        ..row.clone()
+    };
+    let Some(rule) = (lockfile.overrides).rule_for(lockfile, id, &under_own_name) else {
+        return;
+    };
+    // The rule names what the dependency declares, so nothing is lost.
+    if crate::dependency::VersionExt::eql(rule.version(), &row.version, buf, buf) {
+        return;
+    }
+    let (declared, own) = (row.name.slice(buf).to_vec(), pkg.name.slice(buf).to_vec());
+    manager.log_mut().add_warning_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!(
+            "override for \"{own}\" does not replace \"{declared}\": an override replaces a dependency by the name it is declared under, not by the name in its package.json",
+            own = bun_core::fmt::escape_control_chars(&own),
+            declared = bun_core::fmt::escape_control_chars(&declared),
+        ),
+    );
 }
 
 fn run_tasks_erased(
@@ -1381,14 +1407,7 @@ fn run_tasks_erased(
                     task.data_extract(),
                     log_level,
                 ) {
-                    resolve_waiters_and_notify(
-                        cb,
-                        manager,
-                        extract_ctx,
-                        task.id,
-                        &pkg,
-                        install_peer,
-                    )?;
+                    bind_waiters_and_notify(cb, manager, extract_ctx, task.id, &pkg);
                 } else if let Some(dependency_list_entry) =
                     manager.task_queue.get_mut(&Task::Id::for_manifest(
                         manager
@@ -1676,14 +1695,7 @@ fn run_tasks_erased(
                     task.data_git_checkout(),
                     log_level,
                 ) {
-                    resolve_waiters_and_notify(
-                        cb,
-                        manager,
-                        extract_ctx,
-                        task.id,
-                        &pkg,
-                        install_peer,
-                    )?;
+                    bind_waiters_and_notify(cb, manager, extract_ctx, task.id, &pkg);
                 }
 
                 name_progress(manager, alias.slice(), DOWNLOAD);

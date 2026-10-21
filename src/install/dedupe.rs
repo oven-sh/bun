@@ -709,33 +709,22 @@ pub(crate) fn effective_npm_range(
         .filter(|version| version.tag == DependencyVersionTag::Npm)
 }
 
-/// Like the resolver, never overrides a `workspace:` edge.
-pub(crate) fn applied_override<'a>(
-    lockfile: &'a Lockfile,
-    dep_id: DependencyID,
-    dep: &Dependency,
-) -> Option<OverrideRule<'a>> {
-    if dep.behavior.is_workspace() {
-        return None;
-    }
-    lockfile.overrides.lookup(lockfile, dep_id, dep.name_hash)
-}
-
 pub(crate) fn effective_version(
     lockfile: &Lockfile,
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
-    version_under(lockfile, dep, applied_override(lockfile, dep_id, dep))
+    let rule = (lockfile.overrides).rule_for(lockfile, dep_id, dep);
+    version_under(lockfile, dep, rule)
 }
 
-/// Like `effective_version`, but picks the rule the way yarn does (`OverrideMap::lookup_as_yarn`).
+/// Like `effective_version`, but picks the rule the way yarn does (`OverrideMap::rule_for_as_yarn`).
 pub(crate) fn effective_version_as_yarn(
     lockfile: &Lockfile,
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
-    let rule = (lockfile.overrides).lookup_as_yarn(lockfile, dep_id, dep.name_hash);
+    let rule = (lockfile.overrides).rule_for_as_yarn(lockfile, dep_id, dep);
     version_under(lockfile, dep, rule)
 }
 

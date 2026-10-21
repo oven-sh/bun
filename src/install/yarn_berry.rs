@@ -1598,7 +1598,7 @@ fn git_resolution(
         } else {
             String::default()
         },
-        package_name: sbuf!(this).append(name)?,
+        ..Repository::default()
     })))
 }
 

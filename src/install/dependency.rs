@@ -243,10 +243,7 @@ impl DependencyExt for Dependency {
     fn realname(&self) -> String {
         match self.version.tag {
             Tag::DistTag => self.version.dist_tag().name,
-            Tag::Git => self.version.git().package_name,
-            Tag::Github => self.version.github().package_name,
             Tag::Npm => self.version.npm().name,
-            Tag::Tarball => self.version.tarball().package_name,
             _ => self.name,
         }
     }
@@ -1399,7 +1396,6 @@ pub(crate) fn parse_with_tag(
                     value: Value {
                         tarball: TarballInfo {
                             uri: URI::Remote(sliced.sub(dependency).value()),
-                            package_name: String::default(),
                         },
                     },
                 });
@@ -1410,7 +1406,6 @@ pub(crate) fn parse_with_tag(
                     value: Value {
                         tarball: TarballInfo {
                             uri: URI::Local(sliced.sub(&dependency[7..]).value()),
-                            package_name: String::default(),
                         },
                     },
                 });
@@ -1421,7 +1416,6 @@ pub(crate) fn parse_with_tag(
                     value: Value {
                         tarball: TarballInfo {
                             uri: URI::Local(sliced.sub(&dependency[5..]).value()),
-                            package_name: String::default(),
                         },
                     },
                 });
@@ -1445,7 +1439,6 @@ pub(crate) fn parse_with_tag(
                 value: Value {
                     tarball: TarballInfo {
                         uri: URI::Local(sliced.sub(dependency).value()),
-                        package_name: String::default(),
                     },
                 },
             })

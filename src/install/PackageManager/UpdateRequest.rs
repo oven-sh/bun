@@ -8,10 +8,8 @@ use bun_js_parser as js_ast;
 use bun_semver::{SlicedString, String as SemverString, string::Builder as StringBuilder};
 
 use bun_install::dependency::{self, DependencyExt as _};
-use bun_install::{
-    Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash,
-};
-// `lockfile.packages.items_name()` is provided by an extension trait on
+use bun_install::{Dependency, INVALID_PACKAGE_ID, PackageID, PackageManager, PackageNameHash};
+// `lockfile.packages.items_resolutions()` is provided by an extension trait on
 // `MultiArrayList<Package>`.
 pub struct UpdateRequest {
     // CLI positionals are
@@ -31,6 +29,8 @@ pub struct UpdateRequest {
     /// invariant; see `version_buf()`).
     pub(crate) version_buf: bun_ptr::RawSlice<u8>,
     pub(crate) package_id: PackageID,
+    /// The name of the dependency, in `version_buf`. A rule can give it a package of another name.
+    pub(crate) name_in_lockfile: SemverString,
     pub(crate) is_aliased: bool,
     pub failed: bool,
     /// This must be cloned to handle when the AST store resets.
@@ -47,6 +47,7 @@ impl Default for UpdateRequest {
             version: dependency::Version::default(),
             version_buf: bun_ptr::RawSlice::EMPTY,
             package_id: INVALID_PACKAGE_ID,
+            name_in_lockfile: SemverString::default(),
             is_aliased: false,
             failed: false,
             e_string: None,
@@ -126,24 +127,20 @@ impl UpdateRequest {
         }
     }
 
-    /// If `self.package_id` is not `invalid_package_id`, it must be less than `lockfile.packages.len`.
-    pub(crate) fn get_name_in_lockfile<'a>(&'a self, lockfile: &'a Lockfile) -> Option<&'a [u8]> {
+    /// The name that the lockfile has for the dependency, once `bind_update_requests` has found it.
+    pub(crate) fn get_name_in_lockfile(&self) -> Option<&[u8]> {
         if self.package_id == INVALID_PACKAGE_ID {
             None
         } else {
-            Some(lockfile.packages.items_name()[self.package_id as usize].slice(self.version_buf()))
+            Some(self.name_in_lockfile.slice(self.version_buf()))
         }
     }
 
-    /// It is incorrect to call this function before Lockfile.cleanWithLogger() because
-    /// resolved_name should be populated if possible.
-    ///
-    /// `self` needs to be a pointer! If `self` is a copy and the name returned from
-    /// resolved_name is inlined, you will return a pointer to stack memory.
-    pub(crate) fn get_resolved_name<'a>(&'a self, lockfile: &'a Lockfile) -> &'a [u8] {
+    /// The key in package.json: the name that was typed, or the lockfile's once it is resolved.
+    pub(crate) fn get_resolved_name(&self) -> &[u8] {
         if self.is_aliased {
             self.name
-        } else if let Some(name) = self.get_name_in_lockfile(lockfile) {
+        } else if let Some(name) = self.get_name_in_lockfile() {
             name
         } else {
             self.version.literal.slice(self.version_buf())

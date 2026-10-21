@@ -591,7 +591,7 @@ impl PackageManager {
             .remote_rows_waiting()
             .filter(|(_, task_id)| turn == RemoteTurn::InOrder || has_arrived(task_id))
             .min_by_key(|&(row, _)| row);
-        let Some((row, task_id)) = next else {
+        let Some((_, task_id)) = next else {
             return false;
         };
         let Some(arrived) = self.remote_packages.arrived.remove(&task_id) else {
@@ -608,17 +608,7 @@ impl PackageManager {
         ) else {
             return true;
         };
-        let install_peer = self.look_ahead.in_peer_pass;
-        if let Err(err) = run_tasks::resolve_waiters_of_appended_package(
-            self,
-            task_id,
-            &package,
-            install_peer,
-            &Cell::new(false),
-        ) {
-            let dependency = self.lockfile.buffers.dependencies[row as usize].clone();
-            enqueue::add_dependency_error(self, &dependency, err);
-        }
+        run_tasks::bind_waiters_of_appended_package(self, task_id, &package, &Cell::new(false));
         // A git checkout is not a tarball that the linker would otherwise extract again.
         if arrived.resolution.tag != ResolutionTag::Git {
             self.set_preinstall_state(package_id, crate::PreinstallState::Done);

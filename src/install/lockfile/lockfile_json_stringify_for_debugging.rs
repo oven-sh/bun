@@ -83,9 +83,6 @@ where
             w.object_field(uri_tag.as_bytes())?;
             w.write(uri_slice)?;
 
-            w.object_field(b"package_name")?;
-            w.write(info.package_name.slice(sb))?;
-
             let _ = w.end_object();
         }
         DependencyVersionTag::Folder => {
@@ -110,8 +107,6 @@ where
             w.write(info.committish.slice(sb))?;
             w.object_field(b"resolved")?;
             w.write(info.resolved.slice(sb))?;
-            w.object_field(b"package_name")?;
-            w.write(info.package_name.slice(sb))?;
 
             let _ = w.end_object();
         }
@@ -128,8 +123,6 @@ where
             w.write(info.committish.slice(sb))?;
             w.object_field(b"resolved")?;
             w.write(info.resolved.slice(sb))?;
-            w.object_field(b"package_name")?;
-            w.write(info.package_name.slice(sb))?;
 
             let _ = w.end_object();
         }

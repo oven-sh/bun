@@ -1119,8 +1119,7 @@ fn build_store(
                         // peer.
                         if curr_id != node_id
                             && best_version != invalid_package_id
-                            && pkgs.items_name_hash()[ids.pkg_id as usize]
-                                != pkgs.items_name_hash()[best_version as usize]
+                            && !lockfile.serves_overridden_peer(best_version, ids.pkg_id)
                             && lockfile.is_overridden_dependency(peer_dep_id)
                         {
                             break 'resolved_pkg_id (best_version, true);

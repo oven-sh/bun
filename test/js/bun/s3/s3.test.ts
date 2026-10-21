@@ -1503,10 +1503,15 @@ describe("s3-server", () => {
       expect(new URL(s3.presign("hello.txt")).pathname).toBe(pathname);
     });
 
-    it("presigns /bucket/key below an endpoint that new URL() rejects", () => {
+    it.each([
+      ["/prefix//", "/prefix"],
+      ["/a", "/a"],
+      ["//", ""],
+      ["", ""],
+    ])("presigns /bucket/key below an endpoint that new URL() rejects: %j", (tail, prefix) => {
       // A port above 65535 fails the WHATWG parser, so the endpoint is read as written.
-      const s3 = S3({ ...options, endpoint: "https://s3.example.com:70000/prefix//" });
-      expect(s3.presign("hello.txt")).toStartWith("https://s3.example.com:70000/prefix/buntest/hello.txt?");
+      const s3 = S3({ ...options, endpoint: `https://s3.example.com:70000${tail}` });
+      expect(s3.presign("hello.txt")).toStartWith(`https://s3.example.com:70000${prefix}/buntest/hello.txt?`);
     });
 
     it.each(rows)("requests /bucket/key below %j", async (tail, pathname) => {

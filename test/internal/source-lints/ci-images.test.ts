@@ -87,6 +87,8 @@ test("the record a Debian bake writes", () => {
     `image: ${JSON.stringify(image)}`,
     ...tools(image).map(recordedTool),
     "EOF",
+    `[ -n "$(cat "$BAKE_DIR/observed/ca-certificates")" ] || { echo 'bootstrap: nothing was observed for ca-certificates' >&2; exit 1; }`,
+    `cat "$BAKE_DIR/observed/ca-certificates" | sed 's/^/observed ca-certificates: /' >> /etc/bun-image.txt`,
     `[ -n "$(cat "$BAKE_DIR/observed/glibc-sysroot")" ] || { echo 'bootstrap: nothing was observed for glibc-sysroot' >&2; exit 1; }`,
     `cat "$BAKE_DIR/observed/glibc-sysroot" | sed 's/^/observed glibc-sysroot: /' >> /etc/bun-image.txt`,
     `[ -n "$(cat "$BAKE_DIR/observed/musl-sysroot")" ] || { echo 'bootstrap: nothing was observed for musl-sysroot' >&2; exit 1; }`,
@@ -144,6 +146,8 @@ test("the record a Windows bake writes", () => {
     `Add-Content -Path 'C:\\bun-image.txt' -Encoding ascii -Value @(`,
     ...written.map((line, index) => `  '${line}'${index < written.length - 1 ? "," : ""}`),
     ")",
+    `if (-not (Get-Content "$BAKE_DIR\\observed\\disallowed-roots")) { throw 'bootstrap: nothing was observed for disallowed-roots' }`,
+    `Get-Content "$BAKE_DIR\\observed\\disallowed-roots" | ForEach-Object { "observed disallowed-roots: $_" } | Out-File -Append -Encoding ascii 'C:\\bun-image.txt'`,
     `scoop export | Out-String | ConvertFrom-Json | Select-Object -ExpandProperty apps | ForEach-Object { "$($_.Name) $($_.Version)" } | Out-File -Encoding ascii "$scratch\\packages"`,
     // Scoop's exit code: a query that failed must not leave a record without its packages.
     'if ($LASTEXITCODE -ne 0) { throw "bootstrap: scoop exited with code $LASTEXITCODE" }',

@@ -9,7 +9,7 @@ pub struct NoRequireImports {
 const NO_REQUIRE_IMPORTS: Message =
     Message::new("noRequireImports", "A `require()` style import is forbidden.");
 
-/// What `require(..)` is called with, if that is a string or a template without substitutions.
+/// Returns the argument of `require(..)` if it's a string or a template without substitutions.
 pub(crate) fn required_path(call: Call<'_>) -> Option<Name<'_>> {
     match call.args().first()?.kind() {
         ExprKind::String(value) => Some(value),
@@ -32,7 +32,7 @@ impl NoRequireImports {
             return;
         }
         let path = required_path(call);
-        // Upstream looks `require` up by its name alone, so a type of that name counts too.
+        // Upstream looks up `require` by name only, so a type with that name counts too.
         if self.is_import_path_allowed(path) || Node::Expr(e).scope().resolve("require").is_some() {
             return;
         }
@@ -46,8 +46,8 @@ impl NoRequireImports {
             && let Some(reference) = import.require_span()
         {
             // oxlint points at the declaration.
-            let place = if cx.language().is_oxlint { statement.span_without_export() } else { reference };
-            cx.report(place, NO_REQUIRE_IMPORTS).hint("Use an import declaration.");
+            let report_span = if cx.language().is_oxlint { statement.span_without_export() } else { reference };
+            cx.report(report_span, NO_REQUIRE_IMPORTS).hint("Use an import declaration.");
         }
     }
 }

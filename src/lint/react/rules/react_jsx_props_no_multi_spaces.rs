@@ -41,7 +41,8 @@ impl Rule for JsxPropsNoMultiSpaces {
     }
 }
 
-/// `checkSpacing`. `prev` is `None` for what is before the first attribute, and `between` is not one space.
+/// `checkSpacing`. `prev` is `None` for the tag name before the first attribute. The caller has checked that `between`
+/// isn't a single space.
 fn check_spacing<'a>(
     jsx: Jsx<'a>,
     prev: Option<Prop<'a>>,
@@ -56,14 +57,15 @@ fn check_spacing<'a>(
             .data("prop1", get_prop_name(jsx, prev))
             .data("prop2", get_prop_name(jsx, Some(node)))
     };
-    // A name with type arguments is a copy of the opening element with another `range`: its `loc` ends with the tag.
+    // A name with type arguments is a copy of the opening element with a different `range`, so its `loc` ends where the
+    // tag ends.
     let is_generic = prev.is_none() && jsx.type_args().first().is_some();
-    // 2 for more as well.
+    // Capped at 2.
     let line_breaks = strings::js_lines(file.slice(between)).skip(1).take(2).count();
     if line_breaks == 2 && has_empty_lines(file, between, is_generic) {
         report(NO_LINE_GAP);
     }
-    // Whether both end on one line.
+    // Check whether both end on the same line.
     let is_on_one_line = match is_generic {
         true => ast_utils::is_on_one_line(file, Span::after(node.span(), jsx.opening_span().end)),
         false => line_breaks == 0 && ast_utils::is_on_one_line(file, node.span()),
@@ -73,9 +75,9 @@ fn check_spacing<'a>(
     }
 }
 
-/// `hasEmptyLines` of what is around `between`, in which there is nothing but blanks and comments.
+/// `hasEmptyLines` for the two nodes around `between`, which only contains whitespace and comments.
 fn has_empty_lines<'a>(file: &'a File<'a>, between: Span, is_generic: bool) -> bool {
-    // Nothing starts two lines after the end of the tag.
+    // Nothing can start two lines after the end of the tag.
     let (mut prev, mut can_be_far) = (Span::empty(between.start), !is_generic);
     for comment in file.comments_in(between) {
         if can_be_far && has_two_line_breaks(file, prev.between(comment.span())) {
@@ -90,14 +92,14 @@ fn has_two_line_breaks(file: &File<'_>, span: Span) -> bool {
     strings::js_lines(file.slice(span)).nth(2).is_some()
 }
 
-/// `getPropName`. `None`: of what is before the first attribute.
+/// `getPropName`. `None` stands for the tag name before the first attribute.
 fn get_prop_name<'a>(jsx: Jsx<'a>, prop_node: Option<Prop<'a>>) -> Cow<'a, [u8]> {
-    // The name of a `JSXNamespacedName` is a node.
+    // A `JSXNamespacedName`'s name is a node.
     const NODE: &[u8] = b"[object Object]";
     let Some(prop_node) = prop_node else {
         let is_generic = jsx.type_args().first().is_some();
         return match jsx.tag().map(Expr::kind) {
-            // The opening element has a name, which has none.
+            // The opening element's `name` is a node that has no `name` itself.
             Some(ExprKind::Dot { .. }) if is_generic => Cow::Borrowed(b"undefined".as_slice()),
             Some(ExprKind::String(name)) => Cow::Borrowed(match strings::split_once_char(name.bytes(), b':') {
                 Some(_) if is_generic => NODE,

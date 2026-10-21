@@ -16,7 +16,7 @@ enum FunctionStyle {
 
 /// Enforce a specific function type for function components
 pub struct FunctionComponentDefinition {
-    /// The first is preferred.
+    /// The first style is the preferred one.
     named_components: Vec<FunctionStyle>,
     unnamed_components: Vec<FunctionStyle>,
 }
@@ -31,9 +31,9 @@ const NOT_AN_EXPRESSION: Message = Message::new("", "Function component is not a
 const NOT_AN_ARROW: Message = Message::new("", "Function component is not an arrow function");
 
 pub struct State<'a> {
-    /// These three are for oxlint, which goes by where a function is and what it returns.
+    /// These three are for oxlint, which decides by a function's position and what it returns.
     component_wrapper_functions: &'a [Json],
-    /// A call can be one of [`is_hoc_call`].
+    /// True if some call can satisfy [`is_hoc_call`].
     may_have_hoc_calls: bool,
     returns: Returns<'a>,
     components: Components<'a>,
@@ -57,7 +57,7 @@ impl Rule for FunctionComponentDefinition {
             b"arrow-function" => Some(FunctionStyle::Arrow),
             _ => None,
         };
-        // A component without a name cannot be a declaration.
+        // An unnamed component can't be a declaration.
         let styles = |key: &str, default: FunctionStyle| {
             let style = |value: &Json| style(value).filter(|it| *it != FunctionStyle::Declaration || default == *it);
             match options.get(key) {
@@ -102,7 +102,7 @@ fn check<'a>(rule: &FunctionComponentDefinition, func: Func<'a>, cx: &mut Cx<'a,
         FnKind::Decl => FunctionStyle::Declaration,
         FnKind::Expr => FunctionStyle::Expression,
         FnKind::Arrow => FunctionStyle::Arrow,
-        // oxlint passes over the function of a method.
+        // oxlint skips a method's function.
         FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor if !is_oxlint => {
             FunctionStyle::Expression
         }
@@ -123,7 +123,7 @@ fn check<'a>(rule: &FunctionComponentDefinition, func: Func<'a>, cx: &mut Cx<'a,
         return;
     }
     let is_in_position = match (actual, parent) {
-        // All is asked when the program ends.
+        // Upstream checks everything in `Program:exit`.
         (_, Some(parent)) if !is_oxlint => {
             cx.state.components.finish();
             cx.state.components.get(Node::Func(func)).is_some() && !is_property_of(func, parent)
@@ -150,7 +150,7 @@ fn check<'a>(rule: &FunctionComponentDefinition, func: Func<'a>, cx: &mut Cx<'a,
         true => replacement(fixer, func, declaration, expected, named, &cx.state.has_es6_or_jsx),
         false => None,
     };
-    // oxlint suggests it.
+    // For oxlint it's a suggestion.
     match is_oxlint {
         true => report.suggest(message, fix),
         false => report.at_the_end().fix(fix),
@@ -161,14 +161,14 @@ fn check<'a>(rule: &FunctionComponentDefinition, func: Func<'a>, cx: &mut Cx<'a,
 fn is_property_of<'a>(func: Func<'a>, parent: Node<'a>) -> bool {
     match parent {
         Node::Prop(it) => it.kind() != PropKind::Spread && !it.is_jsx_attribute(),
-        // The default is in an `AssignmentPattern`.
+        // The default value is inside an `AssignmentPattern`.
         Node::PatProp(it) => it.default().and_then(Expr::as_fn) != Some(func),
         _ => false,
     }
 }
 
-/// What the function is in, over `as T` and the like, and over `(a, b, f)` of which it is the last. `None` if it is not
-/// the last.
+/// Returns the function's parent, looking through `as T` and the like, and through a sequence `(a, b, f)` that ends
+/// with it. `None` if it isn't the last in the sequence.
 fn component_parent_kind(func: Func<'_>) -> Option<Node<'_>> {
     let Node::Expr(mut inner) = func.owner() else {
         return Some(func.owner().parent());
@@ -178,11 +178,11 @@ fn component_parent_kind(func: Func<'_>) -> Option<Node<'_>> {
         let Some(sequence) = parent.as_expr().filter(|it| it.binary_op() == Some(BinOp::Comma)) else {
             return Some(parent);
         };
-        // `a, b, c` is `(a, b), c` without the parentheses.
-        let goes_on = !sequence.is_parenthesized()
+        // `a, b, c` is parsed as `(a, b), c`.
+        let sequence_continues = !sequence.is_parenthesized()
             && matches!(sequence.parent(), Node::Expr(outer)
                 if outer.binary_op() == Some(BinOp::Comma) && outer.left() == Some(sequence));
-        if goes_on || sequence.right().map(get_inner_expression) != Some(inner) {
+        if sequence_continues || sequence.right().map(get_inner_expression) != Some(inner) {
             return None;
         }
         inner = sequence;
@@ -218,7 +218,7 @@ fn is_component_expression_position<'a>(
     }
 }
 
-/// Where upstream's `getFixer` returns a function. oxlint is more careful.
+/// True where upstream's `getFixer` returns a function. oxlint is more careful.
 fn can_fix(func: Func, declaration: Option<VarDecl>, expected: FunctionStyle, is_oxlint: bool) -> bool {
     // `has_unsafe_outer_expression`
     if is_oxlint
@@ -228,12 +228,12 @@ fn can_fix(func: Func, declaration: Option<VarDecl>, expected: FunctionStyle, is
     {
         return false;
     }
-    let is_alone = |it: VarDecl| {
+    let is_only_declarator = |it: VarDecl| {
         matches!(it.parent(), Node::Stmt(statement)
             if matches!(statement.kind(), StmtKind::Var(all) if all.len() == 1))
     };
     let type_params = func.type_params();
-    (!is_oxlint || declaration.is_none_or(is_alone))
+    (!is_oxlint || declaration.is_none_or(is_only_declarator))
         && !matches!(func.owner(), Node::Stmt(statement) if statement.is_default_export())
         && !(func.kind() == FnKind::Expr && func.name().is_some())
         && !(expected == FunctionStyle::Declaration && declaration.is_some_and(|it| it.ty().is_some()))
@@ -264,7 +264,7 @@ fn replacement<'a>(
             };
             (declaration.parent().as_stmt()?.span_without_export(), kind)
         }
-        // upstream's `fileVarType`. For oxlint it is always `const`.
+        // upstream's `fileVarType`. oxlint always uses `const`.
         None if is_oxlint || *has_es6_or_jsx.get_or_init(|| file_has_es6_or_jsx(file)) => (func.estree_span(), "const"),
         None => (func.estree_span(), "var"),
     };
@@ -329,7 +329,8 @@ fn replacement<'a>(
     Some(fixer.replace(replace_span, text.concat()))
 }
 
-/// upstream's `buildFunction`: each placeholder where it is found first, which can be in what was put in before.
+/// upstream's `buildFunction`. It replaces the first occurrence of each placeholder, which can be inside text that was
+/// inserted earlier.
 fn build_function(template: &str, parts: &[(&str, &[u8])]) -> Vec<u8> {
     let mut acc = template.as_bytes().to_vec();
     for (key, part) in parts {
@@ -340,7 +341,7 @@ fn build_function(template: &str, parts: &[(&str, &[u8])]) -> Vec<u8> {
     acc
 }
 
-/// upstream's `hasES6OrJsx` when the program ends.
+/// upstream's `hasES6OrJsx`, as it is at `Program:exit`.
 fn file_has_es6_or_jsx<'a>(file: &'a File<'a>) -> bool {
     const DECLARATIONS: [StmtTag; 7] = [
         StmtTag::Var,

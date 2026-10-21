@@ -34,8 +34,8 @@ import {
   type Type,
   UnionType,
   UnitType,
-  VariadicType,
   type ValueKind,
+  VariadicType,
   wellKnownSymbol,
 } from "./bindgen-lib-internal.ts";
 import { cap, low } from "./helpers.ts";

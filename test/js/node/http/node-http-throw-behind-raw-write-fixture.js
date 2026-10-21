@@ -37,7 +37,9 @@ async function within(promise) {
 
 // `written` is what the client sends before the throw. `until` ends the scenario: the close of
 // the connection, or the last bytes of a response. `resets` marks the modes in which the
-// connection goes away before the raw write has left, so its byte count says nothing.
+// connection goes away before the raw write has left, so its byte count says nothing. A `paced`
+// client takes one chunk for each turn of the event loop, so the kernel of the server still
+// holds unsent bytes of the raw write when the server closes.
 const modes = {
   "request": { written: get("/first"), until: "close" },
   "checkContinue": { written: get("/first", "Expect: 100-continue\r\n"), until: "close" },
@@ -50,8 +52,8 @@ const modes = {
   "ended": { written: get("/first"), until: "done" },
   "destroyed": { written: get("/first"), until: "close", resets: true },
   "body": { written: post("/first", "hello"), until: "close" },
-  // The body arrives after the throw.
-  "body-to-come": { written: post("/first", ""), until: "close", resets: true },
+  // The body arrives after the throw. The server has stopped the reads, so it stays in the kernel.
+  "body-to-come": { written: post("/first", ""), until: "close", paced: true },
 };
 
 async function scenario(mode) {
@@ -114,7 +116,7 @@ async function scenario(mode) {
   let received = 0;
   let rawIntact = true;
   let response = "";
-  const { written, until, resets } = modes[mode];
+  const { written, until, resets, paced } = modes[mode];
   const finished = Promise.withResolvers();
   let closed = false;
   client.on("close", () => {
@@ -122,6 +124,10 @@ async function scenario(mode) {
     finished.resolve();
   });
   client.on("data", chunk => {
+    if (paced) {
+      client.pause();
+      setImmediate(() => client.resume());
+    }
     const rawPart = Math.max(0, Math.min(chunk.length, rawLength - received));
     received += chunk.length;
     for (let i = 0; i < rawPart; i++) rawIntact &&= chunk[i] === 0x78;

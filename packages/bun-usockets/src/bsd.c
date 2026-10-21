@@ -931,6 +931,21 @@ int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd) {
     return bsd_would_block() ? LIBUS_QUEUED_INPUT_NONE : LIBUS_QUEUED_INPUT_ERROR;
 }
 
+void bsd_discard_queued_input(LIBUS_SOCKET_DESCRIPTOR fd) {
+    /* Not the receive buffer of the loop: a close can come from inside the read of a socket. */
+    char buf[16 * 1024];
+    /* More than a receive buffer holds by default (6 MiB on Linux, 4 MiB on macOS). The bound is for a peer
+     * that fills the receive window again while this reads. */
+    for (int left = 8 * 1024 * 1024; left > 0;) {
+        /* Not until a short read: more of what the peer sent can arrive while this reads. */
+        ssize_t ret = bsd_recv(fd, buf, (int) sizeof(buf), MSG_DONTWAIT);
+        if (ret <= 0) {
+            return;
+        }
+        left -= (int) ret;
+    }
+}
+
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
     ssize_t injected = 0; int unused = 0;

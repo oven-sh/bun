@@ -161,8 +161,7 @@ pub struct Lockfile {
     /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
     /// The workspaces that are reached through a symlink. They are found on disk while the
-    /// workspaces' package.json files are parsed, and are not saved in the lockfile. See
-    /// `take_linked_members` for the workspaces that no package.json lists.
+    /// package.json files are parsed and in `look_at_members`, and are not saved in the lockfile.
     pub(crate) linked_members: LinkedMembers,
 
     /// Optional because `trustedDependencies` in package.json might be an
@@ -1004,18 +1003,13 @@ impl Lockfile {
         }
     }
 
-    /// Takes the symlinked workspaces that the package.json files of this run found, which
-    /// `parsed` holds, then looks at the workspaces of this loaded lockfile that they did not
-    /// list.
+    /// Takes the symlinked workspaces that `parsed` found, then looks at the ones it did not list.
     pub(crate) fn take_linked_members(&mut self, parsed: &mut Lockfile) {
         self.linked_members = core::mem::take(&mut parsed.linked_members);
         self.look_at_members(Some(parsed));
     }
 
-    /// Looks at each workspace of this loaded lockfile that `parsed` does not list. `parsed` is
-    /// `None` for a command that parsed no package.json. A package.json that is not read again,
-    /// an `overrides` value and a workspace that has left "workspaces" are each known from the
-    /// lockfile alone.
+    /// Looks at each workspace of this loaded lockfile that no package.json of this run lists.
     pub(crate) fn look_at_members(&mut self, parsed: Option<&Lockfile>) {
         let buf = self.buffers.string_bytes.as_slice();
         let packages = self.packages.slice();

@@ -261,8 +261,6 @@ pub fn perform_security_scan_for_all(
     )
 }
 
-/// Whether the command has parsed package.json, which is where Bun looks for the workspaces that
-/// are behind a symlink.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PackageJson {
     Parsed,
@@ -289,8 +287,7 @@ fn scan_installing_scanner_if_needed(
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
-            // The linkers ask which workspaces are behind a symlink. `bun pm scan` parses no
-            // package.json, so nothing has looked yet.
+            // Only a package.json parse looks for the workspaces behind a symlink.
             if package_json == PackageJson::NotParsed {
                 manager.lockfile.look_at_members(None);
             }

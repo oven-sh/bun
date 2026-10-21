@@ -2,7 +2,7 @@
 // stream.Readable's `readable` event not firing in Bun 1.2.6+
 import assert from "node:assert";
 import { IncomingMessage, ServerResponse } from "node:http";
-import { PassThrough, Readable } from "node:stream";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { test } from "node:test";
 
 // Helper to create mock IncomingMessage
@@ -20,6 +20,38 @@ test("Standalone ServerResponse.writableNeedDrain is false", () => {
   const res = new ServerResponse(mockReq);
 
   // Regression for #19111: previously true due to defaulting bufferedAmount to 1
+  assert.strictEqual(res.writableNeedDrain, false);
+});
+
+// The same stall, when the socket has a high water mark of 0: nothing buffered had reached the mark.
+test("Standalone ServerResponse.writableNeedDrain is false on a socket with highWaterMark 0", async () => {
+  const chunks: Buffer[] = [];
+  const socket = new Writable({
+    highWaterMark: 0,
+    write(chunk, _encoding, callback) {
+      chunks.push(chunk);
+      callback();
+    },
+  });
+  const res = new ServerResponse(createMockIncomingMessage("/zero-mark"));
+  res.assignSocket(socket as never);
+  assert.strictEqual(res.writableNeedDrain, false);
+
+  const finished = new Promise(resolve => res.on("finish", resolve));
+  Readable.from([Buffer.from("piped")]).pipe(res);
+  await finished;
+  assert.match(Buffer.concat(chunks).toString(), /\r\n\r\n5\r\npiped\r\n0\r\n\r\n$/);
+});
+
+// Node.js reads true here, and a pipe() into the response then waits for a 'drain' that
+// never comes: nothing forwards the 'drain' of the socket to a response that no server made.
+test("Standalone ServerResponse.writableNeedDrain stays false after a write() that its socket refused", () => {
+  // A socket that takes a write and never completes it.
+  const socket = new Writable({ highWaterMark: 16, write() {} });
+  const res = new ServerResponse(createMockIncomingMessage("/refused"));
+  res.assignSocket(socket as never);
+
+  assert.strictEqual(res.write(Buffer.alloc(1024, "a")), false);
   assert.strictEqual(res.writableNeedDrain, false);
 });
 

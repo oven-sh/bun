@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+import { join } from "node:path";
 import { pipeline, Writable } from "node:stream";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
@@ -582,4 +584,83 @@ describe.concurrent("node:http server socket setTimeout(msecs) checks", () => {
       ]);
     },
   );
+});
+
+// A response that waits for its 'drain' is not idle: Node.js refreshes the timer of the socket at every write and at
+// every write that completes. So server.timeout cuts a response only when its client takes nothing for that long.
+// On a unix socket the kernel takes a few hundred KiB from a client that does not read, so a block of 2 MiB waits.
+// A timer fires late on a busy machine and never early, so each test measures from the refresh to the 'timeout'.
+describe.skipIf(isWindows)("server.timeout and a response that waits for 'drain'", () => {
+  const BLOCK = Buffer.alloc(2 * 1024 * 1024, "a");
+  const TIMEOUT = 600;
+
+  // Resolves with a client that has sent its request and reads nothing yet.
+  async function connect(server: http.Server, dir: string) {
+    const path = join(dir, "http.sock");
+    server.listen(path);
+    await once(server, "listening");
+    const client = net.connect(path);
+    client.on("error", () => {});
+    client.pause();
+    await once(client, "connect");
+    client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+    return client;
+  }
+
+  test("the timeout counts from the write() that made the response wait", async () => {
+    using dir = tempDir("http-drain-timeout", {});
+    let wroteAt: number | undefined;
+    const timedOut = Promise.withResolvers<number>();
+    const server = http.createServer((req, res) => {
+      // Due before the timer of the socket, which started over at the request.
+      setTimeout(() => {
+        if (req.socket.destroyed) return;
+        res.write(BLOCK);
+        wroteAt = Date.now();
+      }, TIMEOUT / 2);
+    });
+    server.setTimeout(TIMEOUT, socket => {
+      timedOut.resolve(Date.now());
+      socket.destroy();
+    });
+    const client = await connect(server, String(dir));
+    try {
+      const timedOutAt = await timedOut.promise;
+      // Without a write() there is nothing to measure: the machine stalled for half of the timeout.
+      if (wroteAt !== undefined) expect(timedOutAt - wroteAt).toBeGreaterThanOrEqual(TIMEOUT - 50);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("the timeout counts from the moment the client has taken what the response held", async () => {
+    using dir = tempDir("http-drain-timeout", {});
+    let drainedAt: number | undefined;
+    const wrote = Promise.withResolvers<void>();
+    const timedOut = Promise.withResolvers<number>();
+    const server = http.createServer((req, res) => {
+      res.on("drain", () => (drainedAt = Date.now()));
+      res.write(BLOCK);
+      wrote.resolve();
+    });
+    server.setTimeout(TIMEOUT, socket => {
+      timedOut.resolve(Date.now());
+      socket.destroy();
+    });
+    const client = await connect(server, String(dir));
+    try {
+      await wrote.promise;
+      // Due before the timer of the socket, which started over at the write().
+      setTimeout(() => client.resume(), TIMEOUT / 2);
+      const timedOutAt = await timedOut.promise;
+      // Without a 'drain' there is nothing to measure: the machine stalled for half of the timeout.
+      if (drainedAt !== undefined) expect(timedOutAt - drainedAt).toBeGreaterThanOrEqual(TIMEOUT - 50);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
 });

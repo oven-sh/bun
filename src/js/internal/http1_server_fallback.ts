@@ -1,7 +1,7 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const { STATUS_CODES, kPendingCallbacks, kTakesWriteCallback } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 
@@ -15,10 +15,7 @@ function rethrowUncaught(err) {
   throw err;
 }
 
-// Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
-function failPendingWriteCallbacks(res, err) {
-  const callbacks = res[kPendingCallbacks];
-  res[kPendingCallbacks] = [];
+function failEach(callbacks, err) {
   for (let i = 0; i < callbacks.length; i++) {
     try {
       callbacks[i](err);
@@ -27,6 +24,56 @@ function failPendingWriteCallbacks(res, err) {
       process.nextTick(rethrowUncaught, e);
     }
   }
+}
+
+// Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
+function failPendingWriteCallbacks(res, err) {
+  const callbacks = res[kPendingCallbacks];
+  res[kPendingCallbacks] = [];
+  failEach(callbacks, err);
+}
+
+interface HeldCallback {
+  callback: ((err?: Error | null) => void) | null;
+  next: HeldCallback | null;
+}
+
+// The write callbacks that the socket of a connection holds, oldest first, and the async context of the first one. Node.js completes the writes behind a waiting write in the context of that write.
+interface HeldCallbacks {
+  oldest: HeldCallback | null;
+  newest: HeldCallback | null;
+  frame: unknown;
+}
+
+// Takes the callback of `entry` out, once. The 'close' of the socket can have failed it, and node:net calls a callback again when a later one threw while it destroyed the socket.
+function takeHeldCallback(held: HeldCallbacks, entry: HeldCallback) {
+  const callback = entry.callback;
+  if (callback === null) return null;
+  entry.callback = null;
+  let oldest = held.oldest;
+  while (oldest !== null && oldest.callback === null) oldest = oldest.next;
+  held.oldest = oldest;
+  if (oldest === null) {
+    held.newest = null;
+    held.frame = undefined;
+  }
+  return callback;
+}
+
+function runHeldCallback(frame, callback, err) {
+  if (frame === AsyncContextFrame.current()) callback(err);
+  else AsyncContextFrame.run(frame, callback, undefined, err);
+}
+
+// node:net drops the callbacks of its queued writes when the peer resets the connection (https://github.com/oven-sh/bun/pull/43250), and a stream of user code can drop them in destroy(). The 'close' of the socket fails what is left.
+function failHeldCallbacks(held: HeldCallbacks, err) {
+  const frame = held.frame;
+  const callbacks: ((err?: Error | null) => void)[] = [];
+  for (let entry = held.oldest; entry !== null; entry = entry.next) {
+    const callback = takeHeldCallback(held, entry);
+    if (callback !== null) callbacks.push(callback);
+  }
+  runHeldCallback(frame, failEach.bind(undefined, callbacks), err);
 }
 
 type IncomingMessage = import("node:http").IncomingMessage;
@@ -46,16 +93,17 @@ interface Http1FallbackResponseHead {
   keepAliveTimeoutSecs: number;
 }
 
-function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
+function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout, held: HeldCallbacks) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head: Http1FallbackResponseHead | null = null;
   let headWritten = false;
   let chunked = false;
   let noBody = false;
   let closeDelimited = false;
-  // The drain callback of a write() that reported backpressure, and its async context (native's onwritable slot).
+  // What waits until the socket holds none of the response's bytes, and its async context (native's onwritable slot).
   let onwritable: ((...args: unknown[]) => void) | null | undefined = null;
   let onwritableFrame;
+  const mark = socket.writableHighWaterMark;
 
   function writeHeadToSocket(contentLength) {
     if (headWritten) return;
@@ -179,15 +227,41 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (!socket.writableEnded) socket.write(data, callback);
   }
 
+  // Gives the callback of a chunk to the socket, which runs it when it has written the chunk. The connection keeps it too, for failHeldCallbacks().
+  function heldBySocket(callback) {
+    const entry: HeldCallback = { callback, next: null };
+    const newest = held.newest;
+    if (newest === null) {
+      held.oldest = entry;
+      held.frame = AsyncContextFrame.current();
+    } else {
+      newest.next = entry;
+    }
+    held.newest = entry;
+    return err => {
+      const frame = held.frame;
+      const callback = takeHeldCallback(held, entry);
+      if (callback !== null) runHeldCallback(frame, callback, err);
+    };
+  }
+
   function writeBody(buf, callback?) {
     const length = buf ? (buf.byteLength ?? buf.length) : 0;
     if (length) {
-      if (chunked) {
+      if (!chunked) {
+        writeToSocket(buf, callback);
+      } else if (callback && length <= 16 * 1024 && buf.BYTES_PER_ELEMENT === 1 && $isTypedArrayView(buf)) {
+        // Like the native handle, where uWS copies a write of up to 16 KiB into its cork (CORK_COPY_MAX): one write, so the callback costs one completion of the socket and one packet, not three. Only an array of bytes is copied element by element.
+        const head = length.toString(16) + "\r\n";
+        const frame = Buffer.allocUnsafe(head.length + length + 2);
+        frame.write(head, 0, "latin1");
+        frame.set(buf as Uint8Array, head.length);
+        frame.write("\r\n", head.length + length, "latin1");
+        writeToSocket(frame, callback);
+      } else {
         writeToSocket(length.toString(16) + "\r\n");
         writeToSocket(buf);
         writeToSocket("\r\n", callback);
-      } else {
-        writeToSocket(buf, callback);
       }
     }
     return length;
@@ -234,18 +308,27 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       return onwritable ?? undefined;
     },
     set onwritable(callback) {
+      // An ended response waits for flushed(), which runs `onflushed` in place of the callback that ServerResponse#end() arms.
+      if (this.ended) return;
       onwritable = callback;
       onwritableFrame = callback ? AsyncContextFrame.current() : undefined;
+      // A socket under its high water mark emits no 'drain', so it is made to owe one. That is the state of the socket of Node.js after the cork of a tick refused a write.
+      const state = callback && socket._writableState;
+      if (state) state.needDrain = true;
     },
-    // The socket's bytes while a write waits for 'drain' or an ended response is still flushing; a socket under its high water mark emits no 'drain'.
+    // What the socket holds: the response has the socket to itself until the bytes of end() have left. A socket that owes its 'drain' is not empty yet.
     get bufferedAmount() {
-      return onwritable || (this.ended && !this.finished) ? socket.writableLength : 0;
+      return socket.writableLength || (socket.writableNeedDrain ? 1 : 0);
     },
-    // Native on_drain: the socket drained, so the waiting callback runs.
+    // True while the socket can take a chunk: then write() gives it the callback of the chunk.
+    get [kTakesWriteCallback]() {
+      return !socket.writableEnded && !socket.destroyed;
+    },
+    // Native on_drain: the socket drained, so the waiting callback runs. Like the native one, it is armed again while the handle holds bytes.
     socketDrained() {
       if (onwritable) settleWaiting(onwritable);
     },
-    // The socket finished or closed, so no 'drain' comes: `fn` runs, and the waiting callback never does.
+    // The socket finished, so no 'drain' comes: `fn` runs, and the waiting callback never does.
     socketEnded(fn) {
       if (onwritable) settleWaiting(fn);
     },
@@ -291,12 +374,20 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       this.writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs);
       return this.end(chunk, encoding, undefined, strictContentLength);
     },
-    write(chunk, encoding, callback, _strictContentLength) {
+    write(chunk, encoding, callback, _strictContentLength, onWritten) {
       const buf = toBuffer(chunk, encoding);
       writeHeadToSocket(null);
-      const length = writeBody(buf);
-      // Node's rule: the socket's own write() reports the backpressure. A discarded chunk (HEAD, 204, 304) is null.
-      if (buf === null || !socket.writableNeedDrain) return length;
+      if (onWritten) onWritten = heldBySocket(onWritten);
+      const length = writeBody(buf, onWritten);
+      // The callback of an empty chunk runs behind the bytes that the socket holds, as in Node.js. An empty socket gets no write for it: an Http2Stream would send a DATA frame.
+      if (onWritten && !length) {
+        if (socket.writableLength > 0) socket.write("", "latin1", onWritten);
+        else process.nextTick(onWritten);
+      }
+      // Node's rule: the socket's own write() reports the backpressure, which is a buffer at or over its high water mark. It says so for an empty chunk too. A discarded chunk (HEAD, 204, 304) is null.
+      if (buf === null) return length;
+      const holds = socket.writableLength;
+      if (!holds || holds < mark || socket.writableEnded) return length;
       // Like native write_or_end: a negative result, and the callback waits for the drain.
       if (callback) this.onwritable = callback;
       // An empty write has no length to negate.
@@ -405,6 +496,7 @@ function connectionListenerHTTP1(server, socket, options) {
 
   let req: Http1FallbackRequest | null = null;
   let pendingUpgrade: Http1FallbackRequest | null = null;
+  const held: HeldCallbacks = { oldest: null, newest: null, frame: undefined };
   // Node's per-connection state.requestsCount, behind server.maxRequestsPerSocket.
   let requestsCount = 0;
 
@@ -479,14 +571,15 @@ function connectionListenerHTTP1(server, socket, options) {
       if (!socket._paused && socket.readable) socket.resume();
     };
 
-    const res = new ServerResponseClass(req);
+    // Like Node's parserOnIncoming: the response measures its buffer against the mark of the socket, also before it has the socket.
+    const res = new ServerResponseClass(req, { highWaterMark: socket.writableHighWaterMark });
     // The native dispatcher seeds these from the server; renderNativeHeaders
     // reads them to decide the Keep-Alive auto-header bits, so the fallback
     // path must carry them too or keep-alive responses lose their timeout line.
     res._keepAliveTimeout = keepAliveTimeout;
     const { maxRequestsPerSocket } = server;
     res._maxRequestsPerSocket = maxRequestsPerSocket;
-    const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
+    const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout, held);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
       if (!shouldKeepAlive && !socket.destroyed) {
@@ -678,15 +771,21 @@ function connectionListenerHTTP1(server, socket, options) {
   });
   // Prepended: like Node's 'finish' after a failed last write, a draining response finishes (and detaches) before the other 'close' listeners run.
   socket.prependOnceListener("close", () => {
-    socket._httpMessage?.[kHttp1ResponseHandle]?.flushed();
+    const inflight = socket._httpMessage;
+    // The write callbacks that nothing ran fail first, as in Node.js: the socket did not write their chunks. What the socket held is older than what the response holds.
+    if (held.oldest !== null) {
+      failHeldCallbacks(held, socket.errored ?? inflight?.errored ?? $ERR_STREAM_DESTROYED("write"));
+    }
+    const handle = inflight?.[kHttp1ResponseHandle];
+    if (!handle) return;
+    if (inflight[kPendingCallbacks].length !== 0) {
+      failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write"));
+    }
+    handle.flushed();
   });
   socket.once("close", () => {
     connections.delete(socket);
     const inflight = socket._httpMessage;
-    // The write callbacks that still wait fail, before the response's 'close', as in Node.
-    inflight?.[kHttp1ResponseHandle]?.socketEnded(() =>
-      failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write")),
-    );
     // Like the native socket's close path (Node's socketOnClose ->
     // abortIncoming): abort the in-flight request, then the responses (and
     // requests) still queued behind it, so they all emit 'close'. The

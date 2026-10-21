@@ -2150,12 +2150,23 @@ static NEVER_INLINE void throwStepError(JSC::JSGlobalObject* lexicalGlobalObject
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
 }
 
-// SQLITE_ROW or SQLITE_DONE. Anything else is thrown.
+// An EXPLAIN is still active at SQLITE_DONE: sqlite3VdbeList() does not halt it. Its reset can be a commit, which can fail.
+static NEVER_INLINE void endRunAtDone(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, sqlite3_stmt* stmt)
+{
+    if (sqlite3_reset(stmt) != SQLITE_OK && !scope.exception())
+        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
+}
+
+// SQLITE_ROW or SQLITE_DONE. Anything else is thrown. At SQLITE_DONE the run has ended.
 static ALWAYS_INLINE int step(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, sqlite3_stmt* stmt)
 {
     int status = sqlite3_step(stmt);
-    if (status != SQLITE_ROW && status != SQLITE_DONE) [[unlikely]]
-        throwStepError(lexicalGlobalObject, scope, stmt);
+    if (status != SQLITE_ROW) {
+        if (status != SQLITE_DONE) [[unlikely]]
+            throwStepError(lexicalGlobalObject, scope, stmt);
+        else if (sqlite3_stmt_busy(stmt)) [[unlikely]]
+            endRunAtDone(lexicalGlobalObject, scope, stmt);
+    }
     return status;
 }
 

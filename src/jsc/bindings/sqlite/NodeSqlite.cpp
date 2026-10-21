@@ -2349,7 +2349,8 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
     int r = sqlite3_step(self->statement());
     // As Node: the rows are not read. A write has made all its changes before its
     // first row, and sqlite3_changes64() has them once the statement is reset.
-    if (r == SQLITE_ROW)
+    // SQLITE_DONE does not halt an EXPLAIN: until its reset the count is still that of an earlier write.
+    if (r == SQLITE_ROW || r == SQLITE_DONE)
         r = resetter.resetNow();
     CHECK_UDF_EXCEPTION(scope);
     // Don't go through self->connection(): a named-parameter getter or UDF
@@ -2361,7 +2362,7 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
     // back-pointer, which survives until the BusyScope unwinds and is what
     // Node's StatementSync::Run uses.
     sqlite3* db = sqlite3_db_handle(self->statement());
-    if (r != SQLITE_DONE && r != SQLITE_OK) {
+    if (r != SQLITE_OK) {
         throwSqliteError(globalObject, scope, db);
         return {};
     }
@@ -2711,8 +2712,14 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(createIterResult(vm, globalObject, false, row));
     }
-    sqlite3_reset(stmt->statement());
+    // As Node since v26.8.0 (nodejs/node#63319): only for an EXPLAIN can this reset be a commit, and that can fail.
     self->setDone();
+    r = sqlite3_reset(stmt->statement());
+    CHECK_UDF_EXCEPTION(scope);
+    if (r != SQLITE_OK) [[unlikely]] {
+        throwSqliteError(globalObject, scope, sqlite3_db_handle(stmt->statement()));
+        return {};
+    }
     return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
 }
 

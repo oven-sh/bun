@@ -7034,7 +7034,10 @@ impl<'p, 's> Checker<'p, 's> {
             // `getResolvedBaseConstraint`: a `StructuredType` is a `ConstrainedType`, so the depth test applies to it,
             // and `resolvedBaseConstraint` caches `noConstraintType` or the type itself from the first visit on.
             let is_cut = depth >= 10
-                && (depth >= 50 || self.constraint_stack.contains(&self.recursion_identity(ty)));
+                && (depth >= 50 || {
+                    let identity = self.recursion_identity(ty);
+                    self.constraint_stack.contains(&identity)
+                });
             let (held_back, cuts) = (self.task.held_back(), self.constraint_cuts.get());
             let result = if is_cut {
                 self.cut_constraint_short();

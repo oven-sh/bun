@@ -4319,15 +4319,13 @@ impl<'p, 's> Checker<'p, 's> {
         if stack.len() < max_depth {
             return false;
         }
-        let (t, data) = self.mapped_target_with_symbol(t);
-        if let TypeData::Intersection(parts) = data
-            && parts
+        let (t, data) = self.recursion_identity_target(t);
+        if let TypeData::Intersection(parts) = data {
+            return parts
                 .iter()
-                .any(|&p| self.is_deeply_nested_among(p, stacks, is_source, known, max_depth))
-        {
-            return true;
+                .any(|&p| self.is_deeply_nested_among(p, stacks, is_source, known, max_depth));
         }
-        let identity = self.recursion_identity_as(t, data);
+        let identity = self.recursion_identity_from_target(t, data);
         let bit = identity_bit(identity);
         let mut count = 0;
         let mut last = None;
@@ -4426,8 +4424,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// See `OnStack::may_match`.
     fn identities_that_may_match(&mut self, t: TypeId) -> u64 {
-        let is_mapped = is_mapped_kind(self.data(t));
-        let (of, data) = self.mapped_target_with_symbol(t);
+        let (t, data) = self.leftmost_object_type(t);
+        let is_mapped = is_mapped_kind(data);
+        let (of, data) = self.mapped_target_with_symbol(t, data);
         // The next request may find another target.
         if is_mapped && self.p.mapped_targets.get(&self.task, &t).is_none() {
             return u64::MAX;
@@ -4438,20 +4437,27 @@ impl<'p, 's> Checker<'p, 's> {
                 .fold(0, |bits, &part| bits | self.identities_that_may_match(part)),
             // See `current_recursion_identity`.
             TypeData::Ref { .. } | TypeData::Tuple { .. } => {
-                identity_bit(self.recursion_identity_as(of, data)) | identity_bit((0, of.0, 0))
+                identity_bit(self.recursion_identity_from_target(of, data))
+                    | identity_bit((0, of.0, 0))
             }
-            data => identity_bit(self.recursion_identity_as(of, data)),
+            data => identity_bit(self.recursion_identity_from_target(of, data)),
         }
     }
 
     /// `recursion_identity`. Returns `NOT_PLAIN` for a mapped type, which uses the type it's
-    /// applied to, and for an intersection, which uses its members.
+    /// applied to, for an indexed access, which uses its object type, and for an intersection,
+    /// which uses its members.
     fn plain_recursion_identity(&self, t: TypeId) -> RecursionId {
         let data = self.data(t);
-        if is_mapped_kind(data) || matches!(data, TypeData::Intersection(_)) {
+        if is_mapped_kind(data)
+            || matches!(
+                data,
+                TypeData::Intersection(_) | TypeData::IndexedAccess { .. }
+            )
+        {
             NOT_PLAIN
         } else {
-            self.recursion_identity_as(t, data)
+            self.recursion_identity_from_target(t, data)
         }
     }
 
@@ -4466,12 +4472,34 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getMappedTargetWithSymbol`: the type a homomorphic mapped type is applied to, through any
-    /// number of nested ones, provided that type has a symbol. `Id<{ x: .. }>` is then
-    /// distinguished by the type literal it's applied to. Returned with its `TypeData`.
-    #[inline]
-    fn mapped_target_with_symbol(&mut self, t: TypeId) -> (TypeId, &'p TypeData<'p>) {
-        let data = self.data(t);
+    /// Returns `A` for `A[P1][P2][P3]`, and any other type as it is, with its `TypeData`.
+    #[inline(always)]
+    fn leftmost_object_type(&self, mut t: TypeId) -> (TypeId, &'p TypeData<'p>) {
+        let mut data = self.data(t);
+        while let TypeData::IndexedAccess { obj, .. } = data {
+            t = *obj;
+            data = self.data(t);
+        }
+        (t, data)
+    }
+
+    /// `getRecursionIdentityTarget`: the leftmost object type of an indexed access, and then
+    /// `mapped_target_with_symbol`. An indexed access has no symbol, so none follows a mapped type.
+    #[inline(always)]
+    fn recursion_identity_target(&mut self, t: TypeId) -> (TypeId, &'p TypeData<'p>) {
+        let (t, data) = self.leftmost_object_type(t);
+        self.mapped_target_with_symbol(t, data)
+    }
+
+    /// Returns the type a homomorphic mapped type is applied to, through any number of nested ones, provided
+    /// that type has a symbol. `Id<{ x: .. }>` is then distinguished by the type literal it's applied to.
+    /// `data` is the `TypeData` of `t`, and the result has its own.
+    #[inline(always)]
+    fn mapped_target_with_symbol(
+        &mut self,
+        t: TypeId,
+        data: &'p TypeData<'p>,
+    ) -> (TypeId, &'p TypeData<'p>) {
         if is_mapped_kind(data) {
             let t = self.target_with_symbol_of_mapped(t);
             (t, self.data(t))
@@ -4524,7 +4552,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `hasMatchingRecursionIdentity`
     fn has_matching_recursion_identity(&mut self, t: TypeId, identity: RecursionId) -> bool {
-        let (t, data) = self.mapped_target_with_symbol(t);
+        let (t, data) = self.recursion_identity_target(t);
         match data {
             TypeData::Intersection(parts) => parts
                 .iter()
@@ -4535,7 +4563,7 @@ impl<'p, 's> Checker<'p, 's> {
                 target,
                 args: TypeArguments::Given(_),
             } if identity != (0, t.0, 0) && identity != (1, target.file.0, target.id.0) => false,
-            data => self.recursion_identity_as(t, data) == identity,
+            data => self.recursion_identity_from_target(t, data) == identity,
         }
     }
 
@@ -4568,12 +4596,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getRecursionIdentity`
-    pub(super) fn recursion_identity(&self, t: TypeId) -> RecursionId {
-        self.recursion_identity_as(t, self.data(t))
+    pub(super) fn recursion_identity(&mut self, t: TypeId) -> RecursionId {
+        let (t, data) = self.recursion_identity_target(t);
+        self.recursion_identity_from_target(t, data)
     }
 
-    /// `data` is the `TypeData` of `t`.
-    fn recursion_identity_as(&self, t: TypeId, data: &TypeData) -> RecursionId {
+    /// `getRecursionIdentityFromTarget`. `data` is the `TypeData` of `t`.
+    fn recursion_identity_from_target(&self, t: TypeId, data: &TypeData) -> RecursionId {
         match data {
             // `t.AsTypeReference().node != nil`
             TypeData::Ref {
@@ -4619,14 +4648,6 @@ impl<'p, 's> Checker<'p, 's> {
                 (5, flags.len() as u32, hasher.finish() as u32)
             }
             TypeData::Cond { file, node, .. } => (2, file.0, node.0),
-            TypeData::IndexedAccess { obj, .. } => {
-                // The leftmost object type: `A` in `A[P1][P2][P3]`.
-                let mut of = *obj;
-                while let TypeData::IndexedAccess { obj, .. } = self.data(of) {
-                    of = *obj;
-                }
-                (0, of.0, 0)
-            }
             _ => (0, t.0, 0),
         }
     }

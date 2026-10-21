@@ -10485,6 +10485,36 @@ export type Result<T extends string> = Wrap<Assert<UnionToTuple<{ [K in T]: Lite
       expect(exitCode).toBe(0);
     });
 
+    // In TypeScript 7.1 `A[K]` is an instantiation of the same declaration as `A`, also if `A` is a mapped type applied
+    // to it. In 7.0 every `Chain<..>[K]` is unlike the others, so the constraint is followed to its end, `string`.
+    test.each(["Chain<[...N, 0], K>", "Id<Chain<[...N, 0], K>>"])(
+      "stops looking for the constraint of an indexed access after 10 instantiations of %s",
+      async next => {
+        using dir = project({
+          "a.ts": `type Id<T> = { [P in keyof T]: T[P] };
+interface Chain<N extends 0[], K extends "p"> { p: N["length"] extends 20 ? string : ${next}[K] }
+export function f<K extends "p">(x: Chain<[], K>[K]) { x.length; }
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toBe("a.ts(3,58): error TS2339: Property 'length' does not exist on type 'Chain<[], K>[K]'.");
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    // 7.0 follows both constraints to their ends, `number` and `string`, and reports TS2322.
+    test("assumes that two indexed accesses are related after 3 instantiations of each object type", async () => {
+      using dir = project({
+        "a.ts": `interface A<N extends 0[], K extends "p"> { tag: "a"; p: N["length"] extends 5 ? string : A<[...N, 0], K>[K] }
+interface B<N extends 0[], K extends "p"> { tag: "b"; p: N["length"] extends 5 ? number : B<[...N, 0], K>[K] }
+export function f<K extends "p">(a: A<[], K>[K], b: B<[], K>[K]) { a = b; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("reports TS2722 for calling an unannotated variable in a loop that assigns the result back to it", async () => {
       using dir = project({
         "a.ts": `export function l1(xs: number[]) {

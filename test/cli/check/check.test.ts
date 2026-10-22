@@ -15594,6 +15594,49 @@ export const d5 = v[2];
       expect(exitCode).toBe(1);
     });
 
+    test("`this` is the type parameter if its constraint is a tuple type intersected with its alias", async () => {
+      using dir = project({
+        "a.ts": `type NS = [number, string[]];
+export function f<T extends NS & [number, string[]], U extends T>(t: T, u: U) {
+  const a: never = t.sort();
+  const b: never = t.fill(0 as never);
+  const c: never = t.copyWithin(0, 1);
+  const d: never = u.sort();
+  // Not \`this\`.
+  const e: never = t.reverse();
+  const g: never = t[0];
+  const h: never = t.length;
+  return [a, b, c, d, e, g, h];
+}
+export class Box<T extends NS & [number, string[]]> {
+  constructor(public t: T) {}
+  sorted() {
+    const a: never = this.t.sort();
+    return a;
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(4,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(5,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(6,9): error TS2322: Type 'U' is not assignable to type 'never'.
+          Type 'T' is not assignable to type 'never'.
+            Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(8,9): error TS2322: Type '(number | string[])[]' is not assignable to type 'never'.
+        a.ts(9,9): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(10,9): error TS2322: Type '2' is not assignable to type 'never'.
+        a.ts(16,11): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2345 for a function argument against an index signature inferred from `keyof T`", async () => {
       using dir = project({
         "a.ts": `declare function m<T>(a: T, b: keyof T): T;

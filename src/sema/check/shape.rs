@@ -2724,13 +2724,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `resolveStructuredTypeMembers(apparent)`, where `apparent` is `getApparentType(ty)`.
     /// `getApparentType` passes the type variable `ty` as the `this` argument to a base constraint
-    /// that's a reference, and the intersection `ty` to the reference that its members become. A
-    /// tuple has no slot for it. No other apparent type gets a `this` argument.
+    /// that's a reference, and to the reference that the members of an intersection become. That intersection is the
+    /// base constraint or `ty` itself. A tuple has no slot for it. No other apparent type gets a `this` argument.
     fn members_of_apparent_type(&mut self, ty: TypeId, apparent: TypeId) -> Option<Members<'p>> {
         if ty != apparent && self.is_tuple(apparent) {
             let is_passed = if self.is_deferred(ty) {
                 let constraint = self.base_constraint(ty);
-                self.is_tuple(constraint)
+                self.is_tuple(constraint) || self.is_intersection(constraint)
             } else {
                 self.is_intersection(ty)
             };

@@ -3251,7 +3251,8 @@ impl Delivery {
         let Ok(entry) = bun_sys::lstatat(root_dir, basename) else {
             return Ok(Delivery::Replace);
         };
-        let named = if kind_of(&entry) == FileKind::SymLink {
+        let is_link = kind_of(&entry) == FileKind::SymLink;
+        let named = if is_link {
             let Ok(target) = bun_sys::fstatat(root_dir, basename) else {
                 return Ok(Delivery::Replace);
             };
@@ -3284,10 +3285,13 @@ impl Delivery {
         } else {
             trusted(&entry)
         };
+        // Nothing reads the null device. In a user namespace, `/dev/null` has a foreign owner.
+        let is_null = kind == FileKind::CharacterDevice && is_null_device(&node);
+        let null_by_name = is_null && (!is_link || own_name);
         // A write into a name or a node of another user hands them the executable.
-        if descriptor.is_none() && !(own_name && trusted(&node)) {
-            let can_replace =
-                euid == 0 || dir.st_uid == euid || (shared && dir_mode & S::ISVTX == 0);
+        if descriptor.is_none() && !null_by_name && !(own_name && trusted(&node)) {
+            let own_entry = shared && (dir_mode & S::ISVTX == 0 || entry.st_uid == euid);
+            let can_replace = euid == 0 || dir.st_uid == euid || own_entry;
             if can_replace {
                 return Ok(Delivery::Replace);
             }
@@ -3296,9 +3300,7 @@ impl Delivery {
         }
 
         match kind {
-            FileKind::CharacterDevice if is_null_device(&node) => {
-                Ok(Delivery::InPlace(Node::of(&node)))
-            }
+            FileKind::CharacterDevice if is_null => Ok(Delivery::InPlace(Node::of(&node))),
             // A raw disk, the memory of the machine and a terminal are character devices too.
             FileKind::CharacterDevice => Err(write_failed(
                 outfile,

@@ -3263,6 +3263,52 @@ describe.skipIf(isWindows)("compile outfile that is not a regular file", () => {
       });
     }, 60_000);
 
+    // In a sticky directory, the kernel lets the owner of a name replace it.
+    test("replaces the builder's link in a shared directory, when it leads to a FIFO of another user", async () => {
+      using dir = tempDir("compile-outfile-link-shared", files);
+      const cwd = String(dir);
+      using unprivileged = unprivilegedSpawnOptions(cwd);
+      const fifo = fifoOf(1, cwd);
+      const link = join(cwd, "shared", "link");
+      symlinkSync("out", link);
+      lchownSync(link, unprivileged.uid!, unprivileged.gid!);
+      const before = node(fifo);
+      expect(node(link)).toMatchObject({ kind: "symlink", uid: unprivileged.uid });
+
+      await using reader = readerOf(fifo);
+      const result = await surfaces["bun build --compile"](cwd, "shared/link", unprivileged);
+
+      expect({ result, link: node(link).kind, fifo: node(fifo) }).toEqual({
+        result: built,
+        link: "regular file",
+        fifo: before,
+      });
+    }, 60_000);
+
+    // In a user namespace, /dev/null belongs to a user that the namespace does not have. Nothing
+    // can be read back from a null device, so its owner does not matter.
+    test.skipIf(!scratchDevice.nullDevice)(
+      "writes into a null device of another user",
+      async () => {
+        using dir = tempDir("compile-outfile-null-theirs", files);
+        const cwd = String(dir);
+        using unprivileged = unprivilegedSpawnOptions(cwd);
+        const dev = join(cwd, "dev");
+        const out = join(dev, "out");
+        mkdirSync(dev);
+        chmodSync(dev, 0o755);
+        expect(mknod(out, "c", 1, 3)).toBe(true);
+        chmodSync(out, 0o666);
+        chownSync(out, 1, 1);
+        const before = node(out);
+
+        const result = await surfaces["bun build --compile"](cwd, "dev/out", unprivileged);
+
+        expect({ result, out: node(out), dev: readdirSync(dev) }).toEqual({ result: built, out: before, dev: ["out"] });
+      },
+      60_000,
+    );
+
     test("root replaces a link of another user, and does not follow it", async () => {
       using dir = tempDir("compile-outfile-link-root", files);
       const cwd = String(dir);

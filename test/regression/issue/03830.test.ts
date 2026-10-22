@@ -6,7 +6,7 @@ import { join } from "path";
 describe("issue/03830", () => {
   // First test stays sequential: `toMatchSnapshot()` is not supported in
   // concurrent tests (Bun's test runner rejects it). The second test has no
-  // snapshot matcher, so it runs `.concurrent` per test/CLAUDE.md.
+  // snapshot matcher, so it runs `.concurrent` per test/AGENTS.md.
   it("macros should not lead to seg faults under any given input", async () => {
     // this test code follows the same structure as and
     // is based on the code for testing issue 4893

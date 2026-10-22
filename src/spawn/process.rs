@@ -2010,7 +2010,7 @@ mod spawn_process_body {
             !options.windows.loop_.platform_event_loop().is_null(),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
          WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
-         every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
+         every caller must populate it — see src/AGENTS.md §Spawning Subprocesses \
          (`.loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(...))`)."
         );
         // Non-null verified above; `EventLoopHandle::uv_loop` is the centralized

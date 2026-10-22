@@ -58,7 +58,7 @@ test.skipIf(isWindows || !cc)(
     const [ccStderr, ccExit] = await Promise.all([ccProc.stderr.text(), ccProc.exited]);
     expect(ccStderr).toBe("");
     expect(existsSync(libPath)).toBe(true);
-    // CLAUDE.md: assert exit code last so stderr/output diffs are the first
+    // AGENTS.md: assert exit code last so stderr/output diffs are the first
     // failure the reader sees.
     expect(ccExit).toBe(0);
 

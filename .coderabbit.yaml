@@ -144,4 +144,4 @@ knowledge_base:
     enabled: true
     filePatterns:
       - "**/.cursor/rules/*.mdc"
-      - "**/CLAUDE.md"
+      - "**/AGENTS.md"

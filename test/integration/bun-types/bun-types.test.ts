@@ -10,7 +10,7 @@ import ts from "typescript";
 
 // beforeAll packs bun-types and installs it from the registry, and each case below copies
 // a fixture and type-checks it for several seconds, so everything here outlives the 5s
-// default that a plain `bun test <this file>` (CLAUDE.md, .github/workflows/bun-types.yml)
+// default that a plain `bun test <this file>` (AGENTS.md, .github/workflows/bun-types.yml)
 // runs with; only the CI runner passes a larger --timeout. This call has to precede the
 // registrations: each hook/test captures the default when it is declared.
 setDefaultTimeout(1000 * 60 * 2);

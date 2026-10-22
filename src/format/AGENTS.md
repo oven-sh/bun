@@ -8,7 +8,7 @@ A formatter for JavaScript, JSX, TypeScript, JSON, CSS, Less, SCSS, GraphQL, YAM
 
 - **The specification is Prettier**: `src/language-js/**`, `src/document/**`, `src/main/comments/**`, and its snapshot tests, `tests/format/{js,jsx,typescript}/**/__snapshots__/format.test.js.snap`.
 - **The code is a port of oxc's formatter** (`crates/oxc_formatter_core`, `crates/oxc_formatter`), which is a port of Biome's, which is modelled on Prettier. Where oxc deviates from Prettier, Prettier wins. Both are MIT licensed. See the crate docs in `lib.rs`.
-- **There is no AST of its own**. It prints straight from the type checker's HIR through the handles of `bun_lint::ast` (`src/lint/CLAUDE.md` has the table ESTree → handles).
+- **There is no AST of its own**. It prints straight from the type checker's HIR through the handles of `bun_lint::ast` (`src/lint/AGENTS.md` has the table ESTree → handles).
 
 Not there: Astro, Babel-only proposals, plugins. CSS, GraphQL, Markdown and HTML in templates are formatted: `css/embed.rs`, `graphql/embed.rs`, `markdown/embed.rs`, `html/in_js.rs`.
 
@@ -305,7 +305,7 @@ The goal is to be faster per core than oxfmt and Biome.
 
 ## Conventions
 
-Those of `src/CLAUDE.md` and `src/lint/CLAUDE.md`: no `unsafe`, nothing that can panic on any input (`.get()`, `let .. else`, `saturating_sub`), byte searches through `bun_core::strings`, no `std::fs`/`println!`, `pub(crate)`, no warnings. Comments say what the reader cannot see, in the present tense, and never narrate the port. Naming Prettier's function that something corresponds to is good: ``/// Prettier's `shouldHugTheOnlyFunctionParameter`.``
+Those of `src/AGENTS.md` and `src/lint/AGENTS.md`: no `unsafe`, nothing that can panic on any input (`.get()`, `let .. else`, `saturating_sub`), byte searches through `bun_core::strings`, no `std::fs`/`println!`, `pub(crate)`, no warnings. Comments say what the reader cannot see, in the present tense, and never narrate the port. Naming Prettier's function that something corresponds to is good: ``/// Prettier's `shouldHugTheOnlyFunctionParameter`.``
 
 A node that is not ported yet is written as it is in the source: `write!(f, FormatSuppressedNode(span))`.
 

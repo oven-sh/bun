@@ -2029,7 +2029,7 @@ pub(crate) mod bundle_options_defaults {
 }
 
 pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
-    // Routed through `bun_sys` per CLAUDE.md (never `std::fs`).
+    // Routed through `bun_sys` per src/AGENTS.md (never `std::fs`).
     match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
         Ok(d) => Ok(Dir::from_fd(d)),
         Err(_) => {

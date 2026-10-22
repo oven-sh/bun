@@ -3947,11 +3947,11 @@ fn check_named_files(
                 }
                 here
             });
-            let edges = match request.plan_options.checks_only_requested_paths {
+            let tasks = match request.plan_options.checks_only_requested_paths {
                 true => &[][..],
-                false => modules[i].edges,
+                false => modules[i].tasks,
             };
-            for edge in edges.iter().copied().chain(scripts) {
+            for edge in tasks.iter().map(|task| task.file).chain(scripts) {
                 if !std::mem::replace(&mut is_reached[edge.idx()], true) {
                     to_follow.push(edge.idx());
                 }

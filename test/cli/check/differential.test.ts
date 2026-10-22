@@ -1987,6 +1987,301 @@ differential("lists the same reasons as tsc for why a dynamically imported file 
   expect(bun).toEqual(theirs);
 });
 
+// `shouldAddFile`: an import of a `.tsx` or a `.jsx` file without `jsx`, of a `.js` file without `allowJs`, and every
+// import with `noResolve`, adds no file to the program. So it is no reason for a file to be there, and the imports
+// around it are. What is compared: the reasons of TS6059 or TS6307 at each import, and what `explainFiles` lists.
+
+// With `lib: []` that list has no file of the library, whose path is not that of `tsc`.
+const ownGlobals = "Array<T> Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String"
+  .split(" ")
+  .map(it => `interface ${it} {}\n`)
+  .join("");
+const explained = {
+  strict: true,
+  types: [],
+  lib: [],
+  skipLibCheck: true,
+  moduleResolution: "bundler",
+  explainFiles: true,
+};
+// How a file refers to `S`. `I` makes its names unique.
+const waysToImport: Record<string, string> = {
+  import: `import { Quote as QI } from "S";\n`,
+  type: `import type { Quote as QI } from "S";\n`,
+  side: `import "S";\n`,
+  export: `export { Quote as QI } from "S";\n`,
+  star: `export * as QI from "S";\n`,
+  equals: `import QI = require("S");\n`,
+  call: `export const QI = import("S");\n`,
+  typeof: `export type QI = typeof import("S");\n`,
+};
+const importOf = (way: string, specifier: string, i: number) =>
+  waysToImport[way].replaceAll("S", () => specifier).replace(/I\b/g, () => String(i));
+
+/** For the project in `cwd`: what only `tsc` prints and what only `bun check` prints, on all threads and on one. */
+async function linesThatDiffer(cwd: string, root: string, build: string[] = []) {
+  const [ours, onOneThread] = await Promise.all([
+    linesOf([bunExe(), "check", ...build], cwd, root),
+    linesOf([bunExe(), "check", ...build, "--threads=1"], cwd, root),
+  ]);
+  // After them: it writes a `.tsbuildinfo` for a composite project, and `tsc -b` writes more.
+  const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
+  const only = (a: string[], b: string[]) => a.filter(line => !b.includes(line));
+  return [ours, onOneThread].flatMap(bun =>
+    Bun.deepEquals(theirs, bun) ? [] : [{ onlyTypeScript: only(theirs, bun), onlyBun: only(bun, theirs) }],
+  );
+}
+
+// One program for `rootDir` and one for `composite`: each cell is a directory of it.
+differential("matches tsc on why a file is in the program, for each form of an import that adds no file", async () => {
+  const cells = [
+    ...product(
+      ["tsx", "jsx"],
+      Object.keys(waysToImport),
+      ["before", "after", "between", "twice"],
+      ["files", "path", "include"],
+    ),
+  ];
+  const different: Record<string, object> = {};
+  for (const [consumer, options] of Object.entries({ rootDir: { rootDir: "./in" }, composite: { composite: true } })) {
+    const files: Record<string, string> = { "globals.d.ts": ownGlobals };
+    const listed = ["globals.d.ts"];
+    // A debug build checks every fifth cell: no axis has a multiple of five values, so it keeps every value of each.
+    for (const [extension, way, place, reason] of cells.filter((_, i) => i % (isDebug || isASAN ? 5 : 1) === 0)) {
+      const cell = `${extension}-${way}-${place}-${reason}`;
+      const first = importOf(way, "./Quote", 1);
+      const [a, b] = [`import { a } from "../../out/${cell}/a";\n`, `import { b } from "../../out/${cell}/b";\n`];
+      const body = {
+        before: first + a,
+        after: a + first,
+        between: a + first + b,
+        twice: first + a + importOf(way, "./Quote", 2) + b,
+      };
+      // Why `Quote` is in the program: it is listed, a reference path adds it, or `include` matches it.
+      if (reason !== "include") listed.push(`in/${cell}/index.ts`);
+      if (reason === "files") listed.push(`in/${cell}/Quote.${extension}`);
+      const path = reason === "path" ? `/// <reference path="./Quote.${extension}" />\n` : "";
+      files[`in/${cell}/index.ts`] = path + body[place as keyof typeof body] + "export const wrong: string = 1;\n";
+      files[`in/${cell}/Quote.${extension}`] = "export const Quote = 1;\n";
+      files[`out/${cell}/a.ts`] = "export const a = 1;\n";
+      files[`out/${cell}/b.ts`] = "export const b = 2;\n";
+    }
+    files["tsconfig.json"] = JSON.stringify({
+      compilerOptions: { ...explained, noEmit: true, module: "preserve", allowJs: true, ...options },
+      files: listed,
+      include: ["in/*-include/*"],
+    });
+    using dir = tempDir("bun-check-differential", files);
+    const lines = await linesThatDiffer(String(dir), String(dir));
+    if (lines.length) different[consumer] = lines;
+  }
+  expect(different).toEqual({});
+});
+
+// With `noResolve` no import adds a file. A library reference still does.
+differential("matches tsc on why a file is in the program with `noResolve` and a library reference", async () => {
+  const specifier = "@typescript/lib-es2015/promise";
+  const files: Record<string, string> = {};
+  for (const reason of ["library", "files"]) {
+    const listed = ["globals.d.ts", ...(reason === "files" ? [`node_modules/${specifier}.d.ts`] : [])];
+    for (const [way, place] of product(["side", "star", "call", "typeof"], ["before", "after", "twice"])) {
+      const [first, second, other] = [importOf(way, specifier, 1), importOf(way, specifier, 2), `import "./b";\n`];
+      const body = { before: first + other, after: other + first, twice: first + other + second };
+      files[`${reason}/${way}-${place}/a.ts`] =
+        (reason === "library" ? `/// <reference lib="es2015.promise" />\n` : "") +
+        body[place as keyof typeof body] +
+        "export const a = 1;\n";
+      files[`${reason}/${way}-${place}/b.ts`] = "export const b = 1;\n";
+      listed.push(`${way}-${place}/a.ts`, `${way}-${place}/b.ts`);
+    }
+    files[`${reason}/globals.d.ts`] = ownGlobals;
+    files[`${reason}/node_modules/${specifier}.d.ts`] = "interface Promise<T> {}\nexport {};\n";
+    files[`${reason}/tsconfig.json`] = JSON.stringify({
+      compilerOptions: { ...explained, noEmit: true, module: "esnext", noResolve: true, libReplacement: true },
+      files: listed,
+    });
+  }
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  const different: Record<string, object> = {};
+  await inBatches(["library", "files"], async reason => {
+    const lines = await linesThatDiffer(join(root, reason), root);
+    if (lines.length) different[reason] = lines;
+  });
+  expect(different).toEqual({});
+});
+
+// The entries of one file that name one module: the import of `tslib` or of the JSX runtime that the options add, a
+// statement, `import()`, and a module augmentation. Each of them adds a file or does not, on its own.
+differential("matches tsc on why a file is in the program, for the entries of a file that name a module", async () => {
+  const helpers =
+    "export declare function __assign(...a: any[]): any;\nexport declare function jsx(...a: any[]): any;\n" +
+    "export declare function jsxs(...a: any[]): any;\nexport declare namespace JSX { interface IntrinsicElements { [k: string]: any } }\n";
+  // What is imported, the extension of the file that it resolves to, and `noResolve`.
+  const programs = [...product(["tslib", "jsx"], ["ts", "tsx"], [false, true])];
+  const nameOf = ([kind, target, noResolve]: (typeof programs)[number]) => `${kind}-${target}-${noResolve}`;
+  const files: Record<string, string> = {};
+  for (const program of programs) {
+    const [kind, target, noResolve] = program;
+    const module = kind === "tslib" ? "tslib" : "rt/jsx-runtime";
+    const listed = ["globals.d.ts", `helpers/h.${target}`];
+    for (const [statement, call, augmented] of product([false, true], [false, true], [false, true])) {
+      const cell = `S${+statement}C${+call}A${+augmented}`;
+      const index = `src/${cell}/index.${kind === "jsx" ? "tsx" : "ts"}`;
+      listed.push(index, ...(noResolve ? [`other/${cell}/a.ts`, `other/${cell}/b.ts`] : []));
+      files[`${nameOf(program)}/${index}`] =
+        (statement ? `import * as t from "${module}";\n` : "") +
+        `import { a } from "../../other/${cell}/a";\n` +
+        (call ? `export const d = import("${module}");\n` : "") +
+        (augmented ? `declare module "${module}" {\n  export const extra: number;\n}\n` : "") +
+        `import { b } from "../../other/${cell}/b";\n` +
+        "export const o = { ...a, ...b };\n" +
+        (statement ? "export const tt = t;\n" : "");
+      files[`${nameOf(program)}/other/${cell}/a.ts`] = "export const a = { x: 1 };\n";
+      files[`${nameOf(program)}/other/${cell}/b.ts`] = "export const b = { y: 1 };\n";
+    }
+    files[`${nameOf(program)}/globals.d.ts`] = ownGlobals;
+    files[`${nameOf(program)}/helpers/h.${target}`] = helpers;
+    files[`${nameOf(program)}/tsconfig.json`] = JSON.stringify({
+      compilerOptions: {
+        ...{ ...explained, noEmit: true, module: "esnext", target: "es2015", rootDir: "./src", noResolve },
+        ...{ paths: { [module]: [`./helpers/h.${target}`] } },
+        ...(kind === "tslib" ? { importHelpers: true } : { jsx: "react-jsx", jsxImportSource: "rt" }),
+      },
+      files: listed,
+    });
+  }
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  const different: Record<string, object> = {};
+  await inBatches(programs.map(nameOf), async name => {
+    const lines = await linesThatDiffer(join(root, name), root);
+    if (lines.length) different[name] = lines;
+  });
+  expect(different).toEqual({});
+});
+
+// The options that decide are those of the project that the importing file belongs to. What is read for a source of a
+// referenced project is its declaration file. Each cell is a program with a referenced project of its own.
+differential("matches tsc on why a file is in the program, for imports in and of a referenced project", async () => {
+  const program = (more: object, files: string[]) =>
+    JSON.stringify({
+      compilerOptions: { ...explained, noEmit: true, module: "esnext", rootDir: "./src", ...more },
+      files,
+      references: [{ path: "./lib" }],
+    });
+  const referenced = (more: object, files: string[]) =>
+    JSON.stringify({
+      compilerOptions: {
+        ...explained,
+        explainFiles: undefined,
+        module: "esnext",
+        composite: true,
+        outDir: "out",
+        rootDir: ".",
+        ...more,
+      },
+      files,
+    });
+  const cells: Record<string, Record<string, string>> = {};
+  // An import of a source of the referenced project, which has `jsx`. Why its declaration file is in the program: an
+  // import of another source, `files`, a reference path, or nothing.
+  for (const [extension, reason, place] of product(
+    ["tsx", "ts"],
+    ["index", "listed", "path", "none"],
+    ["before", "after", "between"],
+  )) {
+    const first = `import { A } from "../lib/a";\n`;
+    const index = reason === "index" ? `import { A2 } from "../lib/index";\n` : "";
+    const [later, last] = [`import { later } from "../site/later";\n`, `import { last } from "../site/last";\n`];
+    const body = { before: index + first + later, after: index + later + first, between: later + index + first + last };
+    cells[`${extension}-source-${reason}-${place}`] = {
+      "tsconfig.json": program({}, ["globals.d.ts", ...(reason === "listed" ? ["lib/out/a.d.ts"] : []), "src/main.ts"]),
+      "lib/tsconfig.json": referenced({ jsx: "react-jsx" }, ["index.ts", `a.${extension}`]),
+      [`lib/a.${extension}`]: "export const A = 1;\n",
+      "lib/index.ts": `export { A as A2 } from "./a";\n`,
+      "lib/out/a.d.ts": "export declare const A = 1;\n",
+      "lib/out/index.d.ts": `export { A as A2 } from "./a";\n`,
+      "site/later.ts": "export const later = 1;\n",
+      "site/last.ts": "export const last = 1;\n",
+      "src/main.ts":
+        (reason === "path" ? `/// <reference path="../lib/out/a.d.ts" />\n` : "") +
+        body[place as keyof typeof body] +
+        "export {};\n",
+    };
+  }
+  // An import from a declaration file of the referenced project: the option that lets it add a file, in that project,
+  // in this one, and whether the file is listed here.
+  const arms: Record<string, [string, unknown, string, string, string]> = {
+    js: ["allowJs", true, "../src/b.js", "src/b.js", "export const b = 1;\n"],
+    json: ["resolveJsonModule", true, "../src/d.json", "src/d.json", `{ "d": 1 }\n`],
+    tsx: ["jsx", "react-jsx", "../src/Q", "src/Q.tsx", "export const Q = 1;\n"],
+    noResolve: ["noResolve", true, "../src/c", "src/c.ts", "export const c0 = 1;\n"],
+  };
+  for (const [arm, inLibrary, inProgram, isListed, place] of product(
+    Object.keys(arms),
+    [false, true],
+    [false, true],
+    [false, true],
+    ["before", "after"],
+  )) {
+    const [option, value, specifier, target, text] = arms[arm];
+    // A `.js` or a `.json` file is a root file only with the option.
+    if (isListed && (arm === "js" || arm === "json") && !inProgram) continue;
+    // `bun check` reads the referenced project from its sources: a JavaScript file that it imports has a declaration
+    // file there that no build writes.
+    if (arm === "js" && inLibrary) continue;
+    const [first, later] = [`import "${specifier}";\n`, `import { c } from "../other/c";\n`];
+    cells[`${arm}-${+inLibrary}${+inProgram}-${isListed ? "listed" : "unlisted"}-${place}`] = {
+      "tsconfig.json": program(inProgram ? { [option]: value } : {}, [
+        "globals.d.ts",
+        ...(isListed ? [target] : []),
+        "lib/types.d.ts",
+      ]),
+      "lib/tsconfig.json": referenced(inLibrary ? { [option]: value } : {}, ["types.d.ts"]),
+      "lib/types.d.ts": (place === "before" ? first + later : later + first) + "export declare const t: typeof c;\n",
+      "other/c.ts": "export const c = 1;\n",
+      [target]: text,
+    };
+  }
+  // A JavaScript source of the referenced project: that project may import it, this one may not.
+  for (const [inProgram, place] of product([false, true], ["before", "after"])) {
+    const [first, later] = [`export * from "./b.js";\n`, `export * from "./c";\n`];
+    const index = place === "before" ? first + later : later + first;
+    cells[`js-source-${+inProgram}-${place}`] = {
+      "tsconfig.json": program(inProgram ? { allowJs: true } : {}, ["globals.d.ts", "src/main.ts"]),
+      "lib/tsconfig.json": referenced({ allowJs: true }, ["index.ts", "b.js", "c.ts"]),
+      "lib/index.ts": index,
+      "lib/b.js": "export const b = 1;\n",
+      "lib/c.ts": "export const c = 1;\n",
+      "lib/out/index.d.ts": index,
+      "lib/out/b.d.ts": "export declare const b = 1;\n",
+      "lib/out/c.d.ts": "export declare const c = 1;\n",
+      "src/main.ts": `import { b, c } from "../lib/index";\nexport const mine: string = [b, c];\n`,
+    };
+  }
+  // A debug build checks a sample of the cells. It is always the same sample.
+  const names = Object.keys(cells).filter((_, index) => index % everyConfiguration === 0);
+  const files: Record<string, string> = {};
+  for (const name of names) {
+    files[`${name}/globals.d.ts`] = ownGlobals;
+    for (const path in cells[name]) files[`${name}/${path}`] = cells[name][path];
+  }
+  const different: Record<string, object> = {};
+  // `tsc -b` writes files: each command has a directory of its own. `-b` loads a program the same way, so it has a
+  // third of the cells.
+  for (const build of [[], ["-b"]]) {
+    using dir = tempDir("bun-check-differential", files);
+    const root = String(dir);
+    const cellsOfCommand = names.filter((_, index) => build.length === 0 || index % 3 === 0);
+    await inBatches(cellsOfCommand, async name => {
+      const lines = await linesThatDiffer(join(root, name), root, build);
+      if (lines.length) different[`${name} ${build}`] = lines;
+    });
+  }
+  expect(different).toEqual({});
+});
+
 const swapCase = (text: string) =>
   text.replace(/[a-z]/gi, c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
 // A debug build checks a sample of the projects that take a process each.
@@ -2723,6 +3018,58 @@ const isCaseSensitive = (() => {
 // TypeScript assumes every file system has the case sensitivity of the one its executable is on. `bun check` probes the
 // project's.
 const casingTest = test.concurrent.skipIf(!tsc || isCaseSensitive !== !existsSync(swapCase(tsc)));
+
+// `tasksSeenByNameIgnoreCase` also has the name of a task that is redirected to a declaration file, which has no file
+// of its own. Two names that differ only in case are two files here. The program below has them where they are one.
+test.concurrent.skipIf(!tsc || !isCaseSensitive)(
+  "matches tsc on a name that differs in case from a source of a referenced project",
+  async () => {
+    const options = { ...JSON.parse(tsconfig).compilerOptions, lib: ["es5"] };
+    const project = (more: object, top: object) => JSON.stringify({ compilerOptions: { ...options, ...more }, ...top });
+    const referenced = (files: string[], more: object = {}) =>
+      project({ noEmit: undefined, composite: true, ...more }, { files });
+    const [source, other] = [`import { A } from "./ref/Util";\n`, `import { b } from "./ref/util";\n`];
+    const cells: Record<string, Record<string, string>> = {};
+    // How `ref/Util.ts`, a source of the referenced project, is in the program, and whether `ref/util.ts`, which is
+    // no source of it, is there first.
+    for (const [how, isFirst] of product(["import", "root", "path"], [true, false])) {
+      const imports = how === "import" ? (isFirst ? source + other : other + source) : other;
+      const roots = how === "root" ? (isFirst ? ["ref/Util.ts", "a.ts"] : ["a.ts", "ref/Util.ts"]) : ["a.ts"];
+      // A reference path is followed before every import.
+      if (how === "path" && !isFirst) continue;
+      cells[`${how}-${isFirst ? "first" : "second"}`] = {
+        "tsconfig.json": project({}, { files: roots, references: [{ path: "./ref" }] }),
+        "ref/tsconfig.json": referenced(["Util.ts"], { outDir: "out" }),
+        "ref/Util.ts": "export const A = 1;\n",
+        "ref/out/Util.d.ts": "export declare const A = 1;\n",
+        "ref/util.ts": "export const b = 2;\n",
+        "a.ts": (how === "path" ? `/// <reference path="./ref/Util.ts" />\n` : "") + imports + "export {};\n",
+      };
+    }
+    // Both are sources of the referenced project.
+    for (const isFirst of [true, false]) {
+      cells[`sources-${isFirst ? "first" : "second"}`] = {
+        "tsconfig.json": project({}, { files: ["a.ts"], references: [{ path: "./ref" }] }),
+        "ref/tsconfig.json": referenced(["Util.ts", "util.ts"]),
+        "ref/Util.ts": "export const A = 1;\n",
+        "ref/util.ts": "export const b = 2;\n",
+        "ref/Util.d.ts": "export declare const A = 1;\n",
+        "ref/util.d.ts": "export declare const b = 2;\n",
+        "a.ts": (isFirst ? source + other : other + source) + "export {};\n",
+      };
+    }
+    const files: Record<string, string> = {};
+    for (const name in cells) for (const path in cells[name]) files[`${name}/${path}`] = cells[name][path];
+    using dir = tempDir("bun-check-differential", files);
+    const root = String(dir);
+    const different: Record<string, object> = {};
+    await inBatches(Object.keys(cells), async name => {
+      const lines = await linesThatDiffer(join(root, name), root);
+      if (lines.length) different[name] = lines;
+    });
+    expect(different).toEqual({});
+  },
+);
 
 casingTest("matches tsc on file names that differ only in case", async () => {
   const target = `export class T { private secret = 1; }\nexport const wrong: number = "1";\n`;

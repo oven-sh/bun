@@ -208,8 +208,8 @@ pub struct Module<'s> {
     /// `GetRedirectForResolution`: the options of the referenced project it belongs to, as a
     /// source or as the declaration file that is read in place of one.
     pub redirect_for_resolution: Option<&'s Options>,
-    /// The files it refers to, in order of reference: `/// <reference>`s, then imports.
-    pub edges: &'s [FileId],
+    /// `parseTask.subTasks`, in order of reference: `/// <reference>`s, then imports.
+    pub tasks: &'s [Task],
     /// `IsSourceFileFromExternalLibrary`: `lowestDepth > 0`, meaning every task for it was reached
     /// through a step into a `node_modules`.
     pub is_from_external_library: bool,
@@ -701,6 +701,8 @@ impl ExactSizeIterator for Exports<'_, '_> {}
 struct Resolution<'r> {
     spec: Atom,
     mode: ResolutionMode,
+    /// Which of `moduleNames` it is the resolution of.
+    kind: ModuleNameKind,
     /// The file `parseTask.load` reads for `ResolvedFileName`: `getParseFileRedirect` of it, or else the file itself.
     path: &'r [u8],
     /// `path`'s number from `prefetch_files`, or `NOT_NUMBERED`.
@@ -717,6 +719,63 @@ struct Resolution<'r> {
     /// The error of `parseTask.load` for an extension that the program doesn't support. The file isn't read.
     unsupported_extension: Option<UnsupportedExtension>,
 }
+
+impl Resolution<'_> {
+    /// What its task is for. `None`: `addSubTask` isn't called for it, or `parseTask.load` reads no file, so it has
+    /// no task.
+    fn origin(&self) -> Option<Origin> {
+        if !self.should_add_file || self.unsupported_extension.is_some() {
+            return None;
+        }
+        match self.kind {
+            ModuleNameKind::Helpers => Some(Origin::Helpers),
+            ModuleNameKind::JsxRuntime => Some(Origin::JsxRuntime),
+            ModuleNameKind::Import => Some(Origin::Import(self.spec, self.mode)),
+            ModuleNameKind::Augmentation => None,
+        }
+    }
+
+    fn has_task(&self) -> bool {
+        self.origin().is_some()
+    }
+}
+
+/// One of `moduleNames` of `resolveImportsAndModuleAugmentations`, which has them in this order.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ModuleNameKind {
+    /// `importHelpersImportSpecifier`
+    Helpers,
+    /// `jsxRuntimeImportSpecifier`
+    JsxRuntime,
+    /// One of `file.Imports()`
+    Import,
+    /// One of `file.ModuleAugmentations`. `shouldAddFile` is false for it.
+    Augmentation,
+}
+
+/// `includeReason` of one of `parseTask.subTasks`, without its position: the reference or the module name that the task
+/// is for. A module name for which `shouldAddFile` is false has no task, so nothing has it as its origin.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Origin {
+    /// A `/// <reference>`: its index in `hir::File::references`.
+    Reference(u32),
+    /// `importHelpersImportSpecifier`
+    Helpers,
+    /// `jsxRuntimeImportSpecifier`
+    JsxRuntime,
+    /// One of `file.Imports()`: the specifier and the mode it is resolved in. All its uses in the file share the task.
+    Import(Atom, ResolutionMode),
+}
+
+/// One of `parseTask.subTasks` of a file.
+#[derive(Copy, Clone)]
+pub struct Task {
+    pub file: FileId,
+    pub origin: Origin,
+}
+
+const _: () = assert!(std::mem::size_of::<Origin>() == 8);
+const _: () = assert!(std::mem::size_of::<Task>() == 12);
 
 /// `Resolution::number` of a path that `prefetch_files` didn't number. It numbers each distinct path it
 /// encounters, so equal numbers mean identical bytes. The loader threads compare paths anyway to
@@ -737,9 +796,9 @@ struct ModuleSummary<'s> {
     /// `identifiers` and `type_nodes` become the file's entry in `Files::sizes`.
     identifiers: u32,
     type_nodes: u32,
-    edges: &'s [FileId],
+    tasks: &'s [Task],
     is_lib: bool,
-    /// `edges`, followed by the files it imports.
+    /// The files of `tasks`, followed by the files it imports.
     targets: Vec<FileId>,
     /// Sources of referenced projects that it imports, each with the declaration file that's read instead.
     built_imports: Vec<(Atom, FileId)>,
@@ -925,8 +984,8 @@ struct Loaded<'s, 'r> {
     /// Argument for `Prefetch::take_parse`: the `Parse` it shares with the other copies of the file.
     parse: Option<u32>,
     imports: Vec<Resolution<'r>>,
-    /// (path, is a lib, `increaseDepth`, `packageId`)
-    references: Vec<(&'r [u8], bool, bool, Option<PackageId<'r>>)>,
+    /// (path, is a lib, `increaseDepth`, `packageId`, its index in `hir::File::references`)
+    references: Vec<(&'r [u8], bool, bool, Option<PackageId<'r>>, u32)>,
     /// `Resolution::number` for each of `references`. Empty if they aren't numbered.
     reference_numbers: Vec<u32>,
     /// The `/// <reference lib>` to a library that's replaced by a file with an extension that the program doesn't
@@ -3097,6 +3156,8 @@ enum IncludeReason {
 /// `referenceFileLocation`
 struct Reference {
     target: FileId,
+    /// The index of its task in `Module::tasks` of `from`.
+    task: usize,
     /// The code of the message, in its variant without a package id. `fileIncludeKindImport`: 1393,
     /// 1395 for the helpers, 1397 for the JSX runtime. `fileIncludeKindReferenceFile`: 1400.
     /// `fileIncludeKindTypeReferenceDirective`: 1402. `fileIncludeKindLibReferenceDirective`: 1405.
@@ -3470,14 +3531,23 @@ impl Included<'_, '_> {
         let (resolver, from) = program_resolver.redirect_for_resolution(module.file_name());
         let options = resolver.options();
         let mut references = Vec::new();
+        // A reference is of a task. `Module::imports` is what the checker may resolve: a name in it can have no task,
+        // and a task can have no name in it.
+        let mut task_of: FxHashMap<Origin, usize> = FxHashMap::default();
+        for (at, task) in module.tasks.iter().enumerate() {
+            task_of.entry(task.origin).or_insert(at);
+        }
         let mut refer = |name: Vec<u8>,
                          code: u32,
                          (start, end),
                          package_id: Option<Vec<u8>>,
-                         redirected_from: Option<Vec<u8>>| {
+                         redirected_from: Option<Vec<u8>>,
+                         task: usize| {
+            // The name of the task for the automatic type directives is no file.
             if let Some(target) = by_path.get(&name) {
                 let reference = Reference {
                     target,
+                    task,
                     code,
                     from: file,
                     start,
@@ -3494,12 +3564,13 @@ impl Included<'_, '_> {
             ReferenceKind::Types,
             ReferenceKind::Lib,
         ] {
-            for &(kind, value, pos, mode) in hir.references.iter() {
-                // `noResolve`: only library references are still processed.
-                if kind != current_kind || program_options.no_resolve && kind != ReferenceKind::Lib
-                {
+            for (index, &(kind, value, pos, mode)) in hir.references.iter().enumerate() {
+                if kind != current_kind {
                     continue;
                 }
+                let Some(&task) = task_of.get(&Origin::Reference(index as u32)) else {
+                    continue;
+                };
                 let value = atoms.bytes(value);
                 let end = pos + value.len() as u32;
                 let mut redirected_from = None;
@@ -3532,7 +3603,6 @@ impl Included<'_, '_> {
                         let found = resolver.resolve_type_reference_and_id(value, from, mode, None);
                         (found.map(|it| it.0), 1402)
                     }
-                    ReferenceKind::Lib if program_options.no_lib => (None, 1405),
                     ReferenceKind::Lib => {
                         let lib = referenced_lib(host, program_options, value);
                         let found =
@@ -3542,19 +3612,20 @@ impl Included<'_, '_> {
                 };
                 // `getReferencedLocation`: only that of an import has a `packageId`.
                 if let Some(name) = name {
-                    refer(name, code, (pos, end), None, redirected_from);
+                    refer(name, code, (pos, end), None, redirected_from, task);
                 }
             }
         }
         // `resolveImportsAndModuleAugmentations`: the synthetic imports come first.
-        let mut specifiers: Vec<(Atom, ResolutionMode, u32, u32, u32)> = Vec::new();
+        let mut specifiers: Vec<(Origin, Atom, ResolutionMode, u32, u32)> = Vec::new();
         if imports_helpers(options, hir) {
-            specifiers.push((known::tslib, module.default_mode, 1395, 0, 0));
+            specifiers.push((Origin::Helpers, known::tslib, module.default_mode, 0, 0));
         }
         if crate::resolve::is_jsx_file_name(module.file_name())
             && let Some(runtime) = jsx_runtime_of(options, hir, atoms)
         {
-            specifiers.push((atoms.intern(&runtime), module.default_mode, 1397, 0, 0));
+            let runtime = atoms.intern(&runtime);
+            specifiers.push((Origin::JsxRuntime, runtime, module.default_mode, 0, 0));
         }
         // `file.Imports()`: the specifiers of statements, then those of `import()`, the call and the type.
         let mut uses = hir.specifier_uses.to_vec();
@@ -3567,11 +3638,18 @@ impl Included<'_, '_> {
             let end = end_of_string_literal(text, u.pos);
             let times = calls.as_ref().filter(|_| u.kind.is_call());
             let times = times.map_or(1, |calls| times_among_imports(hir, calls, text, u));
-            specifiers.extend(std::iter::repeat_n((u.spec, mode, 1393, u.pos, end), times));
+            let specifier = (Origin::Import(u.spec, mode), u.spec, mode, u.pos, end);
+            specifiers.extend(std::iter::repeat_n(specifier, times));
         }
-        for (spec, mode, code, start, end) in specifiers {
-            let Some(&target) = module.imports.get(&(spec, mode)) else {
+        for (origin, spec, mode, start, end) in specifiers {
+            let Some(&task) = task_of.get(&origin) else {
                 continue;
+            };
+            let target = module.tasks[task].file;
+            let code = match origin {
+                Origin::Helpers => 1395,
+                Origin::JsxRuntime => 1397,
+                _ => 1393,
             };
             // Use the file's own name unless the target is in `is_requested`.
             let requested_resolution = is_requested[target.idx()].then(|| {
@@ -3583,11 +3661,11 @@ impl Included<'_, '_> {
                     let redirect = program_options.parse_file_redirect(found.file_name);
                     let name = redirect.unwrap_or(found.file_name).to_vec();
                     let redirected_from = redirect.map(|_| found.file_name.to_vec());
-                    refer(name, code, (start, end), id, redirected_from);
+                    refer(name, code, (start, end), id, redirected_from, task);
                 }
                 None => {
                     let name = self.modules[target.idx()].file_name().to_vec();
-                    refer(name, code, (start, end), None, None);
+                    refer(name, code, (start, end), None, None, task);
                 }
             }
         }
@@ -3655,8 +3733,9 @@ impl Included<'_, '_> {
         } else {
             tasks.extend(automatic.iter().map(|&start| (start, None)));
         }
-        let refers_to_requested =
-            |file: FileId| (modules[file.idx()].edges.iter()).any(|edge| is_requested[edge.idx()]);
+        let refers_to_requested = |file: FileId| {
+            (modules[file.idx()].tasks.iter()).any(|task| is_requested[task.file.idx()])
+        };
         let mut seen = vec![false; modules.len()];
         for (first, reason) in tasks {
             if let Some((reason, name)) = reason.filter(|_| is_requested[first.idx()]) {
@@ -3674,15 +3753,15 @@ impl Included<'_, '_> {
                 stack.push(frame(first));
             }
             while let Some(top) = stack.last_mut() {
-                let edges = modules[top.0.idx()].edges;
-                let edge = edges.get(top.1).copied();
+                let tasks = modules[top.0.idx()].tasks;
+                let edge = tasks.get(top.1).map(|task| task.file);
                 // `subTasks` has a task for each reference. The reason of one that repeats an earlier
                 // reference of the file is added when the traversal gets to it.
                 while let Some(references) = &mut top.2
                     && let Some((next, _)) = references.as_slice().first()
                 {
-                    let is_repeated = edges[..top.1].contains(&next.target);
-                    if !is_repeated && Some(next.target) != edge {
+                    let is_repeated = next.task < top.1;
+                    if next.task > top.1 {
                         break;
                     }
                     if let Some((reference, name)) = references.next()
@@ -3996,7 +4075,8 @@ impl Included<'_, '_> {
         let visits = self.visits(&resolver, &is_reported);
         (modules.iter().zip(&visits).enumerate())
             .map(|(i, (module, visits))| (i, module, self.by_path_of(visits, module.file_name())))
-            .filter(|(.., visits)| !visits.is_empty())
+            // Whether or not a reason was found: `verifyCompilerOptions` reports every such file.
+            .filter(|(i, ..)| is_reported[*i])
             .map(|(i, module, visits)| {
                 let file = FileId(i as u32);
                 self.explain(
@@ -4042,11 +4122,13 @@ impl Included<'_, '_> {
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, self.host, self.options);
         let visits = self.visits(&resolver, &is_requested);
-        let differs = |file: FileId, to_file: &[&Visit], visit: &Visit, is_referred_to: bool| {
-            let (existing, name) = (
-                displayed_path(&to_file[0].name),
-                displayed_path(&visit.name),
-            );
+        let differs = |file: FileId,
+                       to_file: &[&Visit],
+                       existing: &[u8],
+                       visit: &Visit,
+                       name: &[u8],
+                       is_referred_to: bool| {
+            let (existing, name) = (displayed_path(existing), displayed_path(name));
             let (code, args) = match !visit.is_reference() && is_referred_to {
                 true => (1261, [&*existing, &*name]),
                 false => (1149, [&*name, &*existing]),
@@ -4063,7 +4145,10 @@ impl Included<'_, '_> {
                     // A different drive letter isn't an error.
                     if without_root(&visit.name) != without_root(&to_file[0].name) {
                         let is_referred_to = to_file[..=i].iter().any(is_reference);
-                        problems.push(differs(file, &to_file, visit, is_referred_to));
+                        let existing = &to_file[0].name;
+                        let problem =
+                            differs(file, &to_file, existing, visit, &visit.name, is_referred_to);
+                        problems.push(problem);
                     }
                 }
             }
@@ -4091,18 +4176,37 @@ impl Included<'_, '_> {
         }
         // `tasksSeenByNameIgnoreCase`
         for case_variants in case_variants {
-            let mut each: Vec<(FileId, Vec<&Visit>)> = (case_variants.iter())
-                .map(|&(name, file)| (file, self.by_path_of(&visits[file.idx()], name)))
-                .filter(|it| !it.1.is_empty())
+            // The file, its reasons, the name, and the reason of the first task with that name.
+            let mut each: Vec<(FileId, Vec<&Visit>, &[u8], &Visit)> = (case_variants.iter())
+                .filter_map(|&(name, file)| {
+                    let to_target = &visits[file.idx()];
+                    // A task that is redirected has no reasons and no file. `collectFiles` reaches it right before
+                    // the task that it is redirected to.
+                    if self.options.parse_file_redirect(name).is_some() {
+                        let is_from = |it: &&Visit| self.redirected_from(it) == Some(name);
+                        let first = to_target.iter().find(is_from)?;
+                        return Some((no_file, Vec::new(), name, first));
+                    }
+                    let to_file = self.by_path_of(to_target, name);
+                    let first = *to_file.first()?;
+                    Some((file, to_file, &first.name[..], first))
+                })
                 .collect();
-            each.shared_sort_by_key(|it| it.1[0].order);
-            let Some(((file, to_file), others)) = each.split_first() else {
+            each.shared_sort_by_key(|it| it.3.order);
+            let Some(((file, to_file, existing, _), others)) = each.split_first() else {
                 continue;
             };
-            for (_, to_other) in others {
-                let visit = to_other[0];
+            for &(_, _, name, visit) in others {
                 let mut before = to_file.iter().filter(|it| it.order < visit.order);
-                problems.push(differs(*file, to_file, visit, before.any(is_reference)));
+                let is_referred_to = before.any(is_reference);
+                problems.push(differs(
+                    *file,
+                    to_file,
+                    existing,
+                    visit,
+                    name,
+                    is_referred_to,
+                ));
             }
         }
         problems
@@ -4322,7 +4426,7 @@ fn output_path_errors(
         let mut is_reached = vec![false; modules.len()];
         while let Some(file) = pending.pop() {
             if !std::mem::replace(&mut is_reached[file.idx()], true) {
-                pending.extend(modules[file.idx()].edges);
+                pending.extend(modules[file.idx()].tasks.iter().map(|task| task.file));
             }
         }
         is_reached
@@ -4777,8 +4881,8 @@ impl<'s> Files<'s> {
             .collect();
         // `subTasks` of the tasks that are loaded and haven't started them yet.
         let mut not_started: FxHashMap<FileId, Vec<SubTask>> = FxHashMap::default();
-        // `subTasks` of one file. Reused for the next.
-        let mut sub_tasks: Vec<SubTask> = Vec::new();
+        // `subTasks` of one file, each with what it is for. Reused for the next.
+        let mut sub_tasks: Vec<(SubTask, Origin)> = Vec::new();
         let mut package_json_info_cache = PackageJsonInfoCache::default();
         // `pathForLibFileResolutions`. The libraries of the options are resolved while `rootTasks` is built.
         let mut lib_resolutions: Vec<(Vec<u8>, Vec<DiagAndArgs>)> = Vec::new();
@@ -4811,8 +4915,6 @@ impl<'s> Files<'s> {
         let mut parses_to_take: Vec<Option<Option<u32>>> = Vec::new();
         // Indexed by `Loaded::parse`.
         let mut is_parse_taken: Vec<bool> = Vec::new();
-        // `Module::edges` of one file. Reused for the next.
-        let mut edges: Vec<FileId> = Vec::new();
         let mut traces: Vec<Vec<DiagAndArgs>> = Vec::new();
         // `rootTasks`: the root files, the libraries, the automatic type directives (`None`) and
         // what they resolve to.
@@ -4958,7 +5060,7 @@ impl<'s> Files<'s> {
                         let numbers = loaded.reference_numbers.iter().copied();
                         let numbers = numbers.chain(std::iter::repeat(NOT_NUMBERED));
                         for (reference, number) in loaded.references.iter().zip(numbers) {
-                            let &(path, is_lib, increases_depth, package_id) = reference;
+                            let &(path, is_lib, increases_depth, package_id, index) = reference;
                             let file = add_numbered(
                                 number,
                                 path,
@@ -4967,12 +5069,13 @@ impl<'s> Files<'s> {
                                 &mut depths,
                                 &mut all_found,
                             );
-                            sub_tasks.push(SubTask {
+                            let task = SubTask {
                                 file,
                                 increases_depth,
                                 is_elided_on_depth: false,
                                 package: all_found.package_of_task(file, package_id),
-                            });
+                            };
+                            sub_tasks.push((task, Origin::Reference(index)));
                         }
                         for &(start, end, path, code) in &loaded.unsupported_libs {
                             // Only one task loads the file, so report this once, however many files
@@ -5004,18 +5107,16 @@ impl<'s> Files<'s> {
                                 is_importable,
                                 ..
                             } = resolution;
-                            if !resolution.should_add_file {
-                                if is_importable {
-                                    only_found.push((*id, spec, mode, path));
-                                }
-                                continue;
-                            }
-                            if let Some(UnsupportedExtension { code, span }) =
-                                resolution.unsupported_extension
-                            {
-                                // Only one task loads the file, so report this once, however many
-                                // files refer to it.
-                                if let Some((pos, end)) = span
+                            let Some(origin) = resolution.origin() else {
+                                if !resolution.should_add_file {
+                                    if is_importable {
+                                        only_found.push((*id, spec, mode, path));
+                                    }
+                                } else if let Some(UnsupportedExtension { code, span }) =
+                                    resolution.unsupported_extension
+                                    // Only one task loads the file, so report this once, however many
+                                    // files refer to it.
+                                    && let Some((pos, end)) = span
                                     && !(unsupported.iter())
                                         .any(|it| it.3.args[0] == *displayed_path(path))
                                 {
@@ -5023,7 +5124,7 @@ impl<'s> Files<'s> {
                                     unsupported.push((*id, pos, end, problem));
                                 }
                                 continue;
-                            }
+                            };
                             let file = add_numbered(
                                 resolution.number,
                                 path,
@@ -5035,7 +5136,7 @@ impl<'s> Files<'s> {
                             if is_importable {
                                 loaded.module.imports.insert((spec, mode), file);
                             }
-                            sub_tasks.push(SubTask {
+                            let task = SubTask {
                                 file,
                                 increases_depth,
                                 // `isJsFileFromNodeModules`
@@ -5043,11 +5144,16 @@ impl<'s> Files<'s> {
                                     && is_javascript_file(host, path)
                                     && strings::contains(path, b"/node_modules/"),
                                 package: all_found.package_of_task(file, resolution.package_id),
-                            });
+                            };
+                            sub_tasks.push((task, origin));
                         }
-                        edges.clear();
-                        edges.extend(sub_tasks.iter().map(|task| task.file));
-                        loaded.module.edges = slice_in(&edges, arena);
+                        if !sub_tasks.is_empty() {
+                            let tasks = sub_tasks.iter().map(|&(task, origin)| Task {
+                                file: task.file,
+                                origin,
+                            });
+                            loaded.module.tasks = arena.alloc_slice_fill_iter(tasks);
+                        }
                         if options.trace_resolution {
                             // A library gets its `SourceFileMetaData` without a lookup.
                             if !is_lib {
@@ -5081,10 +5187,11 @@ impl<'s> Files<'s> {
                         all_found.files[id.idx()].parse = loaded.parse;
                         modules[id.idx()] = Some(loaded.module);
                         // `w.start(loader, taskByFileName.subTasks, data.lowestDepth)`
+                        let sub_tasks = sub_tasks.iter().map(|it| it.0);
                         if starts_sub_tasks {
-                            queued.extend(sub_tasks.iter().map(|&task| (task, depth)));
+                            queued.extend(sub_tasks.map(|task| (task, depth)));
                         } else {
-                            not_started.insert(*id, std::mem::take(&mut sub_tasks));
+                            not_started.insert(*id, sub_tasks.collect());
                         }
                     }
                 }
@@ -5104,13 +5211,14 @@ impl<'s> Files<'s> {
                         Some(top) => {
                             // Sub tasks that were never started aren't loaded.
                             let has_started = !not_started.contains_key(&top.0);
-                            let edges = match modules[top.0.idx()].as_ref().filter(|_| has_started)
-                            {
-                                Some(module) => module.edges,
-                                None if Some(top.0) == automatic_task => &starts[roots_end..],
-                                None => &[],
+                            let edge = match modules[top.0.idx()].as_ref().filter(|_| has_started) {
+                                Some(module) => module.tasks.get(top.1).map(|task| task.file),
+                                None if Some(top.0) == automatic_task => {
+                                    starts[roots_end..].get(top.1).copied()
+                                }
+                                None => None,
                             };
-                            let Some(&edge) = edges.get(top.1) else {
+                            let Some(edge) = edge else {
                                 stack.pop();
                                 continue;
                             };
@@ -5214,7 +5322,7 @@ impl<'s> Files<'s> {
         }
         for file in not_started.into_keys() {
             if let Some(module) = &mut modules[file.idx()] {
-                module.edges = &[];
+                module.tasks = &[];
             }
         }
         // A spelling that `collectFiles` never reached still names the same file.
@@ -5257,15 +5365,16 @@ impl<'s> Files<'s> {
                 // An elided task doesn't load anything, so edges to it are dropped. `collectFiles`
                 // continues from the task for the automatic type directives to its sub tasks, so an
                 // edge to that task becomes edges to them.
-                let mut edges: SmallVec<[FileId; 32]> = SmallVec::new();
-                for edge in module.edges {
-                    let tasks = match Some(*edge) == automatic_task {
+                let mut tasks: SmallVec<[Task; 32]> = SmallVec::new();
+                for &Task { file, origin } in module.tasks {
+                    let files = match Some(file) == automatic_task {
                         true => &starts[roots_end..],
-                        false => std::slice::from_ref(edge),
+                        false => std::slice::from_ref(&file),
                     };
-                    edges.extend(tasks.iter().filter_map(|task| renumbered[task.idx()]));
+                    let files = files.iter().filter_map(|file| renumbered[file.idx()]);
+                    tasks.extend(files.map(|file| Task { file, origin }));
                 }
-                module.edges = slice_in(&edges, session.arena());
+                module.tasks = slice_in(&tasks, session.arena());
                 (module.imports).retain(|_, target| match renumbered[target.idx()] {
                     Some(new) => {
                         *target = new;
@@ -5366,8 +5475,27 @@ impl<'s> Files<'s> {
                 let reference_imports = module.unbuilt_imports.iter().copied();
                 let (built, unbuilt): (Vec<_>, Vec<_>) =
                     reference_imports.partition(|it| module.imports.contains_key(&(it.0, it.1)));
-                let targets = built.iter().map(|it| (it.3, module.imports[&(it.0, it.1)]));
-                built_imports.extend(targets);
+                // `outputFileToProjectReferenceSource` is of a task that was redirected. The split above is what the
+                // checker may resolve.
+                let sources = module.unbuilt_imports.iter().map(|it| ((it.0, it.1), it.3));
+                let sources: FxHashMap<(Atom, ResolutionMode), Atom> = sources.collect();
+                let has_runtime = |task: &Task| task.origin == Origin::JsxRuntime;
+                let runtime = module.tasks.iter().any(has_runtime).then(|| {
+                    let (resolver, _) = resolver.redirect_for_resolution(module.file_name());
+                    jsx_runtime_of(resolver.options(), &module.hir, &atoms)
+                });
+                let runtime = runtime.flatten().map(|runtime| atoms.intern(&runtime));
+                for task in module.tasks {
+                    let key = match task.origin {
+                        Origin::Import(spec, mode) => Some((spec, mode)),
+                        Origin::Helpers => Some((known::tslib, module.default_mode)),
+                        Origin::JsxRuntime => runtime.map(|spec| (spec, module.default_mode)),
+                        Origin::Reference(_) => None,
+                    };
+                    if let Some(&source) = key.and_then(|key| sources.get(&key)) {
+                        built_imports.push((source, task.file));
+                    }
+                }
                 let mut redirected = module.redirected_imports.to_vec();
                 redirected.extend(built.into_iter().map(|it| (it.0, it.1, it.3)));
                 module.redirected_imports = few_in(redirected, own);
@@ -5401,8 +5529,8 @@ impl<'s> Files<'s> {
             module.bound.symbols.transfer_to(arena);
             transfer_arena(&mut module.transient_symbols, arena);
             let (hir, bound) = (&module.hir, &module.bound);
-            let targets: Vec<FileId> =
-                (module.edges.iter().chain(module.imports.values()).copied()).collect();
+            let files = module.tasks.iter().map(|task| task.file);
+            let targets: Vec<FileId> = files.chain(module.imports.values().copied()).collect();
             for target in &targets {
                 is_referred_to[target.idx()].store(true, Ordering::Relaxed);
             }
@@ -5458,7 +5586,7 @@ impl<'s> Files<'s> {
                 symbols: bound.symbols.len(),
                 identifiers: module.identifiers,
                 type_nodes: hir.types.len() as u32,
-                edges: module.edges,
+                tasks: module.tasks,
                 is_lib: module.is_lib,
                 targets,
                 built_imports,
@@ -5479,10 +5607,13 @@ impl<'s> Files<'s> {
             .collect();
         // For each declaration file that's read instead of a source: a name of that source.
         let mut redirected_from: FxHashMap<FileId, Atom> = FxHashMap::default();
+        // `normalizedFilePath` of each task that is redirected, with the file that is read instead.
+        let mut redirecting: Vec<(Atom, FileId)> = Vec::new();
         for (&start, &root) in starts[libs_end..roots_end].iter().zip(&root_of_start) {
             let root = &roots[root as usize];
             if options.parse_file_redirect(root).is_some() {
                 redirected_from.insert(start, atoms.intern(root));
+                redirecting.push((atoms.intern(root), start));
             }
         }
         // Each source's task has its own `seen[data]`, so a second source for one target counts as
@@ -5493,11 +5624,16 @@ impl<'s> Files<'s> {
             {
                 respelled.push(target);
             }
+            redirecting.push((source, target));
         };
         let has_redirects = !options.referenced_projects.is_empty() && !options.no_resolve;
         for module in modules.iter().filter(|_| has_redirects) {
             let from = module.file_name();
-            for &(kind, value, ..) in &module.hir.references {
+            for task in module.tasks {
+                let Origin::Reference(index) = task.origin else {
+                    continue;
+                };
+                let (kind, value, ..) = module.hir.references[index as usize];
                 if kind != ReferenceKind::Path {
                     continue;
                 }
@@ -5505,9 +5641,8 @@ impl<'s> Files<'s> {
                 let Ok(source) = referenced_file(host, options, &name, from) else {
                     continue;
                 };
-                let output = options.parse_file_redirect(&source);
-                if let Some(target) = output.and_then(|output| by_path.get(output)) {
-                    redirect(atoms.intern(&source), target);
+                if options.parse_file_redirect(&source).is_some() {
+                    redirect(atoms.intern(&source), task.file);
                 }
             }
         }
@@ -5517,6 +5652,8 @@ impl<'s> Files<'s> {
         for (target, source) in redirected_from {
             modules[target.idx()].project_reference_source = source;
         }
+        let mut is_known: FxHashSet<(Atom, FileId)> = FxHashSet::default();
+        redirecting.retain(|it| is_known.insert(*it));
         let ambient_with_relative_reexports =
             std::mem::take(&mut *ambient_with_relative_reexports.lock());
         let reexports_relatively = |spec: Atom| ambient_with_relative_reexports.contains(&spec);
@@ -5559,7 +5696,14 @@ impl<'s> Files<'s> {
                 let program_names =
                     program_names.map(|(i, it)| (it.file_name, FileId(i as u32), it.hash_of_name));
                 let missing = missing_roots.iter().map(|&name| (name, no_file));
-                let others = package_copies.iter().copied().chain(missing);
+                let redirecting = redirecting
+                    .iter()
+                    .map(|&(source, file)| (atoms.bytes(source), file));
+                let others = package_copies
+                    .iter()
+                    .copied()
+                    .chain(missing)
+                    .chain(redirecting);
                 program_names.chain(others.map(|(name, file)| (name, file, hash_of_name(name))))
             };
             let mut hashes: FxHashSet<u64> = FxHashSet::default();
@@ -5867,7 +6011,7 @@ impl<'s> Files<'s> {
                     };
                     drop(state);
                     let arena = *arena.get_or_insert_with(|| session.arena());
-                    let resolve_ahead = |names: &[(Atom, ResolutionMode, bool)]| {
+                    let resolve_ahead = |names: &[(Atom, ResolutionMode, ModuleNameKind)]| {
                         const MANY: usize = 256;
                         if names.len() < MANY {
                             return;
@@ -5975,8 +6119,7 @@ impl<'s> Files<'s> {
                     let predicted: Vec<usize> = (0..loaded.imports.len())
                         .filter(|&at| {
                             let it = &loaded.imports[at];
-                            it.should_add_file
-                                && it.unsupported_extension.is_none()
+                            it.has_task()
                                 && !(is_javascript_file(host, it.path)
                                     && strings::contains(it.path, b"/node_modules/"))
                         })
@@ -5984,7 +6127,7 @@ impl<'s> Files<'s> {
                     let found: Vec<(&'r [u8], bool, Option<PackageId<'r>>)> = loaded
                         .references
                         .iter()
-                        .map(|&(path, is_lib, _, package_id)| (path, is_lib, package_id))
+                        .map(|&(path, is_lib, _, package_id, _)| (path, is_lib, package_id))
                         .chain(predicted.iter().map(|&at| {
                             let it = &loaded.imports[at];
                             (it.path, false, it.package_id)
@@ -6261,7 +6404,7 @@ impl<'s> Files<'s> {
         path: &[u8],
         is_lib: bool,
         text: Option<Cow<'static, [u8]>>,
-        resolve_ahead: &dyn Fn(&[(Atom, ResolutionMode, bool)]),
+        resolve_ahead: &dyn Fn(&[(Atom, ResolutionMode, ModuleNameKind)]),
     ) -> Loaded<'s, 'r> {
         let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
         let parse = match run.filter(|run| run.has_file(host, path)) {
@@ -6337,7 +6480,7 @@ impl<'s> Files<'s> {
         is_lib: bool,
         specifies_esm: bool,
         parsed: Result<Parse<'s>, &Parse<'s>>,
-        resolve_ahead: &dyn Fn(&[(Atom, ResolutionMode, bool)]),
+        resolve_ahead: &dyn Fn(&[(Atom, ResolutionMode, ModuleNameKind)]),
     ) -> Loaded<'s, 'r> {
         let (Ok(Parse { hir, bound, .. }) | Err(Parse { hir, bound, .. })) = &parsed;
         let is_esm = options.resolves_like_node && specifies_esm;
@@ -6364,11 +6507,10 @@ impl<'s> Files<'s> {
         };
         let is_import = |u: &SpecifierUse| is_among_imports(&visited, atoms, u);
         let mut extensionless_imports = Vec::new();
-        // `moduleNames`, each with the mode it is resolved in, and whether it is a synthetic import
-        // or one of `file.Imports()`: a module augmentation adds no file to the program.
-        let mut module_names: Vec<(Atom, ResolutionMode, bool)> = Vec::new();
+        // `moduleNames`, each with the mode it is resolved in.
+        let mut module_names: Vec<(Atom, ResolutionMode, ModuleNameKind)> = Vec::new();
         if imports_helpers(options, hir) {
-            module_names.push((known::tslib, default_mode, true));
+            module_names.push((known::tslib, default_mode, ModuleNameKind::Helpers));
         }
         // Interned whether or not it resolves: the checker passes it to `module_of_specifier`,
         // which only accepts published atoms.
@@ -6437,12 +6579,13 @@ impl<'s> Files<'s> {
         };
         if let Some((spec, _)) = runtime {
             extensionless_imports.extend(extensionless_import(spec));
-            module_names.push((spec, default_mode, true));
+            module_names.push((spec, default_mode, ModuleNameKind::JsxRuntime));
         }
         // `file.Imports()`, then `file.ModuleAugmentations`, each with its sort key in that order.
         // The specifiers of statements come before those of `import()`, the call and the type.
         const AFTER_IMPORTS: (bool, u32) = (true, u32::MAX);
-        let mut keyed_names: Vec<((bool, u32), (Atom, ResolutionMode, bool))> = Vec::new();
+        let mut keyed_names: Vec<((bool, u32), (Atom, ResolutionMode, ModuleNameKind))> =
+            Vec::new();
         // Groups the uses by specifier, each group in the order of `specifier_uses`. A barrel file has thousands of
         // specifiers, so a scan of all uses for each one is quadratic.
         let uses = hir.specifier_uses.iter().enumerate();
@@ -6496,7 +6639,11 @@ impl<'s> Files<'s> {
                 count += 1;
             }
             for (i, &(mode, sort_key)) in modes[..count].iter().enumerate() {
-                keyed_names.push((sort_key, (spec, mode, i < imported || !is_module_name)));
+                let kind = match i < imported || !is_module_name {
+                    true => ModuleNameKind::Import,
+                    false => ModuleNameKind::Augmentation,
+                };
+                keyed_names.push((sort_key, (spec, mode, kind)));
             }
         }
         keyed_names.shared_sort_by_key(|name| name.0);
@@ -6511,7 +6658,7 @@ impl<'s> Files<'s> {
             (Vec::new(), Vec::new());
         let (mut ts_extension_imports, mut project_reference_imports) = (Vec::new(), Vec::new());
         let (mut unbuilt_imports, mut redirected_imports) = (Vec::new(), Vec::new());
-        for (spec, mode, is_import) in module_names {
+        for (spec, mode, kind) in module_names {
             let text = atoms.bytes(spec);
             if text.is_empty() {
                 continue;
@@ -6560,7 +6707,7 @@ impl<'s> Files<'s> {
             // "Don't treat redirected files as JS files."
             let is_js_file =
                 is_javascript && !program_options.is_source_of_referenced_project(found);
-            let should_add_file = is_import
+            let should_add_file = kind != ModuleNameKind::Augmentation
                 && get_resolution_diagnostic(options, extension, hir).is_none()
                 && !options.no_resolve
                 && !(program_options.imports_of_sources_add_no_file
@@ -6592,6 +6739,7 @@ impl<'s> Files<'s> {
             imports.push(Resolution {
                 spec,
                 mode,
+                kind,
                 path: redirect.map_or(found, |output| resolver.keep(output)),
                 number: NOT_NUMBERED,
                 should_add_file: should_add_file
@@ -6605,7 +6753,8 @@ impl<'s> Files<'s> {
         // They are processed by kind: paths, then types, then libraries.
         let (mut references, mut types, mut libs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut missing_references, mut unsupported_libs) = (Vec::new(), Vec::new());
-        for &(kind, value, pos, mode) in &hir.references {
+        for (index, &(kind, value, pos, mode)) in hir.references.iter().enumerate() {
+            let index = index as u32;
             // `noResolve`: only library references are still processed.
             if program_options.no_resolve
                 && matches!(kind, ReferenceKind::Path | ReferenceKind::Types)
@@ -6623,10 +6772,12 @@ impl<'s> Files<'s> {
                     ) {
                         Ok(found) => match program_options.parse_file_redirect(&found) {
                             Some(output) if host.is_file(output) => {
-                                references.push((resolver.keep(output), false, false, None));
+                                references.push((resolver.keep(output), false, false, None, index));
                             }
                             Some(_) => {}
-                            None => references.push((resolver.keep(&found), false, false, None)),
+                            None => {
+                                references.push((resolver.keep(&found), false, false, None, index))
+                            }
                         },
                         Err(code) => missing_references.push((pos, code)),
                     }
@@ -6644,7 +6795,7 @@ impl<'s> Files<'s> {
                                     let end = pos + value.len() as u32;
                                     unsupported_libs.push((pos, end, found, code));
                                 }
-                                None => libs.push((found, true, false, None)),
+                                None => libs.push((found, true, false, None, index)),
                             }
                         }
                         None => missing_references.push((pos, 2726)),
@@ -6664,7 +6815,8 @@ impl<'s> Files<'s> {
                         program_options.trace_resolution.then_some(&types_tracer),
                     ) {
                         Some((found, is_external, package_id)) => {
-                            types.push((resolver.keep(&found), false, is_external, package_id));
+                            let found = resolver.keep(&found);
+                            types.push((found, false, is_external, package_id, index));
                         }
                         None => missing_references.push((pos, 2688)),
                     }
@@ -6701,7 +6853,7 @@ impl<'s> Files<'s> {
             hir: parse.hir,
             bound: parse.bound,
             is_lib,
-            // `load` fills `path`, `imports` and `edges`.
+            // `load` fills `path`, `imports` and `tasks`.
             path: Path::init(b""),
             imports: map_in(arena),
             untyped_imports: few_in(untyped_imports, arena),
@@ -6723,7 +6875,7 @@ impl<'s> Files<'s> {
             package_json_directory: resolver
                 .package_json_directory(path)
                 .map_or(Atom::NONE, |directory| atoms.intern(directory)),
-            edges: &[],
+            tasks: &[],
             redirected_imports: few_in(redirected_imports, arena),
             project_reference_imports: few_in(project_reference_imports, arena),
             unbuilt_imports: few_in(unbuilt_imports, arena),
@@ -6829,8 +6981,8 @@ impl<'s> Files<'s> {
             }
             while let Some(top) = stack.last_mut() {
                 let (file, next) = *top;
-                match summaries[file.idx()].edges.get(next) {
-                    Some(&edge) => {
+                match summaries[file.idx()].tasks.get(next) {
+                    Some(&Task { file: edge, .. }) => {
                         top.1 += 1;
                         if !std::mem::replace(&mut seen[edge.idx()], true) {
                             stack.push((edge, 0));

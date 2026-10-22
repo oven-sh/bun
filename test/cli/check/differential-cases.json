@@ -18879,5 +18879,685 @@
       "other/y.ts": "export const y = 1;\n",
       "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
     }
+  },
+  "import-after-an-import-of-a-tsx-file-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\"}}\n",
+      "src/main.ts": "export const main = 1;\n",
+      "site/Quote.tsx": "export const Quote = 1;\n",
+      "site/quotes.ts": "export const quotes = [1];\n",
+      "site/index.tsx": "import { Quote } from \"./Quote\";\nimport { quotes } from \"./quotes\";\nexport const both = [Quote, quotes];\n"
+    }
+  },
+  "import-of-a-file-outside-rootdir-after-an-import-of-a-tsx-file-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\"}}\n",
+      "src/Quote.tsx": "export const Quote = 1;\n",
+      "other/quotes.ts": "export const quotes = [1];\n",
+      "src/index.tsx": "import { Quote } from \"./Quote\";\nimport { quotes } from \"../other/quotes\";\nexport const both = [Quote, quotes];\nexport const wrong: string = 1;\n"
+    }
+  },
+  "import-of-an-unlisted-file-after-an-import-of-a-jsx-file-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true}, \"files\": [\"site/index.ts\", \"site/Quote.jsx\"]}\n",
+      "site/Quote.jsx": "export const Quote = 1;\n",
+      "site/quotes.ts": "export const quotes = [1];\n",
+      "site/index.ts": "import { Quote } from \"./Quote\";\nimport { quotes } from \"./quotes\";\nexport const both = [Quote, quotes];\n"
+    }
+  },
+  "import-after-a-reference-path-and-an-import-of-a-tsx-file-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\"}, \"include\": [\"src\"]}\n",
+      "site/Quote.tsx": "export const Quote = 1;\n",
+      "site/quotes.ts": "export const quotes = [1];\n",
+      "src/index.ts": "/// <reference path=\"../site/Quote.tsx\" />\nimport { Quote } from \"../site/Quote\";\nimport { quotes } from \"../site/quotes\";\nexport const both = [quotes, Quote];\n"
+    }
+  },
+  "import-after-an-import-of-a-tsx-source-of-a-referenced-project": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\"}, \"files\": [\"src/main.ts\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\", \"jsx\": \"react-jsx\"}, \"files\": [\"index.ts\", \"a.tsx\"]}\n",
+      "lib/a.tsx": "export const A = 1;\n",
+      "lib/index.ts": "export { A as A2 } from \"./a\";\n",
+      "lib/out/a.d.ts": "export declare const A = 1;\n",
+      "lib/out/index.d.ts": "export { A as A2 } from \"./a\";\n",
+      "site/later.ts": "export const later = 1;\n",
+      "src/main.ts": "import { A2 } from \"../lib/index\";\nimport { A } from \"../lib/a\";\nimport { later } from \"../site/later\";\nexport const all = [A, A2, later];\n"
+    }
+  },
+  "import-of-a-tsx-source-of-a-referenced-project-whose-declaration-file-is-listed": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"lib/out/a.d.ts\", \"main.ts\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\", \"jsx\": \"react-jsx\"}, \"files\": [\"a.tsx\"]}\n",
+      "lib/a.tsx": "export const A = 1;\n",
+      "lib/out/a.d.ts": "export declare const A = 1;\n",
+      "later.ts": "export const later = 1;\n",
+      "main.ts": "import { A } from \"./lib/a\";\nimport { later } from \"./later\";\nexport const all = [A, later];\n"
+    }
+  },
+  "import-of-a-tsx-source-of-a-referenced-project-whose-declaration-file-is-referenced": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"main.ts\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\", \"jsx\": \"react-jsx\"}, \"files\": [\"a.tsx\"]}\n",
+      "lib/a.tsx": "export const A = 1;\n",
+      "lib/out/a.d.ts": "export declare const A = 1;\n",
+      "later.ts": "export const later = 1;\n",
+      "main.ts": "/// <reference path=\"./lib/out/a.d.ts\" />\nimport { A } from \"./lib/a\";\nimport { later } from \"./later\";\nexport const all = [A, later];\n"
+    }
+  },
+  "import-of-a-js-file-from-a-file-of-a-referenced-project-without-allowjs": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": false, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"allowJs\": true, \"rootDir\": \"./src\"}, \"files\": [\"globals.d.ts\", \"src/b.js\", \"lib/types.d.ts\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\"}, \"files\": [\"types.d.ts\"]}\n",
+      "lib/types.d.ts": "import \"../src/b.js\";\nimport { c } from \"../other/c\";\nexport declare const t: typeof c;\n",
+      "other/c.ts": "export const c = 1;\n",
+      "src/b.js": "export const b = 1;\n"
+    }
+  },
+  "import-of-a-referenced-library-with-noresolve": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"libReplacement\": true, \"noResolve\": true, \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"a.ts\"]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "node_modules/@typescript/lib-es2015/promise.d.ts": "interface Promise<T> {}\n",
+      "a.ts": "/// <reference lib=\"es2015.promise\" />\nimport \"@typescript/lib-es2015/promise\";\nexport const a = 1;\n"
+    }
+  },
+  "helpers-import-of-a-tsx-file-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"importHelpers\": true, \"rootDir\": \"./src\", \"paths\": {\"tslib\": [\"./src/helpers.tsx\"]}}, \"files\": [\"globals.d.ts\", \"src/helpers.tsx\", \"src/index.ts\"]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "other/a.ts": "export const a = 1;\n",
+      "src/helpers.tsx": "export declare function __assign(...a: any[]): any;\n",
+      "src/index.ts": "import { a } from \"../other/a\";\nexport const o = a;\n"
+    }
+  },
+  "jsx-runtime-import-of-a-tsx-file-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\", \"explainFiles\": true, \"paths\": {\"rt/jsx-runtime\": [\"./src/rt.tsx\"]}}, \"files\": [\"globals.d.ts\", \"src/rt.tsx\", \"src/index.tsx\"]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "other/a.ts": "export const a = 1;\n",
+      "src/rt.tsx": "export declare namespace JSX { interface IntrinsicElements { div: {} } interface Element {} }\nexport declare function jsx(type: any, props: any): JSX.Element;\nexport declare function jsxs(type: any, props: any): JSX.Element;\n",
+      "src/index.tsx": "/** @jsxImportSource rt */\nimport { a } from \"../other/a\";\nexport const o = a;\n"
+    }
+  },
+  "require-and-jsdoc-import-types-of-a-jsx-file-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"commonjs\", \"allowJs\": true, \"checkJs\": true, \"rootDir\": \"./src\"}}\n",
+      "other/quotes.ts": "export const quotes = [1];\n",
+      "src/Quote.jsx": "export const Quote = 1;\n",
+      "src/index.js": "const q = require(/* require it */ \"./Quote\");\nconst later = require(\"../other/quotes\");\n/** @type {import(\"./Quote\").Quote | import(\"../other/quotes\")} */\nlet x;\nmodule.exports = { q, later, x };\n"
+    }
+  },
+  "imports-in-ambient-modules-of-a-tsx-file-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"paths\": {\"quote\": [\"./src/Quote.tsx\"], \"later\": [\"./other/quotes.ts\"]}, \"rootDir\": \"./src\"}}\n",
+      "other/quotes.ts": "export const quotes = [1];\nexport type quotes = number;\n",
+      "src/Quote.tsx": "export const Quote = 1;\nexport type Quote = number;\n",
+      "src/ambient.ts": "declare module \"a\" { import { Quote } from \"quote\"; export const a: typeof Quote; }\ndeclare module \"b\" { import { quotes } from \"later\"; export const b: typeof quotes; }\n"
+    }
+  },
+  "import-equals-of-a-tsx-file-without-jsx-in-an-es-module": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"nodenext\", \"rootDir\": \"./src\"}}\n",
+      "other/quotes.ts": "export const quotes = [1];\n",
+      "src/Quote.tsx": "export const Quote = 1;\n",
+      "src/index.mts": "import Q = require(\"./Quote.js\");\nimport { quotes } from \"../other/quotes.js\";\nexport const both = [Q, quotes];\n"
+    }
+  },
+  "build-after-an-import-of-a-tsx-source-whose-declaration-file-is-listed": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"r.ts\"], \"references\": [{\"path\": \"./p\"}]}\n",
+      "r.ts": "import { t } from \"./p/main\";\nexport const u: string = t.x;\n",
+      "p/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"emitDeclarationOnly\": true}, \"files\": [\"lib/out/a.d.ts\", \"main.ts\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "p/main.ts": "import { make } from \"./lib/a\";\nexport const t = make();\n",
+      "p/main.d.ts": "export declare const t: import(\"./lib/out/a\").Thing;\n",
+      "p/lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\", \"emitDeclarationOnly\": true, \"jsx\": \"react-jsx\"}, \"files\": [\"a.tsx\"]}\n",
+      "p/lib/a.tsx": "export interface Thing { x: number }\nexport function make(): Thing { return { x: 1 }; }\n",
+      "p/lib/out/a.d.ts": "export interface Thing {\n    x: number;\n}\nexport declare function make(): Thing;\n"
+    },
+    "build": true
+  },
+  "augmentation-of-a-source-of-a-referenced-project-whose-declaration-file-is-listed": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"lib/out/a.d.ts\", \"main.ts\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\"}, \"files\": [\"a.ts\"]}\n",
+      "lib/a.ts": "export const A = 1;\n",
+      "lib/out/a.d.ts": "export declare const A = 1;\n",
+      "main.ts": "declare module \"./lib/a\" {\n  export const extra: number;\n}\nexport const later = 1;\n"
+    }
+  },
+  "augmentation-of-a-source-of-a-referenced-project-and-an-import-of-its-declaration-file": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"main.ts\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\"}, \"files\": [\"a.ts\"]}\n",
+      "lib/a.ts": "export const A = 1;\n",
+      "lib/out/a.d.ts": "export declare const A = 1;\n",
+      "main.ts": "import { A } from \"./lib/out/a\";\ndeclare module \"./lib/a\" {\n  export const extra: number;\n}\nexport const later = A;\n"
+    }
+  },
+  "jsx-runtime-import-of-an-unlisted-file-and-an-augmentation-of-that-module": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"jsx\": \"react-jsx\", \"jsxImportSource\": \"myjsx\", \"paths\": {\"myjsx/jsx-runtime\": [\"./runtime.ts\"]}}, \"files\": [\"globals.d.ts\", \"a.tsx\"]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "runtime.ts": "export declare namespace JSX { interface IntrinsicElements { div: {} } interface Element {} }\nexport declare function jsx(type: any, props: any): JSX.Element;\nexport declare function jsxs(type: any, props: any): JSX.Element;\n",
+      "a.tsx": "export const a = <div />;\ndeclare module \"myjsx/jsx-runtime\" {\n  export const extra: number;\n}\n"
+    }
+  },
+  "helpers-import-of-a-file-outside-rootdir-and-an-augmentation-of-that-module": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"importHelpers\": true, \"rootDir\": \"./src\", \"paths\": {\"tslib\": [\"./helpers/tslib.ts\"]}}, \"files\": [\"globals.d.ts\", \"src/a.ts\"]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "helpers/tslib.ts": "export declare function __extends(d: Function, b: Function): void;\n",
+      "src/a.ts": "export const a = 1;\ndeclare module \"tslib\" {\n  export const extra: number;\n}\n"
+    }
+  },
+  "helpers-import-and-an-augmentation-of-that-module": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"importHelpers\": true, \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"a.ts\"]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "node_modules/tslib/package.json": "{ \"name\": \"tslib\", \"version\": \"2.0.0\", \"types\": \"index.d.ts\" }\n",
+      "node_modules/tslib/index.d.ts": "export declare function __extends(d: Function, b: Function): void;\n",
+      "a.ts": "export const a = 1;\ndeclare module \"tslib\" {\n  export const extra: number;\n}\n"
+    }
+  },
+  "jsx-runtime-import-of-a-source-of-a-referenced-project-and-an-augmentation-of-that-module": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true, \"jsx\": \"react-jsx\", \"jsxImportSource\": \"myjsx\", \"paths\": {\"myjsx/jsx-runtime\": [\"./lib/runtime.ts\"]}}, \"files\": [\"globals.d.ts\", \"a.tsx\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\"}, \"files\": [\"runtime.ts\"]}\n",
+      "lib/runtime.ts": "export declare namespace JSX { interface IntrinsicElements { div: {} } interface Element {} }\nexport declare function jsx(type: any, props: any): JSX.Element;\nexport declare function jsxs(type: any, props: any): JSX.Element;\n",
+      "lib/out/runtime.d.ts": "export declare namespace JSX { interface IntrinsicElements { div: {} } interface Element {} }\nexport declare function jsx(type: any, props: any): JSX.Element;\nexport declare function jsxs(type: any, props: any): JSX.Element;\n",
+      "a.tsx": "export const a = <div />;\ndeclare module \"myjsx/jsx-runtime\" {\n  export const extra: number;\n}\n"
+    }
+  },
+  "helpers-import-of-a-source-of-a-referenced-project-and-an-augmentation-of-that-module": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true, \"importHelpers\": true, \"paths\": {\"tslib\": [\"./lib/a.ts\"]}}, \"files\": [\"globals.d.ts\", \"main.ts\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\"}, \"files\": [\"a.ts\"]}\n",
+      "lib/a.ts": "export const A = 1;\n",
+      "lib/out/a.d.ts": "export declare const A = 1;\n",
+      "main.ts": "declare module \"tslib\" {\n  export const extra: number;\n}\nexport const later = 1;\n"
+    }
+  },
+  "import-of-a-js-source-of-a-referenced-project-from-its-declaration-file": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"a.ts\"], \"references\": [{\"path\": \"./ref\"}]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "a.ts": "import { fromJs } from \"./ref/index\";\nexport const d: string = fromJs;\n",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"outDir\": \"out\"}, \"files\": [\"index.ts\", \"util.js\"]}\n",
+      "ref/index.ts": "export * from \"./util.js\";\n",
+      "ref/util.js": "export const fromJs = 1;\n",
+      "ref/out/index.d.ts": "export * from \"./util.js\";\n",
+      "ref/out/util.d.ts": "export declare const fromJs = 1;\n"
+    }
+  },
+  "reasons-of-an-unlisted-file-that-a-js-source-of-a-referenced-project-imports": {
+    "files": {
+      "a.ts": "import \"./ref/index\";\nexport const a = 1;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"composite\": true, \"strict\": true, \"types\": [], \"lib\": [\"es2022\"], \"outDir\": \"dist\" }, \"files\": [\"a.ts\"], \"references\": [{ \"path\": \"./ref\" }] }\n",
+      "dist/a.d.ts": "import \"./ref/index\";\nexport declare const a = 1;\n",
+      "dist/a.js": "import \"./ref/index\";\nexport const a = 1;\n",
+      "dist/shared/x.d.ts": "export declare const x = 1;\n",
+      "dist/shared/x.js": "export const x = 1;\n",
+      "shared/x.ts": "export const x = 1;\n",
+      "ref/index.ts": "export * from \"../shared/x\";\nexport * from \"./util.js\";\nexport * from \"../shared/x\";\n",
+      "ref/tsconfig.json": "{ \"compilerOptions\": { \"composite\": true, \"strict\": true, \"types\": [], \"lib\": [\"es2022\"], \"allowJs\": true, \"outDir\": \"out\", \"rootDir\": \"..\" }, \"files\": [\"index.ts\", \"util.js\"] }\n",
+      "ref/util.js": "export * from \"../shared/x\";\nexport const fromJs = 1;\n",
+      "ref/out/shared/x.d.ts": "export declare const x = 1;\n",
+      "ref/out/shared/x.js": "export const x = 1;\n",
+      "ref/out/ref/index.d.ts": "export * from \"../shared/x\";\nexport * from \"./util.js\";\nexport * from \"../shared/x\";\n",
+      "ref/out/ref/index.js": "export * from \"../shared/x\";\nexport * from \"./util.js\";\nexport * from \"../shared/x\";\n",
+      "ref/out/ref/util.d.ts": "export * from \"../shared/x\";\nexport declare const fromJs = 1;\n",
+      "ref/out/ref/util.js": "export * from \"../shared/x\";\nexport const fromJs = 1;\n"
+    }
+  },
+  "build-of-a-project-whose-declaration-file-names-a-js-source-two-projects-down": {
+    "files": {
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./top\" }] }\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"outDir\": \"out\"}, \"files\": [\"index.ts\", \"util.js\"]}\n",
+      "ref/index.ts": "export * from \"./util.js\";\n",
+      "ref/util.js": "export class Bar { v = 1; }\nexport function makeBar() { return new Bar(); }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"a.ts\", \"helper.ts\"], \"references\": [{\"path\": \"../ref\"}]}\n",
+      "mid/a.ts": "import { makeBar } from \"./helper\";\nexport const x = makeBar();\n",
+      "mid/helper.ts": "import \"../ref/index\";\nexport { makeBar } from \"../ref/out/util\";\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": false, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"../globals.d.ts\", \"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}\n",
+      "top/t.ts": "import { x } from \"../mid/a\";\nexport const n = x;\n"
+    },
+    "build": true
+  },
+  "build-of-a-project-that-uses-a-declaration-file-that-names-a-js-source": {
+    "files": {
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./top\" }] }\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"outDir\": \"out\"}, \"files\": [\"index.ts\", \"util.js\"]}\n",
+      "ref/index.ts": "export * from \"./util.js\";\n",
+      "ref/util.js": "export class Bar { v = 1; }\nexport function makeBar() { return new Bar(); }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"a.ts\", \"helper.ts\"], \"references\": [{\"path\": \"../ref\"}]}\n",
+      "mid/a.ts": "import { makeBar } from \"./helper\";\nexport const x = makeBar();\n",
+      "mid/helper.ts": "import \"../ref/index\";\nexport { makeBar } from \"../ref/out/util\";\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"../globals.d.ts\", \"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}\n",
+      "top/t.ts": "import { x } from \"../mid/a\";\nexport const n: string = x.v;\n"
+    },
+    "build": true
+  },
+  "names-that-differ-in-case-after-an-import-of-a-tsx-file-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"a.ts\", \"Quote.tsx\"]}\n",
+      "Quote.tsx": "export const Quote = 1;\n",
+      "Quotes.ts": "export class T { private secret = 1; }\n",
+      "a.ts": "import { Quote } from \"./Quote\";\nimport { T } from \"./Quotes\";\nimport { T as U } from \"./quotes\";\nexport const one: U = new T();\nexport const q = Quote;\n"
+    }
+  },
+  "names-that-differ-in-case-after-an-import-of-a-js-file-without-allowjs": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": false, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"allowJs\": true}, \"files\": [\"globals.d.ts\", \"src/b.js\", \"lib/types.d.ts\"], \"references\": [{\"path\": \"./lib\"}]}\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\"}, \"files\": [\"types.d.ts\"]}\n",
+      "lib/types.d.ts": "import \"../src/b.js\";\nimport { c } from \"../other/c\";\nimport { c as d } from \"../other/C\";\nexport declare const t: typeof c | typeof d;\n",
+      "other/c.ts": "export const c = 1;\n",
+      "src/b.js": "export const b = 1;\n"
+    }
+  },
+  "two-modes-of-a-name-where-the-import-adds-no-file": {
+    "files": {
+      "package.json": "{\"name\": \"app\", \"imports\": {\"#q\": {\"import\": \"./Quote.tsx\", \"require\": \"./quotes.cts\"}}}",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"nodenext\", \"composite\": true}, \"files\": [\"globals.d.ts\", \"a.mts\", \"Quote.tsx\"]}",
+      "a.mts": "import { Quote } from \"#q\";\nimport q = require(\"#q\");\nexport const both = [Quote, q];\n",
+      "Quote.tsx": "export const Quote = 1;\n",
+      "quotes.cts": "export const quotes = [1];\n",
+      "quotes.mts": "export const quotes = [1];\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "two-modes-of-a-name-where-the-require-adds-no-file": {
+    "files": {
+      "package.json": "{\"name\": \"app\", \"imports\": {\"#q\": {\"import\": \"./quotes.mts\", \"require\": \"./Quote.tsx\"}}}",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"nodenext\", \"composite\": true}, \"files\": [\"globals.d.ts\", \"a.mts\", \"Quote.tsx\"]}",
+      "a.mts": "import Q = require(\"#q\");\nimport { quotes } from \"#q\";\nexport const both = [quotes, Q];\n",
+      "Quote.tsx": "export const Quote = 1;\n",
+      "quotes.cts": "export const quotes = [1];\n",
+      "quotes.mts": "export const quotes = [1];\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "reference-path-to-a-source-of-a-referenced-project-in-a-file-whose-sub-tasks-never-start": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"a.ts\", \"ref/src.d.ts\"], \"references\": [{\"path\": \"./ref\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export const s = 1;\n",
+      "ref/src.d.ts": "export declare const s = 1;\n",
+      "node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "node_modules/pkg/index.js": "/// <reference path=\"../../ref/src.ts\" />\nexports.p = 1;\n",
+      "node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nexport const c = [o, p];\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "reference-path-to-a-source-of-a-referenced-project-in-a-file-whose-sub-tasks-start-later": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"a.ts\", \"ref/src.d.ts\"], \"references\": [{\"path\": \"./ref\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export const s = 1;\n",
+      "ref/src.d.ts": "export declare const s = 1;\n",
+      "node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "node_modules/pkg/index.js": "/// <reference path=\"../../ref/src.ts\" />\nexports.p = 1;\n",
+      "node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "a.ts": "import { p } from \"pkg\";\nimport { o } from \"other\";\nexport const c = [o, p];\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "require-of-a-source-of-a-referenced-project-in-a-file-whose-sub-tasks-never-start": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"a.ts\", \"ref/src.d.ts\"], \"references\": [{\"path\": \"./ref\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export const s = 1;\n",
+      "ref/src.d.ts": "export declare const s = 1;\n",
+      "node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "node_modules/pkg/index.js": "const r = require(\"../../ref/src\");\nexports.p = 1;\n",
+      "node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nexport const c = [o, p];\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "import-of-a-source-of-a-referenced-project-in-a-file-whose-sub-tasks-never-start": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"a.ts\", \"ref/src.d.ts\"], \"references\": [{\"path\": \"./ref\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export const s = 1;\n",
+      "ref/src.d.ts": "export declare const s = 1;\n",
+      "node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "node_modules/pkg/index.js": "import { s } from \"../../ref/src\";\nexport const p = s;\n",
+      "node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nexport const c = [o, p];\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "require-of-a-source-of-a-referenced-project-in-a-file-whose-sub-tasks-start": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"a.ts\", \"ref/src.d.ts\"], \"references\": [{\"path\": \"./ref\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"composite\": true, \"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export const s = 1;\n",
+      "ref/src.d.ts": "export declare const s = 1;\n",
+      "node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "node_modules/pkg/index.js": "const r = require(\"../../ref/src\");\nexports.p = 1;\n",
+      "node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "a.ts": "import { o } from \"other\";\nexport const c = [o];\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "import-of-a-tsx-source-of-a-referenced-project-and-then-of-its-declaration-file": {
+    "files": {
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"main.ts\"], \"references\": [{\"path\": \"./lib\"}]}",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\", \"jsx\": \"react-jsx\"}, \"files\": [\"a.tsx\"]}",
+      "lib/a.tsx": "export const A = 1;\n",
+      "lib/out/a.d.ts": "export declare const A = 1;\n",
+      "main.ts": "import { A } from \"./lib/a\";\nimport { A as B } from \"./lib/out/a\";\nexport const all = [A, B];\n"
+    }
+  },
+  "import-of-a-declaration-file-and-then-of-its-tsx-source-in-a-referenced-project": {
+    "files": {
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"main.ts\"], \"references\": [{\"path\": \"./lib\"}]}",
+      "lib/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"rootDir\": \".\", \"jsx\": \"react-jsx\"}, \"files\": [\"a.tsx\"]}",
+      "lib/a.tsx": "export const A = 1;\n",
+      "lib/out/a.d.ts": "export declare const A = 1;\n",
+      "main.ts": "import { A as B } from \"./lib/out/a\";\nimport { A } from \"./lib/a\";\nexport const all = [A, B];\n"
+    }
+  },
+  "import-after-a-jsx-import-without-jsx-and-an-import-of-a-package-without-types": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"noImplicitAny\": false}, \"files\": [\"site/index.ts\", \"site/Quote.jsx\"]}",
+      "site/Quote.jsx": "export const Quote = 1;\n",
+      "site/quotes.ts": "export const quotes = [1];\n",
+      "site/more.ts": "export const more = [1];\n",
+      "node_modules/pkg/package.json": "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"main\":\"index.js\"}",
+      "node_modules/pkg/index.js": "exports.p = 1;\n",
+      "site/index.ts": "import { Quote } from \"./Quote\";\nimport { p } from \"pkg\";\nimport { quotes } from \"./quotes\";\nimport { more } from \"./more\";\nimport { quotes as q2 } from \"./quotes\";\nexport const all = [Quote, p, quotes, more, q2];\n"
+    }
+  },
+  "import-after-a-jsx-import-without-jsx-and-imports-of-two-copies-of-a-package": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"noImplicitAny\": false}, \"files\": [\"site/index.ts\", \"site/Quote.jsx\"]}",
+      "site/Quote.jsx": "export const Quote = 1;\n",
+      "site/quotes.ts": "export const quotes = [1];\n",
+      "node_modules/x/package.json": "{\"name\":\"x\",\"version\":\"1.0.0\",\"types\":\"index.d.ts\"}",
+      "node_modules/x/index.d.ts": "export declare class X { private a: number; }\n",
+      "node_modules/y/package.json": "{\"name\":\"y\",\"version\":\"1.0.0\",\"types\":\"index.d.ts\"}",
+      "node_modules/y/index.d.ts": "export { X } from \"x\";\n",
+      "node_modules/y/node_modules/x/package.json": "{\"name\":\"x\",\"version\":\"1.0.0\",\"types\":\"index.d.ts\"}",
+      "node_modules/y/node_modules/x/index.d.ts": "export declare class X { private a: number; }\n",
+      "site/index.ts": "import { Quote } from \"./Quote\";\nimport { X as Y } from \"y\";\nimport { X } from \"x\";\nimport { quotes } from \"./quotes\";\nexport const all = [Quote, X, Y, quotes];\n"
+    }
+  },
+  "import-of-a-js-source-of-a-referenced-project-and-of-a-package-without-types": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": false, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\", \"outDir\": \"dist\", \"declaration\": true, \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"src/a.ts\"], \"references\": [{\"path\": \"./ref\"}]}",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "src/a.ts": "import { fromJs } from \"../ref/index\";\nexport const d = fromJs;\n",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"outDir\": \"out\"}, \"files\": [\"index.ts\", \"util.js\"]}",
+      "ref/index.ts": "export * from \"./util.js\";\nexport * from \"pkg\";\nexport * from \"../other/c\";\n",
+      "ref/util.js": "export const fromJs = 1;\n",
+      "ref/out/index.d.ts": "export * from \"./util.js\";\nexport * from \"pkg\";\nexport * from \"../other/c\";\n",
+      "ref/out/util.d.ts": "export declare const fromJs = 1;\n",
+      "node_modules/pkg/package.json": "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"main\":\"index.js\"}",
+      "node_modules/pkg/index.js": "exports.p = 1;\n",
+      "other/c.ts": "export const c = 1;\n"
+    }
+  },
+  "import-outside-rootdir-after-a-tsx-import-without-jsx-and-a-package-without-types": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\", \"allowJs\": true, \"noImplicitAny\": false}, \"include\": [\"src\"]}",
+      "src/Quote.tsx": "export const Quote = 1;\n",
+      "src/index.ts": "import { Quote } from \"./Quote\";\nimport p from \"pkg\";\nimport { c } from \"../other/c\";\nexport const all = [Quote, p, c];\n",
+      "node_modules/pkg/package.json": "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"main\":\"index.js\"}",
+      "node_modules/pkg/index.js": "module.exports = 1;\n",
+      "other/c.ts": "export const c = 1;\n"
+    }
+  },
+  "import-of-an-unlisted-file-after-a-jsx-import-without-jsx-and-a-package-without-types": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"noImplicitAny\": false}, \"files\": [\"site/index.ts\", \"site/Quote.jsx\"]}",
+      "site/Quote.jsx": "export const Quote = 1;\n",
+      "site/later.ts": "export const later = [1];\n",
+      "node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "node_modules/pkg/index.js": "exports.p = 1;\n",
+      "site/index.ts": "import { Quote } from \"./Quote\";\nimport { p } from \"pkg\";\nimport { later } from \"./later\";\nexport const all = [Quote, p, later];\n"
+    }
+  },
+  "import-of-an-unlisted-file-after-a-package-without-types-and-a-jsx-import-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"noImplicitAny\": false}, \"files\": [\"site/index.ts\", \"site/Quote.jsx\"]}",
+      "site/Quote.jsx": "export const Quote = 1;\n",
+      "site/later.ts": "export const later = [1];\n",
+      "node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "node_modules/pkg/index.js": "exports.p = 1;\n",
+      "site/index.ts": "import { p } from \"pkg\";\nimport { Quote } from \"./Quote\";\nimport { later } from \"./later\";\nexport const all = [Quote, p, later];\n"
+    }
+  },
+  "import-outside-rootdir-after-a-tsx-import-without-jsx-and-a-package-in-node-modules": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\", \"allowJs\": true, \"noImplicitAny\": false}, \"include\": [\"src\"]}",
+      "src/Quote.tsx": "export const Quote = 1;\n",
+      "src/index.ts": "import { Quote } from \"./Quote\";\nimport \"pkg\";\nimport { c } from \"../other/c\";\nexport const all = [Quote, c];\n",
+      "node_modules/pkg/package.json": "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"main\":\"index.js\"}",
+      "node_modules/pkg/index.js": "module.exports = 1;\n",
+      "other/c.ts": "export const c = 1;\n"
+    }
+  },
+  "imports-of-an-unlisted-file-around-a-package-without-types-and-a-jsx-import-without-jsx": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"noImplicitAny\": false}, \"files\": [\"site/index.ts\", \"site/Quote.jsx\"]}",
+      "site/Quote.jsx": "export const Quote = 1;\n",
+      "site/quotes.ts": "export const quotes = [1];\n",
+      "node_modules/pkg/package.json": "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"main\":\"index.js\"}",
+      "node_modules/pkg/index.js": "exports.p = 1;\n",
+      "site/index.ts": "import { Quote } from \"./Quote\";\nimport { p } from \"pkg\";\nimport { quotes } from \"./quotes\";\nexport const all = [Quote, p, quotes];\n"
+    }
+  },
+  "import-outside-rootdir-after-an-import-of-the-file-of-the-automatic-type-directives": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [\"foo\", \"bar\"], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\", \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"src/a.ts\", \"src/Quote.tsx\"]}",
+      "__inferred type names__.ts": "export const c = 1;\n",
+      "src/Quote.tsx": "export const Quote = 1;\n",
+      "src/a.ts": "import { Quote } from \"./Quote\";\nimport { c } from \"../__inferred type names__\";\nimport { d } from \"../other/d\";\nexport const all = [Quote, c, d];\n",
+      "other/d.ts": "export const d = 1;\n",
+      "node_modules/@types/foo/index.d.ts": "declare const foo: 1;\n",
+      "node_modules/@types/bar/index.d.ts": "declare const bar: 1;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "import-after-a-jsx-import-without-jsx-with-a-package-without-types-between-two-imports": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"allowJs\": true, \"noImplicitAny\": false}, \"files\": [\"site/index.ts\", \"site/Quote.jsx\"]}",
+      "site/Quote.jsx": "export const Quote = 1;\n",
+      "site/quotes.ts": "export const quotes = [1];\n",
+      "site/more.ts": "export const more = [1];\n",
+      "node_modules/pkg/package.json": "{\"name\":\"pkg\",\"version\":\"1.0.0\",\"main\":\"index.js\"}",
+      "node_modules/pkg/index.js": "exports.p = 1;\n",
+      "site/index.ts": "import { Quote } from \"./Quote\";\nimport { quotes } from \"./quotes\";\nimport { p } from \"pkg\";\nimport { more } from \"./more\";\nimport { quotes as q2 } from \"./quotes\";\nexport const all = [Quote, p, quotes, more, q2];\n"
+    }
+  },
+  "build-with-an-import-of-a-source-in-a-file-whose-sub-tasks-never-start": {
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export interface Thing { x: number }\nexport function make(): Thing { return { x: 1 }; }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"../globals.d.ts\", \"a.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nimport { make } from \"../ref/out/src\";\nexport const t = make();\nexport const q = [o, p];\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "import { make } from \"../../../ref/src\";\nexport const p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { t } from \"../mid/a\";\nexport const n: string = t.x;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    },
+    "build": true
+  },
+  "build-with-an-import-of-a-source-in-a-file-whose-sub-tasks-start": {
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export interface Thing { x: number }\nexport function make(): Thing { return { x: 1 }; }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"../globals.d.ts\", \"a.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { p } from \"pkg\";\nimport { o } from \"other\";\nimport { make } from \"../ref/out/src\";\nexport const t = make();\nexport const q = [o, p];\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "import { make } from \"../../../ref/src\";\nexport const p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { t } from \"../mid/a\";\nexport const n: string = t.x;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    },
+    "build": true
+  },
+  "build-with-an-import-of-a-source-in-a-file-whose-sub-tasks-never-start-and-rootdir": {
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export interface Thing { x: number }\nexport function make(): Thing { return { x: 1 }; }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"../globals.d.ts\", \"a.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nimport { make } from \"../ref/out/src\";\nexport const t = make();\nexport const q = [o, p];\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "import { make } from \"../../../ref/src\";\nexport const p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noEmit\": true, \"rootDir\": \".\"}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { t } from \"../mid/a\";\nexport const n: string = t.x;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    },
+    "build": true
+  },
+  "build-with-a-reference-path-to-a-source-in-a-file-whose-sub-tasks-never-start": {
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export interface Thing { x: number }\nexport function make(): Thing { return { x: 1 }; }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"../globals.d.ts\", \"a.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nimport { make } from \"../ref/out/src\";\nexport const t = make();\nexport const q = [o, p];\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "/// <reference path=\"../../../ref/src.ts\" />\nexports.p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { t } from \"../mid/a\";\nexport const n: string = t.x;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    },
+    "build": true
+  },
+  "build-with-a-require-of-a-source-in-a-file-whose-sub-tasks-never-start": {
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"src.ts\"]}",
+      "ref/src.ts": "export interface Thing { x: number }\nexport function make(): Thing { return { x: 1 }; }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true, \"explainFiles\": true}, \"files\": [\"../globals.d.ts\", \"a.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nimport { make } from \"../ref/out/src\";\nexport const t = make();\nexport const q = [o, p];\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "const r = require(\"../../../ref/src\");\nexports.p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\"}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { t } from \"../mid/a\";\nexport const n: string = t.x;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    },
+    "build": true
+  },
+  "build-with-an-import-of-a-js-source-in-a-file-whose-sub-tasks-never-start": {
+    "build": true,
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"util.js\"]}",
+      "ref/util.js": "export class Bar { v = 1; }\nexport function makeBar() { return new Bar(); }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"a.ts\", \"helper.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nimport { makeBar } from \"./helper\";\nexport const x = makeBar();\nexport const q = [o, p];\n",
+      "mid/helper.ts": "export { makeBar } from \"../ref/out/util\";\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "import { makeBar } from \"../../../ref/util\";\nexport const p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noEmit\": true}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { x } from \"../mid/a\";\nexport const n: string = x.v;\n"
+    }
+  },
+  "build-with-an-import-of-a-js-source-in-a-file-whose-sub-tasks-start": {
+    "build": true,
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"util.js\"]}",
+      "ref/util.js": "export class Bar { v = 1; }\nexport function makeBar() { return new Bar(); }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"a.ts\", \"helper.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { p } from \"pkg\";\nimport { o } from \"other\";\nimport { makeBar } from \"./helper\";\nexport const x = makeBar();\nexport const q = [o, p];\n",
+      "mid/helper.ts": "export { makeBar } from \"../ref/out/util\";\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "import { makeBar } from \"../../../ref/util\";\nexport const p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noEmit\": true}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { x } from \"../mid/a\";\nexport const n: string = x.v;\n"
+    }
+  },
+  "build-with-a-require-of-a-js-source-in-a-file-whose-sub-tasks-never-start": {
+    "build": true,
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"util.js\"]}",
+      "ref/util.js": "export class Bar { v = 1; }\nexport function makeBar() { return new Bar(); }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"a.ts\", \"helper.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nimport { makeBar } from \"./helper\";\nexport const x = makeBar();\nexport const q = [o, p];\n",
+      "mid/helper.ts": "export { makeBar } from \"../ref/out/util\";\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "const r = require(\"../../../ref/util\");\nexports.p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noEmit\": true}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { x } from \"../mid/a\";\nexport const n: string = x.v;\n"
+    }
+  },
+  "build-with-a-reference-path-to-a-js-source-in-a-file-whose-sub-tasks-never-start": {
+    "build": true,
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"util.js\"]}",
+      "ref/util.js": "export class Bar { v = 1; }\nexport function makeBar() { return new Bar(); }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"a.ts\", \"helper.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nimport { makeBar } from \"./helper\";\nexport const x = makeBar();\nexport const q = [o, p];\n",
+      "mid/helper.ts": "export { makeBar } from \"../ref/out/util\";\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "/// <reference path=\"../../../ref/util.js\" />\nexports.p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noEmit\": true}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { x } from \"../mid/a\";\nexport const n: string = x.v;\n"
+    }
+  },
+  "build-with-an-import-of-a-js-source-in-a-file-whose-sub-tasks-never-start-and-checked-declaration-files": {
+    "build": true,
+    "files": {
+      "tsconfig.json": "{\"files\": [], \"references\": [{\"path\": \"./top\"}]}",
+      "ref/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"util.js\"]}",
+      "ref/util.js": "export class Bar { v = 1; }\nexport function makeBar() { return new Bar(); }\n",
+      "mid/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true, \"outDir\": \"out\", \"allowJs\": true}, \"files\": [\"a.ts\", \"helper.ts\"], \"references\": [{\"path\": \"../ref\"}]}",
+      "mid/a.ts": "import { o } from \"other\";\nimport { p } from \"pkg\";\nimport { makeBar } from \"./helper\";\nexport const x = makeBar();\nexport const q = [o, p];\n",
+      "mid/helper.ts": "export { makeBar } from \"../ref/out/util\";\n",
+      "mid/node_modules/pkg/package.json": "{\"name\": \"pkg\", \"version\": \"1.0.0\", \"main\": \"index.js\"}",
+      "mid/node_modules/pkg/index.js": "import { makeBar } from \"../../../ref/util\";\nexport const p = 1;\n",
+      "mid/node_modules/other/package.json": "{\"name\": \"other\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\"}",
+      "mid/node_modules/other/index.d.ts": "/// <reference path=\"../pkg/index.js\" />\nexport declare const o: number;\n",
+      "top/tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": false, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noEmit\": true}, \"files\": [\"t.ts\"], \"references\": [{\"path\": \"../mid\"}]}",
+      "top/t.ts": "import { x } from \"../mid/a\";\nexport const n: string = x.v;\n"
+    }
   }
 }

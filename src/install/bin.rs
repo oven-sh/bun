@@ -960,27 +960,6 @@ impl<'a> Linker<'a> {
         debug_assert!(abs_target.as_bytes()[abs_target.as_bytes().len() - 1] != SEP);
         debug_assert!(abs_dest.as_bytes()[abs_dest.as_bytes().len() - 1] != SEP);
 
-        if let Some(seen) = self.seen.as_deref() {
-            // Skip seen destinations for this tree
-            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
-            if seen.contains_key(abs_dest.as_bytes()) {
-                // The name is taken, and `bunx <this package>` starts the file itself.
-                #[cfg(not(windows))]
-                match sys::stat(abs_target) {
-                    Ok(target_stat) => {
-                        if !(target_needs_resolved_containment_check
-                            && self.resolved_target_parent_escapes_package_dir(abs_target))
-                        {
-                            Self::make_executable(abs_target, &target_stat);
-                        }
-                    }
-                    // A script of the package can still write the file.
-                    Err(_) => self.skipped_due_to_missing_bin = true,
-                }
-                return;
-            }
-        }
-
         // Skip if the target does not exist. This is important because placing a dangling
         // shim in path might break a postinstall
         #[cfg(not(windows))]
@@ -988,17 +967,29 @@ impl<'a> Linker<'a> {
             self.skipped_due_to_missing_bin = true;
             return;
         };
-        #[cfg(windows)]
-        if !sys::exists(abs_target) {
-            self.skipped_due_to_missing_bin = true;
-            return;
-        }
 
         if target_needs_resolved_containment_check {
             #[cfg(not(windows))]
             if self.resolved_target_parent_escapes_package_dir(abs_target) {
                 return;
             }
+        }
+
+        if let Some(seen) = self.seen.as_deref() {
+            // Skip seen destinations for this tree
+            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
+            if seen.contains_key(abs_dest.as_bytes()) {
+                // The name is taken, and `bunx <this package>` starts the file itself.
+                #[cfg(not(windows))]
+                Self::make_executable(abs_target, &target_stat);
+                return;
+            }
+        }
+
+        #[cfg(windows)]
+        if !sys::exists(abs_target) {
+            self.skipped_due_to_missing_bin = true;
+            return;
         }
 
         if let Some(seen) = self.seen.as_deref_mut() {

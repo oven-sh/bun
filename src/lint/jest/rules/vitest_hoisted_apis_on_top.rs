@@ -59,7 +59,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, HoistedApisOnTo
     let parent = AstKind::Expr(node).parent();
     let is_expression_statement = parent.as_stmt().is_some_and(|it| it.tag() == StmtTag::Expr);
 
-    // `vi.hoisted()` can also be awaited, and be what a variable is declared with.
+    // `vi.hoisted()` can also be awaited or used as a variable's initializer.
     let mut statement = parent;
     if member_name == b"hoisted" {
         if statement

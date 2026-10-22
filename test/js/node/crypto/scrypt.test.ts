@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { scryptSync } from "node:crypto";
+import { scrypt, scryptSync } from "node:crypto";
 
 // When `crypto.scrypt` fails to allocate the output buffer (OOM for a huge
 // `keylen`), `CryptoJob.init` takes the error path. Previously the `errdefer`
@@ -75,6 +75,53 @@ test("scrypt async does not leak callback/buffers when output allocation fails",
     Uint8Array: 0,
   });
 
+  expect(exitCode).toBe(0);
+});
+
+test("scrypt copies password and salt before it returns", async () => {
+  const password = Buffer.alloc(4096, "p");
+  const salt = Buffer.alloc(16, "s");
+  const expected = scryptSync(password, salt, 32, { N: 1024 }).toString("hex");
+  const results: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    password.fill("p");
+    salt.fill("s");
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    scrypt(password, salt, 32, { N: 1024 }, (err, key) => (err ? reject(err) : resolve(key.toString("hex"))));
+    password.fill(0);
+    salt.fill(0);
+    results.push(await promise);
+  }
+  expect(results).toEqual(Array(20).fill(expected));
+});
+
+test("scrypt doesn't read a resizable ArrayBuffer that shrinks after the call", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const crypto = require("crypto");
+        const expected = crypto.scryptSync(Buffer.alloc(65536, 0x41), "salt", 32, { N: 1024 }).toString("hex");
+        let wrong = 0;
+        for (let i = 0; i < 20; i++) {
+          const ab = new ArrayBuffer(65536, { maxByteLength: 1 << 20 });
+          new Uint8Array(ab).fill(0x41);
+          const { promise, resolve, reject } = Promise.withResolvers();
+          crypto.scrypt(new Uint8Array(ab), "salt", 32, { N: 1024 }, (err, key) => (err ? reject(err) : resolve(key.toString("hex"))));
+          ab.resize(0);
+          if ((await promise) !== expected) wrong++;
+        }
+        console.log("wrong:", wrong);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("wrong: 0\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

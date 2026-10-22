@@ -41,31 +41,31 @@ const EXPLICIT_PROPS_IN_SPREAD_ATTRIBUTES: Message = Message::new(
 const ADD_NOREFERRER: Message = Message::new("", "add rel=`noreferrer` to the element");
 const ADD_NOREFERRER_OR_NOOPENER: Message = Message::new("", "add rel=`noreferrer` or rel=`noopener` to the element");
 
-/// `settings.react.linkComponents` and `formComponents`, where oxlint has them.
+/// `settings.react.linkComponents` and `formComponents`, which is where oxlint reads them from.
 pub struct State<'a> {
     link_components: &'a [Json],
     form_components: &'a [Json],
 }
 
-/// What is known of the value of `target` or `rel`.
+/// Facts about the value of `target` or `rel`.
 #[derive(Copy, Clone, Default)]
 struct Checked<'a> {
-    /// `target` can be `_blank`. `rel` is always safe.
-    holds: bool,
-    /// Of `test ? consequent : alternate`
+    /// For `target`, true if it can be `_blank`. For `rel`, true if it's always safe.
+    is_match: bool,
+    /// The parts of `test ? consequent : alternate`.
     test: Option<Expr<'a>>,
-    holds_in_consequent: bool,
-    holds_in_alternate: bool,
+    is_match_in_consequent: bool,
+    is_match_in_alternate: bool,
 }
 
-/// What is known of the attribute with the URL.
+/// Facts about the attribute that holds the URL.
 #[derive(Copy, Clone, Default)]
 struct Href {
     is_external_link: bool,
     is_dynamic_link: bool,
 }
 
-/// What an element is checked as.
+/// The kind of component an element is checked as.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Component {
     Link,
@@ -109,14 +109,14 @@ impl Rule for JsxNoTargetBlank {
         }
         let is_oxlint = cx.language().is_oxlint;
         let tag_name = match jsx.tag().map(Expr::tag) {
-            // oxlint has no name for it.
+            // oxlint has no name for `<this>`.
             Some(ExprTag::This) if !is_oxlint => Some(b"this".as_slice()),
             _ => get_identifier_name(jsx).map(Name::bytes),
         };
         let Some(tag_name) = tag_name else {
             return;
         };
-        // Upstream checks a link by its attributes, then a form by its own, and knows no `links`.
+        // Upstream checks a link by its attributes, then a form by its own, and has no `links` option.
         if !is_oxlint {
             if let Some(attributes) = get_link_component(cx.file(), tag_name) {
                 self.check(jsx, Component::Link, &|name| attributes.contains(&name), cx);
@@ -144,13 +144,13 @@ impl Rule for JsxNoTargetBlank {
 }
 
 impl JsxNoTargetBlank {
-    /// `has_url`: whether an attribute of that name has the URL.
+    /// `has_url`: returns true if an attribute with that name holds the URL.
     fn check<'a>(&self, jsx: Jsx<'a>, component: Component, has_url: &dyn Fn(&[u8]) -> bool, cx: &Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
-        // Upstream checks a form as if neither option were given.
+        // Upstream checks a form as if neither option were set.
         let is_as_configured = is_oxlint || component == Component::Link;
         let allow_referrer = self.allow_referrer && is_as_configured;
-        // `toLowerCase`, where oxlint knows the letters of ASCII.
+        // `toLowerCase`. oxlint only lowercases ASCII.
         let is_blank = |it: &[u8]| match is_oxlint {
             true => it.eq_ignore_ascii_case(b"_blank"),
             false => *text::to_lower_case(it) == *b"_blank",
@@ -171,7 +171,7 @@ impl JsxNoTargetBlank {
             let Some(name) = attribute.key().and_then(Key::name).map(Name::bytes) else {
                 continue;
             };
-            // A name with a namespace is none of these. oxlint passes over an attribute without a value.
+            // A namespaced name is none of these. oxlint skips an attribute without a value.
             if strings::contains_char(name, b':') || (is_oxlint && get_prop_value(attribute).is_none()) {
                 continue;
             }
@@ -181,12 +181,12 @@ impl JsxNoTargetBlank {
                 target = Some(attribute);
             }
             if is_url {
-                // For upstream one dynamic link is enough, wherever it is.
+                // For upstream one dynamic link anywhere is enough.
                 let is_dynamic_link = href.is_dynamic_link && !is_oxlint;
                 href = check_href(attribute, is_oxlint);
                 href.is_dynamic_link |= is_dynamic_link;
             }
-            // For oxlint it is the one or the other.
+            // For oxlint an attribute is either the URL or `rel`, not both.
             if name == b"rel" && !(is_oxlint && is_url) {
                 rel_valid = check_value(attribute, true, is_oxlint, &|it| check_rel_val(it, allow_referrer, is_oxlint));
             }
@@ -198,42 +198,42 @@ impl JsxNoTargetBlank {
         if is_href_valid {
             return;
         }
-        // oxlint looks at no `target` then, and has a message for it.
+        // In that case oxlint ignores `target`, and has a separate message.
         if is_oxlint && let Some(spread_span) = spread_span {
-            if !rel_valid.holds {
+            if !rel_valid.is_match {
                 self.report(spread_span, EXPLICIT_PROPS_IN_SPREAD_ATTRIBUTES, ADD_NOREFERRER, jsx, component, cx);
             }
             return;
         }
-        if !target_blank.holds && spread_span.is_none() {
+        if !target_blank.is_match && spread_span.is_none() {
             return;
         }
         let is_rel_valid = match (target_blank.test, rel_valid.test, target) {
             (Some(target_test), Some(rel_test), Some(target)) if is_same_test(target_test, rel_test, is_oxlint) => {
-                // Upstream looks at the first that is `"_blank"` as it is written here.
+                // Upstream uses the first branch that's exactly `"_blank"`, case included.
                 let exactly = check_value(target, false, is_oxlint, &|it| it == b"_blank");
                 match is_oxlint {
                     true => {
-                        (!target_blank.holds_in_consequent || rel_valid.holds_in_consequent)
-                            && (!target_blank.holds_in_alternate || rel_valid.holds_in_alternate)
+                        (!target_blank.is_match_in_consequent || rel_valid.is_match_in_consequent)
+                            && (!target_blank.is_match_in_alternate || rel_valid.is_match_in_alternate)
                     }
-                    false if exactly.holds_in_consequent => rel_valid.holds_in_consequent,
-                    false => exactly.holds_in_alternate && rel_valid.holds_in_alternate,
+                    false if exactly.is_match_in_consequent => rel_valid.is_match_in_consequent,
+                    false => exactly.is_match_in_alternate && rel_valid.is_match_in_alternate,
                 }
             }
-            _ => rel_valid.holds,
+            _ => rel_valid.is_match,
         };
         if is_rel_valid {
             return;
         }
-        let (message, of_oxlint, help) = match self.allow_referrer {
+        let (message, oxlint_message, help) = match self.allow_referrer {
             true => (NO_TARGET_BLANK_WITHOUT_NOOPENER, TARGET_BLANK_WITHOUT_NOOPENER, ADD_NOREFERRER_OR_NOOPENER),
             false => (NO_TARGET_BLANK_WITHOUT_NOREFERRER, TARGET_BLANK_WITHOUT_NOREFERRER, ADD_NOREFERRER),
         };
-        // oxlint points at the value of `target`.
+        // oxlint reports `target`'s value.
         match target.and_then(get_prop_value) {
-            Some(value) if is_oxlint => self.report(value.span(), of_oxlint, help, jsx, component, cx),
-            _ => self.report(jsx.opening_span(), if is_oxlint { of_oxlint } else { message }, help, jsx, component, cx),
+            Some(value) if is_oxlint => self.report(value.span(), oxlint_message, help, jsx, component, cx),
+            _ => self.report(jsx.opening_span(), if is_oxlint { oxlint_message } else { message }, help, jsx, component, cx),
         }
     }
 
@@ -258,7 +258,7 @@ impl JsxNoTargetBlank {
 
     fn add_secure_rel<'a>(&self, jsx: Jsx<'a>, fixer: Fixer<'a>) -> Option<Fix> {
         let is_oxlint = fixer.file().language().is_oxlint;
-        // The last of each, but for upstream the first `rel`.
+        // The last of each, except that upstream uses the first `rel`.
         let (mut target_index, mut spread_index, mut rel_attribute) = (None, None, None);
         for (index, attribute) in jsx.attrs().iter().enumerate() {
             if attribute.kind() == PropKind::Spread {
@@ -283,7 +283,7 @@ impl JsxNoTargetBlank {
             Some(AttributeValue::StringLiteral(literal)) => {
                 Some(fixer.replace(literal.span, append_noreferrer(rel_attribute.value()?, is_oxlint)))
             }
-            // oxlint looks at nothing in parentheses.
+            // oxlint ignores anything parenthesized.
             Some(AttributeValue::ExpressionContainer(e)) if !(is_oxlint && e.is_parenthesized()) => match e.tag() {
                 ExprTag::String => Some(fixer.replace(e, append_noreferrer(e, is_oxlint))),
                 ExprTag::True
@@ -299,7 +299,7 @@ impl JsxNoTargetBlank {
     }
 }
 
-/// `string`: a string literal. oxlint keeps its quotes, and what is between them as it is written.
+/// `string`: a string literal. oxlint keeps its quotes and its raw content.
 fn append_noreferrer(string: Expr<'_>, is_oxlint: bool) -> Vec<u8> {
     let raw = string.text();
     let (quote, content) = match string.as_string() {
@@ -311,7 +311,8 @@ fn append_noreferrer(string: Expr<'_>, is_oxlint: bool) -> Vec<u8> {
     [quote, &parts.join(&b" "[..]), quote].concat()
 }
 
-/// Whether `target` and `rel` depend on the same. For upstream that is a variable of one name, or no variable in both.
+/// True if `target` and `rel` depend on the same condition. For upstream that means both tests are variables with the
+/// same name, or neither is a variable.
 fn is_same_test<'a>(target_test: Expr<'a>, rel_test: Expr<'a>, is_oxlint: bool) -> bool {
     if !is_oxlint {
         return target_test.as_ident() == rel_test.as_ident();
@@ -319,8 +320,8 @@ fn is_same_test<'a>(target_test: Expr<'a>, rel_test: Expr<'a>, is_oxlint: bool) 
     !target_test.is_parenthesized() && !rel_test.is_parenthesized() && is_same_expression(target_test, rel_test)
 }
 
-/// Calls `visit` with the `a`, `b` and `c` of `x ? a : y ? b : c`, in this order. What is in parentheses is not looked
-/// into. For upstream it is `expr` alone.
+/// Calls `visit` with the `a`, `b` and `c` of `x ? a : y ? b : c`, in this order, without looking inside parentheses.
+/// For upstream it only visits `expr` itself.
 fn for_each_branch<'a>(expr: Expr<'a>, is_oxlint: bool, mut visit: impl FnMut(Expr<'a>)) {
     let mut pending: SmallVec<[Expr<'a>; 4]> = smallvec![expr];
     while let Some(expr) = pending.pop() {
@@ -331,24 +332,24 @@ fn for_each_branch<'a>(expr: Expr<'a>, is_oxlint: bool, mut visit: impl FnMut(Ex
     }
 }
 
-/// The value, if it is a string, for oxlint one that is not in parentheses.
+/// Returns the value if it's a string. For oxlint the string can't be parenthesized.
 fn string_literal(expr: Expr<'_>, is_oxlint: bool) -> Option<&[u8]> {
     expr.as_string().filter(|_| !(is_oxlint && expr.is_parenthesized())).map(Name::bytes)
 }
 
-/// The `b` of `a="b"`. oxlint reads `&amp;` as it is written.
+/// Returns the `b` in `a="b"`. oxlint keeps `&amp;` as written.
 fn value_of<'a>(attribute: Prop<'a>, literal: StringLiteral<'a>, is_oxlint: bool) -> &'a [u8] {
     attribute.value().and_then(Expr::as_string).filter(|_| !is_oxlint).map_or(literal.value, Name::bytes)
 }
 
-/// `check_target` and `check_rel`; upstream's `attributeValuePossiblyBlank` and `getStringFromValue`. `is_rel`: `holds`
-/// has to hold for all the strings that it can be, not for one of them.
-fn check_value<'a>(attribute: Prop<'a>, is_rel: bool, is_oxlint: bool, holds: &dyn Fn(&[u8]) -> bool) -> Checked<'a> {
-    let holds_in = |expr: Expr<'a>| {
+/// `check_target` and `check_rel`; upstream's `attributeValuePossiblyBlank` and `getStringFromValue`. `is_rel`:
+/// `predicate` has to be true for all the strings the value can be, not just one.
+fn check_value<'a>(attribute: Prop<'a>, is_rel: bool, is_oxlint: bool, predicate: &dyn Fn(&[u8]) -> bool) -> Checked<'a> {
+    let is_match_in = |expr: Expr<'a>| {
         let (mut all, mut any) = (true, false);
         for_each_branch(expr, is_oxlint, |branch| {
-            let it_holds = string_literal(branch, is_oxlint).is_some_and(holds);
-            (all, any) = (all && it_holds, any || it_holds);
+            let branch_matches = string_literal(branch, is_oxlint).is_some_and(predicate);
+            (all, any) = (all && branch_matches, any || branch_matches);
         });
         if is_rel { all } else { any }
     };
@@ -356,29 +357,29 @@ fn check_value<'a>(attribute: Prop<'a>, is_rel: bool, is_oxlint: bool, holds: &d
         return Checked::default();
     };
     if let AttributeValue::StringLiteral(literal) = value {
-        return Checked { holds: holds(value_of(attribute, literal, is_oxlint)), ..Checked::default() };
+        return Checked { is_match: predicate(value_of(attribute, literal, is_oxlint)), ..Checked::default() };
     }
     let Some(expr) = value.as_expression() else {
         return Checked::default();
     };
     match expr.kind() {
         ExprKind::Cond { test, yes, no } if !(is_oxlint && expr.is_parenthesized()) => {
-            let (holds_in_consequent, holds_in_alternate) = (holds_in(yes), holds_in(no));
-            let holds = match is_rel {
-                true => holds_in_consequent && holds_in_alternate,
-                false => holds_in_consequent || holds_in_alternate,
+            let (is_match_in_consequent, is_match_in_alternate) = (is_match_in(yes), is_match_in(no));
+            let is_match = match is_rel {
+                true => is_match_in_consequent && is_match_in_alternate,
+                false => is_match_in_consequent || is_match_in_alternate,
             };
-            Checked { holds, test: Some(test), holds_in_consequent, holds_in_alternate }
+            Checked { is_match, test: Some(test), is_match_in_consequent, is_match_in_alternate }
         }
-        // Upstream reads a template up to its first substitution.
+        // Upstream only reads a template up to its first substitution.
         ExprKind::Template(template) if is_rel && !is_oxlint => {
-            Checked { holds: template.cooked(0).is_some_and(|it| holds(it.bytes())), ..Checked::default() }
+            Checked { is_match: template.cooked(0).is_some_and(|it| predicate(it.bytes())), ..Checked::default() }
         }
-        _ => Checked { holds: holds_in(expr), ..Checked::default() },
+        _ => Checked { is_match: is_match_in(expr), ..Checked::default() },
     }
 }
 
-/// Upstream's is `/^(?:\w+:|\/\/)/`.
+/// Upstream's regex is `/^(?:\w+:|\/\/)/`.
 fn check_is_external_link(link: &[u8], is_oxlint: bool) -> bool {
     if is_oxlint {
         return strings::contains(link, b"//");
@@ -393,7 +394,7 @@ fn check_href(attribute: Prop, is_oxlint: bool) -> Href {
         Some(AttributeValue::StringLiteral(literal)) => {
             href.is_external_link = check_is_external_link(value_of(attribute, literal, is_oxlint), is_oxlint);
         }
-        // For upstream all that is in braces is dynamic.
+        // For upstream anything in braces is dynamic.
         Some(AttributeValue::ExpressionContainer(_)) if !is_oxlint => href.is_dynamic_link = true,
         value => {
             if let Some(expr) = value.and_then(AttributeValue::as_expression) {
@@ -408,7 +409,7 @@ fn check_href(attribute: Prop, is_oxlint: bool) -> Href {
     href
 }
 
-/// With `allowReferrer` oxlint wants small letters.
+/// With `allowReferrer` oxlint's comparison is case-sensitive.
 fn check_rel_val(value: &[u8], allow_referrer: bool, is_oxlint: bool) -> bool {
     let value = if is_oxlint && allow_referrer { Cow::Borrowed(value) } else { text::to_lower_case(value) };
     strings::split(&value, b" ").any(|it| it == b"noreferrer" || (allow_referrer && it == b"noopener"))

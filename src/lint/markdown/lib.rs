@@ -3,7 +3,7 @@
 //! - https://github.com/eslint/markdown (Copyright OpenJS Foundation and other contributors, MIT License)
 //!
 //! The plugin parses with micromark. Bun parses with its own parser, `bun_md`, and `bun_format::markdown` builds the
-//! tree from its output. It's the same tree that `bun fmt` prints: see `document.rs`. Where micromark deviates from the
+//! tree from its output. It's the same tree that `bun fmt` prints. See `document.rs`. Where micromark deviates from the
 //! CommonMark and GFM specs, the tree follows the specs.
 
 #![forbid(unsafe_code)]
@@ -18,7 +18,7 @@ mod util;
 pub use document::Document;
 use document::Mdast;
 
-use bun_lint::languages::{Configured, LineBreaks, Parsed, Refusal, SyntaxError};
+use bun_lint::languages::{Configured, LineBreaks, Parsed, Rejection, SyntaxError};
 use bun_lint::options::Json;
 use bun_lint::rule::{Kind, Meta, Plugin};
 
@@ -170,10 +170,10 @@ impl bun_lint::languages::Language for Markdown {
         LineBreaks::Newlines
     }
 
-    fn configure(&self, name: &[u8], options: &Json) -> Result<Configured, Refusal> {
+    fn configure(&self, name: &[u8], options: &Json) -> Result<Configured, Rejection> {
         match Dialect::new(name, options) {
             Ok(dialect) => Ok(std::sync::Arc::new(dialect)),
-            Err(message) => Err(Refusal::Invalid(message)),
+            Err(message) => Err(Rejection::Invalid(message)),
         }
     }
 

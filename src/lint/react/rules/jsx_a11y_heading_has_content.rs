@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 
 /// Enforce that heading elements have content that is accessible to screen readers.
 pub struct HeadingHasContent {
-    /// Besides `h1` to `h6`.
+    /// In addition to `h1` to `h6`.
     components: Vec<String>,
 }
 

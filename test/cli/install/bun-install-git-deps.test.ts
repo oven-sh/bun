@@ -1308,6 +1308,54 @@ test.concurrent(
   },
 );
 
+// The hoisted linker leaves an optional git dependency out when its repository cannot be cloned. The folder then has
+// the checkout of another commit, which `.bun-tag` names. Without that file the checkout is not known, and stays.
+test.concurrent.each(["removes the checkout of another commit", "keeps a checkout that is not known"])(
+  "hoisted linker: an optional git dependency that cannot be cloned %s",
+  async does => {
+    using dir = tempDir("git-dep-left-out", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [{ name: "lib", branch: "lib" }]);
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    const dependsOn = (commit: string) =>
+      writeProject(root, {}, { optionalDependencies: { lib: `${repoUrl}#${commit}` } });
+
+    const project = dependsOn(branchCommits(bare).lib);
+    {
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {}, "--linker=hoisted");
+      expect(stderr).toContain("Saved lockfile");
+      expect(await installedVersionOf(project, "lib")).toBe("lib");
+      expect(exitCode).toBe(0);
+    }
+
+    // bun.lock gets the next commit.
+    await moveBranch(bare, "lib", "lib-next");
+    const next = branchCommits(bare).lib;
+    dependsOn(next);
+    {
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {}, "--lockfile-only");
+      expect(stderr).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+    }
+    if (does === "keeps a checkout that is not known") rmSync(join(project, "node_modules", "lib", ".bun-tag"));
+
+    // a machine that cannot reach the repository
+    renameSync(bare, `${bare}.gone`);
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, "--linker=hoisted");
+    const removed = `warn: removed the previous "lib" from node_modules: lib@${repoUrl}#${next} is not installed`;
+    expect({
+      errors: stderr.split(/\r?\n/).filter(line => line.startsWith("error:")),
+      removed: stderr.split(/\r?\n/).filter(line => line.includes("removed the previous")),
+      lib: await installedVersionOf(project, "lib"),
+      exitCode,
+    }).toEqual(
+      does === "removes the checkout of another commit"
+        ? { errors: [], removed: [removed], lib: null, exitCode: 0 }
+        : { errors: [], removed: [], lib: "lib", exitCode: 0 },
+    );
+  },
+);
+
 // `overrides` puts a git commit in place of a's registry dependency `b`. When
 // the clone ended, the install sent that dependency through the resolver, which
 // found the package of the pinned commit already loaded and started no checkout.

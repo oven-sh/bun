@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "
 import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { join, sep } from "path";
+import { delimiter, join, sep } from "path";
 import { TestRegistry } from "registry";
 
 let verdaccio: TestRegistry;
@@ -681,6 +681,277 @@ describe.concurrent("native binlink altpath", () => {
       });
     }
   }
+});
+
+// test-postinstall-skip@N has the optional platform package test-postinstall-skip-native@N. The bin of the first
+// prints "shim vN", the bin of the platform package prints "native vN".
+//
+// An upgrade that cannot download the new platform package leaves the previous one in its folder. bun removes it,
+// unless the tool is on the native binlink list: its own scripts do not run, so its bins stay linked into the
+// previous platform package, and bun says so.
+describe.concurrent("a platform package that an upgrade cannot download (hoisted)", () => {
+  const tool = "test-postinstall-skip";
+  const platform = "test-postinstall-skip-native";
+  const notFound = `warn: GET <registry>/${platform}/-/${platform}-2.0.0.tgz - 404`;
+  const stillLinks = `warn: "${tool}" still links to the previous "${platform}": ${platform}@2.0.0 is not installed`;
+  const removed = `warn: removed the previous "${platform}" from node_modules: ${platform}@2.0.0 is not installed`;
+
+  /** The stderr lines that are a warning or an error. */
+  function messages(stderr: string, registry: TestRegistry) {
+    const lines = stderr.replaceAll(registry.registryUrl(), "<registry>/").split(/\r?\n/);
+    return {
+      errors: lines.filter(line => line.startsWith("error:")),
+      warnings: lines.filter(line => line.startsWith("warn:")),
+    };
+  }
+  function version(nodeModules: string, name: string): string | null {
+    try {
+      return JSON.parse(readFileSync(join(nodeModules, name, "package.json"), "utf8")).version;
+    } catch {
+      return null;
+    }
+  }
+  /** What the command of the tool prints. */
+  async function prints(binDir: string, env: NodeJS.Dict<string>) {
+    await using proc = spawn({
+      cmd: [binEntry(binDir, "skip-test-cmd")],
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return exitCode === 0 ? stdout.trim() : `exit code ${exitCode}`;
+  }
+
+  /** With `onList`, the tool is in `nativeDependencies`. */
+  async function project(onList: boolean, extraEnv: NodeJS.Dict<string> = {}) {
+    let status: number | undefined;
+    const registry = new TestRegistry({
+      intercept: request =>
+        status !== undefined && request.url.endsWith(`/${platform}-2.0.0.tgz`)
+          ? new Response("unavailable", { status })
+          : undefined,
+    });
+    await registry.start();
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const env = {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+      BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+      ...extraEnv,
+    };
+    const nodeModules = join(packageDir, "node_modules");
+
+    return {
+      packageDir,
+      env,
+      registry,
+      /** The tarball of the new platform package answers with this status from now on. `undefined` serves it again. */
+      answer(code: number | undefined) {
+        status = code;
+      },
+      async install(toolVersion: string, ...args: string[]) {
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "test-app",
+            version: "1.0.0",
+            dependencies: { [tool]: toolVersion },
+            nativeDependencies: onList ? [tool] : [],
+            trustedDependencies: [tool],
+          }),
+        );
+        await using proc = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        return { ...messages(stderr, registry), exitCode };
+      },
+      /** What is in node_modules, and what the command prints. */
+      async state() {
+        return {
+          tool: version(nodeModules, tool),
+          platform: version(nodeModules, platform),
+          prints: await prints(join(nodeModules, ".bin"), env),
+        };
+      },
+      [Symbol.dispose]() {
+        registry.stop();
+      },
+    };
+  }
+
+  const installed = { errors: [], warnings: [], exitCode: 0 };
+  const both = (v: string) => ({ tool: v, platform: v, prints: `native v${v}` });
+  const withPrevious = { tool: "2.0.0", platform: "1.0.0", prints: "native v1.0.0" };
+
+  test("the bins of a tool on the native binlink list stay linked into the previous one", async () => {
+    using p = await project(true);
+    expect(await p.install("1.0.0")).toEqual(installed);
+    expect(await p.state()).toEqual(both("1.0.0"));
+
+    // bun.lock is behind package.json: the tarball is asked for while the dependencies are resolved.
+    p.answer(404);
+    expect(await p.install("2.0.0")).toEqual({ ...installed, warnings: [notFound, stillLinks] });
+    expect(await p.state()).toEqual(withPrevious);
+
+    // bun.lock is current: the linker asks for the tarball.
+    expect(await p.install("2.0.0")).toEqual({ ...installed, warnings: [notFound, stillLinks] });
+    expect(await p.state()).toEqual(withPrevious);
+
+    p.answer(undefined);
+    expect(await p.install("2.0.0")).toEqual(installed);
+    expect(await p.state()).toEqual(both("2.0.0"));
+  });
+
+  test("the same with --offline", async () => {
+    using p = await project(true);
+    expect(await p.install("1.0.0")).toEqual(installed);
+
+    // Another project puts test-postinstall-skip@2.0.0 into the cache, without its platform package.
+    using other = tempDir("binlink-offline-cache", {
+      "package.json": JSON.stringify({ name: "other", dependencies: { [tool]: "2.0.0" } }),
+    });
+    await p.registry.writeBunfig(String(other), { linker: "hoisted" });
+    await using cached = spawn({
+      cmd: [bunExe(), "install", "--omit=optional"],
+      cwd: String(other),
+      stdout: "ignore",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: p.env,
+    });
+    expect(messages(await cached.stderr.text(), p.registry).errors).toEqual([]);
+    expect(await cached.exited).toBe(0);
+
+    expect(await p.install("2.0.0", "--offline")).toEqual({ ...installed, warnings: [stillLinks] });
+    expect(await p.state()).toEqual(withPrevious);
+  });
+
+  // The bin of this tool is its own, and its scripts run.
+  test("the previous one leaves when the tool is not on the native binlink list", async () => {
+    using p = await project(false);
+    expect(await p.install("1.0.0")).toEqual(installed);
+    expect(await p.state()).toEqual({ tool: "1.0.0", platform: "1.0.0", prints: "shim v1.0.0" });
+
+    p.answer(404);
+    expect(await p.install("2.0.0")).toEqual({ ...installed, warnings: [notFound, removed] });
+    expect(await p.state()).toEqual({ tool: "2.0.0", platform: null, prints: "shim v2.0.0" });
+  });
+
+  // Then no bin of the tool links into the platform package.
+  test("the previous one leaves when the native binlink is turned off", async () => {
+    using p = await project(true, { BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER: "1" });
+    expect(await p.install("1.0.0")).toEqual(installed);
+    expect(await p.state()).toEqual({ tool: "1.0.0", platform: "1.0.0", prints: "shim v1.0.0" });
+
+    p.answer(404);
+    expect(await p.install("2.0.0")).toEqual({ ...installed, warnings: [notFound, removed] });
+    expect(await p.state()).toEqual({ tool: "2.0.0", platform: null, prints: "shim v2.0.0" });
+  });
+
+  // The packages of the global package.json are tools that do not know each other.
+  describe("bun add -g", () => {
+    async function globalProject(onList: boolean) {
+      const gone = new Set<string>();
+      const registry = new TestRegistry({
+        intercept: request =>
+          gone.has(request.url.slice(request.url.lastIndexOf("/") + 1))
+            ? new Response("gone", { status: 404 })
+            : undefined,
+      });
+      await registry.start();
+      const home = tempDir("binlink-global-home", {});
+      const globalDir = join(String(home), ".bun", "install", "global");
+      const binDir = join(String(home), ".bun", "bin");
+      const cacheDir = join(String(home), ".bun-cache");
+      const env = {
+        ...bunEnv,
+        HOME: String(home),
+        BUN_INSTALL: join(String(home), ".bun"),
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_BIN: binDir,
+        BUN_INSTALL_CACHE_DIR: cacheDir,
+        BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+        // Without the bin folder in it, bun prints how to add it.
+        PATH: `${binDir}${delimiter}${bunEnv.PATH}`,
+      };
+      await mkdir(globalDir, { recursive: true });
+      await writeFile(
+        join(globalDir, "package.json"),
+        JSON.stringify({ nativeDependencies: onList ? [tool] : [], trustedDependencies: [tool] }),
+      );
+      const nodeModules = join(globalDir, "node_modules");
+      return {
+        cacheDir,
+        platformDir: join(nodeModules, platform),
+        /** The tarball of this version of the platform package is a 404 from now on. */
+        lose(version: string) {
+          gone.add(`${platform}-${version}.tgz`);
+        },
+        async add(spec: string) {
+          await using proc = spawn({
+            cmd: [bunExe(), "add", "-g", `--registry=${registry.registryUrl()}`, "--linker=hoisted", spec],
+            cwd: String(home),
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            env,
+          });
+          const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+          return { ...messages(stderr, registry), exitCode };
+        },
+        state: async () => ({ platform: version(nodeModules, platform), prints: await prints(binDir, env) }),
+        [Symbol.dispose]() {
+          registry.stop();
+          home[Symbol.dispose]();
+        },
+      };
+    }
+
+    test("of the tool removes its previous platform package", async () => {
+      using p = await globalProject(false);
+      expect(await p.add(`${tool}@1.0.0`)).toEqual(installed);
+      expect(await p.state()).toEqual({ platform: "1.0.0", prints: "shim v1.0.0" });
+
+      p.lose("2.0.0");
+      expect(await p.add(`${tool}@2.0.0`)).toEqual({ ...installed, warnings: [notFound, removed] });
+      expect(await p.state()).toEqual({ platform: null, prints: "shim v2.0.0" });
+    });
+
+    test("of a tool on the native binlink list keeps the link into its previous platform package", async () => {
+      using p = await globalProject(true);
+      expect(await p.add(`${tool}@1.0.0`)).toEqual(installed);
+      expect(await p.state()).toEqual({ platform: "1.0.0", prints: "native v1.0.0" });
+
+      p.lose("2.0.0");
+      expect(await p.add(`${tool}@2.0.0`)).toEqual({ ...installed, warnings: [notFound, stillLinks] });
+      expect(await p.state()).toEqual({ platform: "1.0.0", prints: "native v1.0.0" });
+    });
+
+    test("of another package leaves the platform package of the tool as it is", async () => {
+      using p = await globalProject(false);
+      expect(await p.add(`${tool}@1.0.0`)).toEqual(installed);
+
+      // What an earlier install left: the folder has another version than bun.lock.
+      const manifest = join(p.platformDir, "package.json");
+      await writeFile(manifest, readFileSync(manifest, "utf8").replace('"1.0.0"', '"0.9.0"'));
+      await rm(p.cacheDir, { recursive: true, force: true });
+      p.lose("1.0.0");
+
+      expect(await p.add("no-deps@1.0.0")).toEqual({
+        ...installed,
+        warnings: [notFound.replace("2.0.0", "1.0.0")],
+      });
+      expect(await p.state()).toEqual({ platform: "0.9.0", prints: "shim v1.0.0" });
+    });
+  });
 });
 
 // The bin linker must not create a `node_modules/.bin` entry (nor chmod or rewrite the

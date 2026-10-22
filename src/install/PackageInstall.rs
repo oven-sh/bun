@@ -69,6 +69,9 @@ pub struct Summary {
     pub(crate) places: Vec<(u64, PackageID)>,
 
     pub(crate) offline_misses: OfflineMisses,
+
+    /// Set by the hoisted linker only. Optional dependencies that ended their turn without a package.
+    pub(crate) left_out: Vec<DependencyID>,
 }
 
 /// Only used with `--offline`. Has one entry per folder. `report_offline_misses` decides which ones
@@ -1165,6 +1168,31 @@ impl LinkBatch {
 
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
+/// Whether `found`, the version in the package.json of an installed package, is `expected`.
+#[inline(always)]
+pub(crate) fn installed_version_matches(found: &[u8], expected: &[u8]) -> bool {
+    // Build tags do not count: https://github.com/oven-sh/bun/issues/13563
+    let found_end = strings::last_index_of_char(found, b'+').unwrap_or(found.len());
+    let expected_end = strings::last_index_of_char(expected, b'+').unwrap_or(expected.len());
+    if found[..found_end] == expected[..expected_end] {
+        return true;
+    }
+    // ASCII only.
+    for c in 0..found.len() {
+        match found[c] {
+            // newlines & whitespace
+            b' ' | b'\t' | b'\n' | b'\r'
+            | 0x0B /* VT */
+            | 0x0C /* FF */
+            // version separators
+            | b'v' | b'=' => {}
+            _ => return found[c..] == *expected,
+        }
+    }
+    // Nothing but whitespace and separators never matches.
+    false
+}
+
 /// Contains a git package's commit or a tarball's integrity. Both linkers read it.
 pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
 
@@ -1399,37 +1427,8 @@ impl<'a> PackageInstall<'a> {
             return Some(false);
         }
 
-        let found_version = package_json_checker.found_version();
-
-        // exclude build tags from comparsion
-        // https://github.com/oven-sh/bun/issues/13563
-        let found_version_end =
-            strings::last_index_of_char(found_version, b'+').unwrap_or(found_version.len());
-        let expected_version_end = strings::last_index_of_char(self.package_version, b'+')
-            .unwrap_or(self.package_version.len());
-        // Check if the version matches
-        if found_version[..found_version_end] != self.package_version[..expected_version_end] {
-            let offset = 'brk: {
-                // ASCII only.
-                for c in 0..found_version.len() {
-                    match found_version[c] {
-                        // newlines & whitespace
-                        b' ' | b'\t' | b'\n' | b'\r'
-                        | 0x0B /* VT */
-                        | 0x0C /* FF */
-                        // version separators
-                        | b'v' | b'=' => {}
-                        _ => break 'brk c,
-                    }
-                }
-                // If we didn't find any of these characters, there's no point in checking the version again.
-                // it will never match.
-                return Some(false);
-            };
-
-            if found_version[offset..] != *self.package_version {
-                return Some(false);
-            }
+        if !installed_version_matches(package_json_checker.found_version(), self.package_version) {
+            return Some(false);
         }
 
         // lastly, check the name.

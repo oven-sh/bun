@@ -197,15 +197,15 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
   return real_linkat(olddirfd, oldpath, newdirfd, newpath, flags);
 }
 
-// Like overlayfs, which can't move a directory from a lower layer.
+// Like overlayfs, which can't move a directory from a lower layer. With "busy", like a mount point.
 int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
   static int (*real_renameat)(int, const char *, int, const char *);
   if (!real_renameat) real_renameat = dlsym(RTLD_NEXT, "renameat");
   const char *slash = strrchr(newpath, '/');
   const char *name = slash ? slash + 1 : newpath;
-  if (getenv("STAGING_TEST_NOTHING_MOVES_ASIDE") &&
-      (strncmp(name, ".old-", 5) == 0 || strncmp(name, ".bun-tmp-", 9) == 0)) {
-    errno = EXDEV;
+  const char *nothing_moves = getenv("STAGING_TEST_NOTHING_MOVES_ASIDE");
+  if (nothing_moves && (strncmp(name, ".old-", 5) == 0 || strncmp(name, ".bun-tmp-", 9) == 0)) {
+    errno = strcmp(nothing_moves, "busy") == 0 ? EBUSY : EXDEV;
     return -1;
   }
   return real_renameat(olddirfd, oldpath, newdirfd, newpath);
@@ -1451,6 +1451,52 @@ describe("hoisted linker: packages linked by the thread pool", () => {
     expect(readdirSync(join(root, "markers")).sort()).toEqual(["holding", "released"]);
     expect(readdirSync(deepest).sort()).toEqual(["held-1", "held-2"]);
     expect(exitCode).toBe(0);
+  });
+});
+
+// A hoisted install that leaves an optional dependency out removes the package that an earlier install left in its
+// folder: it moves the folder aside and deletes it. On overlayfs a folder that does not move is deleted in place.
+// Anything else that does not move stays.
+describe.skipIf(!shimDir)("hoisted linker: the previous package of an optional dependency that is left out", () => {
+  test.concurrent.each([
+    ["1", "removed", false],
+    ["busy", "could not remove", true],
+  ])("its folder cannot be moved aside (%s)", async (nothingMoves, outcome, stays) => {
+    // The registry lists opt@2.0.0 and does not have its tarball.
+    using registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname !== "/opt") return new Response("not found", { status: 404 });
+        const version = { name: "opt", version: "2.0.0", dist: { tarball: `${origin}/opt-2.0.0.tgz` } };
+        return Response.json({ name: "opt", "dist-tags": { latest: "2.0.0" }, versions: { "2.0.0": version } });
+      },
+    });
+    using dir = tempDir("left-out-nothing-moves-aside", {
+      "package.json": JSON.stringify({ name: "app", optionalDependencies: { opt: "2.0.0" } }),
+      "bunfig.toml": ({ root }) =>
+        Bun.TOML.stringify({
+          install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker: "hoisted" },
+        }),
+      "node_modules/opt/package.json": JSON.stringify({ name: "opt", version: "1.0.0" }),
+      "node_modules/opt/index.js": "",
+    });
+    const root = String(dir);
+
+    const { stderr, exitCode } = await install(root, [], {
+      ...preloadEnv(),
+      BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+      STAGING_TEST_NOTHING_MOVES_ASIDE: nothingMoves,
+    });
+    expect({
+      said: stderr.split(/\r?\n/).filter(line => line.includes("the previous")),
+      stays: existsSync(join(root, "node_modules", "opt", "index.js")),
+      exitCode,
+    }).toEqual({
+      said: [`warn: ${outcome} the previous "opt" from node_modules: opt@2.0.0 is not installed`],
+      stays,
+      exitCode: 0,
+    });
   });
 });
 

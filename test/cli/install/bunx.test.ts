@@ -80,6 +80,7 @@ type FixturePackage = {
   version: string;
   bin?: Record<string, string>;
   dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
   scripts?: Record<string, string>;
   deprecated?: string;
   /** How long ago the version was published. Years, unless given. */
@@ -145,9 +146,9 @@ async function localRegistry(...packages: FixturePackage[]) {
       ? new Response(null, { status: down.get(pathname) })
       : (tarballs.get(pathname) ?? manifests.get(decodeURIComponent(pathname.slice(1))));
   });
-  for (const { name, version, bin, dependencies, scripts, deprecated, daysOld = 3650, files } of packages) {
+  for (const { deprecated, daysOld = 3650, files, ...packageJson } of packages) {
+    const { name, version } = packageJson;
     const tarballPath = `/${name}/-/${name.slice(name.lastIndexOf("/") + 1)}-${version}.tgz`;
-    const packageJson = { name, version, bin, dependencies, scripts };
     tarballs.set(
       tarballPath,
       await githubTarball("package", { "package.json": JSON.stringify(packageJson), ...files }),
@@ -2399,6 +2400,29 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
         expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 2.0.0 with dep 2.0.0\n", exitCode: 0 });
       },
     );
+
+    // The install of the newer version leaves `native` out. bunx keeps the one that its tree has, so the tool runs.
+    it.concurrent("a day-old tree keeps an optional dependency whose newer version cannot be downloaded", async () => {
+      const pair = (version: string): FixturePackage[] => [
+        { name: "native", version, files: { "index.js": `module.exports = "native ${version}";\n` } },
+        {
+          name: "tool",
+          version,
+          bin: { tool: "cli.js" },
+          optionalDependencies: { native: version },
+          files: { "cli.js": `#!/usr/bin/env node\nconsole.log("tool ${version} with " + require("native"));\n` },
+        },
+      ];
+      using registry = await localRegistry(...pair("1.0.0"), ...pair("2.0.0"));
+      using box = sandbox(registry);
+      registry.tagLatest("tool", "1.0.0");
+      expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 1.0.0 with native 1.0.0\n", exitCode: 0 });
+      age(box.tree("tool@latest"));
+
+      registry.tagLatest("tool", "2.0.0");
+      registry.down.set("/native/-/native-2.0.0.tgz", 404);
+      expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 2.0.0 with native 1.0.0\n", exitCode: 0 });
+    });
 
     // Like a mirror that lists a version before it has the file. That says nothing about the version that bunx already
     // has.

@@ -454,6 +454,8 @@ pub struct TreeContext {
     pub(crate) inside_replaced_folder: bool,
     /// See `PackageInstaller::set_outlived_root`.
     pub(crate) outlived_root: bool,
+    /// This tree is in the folder of a `Summary::left_out` dependency. Its packages are not placed.
+    pub(crate) inside_left_out: bool,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -706,6 +708,68 @@ impl<'a> PackageInstaller<'a> {
     fn fail(&mut self, is_pending_package_install: bool, log_level: Options::LogLevel) {
         self.summary.fail += 1;
         self.increment_tree_install_count(is_pending_package_install, log_level);
+    }
+
+    /// For an optional dependency that ends its turn without its package. The caller counts it.
+    #[cold]
+    fn leave_out(&mut self, tree_id: lockfile::tree::Id, dependency_id: DependencyID) {
+        self.summary.left_out.push(dependency_id);
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let trees = lockfile.buffers.trees.as_slice();
+        let hoisted = lockfile.buffers.hoisted_dependencies.as_slice();
+        let alias = dependencies[dependency_id as usize].name.slice(string_buf);
+        // A parent tree comes before its children.
+        for child in &trees[tree_id as usize + 1..] {
+            let parent = self.trees.get(child.parent as usize);
+            if parent.is_some_and(|parent| parent.inside_left_out)
+                || (child.parent == tree_id
+                    && child.folder_name(dependencies, string_buf) == alias
+                    && !child.is_unlinked_member(trees, hoisted, dependencies))
+            {
+                self.trees[child.id as usize].inside_left_out = true;
+            }
+        }
+    }
+
+    /// Ends the turn of a dependency whose place is in the folder of a `Summary::left_out` one.
+    #[cold]
+    fn skip_inside_left_out(
+        &mut self,
+        is_pending_package_install: bool,
+        log_level: Options::LogLevel,
+    ) {
+        self.increment_tree_install_count(is_pending_package_install, log_level);
+    }
+
+    /// For a download that `run_tasks` saw fail. An optional dependency ends its turn here.
+    #[cold]
+    pub(crate) fn on_download_failed(
+        &mut self,
+        waiters: &[TaskCallbackContext],
+        is_required: bool,
+        log_level: Options::LogLevel,
+    ) {
+        // The install fails. The dependencies that wait are not counted, as before.
+        if is_required {
+            return;
+        }
+        let prev_node_modules = core::mem::take(&mut self.node_modules);
+        let prev_tree_id = self.current_tree_id;
+        for waiter in waiters {
+            let TaskCallbackContext::DependencyInstallContext(context) = waiter else {
+                continue;
+            };
+            self.leave_out(context.tree_id, context.dependency_id);
+            self.node_modules.tree_id = context.tree_id;
+            self.node_modules.path.clone_from(&context.path);
+            self.current_tree_id = context.tree_id;
+            let is_pending_package_install = false;
+            self.increment_tree_install_count(is_pending_package_install, log_level);
+        }
+        self.node_modules = prev_node_modules;
+        self.current_tree_id = prev_tree_id;
     }
 
     fn link_tree_bins(
@@ -2129,15 +2193,21 @@ impl<'a> PackageInstaller<'a> {
                     }
                     // Reported by whoever saw the download fail, or by `report_offline_misses`.
                     Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => {
-                        if self.manager().options.offline
+                        // `--offline` does not know it yet: `report_offline_misses` fails the install.
+                        let required = if self.manager().options.offline
                             == crate::package_manager_real::options::OfflineMode::Offline
                         {
                             self.summary.offline_misses.push(package_id);
+                            false
                         } else {
                             let required = self
                                 .manager()
                                 .is_package_required(dependency_id, package_id);
                             self.summary.fail += required as u32;
+                            required
+                        };
+                        if !required {
+                            self.leave_out(self.current_tree_id, dependency_id);
                         }
                         self.increment_tree_install_count(is_pending_package_install, log_level);
                     }
@@ -2184,6 +2254,10 @@ impl<'a> PackageInstaller<'a> {
                     });
                 self.pending_install_count += 1;
                 return;
+            }
+
+            if self.trees[self.current_tree_id as usize].inside_left_out {
+                return self.skip_inside_left_out(is_pending_package_install, log_level);
             }
 
             // creating this directory now, right before installing package

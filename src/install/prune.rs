@@ -1171,6 +1171,195 @@ impl<'a> HoistedTree<'a> {
     }
 }
 
+/// Whether `alias` in `folder` is a package, a version or a commit that `pkg_id` is not.
+fn has_other_package(lockfile: &Lockfile, folder: &Dir, alias: &[u8], pkg_id: PackageID) -> bool {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let packages = lockfile.packages.slice();
+    let (Some(res), Some(package)) = (
+        packages.items_resolution().get(pkg_id as usize),
+        descend(folder, alias),
+    ) else {
+        return false;
+    };
+    match res.tag {
+        ResolutionTag::Npm => {
+            let Some((name, Some(version))) = installed_package_json(&package) else {
+                return false;
+            };
+            let expected = res.npm().version.fmt(buf).to_string();
+            name != packages.items_name()[pkg_id as usize].slice(buf)
+                || !crate::package_install::installed_version_matches(&version, expected.as_bytes())
+        }
+        ResolutionTag::Git | ResolutionTag::Github => {
+            sys::File::read_from(package.fd(), crate::package_install::BUN_TAG)
+                .is_ok_and(|tag| tag.as_slice() != res.repository().resolved.slice(buf))
+        }
+        ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            let integrity = &packages.items_meta()[pkg_id as usize].integrity;
+            integrity.tag.is_supported()
+                && sys::File::read_from(package.fd(), crate::package_install::BUN_TAG).is_ok_and(
+                    |tag| {
+                        !tag.is_empty()
+                            && !crate::package_install::tarball_tag_matches(&tag, integrity, false)
+                    },
+                )
+        }
+        _ => false,
+    }
+}
+
+/// The package on the native binlink list whose bins link into `package_id`, if there is one.
+fn native_binlink_dependent(manager: &PackageManager, package_id: PackageID) -> Option<PackageID> {
+    use crate::postinstall_optimizer::{PkgInfo, PostinstallOptimizer};
+    let optimizer = &manager.postinstall_optimizer;
+    if !optimizer.is_native_binlink_enabled() {
+        return None;
+    }
+    let lockfile: &Lockfile = &manager.lockfile;
+    let pkgs = lockfile.packages.slice();
+    let resolutions_buffer = lockfile.buffers.resolutions.as_slice();
+    (pkgs.items_name_hash().iter())
+        .zip(pkgs.items_resolutions())
+        .position(|(&name_hash, resolutions)| {
+            optimizer.get(&PkgInfo {
+                name_hash,
+                ..Default::default()
+            }) == Some(PostinstallOptimizer::NativeBinlink)
+                && PostinstallOptimizer::get_native_binlink_replacement_package_id(
+                    resolutions.get(resolutions_buffer),
+                    pkgs.items_meta(),
+                    manager.options.cpu,
+                    manager.options.os,
+                    manager.options.libc,
+                ) == Some(package_id)
+        })
+        .map(|dependent| dependent as PackageID)
+}
+
+/// Whether a global package that this command does not name or install uses `package_id`.
+fn other_global_package_uses(
+    manager: &PackageManager,
+    installed: Option<&DynamicBitSet>,
+    package_id: PackageID,
+) -> bool {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let root = lockfile.packages.items_resolutions().first();
+    let others: Vec<PackageID> = root
+        .map_or(&[][..], |root| root.get(resolutions))
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let installed =
+                installed.is_some_and(|set| set.is_set_allow_out_of_bound(id as usize, false));
+            !manager.links_bins_globally(id, installed)
+        })
+        .collect();
+    reachable::packages_from(
+        lockfile,
+        resolutions,
+        &others,
+        true,
+        reachable::Options::install(manager),
+    )
+    .is_set_allow_out_of_bound(package_id as usize, false)
+}
+
+/// Removes the package that an earlier install left in the folder of each `left_out` dependency.
+pub(crate) fn remove_previous_packages(
+    manager: &mut PackageManager,
+    left_out: &[DependencyID],
+    installed: Option<&DynamicBitSet>,
+) {
+    // `left_out` is from the pass of `install_hoisted_packages`, which had this tree.
+    let Ok(saved) = hoist_install_tree(manager, false) else {
+        return;
+    };
+    for &dependency_id in left_out {
+        remove_previous_package(manager, dependency_id, installed);
+    }
+    restore_tree(&mut manager.lockfile, saved);
+}
+
+fn remove_previous_package(
+    manager: &PackageManager,
+    dependency_id: DependencyID,
+    installed: Option<&DynamicBitSet>,
+) {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let buffers = &lockfile.buffers;
+    let buf = buffers.string_bytes.as_slice();
+    let hoisted = buffers.hoisted_dependencies.as_slice();
+    let in_tree = |tree: &&tree::Tree| tree.dependencies.get(hoisted).contains(&dependency_id);
+    // Not through a link: `open_tree_folder` and `has_other_package` open real directories.
+    let Some(node_modules) = (buffers.trees.iter().find(in_tree))
+        .and_then(|tree| open_tree_folder(lockfile, tree.id, &mut Vec::new()))
+    else {
+        return;
+    };
+    let alias = buffers.dependencies[dependency_id as usize].name.slice(buf);
+    let pkg_id = buffers.resolutions[dependency_id as usize];
+    if !has_other_package(lockfile, &node_modules, alias, pkg_id) {
+        return;
+    }
+    let quiet = manager.options.log_level == LogLevel::Silent;
+    let name = bun_core::fmt::for_terminal(BStr::new(alias));
+    let resolution = bun_core::fmt::for_terminal(
+        lockfile.packages.items_resolution()[pkg_id as usize]
+            .fmt(buf, bun_core::fmt::PathSep::Posix),
+    );
+    // The bins of a package on the native binlink list stay linked into its platform package.
+    if let Some(tool) = native_binlink_dependent(manager, pkg_id) {
+        if !quiet {
+            bun_core::warn!(
+                "\"{}\" still links to the previous \"{}\": {}@{} is not installed",
+                bun_core::fmt::for_terminal(BStr::new(
+                    lockfile.packages.items_name()[tool as usize].slice(buf)
+                )),
+                name,
+                name,
+                resolution,
+            );
+        }
+        return;
+    }
+    if manager.options.global && other_global_package_uses(manager, installed, pkg_id) {
+        return;
+    }
+
+    // Only by a rename: what cannot be moved, for example a mount point, is not Bun's to delete.
+    let aside = crate::package_install::move_aside(
+        &node_modules,
+        &bun_core::ZBox::from_bytes(alias),
+        bun_core::fast_random(),
+    );
+    if let Some(aside) = aside {
+        let _ = node_modules.delete_tree(aside.as_bytes());
+    }
+    let removed = entry_kind_of(&node_modules, alias) == EntryKind::Unknown;
+    if removed {
+        if let Some((scope, _)) = strings::split_once_char(alias, b'/') {
+            // Fails unless that was its last package.
+            let _ = sys::rmdirat(node_modules.fd(), &bun_core::ZBox::from_bytes(scope));
+        }
+        prune_bins(&node_modules);
+    }
+    // Not through the log, which is printed before bun.lock is saved.
+    if !quiet {
+        bun_core::warn!(
+            "{} the previous \"{}\" from node_modules: {}@{} is not installed",
+            if removed {
+                "removed"
+            } else {
+                "could not remove"
+            },
+            name,
+            name,
+            resolution,
+        );
+    }
+}
+
 fn installed_package_json(package: &Dir) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
     let bytes = sys::File::read_from(package.fd(), b"package.json").ok()?;
     crate::initialize_store();

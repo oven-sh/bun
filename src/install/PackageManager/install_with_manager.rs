@@ -1083,6 +1083,20 @@ pub fn install_with_manager(
             core::mem::take(&mut install_summary.places),
         );
     }
+    // Not after a failure, without a saved bun.lock, with `--filter`, or in a bunx tree.
+    if !install_summary.left_out.is_empty()
+        && install_summary.fail == 0
+        && !manager.any_failed_to_install
+        && (should_save_lockfile || !(had_any_diffs || did_meta_hash_change))
+        && workspace_filters.is_empty()
+        && !crate::package_manager_real::run_tasks::is_bunx_install()
+    {
+        crate::prune::remove_previous_packages(
+            manager,
+            &install_summary.left_out,
+            install_summary.successfully_installed.as_ref(),
+        );
+    }
     if manager.options.global && manager.options.do_.install_packages() {
         crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);
     }

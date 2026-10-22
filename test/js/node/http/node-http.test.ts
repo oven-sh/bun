@@ -5,7 +5,18 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, isASAN, isCI, isDebug, isWindows, randomPort, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleSite,
+  isASAN,
+  isCI,
+  isDebug,
+  isWindows,
+  randomPort,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -3311,6 +3322,10 @@ it("a pipelined response is started when no response is in flight to hand it the
   }
 });
 
+// A local debug or ASAN build needs seconds to start one fixture process, so there the tests
+// that start one for each case run one at a time.
+const itFixture = (isASAN || isDebug) && !isCI ? it : it.concurrent;
+
 // The native dispatch tail answers a throw by ending the connection's current response. For a
 // pipelined request that was the response ahead of it: the client got "first" of a 10-byte body,
 // then the close. The throw is an uncaught exception, so each scenario runs in a child process.
@@ -3328,7 +3343,7 @@ describe("a dispatch that throws while an earlier response on the connection is 
 
   // node v26.3.0 gives the same result for the tests in these four loops.
   for (const emitted of ["request", "checkContinue", "checkExpectation"]) {
-    it.concurrent(`'${emitted}' listener: the response ahead still completes`, async () => {
+    itFixture(`'${emitted}' listener: the response ahead still completes`, async () => {
       expect(await run(emitted)).toEqual({
         result: {
           events: ["request /first", `${emitted} /second`, `uncaught: ${emitted} threw`],
@@ -3346,7 +3361,7 @@ describe("a dispatch that throws while an earlier response on the connection is 
     ["large", ["request /first", "request /second", "uncaught: request threw"]],
     ["large-destroyed", ["request /first", "request /second"]],
   ] as const) {
-    it.concurrent(`a large response ahead arrives in full before the connection is reset (${mode})`, async () => {
+    itFixture(`a large response ahead arrives in full before the connection is reset (${mode})`, async () => {
       expect(await run(mode)).toEqual({
         result: { events, firstBodyBytes: 8 * 1024 * 1024, closed: false },
         exitCode: 0,
@@ -3354,7 +3369,7 @@ describe("a dispatch that throws while an earlier response on the connection is 
     });
   }
   for (const mode of ["ended", "ended-later"]) {
-    it.concurrent(`a response that is complete when its turn comes is sent (${mode})`, async () => {
+    itFixture(`a response that is complete when its turn comes is sent (${mode})`, async () => {
       expect(await run(mode)).toEqual({
         result: {
           events: ["request /first", "request /second", "uncaught: request threw"],
@@ -3370,7 +3385,7 @@ describe("a dispatch that throws while an earlier response on the connection is 
   // the connection closes when it comes, and no later response goes out in its place. Node ends
   // with the same result, because it answers the next request with a 400 and closes.
   for (const thrower of ["ServerResponse", "IncomingMessage"]) {
-    it.concurrent(`a throw from the ${thrower} constructor closes the connection at its turn`, async () => {
+    itFixture(`a throw from the ${thrower} constructor closes the connection at its turn`, async () => {
       const mode = thrower === "ServerResponse" ? "constructor-response" : "constructor-request";
       expect(await run(mode)).toEqual({
         result: {
@@ -3387,7 +3402,7 @@ describe("a dispatch that throws while an earlier response on the connection is 
   // connection, which then waits forever. Bun answers a throw with a close. For a queued response
   // that happens when its turn comes, after the responses ahead of it. The requests behind it are
   // aborted with the connection.
-  it.concurrent("a response that is not complete resets the connection when its turn comes", async () => {
+  itFixture("a response that is not complete resets the connection when its turn comes", async () => {
     expect(await run("unfinished")).toEqual({
       result: {
         events: ["request /first", "request /third", "uncaught: request threw"],
@@ -3400,7 +3415,7 @@ describe("a dispatch that throws while an earlier response on the connection is 
   });
 
   // Unchanged: with no response ahead, the throwing request is the current one and is answered at once.
-  it.concurrent("a request that is not pipelined is still answered with a close", async () => {
+  itFixture("a request that is not pipelined is still answered with a close", async () => {
     expect(await run("not-pipelined")).toEqual({
       result: {
         events: ["request /first", "request /second", "uncaught: request threw"],
@@ -3446,8 +3461,8 @@ describe.concurrent.each(["tcp", "tls"])(
       // req.destroy() destroys the connection with the rest of the raw write, like in Node.js.
       "destroyed": { queued: true, events: thrown("request"), response: "", closed: true },
       "body": { queued: true, events: thrown("request"), ...nothingSent },
-      // The body that arrives after the throw ends the connection before the raw write has left.
-      "body-to-come": { queued: true, events: thrown("request"), response: "", closed: true },
+      // The body arrives after the throw and stays unread. The whole raw write still arrives: see the block below.
+      "body-to-come": { queued: true, events: thrown("request"), ...nothingSent },
     };
 
     // Windows takes the whole raw write of a plain TCP socket at once, so the first request is
@@ -3479,6 +3494,49 @@ describe.concurrent.each(["tcp", "tls"])(
     );
   },
 );
+
+// node:http stops the reads of a connection while its output is backed up. What the client sends
+// after that stays unread in the kernel, and the kernel turns a close over unread input into a
+// reset: it throws away the output that it has not sent yet, and the client can miss the close.
+// usockets drops that input where it closes a socket behind its own FIN. The client of the
+// fixture takes one chunk for each turn of the event loop, so that a reset cuts `big` short.
+// node v26.3.0 gives the same results.
+describe("a close over input that the client sent while the reads were stopped", () => {
+  const fixture = path.join(import.meta.dir, "node-http-close-over-unread-input-fixture.js");
+  const cells = [
+    ["tcp", "socket-end", ["request /first"]],
+    ["tls", "socket-end", ["request /first"]],
+    ["unix", "socket-end", ["request /first"]],
+    // Over tcp and a unix socket only the FIN of the client waits unread, and a FIN resets nothing.
+    ["tls", "client-fin-only", ["request /first", "uncaught: first threw"]],
+  ] as const;
+  for (const [transport, mode, events] of cells) {
+    // Windows takes all of `big` at once over plain TCP, so nothing backs up there. A socket
+    // path is a named pipe there.
+    itFixture.skipIf(isWindows && transport !== "tls")(`${mode} (${transport})`, async () => {
+      using dir = transport === "unix" ? tempDir("unread-input", {}) : undefined;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, transport, mode, ...(dir ? [path.join(String(dir), "s")] : [])],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({
+        result: stdout ? JSON.parse(stdout) : undefined,
+        stderr,
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        result: { mode, events: [...events], big: "all", rest: "", end: "end" },
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  }
+});
 
 it("requireHostHeader still rejects Upgrade-carrying requests that dispatch as normal requests", async () => {
   // The native parser exempts Upgrade requests from the Host check so genuine

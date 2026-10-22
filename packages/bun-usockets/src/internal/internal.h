@@ -388,6 +388,9 @@ struct us_socket_t {
   unsigned char ssl_shutdown_after_first_flight : 1;
   /* ssl_raw_write shut the write side down, not the owner. */
   unsigned char ssl_send_rejected : 1;
+  /* us_socket_resume ran and the loop has not read the socket since. Like a socket that is paused, it
+   * can have input of the peer in the kernel that no read took: us_internal_socket_close_and_notify. */
+  unsigned char resumed_unread : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.

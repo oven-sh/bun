@@ -324,6 +324,12 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
             // Prevent entering TIME_WAIT state when forcefully closing
             struct linger l = { 1, 0 };
             setsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_LINGER, (const char*)&l, sizeof(l));
+        } else if ((s->flags.is_paused || s->resumed_unread) && us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN &&
+                   (code == LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN || code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN)) {
+            /* Our FIN is out, and what was written before it must still arrive. A pause left the peer's input
+             * where no read took it, and the kernel turns a close over unread input into a reset that throws
+             * away the output it has not sent yet. */
+            bsd_discard_queued_input(us_poll_fd(&s->p));
         }
 
         us_internal_poll_close_fd((struct us_poll_t *) s);
@@ -457,6 +463,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->resumed_unread = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -879,6 +886,7 @@ void us_socket_pause(struct us_socket_t *s) {
 void us_socket_resume(struct us_socket_t *s) {
     if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;
+    s->resumed_unread = 1;
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 

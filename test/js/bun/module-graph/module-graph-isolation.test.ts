@@ -3732,13 +3732,14 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  // DIAGNOSTIC, not for merging: what holds the last server of disposed-while-building-pages.mjs on the macOS lanes.
+  // DIAGNOSTIC, not for merging: what holds the last server of disposed-while-building-pages.mjs on the macOS and
+  // Windows lanes (the stack is read on macOS only).
   // Two at a time, as the two tests below are, one run after the other.
   for (const [slot, modes] of [
     ["a", [...Array(8).fill("old-floor-50"), ...Array(3).fill("old-floor"), ...Array(3).fill("old"), "judge", "judge"]],
     ["b", [...Array(8).fill("old-floor-50"), ...Array(3).fill("old-floor"), ...Array(3).fill("old"), "weak", "weak"]],
   ] as const)
-    test.skipIf(!isMacOS && !process.env.ZZ_DIAG)(
+    test.skipIf(!isMacOS && !isWindows && !process.env.ZZ_DIAG)(
       "zz diag " + slot,
       async () => {
         const began = Date.now();

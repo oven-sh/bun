@@ -563,12 +563,14 @@ describe.skipIf(isWindows).concurrent("dialogs on a non-blocking stdin", () => {
       );
     const counts = () => ({ reads: count("io", "syscr"), sleeps: count("status", "voluntary_ctxt_switches") });
     const before = counts();
-    let after;
+    let reads, sleeps;
     do {
       await Bun.sleep(1);
-      after = counts();
-    } while (after.sleeps - before.sleeps < 50);
-    expect(after.reads - before.reads).toBeLessThan(10 * (after.sleeps - before.sleeps));
+      const now = counts();
+      reads = now.reads - before.reads;
+      sleeps = now.sleeps - before.sleeps;
+    } while (sleeps < 50 && reads < 500);
+    expect(reads).toBeLessThan(10 * sleeps);
 
     child.write("y\n");
     await child.waitFor("second=y\n");

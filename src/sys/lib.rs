@@ -9339,11 +9339,9 @@ pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
 pub fn read_stdin_blocking(buf: &mut [u8]) -> Maybe<usize> {
     #[cfg(unix)]
     {
-        // `read` reports an errno and nothing else. Only the errno crosses the branch: a caller that ignores the error
-        // then has no `Error` to build or drop.
+        // Only the errno crosses the branch, so a caller that ignores the error has no `Error` to build or drop.
         match read(Fd::stdin(), buf).map_err(|e| e.errno) {
-            // fd 0 shares its O_NONBLOCK with fd 1/2 (set once process.stdout is a socket) and with every program on
-            // the same terminal. EAGAIN is "no input yet", not the end of it: wait, as `write_all_to_stdio` does.
+            // "No input yet", not its end: fd 0 shares O_NONBLOCK with fd 1/2 and with other programs.
             Err(EAGAIN) => read_stdin_when_readable(buf),
             result => result,
         }
@@ -9363,20 +9361,15 @@ const EAGAIN: ErrorInt = libc::EAGAIN as ErrorInt;
 #[cold]
 #[inline(never)]
 fn read_stdin_when_readable(buf: &mut [u8]) -> core::result::Result<usize, ErrorInt> {
-    // The wait ended and the read after it found no input. Another reader of the same description took it, or the wait
-    // cannot watch this stdin: the kernel reports a descriptor without a poll handler as always readable.
-    let mut waited_for_nothing = false;
+    wait_for_stdin();
     loop {
-        wait_for_stdin();
-        // The sleep keeps the loop from spinning. It is after the wait, so that a read that finds nothing goes straight
-        // back to the wait: on macOS, `select` reports the end of a FIFO only until one reader has read that end.
-        if waited_for_nothing {
-            std::thread::sleep(core::time::Duration::from_millis(1));
-        }
         match read(Fd::stdin(), buf).map_err(|e| e.errno) {
-            Err(EAGAIN) => waited_for_nothing = true,
+            // Another reader of the same description took the input, or the wait cannot watch this stdin.
+            Err(EAGAIN) => wait_for_stdin(),
             result => return result,
         }
+        // No spinning. After the wait, not before: macOS `select` reports a FIFO's end only until one reader reads it.
+        std::thread::sleep(core::time::Duration::from_millis(1));
     }
 }
 

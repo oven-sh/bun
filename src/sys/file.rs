@@ -142,8 +142,7 @@ impl File {
     // ── read / write ─────────────────────────────────────────────────────
     pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> {
         match read(self.handle, buf) {
-            // Stdin waits for its input, see `read_stdin_blocking`. Any other handle reports EAGAIN: whoever opened
-            // it with O_NONBLOCK asked for that.
+            // Only stdin waits, see `read_stdin_blocking`. Whoever opened another handle with O_NONBLOCK wants EAGAIN.
             #[cfg(unix)]
             Err(e) if e.is_retry() && self.handle == Fd::stdin() => read_stdin_when_readable(buf)
                 .map_err(|errno| Error::from_code_int(errno.into(), Tag::read)),

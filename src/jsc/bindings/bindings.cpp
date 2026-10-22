@@ -1778,7 +1778,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         if (!WTF::equalSpans(left->span(), right->span()))
             return false;
 
-        if (mode.checkPrototypes) {
+        if (mode.checkPrototypes && !sameStructureWithoutOwnProperties(c1, c2)) {
             // node also compares own enumerable properties of ArrayBuffers.
             break;
         }
@@ -1833,6 +1833,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             if (time1 != time2 && !(std::isnan(time1) && std::isnan(time2))) {
                 return false;
             }
+            if (sameStructureWithoutOwnProperties(c1, c2)) {
+                return true;
+            }
             break;
         }
 
@@ -1851,14 +1854,20 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
 
             if (left->regExp()->key() != right->regExp()->key()) {
-                return false;
+                // node compares `source` and `flags`, and two patterns can have one source: new RegExp("/") and /\//.
+                if (!mode.checkPrototypes || left->regExp()->flags() != right->regExp()->flags() || left->regExp()->escapedPattern() != right->regExp()->escapedPattern()) {
+                    return false;
+                }
             }
             if (mode.checkPrototypes) {
-                // node also compares `lastIndex` and own enumerable properties.
-                bool sameLastIndex = JSC::sameValue(globalObject, left->getLastIndex(), right->getLastIndex());
+                // node also compares `lastIndex` (with `===`) and own enumerable properties.
+                bool sameLastIndex = JSC::JSValue::strictEqual(globalObject, left->getLastIndex(), right->getLastIndex());
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!sameLastIndex) {
                     return false;
+                }
+                if (sameStructureWithoutOwnProperties(c1, c2)) {
+                    return true;
                 }
                 break;
             }
@@ -1903,7 +1912,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            if (mode.isStrict) {
+            if (mode.exactKeys) {
                 if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
                     return false;
                 }
@@ -1915,7 +1924,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             // note that an undefined cause is different than a missing cause in
             // strict mode.
             const PropertyName cause(vm.propertyNames->cause);
-            if (mode.isStrict) {
+            if (mode.exactKeys) {
                 bool leftHasCause = left->hasProperty(globalObject, cause);
                 RETURN_IF_EXCEPTION(scope, {});
                 bool rightHasCause = right->hasProperty(globalObject, cause);
@@ -1948,7 +1957,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
 
             const size_t propertyArrayLength1 = a1.size();
             const size_t propertyArrayLength2 = a2.size();
-            if (mode.isStrict) {
+            if (mode.exactKeys) {
                 if (propertyArrayLength1 != propertyArrayLength2) {
                     return false;
                 }
@@ -1968,7 +1977,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName1);
                 RETURN_IF_EXCEPTION(scope, {});
 
-                if (!mode.isStrict) {
+                if (!mode.exactKeys) {
                     if (prop1.isUndefined() && prop2.isEmpty()) {
                         continue;
                     }
@@ -2030,7 +2039,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         // O(bytes) and node's byte-level semantics (NaN payload bits) are preserved;
         // only the "bytes equal" exits defer to the property walk when extras exist.
         bool compareOwnProperties = false;
-        if (mode.isStrict) {
+        if (mode.exactKeys) {
             compareOwnProperties = hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure());
         }
 
@@ -2060,7 +2069,8 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             return false;
         }
 
-        if (vector == rightVector) [[unlikely]] {
+        // node's loose mode compares a NaN with `==` even when both views read it from one buffer.
+        if (vector == rightVector && !(mode.checkPrototypes && mode.looseValues && isFloatTypedArrayType(c1Type))) [[unlikely]] {
             if (mode.checkPrototypes) {
                 return mode.nonIndexOwnPropertiesEqual(globalObject, gcBuffer, stack, scope, left, right);
             }
@@ -2071,7 +2081,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         // Float arrays in non-strict mode use IEEE == (+0/-0 equal, NaN != NaN); everything else
         // compares raw bytes. All results funnel to one tail so node-parity never skips own props.
         bool contentsEqual;
-        if (!mode.isStrict && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
+        if (mode.looseValues && (c1Type == Float16ArrayType || c1Type == Float32ArrayType || c1Type == Float64ArrayType)) {
             if (c1Type == Float16ArrayType) {
                 contentsEqual = looseFloatContentsEqual(std::span { static_cast<const WTF::Float16*>(vector), byteLength / sizeof(WTF::Float16) },
                     std::span { static_cast<const WTF::Float16*>(rightVector), byteLength / sizeof(WTF::Float16) });
@@ -2097,10 +2107,8 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     }
     case StringObjectType: {
         if (c2Type != StringObjectType) {
-            // A String subclass instance is DerivedStringObjectType. Only skipPrototype
-            // mode, where the constructor is ignored, treats it as an equivalent boxed
-            // string; every other mode keeps the existing "different type" answer.
-            if (!(mode.isStrict && mode.skipPrototypeIdentity)) {
+            // A String subclass instance is DerivedStringObjectType. The modes that ignore the constructor (skipPrototype, node's loose mode) treat it as an equivalent boxed string.
+            if (!(mode.exactKeys && mode.skipPrototypeIdentity)) {
                 return false;
             } else if (c2Type != DerivedStringObjectType) {
                 return false;
@@ -2113,9 +2121,10 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
         }
 
-        JSString* s1 = c1->toStringInline(globalObject);
+        // node compares the string that each object wraps. The other relations call toString().
+        JSString* s1 = mode.checkPrototypes ? uncheckedDowncast<StringObject>(c1)->internalValue() : c1->toStringInline(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        JSString* s2 = c2->toStringInline(globalObject);
+        JSString* s2 = mode.checkPrototypes ? uncheckedDowncast<StringObject>(c2)->internalValue() : c2->toStringInline(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
         bool stringsEqual = s1->equal(globalObject, s2);
@@ -2123,7 +2132,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         if (!stringsEqual) {
             return false;
         }
-        if (mode.checkPrototypes || mode.isStrict) {
+        if (mode.checkPrototypes || mode.exactKeys) {
             // Only these modes compare extra own props on boxed primitives. Guarded so a plain
             // boxed string skips the per-char-index walk; `break` (not nonIndexOwnPropertiesEqual)
             // when extras exist so an out-of-range index still fails the compare, like node.
@@ -2146,7 +2155,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             auto* url2 = dynamicDowncast<JSDOMURL>(c2);
             auto* url1 = dynamicDowncast<JSDOMURL>(c1);
 
-            if (mode.isStrict) {
+            if (mode.exactKeys) {
                 // if one is a URL and the other is not a URL, toStrictEqual returns false.
                 if ((url2 == nullptr) != (url1 == nullptr)) {
                     return false;
@@ -2194,7 +2203,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
 
                     goto compareAsNormalValue;
                 } else {
-                    if (mode.isStrict) {
+                    if (mode.exactKeys) {
                         // if one is a URLSearchParams and the other is not a URLSearchParams, toStrictEqual should return false.
                         if ((urlSearchParams2 == nullptr) != (urlSearchParams1 == nullptr)) {
                             return false;
@@ -2233,7 +2242,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
 
                     goto compareAsNormalValue;
                 } else {
-                    if (mode.isStrict) {
+                    if (mode.exactKeys) {
                         // if one is a FetchHeaders and the other is not a FetchHeaders, toStrictEqual should return false.
                         if ((headers2 == nullptr) != (headers1 == nullptr)) {
                             return false;
@@ -2243,6 +2252,14 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                             goto compareAsNormalValue;
                         }
                     }
+                }
+            }
+        } else if (mode.checkPrototypes) {
+            if (auto* url = dynamicDowncast<JSDOMURL>(c1)) {
+                bool looksEqual = looksLikeURLWithHref(globalObject, scope, c2->getObject(), url->wrapped().href().string());
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!looksEqual) {
+                    return false;
                 }
             }
         }
@@ -2277,6 +2294,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         bool same = JSC::sameValue(globalObject, val1, val2);
         RETURN_IF_EXCEPTION(scope, {});
         if (!same) return false;
+        if (mode.checkPrototypes && sameStructureWithoutOwnProperties(c1, c2)) {
+            return true;
+        }
         // Fall through to check own properties
         break;
     }

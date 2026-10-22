@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
 import { join } from "node:path";
 import v8 from "node:v8";
 
@@ -610,7 +610,7 @@ describe("structuredClone with Blob and File", () => {
     // an fd that no JS could construct. On posix, fd == -1 reaches the
     // `raw != -1` assert in `Fd::as_borrowed_fd` and aborts the process at
     // the first `.size` / body-mixin touch.
-    describe("crafted File blob fd (posix)", () => {
+    describe.skipIf(isWindows)("crafted File blob fd (posix)", () => {
       // Robustness against header/framing changes: serialize a file-backed
       // blob over a distinctive sentinel fd, locate its 4-byte image in the
       // output (posix Fd is `#[repr(transparent)] i32`), and patch it.

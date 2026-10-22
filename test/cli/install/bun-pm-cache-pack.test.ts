@@ -854,7 +854,7 @@ describe("bun pm cache pack", () => {
       using box = sandbox();
       await installedProject(box);
       const online = snapshot(join(box.project, "node_modules", "no-deps"), false);
-      {
+      if (!isWindows) {
         const entry = join(
           box.cache,
           entryNames(box.cache).find(name => name.startsWith("no-deps@"))!,

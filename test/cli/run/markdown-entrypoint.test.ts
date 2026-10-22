@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, rmSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
 import { join } from "path";
 
 // Tracks exit code from the last runMd() call so individual tests can
@@ -347,7 +347,7 @@ describe("bun <file.md>", () => {
     expect(openers).toBeGreaterThanOrEqual(2);
   });
 
-  test.skipIf(!(isDebug || isASAN))(
+  test.skipIf(!isPosix || !(isDebug || isASAN))(
     "prefetched remote images are staged into fresh temp files and never written through a pre-existing entry at the staged path",
     async () => {
       const payload = Buffer.alloc(256, "z");

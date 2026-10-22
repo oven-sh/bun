@@ -3,7 +3,7 @@
 // hardlink install backend must fall back to copying files, like it already
 // does for EXDEV. https://github.com/oven-sh/bun/issues/36852
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, runBunInstall, tempDir, unprivilegedSpawnOptions } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, runBunInstall, tempDir, unprivilegedSpawnOptions } from "harness";
 import { chmodSync, cpSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { installEnv, TestRegistry } from "registry";
@@ -220,7 +220,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
 });
 
 // A `mkdir` that fails says nothing about hard links. Only the package that needs the directory fails.
-describe("hardlink backend, a directory that cannot be created", () => {
+describe.skipIf(isWindows)("hardlink backend, a directory that cannot be created", () => {
   const registry = new TestRegistry();
   beforeAll(() => registry.start());
   afterAll(() => registry.stop());

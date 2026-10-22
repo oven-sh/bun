@@ -8,6 +8,7 @@ import {
   expectMaxObjectTypeCount,
   isASAN,
   isDebug,
+  isWindows,
   runFixtureMaxRSS,
   tempDir,
 } from "harness";
@@ -509,7 +510,7 @@ describe("spawn stdin ReadableStream", () => {
   // iterator: return(). The error is not thrown into it.
   // Not on Windows: fs.closeSync(0) does nothing there (libuv keeps fds 0 to 2 open), so the child
   // cannot close its stdin and live on.
-  describe.each(asyncIterableBodyShapes)(
+  describe.skipIf(isWindows).each(asyncIterableBodyShapes)(
     "%s as stdin is closed with return() when the child closed its stdin before a chunk",
     (_, make) => {
       test.concurrent.each([

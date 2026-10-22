@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 import { join } from "path";
 
 // Regression test for FileReader.onPull: after `drain()` moves the
@@ -24,7 +24,7 @@ import { join } from "path";
 // cannot be reused, so the leak shows up as clean linear RSS growth
 // (~106-119 MB unfixed vs. <10 MB fixed over the sampled window). Debug
 // builds always enable ASAN.
-test.skipIf(!(isDebug || isASAN))(
+test.skipIf(isWindows || !(isDebug || isASAN))(
   "FileReader.onPull frees the drained buffer after memcpy",
   async () => {
     await using proc = Bun.spawn({

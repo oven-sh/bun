@@ -376,7 +376,7 @@ registry = http://localhost:${registry.port}/
     // other POSIX platforms; on Windows it is larger than any environment variable can be), so
     // the longest directory whose "/.npmrc" and NUL terminator still fit is MAX_PATH_BYTES - 8
     // bytes. A longer directory cannot contain an openable .npmrc and counts as having none.
-    describe("$HOME longer than the path buffer", () => {
+    describe.skipIf(isWindows)("$HOME longer than the path buffer", () => {
       const MAX_PATH_BYTES = isLinux ? 4096 : 1024;
       const LONGEST_HOME = MAX_PATH_BYTES - 8;
 

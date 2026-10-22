@@ -1324,7 +1324,7 @@ describe.concurrent("auto-install throws when it can't do something instead of e
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  describe.serial("a cache directory that is read-only", () => {
+  describe.serial.skipIf(isWindows)("a cache directory that is read-only", () => {
     async function run(dir: string) {
       using unprivileged = unprivilegedSpawnOptions(dir);
       await using proc = Bun.spawn({
@@ -3161,7 +3161,7 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
   });
 
   // `app/packages/member` is a link to `outside/up/member`, and bun is started in it by that name.
-  describe("a member that is a link to a folder outside the workspace root", () => {
+  describe.skipIf(isWindows)("a member that is a link to a folder outside the workspace root", () => {
     const scanner = `[install.security]\nscanner = "./scanner.ts"\n`;
     const created = ["app", "cache", "home", "outside"];
     const inLinkedMember = (files: (r: Registries) => Files) =>

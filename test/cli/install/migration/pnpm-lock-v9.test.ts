@@ -5,6 +5,7 @@ import {
   bunExe,
   githubTarball,
   hostedGitRepository,
+  isWindows,
   nodeModulesPackages,
   tempDir,
   unprivilegedSpawnOptions,
@@ -4165,32 +4166,35 @@ importers:
 
     // The copied fields are written before bun.lock, so a read-only package.json fails the migration outright
     // rather than leaving a bun.lock whose overrides the next install cannot see in package.json.
-    test.concurrent("a read-only package.json fails the migration before bun.lock is written", async () => {
-      const packageJson = JSON.stringify({ name: "overrides-read-only", pnpm: { overrides: { plain: "1.0.0" } } });
-      using dir = tempDir("pnpm-v9-overrides-read-only", {
-        "package.json": packageJson,
-        "pnpm-lock.yaml": overridesLockfile("  plain: 1.0.0"),
-      });
-      chmodSync(join(String(dir), "package.json"), 0o444);
-      using unprivileged = unprivilegedSpawnOptions(String(dir));
+    test.concurrent.skipIf(isWindows)(
+      "a read-only package.json fails the migration before bun.lock is written",
+      async () => {
+        const packageJson = JSON.stringify({ name: "overrides-read-only", pnpm: { overrides: { plain: "1.0.0" } } });
+        using dir = tempDir("pnpm-v9-overrides-read-only", {
+          "package.json": packageJson,
+          "pnpm-lock.yaml": overridesLockfile("  plain: 1.0.0"),
+        });
+        chmodSync(join(String(dir), "package.json"), 0o444);
+        using unprivileged = unprivilegedSpawnOptions(String(dir));
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "pm", "migrate"],
-        cwd: String(dir),
-        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
-        stdout: "pipe",
-        stderr: "pipe",
-        ...unprivileged,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "pm", "migrate"],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toContain("error: failed to write package.json: EACCES");
-      expect(stderr).not.toContain("copied");
-      expect(stdout).toBe("");
-      expect(exitCode).toBe(1);
-      expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(packageJson);
-      expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
-    });
+        expect(stderr).toContain("error: failed to write package.json: EACCES");
+        expect(stderr).not.toContain("copied");
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+        expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(packageJson);
+        expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+      },
+    );
   });
 
   // The settings moved out of `pnpm` / pnpm-workspace.yaml are edited into package.json in memory while the

@@ -1116,7 +1116,7 @@ describe.concurrent("Bun.file", () => {
 
   // on Windows the creator of the file will be able to read from it so this test is disabled on it;
   // root can read it anywhere, so it is disabled there as well
-  describe.skipIf(isRoot)("bad permissions throws", () => {
+  describe.skipIf(isWindows || isRoot)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");

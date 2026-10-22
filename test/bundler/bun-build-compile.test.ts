@@ -757,45 +757,49 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       // An executable for Windows has its chunks at B:/~BUN/root/. This bun stands in for the Windows one (its builtins
       // section is what the internal modules are named from), so the program cannot be put in it: the build fails
       // there, after the link wrote what it calls the code. (On Windows that build is the round trips above.)
-      test("a build for Windows calls the code what a build for this platform calls it", async () => {
-        using dir = tempDir("build-compile-bytecode-order-windows", twoEntryPoints);
-        await record(String(dir), twoEntryPointArgs, "5\n");
-        const namesOfBuild = async (target: string[], outfile: string, root: string) => {
-          const build = await buildIn(
-            String(dir),
-            [...twoEntryPointArgs, ...target, "--bytecode-order=app.order"],
-            outfile,
-            {
-              BUN_BYTECODE_ORDER_NAMES_OUT: join(String(dir), outfile + ".names"),
-            },
+      test.skipIf(isWindows)(
+        "a build for Windows calls the code what a build for this platform calls it",
+        async () => {
+          using dir = tempDir("build-compile-bytecode-order-windows", twoEntryPoints);
+          await record(String(dir), twoEntryPointArgs, "5\n");
+          const namesOfBuild = async (target: string[], outfile: string, root: string) => {
+            const build = await buildIn(
+              String(dir),
+              [...twoEntryPointArgs, ...target, "--bytecode-order=app.order"],
+              outfile,
+              {
+                BUN_BYTECODE_ORDER_NAMES_OUT: join(String(dir), outfile + ".names"),
+              },
+            );
+            // Without where the chunks are, the executable's name, and the hash of a chunk's contents (the paths it
+            // imports chunks by are part of those).
+            const names = Object.entries(namesIn(String(dir), outfile + ".names"))
+              .map(([path, names]) => [
+                path
+                  .replace(root, "")
+                  .replace(outfile, "<entry>")
+                  .replace(/-[a-z0-9]{8}\.js$/, ".js"),
+                names,
+              ])
+              .sort();
+            expect(new Set(names.map(([path]) => path)).size).toBe(names.length);
+            return { build, names };
+          };
+          const here = await namesOfBuild([], "thisplatform", "/$bunfs/root/");
+          expect(here.build).toEqual({ stderr: "", exitCode: 0 });
+          const windows = await namesOfBuild(
+            ["--target=bun-windows-x64", `--compile-executable-path=${bunExe()}`],
+            "windows.exe",
+            "B:/~BUN/root/",
           );
-          // Without where the chunks are, the executable's name, and the hash of a chunk's contents (the paths it
-          // imports chunks by are part of those).
-          const names = Object.entries(namesIn(String(dir), outfile + ".names"))
-            .map(([path, names]) => [
-              path
-                .replace(root, "")
-                .replace(outfile, "<entry>")
-                .replace(/-[a-z0-9]{8}\.js$/, ".js"),
-              names,
-            ])
-            .sort();
-          expect(new Set(names.map(([path]) => path)).size).toBe(names.length);
-          return { build, names };
-        };
-        const here = await namesOfBuild([], "thisplatform", "/$bunfs/root/");
-        expect(here.build).toEqual({ stderr: "", exitCode: 0 });
-        const windows = await namesOfBuild(
-          ["--target=bun-windows-x64", `--compile-executable-path=${bunExe()}`],
-          "windows.exe",
-          "B:/~BUN/root/",
-        );
-        expect(windows.build.stderr).toContain("failed to write compiled executable");
-        expect(windows.build.stderr).not.toContain("names");
-        // The three chunks, and node:fs with the internal modules it needs.
-        expect(here.names.length).toBeGreaterThan(3);
-        expect(windows.names).toEqual(here.names);
-      }, 60_000);
+          expect(windows.build.stderr).toContain("failed to write compiled executable");
+          expect(windows.build.stderr).not.toContain("names");
+          // The three chunks, and node:fs with the internal modules it needs.
+          expect(here.names.length).toBeGreaterThan(3);
+          expect(windows.names).toEqual(here.names);
+        },
+        60_000,
+      );
 
       // The runtime runs a module from its source when the bytecode it has is not for that source. Such a run did not
       // see what the module's code does: the recording says nothing about it, not that it did not run.
@@ -1557,24 +1561,28 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       }, 60_000);
 
       // The file is read once, front to back.
-      test("an order file that is a pipe", async () => {
-        const { plain, order } = shared;
-        const piped = await compile(exe("piped"), ["--bytecode-order=/dev/stdin"], {}, order);
-        expect(piped.stderr).not.toContain("bytecode order file");
-        expect(piped.exitCode).toBe(0);
-        expect(hasLinkedPayload(exe("piped"))).toBe(true);
-        expect(await run(exe("piped"), recordedArgv)).toEqual(plain);
-        expect(await stats(exe("piped"), recordedArgv)).toMatchObject({
-          hot: expect.any(Number),
-          unknown: 0,
-          cold: 0,
-        });
-      }, 60_000);
+      test.skipIf(!isPosix)(
+        "an order file that is a pipe",
+        async () => {
+          const { plain, order } = shared;
+          const piped = await compile(exe("piped"), ["--bytecode-order=/dev/stdin"], {}, order);
+          expect(piped.stderr).not.toContain("bytecode order file");
+          expect(piped.exitCode).toBe(0);
+          expect(hasLinkedPayload(exe("piped"))).toBe(true);
+          expect(await run(exe("piped"), recordedArgv)).toEqual(plain);
+          expect(await stats(exe("piped"), recordedArgv)).toMatchObject({
+            hot: expect.any(Number),
+            unknown: 0,
+            cold: 0,
+          });
+        },
+        60_000,
+      );
     });
 
     // process.kill(process.pid, signal) with no handler ends the process without the usual exit: the recording is written
     // before the signal is sent, like the profiles and the compile cache.
-    describe("a process that sends itself a fatal signal still writes the order file", () => {
+    describe.skipIf(isWindows)("a process that sends itself a fatal signal still writes the order file", () => {
       let selfKillDir: ReturnType<typeof tempDir> | undefined;
       let built: string;
       afterAll(() => selfKillDir?.[Symbol.dispose]());

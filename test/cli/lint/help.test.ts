@@ -629,7 +629,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
       expect(await whatRan({}, [command], ".", { before })).toBe("the script");
     });
 
-    describe("a package.json that isn't a readable file", () => {
+    describe.skipIf(isWindows)("a package.json that isn't a readable file", () => {
       const root = { "package.json": `{ "scripts": { "${command}": "echo the script" } }` };
       const link = (to: string) => (dir: string) => symlinkSync(to, join(dir, "sub/package.json"));
       const pipe = (dir: string) => expect(Bun.spawnSync(["mkfifo", join(dir, "sub/package.json")]).exitCode).toBe(0);

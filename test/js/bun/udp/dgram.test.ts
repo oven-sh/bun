@@ -568,52 +568,55 @@ function hasIPv6Loopback() {
 
 // rinfo.family reflects the packet's sockaddr, not the constructor's `type`:
 // a `udp4` socket adopting an IPv6 fd receives IPv6-tagged rinfo.
-test.skipIf(!hasIPv6Loopback())("rinfo.family follows the packet's sockaddr, not the socket type", async () => {
-  const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
-  const wrap = new UDP();
-  expect(wrap.bind6("::1", 0, 0)).toBe(0);
+test.skipIf(isWindows || !hasIPv6Loopback())(
+  "rinfo.family follows the packet's sockaddr, not the socket type",
+  async () => {
+    const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+    const wrap = new UDP();
+    expect(wrap.bind6("::1", 0, 0)).toBe(0);
 
-  const socket = createSocket("udp4");
-  const sender = createSocket("udp6");
-  try {
-    const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
-    const { promise: got, resolve: onMessage, reject: onSocketError } = Promise.withResolvers<any>();
-    // Route every failure into whichever promise is outstanding so a lost
-    // datagram surfaces as an error rather than a test-timeout hang.
-    socket.on("error", err => {
-      onListenError(err);
-      onSocketError(err);
-    });
-    sender.on("error", onSocketError);
-    socket.on("listening", onListening);
-    socket.on("message", (_data, rinfo) => onMessage(rinfo));
+    const socket = createSocket("udp4");
+    const sender = createSocket("udp6");
+    try {
+      const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
+      const { promise: got, resolve: onMessage, reject: onSocketError } = Promise.withResolvers<any>();
+      // Route every failure into whichever promise is outstanding so a lost
+      // datagram surfaces as an error rather than a test-timeout hang.
+      socket.on("error", err => {
+        onListenError(err);
+        onSocketError(err);
+      });
+      sender.on("error", onSocketError);
+      socket.on("listening", onListening);
+      socket.on("message", (_data, rinfo) => onMessage(rinfo));
 
-    socket.bind({ fd: wrap.fd });
-    await listening;
+      socket.bind({ fd: wrap.fd });
+      await listening;
 
-    const port = socket.address().port;
-    let rinfo: any;
-    let sendErr: unknown;
-    // Retry so a single dropped loopback datagram surfaces as a bounded
-    // failure instead of the file-level test timeout.
-    for (let i = 0; i < 50 && rinfo === undefined; i++) {
-      await new Promise<void>((resolve, reject) =>
-        sender.send("hi", port, "::1", err => (err ? reject(err) : resolve())),
-      ).catch(e => (sendErr ??= e));
-      rinfo = await Promise.race([got, Bun.sleep(100)]);
+      const port = socket.address().port;
+      let rinfo: any;
+      let sendErr: unknown;
+      // Retry so a single dropped loopback datagram surfaces as a bounded
+      // failure instead of the file-level test timeout.
+      for (let i = 0; i < 50 && rinfo === undefined; i++) {
+        await new Promise<void>((resolve, reject) =>
+          sender.send("hi", port, "::1", err => (err ? reject(err) : resolve())),
+        ).catch(e => (sendErr ??= e));
+        rinfo = await Promise.race([got, Bun.sleep(100)]);
+      }
+      if (rinfo === undefined) {
+        throw new Error(`no datagram received on adopted fd (port=${port} sendErr=${sendErr ?? "(none)"})`);
+      }
+
+      expect(rinfo.family).toBe("IPv6");
+      expect(rinfo.address).toBe("::1");
+    } finally {
+      sender.close();
+      socket.close();
+      wrap.close();
     }
-    if (rinfo === undefined) {
-      throw new Error(`no datagram received on adopted fd (port=${port} sendErr=${sendErr ?? "(none)"})`);
-    }
-
-    expect(rinfo.family).toBe("IPv6");
-    expect(rinfo.address).toBe("::1");
-  } finally {
-    sender.close();
-    socket.close();
-    wrap.close();
-  }
-});
+  },
+);
 
 // Adopting an unbound descriptor: the kernel auto-binds on the first sendto(),
 // and address() must return that ephemeral port (Node calls getsockname fresh).

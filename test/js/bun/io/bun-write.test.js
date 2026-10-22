@@ -456,7 +456,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   // ftruncate(dst, N); both destroy bytes in a file the caller already had
   // open. BUN_CONFIG_DISABLE_COPY_FILE_RANGE=1 routes Linux through the
   // fallback so the assertion fail-befores on every POSIX lane.
-  describe("Bun.write(Bun.file(fd), Bun.file(path)) does not truncate the fd", () => {
+  describe.skipIf(isWindows)("Bun.write(Bun.file(fd), Bun.file(path)) does not truncate the fd", () => {
     const fallbackEnv = { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" };
 
     it("preserves bytes past the slice window in an r+ fd", async () => {
@@ -1428,7 +1428,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     // the last refs on it while the pipe writer inside it is still on the stack (ASAN:
     // heap-use-after-free). On Windows a write to stdout blocks, so "parked" would never print.
     // setImmediate() runs on a later turn of the loop, once the sink has the chunk.
-    it.each([
+    it.skipIf(isWindows).each([
       [
         "an async iterable's write",
         `(async function* () {

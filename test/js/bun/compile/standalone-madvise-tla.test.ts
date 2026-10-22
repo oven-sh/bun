@@ -5,12 +5,12 @@
 // BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE, read by the compiled binary at
 // runtime, skips the hint.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 // Relies on the StandaloneModuleGraph scoped logger which is compiled out in
 // release builds.
-test.concurrent.skipIf(!isDebug)(
+test.concurrent.skipIf(isWindows || !isDebug)(
   "standalone madvise hint fires with top-level await entrypoint",
   async () => {
     using dir = tempDir("standalone-madvise-tla", {
@@ -89,7 +89,7 @@ test.concurrent.skipIf(!isDebug)(
 // The hint must cover only the source text, not the bytecode JSC keeps
 // decoding from. The string literal below lands in both the source and the
 // bytecode cache, so a hint spanning both reports at least double its size.
-test.concurrent.skipIf(!isDebug)(
+test.concurrent.skipIf(isWindows || !isDebug)(
   "standalone madvise hint covers only the embedded source text",
   async () => {
     const literalBytes = 64 * 1024;

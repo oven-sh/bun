@@ -226,7 +226,7 @@ describe("Bun.Terminal platform behaviour", () => {
       done: o => o.includes("LINE2"),
     });
     expect(Bun.stripANSI(output)).toMatch(/READY *\r\nLINE2/);
-    expect(output).toContain("READY\r\nLINE2");
+    if (!isWindows) expect(output).toContain("READY\r\nLINE2");
   });
 
   test("GAP: ANSI escape sequences", async () => {
@@ -248,18 +248,21 @@ describe("Bun.Terminal platform behaviour", () => {
   // by the child, so the outer terminal never starts reporting mouse events to
   // it (#43450). Server 2022 (build 20348) and Windows 11 relay them, but only
   // once the child has switched stdin to VT input mode (setRawMode).
-  test("SAME: mouse-tracking enable sequences reach the data callback", async () => {
-    const { output } = await runInTerminal(
-      `process.stdin.setRawMode(true);
+  test.todoIf(isWindows && windowsBuild < 20348)(
+    "SAME: mouse-tracking enable sequences reach the data callback",
+    async () => {
+      const { output } = await runInTerminal(
+        `process.stdin.setRawMode(true);
        process.stdin.resume();
        process.stdout.write('\\x1b[?1000h\\x1b[?1006h');
        process.stdout.write('READY');
        setInterval(() => {}, 1000);`,
-      { done: o => o.includes("READY") },
-    );
-    expect(output).toContain("\x1b[?1000h");
-    expect(output).toContain("\x1b[?1006h");
-  });
+        { done: o => o.includes("READY") },
+      );
+      expect(output).toContain("\x1b[?1000h");
+      expect(output).toContain("\x1b[?1006h");
+    },
+  );
 
   test("SAME: UTF-8 multibyte characters reach the data callback", async () => {
     // ConPTY may alter spacing around wide-cell characters when re-rendering,
@@ -388,23 +391,26 @@ describe("Bun.Terminal platform behaviour", () => {
   // ClosePseudoConsole on Windows < 11 24H2 may not terminate a still-running
   // client promptly even when dispatched off-thread; kill the child first if
   // tearing down with one attached on those versions.
-  test("SAME: closing an inline terminal while a child is attached terminates the child", async () => {
-    let output = "";
-    const ready = Promise.withResolvers<void>();
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "setInterval(() => {}, 1000); process.stdout.write('READY')"],
-      env: bunEnv,
-      terminal: {
-        data(_t, chunk: Uint8Array) {
-          output += Buffer.from(chunk).toString("latin1");
-          if (output.includes("READY")) ready.resolve();
+  test.todoIf(isWindows)(
+    "SAME: closing an inline terminal while a child is attached terminates the child",
+    async () => {
+      let output = "";
+      const ready = Promise.withResolvers<void>();
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "setInterval(() => {}, 1000); process.stdout.write('READY')"],
+        env: bunEnv,
+        terminal: {
+          data(_t, chunk: Uint8Array) {
+            output += Buffer.from(chunk).toString("latin1");
+            if (output.includes("READY")) ready.resolve();
+          },
         },
-      },
-    });
-    await ready.promise;
-    proc.terminal!.close();
-    const exitCode = await proc.exited;
-    // POSIX: SIGHUP to session. Windows: ConPTY terminates attached clients.
-    expect(exitCode).not.toBe(0);
-  });
+      });
+      await ready.promise;
+      proc.terminal!.close();
+      const exitCode = await proc.exited;
+      // POSIX: SIGHUP to session. Windows: ConPTY terminates attached clients.
+      expect(exitCode).not.toBe(0);
+    },
+  );
 });

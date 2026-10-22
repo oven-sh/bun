@@ -5,7 +5,15 @@ import { copyFileSync } from "fs";
 import { cp, rm } from "fs/promises";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
-import { bunEnv, bunExe, getPuppeteerInstallEnv, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import {
+  bunEnv,
+  bunExe,
+  getPuppeteerInstallEnv,
+  isCI,
+  isWindows,
+  tmpdirSync,
+  toMatchNodeModulesAt,
+} from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
@@ -142,7 +150,7 @@ afterAll(() => {
 const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
 
 // https://github.com/oven-sh/bun/issues/11255
-test.skipIf(puppeteer_unsupported)(
+test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
     expect(dev_server).not.toBeUndefined();

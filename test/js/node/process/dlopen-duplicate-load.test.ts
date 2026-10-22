@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // These tests share one node-gyp build of two V8 addons (the compile
@@ -385,7 +385,7 @@ if (!isMainThread) {
     });
 
     // The crash handler only records which addon is loading on POSIX.
-    describe("the crash report shows the addon whose init function crashed", () => {
+    describe.skipIf(isWindows)("the crash report shows the addon whose init function crashed", () => {
       test.each([
         ["in a plain load", "addon", `process.dlopen({ exports: {}, fatalInInit: true }, addon);`],
         [

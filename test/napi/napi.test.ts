@@ -529,17 +529,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
 
     // The JS thread parks without heap access during an idle collection, so its end phase runs on the collector thread.
-    it("an idle collection on the collector thread runs the finalizers on the JS thread", async () => {
-      const result = await runOn(bunExe(), "test_external_buffer_finalized_by_idle_collection", [], {
-        BUN_IDLE_GC_SECONDS: "1",
-        BUN_GC_TIMER_DISABLE: undefined,
-        BUN_GC_TIMER_INTERVAL: undefined,
-        BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
-      } as any);
-      expect(result).toStartWith(
-        "experimental: finalized=true finalizedOffThread=0\ndeferred: finalized=true finalizedOffThread=0\n",
-      );
-    }, 30_000);
+    it.skipIf(isWindows)(
+      "an idle collection on the collector thread runs the finalizers on the JS thread",
+      async () => {
+        const result = await runOn(bunExe(), "test_external_buffer_finalized_by_idle_collection", [], {
+          BUN_IDLE_GC_SECONDS: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+        } as any);
+        expect(result).toStartWith(
+          "experimental: finalized=true finalizedOffThread=0\ndeferred: finalized=true finalizedOffThread=0\n",
+        );
+      },
+      30_000,
+    );
 
     it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
       const result = await checkSameOutput("test_external_buffer_worker_exit", []);
@@ -2103,51 +2107,58 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(result).toContain("Test completed:");
   }, 10_000);
 
-  it("napi_reference_unref is blocked from finalizers in experimental modules", async () => {
-    // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
-    // The process should crash/abort when this is attempted
-    // This matches Node.js behavior for experimental modules
+  it.todoIf(
+    // The test does not properly avoid the non-zero exit code on Windows.
+    isWindows,
+  )(
+    "napi_reference_unref is blocked from finalizers in experimental modules",
+    async () => {
+      // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
+      // The process should crash/abort when this is attempted
+      // This matches Node.js behavior for experimental modules
 
-    // Note: Node.js may not enforce this check for manually-registered experimental modules
-    // (ones that set nm_version to NAPI_VERSION_EXPERIMENTAL manually)
-    // But Bun should still enforce it for safety
+      // Note: Node.js may not enforce this check for manually-registered experimental modules
+      // (ones that set nm_version to NAPI_VERSION_EXPERIMENTAL manually)
+      // But Bun should still enforce it for safety
 
-    // Test with Bun - should crash
-    // Use the wrapper script that kills the process after seeing the crash messages
-    // to avoid hanging on llvm-symbolizer
-    const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
-    const bunProc = spawn({
-      cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
-      env: {
-        ...rest,
-        BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
-        // Override ASAN_OPTIONS to disable coredump and symbolization for this specific test
-        // Otherwise ASAN will hang trying to create a core dump or symbolize
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      // Test with Bun - should crash
+      // Use the wrapper script that kills the process after seeing the crash messages
+      // to avoid hanging on llvm-symbolizer
+      const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
+      const bunProc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
+        env: {
+          ...rest,
+          BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
+          // Override ASAN_OPTIONS to disable coredump and symbolization for this specific test
+          // Otherwise ASAN will hang trying to create a core dump or symbolize
+          ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [bunStdout, bunStderr, bunExitCode] = await Promise.all([
-      bunProc.stdout.text(),
-      bunProc.stderr.text(),
-      bunProc.exited,
-    ]);
+      const [bunStdout, bunStderr, bunExitCode] = await Promise.all([
+        bunProc.stdout.text(),
+        bunProc.stderr.text(),
+        bunProc.exited,
+      ]);
 
-    // The wrapper script should exit with 0 if the test passed
-    expect(bunExitCode).toBe(0);
-    expect(bunStdout + bunStderr).toContain("Loading experimental module");
-    expect(bunStdout + bunStderr).toContain("Created");
-    expect(bunStderr).toContain("FATAL ERROR");
-    expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
+      // The wrapper script should exit with 0 if the test passed
+      expect(bunExitCode).toBe(0);
+      expect(bunStdout + bunStderr).toContain("Loading experimental module");
+      expect(bunStdout + bunStderr).toContain("Created");
+      expect(bunStderr).toContain("FATAL ERROR");
+      expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
 
-    // The marker must NOT have actually been printed. Only check stdout: the
-    // fixture prints the marker via console.log (stdout), while stderr contains
-    // the debug-build panic report whose "Args:" line echoes the full -e script
-    // source, including the literal "ERROR: Did not crash! Test failed!".
-    expect(bunStdout).not.toContain("ERROR: Did not crash");
-  }, 25_000);
+      // The marker must NOT have actually been printed. Only check stdout: the
+      // fixture prints the marker via console.log (stdout), while stderr contains
+      // the debug-build panic report whose "Args:" line echoes the full -e script
+      // source, including the literal "ERROR: Did not crash! Test failed!".
+      expect(bunStdout).not.toContain("ERROR: Did not crash");
+    },
+    25_000,
+  );
 
   // Off Windows these fixtures are ordinary addons, so this only checks that they load.
   describe("an addon that imports node.exe without win_delay_load_hook", () => {

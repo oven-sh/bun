@@ -127,7 +127,7 @@ describe.concurrent("bun run", () => {
           expect(exitCode).toBe(1);
         });
 
-        it("exit code message works above 128", async () => {
+        it.skipIf(isWindows)("exit code message works above 128", async () => {
           using dir = tempDir("bun-run-exitcode", {});
           await using proc = Bun.spawn({
             cmd: [bunExe(), "run", "bash", "-c", "ulimit -c 0; exit 200"],
@@ -145,7 +145,7 @@ describe.concurrent("bun run", () => {
 
         describe.each(["--silent", "not silent"])("%s", silentOption => {
           const silent = silentOption === "--silent";
-          it("exit signal works", async () => {
+          it.skipIf(isWindows)("exit signal works", async () => {
             using dir = tempDir("bun-run-signal", {});
             {
               await using proc = Bun.spawn({

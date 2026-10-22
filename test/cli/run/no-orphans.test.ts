@@ -219,7 +219,7 @@ test.concurrent.skipIf(!isPosix)(
 // Same as above but the grandchild is spawned with uid/gid. The credential
 // change clears the pdeathsig the spawn armed (prctl(2)), so this proves it
 // gets re-armed after setgid/setuid. Needs root to setuid.
-test.concurrent.skipIf(!isRoot)(
+test.concurrent.skipIf(!isPosix || !isRoot)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with uid/gid is reaped",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun-uid.js");
@@ -387,7 +387,7 @@ describe.concurrent.each([
 // Linux: PR_SET_CHILD_SUBREAPER claims the orphan, procfs walk finds it.
 // macOS: NoOrphansTracker's p_puniqueid spawn-graph finds it.
 const hasPerl = Bun.which("perl") != null;
-test.concurrent.skipIf(!hasPerl)(
+test.concurrent.skipIf(!isPosix || !hasPerl)(
   "bun run --no-orphans: perl setsid+double-fork daemon (no Bun in chain) is reaped",
   async () => {
     using dir = tempDir("no-orphans-perl", {
@@ -793,7 +793,7 @@ test.concurrent.skipIf(!isLinux)(
 //      itself stopped.
 //   3. After perl `fg`s it (tcsetpgrp + SIGCONT), the script's SIGCONT
 //      handler fires — `onChildStopped` SIGCONT'd the whole script pgroup.
-test.concurrent.skipIf(!hasPerl)(
+test.concurrent.skipIf(!isPosix || !hasPerl)(
   "bun run --no-orphans on a TTY: Ctrl-Z stop observed by outer shell's waitpid(WUNTRACED), fg resumes script",
   async () => {
     // perl in the dev script so `getpgrp()` is trivially available; `$SIG{CONT}`
@@ -920,7 +920,7 @@ test.concurrent.skipIf(!hasPerl)(
 // Same perl-shell/pty rig as above, but perl never hands bun the foreground
 // (the `&` shape). After the script announces READY, perl re-reads
 // `tcgetpgrp(0)` and reports whether it's still perl's own pgroup.
-test.concurrent.skipIf(!hasPerl)(
+test.concurrent.skipIf(!isPosix || !hasPerl)(
   "bun run --no-orphans backgrounded on a TTY does not steal the foreground pgroup",
   async () => {
     using dir = tempDir("no-orphans-tty-bg", {

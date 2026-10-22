@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   isLinux,
+  isWindows,
   libcFamily,
   nodeModulesPackages,
   normalizeBunSnapshot,
@@ -508,28 +509,31 @@ describe("yarn berry migration", () => {
     });
 
     // Otherwise bun.lock would hold patches and ranges the next install cannot see in package.json.
-    test.concurrent("a read-only package.json fails the migration before bun.lock is written", async () => {
-      const dir = await fixture("patch");
-      const before = await Bun.file(join(dir, "package.json")).text();
-      chmodSync(join(dir, "package.json"), 0o444);
-      {
-        using unprivileged = unprivilegedSpawnOptions(dir);
-        const { stderr, exitCode } = await spawnBun(dir, {}, unprivileged, ["pm", "migrate"]);
+    test.concurrent.skipIf(isWindows)(
+      "a read-only package.json fails the migration before bun.lock is written",
+      async () => {
+        const dir = await fixture("patch");
+        const before = await Bun.file(join(dir, "package.json")).text();
+        chmodSync(join(dir, "package.json"), 0o444);
+        {
+          using unprivileged = unprivilegedSpawnOptions(dir);
+          const { stderr, exitCode } = await spawnBun(dir, {}, unprivileged, ["pm", "migrate"]);
 
-        expect(stderr).toContain("error: failed to write package.json: EACCES");
-        expect(stderr).not.toContain(editedLine);
-        expect(await Bun.file(join(dir, "package.json")).text()).toBe(before);
-        expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
-        expect(exitCode).toBe(1);
+          expect(stderr).toContain("error: failed to write package.json: EACCES");
+          expect(stderr).not.toContain(editedLine);
+          expect(await Bun.file(join(dir, "package.json")).text()).toBe(before);
+          expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
+          expect(exitCode).toBe(1);
 
-        // nothing is half done: once the file can be written the same command migrates
-        chmodSync(join(dir, "package.json"), 0o644);
-        const again = await spawnBun(dir, {}, unprivileged, ["pm", "migrate"]);
-        expect(again.stderr).not.toContain("error:");
-        expect(await Bun.file(join(dir, "package.json")).json()).toEqual(migratedPackageJson);
-        expect(again.exitCode).toBe(0);
-      }
-    });
+          // nothing is half done: once the file can be written the same command migrates
+          chmodSync(join(dir, "package.json"), 0o644);
+          const again = await spawnBun(dir, {}, unprivileged, ["pm", "migrate"]);
+          expect(again.stderr).not.toContain("error:");
+          expect(await Bun.file(join(dir, "package.json")).json()).toEqual(migratedPackageJson);
+          expect(again.exitCode).toBe(0);
+        }
+      },
+    );
   });
 
   test.concurrent("resolutions that rewrote a descriptor are followed", async () => {

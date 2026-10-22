@@ -2140,7 +2140,7 @@ describe("the trusted set", () => {
 
   // Nobody trusts `payload`, and it has no script. Its `bin` has the name of a command that `native`, which is trusted,
   // runs.
-  describe("a bin of another package does not replace a command inside a trusted script", () => {
+  describe.skipIf(isWindows)("a bin of another package does not replace a command inside a trusted script", () => {
     const files = (script: "preinstall" | "postinstall", trusted: boolean) => ({
       "package.json": {
         name: "foo",

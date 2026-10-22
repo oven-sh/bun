@@ -531,7 +531,7 @@ describe("order file hints", () => {
       expect(warned()).toEqual([]);
     });
 
-    it.skipIf(!cxxfilt)("reports one that cannot run or fails, and goes on to the next", () => {
+    it.skipIf(isWindows || !cxxfilt)("reports one that cannot run or fails, and goes on to the next", () => {
       using dir = tempDir("orderfile-cxxfilt", {
         "not-a-program": "\n",
         "broken": "#!/bin/sh\necho missing libLLVM >&2\nexit 127\n",
@@ -1128,7 +1128,7 @@ describe.skipIf(process.platform !== "linux" || !nodeExe())("interactive workloa
  * order file that missed it would leave all of that scattered. `ptyrun.c` is
  * what provides the terminal (on windows, the tracer itself does — see below).
  */
-describe.skipIf(!canTrace)("pty runner", () => {
+describe.skipIf(!canTrace || isWindows)("pty runner", () => {
   /** Reports what the process sees on its stdio, plus the one line it was typed. */
   const probe = [
     `process.stdin.once("data", data => {`,
@@ -1393,7 +1393,7 @@ async function expectFixtureTrace(trace: string, symbols: Map<number, string[]>)
  * shells out — hands the preload to the child, and a child that created and
  * truncated the trace file would wipe the entries recorded so far.
  */
-describe.skipIf(!canTrace)("function tracer", () => {
+describe.skipIf(!canTrace || isWindows)("function tracer", () => {
   it.concurrent("records exact entries, and keeps them across an exec'd child", async () => {
     using dir = tempDir("functrace", { "child.c": "int main(void) { return 0; }\n" });
     const root = String(dir);
@@ -1434,7 +1434,7 @@ describe.skipIf(!canTrace)("function tracer", () => {
  * a trace per process (`%p`), and only into the same executable: the starts
  * mean nothing in any other.
  */
-describe.skipIf(!canTrace)("function tracer, following children", () => {
+describe.skipIf(!canTrace || isWindows)("function tracer, following children", () => {
   const source = [
     "#include <stdio.h>",
     "#include <string.h>",

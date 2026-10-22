@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, MAX_PATH_BYTES, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -271,7 +271,7 @@ describe.concurrent("bun pm pkg", () => {
     });
 
     // argv holds any bytes on POSIX. `printf` builds the key `e`, 0xC3, `z`, which is not UTF-8.
-    it("should print U+FFFD for a non-UTF-8 key when getting multiple properties", async () => {
+    it.skipIf(isWindows)("should print U+FFFD for a non-UTF-8 key when getting multiple properties", async () => {
       using dir = tempDir("pm-pkg-get-bytes", {
         "package.json": Buffer.concat([Buffer.from('{"e'), Buffer.from([0xc3]), Buffer.from('z":1,"s":"x}"}')]),
       });

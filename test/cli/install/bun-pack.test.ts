@@ -690,7 +690,7 @@ describe.concurrent("flags", () => {
   });
 
   // On Windows the path buffer is larger than any command line, so the overflow cannot be reached there.
-  describe("--destination longer than the path buffer", () => {
+  describe.skipIf(isWindows)("--destination longer than the path buffer", () => {
     const longName = Buffer.alloc(MAX_PATH_BYTES + 1, "d").toString();
     const packageJson = JSON.stringify({ name: "pack-long-dest", version: "1.0.0" });
     const expectedError = `error: archive destination name too long: "${longName}"\n`;
@@ -1031,7 +1031,7 @@ describe.concurrent("flags", () => {
     });
 
     // PATH_MAX is 4096 on Linux and 1024 on macOS. Windows' path buffer is larger than any command line.
-    describe("--filename longer than PATH_MAX", () => {
+    describe.skipIf(isWindows)("--filename longer than PATH_MAX", () => {
       const longName = Buffer.alloc(5000, "f").toString();
       const packageJson = JSON.stringify({ name: "pack-cwd-long-filename", version: "1.0.0" });
 

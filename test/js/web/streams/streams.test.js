@@ -559,7 +559,7 @@ it("ReadableStream.prototype.values", async () => {
   expect(chunks.join("")).toBe("helloworld");
 });
 
-it.todoIf(isMacOS)("Bun.file() read text from pipe", async () => {
+it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
   const fifoPath = join(tmpdirSync(), "bun-streams-test-fifo");
   try {
     unlinkSync(fifoPath);
@@ -2820,7 +2820,7 @@ it("Bun.file().stream() read text from large file", async () => {
 // A POSIX file is read synchronously inside the stream's pull, so a failing
 // read(2) arrives with no pending read to reject. Windows reads files through
 // libuv, where the error always lands on a pending read.
-describe("Bun.file().stream() surfaces read() errors", () => {
+describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   // read(2) on /proc/self/mem fails with EIO: nothing is mapped at address 0.
   const eioPath = "/proc/self/mem";
   const itEIO = isLinux ? it : it.skip;

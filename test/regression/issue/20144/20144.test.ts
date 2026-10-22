@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { spawn } from "node:child_process";
 
-it("should not time out", async () => {
+it.skipIf(process.platform === "win32")("should not time out", async () => {
   // https://github.com/oven-sh/bun/issues/20144: after cc(), SIGINT must still
   // break a tight loop. The spawn timeout is only a last-resort kill switch for
   // a true hang; 20s matches other hang-guard tests and avoids racing startup.

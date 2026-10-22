@@ -189,7 +189,7 @@ describe("apply", () => {
 
     // The header mode belongs to the file; directories the patch has to create
     // must be traversable regardless, or the file cannot be created inside them.
-    test("creates missing parent directories traversable", async () => {
+    test.if(process.platform !== "win32")("creates missing parent directories traversable", async () => {
       await using tempdir = tempDir("patch-test", { "a/.keep": "" });
       const afolder = join(tempdir, "a");
 
@@ -340,7 +340,7 @@ describe("apply", () => {
 
   describe("mode change", () => {
     // chmod doesn't do anything on windows so skiip
-    test("simple", async () => {
+    test.if(process.platform !== "win32")("simple", async () => {
       const files = {
         "a/hi.txt": "hello!",
         "b/hi.txt": "hi!",
@@ -1267,7 +1267,7 @@ describe("apply", () => {
     // `O_RDONLY` on a FIFO without `O_NONBLOCK` blocks until a writer appears, so
     // the target open must use `O_NONBLOCK` for the `!ISREG` check to ever run.
     // Run in a child process: the unfixed failure mode is an indefinite hang.
-    test("a mode change of a FIFO is rejected instead of hanging", async () => {
+    test.if(process.platform !== "win32")("a mode change of a FIFO is rejected instead of hanging", async () => {
       using dir = tempDir("patch-fifo", { "pkg/.keep": "" });
       const pkgDir = join(String(dir), "pkg");
       await $`mkfifo ${join(pkgDir, "pipe")}`;

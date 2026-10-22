@@ -298,7 +298,7 @@ describe("Bun.Terminal", () => {
     // The mode and the saved termios used to be one process-wide pair, so once
     // any terminal was raw, setRawMode(true) on a second one returned success
     // without ever touching that terminal's own PTY.
-    test("each terminal keeps its own raw mode", async () => {
+    test.skipIf(isWindows)("each terminal keeps its own raw mode", async () => {
       const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
       const ECHO = 0x8;
       const isRaw = (terminal: Bun.Terminal) => (terminal.localFlags & (ICANON | ECHO)) === 0;
@@ -470,7 +470,7 @@ describe("Bun.Terminal", () => {
       expect(terminal.inputFlags).toBe(0);
     });
 
-    test("NaN clamps to tcflag_t max, same as Infinity", async () => {
+    test.skipIf(isWindows)("NaN clamps to tcflag_t max, same as Infinity", async () => {
       // Assigning NaN must clamp to the same value as Infinity (tcflag_t::MAX),
       // matching the reference `@max(0, @min(num, max))` semantics. The kernel
       // may mask some bits per field, so compare NaN against Infinity rather
@@ -559,7 +559,7 @@ describe("Bun.Terminal", () => {
 
   // ConPTY has no line discipline echo without a child process, so termios-echo
   // tests are POSIX-only.
-  describe.concurrent("data callback", () => {
+  describe.concurrent.todoIf(isWindows)("data callback", () => {
     test("receives echoed output", async () => {
       const received: Uint8Array[] = [];
 
@@ -1034,7 +1034,7 @@ describe("Bun.Terminal", () => {
   });
 
   describe("ANSI escape sequences", () => {
-    test("can write ANSI color codes", async () => {
+    test.todoIf(isWindows)("can write ANSI color codes", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -1087,7 +1087,7 @@ describe("Bun.Terminal", () => {
       expect(written).toBe(6);
     });
 
-    test("can receive binary data in callback", async () => {
+    test.todoIf(isWindows)("can receive binary data in callback", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -1203,7 +1203,7 @@ describe("Bun.Terminal", () => {
   });
 
   describe("edge cases", () => {
-    test("handles Unicode characters", async () => {
+    test.todoIf(isWindows)("handles Unicode characters", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({

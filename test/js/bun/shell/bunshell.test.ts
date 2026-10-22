@@ -625,7 +625,7 @@ describe("bunshell", () => {
   // its pipes (EMFILE). The pipeline must print the error on its stderr and
   // finish with exit code 1 so the `$` promise settles and the script goes on,
   // instead of throwing from inside the interpreter and never completing.
-  describe("pipeline that fails to create its pipes", () => {
+  describe.skipIf(isWindows)("pipeline that fails to create its pipes", () => {
     const runWithFdLimit = (limit: number, script: string, env = bunEnv) =>
       Bun.spawn({
         cmd: ["/bin/sh", "-c", `ulimit -n ${limit} && exec "$1" -e "$2"`, "sh", bunExe(), script],
@@ -1132,7 +1132,7 @@ booga"
         .stdout(withParentheses)
         .runAsTest("a single-quoted folder name with parentheses still matches that folder");
 
-      test("a quoted name with parentheses that is a symlink to a folder still expands", async () => {
+      test.skipIf(isWindows)("a quoted name with parentheses that is a symlink to a folder still expands", async () => {
         using dir = tempDir("bunshell-symlink-parentheses", { "real/f.ts": "" });
         symlinkSync("real", join(String(dir), "Dropbox (Personal)"));
         const { stdout, exitCode } = await $`echo "Dropbox (Personal)"/f.* ${"Dropbox (Personal)"}/*.ts`
@@ -1194,7 +1194,7 @@ booga"
       expect(exitCode).toBe(0);
     });
 
-    test.if(!isRoot)("glob over an unreadable directory reports the real error", async () => {
+    test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
       await using dir = tempDir("glob-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
       mkdirSync(noaccess);
@@ -1443,7 +1443,7 @@ booga"
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
-    test.if(!isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
+    test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
       await using dir = tempDir("cd-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess");
       mkdirSync(noaccess);

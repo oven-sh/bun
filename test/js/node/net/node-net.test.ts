@@ -3126,7 +3126,7 @@ it("connect({ localPort }) succeeds when the local port has TIME_WAIT sockets", 
 // https://github.com/oven-sh/bun/issues/32087
 // The writev fast path is `#[cfg(unix)]`, and on Windows the amount a send
 // accepts is machine dependent, so the buffered precondition cannot be built there.
-describe("socket write while data is buffered natively", () => {
+describe.skipIf(isWindows)("socket write while data is buffered natively", () => {
   // Counts received bytes per fill value. STALL_ON_ACCEPT=1 blocks the loop on
   // accept so the kernel buffers stay full while the client writes.
   const serverFixture = /* js */ `

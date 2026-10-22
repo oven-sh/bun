@@ -16,7 +16,7 @@ if (!isWindows) {
 }
 
 // POSIX filesystem root only; Windows drive roots are a separate shape.
-describe.concurrent.skipIf(!canWriteRoot)("module directly under filesystem root", () => {
+describe.concurrent.skipIf(isWindows || !canWriteRoot)("module directly under filesystem root", () => {
   afterAll(() => {
     if (canWriteRoot) rmSync(rootFile, { force: true });
   });

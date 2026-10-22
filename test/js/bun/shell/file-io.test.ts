@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
@@ -53,7 +53,7 @@ describe("IOWriter file output redirection", () => {
     // A FIFO opened by path for `>` must take the pollable path; once the pipe
     // buffer fills, write(2) returns EAGAIN and the writer has to poll for
     // writability instead of treating the fd as an EAGAIN-free regular file.
-    test.concurrent("redirect to a FIFO whose reader drains slowly applies backpressure", async () => {
+    test.concurrent.skipIf(!isPosix)("redirect to a FIFO whose reader drains slowly applies backpressure", async () => {
       const payloadLen = 200 * 1024;
       using dir = tempDir("shell-fifo-redirect", {
         "fixture.ts": /* ts */ `

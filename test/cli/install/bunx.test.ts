@@ -2116,7 +2116,7 @@ describe("a cached tree", () => {
     });
 
     // On Windows the entry in .bin is a shim that exists on its own.
-    it.concurrent("relinks a tree whose bin file is missing", async () => {
+    it.concurrent.skipIf(isWindows)("relinks a tree whose bin file is missing", async () => {
       using registry = await localRegistry(...toolWithDep());
       using box = sandbox(registry);
       expect(await box.run([spec])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -2504,7 +2504,7 @@ describe("a package in node_modules", () => {
   });
 
   // The project has the package, so bunx runs that copy or says why it cannot. It does not download another one.
-  describe("a bin that cannot run", () => {
+  describe.skipIf(isWindows)("a bin that cannot run", () => {
     type Entry = "linked" | "removed" | "dangling" | "no .bin";
     /** Takes the execute bit from the bin of `name`, and puts its entry in node_modules/.bin into the state `entry`. */
     function takeExecuteBit(cwd: string, name: string, bin: string, entry: Entry) {
@@ -2796,34 +2796,37 @@ describe("a package in node_modules", () => {
 
   // The install links the bin of a package with native builds into an optional dependency that has an `os` and a
   // `cpu`. This one has neither, so the entry in .bin is its own bin.
-  it.concurrent("after an install, a package whose optional dependency got the entry in .bin", async () => {
-    using registry = await localRegistry(fixturePackage("aaa-first", "1.0.0", "tool"), {
-      ...fixturePackage("zzz-last", "1.0.0", "tool", echoBin("zzz-last 1.0.0")),
-      optionalDependencies: { "aaa-first": "1.0.0" },
-    });
-    using box = sandbox(registry, {
-      cwd: {
-        "package.json": JSON.stringify({ name: "app", dependencies: { "aaa-first": "1.0.0", "zzz-last": "1.0.0" } }),
-      },
-    });
-    expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
-    expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+  it.concurrent.todoIf(isWindows)(
+    "after an install, a package whose optional dependency got the entry in .bin",
+    async () => {
+      using registry = await localRegistry(fixturePackage("aaa-first", "1.0.0", "tool"), {
+        ...fixturePackage("zzz-last", "1.0.0", "tool", echoBin("zzz-last 1.0.0")),
+        optionalDependencies: { "aaa-first": "1.0.0" },
+      });
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({ name: "app", dependencies: { "aaa-first": "1.0.0", "zzz-last": "1.0.0" } }),
+        },
+      });
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+      expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
 
-    expect(await box.run(["zzz-last", "arg"])).toEqual({
-      stdout: "zzz-last 1.0.0 arg\n",
-      stderr: "",
-      exitCode: 0,
-      requests: [],
-    });
+      expect(await box.run(["zzz-last", "arg"])).toEqual({
+        stdout: "zzz-last 1.0.0 arg\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
 
-    chmodSync(join(box.cwd, "node_modules", "zzz-last", "cli.js"), 0o644);
-    expect(await box.run(["zzz-last", "arg"])).toEqual({
-      stdout: "",
-      stderr: expect.stringMatching(/^error: .*\/node_modules\/zzz-last\/cli\.js is not executable\n$/),
-      exitCode: 126,
-      requests: [],
-    });
-  });
+      chmodSync(join(box.cwd, "node_modules", "zzz-last", "cli.js"), 0o644);
+      expect(await box.run(["zzz-last", "arg"])).toEqual({
+        stdout: "",
+        stderr: expect.stringMatching(/^error: .*\/node_modules\/zzz-last\/cli\.js is not executable\n$/),
+        exitCode: 126,
+        requests: [],
+      });
+    },
+  );
 
   // The file is not there when the bins are linked. The install makes it executable after the script.
   it.concurrent.todoIf(isWindows)(

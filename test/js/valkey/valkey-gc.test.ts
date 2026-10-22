@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { blackholePortSource, bunEnv, bunExe, bunRun, expectRssDeltaBelow, isASAN, isMusl } from "harness";
+import { blackholePortSource, bunEnv, bunExe, bunRun, expectRssDeltaBelow, isASAN, isMusl, isWindows } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -198,7 +198,7 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
 
   // The dial never completes, so teardown delivers on_connect_error for it,
   // with the commands in the offline queue.
-  test.concurrent.skipIf(isMusl)(
+  test.concurrent.skipIf(isWindows || isMusl)(
     "worker.terminate(): commands queued behind a dial that stays pending",
     () =>
       expectCleanExit(
@@ -261,7 +261,7 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
       stdout + "\n",
     );
   }
-  test.concurrent.skipIf(isMusl)(
+  test.concurrent.skipIf(isWindows || isMusl)(
     "close() while a dial to an IP literal is pending",
     () =>
       closePendingDial(
@@ -271,7 +271,7 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
       ),
     timeout,
   );
-  test.concurrent.skipIf(isMusl)(
+  test.concurrent.skipIf(isWindows || isMusl)(
     "connection timeout while a dial to an IP literal is pending",
     () =>
       closePendingDial(

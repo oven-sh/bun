@@ -44,7 +44,7 @@ describe("bun", () => {
   // openpty via bun:ffi so one stdio fd can be a real TTY while the other is
   // a pipe. glibc keeps openpty in libutil; musl and macOS keep everything in
   // libc. Same pattern as test/js/bun/terminal/terminal-spawn.test.ts.
-  describe("per-stream color detection", () => {
+  describe.skipIf(isWindows)("per-stream color detection", () => {
     const colorEnv = {
       ...bunEnv,
       NO_COLOR: undefined,
@@ -243,7 +243,7 @@ describe("bun", () => {
     });
   });
   // On Windows `bun completions` installs bunx as a hardlink (or a .cmd shim) instead of a symlink.
-  describe("completions", () => {
+  describe.skipIf(isWindows)("completions", () => {
     const bunxName = isDebug ? "bunx-debug" : "bunx";
 
     test("installs a bunx symlink to the executable, falling back through the install directories", async () => {

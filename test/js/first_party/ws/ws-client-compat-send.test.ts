@@ -859,7 +859,7 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
 
     // With npm ws on Bun, node:net swallows the exception after terminate() and drops the callback on a reset.
     // Skipped on Windows because Winsock accepts everything on loopback, so nothing is ever buffered.
-    test.concurrent.skipIf(!builtin).each(["terminate()", "a peer reset"])(
+    test.concurrent.skipIf(!builtin || isWindows).each(["terminate()", "a peer reset"])(
       "a buffered send's callback that throws after %s doesn't skip 'close'",
       async how => {
         await using peer = await createPeer({ respond: withSmallReceiveBuffer });
@@ -936,7 +936,7 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
 
     // node:net on Bun calls the write callbacks before the one that threw a second time, and swallows the exception.
     // Skipped on Windows because Winsock accepts everything on loopback, so nothing is ever buffered.
-    test.concurrent.skipIf(!builtin).each([1, 3])(
+    test.concurrent.skipIf(!builtin || isWindows).each([1, 3])(
       "on the stream transport, when callback %i of 4 throws after terminate(), every callback still runs once",
       async thrower => {
         await using peer = await createPeer({ respond: conn => (conn.socket.pause(), withSmallReceiveBuffer(conn)) });
@@ -954,7 +954,7 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
     // node:stream drops the callbacks behind the one that throws, on Node too. The built-in fails them at 'close', and
     // has to tell them apart from the callback of a send() that was made later and has already run.
     // Skipped on Windows because Winsock accepts everything on loopback, so nothing is ever buffered.
-    test.concurrent.skipIf(!builtin)(
+    test.concurrent.skipIf(!builtin || isWindows)(
       "on the stream transport, a send() from a callback doesn't mix up the callbacks that a throw left behind",
       async () => {
         await using peer = await createPeer({ respond: withSmallReceiveBuffer });

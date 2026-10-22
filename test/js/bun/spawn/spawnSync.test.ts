@@ -62,7 +62,7 @@ describe("spawnSync", () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-counters-fixture.ts"))).toSpawn();
   });
 
-  describe("drains piped stdio to EOF after the direct child exits", () => {
+  describe.skipIf(!isPosix)("drains piped stdio to EOF after the direct child exits", () => {
     // Grandchild inherits the pipe and writes after the direct child has exited.
     const sh = (fd: number) => [
       "/bin/sh",
@@ -231,7 +231,7 @@ describe("uid/gid", () => {
     expect(() => Bun.spawnSync({ cmd: [bunExe()], env: bunEnv, gid: 1.5 })).toThrow();
   });
 
-  it.if(isRoot)("applies uid/gid and drops supplementary groups", () => {
+  it.if(isPosix && isRoot)("applies uid/gid and drops supplementary groups", () => {
     const result = Bun.spawnSync({ cmd: ["id"], uid: 65534, gid: 65534 });
     const out = result.stdout.toString();
     expect(out).toContain("uid=65534");

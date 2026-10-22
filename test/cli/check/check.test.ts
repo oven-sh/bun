@@ -24312,7 +24312,7 @@ describe.concurrent("--check", () => {
   });
 
   // These draw the same progress line as `bun check`, on a dedicated thread, and the process keeps running afterwards.
-  describe.skipIf(!hasTerminal)("in a terminal", () => {
+  describe.skipIf(isWindows || !hasTerminal)("in a terminal", () => {
     const files = (n: string) => ({
       "package.json": JSON.stringify({ scripts: { hello: "echo ran 1" } }),
       "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
@@ -24403,7 +24403,7 @@ describe.concurrent("--check", () => {
     ["a shell script", ["--check", "./tool.sh"]],
   ])("bun --check with %s", (_, cmd) => {
     // On Windows it would have to be a real executable, because `bun` doesn't start batch files.
-    test("type checks the project first", async () => {
+    test.skipIf(isWindows && cmd.includes("tool"))("type checks the project first", async () => {
       const files = { "tool.sh": `echo ran\n`, "node_modules/.bin/tool": `#!/bin/sh\necho ran\n` };
       using good = project({ ...files, "a.ts": `export const a: number = 1;\n` });
       using bad = project({ ...files, "a.ts": `export const a: number = "1";\n` });

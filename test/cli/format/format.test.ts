@@ -467,7 +467,7 @@ describe.concurrent("bun fmt", () => {
     });
 
     // With `ulimit -f 16` a write fails with EFBIG once it's 8 KB into a file, much like on a full disk.
-    test("keeps its old text when writing it in place fails partway", async () => {
+    test.skipIf(isWindows)("keeps its old text when writing it in place fails partway", async () => {
       const text = `{${Array.from({ length: 3000 }, (_, i) => `"k${i}":   [1,2,3]`).join(",")}}\n`;
       using dir = tempDir("bun-format", { "a.json": text });
       linkSync(join(String(dir), "a.json"), join(String(dir), "other-name.txt"));
@@ -479,7 +479,7 @@ describe.concurrent("bun fmt", () => {
     });
 
     // A new file would get fewer permission bits, unless the process's umask is 0.
-    test("keeps its mode regardless of the umask", async () => {
+    test.skipIf(isWindows)("keeps its mode regardless of the umask", async () => {
       using dir = tempDir("bun-format", { "a.js": ugly, "b.js": ugly });
       chmodSync(join(String(dir), "a.js"), 0o664);
       chmodSync(join(String(dir), "b.js"), 0o777);
@@ -6194,7 +6194,7 @@ exports.format = async text => "by Prettier";
     expect(exitCode).toBe(1);
   });
 
-  describe("a named pipe passed to a flag", () => {
+  describe.skipIf(isWindows)("a named pipe passed to a flag", () => {
     const makePipes = (dir: string) =>
       expect(Bun.spawnSync(["mkfifo", join(dir, "pipe"), join(dir, "pipe.json")]).exitCode).toBe(0);
 
@@ -8272,7 +8272,7 @@ try {
         expect(inNested.files).toEqual(after(null, 0, 4));
       });
 
-      test("/dev/null", async () => {
+      test.skipIf(isWindows)("/dev/null", async () => {
         const files = { ".prettierrc.mjs": program(8), "a.js": code(0) };
         const result = await format(files, ["--config=/dev/null", "."], { reads: ["evaluated", "a.js"] });
         expect(result.files).toEqual({ "evaluated": null, "a.js": code(2) });
@@ -9074,6 +9074,7 @@ try {
 
     // Some sandboxes have no pseudo-terminals.
     const hasTerminal = (() => {
+      if (isWindows) return false;
       try {
         new Bun.Terminal({}).close();
         return true;

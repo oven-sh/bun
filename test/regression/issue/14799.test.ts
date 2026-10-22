@@ -7,9 +7,9 @@
 // second delivery does not fall through to SIG_DFL and kill the runner while
 // the innermost script is still cleaning up.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 
-test("nested bun run waits for the child on SIGINT", async () => {
+test.skipIf(!isPosix)("nested bun run waits for the child on SIGINT", async () => {
   using dir = tempDir("issue-14799", {
     "package.json": JSON.stringify({
       name: "issue-14799",

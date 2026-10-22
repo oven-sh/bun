@@ -78,7 +78,7 @@ describe("FileSink", () => {
   for (let isPipe of [true, false] as const) {
     // TODO: fix the `mkfifo` function for windows. They do have an API but calling it from bun:ffi didn't get great results.
     // once #8166 is merged, this can be written using it's 'bun:iternals-for-testing' feature
-    describe(isPipe ? "pipe" : "file", () => {
+    describe.skipIf(isPipe && isWindows)(isPipe ? "pipe" : "file", () => {
       fixtures.forEach(([input, expected, label]) => {
         const getPathOrFd = () => (isPipe ? getFd(label, expected.byteLength) : getPath(label));
 

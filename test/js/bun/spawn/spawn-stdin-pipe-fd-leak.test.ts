@@ -11,7 +11,7 @@
 
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isPosix, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -112,7 +112,7 @@ test("reading .stdin does not leak a native FileSink per spawn", async () => {
 // the two owners it is the shell's stranded writers that LSan reports (it still
 // finds the address of a stranded Bun.spawn one somewhere); the Bun.spawn
 // scenarios run the same teardown under ASAN all the same.
-test.skipIf(!isASAN)(
+test.skipIf(!isASAN || isWindows)(
   "Buffer stdin does not leak its native writer when the child closes stdin or drains it",
   async () => {
     using cwd = tempDir("stdin-buffer-writer-leak", {});

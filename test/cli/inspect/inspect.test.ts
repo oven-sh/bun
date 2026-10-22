@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, randomPort, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -392,7 +392,7 @@ describe("unix domain socket without websocket", () => {
     fs.rmSync(tempdir, { recursive: true, force: true });
   });
 
-  {
+  if (isPosix) {
     async function runTest(path: string, args: string[], env = bunEnv) {
       let { promise, resolve, reject } = Promise.withResolvers();
 

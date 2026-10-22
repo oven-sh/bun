@@ -1346,7 +1346,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
   }
 
   // People link every `node_modules` of a monorepo to a volume or a cache disk, not only the root's.
-  it("still installs through a link at a workspace member's node_modules", async () => {
+  it.skipIf(isWindows)("still installs through a link at a workspace member's node_modules", async () => {
     using root = tempDir("nm-member", {});
     const volume = join(String(root), "volume");
     await mkdir(volume);

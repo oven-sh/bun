@@ -1443,7 +1443,7 @@ describe.concurrent("bun lint", () => {
       },
     );
 
-    describe("a named pipe passed to a flag", () => {
+    describe.skipIf(isWindows)("a named pipe passed to a flag", () => {
       const makePipes = (dir: string) =>
         expect(Bun.spawnSync(["mkfifo", join(dir, "pipe"), join(dir, "pipe.json")]).exitCode).toBe(0);
 
@@ -1543,7 +1543,7 @@ describe.concurrent("bun lint", () => {
     });
 
     // git stores a link to `/dev/zero` as is, so a repository can contain one.
-    test.each([
+    test.skipIf(isWindows).each([
       ["eslint.config.js", basic],
       [".oxlintrc.json", "{}"],
     ])("a link to a device whose name ends in .js is skipped: %s", async (name, text) => {
@@ -8024,7 +8024,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       });
 
       // A new file would get fewer permission bits, unless the umask is 0.
-      test("keeps the file's mode regardless of the umask", async () => {
+      test.skipIf(isWindows)("keeps the file's mode regardless of the umask", async () => {
         using dir = tempDir("bun-lint", { ...files, "b.js": files["a.js"] });
         chmodSync(join(String(dir), "a.js"), 0o664);
         chmodSync(join(String(dir), "b.js"), 0o777);
@@ -8660,7 +8660,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       }
     });
 
-    describe("--output-file is a pipe or a device", () => {
+    describe.skipIf(isWindows)("--output-file is a pipe or a device", () => {
       const withOutside = { ...tree, "outside/other": "" };
 
       /** Runs `bun lint -f unix -o <name>` in `dir`'s project through `sh`. `"$@"` in `script` is the command. */

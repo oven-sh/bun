@@ -1359,7 +1359,7 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
 // loader's whole-file read used to `reserve_exact` it and abort the process in
 // `handle_alloc_error` before any user code ran. It must surface as a
 // recoverable error. ASAN-only: ASAN rejects the 1 TiB request deterministically.
-test.skipIf(!isASAN)(".env with a huge lying st_size does not abort the process", async () => {
+test.skipIf(!isASAN || isWindows)(".env with a huge lying st_size does not abort the process", async () => {
   await using dir = tempDir("dotenv-huge-sparse", {
     ".env": "",
     "app.js": `console.log("reached user code");`,

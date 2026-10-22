@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isCanary, tempDir } from "harness";
+import { bunEnv, bunExe, isCanary, isWindows, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
@@ -40,7 +40,7 @@ describe.concurrent("bunfig.toml type-mismatch error messages", () => {
 //
 // On Windows the buffer is ~96 KiB, longer than any path, argument or environment
 // variable the OS accepts, so the overflow cannot be reached there.
-describe.concurrent("config paths that do not fit in a path buffer", () => {
+describe.concurrent.skipIf(isWindows)("config paths that do not fit in a path buffer", () => {
   const MAX_PATH_BYTES = process.platform === "linux" || process.platform === "android" ? 4096 : 1024;
   // A TOML syntax error: every command fails to load it, and the error names the
   // path the config was loaded from.

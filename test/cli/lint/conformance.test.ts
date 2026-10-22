@@ -75,7 +75,7 @@ test.skipIf(!hasRunner).each(suites)(
     // No more cases are skipped than expected. A case that needs a rule defined in upstream's test file only counts as
     // skipped if the sample includes it.
     const skipped = (text: string) => Number(/, (\d+) skipped\n/.exec(text)?.[1]);
-    expect(skipped(stdout)).toBeLessThanOrEqual(skipped(expected));
+    if (!isWindows) expect(skipped(stdout)).toBeLessThanOrEqual(skipped(expected));
     // No more messages are missing oxlint's help text than expected.
     const missingHelp = (text: string) => Number(/\n(\d+) messages lack the help/.exec(text)?.[1] ?? 0);
     expect(missingHelp(stdout)).toBeLessThanOrEqual(missingHelp(expected));

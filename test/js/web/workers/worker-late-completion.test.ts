@@ -459,7 +459,7 @@ describe("terminate() waits for work that cannot be cancelled", () => {
 
 // The upload has a ref on the fetch. Destroying the heap drops it for a JS-pumped body, but the stop phase has to
 // drop it for a body streamed from a native source. Otherwise LeakSanitizer reports the leaked request.
-describe.skipIf(!isASAN)("terminating a worker while a request body is still uploading", () => {
+describe.skipIf(!isASAN || isWindows)("terminating a worker while a request body is still uploading", () => {
   const host = (body: string, fifo: string) => `
     const { Worker } = require("node:worker_threads");
     const fs = require("node:fs");

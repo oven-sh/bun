@@ -462,7 +462,7 @@ function makeValidCase<Fns extends Record<string, FFIFunction>>(
 // The fixture needs pthread_create/pthread_join resolved against the host
 // process, which TinyCC's in-memory output only supports on POSIX.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-describe.skipIf(isASAN)("threadsafe JSCallback invoked from a foreign thread", () => {
+describe.skipIf(isWindows || isASAN)("threadsafe JSCallback invoked from a foreign thread", () => {
   // TinyCC only ships its own builtin headers, so we cannot #include
   // <pthread.h>. pthread_t is `unsigned long` on glibc and a pointer on
   // macOS/musl; both fit in 8 bytes.

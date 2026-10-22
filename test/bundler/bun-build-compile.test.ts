@@ -3136,4 +3136,59 @@ describe("Bun.build compile optimize", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // Each branch jumps over the padding and the next branch. With the right padding its offset fits in 8 bits only until
+  // the next branch is widened, so each pass of the optimizer's jump-size relaxation widens one more branch and the
+  // number of branches sets the number of passes. The sweep finds that padding, and covers the pass counts on both
+  // sides of the one where the optimizer forces every branch wide.
+  test("jump-size relaxation over a range of pass counts", async () => {
+    function chain(branches: number, padding: number) {
+      const pad = "odd = !odd; ".repeat(padding);
+      let body = "";
+      for (let i = branches; i >= 1; --i) body += `L${i}: { `;
+      body += "if (key === 1) break L1; ";
+      for (let i = 2; i <= branches; ++i) body += `${pad}if (key === ${i}) break L${i}; } `;
+      // The last branch jumps over twice the padding, so it is the first to be widened.
+      return `function (key, odd) { ${body}${pad}${pad}} return odd; }`;
+    }
+    let chains = "";
+    for (let branches = 13; branches <= 17; ++branches) {
+      for (let padding = 36; padding <= 42; ++padding) {
+        chains += `[${branches}, ${padding}, ${chain(branches, padding)}],\n`;
+      }
+    }
+    using dir = tempDir("build-optimize-bytecode-relaxation", {
+      "index.js": `
+        for (const [branches, padding, run] of [${chains}]) {
+          for (let key = 0; key <= branches; ++key) {
+            const pads = key === 0 ? branches + 1 : key < branches ? branches : branches - 1;
+            if (run(key, false) !== (pads * padding % 2 === 1)) throw new Error([branches, padding, key].join());
+          }
+        }
+        console.log("ok");
+      `,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--bytecode", "--format=cjs", "--target=bun", "index.js", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ stderr: buildStderr, exitCode: buildExit }).toEqual({ stderr: "", exitCode: 0 });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "out", "index.js")],
+      env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The run must come out of the optimized bytecode, not out of a parse of the source.
+    const lines = stderr.split(/\r?\n/).filter(Boolean);
+    expect(lines.filter(line => !line.startsWith("[Disk Cache] "))).toEqual([]);
+    expect(lines).toContain("[Disk Cache] Cache hit for sourceCode");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
 });

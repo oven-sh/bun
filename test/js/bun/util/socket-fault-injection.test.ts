@@ -43,6 +43,14 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     }
   });
 
+  test("set() rejects 'excess' for syscalls whose wrapper does not check the count", () => {
+    for (const syscall of ["recv", "sendmsg", "recvmsg", "connect", "accept", "ssl_loop_buffer", "ssl_write"] as const) {
+      expect(() => fault.set({ syscall, action: "excess" })).toThrow(/only supported for syscall/);
+    }
+    expect(fault.set({ syscall: "send", action: "excess" })).toBe(true);
+    expect(fault.set({ syscall: "writev", action: "excess" })).toBe(true);
+  });
+
   test("set() accepts ssl_loop_buffer with action 'errno'", () => {
     expect(fault.set({ syscall: "ssl_loop_buffer", action: "errno", errno: "ENOMEM" })).toBe(true);
   });

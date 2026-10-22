@@ -70,6 +70,9 @@ enum us_fault_action {
     /* recv/recvmsg: return 0 (peer closed); send/sendmsg/writev: return 0
      * (treated as backpressure). The JS setter rejects other syscalls. */
     US_FAULT_ZERO,
+    /* send/writev: return one more than the most the call could take, and send nothing.
+     * The JS setter rejects other syscalls. */
+    US_FAULT_EXCESS,
 };
 
 struct us_fault_rule {

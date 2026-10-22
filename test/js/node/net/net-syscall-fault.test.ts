@@ -271,6 +271,22 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     );
   }
 
+  test("send → a count above the request fails the write, which is not sent again", async () => {
+    const received: Buffer[] = [];
+    using p = await connectedPair(s => s.on("data", (c: Buffer) => received.push(c)));
+    const peerEnded = once(p.serverSock, "end");
+    fault.set({ syscall: "send", action: "excess", fd: (p.client as any)._handle.fd });
+    const events: string[] = [];
+    p.client.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code} ${e.syscall}`));
+    const closed = new Promise<void>(resolve => p.client.on("close", () => resolve()));
+    p.client.write("hello", e => events.push(`write ${(e as NodeJS.ErrnoException)?.code}`));
+    await Promise.all([closed, peerEnded]);
+    expect({ events, received: Buffer.concat(received).toString() }).toEqual({
+      events: ["write ECONNABORTED", "error ECONNABORTED write"],
+      received: "",
+    });
+  });
+
   test("connect → ECONNREFUSED is reported on connecting socket", async () => {
     const server = net.createServer();
     server.listen(0, "127.0.0.1");

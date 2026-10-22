@@ -143,6 +143,22 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     });
   });
 
+  test.each(["client", "server"] as const)("send → a count above the request fails the %s's write", async side => {
+    using p = await connectedTLSPair();
+    const writer = side === "client" ? p.client : p.serverSock;
+    const seen = observe(writer);
+    const written = Promise.withResolvers<Error | null | undefined>();
+    fault.set({ syscall: "send", action: "excess", fd: fdOf(writer) });
+    writer.write("hello", written.resolve);
+    const WRITE_ABORTED = { name: "Error", code: "ECONNABORTED", syscall: "write", message: "write ECONNABORTED" };
+    expect(await written.promise).toMatchObject(WRITE_ABORTED);
+    await seen.closed;
+    expect({ events: seen.events.filter(event => event !== "end"), errors: seen.errors }).toEqual({
+      events: ["error", "close(hadError=true)"],
+      errors: [WRITE_ABORTED],
+    });
+  });
+
   test("send → an errno that names no dead peer is retried 32 times in a row, then closes", async () => {
     let received!: () => Buffer;
     using p = await connectedTLSPair(s => (received = collect(s)));

@@ -769,3 +769,220 @@ describe("conversions between color spaces", () => {
     );
   });
 });
+
+// rgb(), hsl() and hwb() cannot hold an origin outside the sRGB gamut. Browsers compute the
+// unclamped color and clip it when painting (w3c/csswg-drafts#8444): the display-p3 green
+// below paints as #00ff00, the lab() one as #ff96ff. These used to be resolved by gamut
+// mapping the origin, to #00f942 and #ffffff. A style sheet now keeps them as written.
+// `Bun.color()` must give a value: rgb() reads the origin with no gamut mapping and clips the
+// result, which is the painted color. hsl() and hwb() still map the origin, as before.
+describe("relative colors with an origin outside the sRGB gamut", () => {
+  test.each(["hsl(from color(display-p3 0 1 0) h s l)", "hwb(from oklch(100% 0.399 336.3) h w b)"])(
+    "%s has a value",
+    input => {
+      expect(color(input, "css")).not.toBeNull();
+    },
+  );
+
+  test.each([
+    ["rgb(from color(display-p3 0 1 0) r g b)", "#0f0"],
+    ["rgb(from lab(100% 104.3 -50.9) r g b)", "#ff96ff"],
+    ["rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)", "light-dark(red, #0f0)"],
+    // An arm of light-dark() is painted as it is.
+    ["light-dark(red, rgb(from color(display-p3 0 1 0) r g b))", "light-dark(red, #0f0)"],
+  ])("%s is the painted color %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // An inner rgb() is not the color that is painted. A browser hands it to the outer function unclamped.
+  // It is gamut mapped as before, which keeps its lightness. The clamp of its channels gives the gray #888 here.
+  test("an inner rgb() is not clamped", () => {
+    const gray = color("oklch(from rgb(from color(rec2020 1 0 0) r g b) l 0 h)", "[rgb]");
+    expect(gray![0]).toBeWithin(0x96, 0x9f);
+  });
+
+  test.each([
+    // In-gamut origins resolve as before.
+    ["rgb(from lab(50% 40 -50) r g b)", "#965dcd"],
+    ["hsl(from oklch(50% 0.1 120) h s l)", "#5c6b21"],
+    ["hwb(from color(display-p3 0.4 0.4 0.4) h w b)", "#666"],
+    // The unbounded functions hold any origin, so they still resolve out-of-gamut ones.
+    ["lab(from oklch(100% 0.399 336.3) l a b)", "lab(94.0205% 119.644 -57.6823)"],
+    ["color(from lab(100% 104.3 -50.9) srgb r g b)", "color(srgb 1.5935 .587758 1.40555)"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // A boundary color written in another space converts back a few 1e-7 outside the gamut.
+  // That is conversion noise, not an out-of-gamut origin: every color on the faces of the
+  // sRGB cube, written as the lab() Bun.color prints for it, still resolves to itself.
+  test("boundary colors written as lab() still resolve", () => {
+    withoutAggressiveGC(() => {
+      const steps = [0, 51, 102, 153, 204, 255];
+      for (const face of [0, 255]) {
+        for (let axis = 0; axis < 3; axis++) {
+          for (const x of steps) {
+            for (const y of steps) {
+              const rgb = [0, 0, 0];
+              rgb[axis] = face;
+              rgb[(axis + 1) % 3] = x;
+              rgb[(axis + 2) % 3] = y;
+              const hex = color({ r: rgb[0], g: rgb[1], b: rgb[2] }, "hex");
+              const lab = color(hex!, "lab");
+              for (const relative of [`rgb(from ${lab} r g b)`, `hsl(from ${lab} h s l)`, `hwb(from ${lab} h w b)`]) {
+                const resolved = color(relative, "hex");
+                if (resolved !== hex) {
+                  throw new Error(`${relative} resolved to ${resolved}, expected ${hex}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+  });
+});
+
+// https://drafts.csswg.org/css-color-5/#relative-colors
+// A relative rgb(), hsl() or hwb() color is not clamped, and a style sheet keeps it as written.
+// `Bun.color()` must give a value. It clips a channel of rgb(), which is what a browser paints.
+// It clamps a channel of hsl() and hwb(), as before. That is not always the painted color.
+describe("relative color with a channel outside its range", () => {
+  test.each(["hsl(from #336699 h 185% l)", "hwb(from #336699 h 150% b)"])("%s has a value", input => {
+    expect(color(input, "css")).not.toBeNull();
+  });
+
+  test.each([
+    ["rgb(from #336699 300 g b)", "#f69"],
+    ["rgb(from #336699 r -10 b)", "#309"],
+    ["rgb(from #336699 r g 120%)", "#36f"],
+    ["rgb(from #336699 255 0 b)", "#f09"],
+    ["hsl(from #336699 h 100% l)", "#06c"],
+    ["rgb(from #336699 r g b / 2)", "#369"],
+    ["rgb(300 0 0)", "red"],
+    // A lightness below 0 paints black, clamped or not.
+    ["hsl(from #336699 h s -10%)", "#000"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
+// https://www.w3.org/TR/css-color-4/#powerless
+// A gray has no hue. After a conversion its `h` is not the same in every browser, so a style
+// sheet keeps the color as written. `Bun.color()` must give a value, and takes the hue it has.
+describe("hue of a gray origin", () => {
+  test.each([
+    "oklch(from #fff 82.5% 0.1 h)",
+    "oklch(from gray l 0.1 h)",
+    "lch(from #333 50% 30 h)",
+    "hsl(from lab(50% 0 0) h 100% 50%)",
+    "hwb(from oklch(50% 0 120) h 0% 0%)",
+  ])("%s has a value", input => {
+    expect(color(input, "css")).not.toBeNull();
+  });
+
+  test.each([
+    ["oklch(from #fff 82.5% 0.1 120)", "oklch(82.5% .1 120)"],
+    ["oklch(from oklch(50% 0.1 40) 82.5% 0.1 h)", "oklch(82.5% .1 40)"],
+    // An origin of the same type is not converted.
+    ["lch(from lch(50% 0 40) 60% 20 h)", "lch(60% 20 40)"],
+    // `lab(L 0 0)` has a chroma of exactly 0 in lch().
+    ["lch(from lab(50% 0 0) 60% 20 h)", "lch(60% 20 0)"],
+    // `lab(50% 0.001 0)` has a chroma above 0 and the hue 0.
+    ["lch(from lab(50% 0.001 0) 50% 20 h)", "lch(50% 20 0)"],
+    ["oklch(from oklch(97% 0 250) l 0.05 h)", "oklch(97% .05 250)"],
+    // A gray hex, name or color(srgb ...) origin has the hue 0 in hsl() and hwb().
+    ["hsl(from gray h 50% 50%)", "#bf4040"],
+    ["hsl(from color(srgb .5 .5 .50001) h 100% 50%)", "#00f"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
+// https://drafts.csswg.org/css-color-5/#relative-colors
+// An omitted alpha is the alpha of the origin color, not 100%.
+describe("relative color origin alpha", () => {
+  test.each([
+    ["rgb(from #0008 r g b)", "#0008"],
+    ["rgb(from #0008 r g b / alpha)", "#0008"],
+    ["rgb(from #0008 r g b / 1)", "#000"],
+    ["rgb(from #000 r g b)", "#000"],
+    ["hsl(from #0008 h s l)", "#0008"],
+    ["hwb(from #0008 h w b)", "#0008"],
+    ["oklch(from oklch(50% 0 0 / 50%) l c h)", "oklch(50% 0 0 / .5)"],
+    ["oklch(from oklch(50% 0 0 / 50%) l c h / 1)", "oklch(50% 0 0)"],
+  ])("%s keeps the origin alpha", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("the origin alpha is converted along with the channels", () => {
+    expect([
+      color("rgb(from rgb(1 2 3 / 50%) r g b)", "[rgba]"),
+      color("hsl(from rgb(1 2 3 / 50%) calc(h + 180) s l)", "[rgba]"),
+      color("rgb(from rgb(1 2 3 / 50%) r g b / 1)", "[rgba]"),
+    ]).toEqual([
+      [1, 2, 3, 128],
+      [3, 2, 1, 128],
+      [1, 2, 3, 255],
+    ]);
+  });
+});
+
+// https://drafts.csswg.org/css-color-5/#relative-colors
+// Each channel keyword is a <number> in the range of the function it is used
+// in: r/g/b are 0..255 in rgb(), s/l and lab()/lch() l are 0..100, oklab() l,
+// color() channels and alpha are 0..1. lightningcss 1.30 produces the same
+// values as the first group below.
+describe("relative color channel keywords", () => {
+  test.each([
+    ["rgb(from rgb(200 100 50) r g b)", "#c86432"],
+    ["rgb(from rgb(200 100 50) calc(r + 10) g b)", "#d26432"],
+    ["rgb(from red calc(100) g b)", "#640000"],
+    ["rgb(from rgb(none 100 50) calc(r + 10) g b)", "#0a6432"],
+    ["rgb(from rgb(200 100 50) r g b / calc(g / 255))", "#c8643264"],
+    ["rgb(from rgb(200 100 50) calc(alpha * 255) g b)", "#ff6432"],
+    ["rgb(from rgb(200 100 50) r g b / calc(alpha - 0.5))", "#c8643280"],
+    ["hsl(from hsl(120 50% 40%) h s l)", "#393"],
+    ["hsl(from hsl(120 50% 40%) h calc(s + 10) l)", "#29a329"],
+    ["hsl(from hsl(120 50% 40%) h s calc(l - 10))", "#267326"],
+    ["hsl(from hsl(120 50% 40%) h 60 l)", "#29a329"],
+    ["hsl(from hsl(120 50% 40%) h 60% l)", "#29a329"],
+    ["hsl(from hsl(120 50% 40%) calc(s * 2) s l)", "#593"],
+    ["hsl(from hsl(120 50% 40%) h s l / calc(l / 100))", "#3936"],
+    ["hwb(from hwb(120 20% 30%) h calc(w + 10) b)", "#4db34d"],
+    ["lab(from lab(50% 20 30) l a b)", "lab(50% 20 30)"],
+    ["lab(from lab(50% 20 30) calc(l + 10) a b)", "lab(60% 20 30)"],
+    ["lab(from lab(50% 20 30) l l l)", "lab(50% 50 50)"],
+    ["lab(from lab(50% 20 30) a b l)", "lab(20% 30 50)"],
+    ["lch(from lch(50% 30 120) calc(l + 10) c h)", "lch(60% 30 120)"],
+    ["oklab(from oklab(50% 0.1 0.1) calc(l + 0.1) a b)", "oklab(60% .1 .1)"],
+    ["oklch(from oklch(50% 0.1 120) calc(l + 0.1) c h)", "oklch(60% .1 120)"],
+    ["color(from color(srgb 0.5 0.2 0.1) srgb calc(r + 0.1) g b)", "color(srgb .6 .2 .1)"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each([
+    // 300 is outside 0..255. `Bun.color()` clips a channel of rgb().
+    ["rgb(from rgb(200 100 50) calc(r + 100) g b)", "#ff6432"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each([
+    // A <number> cannot be added to an <angle>. A browser rejects this too.
+    "hsl(from hsl(120 50% 40%) calc(s + 30deg) s l)",
+    // `h` resolves only in the hue channel. A browser takes it in every channel.
+    "hsl(from hsl(120 50% 40%) h h l)",
+  ])("%s is not resolved", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+
+  test.each([
+    ["lch(from blue calc((49.44 - l) * infinity) 0 0)", "lch(100% 0 0)"],
+    // A calculation that is NaN is 0, not `none`.
+    ["lab(from lab(50% -20 30) l calc(a * NaN) b)", "lab(50% 0 30)"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});

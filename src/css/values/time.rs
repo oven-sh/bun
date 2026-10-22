@@ -60,30 +60,22 @@ impl Time {
         }
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    /// The value and the unit that `to_css` prints.
+    pub(crate) fn to_unit_value(self) -> (f32, &'static str) {
         // 0.1s is shorter than 100ms
         // anything smaller is longer
         match self {
-            Time::Seconds(s) => {
-                if s > 0.0 && s < 0.1 {
-                    CSSNumberFns::to_css(s * 1000.0, dest)?;
-                    dest.write_str("ms")?;
-                } else {
-                    CSSNumberFns::to_css(s, dest)?;
-                    dest.write_str("s")?;
-                }
-            }
-            Time::Milliseconds(ms) => {
-                if ms == 0.0 || ms >= 100.0 {
-                    CSSNumberFns::to_css(ms / 1000.0, dest)?;
-                    dest.write_str("s")?;
-                } else {
-                    CSSNumberFns::to_css(ms, dest)?;
-                    dest.write_str("ms")?;
-                }
-            }
+            Time::Seconds(s) if s > 0.0 && s < 0.1 => (s * 1000.0, "ms"),
+            Time::Seconds(s) => (s, "s"),
+            Time::Milliseconds(ms) if ms == 0.0 || ms >= 100.0 => (ms / 1000.0, "s"),
+            Time::Milliseconds(ms) => (ms, "ms"),
         }
-        Ok(())
+    }
+
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        let (value, unit) = self.to_unit_value();
+        CSSNumberFns::to_css(value, dest)?;
+        dest.write_str(unit)
     }
 
     pub(crate) fn is_zero(self) -> bool {

@@ -434,67 +434,30 @@ impl CssColor {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             CssColor::CurrentColor => dest.write_str("currentColor"),
-            CssColor::Rgba(color) => {
-                if color.alpha == 255 {
-                    let hex: u32 = ((color.red as u32) << 16)
-                        | ((color.green as u32) << 8)
-                        | (color.blue as u32);
-                    if let Some(name) = short_color_name(hex) {
-                        return dest.write_str(name);
-                    }
-
-                    let compact = compact_hex(hex);
-                    if hex == expand_hex(compact) {
-                        dest.write_fmt(format_args!("#{:03x}", compact))?;
-                    } else {
-                        dest.write_fmt(format_args!("#{:06x}", hex))?;
-                    }
-                } else {
-                    // If the #rrggbbaa syntax is not supported by the browser targets, output rgba()
-                    if dest.targets.should_compile_same(Feature::HexAlphaColors) {
-                        // If the browser doesn't support `#rrggbbaa` color syntax, it is converted to `transparent` when compressed(minify = true).
-                        // https://www.w3.org/TR/css-color-4/#transparent-black
-                        if dest.minify
-                            && color.red == 0
-                            && color.green == 0
-                            && color.blue == 0
-                            && color.alpha == 0
-                        {
-                            return dest.write_str("transparent");
-                        } else {
-                            dest.write_fmt(format_args!("rgba({}", color.red))?;
-                            dest.delim(b',', false)?;
-                            dest.write_fmt(format_args!("{}", color.green))?;
-                            dest.delim(b',', false)?;
-                            dest.write_fmt(format_args!("{}", color.blue))?;
-                            dest.delim(b',', false)?;
-
-                            // Try first with two decimal places, then with three.
-                            let mut rounded_alpha = (color.alpha_f32() * 100.0).round() / 100.0;
-                            let clamped = clamp_unit_f32(rounded_alpha);
-                            if clamped != color.alpha {
-                                rounded_alpha = (color.alpha_f32() * 1000.0).round() / 1000.0;
-                            }
-
-                            CSSNumberFns::to_css(rounded_alpha, dest)?;
-                            dest.write_char(b')')?;
-                            return Ok(());
-                        }
-                    }
-
-                    let hex: u32 = ((color.red as u32) << 24)
-                        | ((color.green as u32) << 16)
-                        | ((color.blue as u32) << 8)
-                        | (color.alpha as u32);
-                    let compact = compact_hex(hex);
-                    if hex == expand_hex(compact) {
-                        dest.write_fmt(format_args!("#{:04x}", compact))?;
-                    } else {
-                        dest.write_fmt(format_args!("#{:08x}", hex))?;
-                    }
+            CssColor::Rgba(color) => match RgbaText::of(*color, dest) {
+                RgbaText::Name(name) => dest.write_str(name),
+                RgbaText::Hex { value, digits } => {
+                    dest.write_fmt(format_args!("#{:01$x}", value, digits))
                 }
-                Ok(())
-            }
+                RgbaText::Function => {
+                    dest.write_fmt(format_args!("rgba({}", color.red))?;
+                    dest.delim(b',', false)?;
+                    dest.write_fmt(format_args!("{}", color.green))?;
+                    dest.delim(b',', false)?;
+                    dest.write_fmt(format_args!("{}", color.blue))?;
+                    dest.delim(b',', false)?;
+
+                    // Try first with two decimal places, then with three.
+                    let mut rounded_alpha = (color.alpha_f32() * 100.0).round() / 100.0;
+                    let clamped = clamp_unit_f32(rounded_alpha);
+                    if clamped != color.alpha {
+                        rounded_alpha = (color.alpha_f32() * 1000.0).round() / 1000.0;
+                    }
+
+                    CSSNumberFns::to_css(rounded_alpha, dest)?;
+                    dest.write_char(b')')
+                }
+            },
             CssColor::Lab(lab) => {
                 let (a, b, c, alpha) = lab.components();
                 write_components(lab.css_name(), a, b, c, alpha, dest)
@@ -527,6 +490,40 @@ impl CssColor {
                 dest.write_char(b')')
             }
             CssColor::System(system) => system.to_css(dest),
+        }
+    }
+
+    /// The type of the color that this value holds, when the color is known at build time.
+    pub(crate) fn payload_type_id(&self) -> Option<core::any::TypeId> {
+        use core::any::TypeId;
+        match self {
+            CssColor::Rgba(_) => Some(TypeId::of::<RGBA>()),
+            CssColor::Lab(lab) => Some(lab.payload_type_id()),
+            CssColor::Predefined(pre) => Some(pre.payload_type_id()),
+            CssColor::Float(f) => Some(f.payload_type_id()),
+            CssColor::CurrentColor | CssColor::LightDark { .. } | CssColor::System(_) => None,
+        }
+    }
+
+    /// The kinds of token that `to_css` starts and ends with: `red`, `#f00` or `rgb(…)`.
+    pub(crate) fn serialization_types(
+        &self,
+        dest: &Printer,
+    ) -> (css::TokenSerializationType, css::TokenSerializationType) {
+        use css::TokenSerializationType::*;
+        match self {
+            CssColor::CurrentColor | CssColor::System(_) => (Ident, Ident),
+            CssColor::Rgba(color) => match RgbaText::of(*color, dest) {
+                RgbaText::Name(_) => (Ident, Ident),
+                RgbaText::Hex { .. } => (AtKeywordOrHash, AtKeywordOrHash),
+                RgbaText::Function => (Function, Other),
+            },
+            CssColor::Float(float) => SRGB::from_float_color(float)
+                .into_css_color()
+                .serialization_types(dest),
+            CssColor::Lab(_) | CssColor::Predefined(_) | CssColor::LightDark { .. } => {
+                (Function, Other)
+            }
         }
     }
 
@@ -802,21 +799,12 @@ impl CssColor {
         }
 
         fn check_converted<T: 'static>(color: &CssColor) -> Option<bool> {
-            use core::any::TypeId;
             debug_assert!(!matches!(
                 color,
                 CssColor::LightDark { .. } | CssColor::CurrentColor
             ));
-            match color {
-                CssColor::Rgba(_) => Some(TypeId::of::<T>() == TypeId::of::<RGBA>()),
-                CssColor::Lab(lab) => Some(TypeId::of::<T>() == lab.payload_type_id()),
-                CssColor::Predefined(pre) => Some(TypeId::of::<T>() == pre.payload_type_id()),
-                CssColor::Float(f) => Some(TypeId::of::<T>() == f.payload_type_id()),
-                // System colors cannot be converted to specific color spaces at parse time
-                CssColor::System(_) => None,
-                // We checked these above
-                CssColor::LightDark { .. } | CssColor::CurrentColor => unreachable!(),
-            }
+            // System colors cannot be converted to specific color spaces at parse time
+            Some(core::any::TypeId::of::<T>() == color.payload_type_id()?)
         }
 
         let converted_first = check_converted::<T>(self)?;
@@ -992,7 +980,7 @@ impl ColorFallbackKind {
 
 /// Trait every colorspace implements. The
 /// first three struct fields plus `alpha` are exposed by index.
-pub trait Colorspace: Copy + Sized + FromAnyColorspace {
+pub trait Colorspace: Copy + Sized + FromAnyColorspace + 'static {
     const CHANNEL_NAMES: (&'static [u8], &'static [u8], &'static [u8]);
     const CHANNEL_TYPES: (ChannelType, ChannelType, ChannelType);
 
@@ -1069,6 +1057,8 @@ pub trait Colorspace: Copy + Sized + FromAnyColorspace {
 
 /// Gamut behavior — in-gamut check and clipping per color space.
 pub trait ColorGamut: Sized + Copy {
+    /// Whether the space can only hold colors inside its gamut (the lab family and XYZ hold any).
+    const BOUNDED: bool;
     fn in_gamut(&self) -> bool;
     fn clip(&self) -> Self;
 }
@@ -1127,16 +1117,16 @@ pub(crate) fn parse_color_function(
     let mut parser = ComponentParser::new(true);
 
     crate::match_ignore_ascii_case! { function, {
-        b"lab" => parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
+        b"lab" => parse_lab::<LAB>(input, &mut parser, 100.0, |l, a, b, alpha| {
             LABColor::Lab(LAB { l, a, b, alpha })
         }),
-        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
+        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, 1.0, |l, a, b, alpha| {
             LABColor::Oklab(OKLAB { l, a, b, alpha })
         }),
-        b"lch" => parse_lch::<LCH>(input, &mut parser, |l, c, h, alpha| {
+        b"lch" => parse_lch::<LCH, LAB>(input, &mut parser, 100.0, LCH_POWERLESS_CHROMA, |l, c, h, alpha| {
             LABColor::Lch(LCH { l, c, h, alpha })
         }),
-        b"oklch" => parse_lch::<OKLCH>(input, &mut parser, |l, c, h, alpha| {
+        b"oklch" => parse_lch::<OKLCH, OKLAB>(input, &mut parser, 1.0, OKLCH_POWERLESS_CHROMA, |l, c, h, alpha| {
             LABColor::Oklch(OKLCH { l, c, h, alpha })
         }),
         b"color" => parse_predefined(input, &mut parser),
@@ -1184,10 +1174,18 @@ pub(crate) struct RgbComponents {
     pub(crate) is_legacy: bool,
 }
 
+// See `RelativeComponentParser::percent_basis`.
+const RGB_PERCENT_BASIS: f32 = 255.0;
+const HSL_PERCENT_BASIS: f32 = 100.0;
+
 pub(crate) fn parse_rgb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
 ) -> CssResult<RgbComponents> {
+    if let Some(from) = &mut parser.from {
+        from.percent_basis = (RGB_PERCENT_BASIS, RGB_PERCENT_BASIS, RGB_PERCENT_BASIS);
+    }
+
     let red = parser.parse_number_or_percentage(input)?;
 
     let is_legacy_syntax = parser.from.is_none()
@@ -1216,23 +1214,29 @@ pub(crate) fn parse_rgb_components(
             }
         }
     } else {
-        fn get_component(value: NumberOrPercentage) -> f32 {
+        fn get_component(
+            input: &css::Parser,
+            parser: &ComponentParser,
+            value: NumberOrPercentage,
+        ) -> CssResult<f32> {
             match value {
                 NumberOrPercentage::Number { value: v } => {
-                    if v.is_nan() {
-                        v
-                    } else {
-                        v.round().clamp(0.0, 255.0) / 255.0
-                    }
+                    parser.clamp_unit(input, v / RGB_PERCENT_BASIS)?;
+                    Ok(v.round().clamp(0.0, RGB_PERCENT_BASIS) / RGB_PERCENT_BASIS)
                 }
-                NumberOrPercentage::Percentage { unit_value } => unit_value.clamp(0.0, 1.0),
+                NumberOrPercentage::Percentage { unit_value } => {
+                    parser.clamp_unit(input, unit_value)
+                }
             }
         }
 
-        let r = get_component(red);
-        let g = get_component(parser.parse_number_or_percentage(input)?);
-        let b = get_component(parser.parse_number_or_percentage(input)?);
-        (r, g, b)
+        let green = parser.parse_number_or_percentage(input)?;
+        let blue = parser.parse_number_or_percentage(input)?;
+        (
+            get_component(input, parser, red)?,
+            get_component(input, parser, green)?,
+            get_component(input, parser, blue)?,
+        )
     };
 
     if is_legacy_syntax && (g.is_nan() || b.is_nan()) {
@@ -1326,6 +1330,7 @@ fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
 pub(crate) fn parse_lab<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor>
 where
@@ -1334,8 +1339,12 @@ where
     // https://www.w3.org/TR/css-color-4/#funcdef-lab
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
-            // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
+            if let Some(from) = &mut p.from {
+                from.percent_basis.0 = l_basis;
+            }
+
+            // The lightness is clamped when it is parsed: https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+            let l = p.parse_unit_channel(i, l_basis)?.clamp(0.0, 1.0);
             let a = p.parse_number(i)?;
             let b = p.parse_number(i)?;
             let alpha = parse_alpha(i, p)?;
@@ -1345,14 +1354,40 @@ where
     })
 }
 
-pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
+// The chroma at or below which a color has no hue: https://www.w3.org/TR/css-color-4/#lab-to-lch
+const LCH_POWERLESS_CHROMA: f32 = 0.0015;
+const OKLCH_POWERLESS_CHROMA: f32 = 0.000004;
+// The difference of the largest and the smallest sRGB channel at or below which a converted color has no stable hue.
+const HUE_NOISE_CHROMA: f32 = 1e-4;
+
+/// Whether this type becomes sRGB with no matrix (hex, name, `rgb()`, `hsl()`, `hwb()`, `color(srgb ...)`), so a gray stays exact.
+fn is_srgb_type(ty: core::any::TypeId) -> bool {
+    use core::any::TypeId;
+    [
+        TypeId::of::<RGBA>(),
+        TypeId::of::<SRGB>(),
+        TypeId::of::<HSL>(),
+        TypeId::of::<HWB>(),
+    ]
+    .contains(&ty)
+}
+
+/// `R` is the rectangular form of `T`: `LAB` for `LCH`, `OKLAB` for `OKLCH`.
+pub(crate) fn parse_lch<T, R: 'static>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
+    powerless_chroma: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
-) -> CssResult<CssColor> {
+) -> CssResult<CssColor>
+where
+    T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>,
+{
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             if let Some(from) = &mut p.from {
+                from.percent_basis.0 = l_basis;
+
                 // Relative angles should be normalized.
                 // https://www.w3.org/TR/css-color-5/#relative-LCH
                 from.components.2 = from.components.2.rem_euclid(360.0);
@@ -1361,8 +1396,21 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> +
                 }
             }
 
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
+            let l = p.parse_unit_channel(i, l_basis)?.clamp(0.0, 1.0);
             let c = p.parse_number(i)?.clamp(0.0, f32::MAX);
+            // A gray that is converted has no hue (css-color-4 #powerless), and browsers do not agree on its `h`. A color with chroma cannot take it.
+            if let Some(from) = &mut p.from {
+                use core::any::TypeId;
+                // The hue of the origin is the one that is written, or the 0 of a chroma that is exactly 0 in the same family.
+                let exact = from.origin == Some(TypeId::of::<T>())
+                    || (from.origin == Some(TypeId::of::<R>()) && from.components.1 == 0.0);
+                // A chroma of `none` counts as chroma: the hue shows when the color is mixed.
+                let has_chroma = c > powerless_chroma || c.is_nan();
+                let gray = from.components.1 <= powerless_chroma;
+                if !exact && gray && has_chroma && !i.flags.must_fold() {
+                    from.types.2 = ChannelType::empty();
+                }
+            }
             let h = parse_angle_or_number(i, p)?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, c, h, alpha);
@@ -1384,7 +1432,7 @@ pub(crate) fn parse_hsl_hwb<
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
-            let (h, a, b, is_legacy) = parse_hsl_hwb_components::<T>(i, p, allows_legacy)?;
+            let (h, a, b, is_legacy) = parse_hsl_hwb_components(i, p, allows_legacy)?;
             let alpha = if is_legacy {
                 parse_legacy_alpha(i, p)?
             } else {
@@ -1396,28 +1444,67 @@ pub(crate) fn parse_hsl_hwb<
     })
 }
 
-pub(crate) fn parse_hsl_hwb_components<T>(
+pub(crate) fn parse_hsl_hwb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     allows_legacy: bool,
 ) -> CssResult<(f32, f32, f32, bool)> {
-    let _ = core::marker::PhantomData::<T>; // autofix
+    if let Some(from) = &mut parser.from {
+        from.percent_basis.1 = HSL_PERCENT_BASIS;
+        from.percent_basis.2 = HSL_PERCENT_BASIS;
+    }
+
+    // The difference of the largest and the smallest sRGB channel.
+    let is_hsl = parser
+        .from
+        .as_ref()
+        .is_some_and(|from| from.names.1 == b"s");
+    let chroma = |a: f32, b: f32| {
+        if is_hsl {
+            a * (1.0 - (2.0 * b - 1.0).abs())
+        } else {
+            1.0 - a - b
+        }
+    };
+    // An origin that is not written in sRGB is converted with a rounding error. When it is almost a gray, its hue is that error.
+    let hue_is_noise = !input.flags.must_fold()
+        && parser.from.as_ref().is_some_and(|from| {
+            chroma(from.components.1, from.components.2) <= HUE_NOISE_CHROMA
+                && !from.origin.is_some_and(is_srgb_type)
+        });
+
+    let hue_start = input.state();
     let h = parse_angle_or_number(input, parser)?;
     let is_legacy_syntax = allows_legacy
         && parser.from.is_none()
         && !h.is_nan()
         && input.try_parse(|i| i.expect_comma()).is_ok();
 
-    let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    let a = parser.parse_unit_channel(input, HSL_PERCENT_BASIS)?;
+    let a = parser.clamp_unit(input, a)?;
 
     if is_legacy_syntax {
         input.expect_comma()?;
     }
 
-    let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
+    let b = parser.parse_unit_channel(input, HSL_PERCENT_BASIS)?;
+    let b = parser.clamp_unit(input, b)?;
 
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
+    }
+
+    // A color with chroma shows its hue, so its hue channel must parse with no `h`. `none` counts as chroma.
+    let new_chroma = chroma(a, b);
+    if hue_is_noise && (new_chroma > HUE_NOISE_CHROMA || new_chroma.is_nan()) {
+        let end = input.state();
+        input.reset(&hue_start);
+        if let Some(from) = &mut parser.from {
+            from.types.0 = ChannelType::empty();
+        }
+        let hue = parse_angle_or_number(input, parser);
+        input.reset(&end);
+        hue?;
     }
 
     Ok((h, a, b, is_legacy_syntax))
@@ -1472,15 +1559,18 @@ fn parse_legacy_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssR
 }
 
 fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
-    let res = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
-        parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
+    if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
+        return Ok(parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0));
+    }
 
-    Ok(res)
+    // An omitted alpha of a relative color is the alpha of its origin.
+    Ok(match &parser.from {
+        Some(from) => from.components.3,
+        None => 1.0,
+    })
 }
 
+/// For alpha and the `color()` channels, whose percent basis is 1.
 pub(crate) fn parse_number_or_percentage(
     input: &mut css::Parser,
     parser: &ComponentParser,
@@ -1574,12 +1664,14 @@ macro_rules! define_colorspace {
     // Gamut variants
     (@gamut unbounded $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = false;
             fn in_gamut(&self) -> bool { true }
             fn clip(&self) -> Self { *self }
         }
     };
     (@gamut bounded $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = true;
             fn in_gamut(&self) -> bool {
                 self.$a >= 0.0 && self.$a <= 1.0
                     && self.$b >= 0.0 && self.$b <= 1.0
@@ -1597,6 +1689,7 @@ macro_rules! define_colorspace {
     };
     (@gamut hsl_hwb $name:ident { $h:ident, $a:ident, $b:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = true;
             fn in_gamut(&self) -> bool {
                 self.$a >= 0.0 && self.$a <= 1.0 && self.$b >= 0.0 && self.$b <= 1.0
             }
@@ -1752,6 +1845,14 @@ impl SRGB {
     pub fn into_rgba(&self) -> RGBA {
         let rgb = self.resolve();
         RGBA::from_floats(rgb.r, rgb.g, rgb.b, rgb.alpha)
+    }
+
+    /// `in_gamut()` with room for the ~1e-6 of noise a boundary color picks up when it converts from another space.
+    fn is_nearly_in_gamut(&self) -> bool {
+        // 0.03 of an 8-bit step.
+        const TOLERANCE: f32 = 1e-4;
+        let nearly = |v: f32| (-TOLERANCE..=1.0 + TOLERANCE).contains(&v);
+        nearly(self.r) && nearly(self.g) && nearly(self.b)
     }
 }
 
@@ -1909,7 +2010,7 @@ impl ComponentParser {
             .try_parse(|i| i.expect_ident_matching(b"from"))
             .is_ok()
         {
-            let from = CssColor::parse(input)?;
+            let from = parse_inner_color(input)?;
             return self.parse_from::<T, C, F>(from, input, func);
         }
 
@@ -1935,22 +2036,56 @@ impl ComponentParser {
             return Ok(C::light_dark_owned(light, dark));
         }
 
+        let must_fold = input.flags.must_fold();
+        // For an rgb() that is painted as it is, the clamp of its channels is the paint only when the origin is read with no gamut mapping.
+        let unmapped = must_fold
+            && !input.flags.inner_color()
+            && core::any::TypeId::of::<T>() == core::any::TypeId::of::<SRGB>();
+        // rgb(), hsl() and hwb() hold sRGB. A browser keeps an origin outside sRGB unclamped (w3c/csswg-drafts#8444), so the color is left for it.
+        if T::BOUNDED
+            && !must_fold
+            && !matches!(from, CssColor::Rgba(_))
+            && !SRGB::try_from_css_color(&from)
+                .is_some_and(|srgb| srgb.resolve_missing().is_nearly_in_gamut())
+        {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
+        }
+
         let new_from = match T::try_from_css_color(&from) {
+            Some(v) if unmapped => v.resolve_missing(),
             Some(v) => v.resolve(),
             None => return Err(input.new_custom_error(css::ParserError::invalid_value)),
         };
 
-        self.from = Some(RelativeComponentParser::new(&new_from));
+        let mut relative = RelativeComponentParser::new(&new_from);
+        relative.origin = from.payload_type_id();
+        self.from = Some(relative);
 
         func(input, self)
     }
 
+    /// Clamps a channel to its range. A relative color is not clamped: out of range it stays unresolved, unless the caller must fold.
+    fn clamp_unit(&self, input: &css::Parser, value: f32) -> CssResult<f32> {
+        const TOLERANCE: f32 = 1e-4;
+        if self.from.is_some()
+            && !input.flags.must_fold()
+            && (value < -TOLERANCE || value > 1.0 + TOLERANCE)
+        {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
+        }
+        Ok(value.clamp(0.0, 1.0))
+    }
+
     fn parse_number_or_percentage(&self, input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
         if let Some(from) = &self.from {
-            if let Ok(res) =
-                input.try_parse(|i| RelativeComponentParser::parse_number_or_percentage(i, from))
+            if let Ok(value) = input.try_parse(|i| RelativeComponentParser::parse_number(i, from)) {
+                return Ok(NumberOrPercentage::Number { value });
+            }
+            let allowed = ChannelType::PERCENTAGE | ChannelType::NUMBER;
+            if let Ok(unit_value) =
+                input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from, allowed))
             {
-                return Ok(res);
+                return Ok(NumberOrPercentage::Percentage { unit_value });
             }
         }
 
@@ -1994,14 +2129,23 @@ impl ComponentParser {
         }
     }
 
-    fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
+    /// A unit value: a `<percentage>`, or in relative syntax a `<number>` out of `percent_basis`.
+    fn parse_unit_channel(&self, input: &mut css::Parser, percent_basis: f32) -> CssResult<f32> {
         if let Some(from) = &self.from {
-            if let Ok(res) = input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from))
-            {
-                return Ok(res);
+            if let Ok(value) = input.try_parse(|i| self.parse_number(i)) {
+                return Ok(value / percent_basis);
+            }
+            if let Ok(unit_value) = input.try_parse(|i| {
+                RelativeComponentParser::parse_percentage(i, from, ChannelType::PERCENTAGE)
+            }) {
+                return Ok(unit_value);
             }
         }
 
+        self.parse_percentage(input)
+    }
+
+    fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
         if let Ok(val) = input.try_parse(Percentage::parse) {
             Ok(val.v)
         } else if self.allow_none {
@@ -2074,7 +2218,11 @@ impl NumberOrPercentage {
 pub(crate) struct RelativeComponentParser {
     pub(crate) names: (&'static [u8], &'static [u8], &'static [u8]),
     pub(crate) components: (f32, f32, f32, f32),
+    /// A keyword is `component * percent_basis`: 255 in `rgb()`, 100 for a percentage channel, 1 for the others.
+    pub(crate) percent_basis: (f32, f32, f32),
     pub(crate) types: (ChannelType, ChannelType, ChannelType),
+    /// The type of the origin as written, before its conversion to the color space of the function.
+    origin: Option<core::any::TypeId>,
 }
 
 impl RelativeComponentParser {
@@ -2082,7 +2230,9 @@ impl RelativeComponentParser {
         RelativeComponentParser {
             names: color.channels(),
             components: color.components(),
+            percent_basis: (1.0, 1.0, 1.0),
             types: color.types(),
+            origin: None,
         }
     }
 
@@ -2090,7 +2240,7 @@ impl RelativeComponentParser {
         input: &mut css::Parser,
         this: &RelativeComponentParser,
     ) -> CssResult<css::color::AngleOrNumber> {
-        let allowed = ChannelType::ANGLE | ChannelType::NUMBER;
+        let allowed = ChannelType::all();
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, allowed))
         {
@@ -2103,98 +2253,59 @@ impl RelativeComponentParser {
             return Ok(css::color::AngleOrNumber::Number { value });
         }
 
-        // `Calc::Value` is `Box<V>`, so box the temporary `Angle`.
-        if let Ok(value) = input.try_parse(|i| {
-            match Calc::<Angle>::parse_with(i, &|ident| {
-                let value = this.get_ident(ident, allowed)?;
-                Some(Calc::Value(Box::new(Angle::Deg(value))))
-            }) {
+        // An angle. Every keyword is a number: `calc(s * 1deg)`.
+        let number = |ident: &[u8]| Some(Calc::Number(this.get_number(ident, allowed)?));
+        // The older reading, a keyword as an angle: `calc(h + 30deg)`. A browser rejects it.
+        let angle = |ident: &[u8]| {
+            let (degrees, _) = this.get_ident(ident, ChannelType::ANGLE | ChannelType::NUMBER)?;
+            Some(Calc::Value(Box::new(Angle::Deg(degrees))))
+        };
+        let resolvers: [&dyn Fn(&[u8]) -> Option<Calc<Angle>>; 2] = [&number, &angle];
+        for resolver in resolvers {
+            if let Ok(value) = input.try_parse(|i| match Calc::<Angle>::parse_with(i, resolver) {
                 Ok(Calc::Value(v)) => Ok(*v),
                 _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
+            }) {
+                return Ok(css::color::AngleOrNumber::Angle {
+                    degrees: censor_nan(value.to_degrees()),
+                });
             }
-        }) {
-            return Ok(css::color::AngleOrNumber::Angle {
-                degrees: value.to_degrees(),
-            });
         }
 
         Err(input.new_error_for_next_token())
     }
 
-    fn parse_number_or_percentage(
-        input: &mut css::Parser,
-        this: &RelativeComponentParser,
-    ) -> CssResult<NumberOrPercentage> {
+    /// Every keyword but the hue is a `<number>` in the range of the function.
+    fn parse_number(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         let allowed = ChannelType::PERCENTAGE | ChannelType::NUMBER;
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, allowed))
         {
-            return Ok(NumberOrPercentage::Percentage { unit_value: value });
+            return Ok(value);
         }
 
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_calc(i, this, allowed))
         {
-            return Ok(NumberOrPercentage::Percentage { unit_value: value });
-        }
-
-        if let Ok(value) = input.try_parse(|i| {
-            match Calc::<Percentage>::parse_with(i, &|ident| {
-                let v = this.get_ident(ident, allowed)?;
-                Some(Calc::Value(Box::new(Percentage { v })))
-            }) {
-                Ok(Calc::Value(v)) => Ok(*v),
-                _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
-            }
-        }) {
-            return Ok(NumberOrPercentage::Percentage {
-                unit_value: value.v,
-            });
+            return Ok(value);
         }
 
         Err(input.new_error_for_next_token())
     }
 
-    fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
-        if let Ok(value) = input
-            .try_parse(|i| RelativeComponentParser::parse_ident(i, this, ChannelType::PERCENTAGE))
-        {
-            return Ok(value);
-        }
-
-        if let Ok(value) = input.try_parse(|i| {
-            let calc_value = match Calc::<Percentage>::parse_with(i, &|ident| {
-                let v = this.get_ident(ident, ChannelType::PERCENTAGE)?;
-                Some(Calc::Value(Box::new(Percentage { v })))
-            }) {
-                Ok(v) => v,
-                Err(_) => return Err(i.new_custom_error(css::ParserError::invalid_value)),
-            };
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
-            }
-            Err(i.new_custom_error(css::ParserError::invalid_value))
+    /// The older reading, a keyword as a percentage: `calc(r + 10%)`. A browser rejects it.
+    fn parse_percentage(
+        input: &mut css::Parser,
+        this: &RelativeComponentParser,
+        allowed_types: ChannelType,
+    ) -> CssResult<f32> {
+        match Calc::<Percentage>::parse_with(input, &|ident| {
+            let (v, _) = this.get_ident(ident, allowed_types)?;
+            Some(Calc::Value(Box::new(Percentage { v })))
         }) {
-            return Ok(value.v);
+            Ok(Calc::Value(v)) => Ok(censor_nan(v.v)),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
-
-        Err(input.new_error_for_next_token())
-    }
-
-    fn parse_number(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
-        if let Ok(value) =
-            input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, ChannelType::NUMBER))
-        {
-            return Ok(value);
-        }
-
-        if let Ok(value) =
-            input.try_parse(|i| RelativeComponentParser::parse_calc(i, this, ChannelType::NUMBER))
-        {
-            return Ok(value);
-        }
-
-        Err(input.new_error_for_next_token())
     }
 
     fn parse_ident(
@@ -2203,7 +2314,7 @@ impl RelativeComponentParser {
         allowed_types: ChannelType,
     ) -> CssResult<f32> {
         let ident = input.expect_ident()?;
-        match this.get_ident(ident, allowed_types) {
+        match this.get_number(ident, allowed_types) {
             Some(v) => Ok(v),
             None => Err(input.new_error_for_next_token()),
         }
@@ -2215,47 +2326,70 @@ impl RelativeComponentParser {
         allowed_types: ChannelType,
     ) -> CssResult<f32> {
         if let Ok(calc_val) = Calc::<f32>::parse_with(input, &|ident| {
-            let v = this.get_ident(ident, allowed_types)?;
+            let v = this.get_number(ident, allowed_types)?;
             Some(Calc::Number(v))
         }) {
             // PERF: I don't like this redundant allocation
             if let Calc::Value(v) = calc_val {
-                return Ok(*v);
+                return Ok(censor_nan(*v));
             }
             if let Calc::Number(n) = calc_val {
-                return Ok(n);
+                return Ok(censor_nan(n));
             }
         }
         Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
-    fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
+    /// Whether `ident` is a channel keyword of the function, or `alpha`.
+    pub(crate) fn is_channel_keyword(&self, ident: &[u8]) -> bool {
+        [
+            self.names.0,
+            self.names.1,
+            self.names.2,
+            b"alpha".as_slice(),
+        ]
+        .into_iter()
+        .any(|name| strings::eql_case_insensitive_ascii_check_length(ident, name))
+    }
+
+    fn get_number(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
+        let (component, percent_basis) = self.get_ident(ident, allowed_types)?;
+        Some(component * percent_basis)
+    }
+
+    /// Returns the keyword's stored component and its percent basis.
+    fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<(f32, f32)> {
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.0)
             && allowed_types.intersects(self.types.0)
         {
-            return Some(self.components.0);
+            return Some((self.components.0, self.percent_basis.0));
         }
 
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.1)
             && allowed_types.intersects(self.types.1)
         {
-            return Some(self.components.1);
+            return Some((self.components.1, self.percent_basis.1));
         }
 
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.2)
             && allowed_types.intersects(self.types.2)
         {
-            return Some(self.components.2);
+            return Some((self.components.2, self.percent_basis.2));
         }
 
         if strings::eql_case_insensitive_ascii_check_length(ident, b"alpha")
             && allowed_types.contains(ChannelType::PERCENTAGE)
         {
-            return Some(self.components.3);
+            return Some((self.components.3, 1.0));
         }
 
         None
     }
+}
+
+/// A calculation that is NaN is 0 (css-values-4 #top-level-calculation). NaN in a color is `none`.
+fn censor_nan(value: f32) -> f32 {
+    if value.is_nan() { 0.0 } else { value }
 }
 
 bitflags::bitflags! {
@@ -2282,7 +2416,7 @@ pub(crate) fn parse_predefined(
     let res = input.parse_nested_block(|i| {
         // https://www.w3.org/TR/css-color-4/#color-function
         let from: Option<CssColor> = if i.try_parse(|i| i.expect_ident_matching(b"from")).is_ok() {
-            Some(CssColor::parse(i)?)
+            Some(parse_inner_color(i)?)
         } else {
             None
         };
@@ -2385,6 +2519,15 @@ pub(crate) enum ColorSpaceName {
     Oklch,
 }
 
+/// Parses a color that another color function takes in, see `ParserOpts::INNER_COLOR`.
+fn parse_inner_color(input: &mut css::Parser) -> CssResult<CssColor> {
+    let flags = input.flags;
+    input.flags.insert(css::ParserOpts::INNER_COLOR);
+    let color = CssColor::parse(input);
+    input.flags = flags;
+    color
+}
+
 pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     input.expect_ident_matching(b"in")?;
     let method = ColorSpaceName::parse(input)?;
@@ -2406,7 +2549,7 @@ pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     input.expect_comma()?;
 
     let first_percent_ = input.try_parse(|i| i.expect_percentage());
-    let first_color = CssColor::parse(input)?;
+    let first_color = parse_inner_color(input)?;
     let first_percent: Option<f32> = match first_percent_ {
         Ok(v) => Some(v),
         Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),
@@ -2414,7 +2557,7 @@ pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     input.expect_comma()?;
 
     let second_percent_ = input.try_parse(|i| i.expect_percentage());
-    let second_color = CssColor::parse(input)?;
+    let second_color = parse_inner_color(input)?;
     let second_percent: Option<f32> = match second_percent_ {
         Ok(v) => Some(v),
         Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),
@@ -2556,6 +2699,55 @@ fn rectangular_to_polar(l: f32, a: f32, b: f32) -> LchComponents {
 // ──────────────────────────────────────────────────────────────────────────
 // hex helpers / write helpers
 // ──────────────────────────────────────────────────────────────────────────
+
+/// What an RGBA color prints as: a name, a hex of `digits` digits, or `rgba()`.
+enum RgbaText {
+    Name(&'static str),
+    Hex { value: u32, digits: usize },
+    Function,
+}
+
+impl RgbaText {
+    fn of(color: RGBA, dest: &Printer) -> RgbaText {
+        let (hex, digits) = if color.alpha == 255 {
+            let hex: u32 =
+                ((color.red as u32) << 16) | ((color.green as u32) << 8) | (color.blue as u32);
+            if let Some(name) = short_color_name(hex) {
+                return RgbaText::Name(name);
+            }
+            (hex, 6)
+        } else {
+            // If the #rrggbbaa syntax is not supported by the browser targets, output rgba()
+            if dest.targets.should_compile_same(Feature::HexAlphaColors) {
+                // Transparent black is `transparent` when minified: https://www.w3.org/TR/css-color-4/#transparent-black
+                if dest.minify
+                    && color.red == 0
+                    && color.green == 0
+                    && color.blue == 0
+                    && color.alpha == 0
+                {
+                    return RgbaText::Name("transparent");
+                }
+                return RgbaText::Function;
+            }
+            let hex: u32 = ((color.red as u32) << 24)
+                | ((color.green as u32) << 16)
+                | ((color.blue as u32) << 8)
+                | (color.alpha as u32);
+            (hex, 8)
+        };
+
+        let compact = compact_hex(hex);
+        if hex == expand_hex(compact) {
+            RgbaText::Hex {
+                value: compact,
+                digits: digits / 2,
+            }
+        } else {
+            RgbaText::Hex { value: hex, digits }
+        }
+    }
+}
 
 fn short_color_name(v: u32) -> Option<&'static str> {
     // These names are shorter than their hex codes

@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -187,6 +188,44 @@ describe("css tests", () => {
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+
+    // A <number> and a <percentage> cannot be added. The declaration is left
+    // as written: the sum was evaluated to NaN and printed as 0.
+    minify_test(`a { opacity: calc(50% + 1) }`, `a{opacity:calc(50% + 1)}`);
+    minify_test(`a { opacity: calc(1 - 50%) }`, `a{opacity:calc(1 - 50%)}`);
+    minify_test(`a { color: rgb(calc(10 + 10%) 0 0) }`, `a{color:rgb(calc(10 + 10%)0 0)}`);
+    minify_test(`a { color: color(srgb calc(1 + 50%) 0 0) }`, `a{color:color(srgb calc(1 + 50%)0 0)}`);
+    minify_test(`a { color: rgb(from #336699 calc(10 + 10%) g b) }`, `a{color:rgb(from #369 calc(10 + 10%)g b)}`);
+    // max() of a number and a percentage is not reduced. The sum around it does not become a `none` channel.
+    minify_test(
+      `a { color: rgb(from #336699 r g calc(b + max(10, 20%))) }`,
+      `a{color:rgb(from #369 r g calc(b + max(10,20%)))}`,
+    );
+    minify_test(`a { opacity: calc(50% + 25%) }`, `a{opacity:.75}`);
+    minify_test(`a { opacity: calc(50% * 1.5) }`, `a{opacity:.75}`);
+    // Every other reader of a <percentage> keeps the declaration as written too. They printed `0%`.
+    minify_test(`a { font-stretch: calc(50% + 1) }`, `a{font-stretch:calc(50% + 1)}`);
+    minify_test(`a { scale: 1 calc(50% + 1) }`, `a{scale:1 calc(50% + 1)}`);
+    minify_test(`a { transform: scale(calc(50% + 1)) }`, `a{transform:scale(calc(50% + 1))}`);
+    minify_test(`a { border-image-slice: calc(50% + 1) }`, `a{border-image-slice:calc(50% + 1)}`);
+    minify_test(`a { mask-border-slice: calc(50% + 1) }`, `a{mask-border-slice:calc(50% + 1)}`);
+    minify_test(
+      `@font-face { font-family: x; src: url(a.woff); font-stretch: calc(50% + 1); }`,
+      `@font-face{font-family:x;src:url(a.woff);font-stretch:calc(50% + 1)}`,
+    );
+    // A keyframe with such a selector is dropped, as a browser drops it. It was printed as `0%`.
+    minify_test(`@keyframes k { calc(50% + 1) { color: red } to { color: blue } }`, `@keyframes k{to{color:#00f}}`);
+    minify_test(`@keyframes k { calc(50% + 25%) { color: red } }`, `@keyframes k{75%{color:red}}`);
+    // A typed `initial-value` has no unparsed form: the rule is an error. It was built with `0%`.
+    test("@property with an initial-value that adds a <number> to a <percentage>", () => {
+      const property = (syntax: string, value: string) =>
+        cssInternals.minifyTest(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`, "");
+      expect(() => property("<percentage>", "calc(50% + 1)")).toThrow("Unexpected token: calc(");
+      expect(() => property("<color>", "rgb(calc(10 + 10%) 0 0)")).toThrow("Unexpected token: rgb(");
+      expect(property("<percentage>", "calc(50% + 25%)")).toBe(
+        '@property --p{syntax:"<percentage>";inherits:false;initial-value:75%}',
+      );
+    });
   });
   describe("clamp() simplification", () => {
     // The cases lightningcss asserts in its calc tests.
@@ -232,6 +271,115 @@ describe("css tests", () => {
       `a{width:calc(6 - 400% - 2 - 4 - 8vh + 3ic)}`,
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
+  });
+  describe("relative color keywords inside nested math functions", () => {
+    // https://drafts.csswg.org/css-color-5/#relative-colors: a channel keyword
+    // may appear anywhere in a channel's math, including inside a math function
+    // nested in another one. #336699 is r 51, g 102, b 153, hsl(210 50% 40%),
+    // alpha 1.
+    minify_test(".foo { color: rgb(from #336699 calc(calc(r)) g b) }", ".foo{color:#369}");
+    minify_test(".foo { color: rgb(from #336699 calc(r + calc(g)) b b) }", ".foo{color:#999}");
+    minify_test(".foo { color: rgb(from #336699 r g calc(abs(r - b))) }", ".foo{color:#366}");
+    // sqrt() parses its argument as a plain number; the pow() inside it still sees the keywords.
+    minify_test(".foo { color: rgb(from #336699 r g sqrt(pow(r, 2))) }", ".foo{color:#363}");
+    minify_test(".foo { color: rgb(from #336699 r calc(sqrt(pow(b, 2))) b) }", ".foo{color:#399}");
+    // A keyword next to a literal: abs(51 - 100) is 49.
+    minify_test(".foo { color: rgb(from #336699 r g calc(abs(r - 100))) }", ".foo{color:#336631}");
+    // `a` is -20 here. sqrt() of it is NaN, which is 0 in a channel.
+    minify_test(".foo { color: lab(from lab(50% -20 30) l calc(sqrt(a)) b) }", ".foo{color:lab(50% 0 30)}");
+    // round(), mod(), rem() and sign() have steps, and the value of a keyword has the rounding error of a conversion.
+    // hypot() folds a negative argument wrong. A keyword does not reach them, at the top of a channel or deeper.
+    const steps: [string, string][] = [
+      ["rgb(from #336699 round(r, 10) g b)", "rgb(from #369 round(r,10)g b)"],
+      ["rgb(from #336699 r g calc(round(b, 10)))", "rgb(from #369 r g calc(round(b,10)))"],
+      ["rgb(from #336699 round(calc(r * 1), 10) g b)", "rgb(from #369 round(calc(r*1),10)g b)"],
+      ["hsl(from #336699 mod(h, 90) s l)", "hsl(from #369 mod(h,90)s l)"],
+      ["rgb(from #336699 r g calc(rem(b, g)))", "rgb(from #369 r g calc(rem(b,g)))"],
+      ["rgb(from #336699 calc(b * sign(g)) g b)", "rgb(from #369 calc(b*sign(g))g b)"],
+      ["lab(from lab(50% -20 30) l calc(hypot(a)) b)", "lab(from lab(50% -20 30) l calc(hypot(a))b)"],
+      ["lab(from lab(50% -20 30) l hypot(calc(a * 1)) b)", "lab(from lab(50% -20 30) l hypot(calc(a*1))b)"],
+      // With no keyword they fold.
+      ["rgb(from #336699 calc(r + round(100, 30)) g b)", "#8d6699"],
+    ];
+    for (const [input, expected] of steps) {
+      minify_test(`.foo { color: ${input} }`, `.foo{color:${expected}}`);
+    }
+    // Trigonometric functions read a keyword as a number of radians, as a browser does.
+    minify_test(".foo { color: rgb(from #336699 calc(r + sin(g) * 20) g b) }", ".foo{color:#476699}");
+    minify_test(".foo { color: rgb(from #336699 calc(r + cos(g) * 20) g b) }", ".foo{color:#356699}");
+    minify_test(".foo { color: hsl(from #336699 calc(sin(h) * 20) s l) }", ".foo{color:#994333}");
+    minify_test(".foo { color: hsl(from #336699 calc(sin(h * 1deg) * 20) s l) }", ".foo{color:#934}");
+    minify_test(".foo { color: hsl(from #336699 calc(sin(h) * 100deg) s l) }", ".foo{color:#998333}");
+    minify_test(".foo { color: hsl(from #336699 asin(s / 100) s l) }", ".foo{color:#963}");
+    minify_test(".foo { color: hsl(from #336699 atan2(s, l) s l) }", ".foo{color:#998a33}");
+    minify_test(".foo { color: hsl(from #336699 calc(atan2(s * 1deg, l * 1deg)) s l) }", ".foo{color:#998a33}");
+    minify_test(".foo { color: rgb(from #336699 r g b / calc(sin(g))) }", ".foo{color:#336699fe}");
+    // A color that now folds keeps the alpha of its origin.
+    minify_test(".foo { color: rgb(from #33669980 calc(r + calc(g)) b b) }", ".foo{color:#99999980}");
+    // The alpha slot.
+    minify_test(".foo { color: rgb(from #336699 r g b / calc(alpha - calc(alpha / 2))) }", ".foo{color:#33669980}");
+    minify_test(".foo { color: hsl(from #336699 h s l / calc(alpha - calc(alpha / 2))) }", ".foo{color:#33669980}");
+    minify_test(
+      ".foo { color: rgb(from light-dark(#336699, #996633) calc(r + calc(g)) b b) }",
+      ".foo{color:light-dark(#999,#f33)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(g)) b b / var(--a)) }",
+      ".foo{color:rgb(153 153 153/var(--a))}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(g)) b b / calc(alpha * var(--a))) }",
+      ".foo{color:rgb(from #369 calc(r + calc(g))b b/calc(alpha*var(--a)))}",
+    );
+    // Hues.
+    minify_test(".foo { color: hsl(from #336699 calc(h + calc(h)) s l) }", ".foo{color:#993}");
+    minify_test(".foo { color: hsl(from hsl(120 50% 40%) calc(calc(s) * 1deg + 30deg) s l) }", ".foo{color:#793}");
+    minify_test(".foo { color: lch(from lch(50% 30 120) l c calc(h + calc(h))) }", ".foo{color:lch(50% 30 240)}");
+    // Channels written as percentages.
+    minify_test(".foo { color: hsl(from #336699 h calc(s + calc(s)) l) }", ".foo{color:#06c}");
+    minify_test(".foo { color: lab(from lab(50% 20 30) calc(l + calc(l)) a b) }", ".foo{color:lab(100% 20 30)}");
+    // Channels written as numbers.
+    minify_test(".foo { color: lab(from lab(50% 20 30) l calc(a + calc(b)) b) }", ".foo{color:lab(50% 50 30)}");
+    minify_test(
+      ".foo { color: color(from color(srgb 0.8 0.4 0.2) srgb calc(r - calc(g)) g b) }",
+      ".foo{color:color(srgb .4 .4 .2)}",
+    );
+    // A keyword is a number. A browser rejects a keyword that is added to a percentage or to an angle.
+    // Such a sum folds where it folded before, at the top of a channel, and nowhere deeper.
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(calc(r) + 10%) g b) }",
+      ".foo{color:rgb(from #369 calc(calc(r) + 10%)g b)}",
+    );
+    minify_test(
+      ".foo { color: hsl(from #336699 calc(calc(h) + 30deg) s l) }",
+      ".foo{color:hsl(from #369 calc(calc(h) + 30deg)s l)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 r g b / calc(calc(alpha) + 50%)) }",
+      ".foo{color:rgb(from #369 r g b/calc(calc(alpha) + 50%))}",
+    );
+    minify_test(
+      ".foo { color: hsl(from #336699 calc(h + asin(s / 100)) s l) }",
+      ".foo{color:hsl(from #369 calc(h + asin(s/100))s l)}",
+    );
+    // 153 + 153 is outside 0..255.
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(calc(b) + b) g b) }",
+      ".foo{color:rgb(from #369 calc(calc(b) + b)g b)}",
+    );
+    // The nested function sees exactly the keywords of the function it is
+    // written in: an unknown identifier, another color space's keyword, and a
+    // keyword outside relative syntax are still invalid, and the declaration
+    // is left as written.
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(x)) g b) }",
+      ".foo{color:rgb(from #369 calc(r + calc(x))g b)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(h)) g b) }",
+      ".foo{color:rgb(from #369 calc(r + calc(h))g b)}",
+    );
+    minify_test(".foo { color: rgb(calc(1 + calc(r)) 0 0) }", ".foo{color:rgb(calc(1 + calc(r))0 0)}");
   });
   describe("border_spacing", () => {
     minify_test(
@@ -7623,6 +7771,165 @@ describe("css tests", () => {
     );
   });
 
+  describe("relative color origin alpha", () => {
+    // https://drafts.csswg.org/css-color-5/#relative-colors
+    // An omitted alpha is the alpha of the origin color, not 100%.
+    minify_test(".foo { color: rgb(from #0008 r g b) }", ".foo{color:#0008}");
+    minify_test(".foo { color: rgb(from #0008 r g b / alpha) }", ".foo{color:#0008}");
+    minify_test(".foo { color: rgb(from #0008 r g b / calc(alpha / 2)) }", ".foo{color:#0004}");
+    minify_test(".foo { color: rgb(from #0008 r g b / 1) }", ".foo{color:#000}");
+    minify_test(".foo { color: rgb(from #0008 r g b / 0) }", ".foo{color:#0000}");
+    minify_test(".foo { color: rgb(from #000 r g b) }", ".foo{color:#000}");
+    minify_test(".foo { color: rgb(from rgb(0 0 0 / none) r g b) }", ".foo{color:#0000}");
+    minify_test(".foo { color: rgb(from rgb(1 2 3 / 50%) b g r) }", ".foo{color:#03020180}");
+    minify_test(".foo { color: hsl(from #0008 h s l) }", ".foo{color:#0008}");
+    minify_test(".foo { color: hsl(from rgb(1 2 3 / 50%) calc(h + 180) s l) }", ".foo{color:#03020180}");
+    minify_test(".foo { color: hwb(from #0008 h w b) }", ".foo{color:#0008}");
+    minify_test(".foo { color: lab(from lab(50% 0 0 / 50%) l a b) }", ".foo{color:lab(50% 0 0/.5)}");
+    minify_test(".foo { color: lch(from lch(50% 0 0 / 50%) l c h) }", ".foo{color:lch(50% 0 0/.5)}");
+    minify_test(".foo { color: oklab(from oklab(50% 0 0 / 50%) l a b) }", ".foo{color:oklab(50% 0 0/.5)}");
+    minify_test(".foo { color: oklch(from oklch(50% 0 0 / 50%) l c h) }", ".foo{color:oklch(50% 0 0/.5)}");
+    minify_test(".foo { color: oklch(from oklch(50% 0 0 / 50%) l c h / 1) }", ".foo{color:oklch(50% 0 0)}");
+    minify_test(".foo { color: color(from color(srgb 0 0 0 / 50%) srgb r g b) }", ".foo{color:color(srgb 0 0 0/.5)}");
+    minify_test(
+      ".foo { color: color(from color(srgb 0 0 0 / 50%) display-p3 r g b) }",
+      ".foo{color:color(display-p3 0 0 0/.5)}",
+    );
+    minify_test(".foo { color: rgb(from light-dark(#ff08, #f008) r g b) }", ".foo{color:light-dark(#ff08,#f008)}");
+    minify_test(".foo { color: rgb(from rgb(from #0008 r g b) r g b) }", ".foo{color:#0008}");
+  });
+
+  describe("lightness above the range of lab(), lch(), oklab() and oklch()", () => {
+    // https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+    // The lightness is clamped at both ends when the color is parsed, in a relative color too.
+    minify_test(".a { color: lab(150% 20 30) }", ".a{color:lab(100% 20 30)}");
+    minify_test(".a { color: lch(150% 30 40) }", ".a{color:lch(100% 30 40)}");
+    minify_test(".a { color: oklab(150% 0.1 0.1) }", ".a{color:oklab(100% .1 .1)}");
+    minify_test(".a { color: oklch(150% 0.1 40) }", ".a{color:oklch(100% .1 40)}");
+    minify_test(".a { color: lab(100% 20 30) }", ".a{color:lab(100% 20 30)}");
+    minify_test(".a { color: lab(-10% 20 30) }", ".a{color:lab(0% 20 30)}");
+    minify_test(".a { color: lab(from lab(50% 20 30) calc(l * 3) a b) }", ".a{color:lab(100% 20 30)}");
+    minify_test(".a { color: oklch(from oklch(50% 0.1 40) calc(l * 3) c h) }", ".a{color:oklch(100% .1 40)}");
+    minify_test(".a { color: color-mix(in lab, lab(150% 0 0), black) }", ".a{color:lab(50% 0 0)}");
+    minify_test(".a { color: lab(from lab(50% 20 30) 200 a b) }", ".a{color:lab(100% 20 30)}");
+    minify_test(".a { color: oklch(from oklch(70% 0.1 40) 1.2 c h) }", ".a{color:oklch(100% .1 40)}");
+    // https://github.com/web-platform-tests/wpt/blob/master/css/css-color/parsing/color-computed-relative-color.html
+    minify_test(".a { color: lch(from blue calc((49.44 - l) * infinity) 0 0) }", ".a{color:lch(100% 0 0)}");
+    minify_test(".a { color: lch(from red calc((49.44 - l) * infinity) 0 0) }", ".a{color:lch(0% 0 0)}");
+  });
+
+  describe("hue of a gray origin", () => {
+    // https://www.w3.org/TR/css-color-4/#powerless
+    // A gray has no hue. Browsers do not agree on the `h` of a gray that is converted to lch() or oklch():
+    // Chrome 153 has about 24 for white in oklch(), and the parser had 90.
+    // A color with chroma cannot take that hue at build time, so it stays as written.
+    const cases: [string, string][] = [
+      ["color: oklch(from #fff 82.5% 0.1 h)", "color:oklch(from #fff 82.5% .1 h)"],
+      ["color: oklch(from #808080 l 0.1 h)", "color:oklch(from gray l .1 h)"],
+      ["color: oklch(from #808080 l 0.1 calc(h + 30))", "color:oklch(from gray l .1 calc(h + 30))"],
+      ["color: lch(from #333 50% 30 h)", "color:lch(from #333 50% 30 h)"],
+      ["color: oklch(from lab(50% 0 0) 60% 0.1 h)", "color:oklch(from lab(50% 0 0) 60% .1 h)"],
+      ["color: lch(from lab(50% 0.001 0) 50% 20 h)", "color:lch(from lab(50% .001 0) 50% 20 h)"],
+      // A chroma of `none` is not a gray: the hue shows when the color is mixed.
+      ["color: oklch(from #fff 82.5% none h)", "color:oklch(from #fff 82.5% none h)"],
+      ["color: oklch(from #ffffff 0.825 0.1 h)", "color:oklch(from #fff .825 .1 h)"],
+      // The hue is not read.
+      ["color: oklch(from #fff 82.5% 0.1 120)", "color:oklch(82.5% .1 120)"],
+      // The origin has a hue.
+      ["color: oklch(from oklch(50% 0.1 40) 82.5% 0.1 h)", "color:oklch(82.5% .1 40)"],
+      ["color: lch(from lch(50% 30 40) 60% 20 h)", "color:lch(60% 20 40)"],
+      // An origin of the same type is not converted: its hue is the one that is written.
+      ["color: lch(from lch(50% 0 40) 60% 20 h)", "color:lch(60% 20 40)"],
+      // `lab(L 0 0)` has a chroma of exactly 0 in lch(), and the hue 0 in every browser.
+      ["color: lch(from lab(50% 0 0) 60% 20 h)", "color:lch(60% 20 0)"],
+      ["color: oklch(from oklab(70% 0 0) l 0.1 h)", "color:oklch(70% .1 0)"],
+      ["color: oklch(from oklch(70% 0 120) l calc(c + 0.1) h)", "color:oklch(70% .1 120)"],
+      ["color: oklch(from oklch(70% none 120) l 0.15 h)", "color:oklch(70% .15 120)"],
+      ["color: lch(from lch(from lch(60% 40 30) l 0 h) l 30 h)", "color:lch(60% 30 30)"],
+      // hsl() and hwb(): a gray hex, name or color(srgb ...) origin has the hue 0 in every browser.
+      ["color: hsl(from #808080 h 50% 50%)", "color:#bf4040"],
+      ["color: hwb(from color(srgb .5 .5 .5) h 0% 0%)", "color:red"],
+      ["color: hsl(from color(srgb .5 .5 .50001) h 100% 50%)", "color:#00f"],
+      // A gray of another color space is converted with a rounding error, and its hue is that error.
+      ["color: hsl(from lab(50% 0 0) h 100% 50%)", "color:hsl(from lab(50% 0 0) h 100% 50%)"],
+      ["color: hwb(from oklch(50% 0 120) h 0% 0%)", "color:hwb(from oklch(50% 0 120) h 0% 0%)"],
+      [
+        "color: hsl(from color(display-p3 .5 .5 .5) calc(h + 30) 100% 50%)",
+        "color:hsl(from color(display-p3 .5 .5 .5) calc(h + 30)100% 50%)",
+      ],
+      ["color: hwb(from lab(50% 0 0) h none none)", "color:hwb(from lab(50% 0 0) h none none)"],
+      ["color: hsl(from lab(50% 0 0) 120 s l)", "color:#777"],
+      ["color: hsl(from lab(50% 40 -50) h s l)", "color:#965dcd"],
+    ];
+    for (const [input, expected] of cases) {
+      minify_test(`.a { ${input} }`, `.a{${expected}}`);
+    }
+
+    // A typed `@property` keeps the color as written too.
+    minify_test(
+      `@property --p { syntax: "<color>"; inherits: false; initial-value: oklch(from #fff 82.5% 0.1 h); }`,
+      `@property --p{syntax:"<color>";inherits:false;initial-value:oklch(from #fff 82.5% .1 h)}`,
+    );
+
+    // The color stays gray. The digits of the noise are not pinned.
+    test.each(["oklch(from #fff 82.5% c h)", "lch(from #333 50% c h)"])("%s is resolved", input => {
+      expect(cssInternals.minifyTest(`.a{color:${input}}`, "")).toMatch(
+        /^\.a\{color:(ok)?lch\((82\.5|50)% [^ ]+ [\d.]+\)\}$/,
+      );
+    });
+  });
+
+  describe("relative color with a channel outside its range", () => {
+    // https://drafts.csswg.org/css-color-5/#relative-colors
+    // A relative rgb(), hsl() or hwb() color is not clamped: a browser computes `color(srgb 1.18 .4 .6)` for the first row.
+    // A hex cannot hold that color, so the color stays as written.
+    const cases: [string, string][] = [
+      ["color: rgb(from #336699 300 g b)", "color:rgb(from #369 300 g b)"],
+      ["color: rgb(from #336699 r -10 b)", "color:rgb(from #369 r -10 b)"],
+      ["color: rgb(from #336699 r g 120%)", "color:rgb(from #369 r g 120%)"],
+      ["color: rgb(from #336699 calc(r * 6) g b)", "color:rgb(from #369 calc(r*6)g b)"],
+      ["color: hsl(from #336699 h 185% l)", "color:hsl(from #369 h 185% l)"],
+      ["color: hsl(from #336699 h s 120%)", "color:hsl(from #369 h s 120%)"],
+      ["color: hsl(from #336699 h -10% l)", "color:hsl(from #369 h -10% l)"],
+      ["color: hwb(from #336699 h 150% b)", "color:hwb(from #369 h 150% b)"],
+      ["color: hwb(from #336699 h w -10%)", "color:hwb(from #369 h w -10%)"],
+      ["color: rgb(from #336699 300 g b / var(--a))", "color:rgb(from #369 300 g b/var(--a))"],
+      ["color: hsl(from #336699 h 185% l / var(--a))", "color:hsl(from #369 h 185% l/var(--a))"],
+      ["--c: rgb(from #336699 300 g b)", "--c:rgb(from #369 300 g b)"],
+      ["color: rgb(from #336699 calc(r + 250) g b)", "color:rgb(from #369 calc(r + 250)g b)"],
+      ["color: hsl(from #336699 h 185 l)", "color:hsl(from #369 h 185 l)"],
+      ["color: hsl(from #336699 h s calc(l + 70))", "color:hsl(from #369 h s calc(l + 70))"],
+      ["color: hwb(from #336699 h 150 b)", "color:hwb(from #369 h 150 b)"],
+      // The ends of the range are in it, with room for the rounding error of the keywords.
+      ["color: hsl(from #336699 h calc(s + 50) l)", "color:#06c"],
+      ["color: rgb(from #336699 calc(r + 204) 0 b)", "color:#f09"],
+      ["color: rgb(from #336699 255 0 b)", "color:#f09"],
+      ["color: rgb(from #336699 100% 0% b)", "color:#f09"],
+      ["color: hsl(from #336699 h 100% l)", "color:#06c"],
+      ["color: hsl(from #336699 h 0% 100%)", "color:#fff"],
+      ["color: hwb(from #336699 h 100% 0%)", "color:#fff"],
+      // The alpha is clamped in a browser too.
+      ["color: rgb(from #336699 r g b / 2)", "color:#369"],
+      ["color: rgb(from #336699 r g b / -1)", "color:#3690"],
+      // A color that is not relative is clamped as before.
+      ["color: rgb(300 0 0)", "color:red"],
+      ["color: rgb(120% 0% 0%)", "color:red"],
+      ["color: rgb(300 0 0 / var(--a))", "color:rgb(255 0 0/var(--a))"],
+    ];
+    for (const [input, expected] of cases) {
+      minify_test(`.a { ${input} }`, `.a{${expected}}`);
+    }
+
+    // A browser with no relative colors drops the declaration, so the one before it stays.
+    minify_test(".a { color: red; color: rgb(from #336699 300 g b) }", ".a{color:red;color:rgb(from #369 300 g b)}");
+    minify_test(
+      ".a { text-shadow: 0 0 4px red; text-shadow: 0 0 4px rgb(from #336699 300 g b) }",
+      ".a{text-shadow:0 0 4px red;text-shadow:0 0 4px rgb(from #369 300 g b)}",
+    );
+    // Another value that is kept as tokens replaces the declaration before it, as before.
+    minify_test(".a { color: red; color: var(--c) }", ".a{color:var(--c)}");
+  });
+
   describe("color-scheme", () => {
     minify_test(".foo { color-scheme: normal; }", ".foo{color-scheme:normal}");
     minify_test(".foo { color-scheme: light; }", ".foo{color-scheme:light}");
@@ -7931,6 +8238,47 @@ describe("css tests", () => {
     );
   });
 
+  describe("@property initial-value", () => {
+    const property = (syntax: string, value: string) =>
+      cssInternals.minifyTest(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`, "");
+    const rule = (syntax: string, value: string) =>
+      `@property --p{syntax:"${syntax}";inherits:false;initial-value:${value}}`;
+
+    // A typed value has no unparsed form. A relative color that is left for the browser is valid, so it is kept as tokens.
+    test("a relative color that is left for the browser is kept as written", () => {
+      expect([
+        property("<color>", "rgb(from color(display-p3 0 1 0) r g b)"),
+        property("<color>", "rgb(from #336699 300 g b)"),
+        property("<color>#", "red, hsl(from color(display-p3 0 1 0) h s l)"),
+        property("<color>+", "rgb(from color(display-p3 0 1 0) r g b) red"),
+        property("<color> | <length>", "rgb(from #336699 300 g b)"),
+        property("<color> | <color>#", "rgb(from #336699 300 g b), red"),
+        property("<color>", "rgb(from #336699 round(r, 10) g b)"),
+      ]).toEqual([
+        rule("<color>", "rgb(from color(display-p3 0 1 0) r g b)"),
+        rule("<color>", "rgb(from #369 300 g b)"),
+        rule("<color>#", "red,hsl(from color(display-p3 0 1 0) h s l)"),
+        rule("<color>+", "rgb(from color(display-p3 0 1 0) r g b)red"),
+        rule("<color>|<length>", "rgb(from #369 300 g b)"),
+        rule("<color>|<color>#", "rgb(from #369 300 g b),red"),
+        rule("<color>", "rgb(from #369 round(r,10)g b)"),
+      ]);
+    });
+
+    test("a value that is not valid is an error, as before", () => {
+      expect(() => property("<color>", "10px")).toThrow("Unexpected token: 10px");
+      expect(() => property("<length>", "red")).toThrow("Unexpected token: red");
+      expect(property("<color>", "rgb(255 0 0)")).toBe(rule("<color>", "red"));
+    });
+
+    test("such a relative color does not hide another error in the value", () => {
+      const relative = "rgb(from color(display-p3 0 1 0) r g b)";
+      expect(() => property("<color>+", `${relative} 10px`)).toThrow("Unexpected token: rgb(");
+      expect(() => property("<color>#", `${relative}, 10px`)).toThrow("Unexpected token: rgb(");
+      expect(() => property("<length>", relative)).toThrow("Unexpected token: rgb(");
+    });
+  });
+
   describe("font-palette-values", () => {
     minify_test(
       "@font-palette-values --x{font-family:Foo;base-palette:2}",
@@ -7962,6 +8310,201 @@ describe("css tests", () => {
     minify_test('.foo{grid-template-areas:"a . b" ". c ."}', '.foo{grid-template-areas:"a . b" ". c ."}');
     minify_test('.foo{grid-template-areas:"a ... b"}', '.foo{grid-template-areas:"a ... b"}');
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
+  });
+
+  // rgb(), hsl() and hwb() cannot hold an origin outside the sRGB gamut. Browsers keep the
+  // out-of-gamut channels and clip them when painting (w3c/csswg-drafts#8444), so resolving
+  // these by gamut mapping the origin, as before (#fff and #00f942 below), painted a
+  // different color than the unbundled stylesheet. They are left for the browser.
+  describe("relative colors with an origin outside the sRGB gamut", () => {
+    minify_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
+      ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b)}",
+    );
+    minify_test(
+      ".foo { color: hsl(from color(display-p3 0 1 0) h s l) }",
+      ".foo{color:hsl(from color(display-p3 0 1 0) h s l)}",
+    );
+    minify_test(
+      ".foo { color: hwb(from oklch(100% 0.399 336.3) h w b) }",
+      ".foo{color:hwb(from oklch(100% .399 336.3) h w b)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b / var(--a)) }",
+      ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b/var(--a))}",
+    );
+    // Under targets without lab(), the declaration is the same: a relative color takes no color fallback.
+    prefix_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
+      indoc`
+        .foo {
+          color: rgb(from lab(100% 104.3 -50.9) r g b);
+        }
+      `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // In-gamut origins resolve as before, and the unbounded functions resolve any origin.
+    minify_test(".foo { color: rgb(from lab(50% 40 -50) r g b) }", ".foo{color:#965dcd}");
+    minify_test(".foo { color: hsl(from color(display-p3 0.4 0.4 0.4) h s l) }", ".foo{color:#666}");
+    minify_test(
+      ".foo { color: color(from lab(100% 104.3 -50.9) srgb r g b) }",
+      ".foo{color:color(srgb 1.5935 .587758 1.40555)}",
+    );
+    // A boundary color converts back a few 1e-7 outside the gamut; that still resolves.
+    minify_test(".foo { color: rgb(from lab(54.2905% 80.8049 69.891) r g b) }", ".foo{color:red}");
+    minify_test(".foo { color: hsl(from lab(54.2905% 80.8049 69.891) h s l) }", ".foo{color:red}");
+    minify_test(
+      ".foo { color: rgb(from lab(54.2905% 80.8049 69.891) r g b / var(--a)) }",
+      ".foo{color:rgb(255 0 0/var(--a))}",
+    );
+  });
+
+  describe("relative colors", () => {
+    // The channel keywords are <number>s in the range of the function being
+    // written: r/g/b are 0..255 in rgb(), s/l (and hwb() w/b) and lab()/lch()
+    // l are 0..100, oklab()/oklch() l, color() channels and alpha are 0..1.
+    // https://drafts.csswg.org/css-color-5/#relative-colors
+    describe("rgb()", () => {
+      minify_test(".foo { color: rgb(from rgb(200 100 50) r g b) }", ".foo{color:#c86432}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) b g r) }", ".foo{color:#3264c8}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) calc(r + 10) g b) }", ".foo{color:#d26432}");
+      minify_test(".foo { color: rgba(from rgb(200 100 50) calc(r - 10) g b) }", ".foo{color:#be6432}");
+      minify_test(".foo { color: rgb(from red calc(100) g b) }", ".foo{color:#640000}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) calc(r / 2) calc(g * 2) b) }", ".foo{color:#64c832}");
+      // 300 and -200 are outside 0..255. A relative color is not clamped, so this one stays as written.
+      minify_test(
+        ".foo { color: rgb(from rgb(200 100 50) calc(r + 100) calc(g - 300) b) }",
+        ".foo{color:rgb(from #c86432 calc(r + 100)calc(g - 300)b)}",
+      );
+      minify_test(".foo { color: rgb(from hsl(120 50% 40%) calc(r + 10) g b) }", ".foo{color:#3d9933}");
+      minify_test(
+        ".foo { color: rgb(from light-dark(rgb(200 100 50), rgb(50 100 200)) calc(r + 10) g b) }",
+        ".foo{color:light-dark(#d26432,#3c64c8)}",
+      );
+      // A missing channel is 0.
+      minify_test(".foo { color: rgb(from rgb(none 100 50) calc(r + 10) g b) }", ".foo{color:#0a6432}");
+      // r is 200 (not 200/255) when used as the alpha, and alpha is 1 (not 255) when used as a channel.
+      minify_test(".foo { color: rgb(from rgb(200 100 50) r g b / calc(r / 255)) }", ".foo{color:#c86432c8}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) calc(alpha * 255) g b) }", ".foo{color:#ff6432}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) r g b / calc(alpha - 0.5)) }", ".foo{color:#c8643280}");
+      // An unresolved alpha keeps the resolved channels.
+      minify_test(
+        ".foo { color: rgb(from rgb(200 100 50) calc(r + 10) g b / var(--a)) }",
+        ".foo{color:rgb(210 100 50/var(--a))}",
+      );
+    });
+
+    describe("hsl() and hwb()", () => {
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s l) }", ".foo{color:#393}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h l s) }", ".foo{color:#4db34d}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h calc(s + 10) l) }", ".foo{color:#29a329}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s calc(l + 10)) }", ".foo{color:#40bf40}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s calc(l * 2)) }", ".foo{color:#b3e6b3}");
+      minify_test(".foo { color: hsl(from rgb(200 100 50) h calc(s + 10) l) }", ".foo{color:#d56025}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h 60 l) }", ".foo{color:#29a329}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h 60% l) }", ".foo{color:#29a329}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s l / calc(l / 100)) }", ".foo{color:#3936}");
+      minify_test(
+        ".foo { color: hsl(from hsl(120 50% 40%) h calc(s + 10) l / var(--a)) }",
+        ".foo{color:hsl(120 60% 40%/var(--a))}",
+      );
+      minify_test(".foo { color: hwb(from hwb(120 20% 30%) h w b) }", ".foo{color:#33b333}");
+      minify_test(".foo { color: hwb(from hwb(120 20% 30%) h calc(w + 10) b) }", ".foo{color:#4db34d}");
+      minify_test(".foo { color: hwb(from hwb(120 20% 30%) h w calc(b + 10)) }", ".foo{color:#339a33}");
+
+      describe("hue", () => {
+        // Any non-hue keyword is a <number>, which a hue accepts and an <angle>
+        // can be multiplied by but not added to. The hue keyword is only a hue.
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) s s l) }", ".foo{color:#983}");
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) alpha s l) }", ".foo{color:#993533}");
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) calc(s * 1deg) s l) }", ".foo{color:#983}");
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) calc(h + 30) s l) }", ".foo{color:#396}");
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) calc(h * 1deg + 30deg) s l) }", ".foo{color:#396}");
+        // `h` is a number, so a browser rejects `h + 30deg`. This fold is older than the number keywords and is kept.
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) calc(h + 30deg) s l) }", ".foo{color:#396}");
+        // It is kept as it was: `h` is an angle only next to angles that hold no other keyword.
+        minify_test(
+          ".foo { color: hsl(from hsl(120 50% 40%) calc(h + s * 1deg) s l) }",
+          ".foo{color:hsl(from #393 calc(h + s*1deg)s l)}",
+        );
+        minify_test(
+          ".foo { color: hsl(from hsl(120 50% 40%) calc(s + 30deg) s l) }",
+          ".foo{color:hsl(from #393 calc(s + 30deg)s l)}",
+        );
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) h h l) }", ".foo{color:hsl(from #393 h h l)}");
+      });
+    });
+
+    describe("lab(), lch(), oklab() and oklch()", () => {
+      minify_test(".foo { color: lab(from lab(50% 20 30) l a b) }", ".foo{color:lab(50% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) calc(l + 10) a b) }", ".foo{color:lab(60% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) calc(l * 2) a b) }", ".foo{color:lab(100% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) 60 a b) }", ".foo{color:lab(60% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) calc(l + a) a b) }", ".foo{color:lab(70% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) a b l) }", ".foo{color:lab(20% 30 50)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) l alpha b) }", ".foo{color:lab(50% 1 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) l a b / calc(l / 100)) }", ".foo{color:lab(50% 20 30/.5)}");
+      minify_test(
+        ".foo { color: lab(from rgb(200 100 50) calc(l + 10) a b) }",
+        ".foo{color:lab(64.2174% 38.1977 46.2491)}",
+      );
+      minify_test(
+        ".foo { color: lab(from light-dark(lab(50% 20 30), lab(20% 30 50)) calc(l + 10) a b) }",
+        ".foo{color:light-dark(lab(60% 20 30),lab(30% 30 50))}",
+      );
+      minify_test(".foo { color: lch(from lch(50% 30 120) calc(l + 10) c h) }", ".foo{color:lch(60% 30 120)}");
+      minify_test(".foo { color: lch(from lch(50% 30 120) c l h) }", ".foo{color:lch(30% 50 120)}");
+      minify_test(".foo { color: lch(from lch(50% 30 120) l c calc(h + 30)) }", ".foo{color:lch(50% 30 150)}");
+      // The ok variants write lightness in 0..1.
+      minify_test(".foo { color: oklab(from oklab(50% 0.1 0.1) l a b) }", ".foo{color:oklab(50% .1 .1)}");
+      minify_test(".foo { color: oklab(from oklab(50% 0.1 0.1) calc(l + 0.1) a b) }", ".foo{color:oklab(60% .1 .1)}");
+      minify_test(".foo { color: oklch(from oklch(50% 0.1 120) calc(l + 0.1) c h) }", ".foo{color:oklch(60% .1 120)}");
+      minify_test(
+        ".foo { color: oklch(from oklch(50% 0.1 120) l c h / calc(l - 0.1)) }",
+        ".foo{color:oklch(50% .1 120/.4)}",
+      );
+    });
+
+    describe("color()", () => {
+      minify_test(
+        ".foo { color: color(from color(srgb 0.5 0.2 0.1) srgb calc(r + 0.1) g b) }",
+        ".foo{color:color(srgb .6 .2 .1)}",
+      );
+      minify_test(
+        ".foo { color: color(from color(srgb 0.5 0.2 0.1) srgb r g b / calc(alpha - 0.5)) }",
+        ".foo{color:color(srgb .5 .2 .1/.5)}",
+      );
+      minify_test(
+        ".foo { color: color(from rgb(200 100 50) xyz x y z) }",
+        ".foo{color:color(xyz .289515 .216258 .0566732)}",
+      );
+    });
+
+    describe("a calculation that is NaN", () => {
+      // https://drafts.csswg.org/css-values-4/#top-level-calculation
+      // A browser makes 0 of it. NaN in a color is `none`, which is another value.
+      minify_test(".foo { color: lab(from lab(50% -20 30) l calc(a * NaN) b) }", ".foo{color:lab(50% 0 30)}");
+      minify_test(".foo { color: oklch(from oklch(50% 0.1 120) l c calc(h * NaN)) }", ".foo{color:oklch(50% .1 0)}");
+      minify_test(".foo { color: color(from #336699 srgb calc(r * NaN) g b) }", ".foo{color:color(srgb 0 .4 .6)}");
+      minify_test(".foo { color: lab(from lab(50% -20 30) l a b / calc(a * NaN)) }", ".foo{color:lab(50% -20 30/0)}");
+      minify_test(".foo { color: lab(from lab(50% -20 30) l none b) }", ".foo{color:lab(50% none 30)}");
+    });
+
+    describe("a keyword as a percentage", () => {
+      // A keyword is a number, so a browser rejects a keyword that is added to a percentage.
+      // This fold is older than the number keywords. It is kept as it was, with the same keywords and values.
+      minify_test(".foo { color: rgb(from #336699 calc(r + 10%) g b) }", ".foo{color:#4d6699}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h calc(s + 10%) l) }", ".foo{color:#29a329}");
+      minify_test(".foo { color: rgb(from #336699 r g b / calc(r + 10%)) }", ".foo{color:#3366994d}");
+      // `a` of lab() was never read as a percentage.
+      minify_test(
+        ".foo { color: lab(from lab(50% 20 30) calc(a + 10%) a b) }",
+        ".foo{color:lab(from lab(50% 20 30) calc(a + 10%)a b)}",
+      );
+    });
   });
 
   describe("edge cases", () => {
@@ -8242,6 +8785,450 @@ describe("css tests", () => {
         `,
         modern,
       );
+    });
+
+    // https://drafts.csswg.org/css-color-5/#relative-colors
+    // A channel keyword has a meaning only after `from`. An rgb() or hsl()
+    // with an unresolved alpha is printed with folded channels and no origin,
+    // so a relative one whose alpha names a channel is printed as written:
+    // `rgb(51 102 153/calc(alpha*var(--o)))` is not a color.
+    describe("relative rgb()/hsl() whose unresolved alpha names a channel", () => {
+      const cases: [string, string][] = [
+        ["color: rgb(from #336699 r g b / calc(alpha * var(--o)))", "color:rgb(from #369 r g b/calc(alpha*var(--o)))"],
+        [
+          "color: rgb(from #336699 r g b / calc(r / 255 * var(--o)))",
+          "color:rgb(from #369 r g b/calc(r/255*var(--o)))",
+        ],
+        // `NaN` keeps clamp() from being reduced, with or without a fold of clamp() over numbers.
+        ["color: rgb(from #336699 r g b / clamp(0, alpha, NaN))", "color:rgb(from #369 r g b/clamp(0,alpha,NaN))"],
+        ["color: hsl(from #336699 h s l / calc(alpha * var(--o)))", "color:hsl(from #369 h s l/calc(alpha*var(--o)))"],
+        ["color: hsl(from #336699 h s l / calc(h / 360))", "color:hsl(from #369 h s l/calc(h/360))"],
+        [
+          "color: hsl(from #336699 h s l / calc(s / 100 * var(--o)))",
+          "color:hsl(from #369 h s l/calc(s/100*var(--o)))",
+        ],
+        [
+          "color: rgb(from #336699 r g b / var(--undefined, alpha))",
+          "color:rgb(from #369 r g b/var(--undefined,alpha))",
+        ],
+        ["color: rgb(from #336699 r g b / env(--x, alpha))", "color:rgb(from #369 r g b/env(--x,alpha))"],
+        ["color: RGB(FROM #336699 R G B / CALC(ALPHA * VAR(--o)))", "color:RGB(FROM #369 R G B/CALC(ALPHA*VAR(--o)))"],
+        ["--c: rgb(from #336699 r g b / calc(alpha * var(--o)))", "--c:rgb(from #369 r g b/calc(alpha*var(--o)))"],
+        ["--c: hsl(from #336699 h s l / calc(alpha * var(--o)))", "--c:hsl(from #369 h s l/calc(alpha*var(--o)))"],
+        [
+          "color: rgb(from light-dark(#336699, #996633) r g b / calc(alpha * var(--o)))",
+          "color:rgb(from light-dark(#369,#963) r g b/calc(alpha*var(--o)))",
+        ],
+        [
+          "box-shadow: 0 0 4px rgb(from #336699 r g b / calc(alpha * var(--o)))",
+          "box-shadow:0 0 4px rgb(from #369 r g b/calc(alpha*var(--o)))",
+        ],
+        [
+          "background: linear-gradient(rgb(from #336699 r g b / calc(alpha * var(--o))), red)",
+          "background:linear-gradient(rgb(from #369 r g b/calc(alpha*var(--o))),red)",
+        ],
+        [
+          "color: hwb(from rgb(from #336699 r g b / calc(alpha * var(--o))) h w b)",
+          "color:hwb(from rgb(from #369 r g b/calc(alpha*var(--o)))h w b)",
+        ],
+        [
+          "color: var(--x, rgb(from #336699 r g b / calc(alpha * var(--o))))",
+          "color:var(--x,rgb(from #369 r g b/calc(alpha*var(--o))))",
+        ],
+        // The keyword is found in a block of any kind, and when it is written with an escape.
+        [
+          "color: rgb(from #336699 r g b / calc((alpha) * var(--o)))",
+          "color:rgb(from #369 r g b/calc((alpha)*var(--o)))",
+        ],
+        [
+          "color: rgb(from #336699 r g b / calc((1 - alpha) * var(--o)))",
+          "color:rgb(from #369 r g b/calc((1 - alpha)*var(--o)))",
+        ],
+        ["color: rgb(from #336699 r g b / --half({alpha}))", "color:rgb(from #369 r g b/--half({alpha}))"],
+        [
+          "color: rgb(from #336699 r g b / calc(var(--o) * [alpha]))",
+          "color:rgb(from #369 r g b/calc(var(--o)*[alpha]))",
+        ],
+        [
+          "color: rgb(from #336699 r g b / calc(\\61lpha * var(--o)))",
+          "color:rgb(from #369 r g b/calc(alpha*var(--o)))",
+        ],
+        // The check reads names, not roles: an attribute that is named like a channel keeps the color as written too.
+        ["color: rgb(from #336699 r g b / attr(alpha number, 1))", "color:rgb(from #369 r g b/attr(alpha number,1))"],
+        // The color as written keeps its tokens apart.
+        ["color: rgb(from#f00 r g b / var(--o, b))", "color:rgb(from red r g b/var(--o,b))"],
+        ["color: rgb(from #336699 +10+20+30 / var(--o, b))", "color:rgb(from #369 +10+20+30/var(--o,b))"],
+        ["color: rgb(from #336699 1.0.5 b / var(--o, b))", "color:rgb(from #369 1 .5 b/var(--o,b))"],
+        // No keyword in the alpha: the channels are folded as before.
+        ["color: rgb(from #336699 r g b / var(--o))", "color:rgb(51 102 153/var(--o))"],
+        ["color: rgb(from #336699 r g b / calc((1 - var(--o)) * 2))", "color:rgb(51 102 153/calc((1 - var(--o))*2))"],
+        ["color: rgb(from #336699 r g b / attr(data-o number, 1))", "color:rgb(51 102 153/attr(data-o number,1))"],
+        ["color: rgb(from #336699 r g b / var(--o, alphaa))", "color:rgb(51 102 153/var(--o,alphaa))"],
+        ["color: rgb(from #336699 r g b / var(--alpha))", "color:rgb(51 102 153/var(--alpha))"],
+        ["color: hsl(from #336699 h s l / var(--o))", "color:hsl(210 50% 40%/var(--o))"],
+        ["color: rgb(from #336699 r g b / calc(var(--o) * 2))", "color:rgb(51 102 153/calc(var(--o)*2))"],
+        ["color: rgb(from #336699 r g b / var(--o, .5))", "color:rgb(51 102 153/var(--o,.5))"],
+        // An alpha that is known at build time is folded with its origin.
+        ["color: rgb(from #336699 r g b / calc(alpha * .5))", "color:#33669980"],
+      ];
+      for (const [input, expected] of cases) {
+        minify_test(`.a { ${input} }`, `.a{${expected}}`);
+      }
+
+      for (const chrome of [60, 90]) {
+        test(`not minified, chrome ${chrome}`, () => {
+          const print = (css: string) => cssInternals.prefixTest(css, "", { chrome: chrome << 16 });
+          expect([
+            print(".a { color: rgb(from #336699 r g b / calc(alpha * var(--o))); }"),
+            print(".a { color: hsl(from #336699 h s l / calc(alpha * var(--o))); }"),
+            print(".a { color: rgb(from light-dark(#336699, #996633) r g b / calc(alpha * var(--o))); }"),
+          ]).toEqual([
+            ".a {\n  color: rgb(from #369 r g b / calc(alpha * var(--o)));\n}\n",
+            ".a {\n  color: hsl(from #369 h s l / calc(alpha * var(--o)));\n}\n",
+            ".a {\n  color: rgb(from var(--buncss-light, #369) var(--buncss-dark, #963) r g b / calc(alpha * var(--o)));\n}\n",
+          ]);
+        });
+      }
+    });
+
+    // A relative color with no `var()` folded to a static color, or is one that the parser leaves for the browser.
+    // As tokens it takes no color fallback: that changes the origin, and puts a copy in an `@supports` rule,
+    // which wins over a declaration that comes later.
+    describe("relative color with no var() that stays as tokens takes no color fallback", () => {
+      const print = (css: string) => cssInternals.minifyTest(css, "", { chrome: 90 << 16 });
+      const asWritten = [
+        ".a{color:rgb(from color(display-p3 0 1 0) r g b)}",
+        ".a{color:RGB(FROM color(display-p3 0 1 0) r g b)}",
+        ".a{color:hsl(from lab(90% -100 100) h s l)}",
+        ".a{background:linear-gradient(rgb(from color(display-p3 0 1 0) r g b),red)}",
+        ".a{color:var(--x,rgb(from color(display-p3 0 1 0) r g b))}",
+      ];
+      for (const css of asWritten) {
+        test(css, () => {
+          expect(print(css)).toBe(css);
+        });
+      }
+
+      test("a later declaration wins", () => {
+        expect(print(".a{color:rgb(from color(display-p3 0 1 0) r g b);color:var(--c)}")).toBe(".a{color:var(--c)}");
+      });
+
+      test("a relative color with var() takes its fallback as before", () => {
+        expect(print(".a{color:oklch(from color(display-p3 0 1 0) l c var(--h))}")).toBe(
+          ".a{color:oklch(from #00f942 l c var(--h))}@supports (color:color(display-p3 0 0 0)){.a{color:oklch(from color(display-p3 0 1 0) l c var(--h))}}",
+        );
+      });
+
+      // The `@supports` rule of an earlier declaration comes after the style rule. A later declaration of the property follows it there.
+      test("an earlier declaration with a fallback does not win", () => {
+        expect([
+          print(".a{color:var(--c,lab(60% 10 10));color:rgb(from color(display-p3 0 1 0) r g b)}"),
+          print(".a{color:var(--c,lab(60% 10 10));color:var(--x)}"),
+          print(".a{color:var(--c,lab(60% 10 10))!important;color:var(--x)}"),
+          // The display-p3 rule is read by a browser with no lab(), so the declaration follows with its lowest fallback.
+          print(".a{color:var(--x,color(display-p3 1 0 0));color:var(--y,lab(20% 10 10))}"),
+          // The rule of another property takes no copy. A copy would win over the last declaration.
+          print(".a{background:var(--b,lab(60% 10 10));color:rgb(from color(display-p3 0 1 0) r g b);color:#010203}"),
+          // A typed declaration follows too.
+          print(".a{color:var(--c,lab(60% 10 10));color:red}"),
+          print(".a{color:var(--c,lab(60% 10 10))!important;color:red!important}"),
+          print(".a{text-shadow:0 0 4px var(--c,lab(60% 10 10));text-shadow:0 0 4px red}"),
+          print(".a{background-color:var(--c,lab(60% 10 10));background-color:red}"),
+          print(".a{border:1px solid var(--c,lab(60% 10 10));border:2px dashed red}"),
+          print(".a{box-shadow:0 0 4px var(--c,lab(60% 10 10));box-shadow:0 0 4px red}"),
+          // A relative color that folds is a typed declaration.
+          print(".a{background-color:var(--u,lab(60% 10 10));background-color:oklch(from lch(50% 50 30) 0.8 c h)}"),
+          // The rule of another property takes no typed copy.
+          print(".a{background-color:var(--c,lab(60% 10 10));color:red}"),
+        ]).toEqual([
+          ".a{color:var(--c,#a78a7f);color:rgb(from color(display-p3 0 1 0) r g b)}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10));color:rgb(from color(display-p3 0 1 0) r g b)}}",
+          ".a{color:var(--x)}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10));color:var(--x)}}",
+          ".a{color:var(--x);color:var(--c,#a78a7f)!important}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10))!important}}",
+          ".a{color:var(--y,#412b22)}@supports (color:color(display-p3 0 0 0)){.a{color:var(--x,color(display-p3 1 0 0));color:var(--y,#412b22)}}@supports (color:lab(0% 0 0)){.a{color:var(--y,lab(20% 10 10))}}",
+          ".a{background:var(--b,#a78a7f);color:#010203}@supports (color:lab(0% 0 0)){.a{background:var(--b,lab(60% 10 10))}}",
+          ".a{color:red}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10));color:red}}",
+          ".a{color:red!important}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10))!important;color:red!important}}",
+          ".a{text-shadow:0 0 4px red}@supports (color:lab(0% 0 0)){.a{text-shadow:0 0 4px var(--c,lab(60% 10 10));text-shadow:0 0 4px red}}",
+          ".a{background-color:var(--c,#a78a7f);background-color:red}@supports (color:lab(0% 0 0)){.a{background-color:var(--c,lab(60% 10 10));background-color:red}}",
+          ".a{border:1px solid var(--c,#a78a7f);border:2px dashed red}@supports (color:lab(0% 0 0)){.a{border:1px solid var(--c,lab(60% 10 10));border:2px dashed red}}",
+          ".a{box-shadow:0 0 4px var(--c,#a78a7f);box-shadow:0 0 4px red}@supports (color:lab(0% 0 0)){.a{box-shadow:0 0 4px var(--c,lab(60% 10 10));box-shadow:0 0 4px red}}",
+          ".a{background-color:var(--u,#a78a7f);background-color:oklch(80% .138006 25.0171)}@supports (color:lab(0% 0 0)){.a{background-color:var(--u,lab(60% 10 10));background-color:oklch(80% .138006 25.0171)}}",
+          ".a{background-color:var(--c,#a78a7f);color:red}@supports (color:lab(0% 0 0)){.a{background-color:var(--c,lab(60% 10 10))}}",
+        ]);
+      });
+
+      // A browser that reads lab() reads display-p3, and the lab() rule is printed last.
+      test("a declaration follows into the lab() rule with its display-p3 fallback", () => {
+        const targets = { chrome: 87 << 16, safari: 14 << 16 };
+        const css = ".a{color:var(--v1,lab(61% 10 10));color:var(--v2,color(display-p3 1 0 0.2))}";
+        expect(cssInternals.minifyTest(css, "", targets)).toEndWith(
+          "@supports (color:lab(0% 0 0)){.a{color:var(--v1,lab(61% 10 10));color:var(--v2,color(display-p3 1 0 .2))}}",
+        );
+      });
+
+      // Rules that merge are minified again as one block. The `@supports` rule that is staged then is of a later rule.
+      test("a declaration of a merged rule does not follow into the rule of a later rule", () => {
+        expect([
+          print(".a{color:red}.a{color:var(--c,lab(60% 10 10))}"),
+          print(".a{color:red}.a{color:blue}.b{color:var(--c,lab(60% 10 10))}"),
+          print(".a{background-color:red}.a{background-color:blue}.b{background-color:var(--c,lab(60% 10 10))}"),
+        ]).toEqual([
+          ".a{color:var(--c,#a78a7f)}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10))}}",
+          ".a{color:#00f}.b{color:var(--c,#a78a7f)}@supports (color:lab(0% 0 0)){.b{color:var(--c,lab(60% 10 10))}}",
+          ".a{background-color:#00f}.b{background-color:var(--c,#a78a7f)}@supports (color:lab(0% 0 0)){.b{background-color:var(--c,lab(60% 10 10))}}",
+        ]);
+      });
+
+      // A browser with no relative colors drops a value that needs them when it parses it.
+      // The declaration before it, and an earlier rule of the selector, stay as its fallback.
+      test("the declaration before a relative color stays", () => {
+        expect([
+          print(".a{color:red;color:rgb(from color(display-p3 0 1 0) r g b)}"),
+          print(".a{color:#369}.b{margin:0}.a{color:rgb(from color(display-p3 0 1 0) r g b)}"),
+          // With `var()` a browser keeps the declaration until it computes it, so the earlier one is never used.
+          print(".a{color:red;color:rgb(from var(--c) r g b)}"),
+          print(".a{color:#369}.b{margin:0}.a{color:rgb(from var(--c) r g b)}"),
+        ]).toEqual([
+          ".a{color:red;color:rgb(from color(display-p3 0 1 0) r g b)}",
+          ".a{color:#369}.b{margin:0}.a{color:rgb(from color(display-p3 0 1 0) r g b)}",
+          ".a{color:rgb(from var(--c)r g b)}",
+          ".b{margin:0}.a{color:rgb(from var(--c)r g b)}",
+        ]);
+      });
+
+      // A browser with no relative colors drops the relative color, so it is no fallback for the color after it.
+      test("a color after a relative color takes its own fallback", () => {
+        expect([
+          print(".a{color:rgb(from color(display-p3 0 1 0) r g b);color:lab(50% 10 10)}"),
+          print(".a{color:red;color:rgb(from color(display-p3 0 1 0) r g b);color:lab(50% 10 10)}"),
+          print(".a{background-color:rgb(from color(display-p3 0 1 0) r g b);background-color:lab(50% 10 10)}"),
+          print(".a{border-color:rgb(from color(display-p3 0 1 0) r g b);border-color:lab(50% 10 10)}"),
+          print(".a{box-shadow:0 0 4px rgb(from color(display-p3 0 1 0) r g b);box-shadow:0 0 4px lab(50% 10 10)}"),
+          // After a declaration with `var()`, the color takes none, as before.
+          print(".a{color:var(--x);color:lab(50% 10 10)}"),
+        ]).toEqual([
+          ".a{color:rgb(from color(display-p3 0 1 0) r g b);color:#8c7166;color:lab(50% 10 10)}",
+          ".a{color:red;color:rgb(from color(display-p3 0 1 0) r g b);color:lab(50% 10 10)}",
+          ".a{background-color:rgb(from color(display-p3 0 1 0) r g b);background-color:#8c7166;background-color:lab(50% 10 10)}",
+          ".a{border-color:rgb(from color(display-p3 0 1 0) r g b);border-color:#8c7166;border-color:lab(50% 10 10)}",
+          ".a{box-shadow:0 0 4px rgb(from color(display-p3 0 1 0) r g b);box-shadow:0 0 4px #8c7166;box-shadow:0 0 4px lab(50% 10 10)}",
+          ".a{color:var(--x);color:lab(50% 10 10)}",
+        ]);
+      });
+
+      // The color comes after its own fallbacks. Where each target reads it, it has none and replaces the relative color.
+      test("a color after a relative color follows its fallbacks for each set of targets", () => {
+        const css = ".a{color:rgb(from color(display-p3 0 1 0) r g b);color:oklch(70% 0.2 150)}";
+        expect([
+          cssInternals.minifyTest(css, "", { safari: 14 << 16 }),
+          cssInternals.minifyTest(css, "", { safari: 15 << 16 }),
+          cssInternals.minifyTest(css, "", { chrome: 111 << 16 }),
+        ]).toEqual([
+          ".a{color:rgb(from color(display-p3 0 1 0) r g b);color:color(display-p3 .317813 .736696 .379141);color:lab(67.6722% -60.9446 40.8552)}",
+          ".a{color:lab(67.6722% -60.9446 40.8552)}",
+          ".a{color:oklch(70% .2 150)}",
+        ]);
+      });
+
+      // The `var()` of the light-dark() fallback makes a browser keep a declaration that it cannot compute.
+      test("light-dark() around a relative color stays as written", () => {
+        expect([
+          print(".a{color:red;color:light-dark(rgb(from color(display-p3 0 1 0) r g b),blue)}"),
+          print(".a{color:red;color:light-dark(rgb(from var(--c) r g b),blue)}"),
+        ]).toEqual([
+          ".a{color:red;color:light-dark(rgb(from color(display-p3 0 1 0) r g b),blue)}",
+          ".a{color:var(--buncss-light,rgb(from var(--c)r g b))var(--buncss-dark,blue)}",
+        ]);
+      });
+
+      test("other colors and other functions take their fallback as before", () => {
+        expect([
+          print(".a{background:linear-gradient(rgb(from color(display-p3 1 0 0) r g b),color(display-p3 0 1 0))}"),
+          print(".a{color:color-mix(in srgb,color(display-p3 0 1 0),var(--x))}"),
+          print(".a{color:f(from color(display-p3 0 1 0))}"),
+        ]).toEqual([
+          ".a{background:linear-gradient(rgb(from color(display-p3 1 0 0) r g b),#00f942)}@supports (color:color(display-p3 0 0 0)){.a{background:linear-gradient(rgb(from color(display-p3 1 0 0) r g b),color(display-p3 0 1 0))}}",
+          ".a{color:color-mix(in srgb,#00f942,var(--x))}@supports (color:color(display-p3 0 0 0)){.a{color:color-mix(in srgb,color(display-p3 0 1 0),var(--x))}}",
+          ".a{color:f(from #00f942)}@supports (color:color(display-p3 0 0 0)){.a{color:f(from color(display-p3 0 1 0))}}",
+        ]);
+      });
+    });
+
+    // A value that is kept as tokens is printed token by token. Two tokens that
+    // read back as other tokens when they touch get a separator between them.
+    describe("tokens of an unparsed value stay apart", () => {
+      const cases: [string, string][] = [
+        // A color function that folds to a hex or a name no longer ends in `)`.
+        ["--g:linear-gradient(90deg,rgb(255,0,0)0%,rgb(0,0,255)100%)", "--g:linear-gradient(90deg,red 0%,#00f 100%)"],
+        [
+          "background:linear-gradient(90deg,rgb(255,0,0)0%,var(--c)100%)",
+          "background:linear-gradient(90deg,red 0%,var(--c)100%)",
+        ],
+        ["box-shadow:0 0 0 1px rgb(0 0 0)inset,0 0 var(--x) red", "box-shadow:0 0 0 1px #000 inset,0 0 var(--x)red"],
+        ["color:hwb(from rgb(0 0 0)h w b / var(--o))", "color:hwb(from #000 h w b/var(--o))"],
+        ["--x:rgb(0 0 0)rgb(255 0 0)", "--x:#000 red"],
+        ["--x:rgb(0 0 0)var(--y)", "--x:#000 var(--y)"],
+        ["--x:rgb(0 0 0)calc(1px + 2px)", "--x:#000 calc(1px + 2px)"],
+        ["--x:rgb(0 0 0)--y", "--x:#000 --y"],
+        ["--x:rgb(0 0 0)1px", "--x:#000 1px"],
+        // A color that prints as a name joins the token before it too, and makes a function of `(`.
+        ["border:var(--w) solid#f00", "border:var(--w)solid red"],
+        ["--x:1px#f00", "--x:1px red"],
+        ["--x:rgb(255 0 0)(1px)", "--x:red (1px)"],
+        ["--x:rgb(255 0 0)rgb(0 0 0)", "--x:red#000"],
+        // A color that prints as a hash joins nothing before it.
+        ["border:var(--w) solid#fff", "border:var(--w)solid#fff"],
+        ["--x:1px#fff", "--x:1px#fff"],
+        ["--x:#abc#def", "--x:#abc#def"],
+        ["--x:rgb(0 0 0)(1px)", "--x:#000(1px)"],
+        // Nothing is added where the next token cannot join the color.
+        ["--x:rgb(0 0 0) inset", "--x:#000 inset"],
+        ["--x:rgb(0 0 0),rgb(255 0 0)", "--x:#000,red"],
+        ["--x:rgb(0 0 0)/rgb(255 0 0)", "--x:#000/red"],
+        ["--x:(rgb(255 0 0))", "--x:(red)"],
+        ["--x:f(rgb(255 0 0))", "--x:f(red)"],
+        ["--x:rgb(255 0 0)[a]", "--x:red[a]"],
+        ["--x:rgb(255 0 0)'s'", '--x:red"s"'],
+        // A comment is no token. `a/**/b` is two tokens and printed `ab`.
+        ["--x:a/**/b", "--x:a b"],
+        ["--x:1/**/2 1px/**/2px", "--x:1 2 1px 2px"],
+        ["--x:a/* c *//* d */b", "--x:a b"],
+        ["--x:a,/**/b", "--x:a,b"],
+        ["--x:a/**/:b", "--x:a:b"],
+        ["--x:a/**/(b)", "--x:a (b)"],
+        ["--x:50/**/%", "--x:50 %"],
+        ["--x:#/**/abc", "--x:# abc"],
+        ["--x:1px/**/-2px", "--x:1px -2px"],
+        ["margin:var(--a)/**/var(--b) 1px/**/2px", "margin:var(--a)var(--b)1px 2px"],
+        ["color:rgba(from/**/red/**/r/**/g/**/b / var(--o))", "color:rgba(from red r g b/var(--o))"],
+        // A number prints in its shortest form, which can join the token before it.
+        ["--x:1.0.5", "--x:1 .5"],
+        ["--x:1e1.5", "--x:10 .5"],
+        ["--x:.9999999.5", "--x:1 .5"],
+        ["--x:a.9999999", "--x:a 1"],
+        // A number that starts with its decimal point joins only a number that is printed with digits alone.
+        ["--x:a.5", "--x:a.5"],
+        ["--x:1px.5", "--x:1px.5"],
+        ["--x:1.2.3", "--x:1.2.3"],
+        ["--x:1e30.5", "--x:1e+30.5"],
+        ["--x:theme(colors.gray.8)", "--x:theme(colors.gray.8)"],
+        ["--x:fade-in_1.5s", "--x:fade-in_1.5s"],
+        ["--x:a.5turn", "--x:a.5turn"],
+        // A time can change its unit: `.05s` prints `50ms`, which joins.
+        ["--x:a.05s", "--x:a 50ms"],
+        // A zero with a minus sign keeps the sign in a dimension, and nothing joins a minus sign after a number.
+        ["--x:1-0px", "--x:1-0px"],
+        ["--x:U+0000-00FF", "--x:U+0-0FF"],
+        // An integer written with a plus sign keeps it: `2n +1` is not `2n 1` in `:nth-child()`.
+        ["--x:+10+20+30", "--x:+10+20+30"],
+        ["--x:+1", "--x:+1"],
+        ["--x:a+1", "--x:a+1"],
+        ["--x:2n+1", "--x:2n+1"],
+        ["--x:2n +1", "--x:2n +1"],
+        ["--x:-n+3", "--x:-n+3"],
+        ["--x:U+26", "--x:U+26"],
+        ["--x:u+1f600", "--x:u+1f600"],
+        // A dimension prints without its plus sign. The sign comes back where it separates.
+        ["--x:+1z a+1z", "--x:1z a+1z"],
+        // Only an integer keeps its sign: `+4E00` is the number 4, and `-0` prints as `0`.
+        ["--x:+1.5", "--x:1.5"],
+        ["--x:U+4E00-9FFF", "--x:U 4-9FFF"],
+        ["--x:1-0", "--x:1 0"],
+        ["--x:a+.5", "--x:a.5"],
+        // Nothing joins a minus sign after a number, a plus sign, or a percentage.
+        ["--x:1-2", "--x:1-2"],
+        ["--x:1-2px", "--x:1-2px"],
+        ["--x:a+50%", "--x:a+50%"],
+        ["--x:50%a", "--x:50%a"],
+        // `/` and `*` stay apart whatever is between them in the source.
+        ["--x:a//**/*b", "--x:a/ *b"],
+        ["color:rgb(1 2 3 / *var(--o))", "color:rgb(1 2 3/ *var(--o))"],
+        // Two bars are two tokens, and stay as written.
+        ["--x:a||b", "--x:a||b"],
+      ];
+      for (const [input, expected] of cases) {
+        minify_test(`.a{${input}}`, `.a{${expected}}`);
+      }
+
+      // Each kind of token before each kind that can follow it. `x`: a space keeps the two apart.
+      test("each pair of token kinds", () => {
+        const after = "b f(1) url(b) -b -1 1 .5 1% 1z .5z .5s --> (1) * / % = *=".split(" ");
+        const before: [string, string, string][] = [
+          ["a", "a", "xxxxxx.xx..xx....."],
+          ["@a", "@a", "xxxxxx.xx..x......"],
+          ["#ab", "#ab", "xxxxxx.xx..x......"],
+          ["1z", "1z", "xxxxxx.xx..x......"],
+          ["1px", "1px", "xxxxxx.xx..x......"],
+          ["#", "#", "xxxxxx.xx..x......"],
+          ["1", "1", "xxxx.xxxxxxx...x.."],
+          ["1.5", "1.5", "xxxx.x.xx..x...x.."],
+          ["1e-7", "1e-7", "xxxx.x.xx..x...x.."],
+          ["@", "@", "xxxxx......x......"],
+          [".", ".", ".....x.xx........."],
+          ["/", "/", ".............x...x"],
+          ["*", "*", "..............x.x."],
+          ["$", "$", "................x."],
+          ["|", "|", "................x."],
+          ["rgb(255 0 0)", "red", "xxxxxx.xx..xx....."],
+          ["rgb(0 0 0)", "#000", "xxxxxx.xx..x......"],
+          ["50%", "50%", ".................."],
+          ["f(1)", "f(1)", ".................."],
+        ];
+        const printed = before.map(([input, first]) => [
+          input,
+          first,
+          after
+            .map(next => {
+              const out = cssInternals.minifyTest(`.a{--x:${input}/**/${next}}`, "");
+              return out === `.a{--x:${first} ${next}}` ? "x" : out === `.a{--x:${first}${next}}` ? "." : "?";
+            })
+            .join(""),
+        ]);
+        expect(printed).toEqual(before);
+      });
+
+      // The block and the prelude of an unknown at-rule are token lists.
+      minify_test("@foo{li:nth-child(2n+1){color:red}}", "@foo{li:nth-child(2n+1){color:red}}");
+      minify_test("@foo{li:nth-child(2n +1){color:red}}", "@foo{li:nth-child(2n +1){color:red}}");
+      minify_test("@foo{a#bed:hover{color:red}}", "@foo{a#bed:hover{color:red}}");
+      minify_test("@foo{a/**/:hover{color:red}}", "@foo{a:hover{color:red}}");
+      minify_test(".a{@apply py-3.5 px-2.5}", ".a{@apply py-3.5 px-2.5;}");
+      minify_test(
+        ".a{@apply duration-1.5s animate-[fade-in_1.5s]}",
+        ".a{@apply duration-1.5s animate-[fade-in_1.5s];}",
+      );
+
+      // A fallback and an untyped `initial-value` are token lists too.
+      minify_test("@foo a/**/b;", "@foo a b;");
+      minify_test("@foo{x: rgb(255 0 0)inset}", "@foo{x: red inset}");
+      minify_test(".a{--x:var(--a,a/**/b)}", ".a{--x:var(--a,a b)}");
+      minify_test(".a{width:env(safe-area-inset-left,1px/**/2px)}", ".a{width:env(safe-area-inset-left,1px 2px)}");
+      minify_test(
+        "@property --p{syntax:'*';inherits:false;initial-value:a/**/b}",
+        '@property --p{syntax:"*";inherits:false;initial-value:a b}',
+      );
+      minify_test("@container style(--x:a/**/b){.a{color:red}}", "@container style(--x:a b){.a{color:red}}");
+
+      // The arguments of an unknown pseudo-class or pseudo-element keep their comments.
+      minify_test(".a::-webkit-foo(a/**/b){color:red}", ".a::-webkit-foo(a/**/b){color:red}");
+      minify_test(".a:-moz-foo(1/**/2 x/* c */y){color:red}", ".a:-moz-foo(1/**/2 x/* c */y){color:red}");
+
+      test("not minified", () => {
+        const print = (css: string) => cssInternals.prefixTest(css, "", { chrome: 90 << 16 });
+        expect([
+          print(".a{background:linear-gradient(90deg,rgb(255,0,0)0%,var(--c)100%)}"),
+          print(".a{box-shadow:0 0 0 1px rgb(0 0 0)inset,0 0 var(--x) red}"),
+          print(".a{--x:a/**/b}"),
+          print(".a{--x:2n+1}"),
+          print(".a{color:rgb(1 2 3 / *var(--o))}"),
+        ]).toEqual([
+          ".a {\n  background: linear-gradient(90deg, red 0%, var(--c) 100%);\n}\n",
+          ".a {\n  box-shadow: 0 0 0 1px #000 inset, 0 0 var(--x) red;\n}\n",
+          ".a {\n  --x: a b;\n}\n",
+          ".a {\n  --x: 2n+1;\n}\n",
+          ".a {\n  color: rgb(1 2 3 / * var(--o));\n}\n",
+        ]);
+      });
     });
 
     // Deeply nested @keyframes with invalid percentages

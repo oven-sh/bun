@@ -9,7 +9,9 @@
 use crate as css;
 use crate::PrintResult;
 use crate::Token;
-use crate::css_parser::{self, Delimiters, EnumProperty, Parser, ParserOptions, ParserState};
+use crate::css_parser::{
+    self, Delimiters, EnumProperty, Parser, ParserOptions, ParserState, TokenSerializationType,
+};
 use crate::error::{BasicParseErrorKind, ParseError, ParserError, ParserErrorKind};
 use crate::printer::Printer;
 
@@ -301,20 +303,40 @@ impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+        self.to_css_after(dest, is_custom_property, TokenSerializationType::Nothing)
+    }
+
+    /// `prev` is the kind of token that the caller printed directly before this list.
+    pub(crate) fn to_css_after(
+        &self,
+        dest: &mut Printer,
+        is_custom_property: bool,
+        mut prev: TokenSerializationType,
+    ) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
 
-        let mut has_whitespace = false;
+        // The last number that was printed. Its text is looked at only where a `.5` follows it.
+        let mut prev_number: f32 = 0.0;
         for (i, token_or_value) in self.v.iter().enumerate() {
-            match token_or_value {
+            let (first, last) = token_or_value.serialization_types(dest);
+            let after_number = prev == TokenSerializationType::Number
+                && first == TokenSerializationType::LeadingDot;
+            if prev.needs_separator_when_before(first)
+                && !(after_number && prints_point_or_exponent(prev_number))
+            {
+                dest.write_char(token_or_value.separator())?;
+                prev = TokenSerializationType::WhiteSpace;
+            }
+            let wrote_whitespace = match token_or_value {
                 TokenOrValue::Color(color) => {
                     color.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::UnresolvedColor(color) => {
                     color.to_css(dest, is_custom_property)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Url(url) => {
                     if dest.dependencies.is_some()
@@ -332,104 +354,105 @@ impl TokenList {
                         );
                     }
                     ext::url_to_css(url, dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Var(var) => {
                     var.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
+                    self.write_whitespace_if_needed(i, dest)?
                 }
                 TokenOrValue::Env(env) => {
                     env.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
+                    self.write_whitespace_if_needed(i, dest)?
                 }
                 TokenOrValue::Function(f) => {
                     f.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
+                    self.write_whitespace_if_needed(i, dest)?
                 }
                 TokenOrValue::Length(v) => {
                     // Do not serialize unitless zero lengths in custom properties as it may break calc().
                     let (value, unit) = v.to_unit_value();
                     css_parser::serializer::serialize_dimension(value, unit, dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Angle(v) => {
                     v.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Time(v) => {
                     v.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Resolution(v) => {
                     v.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::DashedIdent(v) => {
                     dest.write_dashed_ident(v, true)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::AnimationName(v) => {
                     v.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Token(token) => match token {
                     Token::Delim(d) => {
+                        debug_assert!(*d <= 0x7F);
                         if *d == b'+' as u32 || *d == b'-' as u32 {
                             dest.write_char(b' ')?;
-                            debug_assert!(*d <= 0x7F);
                             dest.write_char(*d as u8)?;
                             dest.write_char(b' ')?;
+                            true
                         } else {
-                            let ws_before =
-                                !has_whitespace && (*d == b'/' as u32 || *d == b'*' as u32);
-                            debug_assert!(*d <= 0x7F);
+                            let ws_before = prev != TokenSerializationType::WhiteSpace
+                                && (*d == b'/' as u32 || *d == b'*' as u32);
                             dest.delim(*d as u8, ws_before)?;
-                            // `delim()` emits no surrounding whitespace when minifying, so
-                            // consecutive `/` and `*` delims would be printed adjacently and
-                            // form a `/*` or `*/` comment delimiter. Emit a real space when
-                            // the next token is the other half of that pair.
-                            if dest.minify && (*d == b'/' as u32 || *d == b'*' as u32) {
-                                let needs_space = match self.v.get(i + 1) {
-                                    Some(TokenOrValue::Token(Token::Delim(next))) => {
-                                        (*d == b'/' as u32 && *next == b'*' as u32)
-                                            || (*d == b'*' as u32 && *next == b'/' as u32)
-                                    }
-                                    Some(TokenOrValue::Token(Token::SubstringMatch)) => {
-                                        *d == b'/' as u32
-                                    }
-                                    _ => false,
-                                };
-                                if needs_space {
-                                    dest.write_char(b' ')?;
-                                }
-                            }
+                            !dest.minify
                         }
-                        has_whitespace = true;
                     }
                     Token::Comma => {
                         dest.delim(b',', false)?;
-                        has_whitespace = true;
+                        !dest.minify
                     }
                     Token::CloseParen | Token::CloseSquare | Token::CloseCurly => {
                         token.to_css(dest)?;
-                        has_whitespace = self.write_whitespace_if_needed(i, dest)?;
+                        self.write_whitespace_if_needed(i, dest)?
                     }
                     Token::Dimension(dim) => {
                         css_parser::serializer::serialize_dimension(dim.num.value, dim.unit, dest)?;
-                        has_whitespace = false;
+                        false
                     }
                     Token::Number(v) => {
+                        if is_plus_integer(v) {
+                            dest.write_char(b'+')?;
+                        }
                         CSSNumberFns::to_css(v.value, dest)?;
-                        has_whitespace = false;
+                        prev_number = v.value;
+                        false
                     }
                     _ => {
                         token.to_css(dest)?;
-                        has_whitespace = matches!(token, Token::Whitespace(_));
+                        matches!(token, Token::Whitespace(_))
                     }
                 },
-            }
+            };
+            prev = if wrote_whitespace {
+                TokenSerializationType::WhiteSpace
+            } else {
+                last
+            };
         }
         Ok(())
+    }
+
+    /// Prints `/` and then the list: a list that starts with `*` must not open a comment.
+    fn to_css_after_slash(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+        dest.delim(b'/', true)?;
+        let prev = if dest.minify {
+            TokenSerializationType::DelimSlash
+        } else {
+            TokenSerializationType::WhiteSpace
+        };
+        self.to_css_after(dest, is_custom_property, prev)
     }
 
     pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
@@ -493,7 +516,7 @@ impl TokenList {
 
         loop {
             let state = input.state();
-            let Ok(token) = input.next_including_whitespace() else {
+            let Ok(token) = input.next_including_whitespace_and_comments() else {
                 break;
             };
             match token {
@@ -804,6 +827,31 @@ impl TokenList {
         res
     }
 
+    /// Whether a browser with no relative colors drops this value at parse time: it holds one, and no `var()` or `env()`.
+    pub(crate) fn needs_relative_colors(&self) -> bool {
+        let mut relative_color = false;
+        self.has_no_substitution(&mut relative_color) && relative_color
+    }
+
+    /// Whether the list holds no `var()` and no `env()`, at any depth. Sets `relative_color` when it passes a relative color.
+    fn has_no_substitution(&self, relative_color: &mut bool) -> bool {
+        self.v.iter().all(|token| match token {
+            TokenOrValue::Function(f) => {
+                *relative_color |= f.is_relative_color();
+                f.arguments.has_no_substitution(relative_color)
+            }
+            TokenOrValue::Var(_) | TokenOrValue::Env(_) => false,
+            TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
+                light.has_no_substitution(relative_color)
+                    && dark.has_no_substitution(relative_color)
+            }
+            TokenOrValue::UnresolvedColor(
+                UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. },
+            ) => alpha.has_no_substitution(relative_color),
+            _ => true,
+        })
+    }
+
     pub(crate) fn get_necessary_fallbacks(
         &self,
         targets: &css::targets::Targets,
@@ -815,7 +863,7 @@ impl TokenList {
                     fallbacks.insert(color.get_possible_fallbacks(targets));
                 }
                 TokenOrValue::Function(f) => {
-                    fallbacks.insert(f.arguments.get_necessary_fallbacks(targets));
+                    fallbacks.insert(f.get_necessary_fallbacks(targets));
                 }
                 TokenOrValue::Var(v) => {
                     if let Some(fallback) = &v.fallback {
@@ -912,8 +960,7 @@ impl UnresolvedColor {
                 css_parser::to_css::integer(conv(*g), dest)?;
                 dest.write_char(b' ')?;
                 css_parser::to_css::integer(conv(*b), dest)?;
-                dest.delim(b'/', true)?;
-                alpha.to_css(dest, is_custom_property)?;
+                alpha.to_css_after_slash(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
             UnresolvedColor::HSL { h, s, l, alpha } => {
@@ -939,12 +986,18 @@ impl UnresolvedColor {
                 Percentage { v: *s }.to_css(dest)?;
                 dest.write_char(b' ')?;
                 Percentage { v: *l }.to_css(dest)?;
-                dest.delim(b'/', true)?;
-                alpha.to_css(dest, is_custom_property)?;
+                alpha.to_css_after_slash(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
             UnresolvedColor::LightDark { light, dark } => {
-                if !dest.targets.is_compatible(css::compat::Feature::LightDark) {
+                // The `var()` fallback form would make a browser with no relative colors keep a declaration that it cannot compute.
+                let as_written = || {
+                    let mut relative_color = false;
+                    light.has_no_substitution(&mut relative_color)
+                        && dark.has_no_substitution(&mut relative_color)
+                        && relative_color
+                };
+                if !dest.targets.is_compatible(css::compat::Feature::LightDark) && !as_written() {
                     dest.write_str("var(--buncss-light")?;
                     dest.delim(b',', false)?;
                     light.to_css(dest, is_custom_property)?;
@@ -984,17 +1037,19 @@ impl UnresolvedColor {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
                     i.expect_delim(b'/')?;
+                    Self::expect_no_channel_keyword(i, p)?;
                     let alpha = TokenListFns::parse(i, options, depth + 1)?;
                     Ok(UnresolvedColor::RGB { r, g, b, alpha })
                 })
             }),
             b"hsl" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
-                    let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
+                    let (h, s, l, is_legacy) = parse_hsl_hwb_components(i, p, false)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
                     i.expect_delim(b'/')?;
+                    Self::expect_no_channel_keyword(i, p)?;
                     let alpha = TokenListFns::parse(i, options, depth + 1)?;
                     Ok(UnresolvedColor::HSL { h, s, l, alpha })
                 })
@@ -1028,6 +1083,43 @@ impl UnresolvedColor {
             _ => {},
         }}
         Err(input.new_custom_error(ParserError::invalid_value))
+    }
+
+    /// A channel keyword in the alpha needs the origin, which is not kept. Runs before buffering.
+    fn expect_no_channel_keyword(
+        input: &mut Parser,
+        parser: &css_values::color::ComponentParser,
+    ) -> Result<()> {
+        let Some(from) = &parser.from else {
+            return Ok(());
+        };
+        let start = input.state();
+        let found = Self::names_channel_keyword(input, from)?;
+        input.reset(&start);
+        if found {
+            return Err(input.new_custom_error(ParserError::invalid_value));
+        }
+        Ok(())
+    }
+
+    /// Reads to the end of the block, nested blocks included.
+    fn names_channel_keyword(
+        input: &mut Parser,
+        from: &css_values::color::RelativeComponentParser,
+    ) -> Result<bool> {
+        let mut found = false;
+        while let Ok(tok) = input.next() {
+            // Copy the token so that `input` is free for the nested block.
+            let tok = *tok;
+            match tok {
+                Token::Ident(name) => found |= from.is_channel_keyword(name),
+                Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
+                    found |= input.parse_nested_block(|i| Self::names_channel_keyword(i, from))?;
+                }
+                _ => {}
+            }
+        }
+        Ok(found)
     }
 
     fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {
@@ -1308,7 +1400,32 @@ impl Function {
 
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
+    /// Whether this is a relative color, as `rgb(from …)`.
+    fn is_relative_color(&self) -> bool {
+        const NAMES: &[&[u8]] = &[
+            b"rgb", b"rgba", b"hsl", b"hsla", b"hwb", b"lab", b"lch", b"oklab", b"oklch", b"color",
+        ];
+        let first = self.arguments.v.iter().find(|token| !token.is_whitespace());
+        matches!(first, Some(TokenOrValue::Token(Token::Ident(ident))) if strings::eql_case_insensitive_ascii(ident, b"from", true))
+            && strings::eql_any_case_insensitive_ascii(self.name.v(), NAMES)
+    }
+
+    /// A relative color with no `var()` or `env()` takes no fallback: its `@supports` copy would win over a later declaration.
+    fn takes_no_fallback(&self) -> bool {
+        self.is_relative_color() && self.arguments.has_no_substitution(&mut false)
+    }
+
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+        if self.takes_no_fallback() {
+            return ColorFallbackKind::empty();
+        }
+        self.arguments.get_necessary_fallbacks(targets)
+    }
+
     fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+        if self.takes_no_fallback() {
+            return self.deep_clone(bump);
+        }
         Function {
             name: self.name,
             arguments: self.arguments.get_fallback(bump, kind),
@@ -1355,6 +1472,94 @@ impl TokenOrValue {
     fn is_whitespace(&self) -> bool {
         matches!(self, TokenOrValue::Token(Token::Whitespace(_)))
     }
+
+    /// The kinds of token that the printed value starts and ends with.
+    fn serialization_types(
+        &self,
+        dest: &Printer,
+    ) -> (TokenSerializationType, TokenSerializationType) {
+        use TokenSerializationType::*;
+        // `serialize_dimension` and a percentage print a negative zero as `-0`. A number prints it as `0`.
+        let minus = |value: f32, signed_zero: bool| {
+            value < 0.0 || (signed_zero && value == 0.0 && value.is_sign_negative())
+        };
+        // A number below 1 is printed with no `0` before its decimal point, unless it has an exponent or rounds to 1.
+        let start = |value: f32, signed_zero: bool, ty| {
+            if minus(value, signed_zero) {
+                DelimMinus
+            } else if (1e-6..0.9999995).contains(&f64::from(value)) {
+                LeadingDot
+            } else {
+                ty
+            }
+        };
+        match self {
+            TokenOrValue::Token(token) => match token {
+                // `to_css` prints these two with a space on each side.
+                Token::Delim(d) if *d == b'+' as u32 || *d == b'-' as u32 => {
+                    (WhiteSpace, WhiteSpace)
+                }
+                // An integer keeps its `+`: `2n +1` is not `2n 1` in `:nth-child()`.
+                Token::Number(n) if is_plus_integer(n) => (DelimPlus, Number),
+                Token::Number(n) => (start(n.value, false, Number), Number),
+                Token::Dimension(d) => (start(d.num.value, true, Dimension), Dimension),
+                // A percentage keeps its `+` and the `0` before its decimal point.
+                Token::Percentage {
+                    has_sign: true,
+                    unit_value,
+                    ..
+                } if !unit_value.is_sign_negative() => (DelimPlus, Percentage),
+                Token::Percentage { unit_value, .. } if minus(*unit_value, true) => {
+                    (DelimMinus, Percentage)
+                }
+                _ => {
+                    let ty = token.serialization_type();
+                    (ty, ty)
+                }
+            },
+            TokenOrValue::Color(color) => color.serialization_types(dest),
+            TokenOrValue::UnresolvedColor(_)
+            | TokenOrValue::Var(_)
+            | TokenOrValue::Env(_)
+            | TokenOrValue::Function(_) => (Function, Other),
+            TokenOrValue::Url(_) => (UrlOrBadUrl, Other),
+            TokenOrValue::Length(v) => (start(v.to_unit_value().0, true, Dimension), Dimension),
+            TokenOrValue::Resolution(
+                Resolution::Dpi(v) | Resolution::Dpcm(v) | Resolution::Dppx(v),
+            ) => (start(*v, true, Dimension), Dimension),
+            TokenOrValue::Angle(v) => (start(v.to_unit_value().0, true, Dimension), Dimension),
+            TokenOrValue::Time(v) => (start(v.to_unit_value().0, false, Dimension), Dimension),
+            TokenOrValue::DashedIdent(_) | TokenOrValue::AnimationName(_) => (Ident, Ident),
+        }
+    }
+
+    /// What keeps this value apart from the one before it. A dimension written as `+1px` prints as `1px`, so its sign can do it.
+    fn separator(&self) -> u8 {
+        match self {
+            TokenOrValue::Token(Token::Dimension(d)) if is_plus_integer(&d.num) => b'+',
+            _ => b' ',
+        }
+    }
+}
+
+/// Whether a number is an integer that is written with a `+`.
+fn is_plus_integer(num: &css::Num) -> bool {
+    num.has_sign && num.int_value.is_some() && !num.value.is_sign_negative()
+}
+
+/// Whether a number is printed with a `.` or an exponent. A `.5` after it then starts a new number.
+fn prints_point_or_exponent(value: f32) -> bool {
+    // A whole number below 1e21 is printed with digits only.
+    if value.fract() == 0.0 && value.abs() < 1e21 {
+        return false;
+    }
+    // A number that is printed with its decimal point first.
+    if (1e-6..0.9999995).contains(&f64::from(value.abs())) {
+        return true;
+    }
+    let mut buf = [0u8; 129];
+    let (text, _) = css_parser::dtoa_short(&mut buf, value, 6);
+    strings::index_of_any(text, b".e").is_some()
 }
 
 // ─── Clone / Debug shims ───────────────────────────────────────────────────

@@ -550,11 +550,14 @@ impl BorderImageHandler {
                             unparsed.deep_clone(arena)
                         };
 
-                    context.add_unparsed_fallbacks(arena, &mut unparsed_clone);
-                    self.flushed_properties.insert(
-                        BorderImageProperty::try_from_property_id(unparsed_clone.property_id.tag())
+                    if context.add_unparsed_fallbacks(arena, &mut unparsed_clone) {
+                        self.flushed_properties.insert(
+                            BorderImageProperty::try_from_property_id(
+                                unparsed_clone.property_id.tag(),
+                            )
                             .unwrap(),
-                    );
+                        );
+                    }
                     dest.push(Property::Unparsed(unparsed_clone));
                 } else {
                     return false;

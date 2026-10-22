@@ -9,6 +9,9 @@ use bun_alloc::ArenaVecExt as _;
 pub struct FallbackHandler {
     pub(crate) color: Option<usize>,
     pub(crate) text_shadow: Option<usize>,
+    /// Every declaration so far needs relative colors. A browser with none drops them, so a later color takes its own fallbacks.
+    color_is_droppable: bool,
+    text_shadow_is_droppable: bool,
     // The remaining fallback fields are not implemented yet.
     // filter: Option<usize>,
     // backdrop_filter: Option<usize>,
@@ -35,6 +38,7 @@ impl FallbackHandler {
         macro_rules! handle_unprefixed {
             (
                 $self_field:ident,
+                $is_droppable:ident,
                 $Variant:ident,
                 deep_clone = $dc:expr,
                 fallbacks  = $fb:expr,
@@ -43,10 +47,11 @@ impl FallbackHandler {
                 if let Property::$Variant(payload) = property {
                     let mut val = ($dc)(payload, arena);
 
-                    if $self_field.is_none() {
+                    if $self_field.is_none() || *$is_droppable {
                         // `has_fallbacks` is only consulted in the vendor-prefixed branch.
                         ($fb)(&mut val, arena, &context.targets, dest);
                     }
+                    *$is_droppable = false;
 
                     if $self_field.is_none()
                         || (context.targets.browsers.is_some()
@@ -71,10 +76,13 @@ impl FallbackHandler {
         let this = &mut *self;
         let color = &mut this.color;
         let text_shadow = &mut this.text_shadow;
+        let color_is_droppable = &mut this.color_is_droppable;
+        let text_shadow_is_droppable = &mut this.text_shadow_is_droppable;
 
         // PropertyIdTag::Color has no vendor prefix.
         handle_unprefixed!(
             color,
+            color_is_droppable,
             Color,
             deep_clone = |c: &css::css_values::color::CssColor, a| c.deep_clone(a),
             fallbacks = |v: &mut css::css_values::color::CssColor,
@@ -91,6 +99,7 @@ impl FallbackHandler {
         // PropertyIdTag::TextShadow has no vendor prefix.
         handle_unprefixed!(
             text_shadow,
+            text_shadow_is_droppable,
             TextShadow,
             deep_clone =
                 |l: &css::SmallList<css::css_properties::text::TextShadow, 1>, a| l.deep_clone(a),
@@ -111,26 +120,32 @@ impl FallbackHandler {
 
         if let Property::Unparsed(val) = property {
             let val: &UnparsedProperty = val;
-            let (mut unparsed, index): (UnparsedProperty, &mut Option<usize>) = 'unparsed_and_index: {
+            let (mut unparsed, index, is_droppable): (
+                UnparsedProperty,
+                &mut Option<usize>,
+                &mut bool,
+            ) = 'unparsed_and_index: {
                 macro_rules! match_unparsed_unprefixed {
-                    ($self_field:ident, $Variant:ident) => {
+                    ($self_field:ident, $is_droppable:ident, $Variant:ident) => {
                         if val.property_id.tag() == PropertyIdTag::$Variant {
                             let newval = val.deep_clone(arena);
-                            break 'unparsed_and_index (newval, $self_field);
+                            break 'unparsed_and_index (newval, $self_field, $is_droppable);
                         }
                     };
                 }
 
-                match_unparsed_unprefixed!(color, Color);
-                match_unparsed_unprefixed!(text_shadow, TextShadow);
+                match_unparsed_unprefixed!(color, color_is_droppable, Color);
+                match_unparsed_unprefixed!(text_shadow, text_shadow_is_droppable, TextShadow);
                 // (no prefixed properties active yet — `match_unparsed_prefixed!` kept for
                 // when filter/backdrop_filter/etc. are re-enabled in this handler.)
 
                 return false;
             };
 
-            context.add_unparsed_fallbacks(arena, &mut unparsed);
-            if let Some(i) = *index {
+            let is_fallback = context.add_unparsed_fallbacks(arena, &mut unparsed);
+            *is_droppable = !is_fallback && (index.is_none() || *is_droppable);
+            // A browser with no relative colors drops a value that needs them, so the declaration before it stays as its fallback.
+            if let Some(i) = index.filter(|_| is_fallback) {
                 dest[i] = Property::Unparsed(unparsed);
             } else {
                 *index = Some(dest.len());
@@ -148,7 +163,6 @@ impl FallbackHandler {
         _dest: &mut css::DeclarationList,
         _context: &mut css::PropertyHandlerContext,
     ) {
-        self.color = None;
-        self.text_shadow = None;
+        *self = Self::default();
     }
 }

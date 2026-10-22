@@ -2072,7 +2072,8 @@ function Socket(options?): void {
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
         // Not fd 0-2, which process.stdout and process.stderr share. Not with `readable` omitted: the EOF pushed below ends that socket with no end() call.
-        if (optionsReadable === false && fd > 2 && stats.isSocket() && isStreamSocketFd(fd)) this[kSyncFdShutdown] = true;
+        if (optionsReadable === false && fd > 2 && stats.isSocket() && isStreamSocketFd(fd))
+          this[kSyncFdShutdown] = true;
         // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
         if (optionsReadable !== true && optionsReadable !== false) {
           this.push(null);

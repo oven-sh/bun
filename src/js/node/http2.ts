@@ -4296,7 +4296,13 @@ class ServerHttp2Session extends Http2Session {
         }
       }
     },
-    error(self: ServerHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
+    error(
+      self: ServerHttp2Session,
+      errorCode: number | string,
+      lastStreamId: number,
+      opaqueData: Buffer,
+      clientIsGone?: boolean,
+    ) {
       if (!self) return;
       if (errorCode === "ERR_HTTP2_TOO_MANY_INVALID_FRAMES") {
         self.destroy($ERR_HTTP2_TOO_MANY_INVALID_FRAMES());
@@ -4306,6 +4312,8 @@ class ServerHttp2Session extends Http2Session {
       // detected; node surfaces those as NghttpError (code ERR_HTTP2_ERROR) via
       // onSessionInternalError.
       if (typeof errorCode === "number" && errorCode < 0) {
+        // Only the session reports the error. Its streams end as they do when the socket closes.
+        if (clientIsGone) self.#parser?.forEachStream(streamSocketClosed);
         self.destroy(new NghttpError(errorCode));
         return;
       }

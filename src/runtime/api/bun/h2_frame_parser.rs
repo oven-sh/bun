@@ -2497,6 +2497,33 @@ impl H2FrameParser {
         );
     }
 
+    pub(crate) fn dispatch_with_3_extra(
+        &self,
+        event: JSH2FrameParser::Gc,
+        value: JSValue,
+        extra: JSValue,
+        extra2: JSValue,
+        extra3: JSValue,
+    ) {
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return;
+        };
+        value.ensure_still_alive();
+        extra.ensure_still_alive();
+        extra2.ensure_still_alive();
+        extra3.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
+        let _ = self.handlers.get().call_event_handler(
+            event,
+            this_value,
+            ctx_value,
+            &[ctx_value, value, extra, extra2, extra3],
+        );
+    }
+
     /// A header block the HPACK encoder cannot emit fails the whole session in nghttp2, so node
     /// reports ERR_HTTP2_SESSION_ERROR (COMPRESSION_ERROR) rather than resetting the stream.
     /// The stream is left open for the session teardown to error, matching node's request error.
@@ -3828,15 +3855,16 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         let Some(chunk) = self.or_stop(self.handlers.get().binary_type.to_js(debug, &g)) else {
             return;
         };
-        // The client is gone, so no GOAWAY reaches it and its responses are still queued. The server's
-        // session ends without an error, as it does at the close that follows.
-        let client_is_gone = self.is_server.get() && self.transport_send_rejected();
-        if lib_error_code != 0 && !client_is_gone {
-            self.dispatch_with_2_extra(
+        if lib_error_code != 0 {
+            // The responses of a client that is gone are still queued. The server's handler ends
+            // their streams without the session's error, as the close that follows would.
+            let client_is_gone = self.is_server.get() && self.transport_send_rejected();
+            self.dispatch_with_3_extra(
                 JSH2FrameParser::Gc::onError,
                 JSValue::js_number(lib_error_code as f64),
                 JSValue::js_number(self.last_stream_id.get() as f64),
                 chunk,
+                JSValue::from(client_is_gone),
             );
         }
         self.dispatch_with_extra(

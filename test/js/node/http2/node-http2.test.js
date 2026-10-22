@@ -6702,6 +6702,31 @@ for (const secure of [true, false]) {
   );
 }
 
+it.skipIf(!isLinux)("a session reports its own error after its client left", async () => {
+  const bytes = Buffer.concat([
+    http2utils.kClientMagic,
+    new http2utils.SettingsFrame().data,
+    new http2utils.Frame(8, 7, 0, 0).data,
+    Buffer.from([0, 0, 0, 1, 0, 0, 0, 0]),
+  ]);
+  for (const secure of [false, true]) {
+    const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();
+    const sessionError = once(server, "sessionError");
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    const socket = secure
+      ? tls.connect({ port, host: "127.0.0.1", ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" })
+      : net.connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    await once(socket, secure ? "secureConnect" : "connect");
+    socket.write(bytes);
+    socket.destroy();
+    const [err] = await sessionError;
+    expect(err.code).toBe("ERR_HTTP2_ERROR");
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 it.skipIf(!isLinux)("a session reports ECONNRESET when its read finds the connection reset", async () => {
   for (const secure of [false, true]) {
     const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();

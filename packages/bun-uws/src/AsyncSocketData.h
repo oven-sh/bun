@@ -179,6 +179,8 @@ struct AsyncSocketData {
     /* Whether it has fired the filter with -3 (HttpResponse::setNodeHttpTunnelIdle).
      * +3 undoes it, and an idle socket fires -4 in place of -2. */
     bool filteredIdleTunnel = false;
+    /* Whether it has fired the filter with +5 (HttpResponse::setNodeHttpTunnelSending). -5 undoes it, on the paths that balance +2 too. */
+    bool filteredSendingTunnel = false;
 };
 
 }

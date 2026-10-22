@@ -184,8 +184,9 @@ public:
         return true;
     }
 
-    /* node:http: an idle tunnel is at read EOF and has nothing left to send. Like a libuv handle in that state, it does not hold
-     * the event loop. The filter hears -3 when a tunnel becomes idle and +3 when it has bytes to send again. */
+    /* node:http: an idle tunnel does not read (its reads are stopped or at EOF) and has nothing left to send. Like a libuv handle in
+     * that state, it does not hold the event loop: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1473-L1485.
+     * The filter hears -3 when a tunnel becomes idle and +3 when it reads or has bytes to send again. */
     void setNodeHttpTunnelIdle(bool idle) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!httpResponseData->filteredAccept || httpResponseData->filteredIdleTunnel == idle) {
@@ -194,6 +195,20 @@ public:
         httpResponseData->filteredIdleTunnel = idle;
         for (auto &f : HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->filterHandlers) {
             f(this, idle ? -3 : 3);
+        }
+    }
+
+    /* node:http: a tunnel with bytes left to send holds the event loop whatever is unref'd, like a libuv write request:
+     * https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/core.c#L393-L398.
+     * The filter hears +5 when a tunnel has bytes left to send and -5 when it has none any more. */
+    void setNodeHttpTunnelSending(bool sending) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (!httpResponseData->filteredAccept || httpResponseData->filteredSendingTunnel == sending) {
+            return;
+        }
+        httpResponseData->filteredSendingTunnel = sending;
+        for (auto &f : HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->filterHandlers) {
+            f(this, sending ? 5 : -5);
         }
     }
 
@@ -494,6 +509,7 @@ private:
                 f((HttpResponse<SSL> *) this, -1);
             }
         }
+        setNodeHttpTunnelSending(false);
         if (((AsyncSocketData<SSL> *) responseData)->filteredAccept) {
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) this, ((AsyncSocketData<SSL> *) responseData)->filteredIdleTunnel ? -4 : -2);

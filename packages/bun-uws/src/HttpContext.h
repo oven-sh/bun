@@ -280,6 +280,7 @@ private:
                 f((HttpResponse<SSL> *) s, -1);
             }
         }
+        ((HttpResponse<SSL> *) s)->setNodeHttpTunnelSending(false);
         if (httpResponseData->filteredAccept) {
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, httpResponseData->filteredIdleTunnel ? -4 : -2);
@@ -893,6 +894,15 @@ private:
     static us_socket_t *onWritable(us_socket_t *s) {
         auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
         auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
+
+        /* Behind its FIN, a TLS socket gets this event only so that a tunnel hears that what TLS held has left (ssl_on_writable). */
+        if (SSL && us_socket_is_shut_down(s)) {
+            auto *httpContextData = getSocketContextDataS(s);
+            if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
+                httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
+            }
+            return s;
+        }
 
         /* Attempt to drain the socket buffer before triggering onWritable callback */
         size_t bufferedAmount = asyncSocket->getBufferedAmount();

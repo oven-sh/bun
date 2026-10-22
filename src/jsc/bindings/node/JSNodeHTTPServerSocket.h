@@ -150,7 +150,7 @@ public:
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
-    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
+    /* Tells uWS whether this tunnel has bytes left to send, and whether it is idle: it has none and does not read (readStop() or read EOF). See HttpResponse::setNodeHttpTunnelIdle. */
     void updateTunnelIdle();
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
     bool hasUnsentResponseBytes() const;

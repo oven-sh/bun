@@ -2478,6 +2478,7 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        self.flags.remove(ServerFlags::UNREFED_BY_USER);
         self.ref_();
         Ok(this_value)
     }
@@ -2489,6 +2490,7 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        self.flags.insert(ServerFlags::UNREFED_BY_USER);
         self.unref();
         Ok(this_value)
     }

@@ -2485,6 +2485,7 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
   loop_ssl_data->ssl_send_error = 0;
   if (!ssl_drain_spill(loop_ssl_data, s)) return s;
   if (loop_ssl_data->ssl_send_error) return ssl_close_after_rejected_send(s, loop_ssl_data->ssl_send_error);
+  int sent_deferred_shutdown = s->ssl_shutdown_after_spill;
   if (s->ssl_shutdown_after_spill) {
     s->ssl_shutdown_after_spill = 0;
     us_internal_ssl_shutdown(s);
@@ -2500,8 +2501,9 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
   /* uWS HTTP sockets keep the pre-existing SENT_SHUTDOWN suppression: their
    * onWritable clears the teardown timeout armed at shutdown. node sockets
    * still get write-completion dispatch after a half-close in either
-   * direction. */
-  if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
+   * direction. The event that sent a shutdown held behind the spill goes through:
+   * nothing else tells the owner that the bytes it counts as written have left. */
+  if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s) && !sent_deferred_shutdown) return s;
 
   if (s->ssl_handshake_state != HANDSHAKE_PENDING) {
     s->ssl_write_parked = 0;

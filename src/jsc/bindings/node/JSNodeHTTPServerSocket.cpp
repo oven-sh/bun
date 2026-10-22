@@ -203,6 +203,7 @@ void JSNodeHTTPServerSocket::readStop()
     }
     tunnelReadsStopped = true;
     applyTunnelReads();
+    updateTunnelIdle();
 }
 
 void JSNodeHTTPServerSocket::readStart()
@@ -212,6 +213,7 @@ void JSNodeHTTPServerSocket::readStart()
     }
     tunnelReadsStopped = false;
     applyTunnelReads();
+    updateTunnelIdle();
 }
 
 void JSNodeHTTPServerSocket::didDeliverQueuedTunnelBytes(size_t length)
@@ -396,6 +398,8 @@ JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globa
     if (socket && cycleReads) {
         us_socket_resume(socket);
     }
+    // The shutdown can send what TLS still held, and no writable event comes behind the FIN.
+    updateTunnelIdle();
     return result;
 }
 
@@ -884,16 +888,26 @@ extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* sock
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
 }
 
+template<bool SSL>
+static void updateTunnelIdleImpl(us_socket_t* socket, bool reads, bool buffered)
+{
+    auto* response = reinterpret_cast<uWS::HttpResponse<SSL>*>(socket);
+    const bool sending = buffered || !response->hasFullyDrained();
+    response->setNodeHttpTunnelSending(sending);
+    response->setNodeHttpTunnelIdle(!reads && !sending);
+}
+
 void JSNodeHTTPServerSocket::updateTunnelIdle()
 {
-    if (!tunnelReadEnded || upgraded || isClosed()) {
+    if (!isTunnel(this)) {
         return;
     }
-    const bool sent = streamBuffer.bufferedSize() == 0;
+    const bool reads = !tunnelReadEnded && !tunnelReadsStopped;
+    const bool buffered = streamBuffer.bufferedSize() > 0;
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
+        updateTunnelIdleImpl<true>(socket, reads, buffered);
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
+        updateTunnelIdleImpl<false>(socket, reads, buffered);
     }
 }
 

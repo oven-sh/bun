@@ -24,13 +24,13 @@ const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunct
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
 const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
-const startAllocationSampling = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startAllocationSampling", 4);
+const startAllocationSampling = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startAllocationSampling", 5);
 const getAllocationSamplingProfile = $newCppFunction(
   "JSInspectorProfiler.cpp",
   "jsFunction_getAllocationSamplingProfile",
   0,
 );
-const stopAllocationSampling = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopAllocationSampling", 0);
+const stopAllocationSampling = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopAllocationSampling", 1);
 
 // Native bindings for inspector.open(): they start Bun's debugger thread with a
 // WebSocket server that speaks the V8 Chrome DevTools Protocol (see
@@ -475,7 +475,7 @@ class Session extends EventEmitter {
   disconnect() {
     if (!this.#connected) return;
     if (this.#startedAllocationSampling) {
-      stopAllocationSampling();
+      stopAllocationSampling(false);
       this.#startedAllocationSampling = false;
     }
     if (isCPUProfilerRunning()) stopCPUProfiler();
@@ -767,7 +767,7 @@ class Session extends EventEmitter {
 
       case "HeapProfiler.disable":
         if (this.#startedAllocationSampling) {
-          stopAllocationSampling();
+          stopAllocationSampling(false);
           this.#startedAllocationSampling = false;
         }
         return {};
@@ -791,15 +791,17 @@ class Session extends EventEmitter {
         }
         if (samplingInterval < 1) return $ERR_INSPECTOR_COMMAND("-32000: Invalid sampling interval");
         if (stackDepth < 1) return $ERR_INSPECTOR_COMMAND("-32000: Invalid stack depth");
-        // A second start keeps the running session and its interval, as V8 does.
-        startAllocationSampling(samplingInterval, stackDepth, includeMajor, includeMinor);
+        // A second start keeps the running session and its interval, as V8 does. The profile comes after a full
+        // collection (forceGC), as V8's inspector takes it.
+        startAllocationSampling(samplingInterval, stackDepth, true, includeMajor, includeMinor);
         this.#startedAllocationSampling = true;
         return {};
       }
 
       case "HeapProfiler.getSamplingProfile":
       case "HeapProfiler.stopSampling": {
-        const json = method === "HeapProfiler.stopSampling" ? stopAllocationSampling() : getAllocationSamplingProfile();
+        const json =
+          method === "HeapProfiler.stopSampling" ? stopAllocationSampling(true) : getAllocationSamplingProfile();
         if (json === null) return $ERR_INSPECTOR_COMMAND("-32000: V8 sampling heap profiler was not started.");
         if (method === "HeapProfiler.stopSampling") this.#startedAllocationSampling = false;
         return { profile: JSON.parse(json) };

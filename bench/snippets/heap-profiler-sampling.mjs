@@ -1,5 +1,4 @@
-// The cost of HeapProfiler.startSampling (node:inspector): allocation-heavy loops with sampling off, and on at the
-// default 32 KiB interval and at 1 KiB. Runs on bun and node. Compare two bun builds with BUN=path/to/bun.
+// The cost of HeapProfiler.startSampling (node:inspector) on allocation-heavy loops. Runs on bun and node.
 import { Session } from "node:inspector";
 import { bench, group, run } from "../runner.mjs";
 
@@ -26,8 +25,15 @@ function json(n) {
   for (let i = 0; i < n; ++i) keep = JSON.parse(document);
 }
 
+// One process per mode, so the timed loops hold no sampler lifecycle work (and no forced collection):
+//   bun heap-profiler-sampling.mjs                                sampling off
+//   HEAP_SAMPLING_INTERVAL=32768 bun heap-profiler-sampling.mjs   the default interval
+//   HEAP_SAMPLING_INTERVAL=1024 bun heap-profiler-sampling.mjs
+const interval = Number(process.env.HEAP_SAMPLING_INTERVAL ?? 0);
 const session = new Session();
 session.connect();
+if (interval > 0) session.post("HeapProfiler.startSampling", { samplingInterval: interval });
+const mode = interval > 0 ? `sampling at ${interval}` : "sampling off";
 
 for (const [name, fn, count] of [
   ["objects", objects, 200_000],
@@ -36,15 +42,9 @@ for (const [name, fn, count] of [
   ["JSON.parse", json, 20],
 ]) {
   group(name, () => {
-    bench("sampling off", () => fn(count));
-    for (const samplingInterval of [32768, 1024]) {
-      bench(`sampling at ${samplingInterval}`, () => {
-        session.post("HeapProfiler.startSampling", { samplingInterval });
-        fn(count);
-        session.post("HeapProfiler.stopSampling");
-      });
-    }
+    bench(mode, () => fn(count));
   });
 }
 
 await run();
+if (interval > 0) session.post("HeapProfiler.stopSampling");

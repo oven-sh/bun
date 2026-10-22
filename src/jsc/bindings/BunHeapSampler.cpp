@@ -2,6 +2,7 @@
 #include "BunHeapSampler.h"
 #include "BunClientData.h"
 #include "BunCPUProfiler.h"
+#include "NodeValidator.h"
 
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FunctionExecutable.h>
@@ -42,6 +43,29 @@ HeapSampler* HeapSampler::get(JSC::VM& vm)
     return slotFor(vm).get();
 }
 
+std::optional<HeapSampler::Options> HeapSampler::optionsFromArguments(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Options options;
+    V::validateNumber(scope, globalObject, callFrame->argument(0), "sampleInterval"_s, JSC::jsNumber(1), JSC::jsUndefined());
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    options.intervalBytes = callFrame->argument(0).asNumber();
+    int32_t stackDepth = 0;
+    V::validateInt32(scope, globalObject, callFrame->argument(1), "stackDepth"_s, JSC::jsNumber(0), JSC::jsUndefined(), &stackDepth);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    options.stackDepth = static_cast<unsigned>(stackDepth);
+    bool* flags[] = { &options.forceGC, &options.includeObjectsCollectedByMajorGC, &options.includeObjectsCollectedByMinorGC };
+    ASCIILiteral names[] = { "forceGC"_s, "includeObjectsCollectedByMajorGC"_s, "includeObjectsCollectedByMinorGC"_s };
+    for (unsigned i = 0; i < 3; ++i) {
+        JSC::JSValue value = callFrame->argument(2 + i);
+        V::validateBoolean(scope, globalObject, value, names[i]);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        *flags[i] = value.isTrue();
+    }
+    return options;
+}
+
 bool HeapSampler::start(JSC::VM& vm, const Options& options)
 {
     auto& slot = slotFor(vm);
@@ -61,7 +85,8 @@ HeapSampler::HeapSampler(JSC::VM& vm, const Options& options)
     : m_vm(vm)
     , m_options(options)
 {
-    m_nodes.append(Node { "(root)"_s, nullptr, 0, 0, {} });
+    m_options.stackDepth = std::min(m_options.stackDepth, maximumStackDepth);
+    newNode(Node { "(root)"_s, nullptr, 0, 0, 0, 0, 0, {} });
 }
 
 HeapSampler::~HeapSampler()
@@ -83,6 +108,7 @@ void HeapSampler::didSampleExtraMemory(const JSC::JSCell* owner, size_t bytes)
 
 void HeapSampler::record(void* cell, size_t bytes)
 {
+    releasePrunedNodes();
     unsigned node = nodeForCurrentStack();
     // V8's weighting, with the count rounded so every size is a whole number of bytes.
     double scale = 1.0 / -std::expm1(-static_cast<double>(bytes) / m_options.intervalBytes);
@@ -140,18 +166,52 @@ void HeapSampler::compactSamples()
     m_reconciledCount = m_samples.size();
 }
 
-// Drops function nodes with no samples and no children, as V8 does; children have higher indices than parents.
+// Unlinks function nodes with no samples and no children, as V8 drops its nodes. A pruned leaf can leave its parent
+// a childless leaf, so the pass repeats on the parents it touched.
 void HeapSampler::pruneNodes()
 {
-    for (unsigned index = m_nodes.size(); index-- > 1;) {
-        Node& node = m_nodes[index];
-        if (!node.provider || node.sampleCount || !node.children.isEmpty())
-            continue;
-        m_nodeIndex.remove(std::make_tuple(node.parent + 1, node.provider.get(), node.line, node.column));
-        m_nodes[node.parent].children.removeFirst(index);
+    WTF::Vector<unsigned> candidates;
+    for (unsigned slot = 1; slot < m_nodes.size(); ++slot)
+        candidates.append(slot);
+    while (!candidates.isEmpty()) {
+        WTF::Vector<unsigned> parents;
+        for (unsigned slot : candidates) {
+            Node& node = m_nodes[slot];
+            if (!node.id || !node.provider || node.sampleCount || !node.children.isEmpty())
+                continue;
+            m_nodeIndex.remove(std::make_tuple(node.parent + 1, node.provider.get(), node.line, node.column));
+            m_nodes[node.parent].children.removeFirst(slot);
+            node.id = 0; // Pruned, pending release.
+            m_prunedNodes.append(slot);
+            if (!parents.contains(node.parent))
+                parents.append(node.parent);
+        }
+        candidates = WTF::move(parents);
+    }
+}
+
+// JS thread only.
+void HeapSampler::releasePrunedNodes()
+{
+    for (unsigned slot : m_prunedNodes) {
+        Node& node = m_nodes[slot];
         node.provider = nullptr;
         node.functionName = WTF::String();
+        m_freeNodes.append(slot);
     }
+    m_prunedNodes.clear();
+}
+
+unsigned HeapSampler::newNode(Node&& node)
+{
+    node.id = ++m_lastNodeId;
+    if (!m_freeNodes.isEmpty()) {
+        unsigned slot = m_freeNodes.takeLast();
+        m_nodes[slot] = WTF::move(node);
+        return slot;
+    }
+    m_nodes.append(WTF::move(node));
+    return m_nodes.size() - 1;
 }
 
 // The CodeBlocks of the JS frames on the stack, innermost first, inlined frames expanded. vm.topCallFrame can be a
@@ -189,8 +249,7 @@ SUPPRESS_ASAN static void collectJSFrames(JSC::VM& vm, unsigned depth, WTF::Vect
 unsigned HeapSampler::pseudoNode(unsigned& slot, ASCIILiteral name)
 {
     if (slot == noSample) {
-        slot = m_nodes.size();
-        m_nodes.append(Node { WTF::String(name), nullptr, 0, 0, 0, 0, {} });
+        slot = newNode(Node { WTF::String(name), nullptr, 0, 0, 0, 0, 0, {} });
         m_nodes[0].children.append(slot);
     }
     return slot;
@@ -213,13 +272,14 @@ unsigned HeapSampler::nodeForCurrentStack()
         JSC::SourceProvider* provider = executable->source().provider();
         unsigned line = static_cast<unsigned>(executable->firstLine());
         unsigned column = executable->startColumn();
-        auto result = m_nodeIndex.add(std::make_tuple(parent + 1, provider, line, column), m_nodes.size());
+        auto result = m_nodeIndex.add(std::make_tuple(parent + 1, provider, line, column), noSample);
         if (result.isNewEntry) {
             WTF::String functionName;
             if (codeBlock->codeType() == JSC::FunctionCode)
                 functionName = static_cast<JSC::FunctionExecutable*>(executable)->ecmaName().string();
-            m_nodes.append(Node { WTF::move(functionName), provider, line, column, parent, 0, {} });
-            m_nodes[parent].children.append(result.iterator->value);
+            unsigned slot = newNode(Node { WTF::move(functionName), provider, 0, line, column, parent, 0, {} });
+            result.iterator->value = slot;
+            m_nodes[parent].children.append(slot);
         }
         parent = result.iterator->value;
     }
@@ -280,6 +340,7 @@ WTF::String HeapSampler::profileJSON()
 {
     if (m_options.forceGC)
         m_vm.heap.collectSync(JSC::CollectionScope::Full);
+    releasePrunedNodes();
 
     WTF::Vector<double> selfSizes(m_nodes.size(), [](size_t) { return 0.0; });
     // In the order they were taken: a moved sample is appended again, so the vector is not.
@@ -295,7 +356,7 @@ WTF::String HeapSampler::profileJSON()
         selfSizes[sample.node] += sample.size;
         auto object = JSON::Object::create();
         object->setDouble("size"_s, sample.size);
-        object->setInteger("nodeId"_s, sample.node + 1);
+        object->setInteger("nodeId"_s, m_nodes[sample.node].id);
         object->setDouble("ordinal"_s, static_cast<double>(sample.ordinal));
         samples->pushObject(WTF::move(object));
     }
@@ -329,7 +390,7 @@ WTF::String HeapSampler::profileJSON()
         auto object = JSON::Object::create();
         object->setObject("callFrame"_s, WTF::move(callFrame));
         object->setDouble("selfSize"_s, selfSizes[index]);
-        object->setInteger("id"_s, index + 1);
+        object->setInteger("id"_s, node.id);
         auto children = JSON::Array::create();
         for (unsigned child : node.children)
             children->pushObject(self(self, child));

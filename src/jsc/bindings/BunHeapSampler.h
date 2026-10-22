@@ -7,7 +7,11 @@
 #include <wtf/text/WTFString.h>
 #include <tuple>
 
+#include <optional>
+
 namespace JSC {
+class CallFrame;
+class JSGlobalObject;
 class SourceProvider;
 class VM;
 }
@@ -20,14 +24,21 @@ class HeapSampler final : public JSC::AllocationSamplerClient {
     WTF_MAKE_TZONE_ALLOCATED(HeapSampler);
 
 public:
+    // The deepest tree a profile can hold: profileJSON builds and serializes it recursively.
+    static constexpr unsigned maximumStackDepth = 1024;
+
     struct Options {
         double intervalBytes { 32768 };
-        unsigned stackDepth { 128 };
+        unsigned stackDepth { 128 }; // Clamped to maximumStackDepth.
         // A full collection before each profile, as V8 does for the inspector, so the profile holds what is live now.
         bool forceGC { true };
         bool includeObjectsCollectedByMajorGC { false };
         bool includeObjectsCollectedByMinorGC { false };
     };
+
+    // (intervalBytes, stackDepth, forceGC, includeObjectsCollectedByMajorGC, includeObjectsCollectedByMinorGC) from
+    // the arguments of a host function: a number >= 1, an int32 >= 0, three booleans. Throws otherwise.
+    static std::optional<Options> optionsFromArguments(JSC::JSGlobalObject*, JSC::CallFrame*);
 
     // The VM's sampler, or null when sampling is off.
     static HeapSampler* get(JSC::VM&);
@@ -51,7 +62,8 @@ private:
 
     struct Node {
         WTF::String functionName;
-        RefPtr<JSC::SourceProvider> provider; // Null for (root) and the pseudo nodes.
+        RefPtr<JSC::SourceProvider> provider; // Null for (root), the pseudo nodes, and a released slot.
+        unsigned id { 0 }; // The profile's node id, unique for the sampler's life while slots are reused; 0 once pruned.
         unsigned line { 0 }; // 1-based, as JSC reports the function's first line; 0 for none.
         unsigned column { 0 };
         unsigned parent { 0 };
@@ -72,16 +84,24 @@ private:
 
     void record(void* cell, size_t bytes);
     unsigned nodeForCurrentStack();
+    unsigned newNode(Node&&);
     unsigned pseudoNode(unsigned& slot, ASCIILiteral name);
     void linkSampleToCell(unsigned index);
     unsigned takeSamplesOfCell(void*);
     void voidSampleAt(unsigned index);
     void compactSamples();
     void pruneNodes();
+    void releasePrunedNodes();
 
     JSC::VM& m_vm;
     Options m_options;
     WTF::Vector<Node> m_nodes;
+    unsigned m_lastNodeId { 0 };
+    // Pruned slots, unlinked from the tree but still holding their provider and name. Reconcile can run on the
+    // collector thread, and a SourceProvider or an atom string may only be released on the JS thread, so the
+    // release waits for the next record() or profileJSON(). Released slots are reused by newNode().
+    WTF::Vector<unsigned> m_prunedNodes;
+    WTF::Vector<unsigned> m_freeNodes;
     // (parent node + 1, source, first line, start column) of a function that allocated -> its node under that parent.
     WTF::HashMap<std::tuple<unsigned, JSC::SourceProvider*, unsigned, unsigned>, unsigned> m_nodeIndex;
     // Children of (root) for stackless picks, like V8's "(JS)", so (root) never has bytes of its own.

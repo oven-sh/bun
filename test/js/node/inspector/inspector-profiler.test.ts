@@ -1019,6 +1019,20 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
             "allocateObjects",
           );
       }
+      // A huge stackDepth is clamped to what a profile can hold (1024 frames), so deep recursion cannot overflow the
+      // native stack when the profile is built.
+      function recurse(depth: number, into: unknown[]): void {
+        if (depth === 0) return allocateObjects(2000, into);
+        recurse(depth - 1, into);
+      }
+      const holder = new Array(2000).fill(null);
+      retained = holder;
+      session.post("HeapProfiler.startSampling", { samplingInterval: 512, stackDepth: 1e6 });
+      recurse(3000, holder);
+      const { profile } = session.post("HeapProfiler.stopSampling") as { profile: SamplingProfile };
+      validate(profile);
+      expect(depth(profile.head)).toBeLessThanOrEqual(1 + 1024);
+      expect(bytesOf(profile.head, "allocateObjects")).toBeGreaterThan(40_000);
       session.disconnect();
     });
 
@@ -1070,7 +1084,8 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       }
       function makeStrings(count: number) {
         const strings: string[] = [];
-        for (let i = 0; i < count; i++) strings.push("item-" + i + "-" + "x".repeat(40));
+        const padding = Buffer.alloc(40, "x").toString();
+        for (let i = 0; i < count; i++) strings.push("item-" + i + "-" + padding);
         return strings;
       }
       session.post("HeapProfiler.startSampling", { samplingInterval: 1024 });

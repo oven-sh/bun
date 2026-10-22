@@ -893,18 +893,16 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     return JSValue::encode(promise);
 }
 
-// Arguments validated in node/worker_threads.ts. Resolves with false when the worker's VM is sampling already.
+// Resolves with false when the worker's VM is sampling already.
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startHeapProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto& worker = castedThis->wrapped();
-    Bun::HeapSampler::Options options;
-    options.intervalBytes = callFrame->argument(0).asNumber();
-    options.stackDepth = static_cast<unsigned>(std::min(callFrame->argument(1).asNumber(), static_cast<double>(std::numeric_limits<unsigned>::max())));
-    options.forceGC = callFrame->argument(2).isTrue();
-    options.includeObjectsCollectedByMajorGC = callFrame->argument(3).isTrue();
-    options.includeObjectsCollectedByMinorGC = callFrame->argument(4).isTrue();
+    auto parsed = Bun::HeapSampler::optionsFromArguments(globalObject, callFrame);
+    if (!parsed)
+        return {};
+    Bun::HeapSampler::Options options = *parsed;
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();

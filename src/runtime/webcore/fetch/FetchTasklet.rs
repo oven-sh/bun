@@ -912,6 +912,7 @@ impl FetchTasklet {
             // the defer still drops the bytes.
             // SAFETY: just obtained from live `response`.
             if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
+                *unread = Some(0);
                 return Ok(());
             }
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
@@ -1877,7 +1878,7 @@ impl FetchTasklet {
     /// that is `Locked` and has no stream.
     fn unread_body_held_back(&self) -> Option<usize> {
         (self.signal_store.body_receive_mode() == BodyReceiveMode::Paused)
-            .then(|| self.scheduled_response_buffer.list.len())
+            .then_some(self.scheduled_response_buffer.list.len())
     }
 
     /// A stream that nothing reads, after a delivery or when a visit has nothing to deliver:

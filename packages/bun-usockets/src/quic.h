@@ -144,6 +144,7 @@ void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
 void us_quic_stream_reset(us_quic_stream_t *s);
+void us_quic_stream_reset_internal_error(us_quic_stream_t *s);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
 
 void *us_quic_stream_ext(us_quic_stream_t *s);

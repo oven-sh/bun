@@ -1940,6 +1940,52 @@ describe("Bun.serve HTTP/3 request validation", () => {
     });
   });
 
+  test("a response whose headers can't be sent fails its request and no other on the connection", async () => {
+    const held = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let heldRequests = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/held") {
+          heldRequests++;
+          held.resolve();
+          await release.promise;
+          return new Response("held");
+        }
+        const headers = new Headers();
+        // lsxpack holds the length of a value in 16 bits.
+        if (pathname === "/value") headers.set("x-value", Buffer.alloc(70_000, "v").toString());
+        // lsquic encodes a header block into 64 KB, and "~" is sent as it is.
+        else for (let i = 0; i < 20; i++) headers.set(`x-field-${i}`, Buffer.alloc(4_000, "~").toString());
+        if (req.method === "HEAD") return new Response(null, { headers });
+        return new Response("body", { headers });
+      },
+    });
+    const outcome = (path: string, method = "GET") =>
+      fetchH3(server.port!, path, { method }).then(
+        res => res.status,
+        err => err.code,
+      );
+
+    const other = fetchH3(server.port!, "/held");
+    await held.promise;
+    for (const path of ["/value", "/block"]) {
+      expect({ path, GET: await outcome(path), HEAD: await outcome(path, "HEAD") }).toEqual({
+        path,
+        GET: "HTTP3StreamReset",
+        HEAD: "HTTP3StreamReset",
+      });
+    }
+    release.resolve();
+    expect(await (await other).text()).toBe("held");
+    // A closed connection would have sent it again on a new one.
+    expect(heldRequests).toBe(1);
+  });
+
   test("request.url falls back to the :path when :authority is not a valid host", async () => {
     await using server = Bun.serve({
       port: 0,

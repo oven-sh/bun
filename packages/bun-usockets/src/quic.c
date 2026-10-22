@@ -1173,8 +1173,10 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
      * so each pair has to be contiguous. The caller hands us arbitrary
      * pointers, so flatten here. */
     size_t total = 0;
-    for (unsigned int i = 0; i < count; i++)
+    for (unsigned int i = 0; i < count; i++) {
+        if (headers[i].name_len > LSXPACK_MAX_STRLEN || headers[i].value_len > LSXPACK_MAX_STRLEN) return -1;
         total += headers[i].name_len + headers[i].value_len;
+    }
 
     char stackbuf[1024];
     char *buf = total <= sizeof(stackbuf) ? stackbuf : (char *) us_malloc(total);
@@ -1192,8 +1194,9 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
         const struct us_quic_header_t *h = &headers[i];
         memcpy(buf + off, h->name, h->name_len);
         memcpy(buf + off + h->name_len, h->value, h->value_len);
-        lsxpack_header_set_offset2(&xh[i], buf, off, h->name_len,
-            off + h->name_len, h->value_len);
+        /* lsxpack asserts that offsets fit lsxpack_strlen_t, so they count from this pair's start. */
+        lsxpack_header_set_offset2(&xh[i], buf + off, 0, h->name_len,
+            h->name_len, h->value_len);
         if (h->qpack_index >= 0) {
             xh[i].qpack_index = (uint8_t) h->qpack_index;
             xh[i].flags = LSXPACK_QPACK_IDX;
@@ -1245,11 +1248,20 @@ void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int)
  * the wire-level "I'm cancelling this send" and lets the server treat it
  * as a stream-level cancellation rather than a malformed message.
  * Sends nothing once lsquic_stream_close/shutdown has run, so call it first. */
-void us_quic_stream_reset(us_quic_stream_t *s) {
+static void us_quic_stream_reset_with(us_quic_stream_t *s, uint64_t error_code) {
     if (!s->stream) return;
     /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
-    lsquic_stream_maybe_reset(s->stream, 0x10C, 0);
+    lsquic_stream_maybe_reset(s->stream, error_code, 0);
     lsquic_stream_close(s->stream);
+}
+
+void us_quic_stream_reset(us_quic_stream_t *s) {
+    us_quic_stream_reset_with(s, 0x10C);
+}
+
+/* H3_INTERNAL_ERROR, for a message this endpoint can't send. */
+void us_quic_stream_reset_internal_error(us_quic_stream_t *s) {
+    us_quic_stream_reset_with(s, 0x102);
 }
 
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {

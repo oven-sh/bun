@@ -952,20 +952,31 @@ test("a response header set over the size limit fails that request and no other 
         return new Response("held");
       }
       const headers = new Headers();
-      for (let i = 0; i < Number(pathname.slice(1)); i++) headers.append("set-cookie", "");
+      for (const cookie of cookiesOfSize(Number(pathname.slice(1)))) headers.append("set-cookie", cookie);
       return new Response(null, { headers });
     },
   });
   // RFC 9114 section 4.2.2 counts the name, the value and 32 more bytes for each field.
-  const fieldsAtTheLimit = Math.floor((256 * 1024) / ("set-cookie".length + 32));
-  // Leaves room for :status and the fields Bun.serve adds.
-  const under = fieldsAtTheLimit - 8;
+  const sizeOf = (name: string, value: string) => name.length + value.length + 32;
+  // Empty cookies, and a last one that takes the remainder.
+  function cookiesOfSize(size: number) {
+    const count = Math.floor(size / sizeOf("set-cookie", ""));
+    const cookies: string[] = Array(count).fill("");
+    if (count > 0) cookies[count - 1] = Buffer.alloc(size % sizeOf("set-cookie", ""), "v").toString();
+    return cookies;
+  }
 
   const other = fetch(`${origin.url}held`, h3);
   await held.promise;
-  const served = await fetch(`${origin.url}${under}`, h3);
-  expect(served.headers.getSetCookie()).toEqual(Array(under).fill(""));
-  const refused = await fetch(`${origin.url}${fieldsAtTheLimit + 1}`, h3).then(
+  // What a response carries besides the cookies.
+  const rest = [...(await fetch(`${origin.url}0`, h3)).headers].reduce(
+    (size, [name, value]) => size + sizeOf(name, value),
+    sizeOf(":status", "200"),
+  );
+  const atTheLimit = 256 * 1024 - rest;
+  const served = await fetch(`${origin.url}${atTheLimit}`, h3);
+  expect(served.headers.getSetCookie()).toEqual(cookiesOfSize(atTheLimit));
+  const refused = await fetch(`${origin.url}${atTheLimit + 1}`, h3).then(
     res => res.status,
     err => err.code,
   );
@@ -974,6 +985,19 @@ test("a response header set over the size limit fails that request and no other 
   expect(await (await other).text()).toBe("held");
   // A closed connection would have sent it again on a new one.
   expect(heldRequests).toBe(1);
+});
+
+test("rejects a request header value that is too long to send", async () => {
+  // lsxpack holds the length of a value in 16 bits.
+  const outcome = await fetch(`${base}/headers-echo`, {
+    ...h3,
+    headers: { "x-value": Buffer.alloc(70_000, "v").toString() },
+  }).then(
+    res => res.status,
+    err => err.code,
+  );
+  expect(outcome).toBe("HTTP3HeaderEncodingError");
+  expect(await fetch(`${base}/hello`, h3).then(res => res.text())).toBe("hello over h3");
 });
 
 // Stale-session retry: a request bound on session A when A's conn closes

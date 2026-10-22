@@ -23,6 +23,13 @@ extern "C" BlobBytes Blob__sharedView(JSC::EncodedJSValue value, const uint8_t**
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);
 extern "C" void Blob__ref(void* impl);
 extern "C" void Blob__deref(void* impl);
+// Whether `Bun__Blob__contentsDiffer` compares the names of the two blobs (`BlobName` in Blob.rs).
+enum class BlobName : uint8_t {
+    Ignore = 0,
+    Compare = 1,
+};
+// `true` when the two blobs are known to differ (src/runtime/webcore/Blob.rs). Neither pointer is null.
+extern "C" bool Bun__Blob__contentsDiffer(const void* a, const void* b, BlobName);
 
 // False means that `value` holds no Blob, without a call into Rust: every wrapper that holds one has this cell type.
 inline bool mayHoldBlob(JSC::JSValue value)

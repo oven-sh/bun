@@ -222,4 +222,32 @@ size_t DOMFormData::memoryCost() const
     return cost;
 }
 
+bool DOMFormData::entriesEqual(const DOMFormData& other) const
+{
+    if (m_items.size() != other.m_items.size())
+        return false;
+
+    for (size_t i = 0; i < m_items.size(); ++i) {
+        const auto& a = m_items[i];
+        const auto& b = other.m_items[i];
+        // JS reads a null string and an empty string as "".
+        if (!equalIgnoringNullity(a.name, b.name) || a.data.index() != b.data.index())
+            return false;
+
+        if (auto* value = std::get_if<String>(&a.data)) {
+            if (!equalIgnoringNullity(*value, std::get<String>(b.data)))
+                return false;
+            continue;
+        }
+
+        const auto& blobA = std::get<RefPtr<Blob>>(a.data);
+        const auto& blobB = std::get<RefPtr<Blob>>(b.data);
+        // The file name of the entry stands in for the name of its blob.
+        if (!equalIgnoringNullity(blobA->fileName(), blobB->fileName()) || Bun__Blob__contentsDiffer(blobA->impl(), blobB->impl(), BlobName::Ignore))
+            return false;
+    }
+
+    return true;
+}
+
 } // namespace WebCore

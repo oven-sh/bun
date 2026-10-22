@@ -40,6 +40,9 @@ public:
     size_t size() const;
     size_t memoryCost() const;
 
+    // The same [name, value] entries, in any order of names.
+    bool entriesEqual(CookieMap&);
+
     class Iterator {
     public:
         explicit Iterator(CookieMap&);

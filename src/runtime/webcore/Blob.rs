@@ -5670,6 +5670,51 @@ pub(crate) extern "C" fn Blob__sharedView(
     BlobBytes::InMemory
 }
 
+/// Whether [`Bun__Blob__contentsDiffer`] compares the names of the two blobs.
+#[repr(u8)] // C++: `BlobName` (blob.h)
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BlobName {
+    #[expect(dead_code, reason = "only C++ passes it")]
+    Ignore = 0,
+    Compare = 1,
+}
+
+/// The type and the subtype of a MIME type, without its parameters.
+fn mime_essence(content_type: &[u8]) -> &[u8] {
+    let end = strings::index_of_char_usize(content_type, b';').unwrap_or(content_type.len());
+    content_type[..end].trim_ascii()
+}
+
+/// `true` when the two blobs are known to differ. A blob on disk or in S3 is never read.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Blob__contentsDiffer(a: &Blob, b: &Blob, names: BlobName) -> bool {
+    let (Some(bytes), Some(other_bytes)) = (a.in_memory_view(), b.in_memory_view()) else {
+        return false;
+    };
+    if bytes.len() != other_bytes.len() {
+        return true;
+    }
+    // bun gives the blob of a body a type of its own, so a type counts only when both sides set one.
+    if a.content_type_was_set.get() && b.content_type_was_set.get() {
+        let (essence, other_essence) = (
+            mime_essence(a.content_type_slice()),
+            mime_essence(b.content_type_slice()),
+        );
+        // Not every producer writes one type with the same letter case and the same charset.
+        if !strings::eql_case_insensitive_ascii(essence, other_essence, true) {
+            return true;
+        }
+    }
+    if names == BlobName::Compare {
+        if let (Some(name), Some(other_name)) = (a.get_name_string(), b.get_name_string()) {
+            if !name.eql(other_name) {
+                return true;
+            }
+        }
+    }
+    !core::ptr::eq(bytes.as_ptr(), other_bytes.as_ptr()) && bytes != other_bytes
+}
+
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range (or `ptr` null / `len` 0).
 #[unsafe(no_mangle)]

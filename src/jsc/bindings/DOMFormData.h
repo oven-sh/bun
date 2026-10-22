@@ -77,6 +77,9 @@ public:
     size_t count() const { return m_items.size(); }
     size_t memoryCost() const;
 
+    // The same entries in the same order. A file entry compares its blob and its multipart file name.
+    bool entriesEqual(const DOMFormData&) const;
+
     String toURLEncodedString();
 
     class Iterator {

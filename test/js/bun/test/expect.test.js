@@ -316,8 +316,317 @@ describe("expect()", () => {
       expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "1", "b": "2" }));
     });
 
-    // TODO: FormData
-    // It would need to compare Blob, which is tricky.
+    // The ways a test compares two values: bare, strict, nested, and inside a call record.
+    const expectEqual = (/** @type {unknown} */ a, /** @type {unknown} */ b) => {
+      expect(a).toEqual(b);
+      expect(b).toEqual(a);
+      expect(a).toStrictEqual(b);
+      expect({ method: "POST", body: a }).toEqual({ method: "POST", body: b });
+      expect([a]).toContainEqual(b);
+      const send = jest.fn();
+      send("/upload", { body: a });
+      expect(send).toHaveBeenCalledWith("/upload", { body: b });
+    };
+    const expectNotEqual = (/** @type {unknown} */ a, /** @type {unknown} */ b) => {
+      expect(a).not.toEqual(b);
+      expect(b).not.toEqual(a);
+      expect(a).not.toStrictEqual(b);
+      expect({ method: "POST", body: a }).not.toEqual({ method: "POST", body: b });
+      expect([a]).not.toContainEqual(b);
+      const send = jest.fn();
+      send("/upload", { body: a });
+      expect(send).not.toHaveBeenCalledWith("/upload", { body: b });
+    };
+
+    const form = (/** @type {[string, string | Blob, string?][]} */ ...entries) => {
+      const formData = new FormData();
+      for (const [name, value, filename] of entries) {
+        if (filename === undefined) formData.append(name, value);
+        else formData.append(name, /** @type {Blob} */ (value), filename);
+      }
+      return formData;
+    };
+
+    describe("FormData", () => {
+      test.each([
+        ["no entries", () => form(), () => form()],
+        ["one entry", () => form(["a", "1"]), () => form(["a", "1"])],
+        ["a repeated name", () => form(["a", "1"], ["a", "2"]), () => form(["a", "1"], ["a", "2"])],
+      ])("equal: %s", (_, a, b) => expectEqual(a(), b()));
+
+      test.each([
+        ["another value", () => form(["a", "1"]), () => form(["a", "2"])],
+        ["another name", () => form(["a", "1"]), () => form(["b", "1"])],
+        ["no entries against one", () => form(), () => form(["a", "1"])],
+        ["one more entry", () => form(["a", "1"]), () => form(["a", "1"], ["b", "2"])],
+        ["another order", () => form(["a", "1"], ["b", "2"]), () => form(["b", "2"], ["a", "1"])],
+        ["a repeated name in another order", () => form(["a", "1"], ["a", "2"]), () => form(["a", "2"], ["a", "1"])],
+        ["a string against a file", () => form(["a", "1"]), () => form(["a", new Blob(["1"])])],
+        ["another file name", () => form(["a", new Blob(["1"]), "a.txt"]), () => form(["a", new Blob(["1"]), "b.txt"])],
+        ["a file of another size", () => form(["a", new Blob(["1"])]), () => form(["a", new Blob(["12"])])],
+        [
+          "a file of another type",
+          () => form(["a", new Blob(["1"], { type: "text/plain" })]),
+          () => form(["a", new Blob(["1"], { type: "text/html" })]),
+        ],
+      ])("not equal: %s", (_, a, b) => expectNotEqual(a(), b()));
+
+      if (isBun) {
+        // Jest on Node.js sees the size, type and name of a file entry. It also sees
+        // lastModified, which is the time of the append() call when the value is a Blob.
+        test("equal: a file entry with the same bytes and file name", () => {
+          expectEqual(form(["a", new Blob(["abc"]), "a.txt"]), form(["a", new Blob(["abc"]), "a.txt"]));
+          expectEqual(form(["a", new File(["abc"], "a.txt")]), form(["a", new Blob(["abc"]), "a.txt"]));
+          expectEqual(form(["a", new Blob(["abc"])]), form(["a", new Blob(["abc"]), ""]));
+        });
+
+        test("not equal: a file entry with other bytes of the same size", () => {
+          expectNotEqual(form(["a", new Blob(["abc"])]), form(["a", new Blob(["abd"])]));
+        });
+
+        // The file name of an entry is the third argument of append(), else the name of the
+        // File. A File keeps its own name under another file name, and that name does not count.
+        test("a file entry compares its file name, not the name of its File", () => {
+          const renamed = () => form(["a", new File(["abc"], "x.txt"), "a.txt"]);
+          expectEqual(renamed(), form(["a", new File(["abc"], "y.txt"), "a.txt"]));
+          expectEqual(renamed(), form(["a", new File(["abc"], "a.txt")]));
+          expectNotEqual(renamed(), form(["a", new File(["abc"], "x.txt"), "b.txt"]));
+          expectNotEqual(renamed(), form(["a", new File(["abc"], "x.txt")]));
+        });
+
+        test("equal: one side was read first", () => {
+          const a = form(["a", new Blob(["abc"]), "a.txt"]);
+          const b = form(["a", new File(["abc"], "b.txt"), "a.txt"]);
+          expectEqual(a, b);
+          expect(/** @type {File} */ (a.get("a")).name).toBe("a.txt");
+          expectEqual(a, b);
+        });
+
+        describe.each([
+          ["built with append()", async () => form(["file", new Blob(["expected"]), "a.txt"])],
+          [
+            "parsed from a multipart body",
+            () => new Response(form(["file", new Blob(["expected"]), "a.txt"])).formData(),
+          ],
+        ])("a file read from a FormData %s", (_, source) => {
+          test("compares its bytes, and its name with a File", async () => {
+            const file = (await source()).get("file");
+            expectEqual(file, new Blob(["expected"]));
+            expectNotEqual(file, new Blob(["EXPECTED"]));
+            expectEqual(file, new File(["expected"], "a.txt"));
+            expectNotEqual(file, new File(["expected"], "b.txt"));
+          });
+        });
+      }
+    });
+
+    describe("Blob", () => {
+      test.each([
+        ["the same bytes", () => new Blob(["abc"]), () => new Blob(["abc"])],
+        [
+          "the same bytes from other parts",
+          () => new Blob(["ab", "c"]),
+          () => new Blob([new Uint8Array([97, 98, 99])]),
+        ],
+        ["the same type", () => new Blob(["a"], { type: "text/html" }), () => new Blob(["a"], { type: "text/html" })],
+        ["no bytes", () => new Blob([]), () => new Blob()],
+      ])("equal: %s", (_, a, b) => expectEqual(a(), b()));
+
+      test.each([
+        ["another size", () => new Blob(["abc"]), () => new Blob(["xyz-and-longer"])],
+        ["another type", () => new Blob(["a"], { type: "text/plain" }), () => new Blob(["a"], { type: "text/html" })],
+        ["no bytes against one", () => new Blob(), () => new Blob(["a"])],
+      ])("not equal: %s", (_, a, b) => expectNotEqual(a(), b()));
+
+      if (isBun) {
+        // Jest on Node.js sees the size and the type only.
+        test("not equal: other bytes of the same size", () => {
+          expectNotEqual(new Blob(["abc"]), new Blob(["abd"]));
+        });
+
+        test("a slice compares its own bytes", () => {
+          const blob = new Blob(["hello world"]);
+          expectEqual(blob.slice(0, 5), new Blob(["hello"]));
+          expectEqual(blob.slice(), blob);
+          expectNotEqual(blob.slice(0, 5), blob.slice(6));
+        });
+
+        // bun gives the blob of a body a type of its own, so a type counts only when both sides set one.
+        test("equal: a blob read back from a Response", async () => {
+          const blob = new Blob(["hello"]);
+          expectEqual(await new Response(blob).blob(), blob);
+          expectEqual(await new Response(new Uint8Array([104, 105])).blob(), new Blob(["hi"]));
+          expectNotEqual(await new Response(blob).blob(), new Blob(["world"]));
+        });
+      }
+    });
+
+    describe("File", () => {
+      const file = (/** @type {string} */ text, /** @type {string} */ name, /** @type {FilePropertyBag} */ options) =>
+        new File([text], name, { lastModified: 0, ...options });
+
+      test.each([
+        ["the same bytes and name", () => file("a", "a.txt"), () => file("a", "a.txt")],
+        [
+          "the same type",
+          () => file("a", "a.txt", { type: "text/html" }),
+          () => file("a", "a.txt", { type: "text/html" }),
+        ],
+      ])("equal: %s", (_, a, b) => expectEqual(a(), b()));
+
+      test.each([
+        ["another name", () => file("a", "a.txt"), () => file("a", "b.txt")],
+        ["another size", () => file("a", "a.txt"), () => file("ab", "a.txt")],
+        ["a Blob of another size", () => file("a", "a.txt"), () => new Blob(["ab"])],
+        [
+          "another type",
+          () => file("a", "a.txt", { type: "text/plain" }),
+          () => file("a", "a.txt", { type: "text/html" }),
+        ],
+      ])("not equal: %s", (_, a, b) => expectNotEqual(a(), b()));
+
+      if (isBun) {
+        test("not equal: other bytes of the same size", () => {
+          expectNotEqual(file("a", "a.txt"), file("b", "a.txt"));
+          expectNotEqual(file("a", "a.txt"), new Blob(["b"]));
+        });
+
+        // lastModified is the time of construction when it is not given.
+        test("equal: another lastModified", () => {
+          expectEqual(file("a", "a.txt", { lastModified: 1 }), file("a", "a.txt", { lastModified: 2 }));
+        });
+
+        // In bun a File and a Blob are one class. Jest on Node.js calls any File and any Blob different.
+        test("equal: a Blob with the same bytes", () => {
+          expectEqual(file("a", "a.txt"), new Blob(["a"]));
+        });
+
+        // `name` is not standard on a Blob. Like the type, it counts when both sides have one.
+        test("a name counts when both sides have one", () => {
+          const named = (/** @type {string} */ text, /** @type {string} */ name) =>
+            Object.assign(new Blob([text]), { name });
+          expectEqual(named("a", "x.txt"), named("a", "x.txt"));
+          expectNotEqual(named("a", "x.txt"), named("a", "y.txt"));
+          expectEqual(named("a", "x.txt"), file("a", "x.txt"));
+          expectNotEqual(named("a", "x.txt"), file("a", "y.txt"));
+          expectEqual(named("a", "x.txt"), new Blob(["a"]));
+        });
+      }
+    });
+
+    if (isBun) {
+      describe("Bun.Cookie", () => {
+        /** @type {Bun.CookieInit} */
+        const options = {
+          domain: "example.com",
+          path: "/account",
+          expires: new Date(86400000),
+          secure: true,
+          sameSite: "strict",
+          httpOnly: true,
+          maxAge: 60,
+          partitioned: true,
+        };
+
+        test("equal: the same fields", () => {
+          expectEqual(new Bun.Cookie("a", "1"), new Bun.Cookie("a", "1"));
+          expectEqual(new Bun.Cookie("a", "1", options), new Bun.Cookie("a", "1", options));
+          expectEqual(new Bun.Cookie("a", "1"), Bun.Cookie.parse("a=1"));
+          // These print and serialize the same.
+          expectEqual(new Bun.Cookie("a", "1"), new Bun.Cookie("a", "1", { domain: "" }));
+          expectEqual(new Bun.Cookie({ name: "a" }), new Bun.Cookie("a", ""));
+        });
+
+        // A new field needs a row below and a line in Cookie::fieldsEqual.
+        test("every field has a row", () => {
+          const fields = Object.entries(Object.getOwnPropertyDescriptors(Bun.Cookie.prototype))
+            .filter(([, descriptor]) => descriptor.get)
+            .map(([name]) => name);
+          expect(fields.sort()).toEqual([
+            "domain",
+            "expires",
+            "httpOnly",
+            "maxAge",
+            "name",
+            "partitioned",
+            "path",
+            "sameSite",
+            "secure",
+            "value",
+          ]);
+        });
+
+        test.each([
+          ["another name", () => new Bun.Cookie("b", "1", options)],
+          ["another value", () => new Bun.Cookie("a", "2", options)],
+          ["another domain", () => new Bun.Cookie("a", "1", { ...options, domain: "example.org" })],
+          ["no domain", () => new Bun.Cookie("a", "1", { ...options, domain: undefined })],
+          ["another path", () => new Bun.Cookie("a", "1", { ...options, path: "/" })],
+          ["another expires", () => new Bun.Cookie("a", "1", { ...options, expires: new Date(0) })],
+          ["no expires", () => new Bun.Cookie("a", "1", { ...options, expires: undefined })],
+          ["another secure", () => new Bun.Cookie("a", "1", { ...options, secure: false })],
+          ["another sameSite", () => new Bun.Cookie("a", "1", { ...options, sameSite: "lax" })],
+          ["another httpOnly", () => new Bun.Cookie("a", "1", { ...options, httpOnly: false })],
+          ["another maxAge", () => new Bun.Cookie("a", "1", { ...options, maxAge: 61 })],
+          ["no maxAge", () => new Bun.Cookie("a", "1", { ...options, maxAge: undefined })],
+          ["another partitioned", () => new Bun.Cookie("a", "1", { ...options, partitioned: false })],
+        ])("not equal: %s", (_, other) => expectNotEqual(new Bun.Cookie("a", "1", options), other()));
+      });
+
+      describe("Bun.CookieMap", () => {
+        const edited = (/** @type {string} */ header, /** @type {(map: Bun.CookieMap) => void} */ edit) => {
+          const map = new Bun.CookieMap(header);
+          edit(map);
+          return map;
+        };
+
+        test.each([
+          ["no cookies", () => new Bun.CookieMap(), () => new Bun.CookieMap("")],
+          ["the same header", () => new Bun.CookieMap("a=1; b=2"), () => new Bun.CookieMap("a=1; b=2")],
+          ["another order", () => new Bun.CookieMap("a=1; b=2"), () => new Bun.CookieMap("b=2; a=1")],
+          [
+            "a header against set()",
+            () => new Bun.CookieMap("a=1; b=2"),
+            () => edited("a=0", map => (map.set("b", "2"), map.set("a", "1"))),
+          ],
+          [
+            "a repeated name around another name",
+            () => new Bun.CookieMap("a=1; b=9; a=2"),
+            () => new Bun.CookieMap("b=9; a=1; a=2"),
+          ],
+          ["a deleted cookie", () => new Bun.CookieMap("a=1"), () => edited("a=1; b=2", map => map.delete("b"))],
+          ["an empty value", () => new Bun.CookieMap("a="), () => new Bun.CookieMap([["a", ""]])],
+        ])("equal: %s", (_, a, b) => expectEqual(a(), b()));
+
+        test.each([
+          ["another value", () => new Bun.CookieMap("a=1"), () => new Bun.CookieMap("a=2")],
+          ["another name", () => new Bun.CookieMap("a=1"), () => new Bun.CookieMap("b=1")],
+          ["one more cookie", () => new Bun.CookieMap("a=1"), () => new Bun.CookieMap("a=1; b=2")],
+          [
+            "a name repeated with another value",
+            () => new Bun.CookieMap("a=1; a=1"),
+            () => new Bun.CookieMap("a=1; a=2"),
+          ],
+          // get("a") gives the first value of a repeated name.
+          [
+            "a repeated name in another order",
+            () => new Bun.CookieMap("a=1; a=2"),
+            () => new Bun.CookieMap("a=2; a=1"),
+          ],
+          [
+            "a repeated name in another order around another name",
+            () => new Bun.CookieMap("a=1; b=9; a=2"),
+            () => new Bun.CookieMap("b=9; a=2; a=1"),
+          ],
+          [
+            "a value set later",
+            () => new Bun.CookieMap("a=1; b=2"),
+            () => edited("a=1; b=2", map => map.set("b", "3")),
+          ],
+          ["a deleted cookie", () => new Bun.CookieMap("a=1; b=2"), () => edited("a=1; b=2", map => map.delete("b"))],
+        ])("not equal: %s", (_, a, b) => expectNotEqual(a(), b()));
+      });
+    }
   });
 
   describe("BigInt", () => {

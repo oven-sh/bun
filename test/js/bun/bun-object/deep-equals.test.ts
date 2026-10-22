@@ -148,6 +148,256 @@ describe("Bun.deepEquals strict mode", () => {
   });
 });
 
+// These five kinds keep their state in native memory and have no own properties.
+describe("FormData, Blob, File, Bun.Cookie and Bun.CookieMap compare by their contents", () => {
+  type Entry = [name: string, value: string | Blob, filename?: string];
+  const fill = <T extends FormData>(formData: T, entries: Entry[]) => {
+    for (const [name, value, filename] of entries) {
+      if (filename === undefined) formData.append(name, value as string);
+      else formData.append(name, value as Blob, filename);
+    }
+    return formData;
+  };
+  const form = (...entries: Entry[]) => fill(new FormData(), entries);
+  class SubFormData extends FormData {}
+  class SubBlob extends Blob {}
+  // `name` is not standard on a Blob, but bun has a setter for it.
+  const named = (text: string, name: string) => Object.assign(new Blob([text]), { name });
+  const s3File = () =>
+    Bun.s3.file("a.txt", {
+      bucket: "bucket",
+      accessKeyId: "id",
+      secretAccessKey: "secret",
+      endpoint: "http://127.0.0.1:1",
+    });
+  const withGetter = <T extends object>(object: T, value: number) =>
+    Object.defineProperty(object, "x", { get: () => value, enumerable: true });
+
+  // [name, a, b, equal in the default mode, equal in strict mode]
+  const cases: [string, () => unknown, () => unknown, boolean, boolean][] = [
+    ["FormData, another value", () => form(["a", "1"]), () => form(["a", "2"]), false, false],
+    ["FormData, no entries against one", () => form(), () => form(["a", "1"]), false, false],
+    ["FormData, the same entries", () => form(["a", "1"], ["b", "2"]), () => form(["a", "1"], ["b", "2"]), true, true],
+    ["Blob, another size", () => new Blob(["abc"]), () => new Blob(["xyz-and-longer"]), false, false],
+    ["Blob, other bytes", () => new Blob(["abc"]), () => new Blob(["abd"]), false, false],
+    [
+      "Blob, another type",
+      () => new Blob(["a"], { type: "text/plain" }),
+      () => new Blob(["a"], { type: "text/html" }),
+      false,
+      false,
+    ],
+    // bun derives a type for the blob of a body, so a type on one side only does not count.
+    ["Blob, a type on one side only", () => new Blob(["a"], { type: "text/plain" }), () => new Blob(["a"]), true, true],
+    ["Blob, the same bytes", () => new Blob(["abc"]), () => new Blob(["a", "bc"]), true, true],
+    ["File, another name", () => new File(["a"], "a.txt"), () => new File(["a"], "b.txt"), false, false],
+    ["File against a Blob, other bytes", () => new File(["a"], "a.txt"), () => new Blob(["b"]), false, false],
+    // In bun a File and a Blob are one class, and a name counts only when both sides have one.
+    ["File against a Blob, the same bytes", () => new File(["a"], "a.txt"), () => new Blob(["a"]), true, true],
+    ["Blob, the same name", () => named("a", "x.txt"), () => named("a", "x.txt"), true, true],
+    ["Blob, another name", () => named("a", "x.txt"), () => named("a", "y.txt"), false, false],
+    [
+      "Blob with a name against a File of another name",
+      () => named("a", "x.txt"),
+      () => new File(["a"], "y.txt"),
+      false,
+      false,
+    ],
+    ["Blob with a name against a Blob with none", () => named("a", "x.txt"), () => new Blob(["a"]), true, true],
+    [
+      "File, another lastModified",
+      () => new File(["a"], "a.txt", { lastModified: 1 }),
+      () => new File(["a"], "a.txt", { lastModified: 2 }),
+      true,
+      true,
+    ],
+    ["Bun.Cookie, another value", () => new Bun.Cookie("a", "1"), () => new Bun.Cookie("a", "2"), false, false],
+    ["Bun.Cookie, the same fields", () => new Bun.Cookie("a", "1"), () => new Bun.Cookie("a", "1"), true, true],
+    ["Bun.CookieMap, another value", () => new Bun.CookieMap("a=1"), () => new Bun.CookieMap("a=2"), false, false],
+    [
+      "Bun.CookieMap, another order",
+      () => new Bun.CookieMap("a=1; b=2"),
+      () => new Bun.CookieMap("b=2; a=1"),
+      true,
+      true,
+    ],
+
+    // A blob on disk or in S3 is not read, so these pairs keep the answer they had.
+    ["Bun.file against a Blob", () => Bun.file("/does-not-exist/a.txt"), () => new Blob(["x"]), true, true],
+    [
+      "Bun.file of another path",
+      () => Bun.file("/does-not-exist/a.txt"),
+      () => Bun.file("/does-not-exist/b.txt"),
+      true,
+      true,
+    ],
+    [
+      "FormData, an S3 file entry against bytes under the same file name",
+      () => form(["f", s3File(), "a.txt"]),
+      () => form(["f", new Blob(["x"]), "a.txt"]),
+      true,
+      true,
+    ],
+
+    // A FormData entry for a file on disk compares its file name. Nothing reads the file.
+    [
+      "FormData, one Bun.file under another file name",
+      () => form(["f", Bun.file("/does-not-exist/a.txt"), "x.txt"]),
+      () => form(["f", Bun.file("/does-not-exist/a.txt"), "y.txt"]),
+      false,
+      false,
+    ],
+    [
+      "FormData, a Bun.file entry of another path",
+      () => form(["f", Bun.file("/does-not-exist/a.txt")]),
+      () => form(["f", Bun.file("/does-not-exist/b.txt")]),
+      false,
+      false,
+    ],
+    [
+      "FormData, a Bun.file entry of the same path",
+      () => form(["f", Bun.file("/does-not-exist/a.txt")]),
+      () => form(["f", Bun.file("/does-not-exist/a.txt")]),
+      true,
+      true,
+    ],
+
+    // Inside other values.
+    ["an array", () => [form(["a", "1"])], () => [form(["a", "2"])], false, false],
+    ["a Map value", () => new Map([["k", new Blob(["a"])]]), () => new Map([["k", new Blob(["b"])]]), false, false],
+    [
+      "a Set member",
+      () => new Set([new Bun.Cookie("a", "1")]),
+      () => new Set([new Bun.Cookie("a", "2")]),
+      false,
+      false,
+    ],
+    [
+      "an Error cause",
+      () => new Error("e", { cause: new Bun.CookieMap("a=1") }),
+      () => new Error("e", { cause: new Bun.CookieMap("a=2") }),
+      false,
+      false,
+    ],
+
+    // Own properties and the class still count when the contents are equal.
+    [
+      "equal FormData, another own property value",
+      () => Object.assign(form(["a", "1"]), { x: 1 }),
+      () => Object.assign(form(["a", "1"]), { x: 2 }),
+      false,
+      false,
+    ],
+    [
+      "equal FormData, an own property on one side",
+      () => Object.assign(form(["a", "1"]), { x: 1 }),
+      () => form(["a", "1"]),
+      false,
+      false,
+    ],
+    [
+      "equal FormData, the same own property",
+      () => Object.assign(form(["a", "1"]), { x: 1 }),
+      () => Object.assign(form(["a", "1"]), { x: 1 }),
+      true,
+      true,
+    ],
+    [
+      "equal FormData, another own getter value",
+      () => withGetter(form(["a", "1"]), 1),
+      () => withGetter(form(["a", "1"]), 2),
+      false,
+      false,
+    ],
+    [
+      "equal Blob, another own property value",
+      () => Object.assign(new Blob(["a"]), { x: 1 }),
+      () => Object.assign(new Blob(["a"]), { x: 2 }),
+      false,
+      false,
+    ],
+    [
+      "FormData, another own property value and another entry",
+      () => Object.assign(form(["a", "1"]), { x: 1 }),
+      () => Object.assign(form(["a", "2"]), { x: 1 }),
+      false,
+      false,
+    ],
+    [
+      "a FormData subclass against FormData",
+      () => fill(new SubFormData(), [["a", "1"]]),
+      () => form(["a", "1"]),
+      true,
+      false,
+    ],
+    [
+      "a FormData subclass, the same entries",
+      () => fill(new SubFormData(), [["a", "1"]]),
+      () => fill(new SubFormData(), [["a", "1"]]),
+      true,
+      true,
+    ],
+    [
+      "a FormData subclass, another value",
+      () => fill(new SubFormData(), [["a", "1"]]),
+      () => fill(new SubFormData(), [["a", "2"]]),
+      false,
+      false,
+    ],
+    ["a Blob subclass against Blob", () => new SubBlob(["a"]), () => new Blob(["a"]), true, false],
+    ["a Blob subclass, other bytes", () => new SubBlob(["a"]), () => new SubBlob(["b"]), false, false],
+  ];
+
+  it.each(cases)("%s", (_, a, b, loose, strict) => {
+    expect({
+      loose: [Bun.deepEquals(a(), b()), Bun.deepEquals(b(), a())],
+      strict: [Bun.deepEquals(a(), b(), true), Bun.deepEquals(b(), a(), true)],
+    }).toEqual({ loose: [loose, loose], strict: [strict, strict] });
+  });
+
+  // Two different classes are never compared by contents. Only the strict answer is checked:
+  // the default mode calls such a pair equal.
+  it.each([
+    ["FormData and Blob", () => form(["a", "1"]), () => new Blob(["a"])],
+    ["Bun.Cookie and Bun.CookieMap", () => new Bun.Cookie("a", "1"), () => new Bun.CookieMap("a=1")],
+    ["Blob and Response", () => new Blob(["a"]), () => new Response("a")],
+  ])("%s are not strictly equal", (_, a, b) => {
+    expect([Bun.deepEquals(a(), b(), true), Bun.deepEquals(b(), a(), true)]).toEqual([false, false]);
+  });
+
+  // bun does not write one type the same way everywhere: the constructor adds a charset to
+  // `text/plain`, and the blob of a body keeps the letter case of its header.
+  it("a type that both sides set compares by its type and subtype", async () => {
+    const typed = (type: string) => new Blob(["x"], { type });
+    const fromHeader = await new Response("x", { headers: { "content-type": "Text/Plain" } }).blob();
+    const pairs: [Blob, Blob, boolean][] = [
+      [typed("TEXT/PLAIN"), typed("text/plain"), true],
+      [typed("text/plain; charset=utf-8"), typed("text/plain"), true],
+      [typed("text/plain;charset=utf-8"), typed("text/plain;charset=iso-8859-1"), true],
+      [fromHeader, typed("Text/Plain"), true],
+      [typed("text/plain"), typed("text/html"), false],
+      [typed("image/png"), typed("image/jpeg"), false],
+      [typed("application/x-a"), typed("application/x-ab"), false],
+    ];
+    expect(pairs.map(([a, b]) => Bun.deepEquals(a, b))).toEqual(pairs.map(([, , equal]) => equal));
+  });
+
+  it("an empty FormData field equals its parsed form", async () => {
+    const built = form(["a", ""], ["b", "1"]);
+    const multipart = await new Response(built).formData();
+    const urlencoded = await new Response("a=&b=1", {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    }).formData();
+    expect([Bun.deepEquals(multipart, built, true), Bun.deepEquals(urlencoded, built, true)]).toEqual([true, true]);
+  });
+
+  it("compares contents when the fourth argument skips the prototype check", () => {
+    const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+    expect(deepEquals(form(["a", "1"]), form(["a", "2"]), true, true)).toBe(false);
+    expect(deepEquals(form(["a", "1"]), form(["a", "1"]), true, true)).toBe(true);
+  });
+});
+
 // The object fast path used to recurse into nested values while walking the
 // structure's PropertyTable; a getter on a nested object that added or removed
 // properties on the parent rehashed that table and freed the vector being

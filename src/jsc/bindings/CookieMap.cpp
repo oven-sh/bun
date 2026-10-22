@@ -292,4 +292,49 @@ CookieMap::Iterator::Iterator(CookieMap& cookieMap)
 {
 }
 
+bool CookieMap::entriesEqual(CookieMap& other)
+{
+    if (size() != other.size())
+        return false;
+
+    using Entry = KeyValuePair<String, String>;
+    auto sameEntry = [](const Entry& a, const Entry& b) {
+        return equalIgnoringNullity(a.key, b.key) && equalIgnoringNullity(a.value, b.value);
+    };
+
+    bool sameOrder = true;
+    {
+        auto iterator = createIterator();
+        auto otherIterator = other.createIterator();
+        while (auto entry = iterator.next()) {
+            auto otherEntry = otherIterator.next();
+            if (!otherEntry || !sameEntry(*entry, *otherEntry)) {
+                sameOrder = false;
+                break;
+            }
+        }
+    }
+    if (sameOrder)
+        return true;
+
+    // set() reorders names, so only the order within one name counts: get() returns its first value.
+    auto sortedByName = [](CookieMap& map) {
+        Vector<Entry> entries;
+        auto iterator = map.createIterator();
+        while (auto entry = iterator.next())
+            entries.append(WTF::move(*entry));
+        std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+            return WTF::codePointCompareLessThan(a.key, b.key);
+        });
+        return entries;
+    };
+    auto entries = sortedByName(*this);
+    auto otherEntries = sortedByName(other);
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (!sameEntry(entries[i], otherEntries[i]))
+            return false;
+    }
+    return true;
+}
+
 } // namespace WebCore

@@ -105,6 +105,9 @@ public:
 
     bool isExpired() const;
 
+    // Every field has the same value in both cookies.
+    bool fieldsEqual(const Cookie&) const;
+
     // Returns OutOfMemoryError if the Set-Cookie string exceeds the max string length.
     ExceptionOr<String> toString(JSC::VM& vm) const;
     JSC::JSValue toJSON(JSC::VM& vm, JSC::JSGlobalObject*) const;

@@ -27,12 +27,13 @@ function unstall() {
   stalled = false;
 }
 
-// Sends frames until the kernel doesn't take a whole one, which leaves the rest of that frame unsent.
-// Runs outside the message handler, where a send would only go to the cork buffer.
+// Sends frames until the kernel doesn't take a whole one, then blocks every write, so the rest of that frame stays
+// unsent. Runs outside the message handler, where a send would only go to the cork buffer.
 function flood(ws: ServerWebSocket<unknown>) {
   const frame = Buffer.alloc(64 * 1024, 1);
   let whole = 0;
   while (ws.send(frame) > 0) whole++;
+  hold();
   emit({ flooded: whole });
 }
 

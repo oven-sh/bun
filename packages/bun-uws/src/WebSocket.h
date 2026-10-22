@@ -80,7 +80,13 @@ public:
         }
         Super::uncork();
 
-        return closeSocket();
+        /* Callers rely on the close event having run on return, which code 0 does not give on TLS (CloseCode, src/uws_sys/us_socket_t.rs). */
+        us_socket_t *s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+        if (!us_socket_is_closed((us_socket_t *) this)) {
+            /* Parked behind the TLS ciphertext spill, which a peer that stopped reading never drains. */
+            s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+        }
+        return s;
     }
 
     enum SendStatus : int {
@@ -320,17 +326,6 @@ private:
         }
     }
 
-    /* Closes the socket and writes nothing more to it. What the kernel already has still reaches the peer.
-     * Callers rely on the close event having run on return, which code 0 does not give on TLS (CloseCode, src/uws_sys/us_socket_t.rs). */
-    us_socket_t *closeSocket() {
-        us_socket_t *s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
-        if (!us_socket_is_closed((us_socket_t *) this)) {
-            /* Parked behind the TLS ciphertext spill, which a peer that stopped reading never drains. */
-            s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
-        }
-        return s;
-    }
-
     /* Calls the close handler with 1006, or with -failure.kind in a wsPackage context. */
     void emitFailure(const WebSocketFailure &failure, unsigned int detail) {
         if (!getContextData()->wsPackage) {
@@ -385,16 +380,14 @@ public:
         getContextData()->topicTree->freeSubscriber(webSocketData->subscriber);
         webSocketData->subscriber = nullptr;
 
-        if (!getBufferedAmount()) {
-            failConnection(FAIL_OUT_OF_MEMORY, 0);
-            return;
+        if (getBufferedAmount()) {
+            /* Sending a Close frame would grow the backpressure buffer, so free the unsent data instead. What the
+             * kernel already has can end inside a frame, so no frame may follow it: sendCloseFrame() now sends none. */
+            Super::getAsyncSocketData()->buffer.clear();
+            webSocketData->closeFrameSent = true;
         }
 
-        /* Sending a Close frame would grow the backpressure buffer, and would hold the unsent data until the peer
-         * reads it. Report the failure and close the socket, which frees that data now. */
-        webSocketData->isShuttingDown = true;
-        emitFailure(FAIL_OUT_OF_MEMORY, 0);
-        closeSocket();
+        failConnection(FAIL_OUT_OF_MEMORY, 0);
     }
 
     /* Corks the response if possible. Leaves already corked socket be. */

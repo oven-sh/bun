@@ -461,23 +461,35 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
     await expectStillServing("ws");
   });
 
-  // That close is not a reset, so the peer still receives what the kernel had already accepted.
-  test("delivers the frames the kernel already accepted when data is still unsent", async () => {
-    using client = await connect("ws", deflate);
-    client.socket.pause();
-    client.text("flood");
-    const { flooded } = await nextEvent();
-    expect(flooded).toBeGreaterThan(0);
-    client.binary(deflated(tooBig.length), { rsv1: true });
-    expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
-    client.socket.resume();
-    const frames = await client.remainingFrames();
-    await client.closed;
-    expect({ frames: frames.length, socketEvents: client.socketEvents }).toEqual({
-      frames: flooded,
-      socketEvents: ["end", "close"],
-    });
-    await expectStillServing("ws");
+  // The close is the same one that follows a Close frame: the server ends its side and reads until the peer ends
+  // too. A socket that is closed with input unread, or with TLS data the kernel hasn't taken, is reset instead,
+  // and the peer loses what the kernel had accepted.
+  describe.each(["ws", "wss"] as const)("%s: a paused peer of a socket with unsent data", scheme => {
+    const rejections: [name: string, send: (client: RawClient) => void][] = [
+      ["was read in full", client => client.binary(deflated(tooBig.length), { rsv1: true })],
+      ["is still partly unread", client => client.binary(tooBig)],
+    ];
+
+    test.skipIf(!fault.available()).each(rejections)(
+      "receives the frames the kernel accepted and then FIN, if the rejected message %s",
+      async (_name, send) => {
+        using client = await connect(scheme, deflate);
+        client.socket.pause();
+        client.text("flood");
+        const { flooded } = await nextEvent();
+        expect(flooded).toBeGreaterThan(0);
+        send(client);
+        expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+        client.socket.resume();
+        const frames = await client.remainingFrames();
+        await client.closed;
+        expect({ frames: frames.length, socketEvents: client.socketEvents }).toEqual({
+          frames: flooded,
+          socketEvents: ["end", "close"],
+        });
+        await expectStillServing(scheme);
+      },
+    );
   });
 
   // Failing the connection unsubscribes the socket without writing its queued publishes. Every socket in the

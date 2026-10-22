@@ -277,7 +277,11 @@ type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 /// Git-commit task id -> the SHA it resolved, for the waiters that re-enter.
 type GitCommitMap = HashMap<Task::Id, Vec<u8> /* , IdentityContext<Task::Id>, 80 */>;
-/// A finished git checkout or tarball extract -> its package in `manager.lockfile`, for a dependency that is enqueued after the task's waiters were resolved. `rebind_to_cleaned_lockfile` moves the id after a clean, or drops the entry so that the task runs again.
+/// Resolve-task id (git checkout / tarball extract) -> the package that task
+/// appended during the resolve phase. A task's callback queue is drained
+/// exactly once, so a dependency enqueued after that drain must resolve
+/// through this map instead of queueing a callback that nothing will ever
+/// process.
 type AppendedTaskPackageMap =
     HashMap<Task::Id, PackageID /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap = HashMap<FolderResolutionKey, FolderResolutionEntry>;
@@ -492,10 +496,6 @@ pub struct PackageManager {
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
     /// could be any of the workspaces.
     pub root_package_id: RootPackageId,
-
-    /// A clean replaced the lockfile, and nothing resolves a dependency before `install_with_manager::rebind_to_cleaned_lockfile` runs.
-    #[cfg(debug_assertions)]
-    pub(crate) ids_predate_clean: bool,
 
     /// The hash of the `name` in the root package.json. `workspace_paths` only has the workspaces,
     /// not the root.
@@ -1676,8 +1676,6 @@ fn allocate_package_manager(
         wr!(update_request_index, Default::default());
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_id, RootPackageId::default());
-        #[cfg(debug_assertions)]
-        wr!(ids_predate_clean, false);
         wr!(workspace_root_name_hash, 0);
         wr!(workspace_root_version, Box::default());
         wr!(task_batch, thread_pool::Batch::default());

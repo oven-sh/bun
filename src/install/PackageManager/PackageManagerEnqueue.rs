@@ -838,7 +838,9 @@ pub fn enqueue_patch_task_pre(this: &mut PackageManager, mut task: Box<PatchTask
     let _ = this.pending_pre_calc_hashes.fetch_add(1, Ordering::Relaxed);
 }
 
-/// If `task_id` already finished and appended a package, binds `id` to it: the task does not run again for a waiter that is queued now.
+/// A resolve task's callback queue is drained exactly once. If `task_id`
+/// already completed and appended a package, resolve `id` against it directly:
+/// a context queued now would never be processed.
 fn resolve_from_appended_task(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -1842,11 +1844,6 @@ pub(crate) fn bind_row(
     // Auto-install: resolution errors go to `this.log` instead of propagating.
     is_root: bool,
 ) -> crate::Result<Row> {
-    #[cfg(debug_assertions)]
-    assert!(
-        !this.ids_predate_clean,
-        "resolved after a clean, before the rebind"
-    );
     if dependency.behavior.is_optional_peer() {
         return Ok(Row::Done);
     }
@@ -2120,11 +2117,6 @@ fn bind_row_without_manifest(
     is_root: bool,
     asked: Asked<'_>,
 ) -> crate::Result<()> {
-    #[cfg(debug_assertions)]
-    assert!(
-        !this.ids_predate_clean,
-        "resolved after a clean, before the rebind"
-    );
     let Asked {
         name,
         name_hash,

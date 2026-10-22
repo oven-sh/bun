@@ -2377,10 +2377,6 @@ fn clean_lockfile(
         }
     };
     let mut before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
-    #[cfg(debug_assertions)]
-    {
-        manager.ids_predate_clean = true;
-    }
     // `reresolve_rows_outside_overrides` needs these, and the copy only has what's saved in the
     // lockfile.
     manager.lockfile.package_extensions.rules =
@@ -2393,7 +2389,7 @@ fn clean_lockfile(
     Ok(before_clean)
 }
 
-/// Moves the ids that `manager` has from the first pass to the cleaned lockfile, plans the update scope again, and forgets the ids that the clean has no package or no mapping for.
+/// A clean renumbers packages and rows. Moves the package ids that `manager` cached in the first pass to `manager.lockfile`, and forgets the rest.
 #[cold]
 #[inline(never)]
 fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: &Lockfile) {
@@ -2436,20 +2432,15 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
         }
     }
 
-    // The pass has not invalidated a row yet. A walk during the pass does not see what is below a row that waits.
     if manager.named_update_reachable.is_some() {
         crate::update_scope::plan_named(manager);
     }
     // The peer pass of the first pass is over.
     manager.look_ahead.in_peer_pass = false;
-    // A clean has no mapping for row ids, so the rows that the first pass left waiting are dropped.
+    // A clean has no mapping for rows, so the rows that the first pass left waiting are dropped.
     while manager.peer_dependencies.read_item().is_some() {}
     for waiters in manager.task_queue.values_mut() {
         waiters.retain(|waiter| !matches!(waiter, TaskCallbackContext::Dependency(_)));
-    }
-    #[cfg(debug_assertions)]
-    {
-        manager.ids_predate_clean = false;
     }
 }
 

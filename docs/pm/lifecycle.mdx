@@ -71,7 +71,7 @@ The lockfile records the list, even if it's empty. In a checkout without the wor
 
 ## When an install fails
 
-Bun takes a package that is in `node_modules` for installed, and does not run its lifecycle scripts again. So when a lifecycle script fails, or `bun install` stops with another error, Bun removes the trusted packages that this install put in `node_modules` and whose scripts have not finished. The next `bun install` installs them again and runs their scripts.
+Bun treats a package that is in `node_modules` as installed, and does not run its lifecycle scripts again. So when a lifecycle script fails, or `bun install` stops with another error, Bun removes the trusted packages that this install put in `node_modules` and whose scripts have not finished. The next `bun install` installs them again and runs their scripts.
 
 - A package that was installed before, and that you trust only now, can stay. The next install that trusts it runs its scripts.
 - With the isolated linker, `node_modules/<name>` of a removed package stays as a link to nothing until the next install.

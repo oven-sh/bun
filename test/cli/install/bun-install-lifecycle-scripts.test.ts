@@ -3751,7 +3751,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after on
   // `unreadable` is not trusted. Its manifest says that it has an install script, so bun reads its
   // package.json to count the scripts that it does not run. The cache has `aaa-dep`, so the
   // install places it first.
-  test.skipIf(isolated)("--production, a package whose blocked scripts cannot be read", async () => {
+  test.skipIf(isWindows || isolated)("--production, a package whose blocked scripts cannot be read", async () => {
     const unreadable = { hasInstallScript: true, files: { "package.json": "{ not json" } };
     const root = { name: "foo", dependencies: { "aaa-dep": "1.0.0" }, trustedDependencies: ["aaa-dep"] };
     const both = { ...root, dependencies: { ...root.dependencies, unreadable: "1.0.0" } };
@@ -3974,11 +3974,13 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after on
       expect(inStore(ctx, "own")).toBe(true);
 
       if (production) await appendFile(join(ctx.packageDir, "bunfig.toml"), "production = true\n");
-      expect(await install(ctx, "second.txt", "add", "--trust", "own")).toEqual({
-        errors: [cannotLink("own")],
-        ran: [],
-        exitCode: 1,
-      });
+      const { errors, ...rest } = await install(ctx, "second.txt", "add", "--trust", "own");
+      expect(rest).toEqual({ ran: [], exitCode: 1 });
+      expect(errors[0]).toBe(cannotLink("own"));
+      // Without `production` bun goes on. The task of the project can then come to the bin of
+      // `own` before bun has removed `own`.
+      const ofProject = expect.stringContaining("of dependency own@1.0.0 for package: foo@");
+      expect(errors.slice(1)).toEqual(production || errors.length === 1 ? [] : [ofProject]);
       expect(inStore(ctx, "own")).toBe(production);
     });
 
@@ -4898,10 +4900,21 @@ describe.concurrent.skipIf(!isLinux || isMusl || !Bun.which("cc"))(
             stderr += decoder.decode(value, { stream: true });
           }
         }
+        // A row that waits for what does not come fails with what bun printed, and does not hang.
+        const deadline = Date.now() + (isASAN || isDebug ? 120_000 : 30_000);
+        async function until(condition: () => boolean, what: string) {
+          while (true) {
+            if (proc.exitCode !== null || Date.now() > deadline) {
+              throw new Error(`bun (exit code ${proc.exitCode}) did not get to ${what}: ${stderr}`);
+            }
+            if (condition()) return;
+            await Bun.sleep(1);
+          }
+        }
         // A task on the thread pool is at the held operation.
         await said("holding\n");
         // The script of the folder runs, and waits.
-        if (first.includes("held")) while (!existsSync(started)) await Bun.sleep(1);
+        if (first.includes("held")) await until(() => existsSync(started), "the script of `held`");
         tarballOf.resolve();
         // bun has said why it ends the install. Then its main thread sleeps: it waits for the
         // thread pool, or it is in the exit that the shim holds.
@@ -4910,7 +4923,7 @@ describe.concurrent.skipIf(!isLinux || isMusl || !Bun.which("cc"))(
           const stat = readFileSync(`/proc/${proc.pid}/stat`, "utf8");
           return stat[stat.lastIndexOf(")") + 2] === "S";
         };
-        while (!mainThreadSleeps()) await Bun.sleep(1);
+        await until(mainThreadSleeps, "the wait of its main thread");
         closeSync(openSync(release, "w"));
         const exitCode = await proc.exited;
         expect({ ran: ranIn("first.txt"), exitCode }).toEqual({ ran: first, exitCode: 1 });

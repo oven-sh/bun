@@ -4020,6 +4020,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.note_taint_event(depth);
         // A walk can end with an incomplete type after its loops are complete (`get_flow_type_of_reference`).
         let stores_signatures = !self.is_in_flow_loop();
+        let mut is_in_stored_call = false;
         // `getTypeOfVariableOrParameterOrProperty` stores what `getQuickTypeOfExpression` returns,
         // which checks the callee with the loops visible, and the type of a `...rest`. Nothing stores
         // the type of a pattern around a binding element, which is recomputed for the next element.
@@ -4028,7 +4029,10 @@ impl<'p, 's> Checker<'p, 's> {
             if self.quick_initializers.iter().any(is_quick) && self.is_resolution(self.stack[at]) {
                 continue;
             }
-            if stores_signatures && matches!(self.stack[at], Query::Call(..)) {
+            // The check of the call's statement finds the signature and doesn't check the callee or the
+            // arguments again.
+            is_in_stored_call |= stores_signatures && matches!(self.stack[at], Query::Call(..));
+            if is_in_stored_call {
                 continue;
             }
             self.frames[at].tainted = true;

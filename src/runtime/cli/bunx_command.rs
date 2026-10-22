@@ -613,8 +613,8 @@ impl BunxCommand {
         real: &[u8],
         kinds: &[&[u8]],
     ) -> Vec<Vec<u8>> {
-        let mut found = Vec::new();
         Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
+            let mut found = Vec::new();
             for kind in kinds {
                 let Some(dependencies) = root.get(kind) else {
                     continue;
@@ -638,8 +638,9 @@ impl BunxCommand {
                     found.push([dir.as_slice(), b"package.json"].concat());
                 }
             }
-        });
-        found
+            found
+        })
+        .unwrap_or_default()
     }
 
     fn read_package_json<T>(

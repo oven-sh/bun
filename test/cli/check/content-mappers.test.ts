@@ -29,8 +29,8 @@ const frame = message => {
   const body = Buffer.from(typeof message === "string" ? message : JSON.stringify(message));
   return Buffer.concat([Buffer.from("Content-Length: " + body.length + "\r\n\r\n"), body]);
 };
-const raw = bytes => process.stdout.write(bytes);
-const send = message => raw(frame({ jsonrpc: "2.0", ...message }));
+const raw = (bytes, written) => process.stdout.write(bytes, written);
+const send = (message, written) => raw(frame({ jsonrpc: "2.0", ...message }), written);
 const script = content => {
   const bytes = Buffer.from(content);
   const start = bytes.indexOf("<script>") + 8, end = bytes.indexOf("</script>");
@@ -452,7 +452,7 @@ describe.concurrent("a mapper that doesn't follow the protocol", () => {
 
   test("a length that never arrives", async () => {
     await expectErrors(
-      { mapper: `raw("Content-Length: 1000000000000000000\\r\\n\\r\\n{}"); setTimeout(() => process.exit(0), 50);` },
+      { mapper: `raw("Content-Length: 1000000000000000000\\r\\n\\r\\n{}", () => process.exit(0));` },
       notInitialized("The content mapper process exited before responding to the 'initialize' request (exit code 0)."),
     );
   });
@@ -472,8 +472,7 @@ describe.concurrent("a mapper that doesn't follow the protocol", () => {
 
   test("only answers with the wrong id, then exits", async () => {
     const mapper = `serve({ initialize: () => {
-      send({ id: "nope", result: defaults.initialize() });
-      setTimeout(() => process.exit(0), 50);
+      send({ id: "nope", result: defaults.initialize() }, () => process.exit(0));
       return SKIP;
     } });`;
     await expectErrors(

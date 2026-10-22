@@ -454,6 +454,59 @@ describe("junit reporter", () => {
     expect(proc.exitCode).toBe(1);
   });
 
+  it("reports a concurrent test's earlier attempts under that test", async () => {
+    await using tmpDir = tempDir("junit-retry-concurrent", {
+      "package.json": "{}",
+      "concurrent.test.js": `
+        import { test } from "bun:test";
+        const turn = () => new Promise(resolve => setImmediate(resolve));
+        const retrying = Promise.withResolvers();
+        const attempts = {};
+        const attempt = name => (attempts[name] = (attempts[name] ?? 0) + 1);
+
+        test.concurrent("fails once, and ends last", { retry: 1 }, async () => {
+          if (attempt("a") === 1) throw new Error("first attempt of the last");
+          retrying.resolve();
+          for (let i = 0; i < 5; i++) await turn();
+        });
+        test.concurrent("fails once", { retry: 1 }, async () => {
+          if (attempt("b") === 1) throw new Error("first attempt");
+          await retrying.promise;
+        });
+        test.concurrent("passes", async () => {
+          await retrying.promise;
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    const attemptsOf = name =>
+      [
+        ...xmlContent
+          .match(new RegExp(`<testcase[^>]*name="${name}"[^/]*(?:/>|>[\\s\\S]*?</testcase>)`))[0]
+          .matchAll(/<(\w+) type="(\w+)" message="([^"]*)"/g),
+      ].map(match => match.slice(1));
+    expect({
+      "fails once, and ends last": attemptsOf("fails once, and ends last"),
+      "fails once": attemptsOf("fails once"),
+      "passes": attemptsOf("passes"),
+    }).toEqual({
+      "fails once, and ends last": [["flakyFailure", "Error", "first attempt of the last"]],
+      "fails once": [["flakyFailure", "Error", "first attempt"]],
+      "passes": [],
+    });
+    expect(proc.exitCode).toBe(0);
+  });
+
   it("reports an attempt that failed without an error like any other failed attempt", async () => {
     await using tmpDir = tempDir("junit-retry-no-error", {
       "package.json": "{}",

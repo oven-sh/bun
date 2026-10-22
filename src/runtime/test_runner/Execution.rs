@@ -175,6 +175,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) callback_done: bool,
     /// Names `Snapshots::add_count` counted during this attempt, for `reset_sequence` to undo.
     pub(crate) counted_snapshots: Vec<Box<[u8]>>,
+    /// Failures from earlier attempts, for the JUnit report.
+    pub(crate) earlier_failures: Vec<test_command::TestFailure>,
 }
 
 impl ExecutionSequence {
@@ -202,6 +204,7 @@ impl ExecutionSequence {
             pending_matchers: 0,
             callback_done: false,
             counted_snapshots: Vec::new(),
+            earlier_failures: Vec::new(),
         }
     }
 
@@ -722,6 +725,7 @@ impl Execution {
                 // SAFETY: arena-owned entry
                 sequence.remaining_retry_count = sequence.test_entry.map_or(0, |test| unsafe { test.as_ref() }.retry_count);
                 Execution::discard_junit_failure(buntest);
+                sequence.earlier_failures.clear();
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -880,17 +884,19 @@ impl Execution {
             // provenance (see BunTest docs); single-threaded, no other borrow.
             unsafe {
                 (*reporter.as_ptr()).test_failure = None;
-                (*reporter.as_ptr()).earlier_test_failures.clear();
             }
         }
     }
 
     /// Saves a failed attempt's failure before a retry, so it's reported with the test's final result.
-    fn save_attempt_failure(buntest: NonNull<BunTest>, sequence: &ExecutionSequence) {
+    fn save_attempt_failure(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         // SAFETY: as in `discard_junit_failure`.
         if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
             // SAFETY: as in `discard_junit_failure`.
             let reporter = unsafe { &mut *reporter.as_ptr() };
+            if !reporter.jest.test_options.reporters.junit {
+                return;
+            }
             let failure = reporter
                 .test_failure
                 .take()
@@ -901,7 +907,7 @@ impl Execution {
                     )
                 })
                 .unwrap_or_default();
-            reporter.earlier_test_failures.push(failure);
+            sequence.earlier_failures.push(failure);
         }
     }
 
@@ -940,6 +946,7 @@ impl Execution {
         *sequence = ExecutionSequence {
             attempt: sequence.attempt.wrapping_add(1),
             context: sequence.context.take(),
+            earlier_failures: core::mem::take(&mut sequence.earlier_failures),
             ..ExecutionSequence::init(
                 sequence.first_entry,
                 sequence.test_entry,

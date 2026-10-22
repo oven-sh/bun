@@ -1126,8 +1126,6 @@ pub(crate) struct CommandLineReporter {
     /// that attaches them to the test case (JUnit) is on. Taken by
     /// `handle_test_completed`.
     pub(crate) test_failure: Option<TestFailure>,
-    /// Failures from earlier attempts of the test that's being retried.
-    pub(crate) earlier_test_failures: Vec<TestFailure>,
 
     pub(crate) failures_to_repeat_buf: Vec<u8>,
     pub(crate) skips_to_repeat_buf: Vec<u8>,
@@ -1544,12 +1542,11 @@ impl CommandLineReporter {
         // the coordinator replays into its own `JunitReporter`.
         let report = this.jest.test_options.reporters.junit.then(|| {
             let failure = this.test_failure.take();
-            let earlier = core::mem::take(&mut this.earlier_test_failures);
+            let earlier = core::mem::take(&mut sequence.earlier_failures);
             Self::test_case_report(
                 result, buntest, sequence, test_entry, elapsed_ns, failure, earlier,
             )
         });
-        this.earlier_test_failures.clear();
         if let Some(idx) = this.worker_ipc_file_idx {
             ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());
         } else {
@@ -2119,7 +2116,6 @@ impl TestCommand {
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
             test_failure: None,
-            earlier_test_failures: Vec::new(),
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),

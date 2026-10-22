@@ -751,12 +751,6 @@ public:
     }
 
     DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSQLStatementPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -777,6 +771,7 @@ private:
         putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).runTailPrivateName(), 1, jsSQLStatementRunTailFunction, ImplementationVisibility::Private, NoIntrinsic, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     }
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSQLStatementPrototype, JSSQLStatementPrototype::Base);
 
 const ClassInfo JSSQLStatementPrototype::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementPrototype) };
 

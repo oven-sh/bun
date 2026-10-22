@@ -2642,6 +2642,106 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("a script that runs i
     expect(exitCode).toBe(0);
   });
 
+  // Only the hoisted linker links into `node_modules/native/node_modules`.
+  describe.skipIf(linker === "isolated")("the package's own .bin", () => {
+    const ownBin = (...native: string[]) => readdirSorted(join(...native, "node_modules", ".bin"));
+    const links = isWindows ? ["build-helper.bunx", "build-helper.exe"] : ["build-helper"];
+    const errors = (err: string) => splitErrLines(err).filter(line => line.startsWith("error:"));
+
+    // `helper-alias` in the member's `node_modules` is the same package as `build-helper` in the project's.
+    test("leads to the dependency by its name, not to a closer copy under another name", async () => {
+      using ctx = await setupScriptPackages(linker, {
+        "build-helper": helper("build-helper"),
+        native: usesHelper("build-helper"),
+        other: {},
+      });
+      const member = join(ctx.packageDir, "packages", "member");
+      await mkdir(member, { recursive: true });
+      await writeFile(
+        join(member, "package.json"),
+        JSON.stringify({
+          name: "member",
+          dependencies: { native: `${ctx.registry}native-1.0.0.tgz`, "helper-alias": "npm:build-helper@1.0.0" },
+        }),
+      );
+      await writeFile(
+        ctx.packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { native: "npm:other@1.0.0", "helper-alias": "npm:other@1.0.0" },
+          trustedDependencies: ["native"],
+        }),
+      );
+
+      const { err, exitCode } = await ctx.bun("install");
+      expect(err).not.toContain("error:");
+      expect({
+        closer: await readdirSorted(join(member, "node_modules")),
+        ownBin: await ownBin(member, "node_modules", "native"),
+      }).toEqual({ closer: [".bin", "helper-alias", "native"], ownBin: links });
+      expect(exitCode).toBe(0);
+    });
+
+    // A file is in the place of `node_modules/native/node_modules`.
+    async function setupBlockedBin(group: "dependencies" | "optionalDependencies") {
+      const ctx = await setupScriptPackages(linker, {
+        "build-helper": helper("build-helper"),
+        native: usesHelper("build-helper"),
+      });
+      await writeFile(ctx.packageJson, JSON.stringify({ name: "root", [group]: { native: "1.0.0" } }));
+      const { err, exitCode } = await ctx.bun("install");
+      expect({ errors: errors(err), exitCode }).toEqual({ errors: [], exitCode: 0 });
+      await writeFile(ctx.installed("native", "node_modules"), "");
+      return ctx;
+    }
+
+    test.each([
+      { group: "dependencies", failure: ["error: failed to link bins for life-cycle scripts for native"], exitCode: 1 },
+      { group: "optionalDependencies", failure: [], exitCode: 0 },
+    ] as const)("cannot be made ($group): the next install runs the scripts", async ({ group, failure, exitCode }) => {
+      using ctx = await setupBlockedBin(group);
+      await writeFile(
+        ctx.packageJson,
+        JSON.stringify({ name: "root", [group]: { native: "1.0.0" }, trustedDependencies: ["native"] }),
+      );
+
+      const first = await ctx.bun("install");
+      expect({
+        errors: errors(first.err).map(line => line.replace(/: E[A-Z]+$/, "")),
+        installed: existsSync(ctx.installed("native")),
+        exitCode: first.exitCode,
+      }).toEqual({ errors: [...failure], installed: false, exitCode });
+
+      const second = await ctx.bun("install");
+      expect({
+        errors: errors(second.err),
+        builtBy: builtBy(ctx.installed("native")),
+        ownBin: await ownBin(ctx.installed("native")),
+        exitCode: second.exitCode,
+      }).toEqual({ errors: [], builtBy: "build-helper", ownBin: links, exitCode: 0 });
+    });
+
+    test("cannot be made: bun pm trust runs and records nothing", async () => {
+      using ctx = await setupBlockedBin("dependencies");
+
+      const { err, exitCode } = await ctx.bun("pm", "trust", "native");
+      expect({
+        errors: splitErrLines(err)
+          .filter(line => line.includes("failed to link"))
+          .map(line => line.replace(/^E[A-Z]+: /, "")),
+        ran: existsSync(ctx.installed("native", "built-by.txt")),
+        manifest: await file(ctx.packageJson).json(),
+        exitCode,
+      }).toEqual({
+        errors: ["failed to link bins for the scripts of native"],
+        ran: false,
+        manifest: { name: "root", dependencies: { native: "1.0.0" } },
+        exitCode: 1,
+      });
+    });
+  });
+
   // The hoisted linker leaves the `node_modules` of a member alone when it places nothing there.
   test("nothing is linked into a workspace member", async () => {
     using ctx = await setupScriptPackages(linker, { "build-helper": helper("build-helper") });

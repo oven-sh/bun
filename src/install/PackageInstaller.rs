@@ -469,7 +469,7 @@ fn find_tree_resolved_from(
     string_buf: &[u8],
     start_tree: lockfile::tree::Id,
     alias: &[u8],
-    is_target: impl Fn(DependencyID) -> bool,
+    is_target: &dyn Fn(DependencyID) -> bool,
 ) -> Option<lockfile::tree::Id> {
     let tree_contains = |id: lockfile::tree::Id| -> bool {
         trees[id as usize]
@@ -541,7 +541,7 @@ fn native_binlink_target(
         lockfile.buffers.string_bytes.as_slice(),
         tree_id,
         alias,
-        |dep_id| resolutions[dep_id as usize] == replacement_pkg_id,
+        &|dep_id| resolutions[dep_id as usize] == replacement_pkg_id,
     )?;
     Some((target_tree_id, replacement_pkg_id))
 }
@@ -599,7 +599,7 @@ pub fn link_dependency_bins(
                 string_buf,
                 tree_id,
                 alias,
-                |dep_id| {
+                &|dep_id| {
                     resolutions[dep_id as usize] == resolutions[own_id as usize]
                         && dependencies[dep_id as usize].name_hash
                             == dependencies[own_id as usize].name_hash
@@ -622,21 +622,18 @@ pub fn link_dependency_bins(
         a.cmp(&b)
     });
 
-    let mut node_modules_path =
+    let mut package_path =
         abs_node_modules_path(lockfile, string_buf, tree_id).ok_or(NAME_TOO_LONG)?;
-    node_modules_path
-        .try_append(alias)
-        .map_err(|_| NAME_TOO_LONG)?;
+    package_path.try_append(alias).map_err(|_| NAME_TOO_LONG)?;
     // A workspace, or a `link:` or `file:` directory: its `node_modules` is not the installer's.
-    if !bun_sys::lstat(node_modules_path.slice_z()).is_ok_and(|st| {
-        bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::EntryKind::Directory
-    }) {
+    let stat = bun_sys::lstat(package_path.slice_z())?;
+    if bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) != bun_sys::EntryKind::Directory {
         return Ok(());
     }
     // The tree of a workspace is reached through a link, and a relative link starts from the real
     // directory.
     let mut real_buf = bun_paths::path_buffer_pool::get();
-    let real_path = bun_sys::realpath(node_modules_path.slice_z(), &mut real_buf)?;
+    let real_path = bun_sys::realpath(package_path.slice_z(), &mut real_buf)?;
     let mut node_modules_path = AbsPath::from(real_path).map_err(|_| NAME_TOO_LONG)?;
     let package_path_len = node_modules_path.len();
     node_modules_path
@@ -687,7 +684,7 @@ pub fn link_dependency_bins(
         let native = native_binlink_target(manager, placed_tree_id, name, package_id);
         let linked_native = native.is_some_and(|(native_tree_id, native_id)| {
             let native_name = pkgs.items_name()[native_id as usize].slice(string_buf);
-            link_into(native_tree_id, native_name).unwrap_or(false)
+            matches!(link_into(native_tree_id, native_name), Ok(true))
         });
         if !linked_native {
             link_into(placed_tree_id, name)?;
@@ -1157,7 +1154,14 @@ impl<'a> PackageInstaller<'a> {
         let name = entry.list.package_name.clone();
         let output_in_foreground = false;
         if let Err(err) = link_dependency_bins(self.manager(), entry.tree_id, entry.dependency_id) {
-            return self.on_scripts_error(log_level, "link bins for life-cycle", &name, err);
+            // As after a failed script: the next install places the package and runs its scripts.
+            remove_placed_package(self.lockfile(), entry.tree_id, &name);
+            (self.unfinished_scripts.borrow_mut())
+                .retain(|(tree_id, folder_name)| *tree_id != entry.tree_id || *folder_name != name);
+            if !entry.optional {
+                self.on_scripts_error(log_level, "link bins for life-cycle", &name, err);
+            }
+            return;
         }
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
             self.command_ctx,

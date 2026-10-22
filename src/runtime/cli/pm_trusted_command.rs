@@ -520,14 +520,29 @@ impl TrustCommand {
             .filter(|info| info.action == Action::Run)
             .filter_map(|info| Some((info.tree_id?, info.dep_id)))
             .collect();
-        if !placed.is_empty() {
+        let failed = if placed.is_empty() {
+            None
+        } else {
             // SAFETY: `pm_raw` singleton; `lockfile` is borrowed again below.
             bun_install::prune::with_install_tree(unsafe { &mut *pm_raw }, |pm| {
-                (placed.iter()).try_for_each(|&(tree_id, id)| link_dependency_bins(pm, tree_id, id))
-            })??;
-        }
+                (placed.iter()).find_map(|&(tree_id, dep_id)| {
+                    Some((dep_id, link_dependency_bins(pm, tree_id, dep_id).err()?))
+                })
+            })?
+        };
         // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow until the scripts have run.
         let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
+        if let Some((dep_id, err)) = failed {
+            let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize].name;
+            Output::err(
+                err,
+                "failed to link bins for the scripts of <b>{}<r>",
+                (bstr::BStr::new(
+                    alias.slice(lockfile.buffers.string_bytes.as_slice()),
+                ),),
+            );
+            Global::crash();
+        }
 
         let mut scripts_node: Progress::Node;
         let show_progress = log_level.show_progress();

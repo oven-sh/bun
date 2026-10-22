@@ -11,7 +11,7 @@ use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
-use crate::api::h2_frame_parser_body::has_edge_whitespace;
+use crate::api::h2_frame_parser_body::{has_control_byte, has_edge_whitespace};
 use bun_collections::HashMap;
 use bun_http_types::parse_content_length_strict;
 use std::num::NonZeroU32;
@@ -26,6 +26,23 @@ mod pseudo {
     pub(super) const STATUS: u8 = 16;
     pub(super) const PROTOCOL: u8 = 32;
     pub(super) const UNKNOWN: u8 = 64;
+
+    /// Whether nghttp2 takes every byte of a request pseudo-header's value (nghttp2_check_method,
+    /// nghttp2_check_path, check_scheme, check_authority).
+    pub(super) fn is_valid_value(bit: u8, value: &[u8]) -> bool {
+        let all = |extra: &[u8]| {
+            value
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
+        };
+        match bit {
+            METHOD => all(b"!#$%&'*+-.^_`|~"),
+            PATH => value.iter().all(|&c| c > b' ' && c != 0x7f),
+            SCHEME => value.first().is_some_and(u8::is_ascii_alphabetic) && all(b"+-."),
+            AUTHORITY => all(b"!$%&'()*+,-.:;=[]_~"),
+            _ => true,
+        }
+    }
 }
 
 /// Snapshot of the local-settings values carried by one sent-but-unACKed SETTINGS frame, so an
@@ -1238,7 +1255,11 @@ impl Connection {
         // nghttp2_http_on_request_headers): only an initial HEADERS block (or a PUSH_PROMISE
         // block) is a request; a later HEADERS on the same stream is a trailer section.
         let mut saw_connect = false;
+        let mut saw_options = false;
         let mut saw_host = false;
+        let mut http_scheme = false;
+        let mut origin_form = false;
+        let mut asterisk_form = false;
         let mut informational = false;
         let mut content_length: Option<u64> = None;
         while off < block.len() {
@@ -1306,6 +1327,8 @@ impl Connection {
                                 || is_trailer
                                 || value_b.is_empty()
                                 || has_edge_whitespace(value_b)
+                                || has_control_byte(value_b)
+                                || !pseudo::is_valid_value(bit, value_b)
                             {
                                 malformed = true;
                             }
@@ -1316,13 +1339,29 @@ impl Connection {
                             if rest == b"method" && value_b == b"CONNECT" {
                                 saw_connect = true;
                             }
+                            match bit {
+                                pseudo::METHOD => saw_options = value_b == b"OPTIONS",
+                                pseudo::SCHEME => {
+                                    http_scheme = value_b.eq_ignore_ascii_case(b"http")
+                                        || value_b.eq_ignore_ascii_case(b"https");
+                                }
+                                pseudo::PATH => {
+                                    origin_form = value_b.starts_with(b"/");
+                                    asterisk_form = value_b == b"*";
+                                }
+                                _ => {}
+                            }
                         } else {
                             seen_regular = true;
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
-                                b"host" if is_request && !has_edge_whitespace(value_b) => {
-                                    saw_host = true;
+                                // nghttp2 ignores a request's Host that is not an authority.
+                                b"host" if self.is_server || push_parent.is_some() => {
+                                    if !pseudo::is_valid_value(pseudo::AUTHORITY, value_b) {
+                                        continue;
+                                    }
+                                    saw_host |= is_request;
                                 }
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
@@ -1337,6 +1376,10 @@ impl Connection {
                                     _ => malformed = true,
                                 },
                                 _ => {}
+                            }
+                            // nghttp2 ignores such a field (NGHTTP2_ERR_IGN_HTTP_HEADER).
+                            if has_control_byte(value_b) {
+                                continue;
                             }
                         }
                     }
@@ -1385,6 +1428,7 @@ impl Connection {
         // :scheme/:path and carries :authority; extended CONNECT (:protocol, RFC 8441) requires
         // :method CONNECT and :authority. Without this a block with an empty or missing :path
         // reaches JS as a request with an empty url (no compliant peer can produce that shape).
+        // For http and https, :path starts with "/", or is "*" in an OPTIONS request (check_path).
         if is_request && !rejected && !malformed {
             use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
             let extended_connect = (seen_pseudo & PROTOCOL) != 0;
@@ -1394,6 +1438,7 @@ impl Connection {
                 (seen_pseudo & (METHOD | SCHEME | PATH)) != (METHOD | SCHEME | PATH)
                     || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
+                    || (http_scheme && !origin_form && !(asterisk_form && saw_options))
             };
         }
         if push_parent.is_none() && self.is_server && !malformed && !rejected {

@@ -1,10 +1,12 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { join } from "node:path";
 import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
@@ -1053,4 +1055,308 @@ test("closeAllConnections() on a server that took the listener of a Bun.serve se
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("0\n");
   expect(exitCode).toBe(0);
+});
+
+// close() registers the reaction that emits 'close'. The event keeps the async context of listen(), whoever calls
+// close(). Node runs 'close' in the context of close(), and net.Server does so here too. That difference is older than
+// this test: https://github.com/oven-sh/bun/pull/33719
+test("'close' and the close() callback see the AsyncLocalStorage store of listen()", async () => {
+  const storage = new AsyncLocalStorage<string>();
+  const server = createServer();
+  const seen: unknown[] = [];
+  server.on("close", () => seen.push(storage.getStore()));
+  storage.run("listen", () => server.listen(0, "127.0.0.1"));
+  await once(server, "listening");
+  await new Promise<void>(resolve =>
+    storage.run("close", () =>
+      server.close(() => {
+        seen.push(storage.getStore());
+        resolve();
+      }),
+    ),
+  );
+  expect(seen).toEqual(["listen", "listen"]);
+});
+
+describe("the server of a Bun.ModuleGraph that the host closes", () => {
+  async function listenInGraph() {
+    const dir = tempDir("node-http-graph", {
+      "listens.mjs": `
+        import { createServer } from "node:http";
+        export const closedIn = [];
+        export function listen() {
+          const server = createServer().on("close", () => closedIn.push(Bun.ModuleGraph.current));
+          return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server)));
+        }
+      `,
+    });
+    const graph = new Bun.ModuleGraph();
+    const app = await graph.import(join(String(dir), "listens.mjs"));
+    const server = await graph.run(() => app.listen());
+    return {
+      graph,
+      app,
+      server,
+      [Symbol.dispose]() {
+        graph.dispose();
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+
+  test("tells the 'close' listener of the graph in the context of the graph", async () => {
+    using listening = await listenInGraph();
+    const { graph, app, server } = listening;
+    server.close();
+    await once(server, "close");
+    expect(app.closedIn.map(current => current === graph)).toEqual([true]);
+  });
+
+  test("emits no 'close' once the graph is disposed", async () => {
+    using listening = await listenInGraph();
+    const { graph, app, server } = listening;
+    graph.dispose();
+    let calledBack = false;
+    server.close(() => (calledBack = true));
+    // A server of the host, closed after it, has emitted 'close': the server of the graph would have too.
+    const hostServer = createServer().listen(0, "127.0.0.1");
+    await once(hostServer, "listening");
+    hostServer.close();
+    await once(hostServer, "close");
+    expect({ calledBack, inTheGraph: app.closedIn.length }).toEqual({ calledBack: false, inTheGraph: 0 });
+  });
+});
+
+// `bun --hot` evaluates the entry point again, and Bun.serve() answers a listen() on an address that a native server
+// already serves with that server. The native server then calls the new http.Server only. The earlier one keeps its
+// handle and its connections, so its close() still stops the listener. Nothing else keeps it alive: not a
+// connections-checking interval with no connection to check, not a reaction for its 'close' event.
+// A second listen() on the address in the same load gets the native server too, so only the first test needs a reload.
+// One at a time: a debug build needs two seconds to start one fixture, and twice that next to three others.
+describe("bun --hot gives the native server of an http.Server to the next one", () => {
+  // The fixture ends the process itself.
+  async function runHot(fixture: string, env = bunEnv) {
+    using dir = tempDir("node-http-hot", { "server.mjs": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "server.mjs"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: stdout
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line)),
+      stderr: stderr.replaceAll(/^DEBUG:.*\n/gm, ""),
+      exitCode,
+    };
+  }
+
+  // For a WeakRef whose target nothing else holds.
+  const collected = `
+    async function collected(ref) {
+      const deadline = performance.now() + 1000;
+      while (ref.deref() !== undefined && performance.now() < deadline) {
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+      }
+      return ref.deref() === undefined;
+    }
+  `;
+  test.each([
+    ["http", bunEnv, "{}"],
+    // NODE_ENV=production: the native server class without the development mode.
+    ["https", { ...bunEnv, NODE_ENV: "production" }, JSON.stringify({ key: tlsCert.key, cert: tlsCert.cert })],
+  ] as const)("each earlier %s server is collected, and emits no 'close'", async (protocol, env, options) => {
+    const fixture = `
+      import { AsyncLocalStorage } from "node:async_hooks";
+      import { once } from "node:events";
+      import { readFileSync, writeFileSync } from "node:fs";
+      import { createServer } from "node:${protocol}";
+
+      const load = (globalThis.loads = (globalThis.loads ?? 0) + 1);
+      const state = (globalThis.state ??= { plain: [], store: [], closes: 0 });
+      // It outlives every load.
+      const storage = (globalThis.storage ??= new AsyncLocalStorage());
+
+      function serve(kind, listen) {
+        const server = createServer(${options}, (req, res) => res.end("ok"));
+        server.on("close", () => state.closes++);
+        state[kind].push(new WeakRef(server));
+        listen(server);
+        return once(server, "listening");
+      }
+      await Promise.all([
+        serve("plain", server => server.listen(0, "127.0.0.1")),
+        serve("store", server => storage.run({ server }, () => server.listen(0))),
+      ]);
+
+      if (load < 3) {
+        // The write starts the next load.
+        const self = new URL(import.meta.url);
+        writeFileSync(self, readFileSync(self, "utf8"));
+      } else {
+        // Only the servers of this load are in use.
+        const alive = {};
+        for (let i = 0; i < 10; i++) {
+          Bun.gc(true);
+          for (const kind of ["plain", "store"]) {
+            alive[kind] = state[kind].filter(ref => ref.deref() !== undefined).length;
+          }
+          if (alive.plain === 1 && alive.store === 1) break;
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        console.log(JSON.stringify({ alive, closes: state.closes }));
+        process.exit(0);
+      }
+    `;
+    const { stdout, stderr, exitCode } = await runHot(fixture, env);
+    expect({ stdout, stderr }).toEqual({ stdout: [{ alive: { plain: 1, store: 1 }, closes: 0 }], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // One load can ask for one address twice, with port 0 for example. Both servers get the same native server.
+  test("two servers of one load on one address: both get 'listening', the first one is collected", async () => {
+    const fixture = `
+      import { once } from "node:events";
+      import { createServer } from "node:http";
+      ${collected}
+
+      // A function, so that no variable of this module holds the first server.
+      async function listenTwice() {
+        const heard = [];
+        const first = createServer().once("listening", () => heard.push("first"));
+        const second = createServer().once("listening", () => heard.push("second"));
+        first.listen(0, "127.0.0.1");
+        second.listen(0, "127.0.0.1");
+        await once(second, "listening");
+        return { heard, first: new WeakRef(first) };
+      }
+      const { heard, first } = await listenTwice();
+      console.log(JSON.stringify({ listening: heard, firstCollected: await collected(first) }));
+      process.exit(0);
+    `;
+    const { stdout, stderr, exitCode } = await runHot(fixture);
+    expect({ stdout, stderr }).toEqual({
+      stdout: [{ listening: ["first", "second"], firstCollected: true }],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // What the fixtures below share: a server that answers with its name and leaves the response of "/slow" in flight,
+  // and raw clients.
+  const connections = `
+    let slow;
+    function serve(name, options = {}) {
+      return createServer(options, (req, res) => {
+        if (req.url === "/slow") (slow = res).write("partial");
+        else res.end(name);
+      });
+    }
+    function open(port) {
+      const client = { socket: connect(port, "127.0.0.1").setEncoding("latin1"), received: "", closed: false };
+      client.socket.on("data", chunk => (client.received += chunk));
+      client.socket.on("close", () => (client.closed = true));
+      client.socket.on("error", () => {});
+      return client;
+    }
+    // Whether the client has received \`text\`. Waits for it until the connection closes.
+    async function received(client, text) {
+      while (!client.received.includes(text) && !client.closed) {
+        await Promise.race([once(client.socket, "data"), once(client.socket, "close")]);
+      }
+      return client.received.includes(text);
+    }
+    const get = path => "GET " + path + " HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n";
+    const count = server => new Promise(resolve => server.getConnections((error, count) => resolve(count)));
+    // The error code of a connection to a port that nothing listens on.
+    const refused = port =>
+      new Promise(resolve => {
+        const socket = connect(port, "127.0.0.1");
+        socket.on("error", error => resolve(error.code));
+        socket.on("connect", () => resolve("connected"));
+      });
+    // Whether the interval that checks the connections of the server is cleared, with a wait for that until a deadline.
+    // A WeakRef of the server cannot show it: the last call of the interval leaves its \`this\`, the server, in a stack word.
+    async function checkStopped(server) {
+      const deadline = performance.now() + 1000;
+      while (!server[kConnectionsCheckingInterval]._destroyed && performance.now() < deadline) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      return server[kConnectionsCheckingInterval]._destroyed;
+    }
+  `;
+
+  test("a connection of the first server stays with it, and the first server checks it until it closes", async () => {
+    const fixture = `
+      import { kConnectionsCheckingInterval } from "node:_http_server";
+      import { once } from "node:events";
+      import { createServer } from "node:http";
+      import { connect } from "node:net";
+      ${connections}
+
+      const first = serve("first", { connectionsCheckingInterval: 5, headersTimeout: 50 });
+      await once(first.listen(0, "127.0.0.1"), "listening");
+      // The response is in flight when the second server listens.
+      const client = open(first.address().port);
+      client.socket.write(get("/slow"));
+      await received(client, "partial");
+      const second = serve("second");
+      await once(second.listen(0, "127.0.0.1"), "listening");
+
+      const result = { connections: [await count(first), await count(second)] };
+      slow.end();
+      // The native server calls the second server for the next request on the connection.
+      client.socket.write(get("/"));
+      result.nextRequest = (await received(client, "second")) && "second";
+      // The first server still checks its connection: a request head that does not end gets the timeout.
+      client.socket.write("GET /partial HTTP/1.1\\r\\nHost: localhost\\r\\n");
+      result.timeout = (await received(client, "HTTP/1.1 408")) && "408";
+      if (!client.closed) await once(client.socket, "close");
+      result.checkStopped = await checkStopped(first);
+      console.log(JSON.stringify(result));
+      process.exit(0);
+    `;
+    const { stdout, stderr, exitCode } = await runHot(fixture);
+    expect({ stdout, stderr }).toEqual({
+      stdout: [{ connections: [1, 0], nextRequest: "second", timeout: "408", checkStopped: true }],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The first server keeps its handle, as a shutdown hook of an earlier load does.
+  test("close() of the first server still stops the listener, and the second server stops its check", async () => {
+    const fixture = `
+      import { kConnectionsCheckingInterval } from "node:_http_server";
+      import { once } from "node:events";
+      import { createServer } from "node:http";
+      import { connect } from "node:net";
+      ${connections}
+
+      const first = serve("first");
+      await once(first.listen(0, "127.0.0.1"), "listening");
+      const { port } = first.address();
+      const second = serve("second", { connectionsCheckingInterval: 5 });
+      await once(second.listen(0, "127.0.0.1"), "listening");
+
+      const result = { listening: first.listening };
+      result.firstClose = await new Promise(resolve => first.close(error => resolve(error?.code ?? "closed")));
+      result.connect = await refused(port);
+      // The second server has no listener now. It learns that at its next check of the connections.
+      result.checkStopped = await checkStopped(second);
+      console.log(JSON.stringify(result));
+      process.exit(0);
+    `;
+    const { stdout, stderr, exitCode } = await runHot(fixture);
+    expect({ stdout, stderr }).toEqual({
+      stdout: [{ listening: true, firstClose: "closed", connect: "ECONNREFUSED", checkStopped: true }],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

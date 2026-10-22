@@ -66,11 +66,23 @@ const dir = String(
         const w = new Worker("data:text/javascript,setInterval(() => {}, 1000); postMessage('up')");
         return new Promise(resolve => { w.onmessage = () => resolve(); w.addEventListener("close", () => control.heard.push("worker close")); });
       }
-      // node:http waits for the promise of its native server to emit 'close', and that reaction reaches the server.
+      // The native server of a node:http server calls it, and the server has its timer for the connections.
       export function listenWithNode(tls) {
         const server = tls ? https.createServer(tls, () => {}) : http.createServer(() => {});
         server.on("close", () => control.heard.push("close"));
         return new Promise(resolve => server.listen(0, "127.0.0.1", () => { control.httpPort = server.address().port; resolve(); }));
+      }
+      // A close() that waits for a request nobody answers. node:http waits for the promise of its native server to emit
+      // 'close', and that reaction reaches the server.
+      export async function closeWithNodeThatWaitsForARequest(tls) {
+        const asked = Promise.withResolvers();
+        const server = tls ? https.createServer(tls, () => asked.resolve()) : http.createServer(() => asked.resolve());
+        server.on("close", () => control.heard.push("close"));
+        await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+        control.httpPort = server.address().port;
+        fetch((tls ? "https" : "http") + "://127.0.0.1:" + control.httpPort + "/", { tls: { rejectUnauthorized: false } }).catch(asked.reject);
+        await asked.promise;
+        server.close();
       }
       // A stop() that waits for a request nobody answers, with a reaction that reaches the server.
       export async function stopThatWaitsForARequest() {
@@ -416,10 +428,13 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
   });
 
-  // Nothing settles the promise that tells a server is closed once its graph is disposed, and its reactions reach the server.
+  // A server that listens is a GC root, and it reaches the graph. For a close() or a stop() that waits, nothing settles
+  // the promise that tells the server is closed once the graph is disposed, and its reactions reach the server.
   for (const [what, open] of [
     ["node:http server that is listening", io => io.listenWithNode()],
     ["node:https server that is listening", io => io.listenWithNode(tls)],
+    ["node:http server whose close() waits for a request", io => io.closeWithNodeThatWaitsForARequest()],
+    ["node:https server whose close() waits for a request", io => io.closeWithNodeThatWaitsForARequest(tls)],
     ["Bun.serve() server whose stop() is waited for", io => io.stopThatWaitsForARequest()],
   ] as [string, (io: any) => Promise<void>][]) {
     test(`a ${what} when its graph is disposed goes with the graph`, async () => {

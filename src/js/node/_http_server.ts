@@ -87,6 +87,11 @@ const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
 const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
+// bun --hot: the http.Server that a native server with a hot id calls, or null once another http.Server stopped it.
+let nativeServerOwners: WeakMap<object, Server | null> | undefined;
+const SafeWeakMap = WeakMap;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
 function closeHandle(handle) {
@@ -109,7 +114,6 @@ function traceServerRequestEnd() {
   traceEvents.emitEvent("e", kHttpTraceCat, "http.server.request");
 }
 
-const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
 const getBunServerOpenCount = $bindgen("node_http_binding.bind.ts", "getBunServerOpenCount");
 
 const kServerResponse = Symbol("ServerResponse");
@@ -147,6 +151,21 @@ function markListenerGenerationClosed(self: Server, generation) {
 }
 function emitCloseNTServer(this: Server, generation) {
   process.nextTick(markListenerGenerationClosed, this, generation);
+}
+// 'close' keeps the async context of listen(). Node uses that of close(): https://github.com/oven-sh/bun/pull/33719
+function queueCloseNTServer(self: Server, stopped, generation) {
+  const frame = generation.frame;
+  generation.frame = undefined;
+  const current = $getInternalField($asyncContext, 0);
+  if (frame !== current) $putInternalField($asyncContext, 0, frame);
+  try {
+    // The server of a disposed Bun.ModuleGraph stays silent, as when listen() registered the reaction.
+    if (frame === undefined || !isStoppedModuleGraphRunning()) {
+      stopped.$then(emitCloseNTServer.bind(self, generation));
+    }
+  } finally {
+    if (frame !== current) $putInternalField($asyncContext, 0, current);
+  }
 }
 
 function setCloseCallback(self, callback) {
@@ -474,6 +493,8 @@ function setupConnectionsTracking(this: any) {
   const delay = this.connectionsCheckingInterval ?? 30_000;
   this[kConnectionsCheckingInterval] = setInterval(checkConnections.bind(this), delay);
   this[kConnectionsCheckingInterval].unref();
+  // bun --hot: the next http.Server listened on the native server before this 'listening'.
+  if (lostListener(this)) releaseListener(this);
 }
 
 // Node.js's checkConnections sweep: every connectionsCheckingInterval, expire
@@ -481,14 +502,16 @@ function setupConnectionsTracking(this: any) {
 // The per-connection timing lives on the native socket handle (the parser is
 // native), so each tracked connection is asked whether it expired.
 function checkConnections(this: Server) {
-  const headersTimeout = this.headersTimeout;
-  const requestTimeout = this.requestTimeout;
-  if (headersTimeout === 0 && requestTimeout === 0) {
+  const connections = this[kTrackedConnections];
+  if (!connections || connections.size === 0) {
+    // bun --hot: a server that lost its listener has no connection left to check.
+    if (lostListener(this)) clearInterval(this[kConnectionsCheckingInterval]);
     return;
   }
 
-  const connections = this[kTrackedConnections];
-  if (!connections || connections.size === 0) {
+  const headersTimeout = this.headersTimeout;
+  const requestTimeout = this.requestTimeout;
+  if (headersTimeout === 0 && requestTimeout === 0) {
     return;
   }
 
@@ -574,8 +597,13 @@ Server.prototype.close = function (optionalCallback?) {
   const open = getBunServerOpenCount(server);
   const swept = server.closeIdleConnections();
   if (generation) generation.drainedAtClose = open === swept;
+  if (nativeServerOwners !== undefined) {
+    // bun --hot: the http.Server that the native server calls, if it is another one, has no listener from here on.
+    const owner = WeakMapPrototypeGet.$call(nativeServerOwners, server);
+    if (owner != null && owner !== this) WeakMapPrototypeSet.$call(nativeServerOwners, server, null);
+  }
   // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
-  server.stop();
+  queueCloseNTServer(this, server.stop(), generation);
   return this;
 };
 
@@ -1145,10 +1173,18 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       isUnix: !!socketPath,
       nativeClosed: false,
       drainedAtClose: false,
+      // The async context of listen(), until close().
+      frame: $getInternalField($asyncContext, 0),
     };
     this[kListenerGeneration] = listenerGeneration;
-    getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this, listenerGeneration));
     applyServerCustomOptions(this);
+    // Only bun --hot gives a native server an id here: the next listen() on its address gets this native server.
+    if (handle.id !== "") {
+      const owners = (nativeServerOwners ??= new SafeWeakMap());
+      const previous = WeakMapPrototypeGet.$call(owners, handle);
+      WeakMapPrototypeSet.$call(owners, handle, this);
+      if (previous != null) releaseListener(previous);
+    }
 
     if (this?._unref) {
       this[serverSymbol]?.unref?.();
@@ -1175,6 +1211,18 @@ function applyServerCustomOptions(server: Server) {
     !!server.httpAllowHalfOpen,
   );
   setServerMaxHeadersCount(handle, nativeMaxHeadersCount(server.maxHeadersCount));
+}
+
+// bun --hot: whether the native server of `server` calls another http.Server now, or none.
+function lostListener(server: Server) {
+  if (nativeServerOwners === undefined) return false;
+  const owner = WeakMapPrototypeGet.$call(nativeServerOwners, server[serverSymbol]);
+  return owner !== undefined && owner !== server;
+}
+
+// bun --hot: `server` lost its listener. It checks the timeouts of its connections while it has one.
+function releaseListener(server: Server) {
+  if (server[kTrackedConnections].size === 0) clearInterval(server[kConnectionsCheckingInterval]);
 }
 
 // Resolution: httpValidation > explicit insecureHTTPParser > --insecure-http-parser. Native

@@ -2382,6 +2382,60 @@ mod posix_impl {
         )
     }
 
+    /// Whether `path` in `dir` is the root of a mount: a bind mount, a Docker volume. Follows no link.
+    pub fn is_mount_point(dir: Fd, path: &ZStr) -> Maybe<bool> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if SUPPORTS_STATX_ON_LINUX.load(core::sync::atomic::Ordering::Relaxed) {
+            // `<linux/stat.h>`. The kernel reports the bit since 5.8, and the mask says whether it does.
+            const STATX_ATTR_MOUNT_ROOT: u64 = 0x2000;
+            const AT_STATX_DONT_SYNC: c_int = 0x4000;
+            let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
+            let rc = loop {
+                // SAFETY: `path` is NUL-terminated; `buf` is a valid out-param.
+                let rc = unsafe {
+                    lx::statx(
+                        dir.native(),
+                        path.as_ptr(),
+                        libc::AT_SYMLINK_NOFOLLOW | AT_STATX_DONT_SYNC,
+                        0,
+                        buf.as_mut_ptr(),
+                    )
+                };
+                if rc >= 0 || SystemErrno::init(last_errno() as _) != Some(E::EINTR) {
+                    break rc;
+                }
+            };
+            if rc == 0 {
+                // SAFETY: rc == 0 ⇒ kernel populated the buffer.
+                let buf = unsafe { buf.assume_init() };
+                if buf.stx_attributes_mask & STATX_ATTR_MOUNT_ROOT != 0 {
+                    return Ok(buf.stx_attributes & STATX_ATTR_MOUNT_ROOT != 0);
+                }
+            } else if rc < 0 {
+                let raw_errno = last_errno();
+                // The errnos `statx_impl` falls back on.
+                if !matches!(
+                    SystemErrno::init(raw_errno as _),
+                    Some(E::ENOSYS | E::EOPNOTSUPP | E::EPERM | E::EINVAL)
+                ) {
+                    return Err(Error {
+                        errno: raw_errno as _,
+                        syscall: Tag::fstatat,
+                        ..Default::default()
+                    }
+                    .with_path(path.as_bytes()));
+                }
+            }
+        }
+        // A mount of another file system. A bind mount of the same one is not told apart.
+        let parent = match bun_paths::dirname(path.as_bytes()) {
+            Some(parent) => fstatat(dir, &bun_core::ZBox::from_bytes(parent))?,
+            None => fstatat(dir, bun_core::zstr!("."))?,
+        };
+        let child = lstatat(dir, path)?;
+        Ok(child.st_dev != parent.st_dev)
+    }
+
     pub fn mkdir(path: &ZStr, mode: Mode) -> Maybe<()> {
         check_p!(
             // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
@@ -3814,6 +3868,10 @@ mod windows_impl {
             return Err(err.with_fd(fd));
         }
         Ok(bytes_written as usize)
+    }
+    /// A volume mount point is a reparse point, and `renameat` moves it. Nothing is a mount here.
+    pub fn is_mount_point(_dir: Fd, _path: &ZStr) -> Maybe<bool> {
+        Ok(false)
     }
     pub fn stat(path: &ZStr) -> Maybe<Stat> {
         sys_uv::stat(path)

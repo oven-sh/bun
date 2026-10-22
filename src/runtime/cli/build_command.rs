@@ -961,7 +961,6 @@ impl BuildCommand {
                                     data: bun_sys::WriteFileData::Buffer {
                                         buffer: sourcemap_bytes,
                                     },
-                                    encoding: bun_sys::WriteFileEncoding::Buffer,
                                     dirfd: root_dir.fd,
                                     file: bun_sys::PathOrFileDescriptor::Path(map_basename),
                                     ..Default::default()

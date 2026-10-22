@@ -44,8 +44,6 @@ pub mod options {
     pub enum PathSeparators {
         Any,
         Auto,
-        Posix,
-        Windows,
     }
 
     // ── const-generic encoding ────────────────────────────────────────────
@@ -71,8 +69,6 @@ pub mod options {
         pub(crate) const fn from_u8(v: u8) -> Self {
             match v {
                 1 => Self::Auto,
-                2 => Self::Posix,
-                3 => Self::Windows,
                 _ => Self::Any,
             }
         }
@@ -96,8 +92,6 @@ pub mod options {
             match self {
                 PathSeparators::Any => panic!("use the existing slash"),
                 PathSeparators::Auto => SEP,
-                PathSeparators::Posix => SEP_POSIX,
-                PathSeparators::Windows => SEP_WINDOWS,
             }
         }
     }
@@ -156,19 +150,6 @@ pub mod options {
 }
 
 use options::{CheckLength, Error as PathError, Kind, PathSeparators};
-
-// Runtime → type-param dispatch for `resolve_path`'s `<P: PlatformT>` fns,
-// keyed on `SEP_OPT`. PERF: SEP_OPT is a const generic so the optimizer
-// const-folds the match to a single monomorphized call.
-macro_rules! sep_dispatch {
-    ($fn:ident ( $($a:expr),* $(,)? )) => {
-        match PathSeparators::from_u8(SEP_OPT) {
-            PathSeparators::Any | PathSeparators::Auto => path::$fn::<path::platform::Auto>($($a),*),
-            PathSeparators::Posix => path::$fn::<path::platform::Posix>($($a),*),
-            PathSeparators::Windows => path::$fn::<path::platform::Windows>($($a),*),
-        }
-    };
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PathUnit trait — replaces `opts.pathUnit()` / `opts.notPathUnit()` /
@@ -368,11 +349,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     fn append(&mut self, characters: &[U], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
-            buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
-                PathSeparators::Posix => U::from_u8(SEP_POSIX),
-                PathSeparators::Windows => U::from_u8(SEP_WINDOWS),
-            };
+            buf[self.len] = U::from_u8(SEP);
             self.len += 1;
         }
 
@@ -382,7 +359,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
                 buf[self.len..][..characters.len()].copy_from_slice(characters);
                 self.len += characters.len();
             }
-            PathSeparators::Auto | PathSeparators::Posix | PathSeparators::Windows => {
+            PathSeparators::Auto => {
                 for &c in characters {
                     buf[self.len] = if c.eq_ascii(b'/') || c.eq_ascii(b'\\') {
                         U::from_u8(PathSeparators::from_u8(SEP_OPT).char())
@@ -399,11 +376,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
         let buf = U::buffer_as_mut_slice(&mut self.pooled);
         if add_separator {
-            buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
-                PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
-                PathSeparators::Posix => U::from_u8(SEP_POSIX),
-                PathSeparators::Windows => U::from_u8(SEP_WINDOWS),
-            };
+            buf[self.len] = U::from_u8(SEP);
             self.len += 1;
         }
 
@@ -1085,12 +1058,16 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // `unreachable!()` and is const-folded out in this monomorphisation.
             let parts_u8: &[&[u8]] = U::id_u8_slices(parts);
             let joined = if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
-                match sep_dispatch!(join_abs_string_buf_checked(cloned_slice, pooled, parts_u8)) {
+                match path::join_abs_string_buf_checked::<path::platform::Auto>(
+                    cloned_slice,
+                    pooled,
+                    parts_u8,
+                ) {
                     Some(j) => j,
                     None => return Err(PathError::MaxPathExceeded),
                 }
             } else {
-                sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8))
+                path::join_abs_string_buf::<path::platform::Auto>(cloned_slice, pooled, parts_u8)
             };
 
             let trimmed = trim_input(TrimInputKind::Abs, joined);
@@ -1138,7 +1115,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
                 let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
                 let part_u8: &[u8] = C::id_u8(part);
-                let joined = sep_dispatch!(join_string_buf(pooled, &[cwd_path, part_u8]));
+                let joined =
+                    path::join_string_buf::<path::platform::Auto>(pooled, &[cwd_path, part_u8]);
 
                 let trimmed = trim_input(TrimInputKind::Abs, joined);
                 self._buf.len = trimmed.len();
@@ -1161,7 +1139,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 let pooled: &mut [u16] =
                     U::id_u16_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
                 let part_u16: &[u16] = C::id_u16(part);
-                let joined = sep_dispatch!(join_string_buf_w_same(pooled, &[cwd_path, part_u16]));
+                let joined = path::join_string_buf_w_same::<path::platform::Auto>(
+                    pooled,
+                    &[cwd_path, part_u16],
+                );
                 let trimmed = trim_input(TrimInputKind::Abs, joined);
                 self._buf.len = trimmed.len();
             }
@@ -1241,10 +1222,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     .iter()
                     .rposition(|c| c.eq_ascii(SEP_POSIX) || c.eq_ascii(SEP_WINDOWS)),
                 PathSeparators::Auto => self.slice().iter().rposition(|c| c.eq_ascii(SEP)),
-                PathSeparators::Posix => self.slice().iter().rposition(|c| c.eq_ascii(SEP_POSIX)),
-                PathSeparators::Windows => {
-                    self.slice().iter().rposition(|c| c.eq_ascii(SEP_WINDOWS))
-                }
             };
             let Some(slash) = slash else {
                 self._buf.set_length(min_len);

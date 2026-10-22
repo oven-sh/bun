@@ -621,13 +621,6 @@ public:
         | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum
         | JSC::ProhibitsPropertyCaching;
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSharedEnvMap, Base);
-        return &vm.plainObjectSpace();
-    }
-
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -664,6 +657,7 @@ private:
         Base::finishCreation(vm);
     }
 };
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSharedEnvMap, JSSharedEnvMap::Base);
 
 const JSC::ClassInfo JSSharedEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSharedEnvMap) };
 

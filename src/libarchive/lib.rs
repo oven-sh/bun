@@ -661,13 +661,9 @@ pub mod lib {
         }
     }
 
-    /// Iterates over the entries of an open archive, skipping entries whose
-    /// file kind has its bit set in `filter`.
+    /// Iterates over the entries of an open archive.
     pub struct ArchiveIterator {
         pub archive: *mut Archive,
-        // A u16 bitmask over
-        // `bun_sys::FileKind` variants.
-        pub(crate) filter: u16,
     }
 
     /// One entry returned from [`ArchiveIterator::next`].
@@ -753,7 +749,7 @@ pub mod lib {
                 _ => {}
             }
 
-            IteratorResult::init_res(Self { archive, filter: 0 })
+            IteratorResult::init_res(Self { archive })
         }
 
         pub fn next(&mut self) -> IteratorResult<Option<NextEntry>> {
@@ -768,9 +764,6 @@ pub mod lib {
                         let kind = bun_sys::kind_from_mode(
                             Entry::opaque_ref(entry).filetype() as bun_sys::Mode
                         );
-                        if (self.filter & (1u16 << (kind as u8))) != 0 {
-                            continue;
-                        }
                         IteratorResult::init_res(Some(NextEntry { entry, kind }))
                     }
                     _ => IteratorResult::init_err(self.archive, b"failed to read archive header"),
@@ -1292,25 +1285,12 @@ pub mod archiver {
         }
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub struct ExtractOptions {
         pub depth_to_skip: usize,
-        pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
         pub skip_symlinks: bool,
-    }
-
-    impl Default for ExtractOptions {
-        fn default() -> Self {
-            Self {
-                depth_to_skip: 0,
-                close_handles: true,
-                log: false,
-                npm: false,
-                skip_symlinks: false,
-            }
-        }
     }
 }
 
@@ -1843,10 +1823,7 @@ impl Archiver {
                             };
 
                             let mut output = match file_handle_native.make_lib_uv_owned() {
-                                Ok(fd) => OutputFile {
-                                    fd,
-                                    close: options.close_handles,
-                                },
+                                Ok(fd) => OutputFile { fd, close: true },
                                 Err(err) => {
                                     file_handle_native.close();
                                     return Err(err.into());
@@ -1985,11 +1962,7 @@ impl Archiver {
             }
         };
 
-        let _close_guard = scopeguard::guard(dir, |d| {
-            if options.close_handles {
-                d.close();
-            }
-        });
+        let _close_guard = scopeguard::guard(dir, |d| d.close());
 
         Self::extract_to_dir(file_buffer, dir, ctx, appender, options)
     }

@@ -749,23 +749,6 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
   const lineInfo = new LineInfo(sourceCode);
   const ctx: ParseContext = { file, sourceCode, lineInfo };
 
-  if (!tree) {
-    appendError({ file, start: { line: 0, column: 0 }, end: { line: 0, column: 0 } }, "no tree found");
-    for (const lineNumber of manualFindLines) {
-      const lineContent = sourceCodeLines[lineNumber - 1];
-      const column = lineContent.indexOf("[[ZIG_EXPORT(") + 3;
-      appendError(
-        {
-          file,
-          start: { line: lineNumber, column },
-          end: { line: lineNumber, column: column + "ZIG_EXPORT(".length },
-        },
-        "ZIG_EXPORT found, but Lezer failed to parse the file.",
-      );
-    }
-    return;
-  }
-
   const queryFoundLines = new Set<number>();
 
   tree.iterate({

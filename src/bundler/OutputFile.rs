@@ -246,7 +246,6 @@ impl OutputFile {
                     &mut path_buf,
                     &bun_sys::WriteFileArgs {
                         data: bun_sys::WriteFileData::Buffer { buffer: bytes },
-                        encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,
                         file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),

@@ -10,35 +10,17 @@
 //! dead. Revive via `Alias::has` rather than re-adding a parallel table.
 
 /// One macro call below is the *only* place a module name is spelled.
-///
-/// Input is two disjoint groups so the COMPAT subset falls out without a
-/// tt-muncher: `compat` names go in all three consts, `node_only` names are
-/// the five Bun-compat exclusions (buffer/fs/path/process/test) and go only
-/// in RAW/PATTERNS. Every current consumer inserts into a hash set, so the
-/// "compat-first, exclusions-last" order (vs. strict-alpha) is not
-/// observable.
 macro_rules! node_builtins_table {
     (
         compat:    [ $( $c:literal ),* $(,)? ],
         node_only: [ $( $n:literal ),* $(,)? ] $(,)?
     ) => {
-        /// All Node.js core module bare names.
-        pub const NODE_BUILTIN_PATTERNS_RAW: &[&[u8]] = &[
-            $( $c.as_bytes(), )*
-            $( $n.as_bytes(), )*
-        ];
-
-        /// RAW plus the same names with a `node:` prefix.
+        /// All Node.js core module bare names, each also with a `node:` prefix.
         pub const NODE_BUILTIN_PATTERNS: &[&[u8]] = &[
             $( $c.as_bytes(), )*
             $( $n.as_bytes(), )*
             $( concat!("node:", $c).as_bytes(), )*
             $( concat!("node:", $n).as_bytes(), )*
-        ];
-
-        /// RAW minus the `node_only` exclusions.
-        pub const BUN_NODE_BUILTIN_PATTERNS_COMPAT: &[&[u8]] = &[
-            $( $c.as_bytes(), )*
         ];
     };
 }
@@ -114,8 +96,6 @@ mod tests {
     use super::*;
     #[test]
     fn cardinalities_match_zig_spec() {
-        assert_eq!(NODE_BUILTIN_PATTERNS_RAW.len(), 57);
         assert_eq!(NODE_BUILTIN_PATTERNS.len(), 57 * 2);
-        assert_eq!(BUN_NODE_BUILTIN_PATTERNS_COMPAT.len(), 52);
     }
 }

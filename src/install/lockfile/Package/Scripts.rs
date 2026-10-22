@@ -269,9 +269,6 @@ impl Scripts {
         None
     }
 
-    // Generic over `bun_semver::StringBuilder`
-    // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
-    // are accepted (both impl the trait).
     pub(crate) fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {

@@ -339,7 +339,7 @@ const ClassInfo JSReadableSinkControllerBase::s_info = { "ReadableSinkController
   var templ = head;
 
   for (let name of classes) {
-    const { className, controller, prototypeName, controllerName, controllerPrototypeName, constructor } = names(name);
+    const { className, controller } = names(name);
     templ += `
 
   void ${className}::ref() {
@@ -609,12 +609,6 @@ public:
     }
 
     DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${prototypeName}, Base);
-        return &vm.plainObjectSpace();
-    }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -643,12 +637,6 @@ class ${controllerPrototypeName} final : public JSC::JSNonFinalObject {
         }
     
         DECLARE_INFO;
-        template<typename CellType, JSC::SubspaceAccess>
-        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-        {
-            STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${controllerPrototypeName}, Base);
-            return &vm.plainObjectSpace();
-        }
         static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
         {
             return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -952,7 +940,7 @@ default:
   templ += footer;
 
   for (let name of classes) {
-    const { className, controller, prototypeName, controllerPrototypeName, constructor } = names(name);
+    const { controller } = names(name);
 
     templ += `
 extern "C" JSC::EncodedJSValue ${name}__createObject(JSC::JSGlobalObject* arg0, void* sinkPtr, uintptr_t destructor)
@@ -1190,7 +1178,7 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
 `;
 
   for (const name of classes) {
-    const rustPath = sinkPaths[name] ?? `crate::webcore::streams::${name}`;
+    const rustPath = sinkPaths[name];
     const JSSinkT = `crate::webcore::sink::JSSink::<${name}>`;
     templ += `// ════════════════════════════════════════════════════════════════════════════
 // ${name}

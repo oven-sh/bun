@@ -181,9 +181,7 @@ pub(crate) fn init_external_modules(
     result
 }
 
-pub use bun_resolve_builtins::node_builtins::{
-    BUN_NODE_BUILTIN_PATTERNS_COMPAT, NODE_BUILTIN_PATTERNS, NODE_BUILTIN_PATTERNS_RAW,
-};
+pub use bun_resolve_builtins::node_builtins::NODE_BUILTIN_PATTERNS;
 // NODE_BUILTINS_MAP removed: dead — `is_node_builtin` (line 142) already delegates to
 // `bun_resolve_builtins::Alias::has`; no other reader. See node_builtins.rs header.
 

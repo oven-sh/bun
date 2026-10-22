@@ -2888,6 +2888,52 @@ describe.concurrent("the global bin directory and $PATH", () => {
   });
 });
 
+// On Linux a file name is bytes, not text. A script runs `"$(bun pm bin)/tool"`, so every byte of
+// the path has to come out as it is. `sh` puts the byte into the working directory and into the
+// environment: a JavaScript string cannot hold a lone 0xFF byte.
+describe.concurrent.skipIf(!isLinux)("bun pm bin prints a path that is not UTF-8 byte for byte", () => {
+  const withByte = (prefix: string) => Buffer.concat([Buffer.from(prefix), Buffer.from([0xff])]);
+
+  async function pmBin(cwd: string, script: string, extraEnv: NodeJS.Dict<string> = {}) {
+    await using proc = spawn({
+      cmd: ["sh", "-c", script, bunExe()],
+      cwd,
+      env: { ...env, ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    // One byte of output is one character of the string, so a failure shows the bytes.
+    return { stdout: Buffer.from(stdout).toString("latin1"), stderr, exitCode };
+  }
+
+  test("the project's node_modules/.bin", async () => {
+    using dir = tempDir("pm-bin-bytes", {});
+    const project = withByte(join(String(dir), "proj-"));
+    mkdirSync(project);
+    writeFileSync(Buffer.concat([project, Buffer.from("/package.json")]), JSON.stringify({ name: "p" }));
+    writeFileSync(join(String(dir), "project.bin"), project);
+
+    expect(await pmBin(String(dir), `cd "$(cat project.bin)" && exec "$0" pm bin`)).toEqual({
+      stdout: `${project.toString("latin1")}/node_modules/.bin\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("the global bin directory", async () => {
+    using dir = tempDir("pm-bin-bytes-global", { "global/package.json": "{}" });
+    const bin = withByte(join(String(dir), "bin-"));
+    writeFileSync(join(String(dir), "bin.bin"), bin);
+
+    expect(
+      await pmBin(String(dir), `BUN_INSTALL_BIN="$(cat bin.bin)" exec "$0" pm bin -g`, {
+        BUN_INSTALL_GLOBAL_DIR: join(String(dir), "global"),
+      }),
+    ).toEqual({ stdout: `${bin.toString("latin1")}\n`, stderr: "", exitCode: 0 });
+  });
+});
+
 // A package.json that is readable but not writable (a read-only checkout, a file owned by
 // another user) must only stop the commands that actually rewrite it.
 describe.skipIf(isWindows)("read-only package.json", () => {

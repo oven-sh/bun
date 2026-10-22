@@ -481,21 +481,24 @@ impl CronRegisterJob {
         }
 
         // Build new entry with single-quoted paths to prevent shell injection
-        let mut new_entry = Vec::new();
-        if write!(
-            &mut new_entry,
-            "# bun-cron: {title}\n{sched} '{exe}' run --cron-title={title} --cron-period='{sched}' '{path}'\n",
-            title = bstr::BStr::new(self.title.as_bytes()),
-            sched = bstr::BStr::new(self.schedule.as_bytes()),
-            exe = bstr::BStr::new(self.bun_exe.as_bytes()),
-            path = bstr::BStr::new(self.abs_path.as_bytes()),
-        )
-        .is_err()
-        {
-            self.set_err(format_args!("Out of memory"));
-            return Err(());
-        }
-        result.extend_from_slice(&new_entry);
+        let (title, schedule) = (self.title.as_bytes(), self.schedule.as_bytes());
+        let new_entry: [&[u8]; 13] = [
+            b"# bun-cron: ",
+            title,
+            b"\n",
+            schedule,
+            b" '",
+            self.bun_exe.as_bytes(),
+            b"' run --cron-title=",
+            title,
+            b" --cron-period='",
+            schedule,
+            b"' '",
+            self.abs_path.as_bytes(),
+            b"'\n",
+        ];
+        // Joined, not formatted: `{}` would replace each byte of a path that is not UTF-8.
+        result.extend_from_slice(&new_entry.concat());
 
         let tmp_path = match make_temp_path("bun-cron-") {
             Ok(p) => p,
@@ -564,31 +567,19 @@ impl CronRegisterJob {
             return Err(());
         };
 
-        let mut launch_agents_dir = Vec::new();
-        let _ = write!(
-            &mut launch_agents_dir,
-            "{}/Library/LaunchAgents",
-            bstr::BStr::new(home)
-        );
-        if Fd::cwd().make_path(&launch_agents_dir).is_err() {
+        // Joined as bytes, like `plist_path`.
+        if Fd::cwd()
+            .make_path(&[home, b"/Library/LaunchAgents"].concat())
+            .is_err()
+        {
             self.set_err(format_args!(
                 "Failed to create ~/Library/LaunchAgents directory"
             ));
             return Err(());
         }
 
-        let plist_path = match alloc_print_z(format_args!(
-            "{}/Library/LaunchAgents/bun.cron.{}.plist",
-            bstr::BStr::new(home),
-            bstr::BStr::new(self.title.as_bytes())
-        )) {
-            Ok(p) => p,
-            Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Err(());
-            }
-        };
-        self.tmp_path.set(Some(plist_path));
+        self.tmp_path
+            .set(Some(plist_path(home, self.title.as_bytes())));
 
         // XML-escape all dynamic values
         macro_rules! try_escape {
@@ -1171,15 +1162,7 @@ impl CronRemoveJob {
             self.set_err(format_args!("HOME not set"));
             return;
         };
-        if let Ok(plist_path) = alloc_print_z(format_args!(
-            "{}/Library/LaunchAgents/bun.cron.{}.plist",
-            bstr::BStr::new(home),
-            bstr::BStr::new(self.title.as_bytes())
-        )) {
-            let _ = sys::unlink(&plist_path);
-        } else {
-            self.set_err(format_args!("Out of memory"));
-        }
+        let _ = sys::unlink(&plist_path(home, self.title.as_bytes()));
     }
 
     /// May free `this` (via spawn → synchronous exit → finish, or error path).
@@ -2310,6 +2293,14 @@ fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::A
     let mut v = Vec::new();
     v.write_fmt(args).map_err(|_| bun_alloc::AllocError)?;
     Ok(ZString::from_vec(v))
+}
+
+/// Joined, not formatted: `$HOME` is not always UTF-8, and `{}` would replace each such byte.
+#[cfg(target_os = "macos")]
+fn plist_path(home: &[u8], title: &[u8]) -> ZString {
+    ZString::from_vec_with_nul(
+        [home, b"/Library/LaunchAgents/bun.cron.", title, b".plist\0"].concat(),
+    )
 }
 
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.

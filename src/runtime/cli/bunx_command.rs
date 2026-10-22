@@ -484,31 +484,35 @@ impl BunxCommand {
             let file_path = [package_dir.as_slice(), SEP, &*bin.file].concat();
             let file = bun_which::which(&mut buf, b"", b"", &file_path)
                 .map(|file| ZBox::from_bytes(file.as_bytes()));
-            let file_is_executable = file.is_some();
 
             let mut real_dir = bun_paths::path_buffer_pool::get();
             let Ok(real_dir) = bun_sys::realpath(&ZBox::from_vec(package_dir), &mut real_dir)
             else {
                 return Ok(InProject::Absent);
             };
-            let found = [entry, file].into_iter().flatten().find(|candidate| {
-                bun_sys::realpath(candidate, &mut buf).is_ok_and(|real| {
-                    (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP))
-                })
-            });
-            return Ok(match found {
-                Some(bin) => InProject::Run(bin),
-                // The file links out of the package.
-                None if file_is_executable => InProject::Absent,
-                None => Self::find_without_executable_file(
-                    transpiler,
-                    &package_json,
+            let is_in_package = |real: &[u8]| {
+                (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP))
+            };
+            // The installer links the bin of a package with native builds into an optional dependency,
+            // and skips the install script that replaces the package's own file.
+            if let Some(entry) = entry
+                && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
+                && (is_in_package(real)
+                    || Self::is_in_optional_dependency(transpiler, &package_json, real))
+            {
+                return Ok(InProject::Run(entry));
+            }
+            let Some(file) = file else {
+                return Ok(Self::find_without_executable_file(
                     package_name,
-                    &bin_dir,
-                    &bin.name,
                     file_path,
                     real_dir,
-                ),
+                ));
+            };
+            return Ok(match bun_sys::realpath(&file, &mut buf) {
+                Ok(real) if is_in_package(real) => InProject::Run(file),
+                // The file links out of the package.
+                _ => InProject::Absent,
             });
         }
         Ok(InProject::Absent)
@@ -517,24 +521,11 @@ impl BunxCommand {
     /// The project has the package, and the file of its bin is not an executable file.
     #[cold]
     fn find_without_executable_file(
-        transpiler: &mut Transpiler,
-        package_json: &ZStr,
         package_name: &[u8],
-        bin_dir: &[u8],
-        bin_name: &[u8],
         file: Vec<u8>,
         real_dir: &[u8],
     ) -> InProject {
         let mut buf = bun_paths::path_buffer_pool::get();
-        // The installer links the bin of a package with native builds into an optional dependency.
-        if let Some(entry) = bun_which::which(&mut buf, bin_dir, b"", bin_name)
-            .map(|entry| ZBox::from_bytes(entry.as_bytes()))
-            && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
-            && Self::is_in_optional_dependency(transpiler, package_json, real)
-        {
-            return InProject::Run(entry);
-        }
-
         let file = ZBox::from_vec(file);
         match bun_sys::realpath(&file, &mut buf) {
             Ok(real) if (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP)) => {

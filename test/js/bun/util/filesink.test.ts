@@ -2,6 +2,8 @@ import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { totalmem } from "node:os";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -1672,4 +1674,102 @@ console.log(await Bun.file("out.txt").text());
     stderr: "",
     exitCode: 0,
   });
+});
+
+// On Windows the sink hands libuv, as one buffer, everything that queued behind
+// an in-flight write, and one libuv buffer describes at most 2^32 - 1 bytes. A
+// queue of 2^32 + 64 KiB bytes went out as 64 KiB, and the sink reported all of
+// it as written. The writes happen in a child, which holds about 6 GiB while
+// the queue grows.
+describe.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)("writes that queue more than 4 GiB", () => {
+  // The first write goes out at once and stays in flight until the event loop
+  // runs, so the 16 writes after it queue in one buffer of 2^32 + 64 KiB bytes.
+  const first = 64 * 1024;
+  const piece = 2 ** 28 + 4 * 1024;
+  const pieces = 16;
+  const total = first + pieces * piece;
+  // The first write is all 3. Every piece starts with 1 and ends with 2.
+  const writeAll = `
+    sink.write(new Uint8Array(${first}).fill(3));
+    const piece = new Uint8Array(${piece});
+    piece[0] = 1;
+    piece[piece.length - 1] = 2;
+    for (let i = 0; i < ${pieces}; i++) sink.write(piece);
+    await sink.end();
+  `;
+  // The offsets of both ends of the first write and of every piece, and the bytes there.
+  const probes = [0, first - 1];
+  const expected = [3, 3];
+  for (let i = 0; i < pieces; i++) {
+    probes.push(first + i * piece, first + (i + 1) * piece - 1);
+    expected.push(1, 2);
+  }
+
+  async function run(source: string, env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  it("reach a child's stdin whole", async () => {
+    // Prints the number of bytes on stdin and the byte at each offset in PROBES.
+    const countStdin = `
+      const probes = JSON.parse(process.env.PROBES);
+      const seen = probes.map(() => null);
+      let total = 0;
+      for await (const chunk of Bun.stdin.stream()) {
+        for (let i = 0; i < probes.length; i++) {
+          const at = probes[i] - total;
+          if (at >= 0 && at < chunk.length) seen[i] = chunk[at];
+        }
+        total += chunk.length;
+      }
+      console.log(JSON.stringify({ total, seen }));
+    `;
+    const result = await run(
+      `
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", process.env.COUNT_STDIN],
+        env: process.env,
+        stdin: "pipe",
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const sink = proc.stdin;
+      ${writeAll}
+      process.exitCode = await proc.exited;
+      `,
+      { COUNT_STDIN: countStdin, PROBES: JSON.stringify(probes) },
+    );
+    expect(result).toEqual({ result: { total, seen: expected }, stderr: "", exitCode: 0, signalCode: null });
+  }, 180_000);
+
+  it("reach a file whole", async () => {
+    using dir = tempDir("filesink-4gib", {});
+    const file = join(String(dir), "out.bin");
+    const result = await run(
+      `
+      const sink = Bun.file(process.env.OUT).writer();
+      ${writeAll}
+      console.log(JSON.stringify("closed"));
+      `,
+      { OUT: file },
+    );
+    expect(result).toEqual({ result: "closed", stderr: "", exitCode: 0, signalCode: null });
+
+    const seen: number[] = [];
+    const fd = openSync(file, "r");
+    try {
+      const byte = new Uint8Array(1);
+      for (const at of probes) seen.push(readSync(fd, byte, 0, 1, at) === 1 ? byte[0] : -1);
+    } finally {
+      closeSync(fd);
+    }
+    expect({ size: statSync(file).size, seen }).toEqual({ size: total, seen: expected });
+  }, 180_000);
 });

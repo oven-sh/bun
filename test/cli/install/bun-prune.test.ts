@@ -4242,6 +4242,880 @@ test.concurrent(
   },
 );
 
+// An install writes each tree of bun.lock through the workspace links. So every tree of one workspace is one folder,
+// `<workspace>/node_modules`, whatever links the workspace. `c` is self-contained and depends on its sibling `b`. `b`
+// then has a tree below the root, with what the root has at another version (no-deps), and a tree below `c`, with
+// what `c` has at another version (a-dep).
+const selfContained = (...workspaces: string[]) => ({ packages: ["packages/*"], selfContained: workspaces });
+const twoTrees: Workspaces = {
+  root: { workspaces: selfContained("packages/c"), dependencies: { "no-deps": "2.0.0" } },
+  packages: {
+    b: { dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } },
+    c: { dependencies: { b: "workspace:*", "no-deps": "1.0.0", "a-dep": "1.0.2" } },
+  },
+};
+// The same two trees without a self-contained workspace. `a` depends on `b` under a name that the root gives to a
+// registry package, so the link to `b` is in packages/a/node_modules.
+const twoTreesByAlias: Workspaces = {
+  root: { dependencies: { "no-deps": "2.0.0", "a-dep": "1.0.1", "what-bin": "1.0.0" } },
+  packages: {
+    a: { dependencies: { "what-bin": "workspace:b@*", "no-deps": "1.0.0", "a-dep": "1.0.2" } },
+    b: { dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } },
+  },
+};
+const bothTrees = { "a-dep": "1.0.1", "no-deps": "1.0.0" };
+// Two self-contained workspaces depend on `b`, which has a tree below each and one below the root.
+const threeTrees: Workspaces = {
+  root: { workspaces: selfContained("packages/c", "packages/d"), dependencies: { "no-deps": "2.0.0" } },
+  packages: {
+    ...twoTrees.packages,
+    d: { dependencies: { b: "workspace:*", "no-deps": "1.0.1", "a-dep": "1.0.3" } },
+  },
+};
+// `a` and `b` link each other, each under a name that the root gives to a registry package.
+const mutualLinks: Workspaces = {
+  root: { dependencies: { "no-deps": "2.0.0", "a-dep": "1.0.1", "what-bin": "1.0.0" } },
+  packages: {
+    a: { dependencies: { "what-bin": "workspace:b@*", "no-deps": "1.0.0" } },
+    b: { dependencies: { "a-dep": "workspace:a@*", "no-deps": "1.0.1" } },
+  },
+};
+// two-level-nest depends on one-fixed-dep@1.0.0, and a range binds to the workspace of that name. The root gives the
+// name to one-fixed-dep@2.0.0, so the link to the workspace is inside two-level-nest.
+const linkInsidePackage: Workspaces = {
+  root: {
+    dependencies: { "two-level-nest": "1.0.0", "one-fixed-dep": "2.0.0", "no-deps": "2.0.0", "what-bin": "1.0.0" },
+  },
+  packages: { "one-fixed-dep": { dependencies: { "no-deps": "2.0.0", "what-bin": "1.5.0" } } },
+};
+
+// The version of each package in `<folder>/node_modules`, and "link" for a link.
+function installedIn(dir: string, folder: string) {
+  const nm = join(dir, folder, "node_modules");
+  const versionOf = (name: string) =>
+    isSymlink(join(nm, name)) ? "link" : JSON.parse(readFileSync(join(nm, name, "package.json"), "utf8")).version;
+  const names = readdirSync(nm).filter(name => !name.startsWith("."));
+  return Object.fromEntries(names.toSorted().map(name => [name, versionOf(name)]));
+}
+
+test.concurrent.each([
+  ["a self-contained workspace", twoTrees, NOTHING(9, 3)],
+  ["a workspace: alias", twoTreesByAlias, NOTHING(10, 3)],
+] as const)(
+  "hoisted: bun prune --check finds nothing in a workspace that %s links too",
+  async (_, workspaces, nothing) => {
+    const dir = await setupWorkspaces("hoisted", workspaces);
+    expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--check");
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toEqual([BANNER, "", nothing]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The folder, what is placed in it, the packages that `bun prune` counts, and the name it gives the folder.
+const linked = "node_modules/b/node_modules";
+test.concurrent.each([
+  ["a self-contained workspace links too", twoTrees, "packages/b", bothTrees, 9, linked],
+  ["a workspace: alias links too", twoTreesByAlias, "packages/b", bothTrees, 10, linked],
+  ["two self-contained workspaces link too", threeTrees, "packages/b", bothTrees, 13, linked],
+  ["links the workspace that links it", mutualLinks, "packages/b", { "a-dep": "link", "no-deps": "1.0.1" }, 9, linked],
+  [
+    "a package of the root links",
+    linkInsidePackage,
+    "packages/one-fixed-dep",
+    { "no-deps": "2.0.0", "what-bin": "1.5.0" },
+    8,
+    "packages/one-fixed-dep/node_modules",
+  ],
+] as const)(
+  "hoisted: the folder of a workspace that %s keeps what each tree places",
+  async (_, workspaces, folder, placed, packages, label) => {
+    const dir = await setupWorkspaces("hoisted", workspaces);
+    expect(installedIn(dir, folder)).toEqual(placed);
+    // What no tree places is listed once and counted once, and nothing else goes.
+    plant(dir, `${folder}/node_modules/stray`);
+
+    const { stdout, stderr, exitCode } = await prune(dir);
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toEqual([BANNER, "", `- stray (${label})`, REMOVED(1, packages + 1)]);
+    expect(installedIn(dir, folder)).toEqual(placed);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.each([
+  ["b", 7],
+  ["c", 8],
+] as const)(
+  "hoisted: --filter %s prunes the folder of that workspace when two trees share packages/b",
+  async (selected, packages) => {
+    const dir = await setupWorkspaces("hoisted", twoTrees);
+    const strays = {
+      b: plant(dir, "packages/b/node_modules/stray-b"),
+      c: plant(dir, "packages/c/node_modules/stray-c"),
+    };
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--filter", selected);
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toEqual([
+      BANNER,
+      "",
+      `- stray-${selected} (node_modules/${selected}/node_modules)`,
+      REMOVED(1, packages),
+    ]);
+    expect(existsSync(strays[selected === "b" ? "c" : "b"])).toBeTrue();
+    expect(installedIn(dir, "packages/b")).toMatchObject(bothTrees);
+    expect(installedIn(dir, "packages/c")).toMatchObject({ "a-dep": "1.0.2", b: "link", "no-deps": "1.0.0" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Both trees of `b` have one-fixed-dep@1.0.0. Its no-deps@1.0.0 is the root's for the tree below the root, and a
+// nested copy for the tree below `c`, which has no-deps@2.0.0.
+test.concurrent(
+  "hoisted: a package folder below a shared workspace folder keeps what one tree nests in it",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { workspaces: selfContained("packages/c"), dependencies: { "no-deps": "1.0.0", "one-fixed-dep": "2.0.0" } },
+      packages: {
+        b: { dependencies: { "one-fixed-dep": "1.0.0" } },
+        c: { dependencies: { b: "workspace:*", "one-fixed-dep": "2.0.0" } },
+      },
+    });
+    const nested = "packages/b/node_modules/one-fixed-dep";
+    expect(installedIn(dir, "packages/b")).toEqual({ "one-fixed-dep": "1.0.0" });
+    expect(installedIn(dir, nested)).toEqual({ "no-deps": "1.0.0" });
+
+    plant(dir, `${nested}/node_modules/stray`);
+    const { stdout, stderr, exitCode } = await prune(dir);
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toEqual([
+      BANNER,
+      "",
+      "- stray (node_modules/c/node_modules/b/node_modules/one-fixed-dep/node_modules)",
+      REMOVED(1, 11),
+    ]);
+    expect(installedIn(dir, nested)).toEqual({ "no-deps": "1.0.0" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// two-level-nest needs one-fixed-dep@1.0.0 and no-deps@1.1.0. The root and `c` each have another package under its
+// name, so both trees of `b` place it, and each nests the dependency that its own side has at another version.
+test.concurrent(
+  "hoisted: a package folder below a shared workspace folder keeps what each tree nests in it",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: {
+        workspaces: selfContained("packages/c"),
+        dependencies: { "two-level-nest": "npm:a-dep@1.0.1", "no-deps": "1.1.0", "one-fixed-dep": "2.0.0" },
+      },
+      packages: {
+        b: { dependencies: { "two-level-nest": "1.0.0" } },
+        c: {
+          dependencies: {
+            b: "workspace:*",
+            "two-level-nest": "npm:a-dep@1.0.2",
+            "no-deps": "2.0.0",
+            "one-fixed-dep": "1.0.0",
+          },
+        },
+      },
+    });
+    const nested = "packages/b/node_modules/two-level-nest";
+    const placed = { "no-deps": "1.1.0", "one-fixed-dep": "1.0.0" };
+    expect(installedIn(dir, "packages/b")).toEqual({ "two-level-nest": "1.0.0" });
+    expect(installedIn(dir, nested)).toEqual(placed);
+
+    plant(dir, `${nested}/node_modules/stray`);
+    const { stdout, stderr, exitCode } = await prune(dir);
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toEqual([
+      BANNER,
+      "",
+      "- stray (node_modules/b/node_modules/two-level-nest/node_modules)",
+      REMOVED(1, 16),
+    ]);
+    expect(installedIn(dir, nested)).toEqual(placed);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `b` has no-deps@1.0.0 from the tree below the root and what-bin@1.5.0 from the tree below `c`. The command goes
+// from the package that leaves to the one that stays, whichever tree places that one.
+test.concurrent("hoisted: a command in a shared workspace folder goes to the package another tree places", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { workspaces: selfContained("packages/c"), dependencies: { "no-deps": "2.0.0", "what-bin": "1.5.0" } },
+    packages: {
+      b: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.5.0" } },
+      c: { dependencies: { b: "workspace:*", "no-deps": "1.0.0", "what-bin": "1.0.0" } },
+    },
+  });
+  const nm = join(dir, "packages", "b", "node_modules");
+  expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.0", "what-bin": "1.5.0" });
+  expectBinInstalled(nm, "what-bin");
+  // A package that no tree places has the command.
+  const stray = plant(dir, "packages/b/node_modules/a-stray");
+  if (!isWindows) {
+    writeFileSync(join(stray, "what-bin.js"), "");
+    rmSync(join(nm, ".bin", "what-bin"));
+    symlinkSync("../a-stray/what-bin.js", join(nm, ".bin", "what-bin"));
+  }
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(lines(stdout)).toEqual([BANNER, "", "- a-stray (node_modules/b/node_modules)", REMOVED(1, 10)]);
+  expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.0", "what-bin": "1.5.0" });
+  expectBinInstalled(nm, "what-bin");
+  if (!isWindows) expect(readlinkSync(join(nm, ".bin", "what-bin"))).toBe("../what-bin/what-bin.js");
+  expect(exitCode).toBe(0);
+});
+
+// `b` pins no-deps twice: 1.0.0 for the tree below the root, which has 2.0.0, and 2.0.0 for the tree below `c`,
+// which has 1.0.0. An install writes both to packages/b/node_modules/no-deps. Only bun.lockb keeps both.
+test.concurrent("hoisted: a name that two trees of a workspace fill with different packages is kept", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted", saveTextLockfile: false },
+  });
+  await writeWorkspaces(dir, packageJson, {
+    root: { workspaces: selfContained("packages/c"), dependencies: { "no-deps": "2.0.0", "a-dep": "1.0.2" } },
+    packages: {
+      b: { dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" }, devDependencies: { "no-deps": "2.0.0" } },
+      c: { dependencies: { b: "workspace:*", "no-deps": "1.0.0" } },
+    },
+  });
+  await install(dir);
+  expect(existsSync(join(dir, "bun.lockb"))).toBeTrue();
+  const installed = installedIn(dir, "packages/b");
+  expect(Object.keys(installed)).toEqual(["a-dep", "no-deps"]);
+  // What loads from the name stays too: what is inside the package, and a copy of it below a sibling.
+  const inside = plant(dir, "packages/b/node_modules/no-deps/node_modules/inside");
+  const below = plant(dir, "packages/b/node_modules/a-dep/node_modules/no-deps");
+  plant(dir, "packages/b/node_modules/stray");
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  const place = "node_modules/b/node_modules/no-deps";
+  expect(out(stderr).split("\n")).toEqual([
+    `warn: the lockfile places two packages at ${place}; keeping node_modules/b/node_modules/a-dep/node_modules/no-deps`,
+    `warn: the lockfile places two packages at ${place}; keeping it`,
+    "note: a package.json has that name in two dependency groups with different versions",
+  ]);
+  expect(lines(stdout)).toEqual([BANNER, "", "- stray (node_modules/b/node_modules)", REMOVED(1, 12)]);
+  expect(installedIn(dir, "packages/b")).toEqual(installed);
+  expect(existsSync(inside)).toBeTrue();
+  expect(existsSync(below)).toBeTrue();
+  expect(exitCode).toBe(0);
+});
+
+// `c` and `d` link `b` and have what-bin, and `b` does not depend on it. The hoister looks for what `b` needs in
+// packages/b and then in the folder that links it. A copy in packages/b is in the way of theirs, so it goes only
+// while each of them has its own.
+const twoLinkersWithBin: Workspaces = {
+  root: threeTrees.root,
+  packages: {
+    b: threeTrees.packages.b,
+    c: { dependencies: { b: "workspace:*", "no-deps": "1.0.0", "a-dep": "1.0.2", "what-bin": "1.0.0" } },
+    d: { dependencies: { b: "workspace:*", "no-deps": "1.0.1", "a-dep": "1.0.3", "what-bin": "1.0.0" } },
+  },
+};
+test.concurrent(
+  "hoisted: a stray in a shared workspace folder goes if each folder that links it has the package",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", twoLinkersWithBin);
+    const copy = plant(dir, "packages/b/node_modules/what-bin");
+
+    const { stdout, stderr, exitCode } = await prune(dir);
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toEqual([BANNER, "", "- what-bin (node_modules/b/node_modules)", REMOVED(1, 16)]);
+    expect(existsSync(copy)).toBeFalse();
+    expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "hoisted: a stray in a shared workspace folder stays while a folder that links it lacks the package",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", twoLinkersWithBin);
+    const copy = plant(dir, "packages/b/node_modules/what-bin");
+    rmSync(join(dir, "packages", "d", "node_modules", "what-bin"), { recursive: true });
+
+    const { stdout, stderr, exitCode } = await prune(dir);
+    expect(out(stderr)).toBe(
+      `${MISSING_WARN("node_modules/d/node_modules/what-bin", "node_modules/b/node_modules/what-bin")}\n${NOTE}`,
+    );
+    expect(lines(stdout)).toEqual([BANNER, "", NOTHING(15, 4)]);
+    expect(existsSync(copy)).toBeTrue();
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `c` links `b` and has what-bin. If `b` needs what the root has, `b` has no tree, and packages/c still links it.
+const linkerWithBin = (noDepsOfRoot: string): Workspaces => ({
+  root: { workspaces: selfContained("packages/c"), dependencies: { "no-deps": noDepsOfRoot } },
+  packages: {
+    b: { dependencies: { "no-deps": "1.0.0" } },
+    c: { dependencies: { b: "workspace:*", "no-deps": "1.0.0", "what-bin": "1.0.0" } },
+  },
+});
+test.concurrent(
+  "hoisted: a stray in the folder of a workspace with no tree stays for a folder that links it",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", linkerWithBin("1.0.0"));
+    expect(existsSync(join(dir, "packages", "b", "node_modules"))).toBeFalse();
+    const copy = plant(dir, "packages/b/node_modules/what-bin");
+    rmSync(join(dir, "packages", "c", "node_modules", "what-bin"), { recursive: true });
+
+    const { stdout, stderr, exitCode } = await prune(dir);
+    expect(out(stderr)).toBe(
+      `${MISSING_WARN("node_modules/c/node_modules/what-bin", "packages/b/node_modules/what-bin")}\n${NOTE}`,
+    );
+    expect(lines(stdout)).toEqual([BANNER, "", NOTHING(6, 3)]);
+    expect(existsSync(copy)).toBeTrue();
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A run with `--filter b` does not install packages/c. What packages/c lacks then keeps nothing in packages/b.
+test.concurrent.each([
+  ["a tree", "2.0.0", "node_modules/b/node_modules", 5],
+  ["no tree", "1.0.0", "packages/b/node_modules", 4],
+] as const)(
+  "hoisted: --filter removes a stray from a workspace with %s whatever a folder it leaves out lacks",
+  async (_, noDepsOfRoot, label, packages) => {
+    const dir = await setupWorkspaces("hoisted", linkerWithBin(noDepsOfRoot));
+    const copy = plant(dir, "packages/b/node_modules/what-bin");
+    rmSync(join(dir, "packages", "c", "node_modules", "what-bin"), { recursive: true });
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--filter", "b");
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toEqual([BANNER, "", `- what-bin (${label})`, REMOVED(1, packages)]);
+    expect(existsSync(copy)).toBeFalse();
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `ui` is inside the folder of `web`, which is self-contained and links it. The only tree of `ui` is below `web`.
+const workspaceInside: Workspaces = {
+  root: { workspaces: { packages: ["apps/*", "apps/web/packages/*"], selfContained: ["apps/web"] } },
+  packages: {},
+};
+async function setupWorkspaceInside() {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  const member = (name: string, pkg: object) => JSON.stringify({ name, version: "1.0.0", ...pkg });
+  await Promise.all([
+    writeWorkspaces(dir, packageJson, workspaceInside),
+    write(
+      join(dir, "apps", "web", "package.json"),
+      member("web", { dependencies: { ui: "workspace:*" }, devDependencies: { "what-bin": "1.0.0" } }),
+    ),
+    write(
+      join(dir, "apps", "web", "packages", "ui", "package.json"),
+      member("ui", { dependencies: { "what-bin": "1.5.0" } }),
+    ),
+  ]);
+  await install(dir, "--linker", "hoisted");
+  expect(installedIn(dir, "apps/web/packages/ui")).toEqual({ "what-bin": "1.5.0" });
+  expect(installedIn(dir, "apps/web")).toEqual({ ui: "link", "what-bin": "1.0.0" });
+  return dir;
+}
+
+test.concurrent(
+  "hoisted: --production keeps the packages of a workspace inside a self-contained workspace",
+  async () => {
+    const dir = await setupWorkspaceInside();
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--production");
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toEqual([BANNER, "", "- what-bin@1.0.0 (node_modules/web/node_modules)", REMOVED(1, 6)]);
+    expect(installedIn(dir, "apps/web/packages/ui")).toEqual({ "what-bin": "1.5.0" });
+    expect(installedIn(dir, "apps/web")).toEqual({ ui: "link" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("hoisted: bun update keeps the packages of a workspace inside a self-contained workspace", async () => {
+  const dir = await setupWorkspaceInside();
+
+  const { stderr, exitCode } = await update(dir);
+  expect(stderr).not.toContain("warn:");
+  expect(installedIn(dir, "apps/web/packages/ui")).toEqual({ "what-bin": "1.5.0" });
+  expect(installedIn(dir, "apps/web")).toEqual({ ui: "link", "what-bin": "1.0.0" });
+  expect(exitCode).toBe(0);
+});
+
+// The folder of `b` is opened at packages/b, not through packages/c/node_modules/b.
+test.concurrent(
+  "hoisted: --filter does not refuse for the linked node_modules of a workspace it leaves out",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", twoTrees);
+    linkToOwnStorage(dir, "c");
+    plant(dir, "packages/b/node_modules/stray");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--filter", "b");
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toEqual([BANNER, "", "- stray (node_modules/b/node_modules)", REMOVED(1, 7)]);
+    expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// With a what-bin in the root's node_modules, as `twoTreesByAlias` has.
+const twoTreesAndWhatBin: Workspaces = {
+  ...twoTrees,
+  root: { ...twoTrees.root, dependencies: { "no-deps": "2.0.0", "what-bin": "1.0.0" } },
+};
+test.concurrent.each([
+  ["a self-contained workspace", twoTreesAndWhatBin],
+  ["a workspace: alias", twoTreesByAlias],
+] as const)(
+  "hoisted: bun update keeps what each tree places in a workspace that %s links too",
+  async (_, workspaces) => {
+    const dir = await setupWorkspaces("hoisted", workspaces);
+    expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+    // No tree places a what-bin in packages/b, and the root has one. A copy there goes, and nothing else does.
+    plant(dir, "packages/b/node_modules/what-bin");
+    plant(dir, "packages/b/node_modules/mine");
+
+    const { stderr, exitCode } = await update(dir);
+    expect(stderr).not.toContain("warn:");
+    const entries = readdirSync(join(dir, "packages", "b", "node_modules")).filter(name => !name.startsWith("."));
+    expect(entries.toSorted()).toEqual(["a-dep", "mine", "no-deps"]);
+    expect(installedIn(dir, "packages/b")).toMatchObject(bothTrees);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// hoist-lockfile-2 wants hoist-lockfile-shared@^1.0.1 and has 1.0.2 below it from the first install. The root then
+// pins 1.0.1, so `bun dedupe` has a version to remove, and the install it runs ends with the same pass.
+test.concurrent("hoisted: bun dedupe keeps what each tree places in a workspace that two folders link", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  const root = (dependencies: object) => ({
+    ...twoTrees,
+    root: { ...twoTrees.root, dependencies: { "no-deps": "2.0.0", "hoist-lockfile-2": "1.0.0", ...dependencies } },
+  });
+  await writeWorkspaces(dir, packageJson, root({}));
+  await install(dir);
+  await writeWorkspaces(dir, packageJson, root({ "hoist-lockfile-shared": "1.0.1" }));
+  await install(dir);
+  expect(installedIn(dir, "node_modules/hoist-lockfile-2")).toEqual({ "hoist-lockfile-shared": "1.0.2" });
+  expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+
+  const { stdout, stderr, exitCode } = await bun(dir, "dedupe");
+  expect(stderr).not.toContain("error:");
+  expect(out(stdout)).toContain("1 duplicate version removed");
+  expect(
+    existsSync(join(dir, "node_modules", "hoist-lockfile-2", "node_modules", "hoist-lockfile-shared")),
+  ).toBeFalse();
+  expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+  expect(exitCode).toBe(0);
+});
+
+// bun.lock names a workspace by its path and by its name. Neither has to be what it was.
+const respellPath = async (dir: string) => {
+  const respelled = (await lock(dir)).replace('"packages/b": {', '"./packages/b": {');
+  expect(respelled).toContain('"./packages/b": {');
+  await write(join(dir, "bun.lock"), respelled);
+};
+const moveAndLeaveLink = async (dir: string) => {
+  mkdirSync(join(dir, "libs"));
+  renameSync(join(dir, "packages", "b"), join(dir, "libs", "b"));
+  symlinkSync(join(dir, "libs", "b"), join(dir, "packages", "b"), "junction");
+  const workspaces = { packages: ["packages/c", "libs/*"], selfContained: ["packages/c"] };
+  await write(join(dir, "package.json"), JSON.stringify({ name: "root", ...twoTrees.root, workspaces }));
+};
+const rename = async (dir: string) => {
+  const edit = async (path: string, from: string, to: string) => {
+    const text = await file(path).text();
+    expect(text).toContain(from);
+    await write(path, text.replace(from, to));
+  };
+  await edit(join(dir, "packages", "c", "package.json"), '"b":"workspace:*"', '"bee":"workspace:*"');
+  const moved = join(dir, "libs", "b", "package.json");
+  await edit(existsSync(moved) ? moved : join(dir, "packages", "b", "package.json"), '"name":"b"', '"name":"bee"');
+};
+test.concurrent.each([
+  ["bun.lock spells its path another way", "packages/b", [respellPath]],
+  ["it moved and a link is at its old path", "libs/b", [moveAndLeaveLink]],
+  ["it has another name", "packages/b", [rename]],
+  ["it moved, has another name, and a link is at its old path", "libs/b", [moveAndLeaveLink, rename]],
+] as const)("hoisted: bun update keeps what each tree places in a workspace when %s", async (_, folder, edits) => {
+  const dir = await setupWorkspaces("hoisted", twoTrees);
+  for (const edit of edits) await edit(dir);
+
+  const { stderr, exitCode } = await update(dir);
+  expect(stderr).not.toContain("warn:");
+  expect(installedIn(dir, folder)).toEqual(bothTrees);
+  expect(exitCode).toBe(0);
+});
+
+// `a` takes the a-dep that `b` and the root want. No tree places a copy in packages/a or packages/b any longer.
+test.concurrent(
+  "hoisted: bun install removes what the second tree of a workspace placed and no tree places",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", twoTreesByAlias);
+    await write(
+      join(dir, "packages", "a", "package.json"),
+      JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { "what-bin": "workspace:b@*", "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      }),
+    );
+
+    await install(dir);
+    expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.0" });
+    expect(installedIn(dir, "packages/a")).toEqual({ "no-deps": "1.0.0", "what-bin": "link" });
+  },
+);
+
+// The workspace takes the root's version of its only dependency. Its copy goes, whatever else changed about it.
+test.concurrent.each([
+  ["bun.lock spells its path another way", "packages/b", [respellPath]],
+  ["it moved and a link is at its old path", "libs/b", [moveAndLeaveLink]],
+  ["it has another name", "packages/b", [rename]],
+  ["it moved, has another name, and a link is at its old path", "libs/b", [moveAndLeaveLink, rename]],
+] as const)("hoisted: bun install removes the copy a workspace no longer needs when %s", async (_, folder, edits) => {
+  const dir = await setupWorkspaces("hoisted", twoTrees);
+  expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+  for (const edit of edits) await edit(dir);
+  const manifest = join(dir, folder, "package.json");
+  const { name } = await file(manifest).json();
+  await write(manifest, JSON.stringify({ name, version: "1.0.0", dependencies: { "a-dep": "1.0.1" } }));
+
+  await install(dir);
+  expect(installedIn(dir, folder)).toEqual({ "a-dep": "1.0.1" });
+});
+
+// one-fixed-dep@1.0.0 in packages/a had its own no-deps@1.0.0. The root takes that version, so the copy has to go.
+// The way to packages/a does not pass the root's node_modules, and a link there still stops the removal. The
+// tests of an install through such a link skip Windows too.
+test.concurrent.skipIf(isWindows)(
+  "hoisted: bun install removes no copy below a workspace while the root node_modules is a link",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const root = (noDeps: string) => ({ dependencies: { "no-deps": noDeps, "one-fixed-dep": "2.0.0" } });
+    const packages = { a: { dependencies: { "one-fixed-dep": "1.0.0" } } };
+    await writeWorkspaces(dir, packageJson, { root: root("2.0.0"), packages });
+    mkdirSync(join(dir, "storage"));
+    symlinkSync("storage", join(dir, "node_modules"));
+    await install(dir);
+    const nested = "packages/a/node_modules/one-fixed-dep";
+    expect(installedIn(dir, nested)).toEqual({ "no-deps": "1.0.0" });
+
+    await writeWorkspaces(dir, packageJson, { root: root("1.0.0"), packages });
+    const { stderr, exitCode } = await bun(dir, "install");
+    expect(out(stderr)).toContain(
+      "warn: cannot prune symlink node_modules\n" + "note: remove the link and run 'bun install', then 'bun prune'",
+    );
+    expect(installedIn(dir, nested)).toEqual({ "no-deps": "1.0.0" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The root takes the version `b` wants, and `c` another one. The copy in packages/b is now what the tree below `c`
+// places, and no longer what the tree below the root places.
+test.concurrent(
+  "hoisted: bun install keeps a package that moved from one tree of a workspace to the other",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", twoTrees);
+    await writeWorkspaces(dir, join(dir, "package.json"), {
+      root: { ...twoTrees.root, dependencies: { "no-deps": "1.0.0" } },
+      packages: {
+        ...twoTrees.packages,
+        c: { dependencies: { b: "workspace:*", "no-deps": "2.0.0", "a-dep": "1.0.2" } },
+      },
+    });
+
+    await install(dir);
+    expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+    expect(installedIn(dir, "packages/c")).toEqual({ "a-dep": "1.0.2", b: "link", "no-deps": "2.0.0" });
+  },
+);
+
+// `c` gives the name `d` to a registry package, so the link to workspace `d` is in packages/b. The way up from
+// packages/d/node_modules passes packages/b and then packages/c.
+test.concurrent("hoisted: a stray stays while a folder two links up lacks the package", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: twoTrees.root,
+    packages: {
+      b: { dependencies: { d: "workspace:*", "no-deps": "1.0.0" } },
+      c: {
+        dependencies: {
+          b: "workspace:*",
+          d: "npm:a-dep@1.0.2",
+          "no-deps": "1.0.0",
+          "what-bin": "1.0.0",
+          "a-dep": "1.0.3",
+        },
+      },
+      d: { dependencies: { "no-deps": "1.0.1", "what-bin": "1.5.0" } },
+    },
+  });
+  expect(installedIn(dir, "packages/b")).toEqual({ d: "link", "no-deps": "1.0.0" });
+  expect(installedIn(dir, "packages/d")).toEqual({ "no-deps": "1.0.1", "what-bin": "1.5.0" });
+  const copy = plant(dir, "packages/d/node_modules/a-dep");
+  rmSync(join(dir, "packages", "c", "node_modules", "a-dep"), { recursive: true });
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(out(stderr)).toBe(
+    `${MISSING_WARN("node_modules/c/node_modules/a-dep", "node_modules/d/node_modules/a-dep")}\n${NOTE}`,
+  );
+  expect(lines(stdout)).toEqual([BANNER, "", NOTHING(14, 4)]);
+  expect(existsSync(copy)).toBeTrue();
+  expect(exitCode).toBe(0);
+});
+
+// `b` takes a-dep@1.0.3 and the run installs for `b` alone. The tree of `b` below `c` places that version in
+// packages/b, but the run leaves `c` out and does not write that tree. What is in packages/b is the old copy.
+test.concurrent("hoisted: bun update --filter removes the old copy that only a tree it leaves out places", async () => {
+  const dir = await setupWorkspaces("hoisted", twoTrees);
+  await write(
+    join(dir, "packages", "b", "package.json"),
+    JSON.stringify({ name: "b", version: "1.0.0", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.3" } }),
+  );
+
+  const { stderr, exitCode } = await bun(dir, "update", "--filter", "b");
+  expect(stderr).not.toContain("warn:");
+  expect(installedIn(dir, ".")).toMatchObject({ "a-dep": "1.0.3" });
+  expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.0" });
+  expect(installedIn(dir, "packages/c")).toEqual({ "a-dep": "1.0.2", b: "link", "no-deps": "1.0.0" });
+  expect(exitCode).toBe(0);
+});
+
+// `b` drops no-deps, so its copy has to go once the root and `c` have theirs. packages/c/node_modules is a link, and
+// a link is never opened.
+test.concurrent(
+  "hoisted: bun install keeps a copy and says why if a folder that links the workspace is behind a link",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", twoTrees);
+    linkToOwnStorage(dir, "c");
+    await write(
+      join(dir, "packages", "b", "package.json"),
+      JSON.stringify({ name: "b", version: "1.0.0", dependencies: { "a-dep": "1.0.1" } }),
+    );
+
+    const { stderr, exitCode } = await bun(dir, "install", "--linker", "hoisted");
+    expect(out(stderr)).toContain(
+      "warn: cannot prune symlink packages/c/node_modules\n" +
+        "note: remove the link and run 'bun install', then 'bun prune'",
+    );
+    expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `a` links the workspace under its new name. Until the next install, bun.lock lists packages/b under both names.
+test.concurrent(
+  "hoisted: bun install keeps what each tree places in a workspace that bun.lock lists under two names",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", twoTreesByAlias);
+    await writeWorkspaces(dir, join(dir, "package.json"), {
+      root: twoTreesByAlias.root,
+      packages: {
+        a: { dependencies: { "what-bin": "workspace:bee@*", "no-deps": "1.0.0", "a-dep": "1.0.2" } },
+        b: { name: "bee", ...twoTreesByAlias.packages.b },
+      },
+    });
+
+    await install(dir);
+    expect(installedIn(dir, "packages/b")).toEqual(bothTrees);
+    expect(installedIn(dir, "packages/a")).toEqual({ "a-dep": "1.0.2", "no-deps": "1.0.0", "what-bin": "link" });
+  },
+);
+
+// The root gives the name of the workspace in packages/w to a registry package. That package's no-deps@1.0.0 is a
+// nested copy until the root takes that version.
+const nameOfWorkspace = (noDeps: string): Workspaces => ({
+  root: { dependencies: { "one-fixed-dep": "1.0.0", "no-deps": noDeps } },
+  packages: { w: { name: "one-fixed-dep", version: "9.9.9", dependencies: { "no-deps": "1.0.1" } } },
+});
+test.concurrent(
+  "hoisted: bun install removes the nested copy of a root package that has a workspace's name",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", nameOfWorkspace("2.0.0"));
+    expect(installedIn(dir, "node_modules/one-fixed-dep")).toEqual({ "no-deps": "1.0.0" });
+    await writeWorkspaces(dir, join(dir, "package.json"), nameOfWorkspace("1.0.0"));
+
+    await install(dir);
+    expect(existsSync(join(dir, "node_modules", "one-fixed-dep", "node_modules", "no-deps"))).toBeFalse();
+    expect(installedIn(dir, "packages/w")).toEqual({ "no-deps": "1.0.1" });
+  },
+);
+
+// The registry package bundles a dependency, so its folder is left alone. The workspace of that name is another
+// folder.
+test.concurrent("hoisted: the folder of a workspace is pruned if the root package with its name bundles", async () => {
+  const dir = await setupWorkspaces("hoisted", nameOfWorkspace("2.0.0"));
+  const manifest = join(dir, "node_modules", "one-fixed-dep", "package.json");
+  await write(manifest, JSON.stringify({ ...(await file(manifest).json()), bundleDependencies: ["vendored"] }));
+  const vendored = plant(dir, "node_modules/one-fixed-dep/node_modules/vendored");
+  plant(dir, "packages/w/node_modules/stray");
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(lines(stdout)).toEqual([BANNER, "", "- stray (packages/w/node_modules)", REMOVED(1, 4)]);
+  expect(installedIn(dir, "packages/w")).toEqual({ "no-deps": "1.0.1" });
+  expect(existsSync(vendored)).toBeTrue();
+  expect(exitCode).toBe(0);
+});
+
+// The folder of workspace `w` is `one-fixed-dep`, which is also the name of a package of the root.
+test.concurrent("hoisted: a workspace's folder and the root package named like its path are two folders", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  await Promise.all([
+    writeWorkspaces(dir, packageJson, {
+      root: {
+        workspaces: ["one-fixed-dep", "packages/*"],
+        dependencies: { "one-fixed-dep": "1.0.0", "no-deps": "2.0.0" },
+      },
+      packages: { b: { dependencies: { "no-deps": "1.0.1" } } },
+    }),
+    write(
+      join(dir, "one-fixed-dep", "package.json"),
+      JSON.stringify({ name: "w", version: "1.0.0", dependencies: { "no-deps": "1.0.1" } }),
+    ),
+  ]);
+  await install(dir, "--linker", "hoisted");
+  expect(installedIn(dir, "one-fixed-dep")).toEqual({ "no-deps": "1.0.1" });
+  expect(installedIn(dir, "node_modules/one-fixed-dep")).toEqual({ "no-deps": "1.0.0" });
+  plant(dir, "one-fixed-dep/node_modules/in-workspace");
+  plant(dir, "node_modules/one-fixed-dep/node_modules/in-package");
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(lines(stdout)).toEqual([
+    BANNER,
+    "",
+    "- in-package (node_modules/one-fixed-dep/node_modules)",
+    "- in-workspace (node_modules/w/node_modules)",
+    REMOVED(2, 9),
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+// `node_modules/b` leads elsewhere, as after `bun link`. The packages of `b` are in packages/b, and so is its `.bin`.
+test.concurrent("hoisted: a command goes to the package that stays in the workspace's own folder", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "what-bin": "1.0.0" } },
+    packages: { b: { dependencies: { "what-bin": "1.5.0" } } },
+  });
+  const nm = join(dir, "packages", "b", "node_modules");
+  expectBinInstalled(nm, "what-bin");
+  const stray = plant(dir, "packages/b/node_modules/a-stray");
+  if (!isWindows) {
+    writeFileSync(join(stray, "what-bin.js"), "");
+    rmSync(join(nm, ".bin", "what-bin"));
+    symlinkSync("../a-stray/what-bin.js", join(nm, ".bin", "what-bin"));
+  }
+  rmSync(join(dir, "node_modules", "b"));
+  const elsewhere = linkOutside(dir, "node_modules/b");
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(lines(stdout)).toEqual([BANNER, "", "- a-stray (node_modules/b/node_modules)", REMOVED(1, 4)]);
+  expectBinInstalled(nm, "what-bin");
+  if (!isWindows) expect(readlinkSync(join(nm, ".bin", "what-bin"))).toBe("../what-bin/what-bin.js");
+  expect(existsSync(join(elsewhere, "node_modules"))).toBeFalse();
+  expect(exitCode).toBe(0);
+});
+
+// No workspace is self-contained here. The workspace moves to libs/b, takes another name, and a link stays at
+// packages/b. Its no-deps@1.0.0 is still placed, in the folder that the link leads to.
+test.concurrent.each(["install", "update"])(
+  "hoisted: bun %s keeps the packages of a workspace that moved, has another name, and left a link",
+  async command => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { b: { dependencies: { "no-deps": "1.0.0" } } },
+    });
+    mkdirSync(join(dir, "libs"));
+    renameSync(join(dir, "packages", "b"), join(dir, "libs", "b"));
+    symlinkSync(join(dir, "libs", "b"), join(dir, "packages", "b"), "junction");
+    await Promise.all([
+      write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "root", workspaces: ["libs/*"], dependencies: { "no-deps": "2.0.0" } }),
+      ),
+      write(
+        join(dir, "libs", "b", "package.json"),
+        JSON.stringify({ name: "bee", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+      ),
+    ]);
+
+    const { stderr, exitCode } = await bun(dir, command);
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "libs/b")).toEqual({ "no-deps": "1.0.0" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Workspace `a` leaves, and the workspace in packages/b, which has no dependency, takes its name. The no-deps in
+// packages/b is not the copy that `a` had: Bun did not place it.
+test.concurrent("hoisted: bun install keeps what is in a workspace that takes the name of one that left", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "no-deps": "1.0.0" } }, b: {} },
+  });
+  const own = plant(dir, "packages/b/node_modules/no-deps");
+  rmSync(join(dir, "packages", "a"), { recursive: true });
+  await write(join(dir, "packages", "b", "package.json"), JSON.stringify({ name: "a", version: "1.0.0" }));
+
+  await install(dir);
+  expect(existsSync(own)).toBeTrue();
+});
+
+// `<dir>/project` is the project. The workspace in `<dir>/shared` is outside it. It links `b` under a name that the
+// root gives to a registry package, and has its own what-bin. Nothing in its folder is opened, so what it has there
+// keeps nothing in packages/b.
+test.concurrent("hoisted: a stray in a workspace goes whatever a workspace outside the project has", async () => {
+  const { packageDir: dir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  const project = join(dir, "project");
+  const member = (name: string, pkg: object = {}) => JSON.stringify({ name, version: "1.0.0", ...pkg });
+  await Promise.all([
+    registry.writeBunfig(project, { linker: "hoisted" }),
+    write(
+      join(project, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*", "../shared"],
+        dependencies: { "no-deps": "2.0.0", "a-dep": "1.0.1", "what-bin": "1.5.0" },
+      }),
+    ),
+    write(join(project, "packages", "b", "package.json"), member("b")),
+    write(
+      join(dir, "shared", "package.json"),
+      member("shared", { dependencies: { "a-dep": "workspace:b@*", "what-bin": "1.0.0" } }),
+    ),
+  ]);
+  await install(project, "--linker", "hoisted");
+  const copy = plant(project, "packages/b/node_modules/what-bin");
+
+  const { stdout, stderr, exitCode } = await prune(project);
+  expect(stderr).toBe("");
+  expect(lines(stdout)).toEqual([BANNER, "", "- what-bin (packages/b/node_modules)", REMOVED(1, 6)]);
+  expect(existsSync(copy)).toBeFalse();
+  expect(exitCode).toBe(0);
+});
+
+// packages/b/node_modules is a link, and the run is for `b` alone. No package leaves packages/b, so the link stops
+// nothing and the run has nothing to say about it.
+test.concurrent(
+  "hoisted: bun update --filter says nothing about the linked node_modules that nothing leaves",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", twoTrees);
+    const storage = linkToOwnStorage(dir, "b");
+
+    const { stderr, exitCode } = await bun(dir, "update", "--filter", "b");
+    expect(stderr).not.toContain("warn:");
+    const entries = readdirSync(storage).filter(name => !name.startsWith("."));
+    expect(entries.toSorted()).toEqual(["a-dep", "no-deps"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("hoisted: an install removes the packages of the last dependency that left package.json", async () => {
   const dir = await setup({ name: "foo", dependencies: { "one-dep": "1.0.0", "what-bin": "1.0.0" } });
   const nm = join(dir, "node_modules");

@@ -309,6 +309,22 @@ describe.each([
     expect(again.out).toContain("(no changes)");
     expect(again.code).toBe(0);
     expect({ a: bazFrom("a"), b: bazFrom("b") }).toEqual({ a: "0.0.3", b: "0.0.5" });
+
+    // `bun update` and `bun prune` remove the copies that a folder above provides. What c's tree
+    // wrote into a sibling is not one of them, although the root can have the same version.
+    for (const command of ["update", "prune"]) {
+      await using proc = spawn({
+        cmd: [bunExe(), command],
+        cwd: package_dir,
+        env: { ...env, ...cacheEnv },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect({ command, a: bazFrom("a"), b: bazFrom("b") }).toEqual({ command, a: "0.0.3", b: "0.0.5" });
+      expect(code).toBe(0);
+    }
   });
 });
 

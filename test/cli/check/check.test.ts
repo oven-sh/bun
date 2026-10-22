@@ -10693,6 +10693,54 @@ export function inSwitch(x: number | undefined) {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the callee of a returned call again for the test for a recursive call", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const make: () => number;
+declare const list: number[];
+export function returned(o: object) {
+  fail();
+  block: {
+    for (const key in o) {}
+    if (c || c || c) break block;
+  }
+  for (const item of list) {
+    try {
+      return make();
+    } catch {
+    } finally {
+      make();
+    }
+  }
+}
+export function notReturned(o: object) {
+  fail();
+  block: {
+    for (const key in o) {}
+    if (c || c || c) break block;
+  }
+  for (const item of list) {
+    try {
+      make();
+    } catch {
+    } finally {
+      make();
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,22): error TS2488: Type 'never' must have a '[Symbol.iterator]()' method that returns an iterator.
+        a.ts(16,7): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures.
+        a.ts(26,22): error TS2488: Type 'never' must have a '[Symbol.iterator]()' method that returns an iterator."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

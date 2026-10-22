@@ -4778,8 +4778,9 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(hir[callee].kind, ExprKind::Ident(_)) || is_parenthesized(hir, callee) {
             return false;
         }
-        let ty = self
-            .outside_flow_loops(|c| c.check_expression_cached_ex(file, callee, CheckMode::empty()));
+        let outer = self.suspend_recheck();
+        let ty = self.outside_flow_loops(|c| c.check_expression_again(file, callee));
+        self.end_recheck(outer);
         self.is_type_of_function_symbol(ty, file, func)
             && (!matches!(hir[func].kind, FnKind::Expr | FnKind::Arrow) || {
                 let reference = self.reference_of(file, callee);

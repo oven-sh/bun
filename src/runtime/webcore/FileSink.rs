@@ -979,8 +979,7 @@ impl FileSink {
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
             // callback it may trigger goes via the stored `*mut FileSink` backref.
             let mut flushed = (*this).writer.with_mut(|w| w.flush());
-            while matches!(flushed, WriteResult::Pending(_))
-                && (*this).wait_for_writable_at_exit()
+            while matches!(flushed, WriteResult::Pending(_)) && (*this).wait_for_writable_at_exit()
             {
                 amount_buffered = (*this).writer.get().outgoing.size();
                 flushed = (*this).writer.with_mut(|w| w.flush());

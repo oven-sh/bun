@@ -22,6 +22,7 @@ use crate::migration::{
 use crate::npm;
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
 use crate::package_manager_real::package_json_write_back;
+use crate::package_manager_real::update_package_json_and_install::save_entry;
 use crate::pnpm::e_object_mut;
 use crate::repository::Repository;
 use crate::resolution::{Resolution, Tag as ResolutionTag, TaggedValue};
@@ -2262,9 +2263,7 @@ fn edit_package_json(
     if changed.is_empty() {
         return Ok(None);
     }
-    // The edits spliced Store-allocated nodes into the cached tree: the entry must own its tree.
-    if entry.save(json, log).is_err() {
-        return Err(Error::InvalidPackageJSON);
-    }
+    // The spliced-in nodes live in `bump` and the AST store: the cache entry must own its tree.
+    save_entry(entry, json, log);
     Ok(Some(changed))
 }

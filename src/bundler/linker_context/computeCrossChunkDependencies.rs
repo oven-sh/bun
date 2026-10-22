@@ -583,6 +583,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 continue;
             }
 
+            let is_entry_point = chunk.entry_point.is_entry_point();
             let repr = chunk.content.javascript_mut();
 
             match c.options.output_format {
@@ -613,9 +614,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     }
 
                     // Node takes a `.js` file without `import` or `export` for CommonJS, which is not strict.
-                    if clause_items.len() > 0
-                        || c.is_early_entry_file(chunk.entry_point.source_index())
-                    {
+                    if clause_items.len() > 0 || !is_entry_point {
                         let mut stmts = Vec::<bun_ast::Stmt>::init_capacity(1);
                         let items_ptr =
                             bun_ast::StoreSlice::new_mut(clause_items.into_bump_slice_mut());

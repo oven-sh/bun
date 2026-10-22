@@ -624,14 +624,13 @@ Nothing folds into the chunk of an entrypoint whose name has no `[hash]`, which 
 
 The shared code goes into one hashed chunk next to the entrypoint, and that chunk runs before the code in `index.js`.
 
-That is too early when `index.js` imports a module of its own ahead of the shared code, such as a setup file that the shared code depends on. Bun puts such modules into a second hashed chunk, which `index.js` imports first.
+That is too early when `index.js` imports a module of its own ahead of the shared code, such as a setup file that the shared code depends on. Bun puts such modules into the hashed chunk too, in import order. External packages that the hashed chunk imports load before all of its code. When `index.js` itself must run something ahead of the shared code, such as a CommonJS or [external](#external) package that it imports first, all of its code goes there, and `index.js` only imports the hashed chunk.
 
-Bun does this only when nothing else changes. The modules stay in `index.js`, and run after the shared code, when for example:
+A module stays in `index.js`, with the modules that follow it, when the move could change something else:
 
 - the entrypoint has exports, is a CommonJS module, or the build uses `compile`
-- the module is CommonJS, uses a direct `eval`, or imports shared code itself
-- the module can tell which file holds it: it reads `import.meta`, imports an asset or a relative path that is not bundled, or has an `import()` or `require()` whose argument is not a string
-- an [external](#external) package or a CommonJS module is imported ahead of it
+- the module can tell which file holds it: it reads `import.meta`, uses a direct `eval`, imports an asset or a relative path that is not bundled, or has an `import()` or `require()` whose argument is not a string
+- the module imports an external package after some of the shared code
 - the entrypoint also loads a module that another entrypoint shares
 
 Entrypoints that an HTML file loads, and entrypoints with `[hash]` in `naming.entry`, fold the shared code into their own chunk.

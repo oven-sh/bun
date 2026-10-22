@@ -140,8 +140,6 @@ pub struct LinkerContext<'a> {
     /// `merge_small_chunks` proved to be no-ops where it moved them: a chunk
     /// their chunk imports makes the same calls first.
     pub(crate) inits_already_done: Option<AutoBitSet>,
-    /// Files of an entry point's own chunk that `merge_small_chunks` gives a chunk of their own, which the entry point imports ahead of the code it shares.
-    pub(crate) early_entry_files: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
@@ -183,7 +181,6 @@ impl<'a> Default for LinkerContext<'a> {
             renamer_rows: None,
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
-            early_entry_files: None,
             entry_point_part_indices: Vec::new(),
         }
     }
@@ -449,12 +446,6 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    pub(crate) fn is_early_entry_file(&self, source_index: u32) -> bool {
-        self.early_entry_files
-            .as_ref()
-            .is_some_and(|files| files.is_set(source_index as usize))
-    }
-
     /// `"sideEffects": false` (or the resolver's equivalent), unless
     /// `--ignore-dce-annotations` says not to trust it.
     pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {
@@ -577,7 +568,6 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
-        self.early_entry_files = None;
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.

@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
@@ -253,12 +253,10 @@ impl WalkPlan {
             // A file is in the chunk that has its entry bits as key, also when it prints nothing there.
             let file_entry_bits = c.graph.files.items_entry_bits();
             let css = c.graph.ast.items_css();
-            // The second map: the chunks of `early_entry_files`, which have the key of their entry point's chunk.
-            let mut chunk_of_key: [StringHashMap<u32>; 2] = Default::default();
+            let mut chunk_of_key: StringHashMap<u32> = StringHashMap::default();
             for (chunk_index, chunk) in chunks.iter().enumerate() {
                 if matches!(chunk.content, chunk::Content::Javascript(_)) {
-                    let is_early = c.is_early_entry_file(chunk.entry_point.source_index());
-                    bun_core::handle_oom(chunk_of_key[usize::from(is_early)].put(
+                    bun_core::handle_oom(chunk_of_key.put(
                         chunk.entry_bits().bytes(entry_points.len()),
                         chunk_index as u32,
                     ));
@@ -269,9 +267,8 @@ impl WalkPlan {
                 let file = source_index.get() as usize;
                 if c.graph.files_live.is_set(file)
                     && css[file].is_none()
-                    && let Some(&chunk_index) = chunk_of_key
-                        [usize::from(c.is_early_entry_file(file as u32))]
-                    .get(file_entry_bits[file].bytes(entry_points.len()))
+                    && let Some(&chunk_index) =
+                        chunk_of_key.get(file_entry_bits[file].bytes(entry_points.len()))
                 {
                     plan.chunk_of_file[file] = chunk_index;
                 }
@@ -613,6 +610,8 @@ pub(crate) enum Edge {
     LoadNow(IndexInt),
     /// An `import()`, or a split `require()` in a part that only declares.
     LoadLater(IndexInt),
+    /// An `import` statement that loads a module that is not bundled and can have side effects.
+    External,
 }
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
@@ -648,7 +647,19 @@ pub(crate) fn for_each_edge(
         let part_index = part_index as u32;
         for &record_id in part.import_record_indices.slice() {
             let record: &ImportRecord = &records[record_id as usize];
-            if !record.source_index.is_valid() || !(record.kind == ImportKind::Stmt || runs_here) {
+            if !record.source_index.is_valid() {
+                if runs_here
+                    && record.kind == ImportKind::Stmt
+                    && !record.path.is_disabled
+                    && !record
+                        .flags
+                        .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
+                {
+                    each(part_index, Edge::External);
+                }
+                continue;
+            }
+            if !(record.kind == ImportKind::Stmt || runs_here) {
                 continue;
             }
             let other = record.source_index.get();
@@ -770,6 +781,7 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
                     },
                     Edge::LoadNow(other) => LoadFrame::Load(entry_id_of_file[other as usize]),
                     Edge::LoadLater(other) => LoadFrame::Later(entry_id_of_file[other as usize]),
+                    Edge::External => return,
                 });
             });
             stack[mark..].reverse();
@@ -985,7 +997,7 @@ impl EntryWalk {
                 Edge::LoadNow(other) => {
                     import(part_index, other, plan.entry_id_of_file[other as usize])
                 }
-                Edge::LoadLater(_) => {}
+                Edge::LoadLater(_) | Edge::External => {}
             });
             if let Some(slot) = slot {
                 stack.push(WalkFrame::Place {
@@ -1148,7 +1160,6 @@ fn reached_chunks_in_order(
     }
 
     let entry_bits = chunk.entry_bits();
-    let is_early_chunk = c.is_early_entry_file(chunk.entry_point.source_index());
     let file_entry_bits = c.graph.files.items_entry_bits();
     let css = c.graph.ast.items_css();
     let parts = c.graph.ast.items_parts();
@@ -1191,7 +1202,6 @@ fn reached_chunks_in_order(
 
             let is_file_in_chunk = if css[source_index as usize].is_none() {
                 entry_bits.eql(&file_entry_bits[source_index as usize])
-                    && c.is_early_entry_file(source_index) == is_early_chunk
             } else {
                 entry_bits.has_intersection(&file_entry_bits[source_index as usize])
             };

@@ -958,17 +958,21 @@ struct HttpResponseData;
                     }
                     if (hasLess(word, 33)) {
                         while (*(unsigned char *)data > 32) {
-                            if (IsNodeHttp && *(unsigned char *)data >= 0x7f) [[unlikely]] {
-                                return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
+                            if constexpr (IsNodeHttp) {
+                                if (*(unsigned char *)data >= 0x7f) [[unlikely]] {
+                                    return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
+                                }
                             }
                             data++;
                         }
                         if(maxHeaderSize && (uintptr_t)(data - start) > maxHeaderSize) {
                             return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                         }
-                        /* A CR at end is the post padding. */
-                        if (IsNodeHttp && data[0] != 32 && !isNewline(data[0])) [[unlikely]] {
-                            return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
+                        if constexpr (IsNodeHttp) {
+                            /* A CR at end is the post padding. */
+                            if (data[0] != 32 && !isNewline(data[0])) [[unlikely]] {
+                                return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
+                            }
                         }
                         /* Now we stand on space */
                         header.value = {start, (size_t) (data - start)};
@@ -994,9 +998,11 @@ struct HttpResponseData;
                          * post-padding sentinel. Fall through to the version error. */
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                     }
-                    /* llhttp accepts only 0x21 to 0x7e in a request target, with or without insecureHTTPParser. */
-                    if (IsNodeHttp && hasDeleteOrAbove(word)) [[unlikely]] {
-                        return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
+                    if constexpr (IsNodeHttp) {
+                        /* llhttp accepts only 0x21 to 0x7e in a request target, with or without insecureHTTPParser. */
+                        if (hasDeleteOrAbove(word)) [[unlikely]] {
+                            return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
+                        }
                     }
                 }
             }
@@ -1043,9 +1049,16 @@ struct HttpResponseData;
             for (; true; p += 8) {
                 uint64_t word;
                 memcpy(&word, p, sizeof(uint64_t));
-                if (hasLess(word, 32) || (IsNodeHttp && hasLess(word ^ (~0ULL/255*127), 1))) {
-                    while (*(unsigned char *)p > 31 && !(IsNodeHttp && *(unsigned char *)p == 127)) p++;
-                    return p;
+                if constexpr (IsNodeHttp) {
+                    if (hasLess(word, 32) || hasLess(word ^ (~0ULL/255*127), 1)) {
+                        while (*(unsigned char *)p > 31 && *(unsigned char *)p != 127) p++;
+                        return p;
+                    }
+                } else {
+                    if (hasLess(word, 32)) {
+                        while (*(unsigned char *)p > 31) p++;
+                        return p;
+                    }
                 }
             }
         }

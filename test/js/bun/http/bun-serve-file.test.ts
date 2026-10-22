@@ -1472,6 +1472,39 @@ test.skipIf(!isLinux)("Response(Bun.file(fifo)) ends the body when the EOF arriv
   expect({ first: Buffer.from(first.value!).toString(), done: last.done }).toEqual({ first: "hello", done: true });
 });
 
+// A FIFO that no writer has opened yet reads as 0 bytes without being at EOF.
+// macOS takes that for EOF: https://github.com/oven-sh/bun/pull/37090
+test.skipIf(!isLinux).each([
+  ["Response(Bun.file(fifo))", (fifo: string) => ({ fetch: () => new Response(Bun.file(fifo)) })],
+  ["Response(Bun.file(fifo).stream())", (fifo: string) => ({ fetch: () => new Response(Bun.file(fifo).stream()) })],
+  ["a static route of Bun.file(fifo)", (fifo: string) => ({ routes: { "/": new Response(Bun.file(fifo)) } })],
+])("%s waits for the first writer", async (_, options) => {
+  using dir = tempDir("serve-fifo-late-writer", {});
+  const fifo = join(String(dir), "body.fifo");
+  mkfifo(fifo);
+  await using server = Bun.serve({ port: 0, ...options(fifo) });
+
+  let answered = false;
+  const body = fetch(server.url)
+    .then(response => response.text())
+    .finally(() => (answered = true));
+  let writer: number | undefined;
+  while (writer === undefined && !answered) {
+    try {
+      writer = openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
+    } catch (error) {
+      // No reader yet: the server has not opened the FIFO.
+      if ((error as NodeJS.ErrnoException).code !== "ENXIO") throw error;
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+  if (writer !== undefined) {
+    writeSync(writer, "hello");
+    closeSync(writer);
+  }
+  expect(await body).toBe("hello");
+});
+
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared
 // userdata slot per response, so when the handler returns a file response

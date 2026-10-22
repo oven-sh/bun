@@ -188,6 +188,8 @@ pub struct PosixBufferedReader {
     pub handle: PollOrFd,
     /// Set once `preadv2(RWF_NOWAIT)` said this fd's file type does not support it (tty), so we stop asking.
     rwf_unsupported: core::cell::Cell<bool>,
+    /// Same for `vmsplice(SPLICE_F_NONBLOCK)`, the next primitive tried.
+    vmsplice_unsupported: core::cell::Cell<bool>,
     pub _buffer: Vec<u8>,
     pub(crate) _offset: usize,
     limit: ReadLimit,
@@ -228,6 +230,7 @@ impl PosixBufferedReader {
         PosixBufferedReader {
             handle: PollOrFd::Closed,
             rwf_unsupported: core::cell::Cell::new(false),
+            vmsplice_unsupported: core::cell::Cell::new(false),
             _buffer: Vec::new(),
             _offset: 0,
             limit: ReadLimit::NONE,
@@ -267,6 +270,7 @@ impl PosixBufferedReader {
         *self = PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
             rwf_unsupported: other.rwf_unsupported.clone(),
+            vmsplice_unsupported: other.vmsplice_unsupported.clone(),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
             limit: other.limit,
@@ -675,7 +679,7 @@ impl PosixBufferedReader {
         MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
     }
 
-    /// Every kind uses its non-blocking primitive: `RWF_NOWAIT`/poll-guarded reads for pipes, `MSG_DONTWAIT` for sockets; regular files cannot block.
+    /// Every kind uses its non-blocking primitive: `RWF_NOWAIT`/`vmsplice`/poll-guarded reads for pipes, `MSG_DONTWAIT` for sockets; regular files cannot block.
     fn sys_read(&self, file_type: FileType, fd: Fd, buf: &mut [u8]) -> sys::Result<usize> {
         match file_type {
             FileType::File if self.flags.contains(PosixFlags::USE_PREAD) => {
@@ -693,13 +697,22 @@ impl PosixBufferedReader {
                             Err(e) => return Err(e),
                         }
                     }
+                    if !self.vmsplice_unsupported.get() {
+                        match sys::read_pipe_nowait(fd, buf) {
+                            Ok(None) => self.vmsplice_unsupported.set(true),
+                            Ok(Some(n)) => return Ok(n),
+                            Err(e) => return Err(e),
+                        }
+                    }
                     // Poll first even when labelled nonblocking: some callers (FileResponseStream) label by fd kind, not by O_NONBLOCK.
+                    // On a blocking fd this read still waits if another process sharing the pipe takes the bytes after the poll.
                     match bun_core::is_readable(fd) {
                         bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::read(fd, buf),
                         bun_core::Pollable::NotReady => Err(sys::Error::retry().with_fd(fd)),
                     }
                 }
                 // macOS poll(2) is unreliable on FIFOs; the kqueue registration drives readiness there.
+                // There is no per-call non-blocking pipe read either, so on a blocking fd this waits if another process sharing the pipe takes the bytes first.
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 sys::read(fd, buf)
             }
@@ -897,7 +910,7 @@ impl PosixBufferedReader {
             // which case draining locally reaches EOF — but `received_hup` is a
             // snapshot, and user JS inside `on_read_chunk` may have opened a new
             // writer on the same FIFO. Re-check before committing to a read
-            // that could block (Linux named FIFOs reject RWF_NOWAIT).
+            // that could block (`sys_read` has no non-blocking pipe read outside Linux).
             if !received_hup {
                 // SAFETY: caller contract; the error dispatch may free the parent.
                 unsafe { Self::register_poll(this) };

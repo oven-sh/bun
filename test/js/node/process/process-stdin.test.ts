@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { exec } from "node:child_process";
+import { closeSync, constants, openSync, writeSync } from "node:fs";
+import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -665,4 +668,163 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
+});
+
+// A child that inherits fd 0 can take the bytes between this process learning
+// the pipe is readable and reading it. That read must not wait for the next
+// write: it runs on the event loop thread.
+//
+// Linux only: the other POSIX platforms have no per-call non-blocking read for a
+// pipe, so their read of a blocking stdin pipe can still wait there.
+describe.skipIf(!isLinux)("a stdin pipe shared with a child process", () => {
+  const fixtures = {
+    "parent.js": `
+      import { writeSync } from "node:fs";
+      const inherit = process.argv[2] === "inherit";
+      const child = Bun.spawn([process.execPath, "child.js"], {
+        stdin: inherit ? "inherit" : Bun.stdin.stream(),
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      child.exited.then(() => writeSync(1, "child-exit\\n"));
+      const timer = setInterval(() => writeSync(1, "tick\\n"), 1);
+      const onChunk = chunk => writeSync(1, "parent " + chunk.length + "\\n");
+      if (inherit) {
+        process.stdin.on("data", onChunk).on("end", () => clearInterval(timer));
+      } else {
+        // process.stdin reads the stream the child was just given, which spawn leaves locked: https://github.com/oven-sh/bun/issues/45068
+        for await (const chunk of Bun.file(0).stream()) onChunk(chunk);
+        clearInterval(timer);
+      }
+    `,
+    "child.js": `
+      import { writeSync } from "node:fs";
+      for await (const chunk of Bun.stdin.stream()) writeSync(1, "child " + chunk.length + "\\n");
+    `,
+  };
+  // A full pipe buffer: the reader that wins spends long enough copying it for
+  // the other one to still see the pipe as readable.
+  const chunk = Buffer.alloc(65536, "x");
+
+  // Not concurrent: the two readers only race while both are on a CPU.
+  test.each([
+    // preadv2(RWF_NOWAIT) is refused on a named FIFO.
+    { pipe: "named FIFO", route: "inherit" },
+    // It is also refused on an anonymous pipe by older kernels, and never tried on 5.9 and 5.10.
+    { pipe: "anonymous pipe without RWF_NOWAIT", route: "Bun.stdin.stream()" },
+  ])("$pipe, child stdin $route: timers keep firing", async ({ pipe, route }) => {
+    using dir = tempDir("stdin-shared-pipe", fixtures);
+    const fifo = join(String(dir), "in.fifo");
+    mkfifo(fifo);
+    // Read-write so that neither open waits for a peer; non-blocking (on this description only) so that no write here can.
+    const feed = openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK);
+    // Both readers live off this fd: closing it is their EOF, which also ends a read that got stuck.
+    using feeding = new DisposableStack();
+    feeding.defer(() => closeSync(feed));
+    const stdin = feeding.adopt(openSync(fifo, constants.O_RDONLY), closeSync);
+    await using proc = Bun.spawn({
+      cmd:
+        pipe === "named FIFO"
+          ? [bunExe(), "parent.js", route]
+          : ["sh", "-c", `cat | "${bunExe()}" parent.js "${route}"`],
+      cwd: String(dir),
+      env: pipe === "named FIFO" ? bunEnv : { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK: "1" },
+      stdin,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = proc.stderr.text();
+
+    const reads = { parent: 0, child: 0 };
+    let received = 0;
+    // A line the parent printed before its read got stuck is ordered before the
+    // line of the child's read that emptied the pipe, so only later ones count.
+    let parentLinesSinceChildRead = 0;
+    let childExited = false;
+    let closed = false;
+    let changed = Promise.withResolvers<void>();
+    const pump = (async () => {
+      for await (const line of forEachLine(proc.stdout)) {
+        const [who, length] = line.split(" ");
+        parentLinesSinceChildRead = who === "child" ? 0 : parentLinesSinceChildRead + 1;
+        if (who === "child-exit") childExited = true;
+        if (who === "parent" || who === "child") {
+          reads[who]++;
+          received += Number(length);
+        }
+        changed.resolve();
+        changed = Promise.withResolvers();
+      }
+      closed = true;
+      changed.resolve();
+    })();
+    const never = new Promise<void>(() => {});
+    async function until(condition: () => boolean, deadline = never) {
+      let expired = false;
+      deadline.then(() => (expired = true));
+      while (!condition()) {
+        if (expired || closed) return false;
+        await Promise.race([changed.promise, deadline]);
+      }
+      return true;
+    }
+
+    let sent = 0;
+    async function feedOnce() {
+      if (childExited) return "the child is gone";
+      sent += writeSync(feed, chunk);
+      if (!(await until(() => received >= sent))) return "both readers are gone";
+      const deadline = Promise.withResolvers<void>();
+      const timer = setTimeout(deadline.resolve, 2000);
+      const alive = await until(() => parentLinesSinceChildRead > 0, deadline.promise);
+      clearTimeout(timer);
+      return alive ? null : closed ? "the parent is gone" : "the parent's timer stopped";
+    }
+
+    let failure: string | null = null;
+    const giveUpAt = performance.now() + 4000;
+    while (failure === null && (reads.parent === 0 || reads.child === 0)) {
+      failure = performance.now() < giveUpAt ? await feedOnce() : `no race: ${JSON.stringify(reads)}`;
+    }
+    // Each read the child wins is a chance for the parent's to get stuck: about one in five does in a debug build.
+    // How often it wins is up to the scheduler, so a busy machine gets fewer chances rather than a longer test.
+    const stopAt = performance.now() + 500;
+    while (failure === null && reads.child < 30 && performance.now() < stopAt) failure = await feedOnce();
+    feeding.dispose();
+    await pump;
+
+    expect({
+      failure,
+      received,
+      stderr: await stderr,
+      exitCode: await proc.exited,
+      signalCode: proc.signalCode,
+    }).toEqual({ failure: null, received: sent, stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  // vmsplice(2) goes by the fd's access mode: on a writable fd it would fill the pipe from the read buffer.
+  test.concurrent("a FIFO opened read-write is only read from", async () => {
+    using dir = tempDir("stdin-rdwr-fifo", {});
+    const path = join(String(dir), "in.fifo");
+    mkfifo(path);
+    const fd = openSync(path, constants.O_RDWR);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.stdin.once("data", chunk => { process.stdout.write(JSON.stringify(chunk.toString())); process.exit(0); });`,
+        ],
+        env: bunEnv,
+        stdin: fd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      writeSync(fd, "hello");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: '"hello"', stderr: "", exitCode: 0 });
+    } finally {
+      closeSync(fd);
+    }
+  });
 });

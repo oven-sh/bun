@@ -1189,6 +1189,8 @@ pub mod O {
     pub const NOCTTY: i32 = libc::O_NOCTTY;
     #[cfg(windows)]
     pub const NOCTTY: i32 = 0;
+    #[cfg(unix)]
+    pub const ACCMODE: i32 = libc::O_ACCMODE;
     #[cfg(windows)]
     pub const ACCMODE: i32 = 3;
     #[cfg(target_os = "macos")]
@@ -7468,6 +7470,58 @@ pub fn read_nowait(fd: Fd, buf: &mut [u8]) -> Maybe<Option<usize>> {
                 return Ok(None);
             }
             libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
+        }
+    }
+}
+
+/// `vmsplice(SPLICE_F_NONBLOCK)` out of a pipe's read end: never waits whatever the fd's `O_NONBLOCK`, and serves the pipes `read_nowait` cannot (named FIFOs, kernels without `FMODE_NOWAIT` pipes). `Ok(None)` means it is not usable on this fd and the caller should remember that.
+/// Try `read_nowait` first: a pipe that supports it stops doing so, for every holder of the open file description, once it has been spliced.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn read_pipe_nowait(fd: Fd, buf: &mut [u8]) -> Maybe<Option<usize>> {
+    if buf.is_empty() {
+        return Ok(Some(0));
+    }
+    // vmsplice takes its direction from the access mode: on a writable fd (an `O_RDWR` FIFO) it would write `buf` into the pipe.
+    // Asked per call, in place of the poll this read replaces: an answer kept by the caller could outlive the fd.
+    match get_fcntl_flags(fd) {
+        Ok(flags) if (flags as i32 & O::ACCMODE) == O::RDONLY => {}
+        _ => return Ok(None),
+    }
+    let mut polled = None;
+    loop {
+        let iov = [libc::iovec {
+            iov_base: buf.as_mut_ptr().cast(),
+            iov_len: buf.len(),
+        }];
+        // SAFETY: iov points at a live stack array over `buf`, which the kernel fills: fd is a read end.
+        let rc = unsafe { libc::vmsplice(fd.native(), iov.as_ptr(), 1, libc::SPLICE_F_NONBLOCK) };
+        if rc > 0 {
+            return Ok(Some(rc as usize));
+        }
+        if rc == 0 {
+            match polled {
+                // Also the answer for a FIFO whose first writer has yet to open it, which poll does not count as a hangup.
+                None => match bun_core::is_readable(fd) {
+                    bun_core::Pollable::NotReady => return Err(Error::retry().with_fd(fd)),
+                    state => polled = Some(state),
+                },
+                // EOF is a 0 read after the hangup.
+                Some(bun_core::Pollable::Hup) => return Ok(Some(0)),
+                // poll sees bytes that vmsplice does not hand over.
+                Some(_) => return Ok(None),
+            }
+            continue;
+        }
+        match last_errno() {
+            libc::EINTR => continue,
+            // EBADF: not a pipe (tty).
+            libc::EBADF
+            | libc::EINVAL
+            | libc::ENOSYS
+            | libc::EOPNOTSUPP
+            | libc::EPERM
+            | libc::EACCES => return Ok(None),
             e => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
         }
     }

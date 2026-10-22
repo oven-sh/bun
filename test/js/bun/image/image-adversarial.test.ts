@@ -1193,7 +1193,10 @@ describe("hostile option objects", () => {
     await expect(img.png().bytes()).rejects.toThrow(/detached/);
   });
 
-  test("OversizeTypedArray input survives `.buffer` → transfer() while worker decodes (pin-after-adopt)", async () => {
+  test.each([
+    ["OversizeTypedArray", (a: Uint8Array) => a],
+    ["subarray of an OversizeTypedArray", (a: Uint8Array) => a.subarray(0, tinyPng.length)],
+  ])("%s input survives `.buffer` → transfer() while worker decodes (pin-after-adopt)", async (_, input) => {
     // Fresh Uint8Array > fastSizeLimit elements with no .buffer touched yet =
     // OversizeTypedArray. The borrow helper adopts its storage into a real
     // ArrayBuffer (createAdopted — wraps in place, no byte copy) and pins.
@@ -1202,7 +1205,7 @@ describe("hostile option objects", () => {
     // — the worker keeps reading the same pointer.
     const a = new Uint8Array(tinyPng.length + 4096);
     a.set(tinyPng);
-    const p = new Bun.Image(a.subarray(0, tinyPng.length)).png().bytes();
+    const p = new Bun.Image(input(a)).png().bytes();
     const moved = a.buffer.transfer();
     // While pinned: transfer() returned a COPY; `a` is NOT detached.
     expect(moved.byteLength).toBe(tinyPng.length + 4096);

@@ -940,15 +940,19 @@ describe("zlib.zstd", () => {
 });
 
 describe("async write buffer lifetime", () => {
-  it("keeps the input and output buffers attached while a native write is in flight", async () => {
+  it.each([
+    ["over an ArrayBuffer", () => [new Uint8Array(new ArrayBuffer(64)), new Uint8Array(new ArrayBuffer(1024))]],
+    // Too large to be stored inline, and have no ArrayBuffer until something reads `.buffer`.
+    ["with no ArrayBuffer yet", () => [new Uint8Array(2048), new Uint8Array(4096)]],
+  ])("keeps input and output buffers %s attached while a native write is in flight", async (_, makeBuffers) => {
     const { promise, resolve } = Promise.withResolvers();
     const deflate = zlib.createDeflate();
     try {
       const handle = deflate._handle;
 
-      const input = new Uint8Array(new ArrayBuffer(64));
+      const [input, out] = makeBuffers();
+      const [inputLength, outLength] = [input.byteLength, out.byteLength];
       input.fill(97);
-      const out = new Uint8Array(new ArrayBuffer(1024));
 
       // Mirror the bookkeeping processChunk() performs before calling
       // handle.write(), so the native write callback can complete normally.
@@ -976,9 +980,9 @@ describe("async write buffer lifetime", () => {
       out.buffer.transfer();
       input.buffer.transfer();
       expect(out.buffer.detached).toBe(false);
-      expect(out.byteLength).toBe(1024);
+      expect(out.byteLength).toBe(outLength);
       expect(input.buffer.detached).toBe(false);
-      expect(input.byteLength).toBe(64);
+      expect(input.byteLength).toBe(inputLength);
 
       await promise;
 

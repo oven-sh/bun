@@ -33,7 +33,7 @@ pub struct ArrayBuffer {
     /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
     /// a slice from one is unsafe (it can shrink/reallocate underneath you).
     pub resizable: bool,
-    /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
+    /// Set by [`JSValue::as_pinned_arraybuffer`]; [`ArrayBuffer::unpin`] is a no-op otherwise.
     pub pinned: bool,
 }
 
@@ -150,7 +150,7 @@ unsafe extern "C" {
 }
 
 impl JSValue {
-    /// Releases a pin on this value's backing `JSC::ArrayBuffer`. Only for a value whose pin actually pinned a buffer; prefer [`ArrayBuffer::unpin`], which knows.
+    /// Releases a pin on this value's backing `JSC::ArrayBuffer`. Only for a value that was pinned; prefer [`ArrayBuffer::unpin`], which knows.
     pub fn unpin_array_buffer(self) {
         JSC__JSValue__unpinArrayBuffer(self);
     }
@@ -161,7 +161,7 @@ impl ArrayBuffer {
         self.ptr.is_null()
     }
 
-    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`], if it took one.
+    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`]; a no-op on a value from [`JSValue::as_array_buffer`].
     pub fn unpin(&self) {
         if self.pinned {
             self.value.unpin_array_buffer();

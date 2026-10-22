@@ -378,7 +378,7 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
             if (count < view->length()) {
                 // A partial fill (pipes, sockets, the tail of a file) is copied out right-sized and the
                 // whole slab is reused for the next pull: no subarray views, and the slab is never adopted
-                // into an ArrayBuffer (which only full collections reclaim). A full fill hands over the slab.
+                // into an ArrayBuffer. A full fill hands over the slab.
                 auto* chunk = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), count);
                 RETURN_IF_EXCEPTION(scope, {});
                 memcpy(chunk->typedVector(), view->typedVector(), count);

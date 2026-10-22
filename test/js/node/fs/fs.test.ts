@@ -6880,23 +6880,27 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
   });
 });
 
-it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred while the read is pending", async () => {
-  using dir = tempDir("fs-read-transfer", {
-    "data.bin": Buffer.alloc(65536, 0x61).toString(),
-  });
+it.each([
+  ["over an ArrayBuffer", "new Uint8Array(new ArrayBuffer(65536))"],
+  ["with no ArrayBuffer yet", "new Uint8Array(65536)"],
+])(
+  "fs.read keeps filling a view %s when its ArrayBuffer is transferred while the read is pending",
+  async (_, makeView) => {
+    using dir = tempDir("fs-read-transfer", {
+      "data.bin": Buffer.alloc(65536, 0x61).toString(),
+    });
 
-  // The async read snapshots the destination buffer before handing it to the
-  // work pool. Transferring the backing ArrayBuffer immediately afterwards
-  // must not leave the in-flight read writing into storage the caller's view
-  // no longer owns: the view must still be attached and contain the file's
-  // bytes once the read completes.
-  const script = `
+    // The async read snapshots the destination buffer before handing it to the
+    // work pool. Transferring the backing ArrayBuffer immediately afterwards
+    // must not leave the in-flight read writing into storage the caller's view
+    // no longer owns: the view must still be attached and contain the file's
+    // bytes once the read completes.
+    const script = `
     const fs = require("node:fs");
     const path = require("node:path");
     (async () => {
       const fd = fs.openSync(path.join(process.cwd(), "data.bin"), "r");
-      const ab = new ArrayBuffer(65536);
-      const view = new Uint8Array(ab);
+      const view = ${makeView};
       const pending = new Promise((resolve, reject) => {
         fs.read(fd, view, 0, 65536, 0, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead)));
       });
@@ -6904,7 +6908,7 @@ it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred 
       // read completes. Refusing the detach by throwing is also acceptable.
       let transferred;
       try {
-        transferred = ab.transfer();
+        transferred = view.buffer.transfer();
       } catch {}
       const bytesRead = await pending;
       fs.closeSync(fd);
@@ -6922,24 +6926,25 @@ it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred 
     });
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({
-    bytesRead: 65536,
-    viewByteLength: 65536,
-    first: 0x61,
-    last: 0x61,
-  });
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      bytesRead: 65536,
+      viewByteLength: 65536,
+      first: 0x61,
+      last: 0x61,
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 it("writevSync does not write bytes from a buffer detached by an index getter during argument conversion", () => {
   using dir = tempDir("fs-writev-detach", {});
@@ -7016,14 +7021,18 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
   expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
-it("fs.write keeps the source buffer attached while the write is in flight", async () => {
+it.each([
+  ["over an ArrayBuffer", () => new Uint8Array(new ArrayBuffer(8))],
+  // Too large to be stored inline, and has no ArrayBuffer until something reads `.buffer`.
+  ["with no ArrayBuffer yet", () => new Uint8Array(64 * 1024)],
+])("fs.write keeps a source buffer %s attached while the write is in flight", async (_, makeBuffer) => {
   using dir = tempDir("fs-write-pin", {});
   const file = join(String(dir), "out.bin");
   const fd = openSync(file, "w");
-  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
+  const buf = makeBuffer().fill(0x44);
   const { promise, resolve, reject } = Promise.withResolvers();
   try {
-    fs.write(fd, buf, 0, buf.byteLength, 0, (err, written) => (err ? reject(err) : resolve(written)));
+    fs.write(fd, buf, 0, 8, 0, (err, written) => (err ? reject(err) : resolve(written)));
 
     // The native write runs on the thread pool and reads the source bytes
     // through a raw pointer; the backing store must not be detachable out
@@ -7042,10 +7051,14 @@ it("fs.write keeps the source buffer attached while the write is in flight", asy
   expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
-it("fs.promises.writeFile keeps the source buffer attached while the write is in flight", async () => {
+it.each([
+  ["over an ArrayBuffer", () => new Uint8Array(new ArrayBuffer(8))],
+  ["with no ArrayBuffer yet", () => new Uint8Array(64 * 1024)],
+])("fs.promises.writeFile keeps a source buffer %s attached while the write is in flight", async (_, makeBuffer) => {
   using dir = tempDir("fs-writefile-pin", {});
   const file = join(String(dir), "out.bin");
-  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x45);
+  const buf = makeBuffer().fill(0x45);
+  const expected = Buffer.from(buf);
   const pending = fs.promises.writeFile(file, buf);
 
   // The native write runs on the thread pool and reads the source bytes
@@ -7060,7 +7073,7 @@ it("fs.promises.writeFile keeps the source buffer attached while the write is in
   buf.buffer.transfer();
   expect(buf.buffer.detached).toBe(true);
 
-  expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
+  expect(readFileSync(file)).toEqual(expected);
 });
 
 // A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into

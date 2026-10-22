@@ -47,8 +47,6 @@ mod _impl {
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
-        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
-        pub pinned_buffers: Cell<u8>,
         /// Copy of the pending `write()`'s input, if a pin can't keep the input mapped.
         pub input_copy: JsCell<crate::node::node_zlib_binding::InputCopy>,
         pub pending_close: Cell<bool>,
@@ -116,7 +114,6 @@ mod _impl {
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
-                pinned_buffers: Cell::new(0),
                 input_copy: JsCell::new(Default::default()),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),

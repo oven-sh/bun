@@ -95,7 +95,16 @@ interface FsBinding
   realpathNativeSync: NodeFS["realpathSync"]["native"];
   rmdir(path: import("node:fs").PathLike, options?: import("node:fs").RmOptions): Promise<void>;
   rmdirSync(path: import("node:fs").PathLike, options?: import("node:fs").RmOptions): void;
-  watch(path: string, options: import("node:fs").WatchOptions, listener: WatchListener): $ZigGeneratedClasses.FSWatcher;
+  /** The callers apply node's option rules. Native only tests `persistent`, `recursive` and `verbose` for `true`. */
+  watch(
+    path: string,
+    persistent: unknown,
+    recursive: unknown,
+    encoding: unknown,
+    signal: unknown,
+    verbose: unknown,
+    listener: WatchListener,
+  ): $ZigGeneratedClasses.FSWatcher;
   watchFile(
     path: string,
     options: import("node:fs").WatchFileOptions | undefined,

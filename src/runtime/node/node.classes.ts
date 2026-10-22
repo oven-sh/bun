@@ -114,7 +114,7 @@ export default [
       unlinkSync: { async: false, fn: "unlinkSync", length: 1 },
       utimes: { async: true, fn: "utimes", length: 4 },
       utimesSync: { async: false, fn: "utimesSync", length: 3 },
-      watch: { async: true, fn: "watch", length: 3 },
+      watch: { async: true, fn: "watch", length: 7 },
       watchFile: { async: true, fn: "watchFile", length: 3 },
       writeFile: { async: true, fn: "writeFile", length: 4 },
       writeFileSync: { async: false, fn: "writeFileSync", length: 3 },

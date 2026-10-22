@@ -654,6 +654,7 @@ pub(crate) struct Arguments<'a> {
 }
 
 impl<'a> Arguments<'a> {
+    /// `watch(path, persistent, recursive, encoding, signal, verbose, listener)`: the JS callers apply node's option rules.
     pub(crate) fn from_js(
         cx: &bun_jsc::JsThread<'a>,
         arguments: &mut ArgumentsSlice,
@@ -666,93 +667,40 @@ impl<'a> Arguments<'a> {
         // `PathLike: Drop` releases the path: `?` on the error paths below
         // drops `path` automatically.
 
-        let mut listener: JSValue = JSValue::ZERO;
+        // Only `true` counts: https://github.com/nodejs/node/blob/v26.3.0/src/fs_event_wrap.cc#L155-L175
+        let persistent = arguments.next_eat() == Some(JSValue::TRUE);
+        let recursive = arguments.next_eat() == Some(JSValue::TRUE);
+
+        let encoding = match arguments.next_eat() {
+            Some(encoding_) => Encoding::assert(encoding_, cx.global(), Encoding::Utf8)?,
+            None => Encoding::Utf8,
+        };
+
         let mut signal: Option<&AbortSignal> = None;
-        let mut persistent: bool = true;
-        let mut recursive: bool = false;
-        let mut encoding: Encoding = Encoding::Utf8;
-        let mut verbose = false;
-        if let Some(options_or_callable) = arguments.next_eat() {
-            // options
-            if options_or_callable.is_object() {
-                if let Some(persistent_) =
-                    options_or_callable.get_truthy(cx.global(), "persistent")?
-                {
-                    if !persistent_.is_boolean() {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "persistent must be a boolean"
-                        )));
-                    }
-                    persistent = persistent_.to_boolean();
-                }
-
-                if let Some(verbose_) = options_or_callable.get_truthy(cx.global(), "verbose")? {
-                    if !verbose_.is_boolean() {
-                        return Err(cx
-                            .global()
-                            .throw_invalid_arguments(format_args!("verbose must be a boolean")));
-                    }
-                    verbose = verbose_.to_boolean();
-                }
-
-                if let Some(encoding_) =
-                    options_or_callable.fast_get(cx.global(), jsc::BuiltinName::encoding)?
-                {
-                    encoding = Encoding::assert(encoding_, cx.global(), encoding)?;
-                }
-
-                if let Some(recursive_) =
-                    options_or_callable.get_truthy(cx.global(), "recursive")?
-                {
-                    if !recursive_.is_boolean() {
-                        return Err(cx
-                            .global()
-                            .throw_invalid_arguments(format_args!("recursive must be a boolean")));
-                    }
-                    recursive = recursive_.to_boolean();
-                }
-
-                // abort signal
-                if let Some(signal_) = options_or_callable.get_truthy(cx.global(), "signal")? {
-                    if let Some(signal_obj) = AbortSignal::from_js(signal_) {
-                        // Keep it alive
-                        signal_.ensure_still_alive();
-                        // `signal_obj` is the live C++ AbortSignal owned by
-                        // `signal_` (kept reachable for the duration of the call
-                        // by `ensure_still_alive`). `AbortSignal` is an
-                        // `opaque_ffi!` ZST handle; `opaque_ref` is the
-                        // centralised deref proof.
-                        signal = Some(AbortSignal::opaque_ref(signal_obj));
-                    } else {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "signal is not of type AbortSignal"
-                        )));
-                    }
-                }
-
-                // listener
-                if let Some(callable) = arguments.next_eat() {
-                    if !callable.is_cell() || !callable.is_callable() {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "Expected \"listener\" callback to be a function"
-                        )));
-                    }
-                    listener = callable;
-                }
-            } else {
-                if !options_or_callable.is_cell() || !options_or_callable.is_callable() {
+        if let Some(signal_) = arguments.next_eat() {
+            let is_empty_string = signal_.is_string() && !signal_.to_boolean();
+            if !signal_.is_undefined_or_null() && !is_empty_string {
+                let Some(signal_obj) = AbortSignal::from_js(signal_) else {
                     return Err(cx.global().throw_invalid_arguments(format_args!(
-                        "Expected \"listener\" callback to be a function"
+                        "signal is not of type AbortSignal"
                     )));
-                }
-                listener = options_or_callable;
+                };
+                // `signal_` owns the C++ AbortSignal behind `signal_obj`, so keep it alive for this call.
+                signal_.ensure_still_alive();
+                signal = Some(AbortSignal::opaque_ref(signal_obj));
             }
         }
-        if listener.is_empty() {
-            return Err(cx
-                .global()
-                .throw_invalid_arguments(format_args!("Expected \"listener\" callback")));
-        }
+
+        let verbose = arguments.next_eat() == Some(JSValue::TRUE);
+
+        let listener = match arguments.next_eat() {
+            Some(callable) if callable.is_cell() && callable.is_callable() => callable,
+            _ => {
+                return Err(cx.global().throw_invalid_arguments(format_args!(
+                    "Expected \"listener\" callback to be a function"
+                )));
+            }
+        };
 
         Ok(Arguments {
             path,

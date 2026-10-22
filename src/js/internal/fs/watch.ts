@@ -2,6 +2,10 @@
 const EventEmitter = require("node:events");
 const { basename } = require("node:path");
 
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectHasOwn = Object.hasOwn;
+const ObjectPrototype = Object.prototype;
+
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
 
@@ -60,6 +64,27 @@ function createIgnoreMatcher(ignore) {
     }
     return false;
   };
+}
+
+// Reads an option as native did: a property of Object.prototype does not count, and a Proxy answers for itself.
+function getWatchOption(options, key) {
+  if (!(key in ObjectPrototype)) return options[key];
+  let current = options;
+  do {
+    if ($isProxyObject(current) || ObjectHasOwn(current, key)) return options[key];
+    current = ObjectGetPrototypeOf(current);
+  } while (current !== null && current !== ObjectPrototype);
+}
+
+// Node checks encoding, signal and path first: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2511-L2528
+function throwInvalidRecursiveWatchOptions(path, recursive, persistent, encoding, signal) {
+  const { validateAbortSignal, validateBoolean, getValidatedFsPath } = require("internal/validators");
+  $bindgen("node_util_binding.bind.ts", "assertEncodingValid")(encoding);
+  if (signal !== undefined) validateAbortSignal(signal, "options.signal");
+  getValidatedFsPath(path);
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/recursive_watch.js#L58-L64
+  validateBoolean(recursive, "options.recursive");
+  validateBoolean(persistent, "options.persistent");
 }
 
 const kFSWatchStart = Symbol("kFSWatchStart");
@@ -144,21 +169,42 @@ class FSWatcher extends EventEmitter {
       path = Bun.fileURLToPath(path);
     }
 
+    let persistent, recursive, encoding, signal, verbose;
     if (typeof options === "function") {
       listener = options;
-      options = {};
+      options = undefined;
     } else if (typeof options === "string") {
-      options = { encoding: options };
+      encoding = options;
+      options = undefined;
+    } else if (options) {
+      if (typeof options !== "object") throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], options);
+      persistent = getWatchOption(options, "persistent");
+      recursive = getWatchOption(options, "recursive");
+      encoding = getWatchOption(options, "encoding");
+      signal = getWatchOption(options, "signal");
+      verbose = getWatchOption(options, "verbose");
     }
+    // Unlike node, null and "" mean not given, as before: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2516
+    if (persistent == null || persistent === "") persistent = true;
 
     if (typeof listener !== "function") {
       listener = () => {};
     }
 
+    // Only node's non-native recursive watcher validates: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2526-L2538
+    if (
+      recursive &&
+      process.platform !== "darwin" &&
+      process.platform !== "win32" &&
+      (recursive !== true || typeof persistent !== "boolean")
+    ) {
+      throwInvalidRecursiveWatchOptions(path, recursive, persistent, encoding, signal);
+    }
+
     this.#ignoreMatcher = createIgnoreMatcher(options?.ignore);
     this.#listener = listener;
     try {
-      this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
+      this.#watcher = fs.watch(path, persistent, recursive, encoding, signal, verbose, this.#onEvent.bind(this));
     } catch (e: any) {
       e.path = path;
       e.filename = path;
@@ -269,4 +315,4 @@ function watch(path, options, listener) {
   return new FSWatcher(path, options, listener);
 }
 
-export default { watch, createIgnoreMatcher };
+export default { watch, createIgnoreMatcher, getWatchOption };

@@ -40,6 +40,24 @@ let nodeFsForIter; // lazy value for require("node:fs") (sync read/write/close f
 
 let Interface; // lazy value for require("node:readline").Interface.
 
+// Throws what node throws first. Its order has a path check in it and depends on the platform: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1998
+function throwInvalidWatchOptions(filename: string, options: unknown, persistent?: unknown, recursive?: unknown) {
+  const { getValidatedFsPath } = require("internal/validators");
+  const pathFirst = process.platform === "darwin" || process.platform === "win32";
+  if (pathFirst) getValidatedFsPath(filename);
+  if (options && typeof options !== "object" && typeof options !== "function") validateObject(options, "options");
+  if (pathFirst) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L378-L393
+    validateBoolean(persistent, "options.persistent");
+    validateBoolean(recursive, "options.recursive");
+  } else {
+    // The non-native recursive watcher checks the path last: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1939-L1957
+    validateBoolean(recursive, "options.recursive");
+    if (!recursive) getValidatedFsPath(filename);
+    validateBoolean(persistent, "options.persistent");
+  }
+}
+
 function watch(
   filename: string | Buffer | URL,
   options: {
@@ -66,8 +84,23 @@ function watch(
   if (typeof options === "string") {
     options = { encoding: options };
   }
+  const { createIgnoreMatcher, getWatchOption } = require("internal/fs/watch");
+  let persistent: unknown, recursive: unknown, encoding: unknown, verbose: unknown;
+  if (options) {
+    if (typeof options !== "object" && typeof options !== "function") throwInvalidWatchOptions(filename, options);
+    persistent = getWatchOption(options, "persistent");
+    recursive = getWatchOption(options, "recursive");
+    encoding = getWatchOption(options, "encoding");
+    verbose = getWatchOption(options, "verbose");
+  }
+  // Node rejects null and "". Here they mean not given, as before: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L392-L393
+  if (persistent == null || persistent === "") persistent = true;
+  if (recursive == null || recursive === "") recursive = false;
+  if (typeof persistent !== "boolean" || typeof recursive !== "boolean") {
+    throwInvalidWatchOptions(filename, options, persistent, recursive);
+  }
   const queue = $createFIFO();
-  const ignoreMatcher = require("internal/fs/watch").createIgnoreMatcher(options?.ignore);
+  const ignoreMatcher = createIgnoreMatcher(options?.ignore);
   const signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
   function makeAbortError() {
@@ -97,17 +130,25 @@ function watch(
     };
   }
 
-  const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
-    if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
-      return;
-    }
-    queue.push({ __proto__: null, eventType, filename });
-    if (nextEventResolve) {
-      const resolve = nextEventResolve;
-      nextEventResolve = null;
-      resolve();
-    }
-  });
+  const watcher = fs.watch(
+    filename,
+    persistent,
+    recursive,
+    encoding,
+    signal,
+    verbose,
+    (eventType: string, filename: string | Buffer | undefined) => {
+      if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
+        return;
+      }
+      queue.push({ __proto__: null, eventType, filename });
+      if (nextEventResolve) {
+        const resolve = nextEventResolve;
+        nextEventResolve = null;
+        resolve();
+      }
+    },
+  );
 
   function onAbort() {
     watcher.close();

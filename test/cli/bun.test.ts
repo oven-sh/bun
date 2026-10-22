@@ -555,6 +555,36 @@ describe("bun", () => {
       else expect({ stdout, stderr }).toEqual({ stdout: "", stderr: 'error: Script not found "lint"\n' });
       expect(exitCode).toBe(1);
     });
+
+    // test/cli/lint has more of these, but a release build skips it.
+    test.each([
+      ["a script in package.json", { "package.json": `{ "scripts": { "lint": "echo the script" } }` }, "the script"],
+      ["lint.ts", { "lint.ts": `console.log("the file");` }, "the file"],
+      ["lint/index.js", { "lint/index.js": `console.log("the index");` }, "the index"],
+      // On Windows, an install creates different files for it.
+      ...(isWindows
+        ? []
+        : [
+            [
+              "node_modules/.bin/lint",
+              { "node_modules/.bin/lint": `#!/bin/sh\necho the executable\n` },
+              "the executable",
+            ],
+          ]),
+    ] as [string, Record<string, string>, string][])("everywhere bun lint runs %s", async (_, files, printed) => {
+      using dir = tempDir("bun-lint-of-the-project", { "a.js": "debugger;\n", ...files });
+      if ("node_modules/.bin/lint" in files) fs.chmodSync(join(String(dir), "node_modules/.bin/lint"), 0o755);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe(printed);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("test command line arguments", () => {

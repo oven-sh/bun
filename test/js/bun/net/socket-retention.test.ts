@@ -4,6 +4,7 @@
 // socket is active so callbacks can always recover the wrapper, weak once the
 // socket is closed so GC can reclaim it. This test exercises both directions.
 
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
@@ -420,6 +421,132 @@ test("node:net handle whose socket never starts connecting is collectable", asyn
   expect(TLSSocket).toBeLessThanOrEqual(3);
   expect(exitCode).toBe(0);
 });
+
+// destroy() of a net.Socket that a TLS socket wraps closes the fd of the two with no close event for either handle.
+// That close has to release both handles as a close event does.
+const adoptedPairs = `
+  const net = require("node:net");
+  const tls = require("node:tls");
+  const { once } = require("node:events");
+  const { key, cert } = ${JSON.stringify({ key: tlsCert.key, cert: tlsCert.cert })};
+  const received = { length: 0 };
+  const server = tls.createServer({ key, cert }, peer => {
+    peer.on("error", () => {});
+    peer.on("data", data => (received.length += data.length));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const handles = [];
+  // One wrap of each kind. Returns the two sockets of the pair.
+  async function pair(kind) {
+    if (kind === "server") {
+      const accepted = Promise.withResolvers();
+      const front = net.createServer(raw => {
+        const tlsSocket = new tls.TLSSocket(raw, { isServer: true, key, cert });
+        tlsSocket.on("secure", () => accepted.resolve({ raw, tlsSocket }));
+      });
+      await once(front.listen(0, "127.0.0.1"), "listening");
+      const peer = tls.connect({ port: front.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+      peer.on("error", () => {});
+      peer.on("data", data => (received.length += data.length));
+      const sockets = await accepted.promise;
+      front.close();
+      return sockets;
+    }
+    const raw = net.connect(server.address().port, "127.0.0.1");
+    await once(raw, "connect");
+    const tlsSocket =
+      kind === "connect"
+        ? tls.connect({ socket: raw, rejectUnauthorized: false })
+        : new tls.TLSSocket(raw, { rejectUnauthorized: false });
+    if (kind !== "connect") tlsSocket._start();
+    await once(tlsSocket, "secure");
+    return { raw, tlsSocket };
+  }
+  const alive = () => {
+    Bun.gc(true);
+    return handles.filter(ref => ref.deref() !== undefined).length;
+  };
+`;
+
+test.skipIf(isWindows)(
+  "node:tls handles over an adopted fd are collectable after destroy() of the socket that the TLS socket wraps",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${adoptedPairs}
+        for (let round = 0; round < 10; round++) {
+          for (const kind of ["connect", "client", "server"]) {
+            const { raw, tlsSocket } = await pair(kind);
+            for (const socket of [raw, tlsSocket]) socket.on("error", () => {});
+            handles.push(new WeakRef(raw._handle), new WeakRef(tlsSocket._handle));
+            raw.destroy();
+            await once(raw, "close");
+          }
+        }
+        let held = alive();
+        for (let i = 0; i < 50 && held > 0; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+          held = alive();
+        }
+        console.log(JSON.stringify({ handles: handles.length, held }));
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim().split("\n").pop()!)).toEqual({ handles: 60, held: 0 });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(isWindows || !fault.available())(
+  "node:tls handles over an adopted fd are collectable while the close of that fd waits for the kernel",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${adoptedPairs}
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        for (const kind of ["connect", "client", "server"]) {
+          const { raw, tlsSocket } = await pair(kind);
+          for (const socket of [raw, tlsSocket]) socket.on("error", () => {});
+          handles.push(new WeakRef(raw._handle), new WeakRef(tlsSocket._handle));
+          // The kernel refuses the ciphertext, and the TLS socket reports the write as written.
+          fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: raw._handle.fd });
+          await new Promise(resolve => tlsSocket.write(Buffer.alloc(8 * 1024, "w"), resolve));
+          raw.destroy();
+          await once(raw, "close");
+        }
+        // The close of each fd waits for the kernel to take that ciphertext.
+        let held = alive();
+        for (let i = 0; i < 50 && held > 0; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+          held = alive();
+        }
+        fault.clear();
+        while (received.length < 3 * 8 * 1024) await new Promise(resolve => setImmediate(resolve));
+        console.log(JSON.stringify({ handles: handles.length, held, received: received.length }));
+        process.exit(0);
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Two handles for each of the 3 fds, and the 8 KiB that each TLS socket reported as written.
+    expect(JSON.parse(stdout.trim().split("\n").pop()!)).toEqual({ handles: 6, held: 0, received: 3 * 8 * 1024 });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test("node:net socket nothing references still connects when GC runs during the attempt", async () => {
   // The handle is weak until the attempt starts; the attempt has to hold it, or a collection

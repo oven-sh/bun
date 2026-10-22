@@ -2,6 +2,7 @@ import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
 import { once } from "node:events";
+import { fstatSync } from "node:fs";
 import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -975,6 +976,215 @@ describe.skipIf(skip)("the final handshake flight and the first write leave in o
     }
   });
 });
+
+// destroy() of a net.Socket that a TLS socket wraps closes the fd of the two in the call. A write that the TLS socket
+// reported as written can still be ciphertext that the kernel refused: https://github.com/oven-sh/bun/issues/43874
+describe.skipIf(skip)(
+  "the owner destroys a socket that a TLS socket wraps, with ciphertext that the kernel refused",
+  () => {
+    const RECORD = Buffer.alloc(8 * 1024, "w");
+    const options = { key: certs.key, cert: certs.cert } as const;
+    const fdOfRaw = (raw: net.Socket) => (raw as any)._handle.fd as number;
+    const refuseSends = (fd: number) =>
+      fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd });
+    const isOpen = (fd: number) => {
+      try {
+        return fstatSync(fd).isSocket();
+      } catch {
+        return false;
+      }
+    };
+    // What the other end of the connection sees.
+    function observePeer(peer: net.Socket) {
+      const events: string[] = [];
+      let received = 0;
+      peer.on("data", data => (received += data.length));
+      peer.on("secureConnect", () => events.push("secureConnect"));
+      peer.on("end", () => events.push("end"));
+      peer.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      const closed = new Promise<void>(resolve => peer.on("close", () => resolve()));
+      return { events, closed, received: () => received };
+    }
+    type Pair = {
+      raw: net.Socket;
+      tlsSocket: tls.TLSSocket;
+      peer: ReturnType<typeof observePeer>;
+      [Symbol.dispose](): void;
+    };
+    // The server side of a wrap: `wrap` gets the accepted socket.
+    async function accepted(
+      wrap: (raw: net.Socket, resolve: (tlsSocket: tls.TLSSocket) => void) => void,
+    ): Promise<Pair> {
+      const { promise, resolve } = Promise.withResolvers<{ raw: net.Socket; tlsSocket: tls.TLSSocket }>();
+      const front = net.createServer(raw => wrap(raw, tlsSocket => resolve({ raw, tlsSocket })));
+      await once(front.listen(0, "127.0.0.1"), "listening");
+      const client = tls.connect({ port: (front.address() as AddressInfo).port, host: "127.0.0.1", ca: certs.cert });
+      const peer = observePeer(client);
+      const { raw, tlsSocket } = await promise;
+      return { raw, tlsSocket, peer, [Symbol.dispose]: () => (raw.destroy(), client.destroy(), void front.close()) };
+    }
+    // The client side of a wrap, against the server of this file.
+    async function dialed(wrap: (raw: net.Socket) => tls.TLSSocket): Promise<Pair> {
+      const serverSocket = once(server, "secureConnection") as Promise<[tls.TLSSocket]>;
+      const raw = net.connect(port, "127.0.0.1");
+      await once(raw, "connect");
+      const tlsSocket = wrap(raw);
+      const [[peerSocket]] = await Promise.all([serverSocket, once(tlsSocket, "secure")]);
+      const peer = observePeer(peerSocket);
+      return { raw, tlsSocket, peer, [Symbol.dispose]: () => (raw.destroy(), void peerSocket.destroy()) };
+    }
+    const pairs: [string, () => Promise<Pair>][] = [
+      [
+        "a socket injected into a tls.Server",
+        () => accepted((raw, resolve) => void tls.createServer(options, resolve).emit("connection", raw)),
+      ],
+      [
+        "new TLSSocket(socket, { isServer })",
+        () =>
+          accepted((raw, resolve) => {
+            const tlsSocket = new tls.TLSSocket(raw, { isServer: true, ...options });
+            tlsSocket.on("secure", () => resolve(tlsSocket));
+          }),
+      ],
+      ["tls.connect({ socket })", () => dialed(raw => tls.connect({ socket: raw, ca: certs.cert }))],
+      [
+        "new TLSSocket(socket)",
+        () =>
+          dialed(raw => {
+            const tlsSocket = new tls.TLSSocket(raw, { rejectUnauthorized: false });
+            (tlsSocket as any)._start();
+            return tlsSocket;
+          }),
+      ],
+    ];
+    const writeTo = (tlsSocket: tls.TLSSocket, chunk: string | Buffer) =>
+      new Promise<string>(resolve => tlsSocket.write(chunk, err => resolve(err ? String((err as any).code) : "ok")));
+
+    for (const [name, establish] of pairs) {
+      test(`${name}, destroy(): what was reported as written reaches the peer, and nothing else`, async () => {
+        using pair = await establish();
+        const { raw, tlsSocket, peer } = pair;
+        for (const socket of [raw, tlsSocket]) socket.on("error", () => {});
+        const fd = fdOfRaw(raw);
+        refuseSends(fd);
+        const written = await writeTo(tlsSocket, RECORD);
+        raw.destroy();
+        // The close waits for the kernel to take that ciphertext.
+        const waits = isOpen(fd);
+        const late = writeTo(tlsSocket, "late");
+        fault.clear();
+        await peer.closed;
+        expect({ written, waits, late: await late, received: peer.received(), peer: peer.events.slice(-1) }).toEqual({
+          written: "ok",
+          waits: true,
+          late: "EBADF",
+          received: RECORD.length,
+          peer: ["end"],
+        });
+      });
+
+      test(`${name}, destroy() in the tick of two writes: the write that the Writable still holds is dropped with no 'error'`, async () => {
+        using pair = await establish();
+        const { raw, tlsSocket, peer } = pair;
+        const errors: string[] = [];
+        raw.on("error", () => {});
+        tlsSocket.on("error", (err: NodeJS.ErrnoException) => errors.push(String(err.code)));
+        // Out of the callback of the handshake.
+        await new Promise(resolve => setImmediate(resolve));
+        const fd = fdOfRaw(raw);
+        refuseSends(fd);
+        const writes = [writeTo(tlsSocket, RECORD), writeTo(tlsSocket, RECORD)];
+        raw.destroy();
+        const waits = isOpen(fd);
+        fault.clear();
+        await peer.closed;
+        expect({ writes: await Promise.all(writes), waits, errors, received: peer.received() }).toEqual({
+          writes: ["ok", "ERR_STREAM_DESTROYED"],
+          waits: true,
+          errors: [],
+          received: RECORD.length,
+        });
+      });
+
+      test(`${name}, resetAndDestroy(): nothing more is sent, not even ciphertext that the kernel would take now`, async () => {
+        using pair = await establish();
+        const { raw, tlsSocket, peer } = pair;
+        for (const socket of [raw, tlsSocket]) socket.on("error", () => {});
+        const fd = fdOfRaw(raw);
+        refuseSends(fd);
+        const written = await writeTo(tlsSocket, RECORD);
+        fault.clear();
+        raw.resetAndDestroy();
+        const open = isOpen(fd);
+        await peer.closed;
+        expect({ written, open, received: peer.received() }).toEqual({ written: "ok", open: false, received: 0 });
+      });
+
+      // The close of the TLS socket waits for the kernel. The destroy() of the wrapped socket leaves that close alone.
+      for (const verb of ["destroy", "resetAndDestroy"] as const) {
+        test(`${name}, destroy() of the TLS socket, then ${verb}(): what was reported as written still reaches the peer`, async () => {
+          using pair = await establish();
+          const { raw, tlsSocket, peer } = pair;
+          for (const socket of [raw, tlsSocket]) socket.on("error", () => {});
+          refuseSends(fdOfRaw(raw));
+          const written = await writeTo(tlsSocket, RECORD);
+          tlsSocket.destroy();
+          raw[verb]();
+          fault.clear();
+          await peer.closed;
+          expect({ written, received: peer.received() }).toEqual({ written: "ok", received: RECORD.length });
+        });
+      }
+    }
+
+    // The flight of the server waits in userspace. No write was reported as written yet, so the destroy() drops it.
+    const flights: [string, (raw: net.Socket, onFlight: () => void) => void][] = [
+      [
+        "a socket injected into a tls.Server",
+        (raw, onFlight) =>
+          void tls
+            .createServer(options)
+            .on("keylog", onFlight)
+            .on("tlsClientError", () => {})
+            .emit("connection", raw),
+      ],
+      [
+        "new TLSSocket(socket, { isServer })",
+        (raw, onFlight) =>
+          void new tls.TLSSocket(raw, { isServer: true, ...options }).on("keylog", onFlight).on("error", () => {}),
+      ],
+    ];
+    for (const [name, wrap] of flights) {
+      test(`${name}, destroy() before the handshake completes: the flight that the kernel refused is never sent`, async () => {
+        const front = net.createServer(raw => {
+          raw.on("error", () => {});
+          refuseSends(fdOfRaw(raw));
+          let destroyed = false;
+          // The first secret of the handshake: the flight of the server is sealed.
+          wrap(raw, () => {
+            if (destroyed) return;
+            destroyed = true;
+            // Past the handshake step that made that flight.
+            setImmediate(() => {
+              raw.destroy();
+              fault.clear();
+            });
+          });
+        });
+        await once(front.listen(0, "127.0.0.1"), "listening");
+        const client = tls.connect({ port: (front.address() as AddressInfo).port, host: "127.0.0.1", ca: certs.cert });
+        try {
+          const peer = observePeer(client);
+          await peer.closed;
+          expect(peer.events).toEqual(["error ECONNRESET"]);
+        } finally {
+          client.destroy();
+          front.close();
+        }
+      });
+    }
+  },
+);
 
 describe.skipIf(skip)("node:tls seeded syscall fuzz", () => {
   const seed = Number(process.env.BUN_SOCKET_FUZZ_SEED ?? 0x7a1c) >>> 0 || 1;

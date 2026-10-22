@@ -1844,6 +1844,19 @@ describe("HTMLRewriter", () => {
       return rw;
     }));
 
+  it("rejects a selector that is nested too deeply", async () => {
+    const nested = (open, depth) => open.repeat(depth) + "b" + ")".repeat(depth);
+    for (const open of [":not(", ":not(/*)*/", ":not(.a\\)", `:not([a=")"]`, `:not([a='\\')']`]) {
+      expect(() => new HTMLRewriter().on(nested(open, 10_000), {})).toThrow("Selector is nested too deeply.");
+    }
+    expect(() => new HTMLRewriter().on(nested(":not(", 32), {})).not.toThrow();
+    const selector = `b:not(p:nth-child(2)), ${Array(100).fill("p:nth-child(1)").join(", ")}, [a="${"(".repeat(100)}"]`;
+    const res = new HTMLRewriter()
+      .on(selector, { element: e => void e.remove() })
+      .transform(new Response("<b></b><i></i>"));
+    expect(await res.text()).toBe("<i></i>");
+  });
+
   it("selector tests", async () => {
     const checkSelector = async (selector, input, expected) => {
       const res = new HTMLRewriter()

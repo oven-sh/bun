@@ -2490,3 +2490,44 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
+  // (type $s (struct (field (mut i32))))
+  // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+  // prettier-ignore
+  const bytes = new Uint8Array([
+    0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+    1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+    3, 2, 1, 1,
+    7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+    10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+  ]);
+  const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+  expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
+});
+
+test.concurrent("a stack taken while a CommonJS module loads names the frame of require() anonymous", async () => {
+  using dir = tempDir("stack-while-commonjs-loads", {
+    "main.cjs": `require("./child.cjs");`,
+    "child.cjs": [
+      `const line = new Error().stack.split("\\n")[2];`,
+      `Error.prepareStackTrace = (_error, callSites) => callSites[1];`,
+      `const callSite = new Error().stack;`,
+      `console.log(JSON.stringify({ line, name: callSite.getFunctionName(), text: String(callSite) }));`,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.cjs"],
+    cwd: String(dir),
+    // Debug builds show the frames of builtin JavaScript unless this is off.
+    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+    stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (native)" },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});

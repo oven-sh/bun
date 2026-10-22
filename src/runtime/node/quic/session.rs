@@ -50,7 +50,7 @@ const STREAM_ID_UNI_BIT: u64 = 0x2;
 
 /// HTTP/3 application error codes (RFC 9114 §8.1).
 const H3_NO_ERROR: u64 = 0x100;
-const H3_INTERNAL_ERROR: u64 = 0x102;
+pub(super) const H3_INTERNAL_ERROR: u64 = 0x102;
 
 /// Mirrors node's `Session::Application::Type` (node/src/quic/application.h).
 #[derive(Clone, Copy)]

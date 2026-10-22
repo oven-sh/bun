@@ -7,7 +7,7 @@ use bun_ptr::BackRef;
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, ShellTask, closefd, shell_openat, shell_statat,
+    Interpreter, NodeId, ShellTask, closefd, shell_lstatat, shell_openat, shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -25,6 +25,8 @@ pub(crate) struct MvArgs {
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
     pub(crate) target_idx: usize,
     pub(crate) target_fd: Option<bun_sys::Fd>,
+    /// `-n` — do not overwrite an existing file
+    pub(crate) no_clobber: bool,
 }
 
 #[derive(Default)]
@@ -213,9 +215,13 @@ impl Mv {
                 let task_count = n_sources.div_ceil(BATCH);
                 let cwd = Builtin::cwd(interp, cmd);
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let (sources_start, target_idx) = {
+                let (sources_start, target_idx, no_clobber) = {
                     let me = Self::state_mut(interp, cmd);
-                    (me.args.sources_start, me.args.target_idx)
+                    (
+                        me.args.sources_start,
+                        me.args.target_idx,
+                        me.args.no_clobber,
+                    )
                 };
                 let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
 
@@ -233,6 +239,7 @@ impl Mv {
                         sources: srcs,
                         target: ZBox::from_bytes(target),
                         target_fd: maybe_fd,
+                        no_clobber,
                         cwd,
                         error_signal: None,
                         err: None,
@@ -348,9 +355,10 @@ impl Mv {
             return Err(MvParseError::ShowUsage);
         }
         let mut idx = 0usize;
+        let mut no_clobber = false;
         while idx < argc {
             let flag = Builtin::of(interp, cmd).arg_bytes(idx);
-            match Self::parse_flag(flag) {
+            match Self::parse_flag(flag, &mut no_clobber) {
                 MvFlag::Done => {
                     let filepath_args = argc - idx;
                     if filepath_args < 2 {
@@ -359,6 +367,7 @@ impl Mv {
                     let me = Self::state_mut(interp, cmd);
                     me.args.sources_start = idx;
                     me.args.target_idx = argc - 1;
+                    me.args.no_clobber = no_clobber;
                     return Ok(());
                 }
                 MvFlag::ContinueParsing => {}
@@ -369,13 +378,16 @@ impl Mv {
         Err(MvParseError::ShowUsage)
     }
 
-    fn parse_flag(flag: &[u8]) -> MvFlag {
+    fn parse_flag(flag: &[u8], no_clobber: &mut bool) -> MvFlag {
         if flag.is_empty() || flag[0] != b'-' {
             return MvFlag::Done;
         }
         for &ch in &flag[1..] {
             match ch {
-                b'f' | b'h' | b'i' | b'n' | b'v' => {}
+                // The last of `-f` and `-n` wins.
+                b'n' => *no_clobber = true,
+                b'f' => *no_clobber = false,
+                b'h' | b'i' | b'v' => {}
                 _ => return MvFlag::IllegalOption(b"-"),
             }
         }
@@ -435,6 +447,7 @@ pub(crate) struct ShellMvBatchedTask {
     pub(crate) sources: Vec<ZBox>,
     pub(crate) target: ZBox,
     pub(crate) target_fd: Option<bun_sys::Fd>,
+    pub(crate) no_clobber: bool,
     pub(crate) cwd: bun_sys::Fd,
     /// Back-reference into `MvState::Executing::error_signal`. The owning
     /// `MvState` outlives every batched task (tasks are joined / counted in
@@ -462,6 +475,7 @@ impl ShellMvBatchedTask {
                 dir,
                 this.target.as_bytes(),
                 &this.sources[0],
+                this.no_clobber,
                 &mut buf,
             ) {
                 this.err = Some(e);
@@ -469,7 +483,13 @@ impl ShellMvBatchedTask {
             return;
         }
         // Rename single entry to a new path (target was not a directory).
-        if let Err(e) = Self::do_rename(this.cwd, &this.sources[0], this.cwd, &this.target) {
+        if let Err(e) = Self::do_rename(
+            this.cwd,
+            &this.sources[0],
+            this.cwd,
+            &this.target,
+            this.no_clobber,
+        ) {
             this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
             } else {
@@ -485,9 +505,33 @@ impl ShellMvBatchedTask {
         src: &ZStr,
         dst_dir: bun_sys::Fd,
         dst: &ZStr,
+        no_clobber: bool,
     ) -> Result<(), bun_sys::Error> {
+        use bun_sys::E;
+
+        if no_clobber {
+            if shell_lstatat(dst_dir, dst).is_ok() {
+                // `dst` stays. A missing `src` is still an error.
+                return shell_lstatat(src_dir, src)
+                    .map(drop)
+                    .map_err(|e| e.with_path(src.as_bytes()));
+            }
+            // Where the kernel and the filesystem can, also refuse a `dst` created since the check.
+            #[cfg(unix)]
+            {
+                // EXDEV is handled below.
+                const UNSUPPORTED: [E; 5] =
+                    [E::ENOSYS, E::EINVAL, E::ENOTSUP, E::EOPNOTSUPP, E::EXDEV];
+                let mode = bun_sys::RenameMode::NoReplace;
+                match bun_sys::renameat2(src_dir, src, dst_dir, dst, mode) {
+                    Err(e) if e.get_errno() == E::EEXIST => return Ok(()),
+                    Err(e) if UNSUPPORTED.contains(&e.get_errno()) => {}
+                    result => return result,
+                }
+            }
+        }
         match bun_sys::renameat(src_dir, src, dst_dir, dst) {
-            Err(e) if e.get_errno() == bun_sys::E::EXDEV => {
+            Err(e) if e.get_errno() == E::EXDEV => {
                 Self::move_across_devices(src_dir, src, dst_dir, dst, None).map_err(|e| {
                     if e.path.is_empty() {
                         e.with_path(src.as_bytes())
@@ -712,6 +756,7 @@ impl ShellMvBatchedTask {
         target_fd: bun_sys::Fd,
         target: &[u8],
         src: &ZStr,
+        no_clobber: bool,
         buf: &mut PathBuffer,
     ) -> Result<(), bun_sys::Error> {
         let base = resolve_path::basename(src.as_bytes());
@@ -725,7 +770,7 @@ impl ShellMvBatchedTask {
         } else {
             let path_in_dir =
                 resolve_path::normalize_buf_z::<bun_paths::platform::Auto>(base, &mut buf[..]);
-            Self::do_rename(cwd, src, target_fd, path_in_dir)
+            Self::do_rename(cwd, src, target_fd, path_in_dir, no_clobber)
         };
         result.map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
@@ -756,6 +801,7 @@ impl ShellMvBatchedTask {
                 dir,
                 self.target.as_bytes(),
                 &self.sources[i],
+                self.no_clobber,
                 &mut buf,
             ) {
                 self.err = Some(e);

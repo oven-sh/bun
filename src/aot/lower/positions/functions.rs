@@ -136,7 +136,6 @@ fn compute_this_position(
     };
     if func.this_param.is_some() {
         // `new` and the constructors below bring what the function makes, not everything that fits the written type.
-        // The checker holds the calls to the written type.
         if file.queries.is_prototype_object_used(source)
             && let Some(layout) = layouts::constructor_function_layout(file, source)
         {

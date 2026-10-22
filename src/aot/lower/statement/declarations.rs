@@ -68,8 +68,7 @@ pub(super) fn lower_variable_declaration(
     }
 }
 
-// `const a = require(K)`, where every use of `a` is bound to what the module exports. The name holds nothing that anybody looks
-// at. It keeps what the language gives it: a dead zone, or `undefined` until the statement has run.
+// `const a = require(K)`, where every use of `a` is bound to what the module exports.
 fn initialize_holder(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     pattern: PatId,

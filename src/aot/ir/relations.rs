@@ -23,8 +23,7 @@ const MAX_SPARE_SET_WORDS: usize = 1 << 18;
 const MAX_SPARE_ROWS: usize = 1 << 14;
 const MAX_SPARE_READS: usize = 1 << 10;
 const NO_SUBJECT: u16 = u16::MAX;
-// In a row: the value may also be something that is no subject. An operand that has no row at all is nothing else.
-// As the index of a constant: the `undefined` of a `return` without a value.
+// In a row: the value may also be something that is no subject.
 const UNLISTED: u32 = u32::MAX;
 
 // In ascending order.
@@ -639,7 +638,6 @@ impl<'a, const W: usize> Walk<'a, W> {
     }
 
     // In this order whatever a value is made of has been followed before it, but what comes round an edge that goes back.
-    // A block in front of every block that such an edge has brought something new has nothing new to follow.
     fn follow_values(&mut self) {
         let function = self.function;
         let mut first = 0;
@@ -803,8 +801,7 @@ impl<'a, const W: usize> Walk<'a, W> {
         }
     }
 
-    // `{ a: p, n: 2 }`: a member of a literal that is no operand of NewObject is defined behind it. That creates a data property under a name: it looks nothing up, finds no setter
-    // and puts no accessor anywhere. On an object that the function has made itself it is a store, whose row has the key. Of any other object the caller knows more.
+    // `{ a: p, n: 2 }`: a member of a literal that is no operand of NewObject is defined behind it.
     fn as_done_to(&self, subject: u16, opcode: Opcode, has_key: bool, fate: ValueFate) -> ValueFate {
         let is_own = self.subjects[subject as usize].kind == RelationSubjectKind::Allocation;
         if opcode == Opcode::PropDefine && has_key && is_own && fate.contains(ValueFate::HAS_MEMBERS_DELETED_OR_DEFINED) {
@@ -814,7 +811,6 @@ impl<'a, const W: usize> Walk<'a, W> {
     }
 
     // A built-in object and what an operator hands out are there for everybody: what is stored into them is stored into an unknown object.
-    // The second answer: the value may be one of those.
     fn find_holders(&self, value: ValueId) -> (Subjects, bool) {
         let mut holders = Subjects::new();
         let mut holds_others = false;
@@ -1243,8 +1239,7 @@ impl<const W: usize> Walk<'_, W> {
         }
     }
 
-    // By the place of the kind, the length of the path, the index that is shown, the source. No two subjects have one key: a parameter has its index, a value has one subject,
-    // and what a value reads has one for each source.
+    // By the place of the kind, the length of the path, the index that is shown, the source.
     fn sort_key_of(&self, record: &Subject) -> u64 {
         (u64::from(place_of(record.kind)) << 56)
             | (u64::from(record.path_length) << 48)

@@ -41,8 +41,7 @@ pub struct KnownFunction {
     pub shape: Shape,
     pub functions: Box<[FnId]>,
     pub references: Box<[KnownReference]>,
-    /// Whenever the function runs, each helper that it names is that helper and each built-in that it names is that
-    /// built-in: the bindings are settled before it can run, and start-up locks the built-ins.
+    /// Whenever the function runs, each helper that it names is that helper and each built-in that it names is that built-in: the bindings are settled before it can run, and start-up locks the built-ins.
     pub relies_on_facts: bool,
 }
 
@@ -64,8 +63,7 @@ pub enum Certainty {
 pub struct BindingValues {
     pub functions: SmallVec<[HeldFunction; 2]>,
     pub certainty: Certainty,
-    /// No code of the file runs while the binding is still empty: it is a function declaration, or it is defined in the
-    /// head of a file that nothing enters ahead of its body. Never set beside `MayHoldOtherValues`.
+    /// No code of the file runs while the binding is still empty: it is a function declaration, or it is defined in the head of a file that nothing enters ahead of its body.
     pub holds_from_the_start: bool,
 }
 
@@ -95,8 +93,7 @@ impl FileHelpers {
         self.bindings.iter().map(|entry| (entry.0, &entry.1))
     }
 
-    /// What `Quiet::allows_reads_of_open_globals` is for the head of the file: code of other files that runs while the
-    /// head does has no way to call into the file.
+    /// What `Quiet::allows_reads_of_open_globals` is for the head of the file: code of other files that runs while the head does has no way to call into the file.
     pub fn head_allows_reads_of_open_globals(&self) -> bool {
         self.head_allows_reads_of_open_globals
     }
@@ -348,8 +345,7 @@ impl Finder<'_, '_> {
         }
     }
 
-    // `var __defProp = Object.defineProperty;`: what the path held when the variable was initialized. Whoever relies on
-    // the built-in compares the variable with it.
+    // `var __defProp = Object.defineProperty;`: what the path held when the variable was initialized.
     fn is_alias_of_global(&self, symbol: SymbolId, path: &[&str]) -> bool {
         let recorded = self.bound.binding_stability_ignoring(symbol, &|_| true);
         let definition = self.find_definition(symbol);
@@ -538,8 +534,7 @@ impl Finder<'_, '_> {
         }
     }
 
-    // Code of another file that holds the exports of a file that has not run to its end finds nothing to call in a
-    // CommonJS file that has stored no export yet, and the function declarations in an ES module.
+    // Code of another file that holds the exports of a file that has not run to its end finds nothing to call in a CommonJS file that has stored no export yet, and the function declarations in an ES module.
     fn may_start_early(&self) -> bool {
         self.is_es_module && self.exports_function_declaration() && (self.is_held_early)()
     }
@@ -610,8 +605,7 @@ impl Finder<'_, '_> {
         !self.may_start_early() && definition.is_some_and(|definition| self.is_in_head(definition))
     }
 
-    // `this && this.__helper` in the head of a CommonJS file: `this` is the object that the file exports, and it is
-    // still as it was made.
+    // `this && this.__helper` in the head of a CommonJS file: `this` is the object that the file exports, and it is still as it was made.
     fn reads_untouched_exports(&self, this: ExprId, member: ExprId) -> bool {
         if self.is_es_module {
             return false;

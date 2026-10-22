@@ -6,8 +6,7 @@ use crate::ir::{
 use bun_sema::check::aot::ObjectOrigin;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-// The layout of a plain object belongs to no file. Each file that names it defines it with the types that the file knows, and
-// a slot holds what any of them stores there.
+// The layout of a plain object belongs to no file.
 pub(super) fn has_united_definitions(key: &LayoutKey) -> bool {
     matches!(
         key,
@@ -22,8 +21,7 @@ const FLAGS_THAT_ALL_GIVE: FieldFlags = FieldFlags(
     FieldFlags::IS_REQUIRED.0 | FieldFlags::IS_METHOD.0 | FieldFlags::IS_IMMUTABLE.0,
 );
 
-// Many files define a layout with the same few types. A union that was asked for before is in the table: to find it there it
-// would be put together, sorted and hashed again.
+// Many files define a layout with the same few types.
 struct Unions<'a> {
     types: &'a mut TypeTable,
     known: FxHashMap<(TypeId, TypeId), TypeId>,
@@ -55,8 +53,7 @@ fn unite_positions(first: DeclaredType, other: DeclaredType, ty: TypeId) -> Decl
     DeclaredType::new(mapped, first.site, flags)
 }
 
-// What one more definition says that a field holds, where that is another type than the definitions before it gave. Only the
-// table of types can say what the two hold together, and the types that it adds are numbered in the order in which it is asked.
+// What one more definition says that a field holds, where that is another type than the definitions before it gave.
 struct WaitingPosition {
     // 0 is the layout, and `n` its view `n - 1`.
     record: u32,
@@ -69,8 +66,7 @@ struct Uniting<'a> {
     record: u32,
     // By field. What comes behind a position that waits has to wait too.
     is_waiting: Vec<bool>,
-    // What the positions of a field with one that waits have said. To unite a position with the same type and flags once more
-    // changes nothing, and most files say what another has said.
+    // What the positions of a field with one that waits have said.
     said: FxHashSet<(u32, TypeId, PositionFlags)>,
     waiting: &'a mut Vec<WaitingPosition>,
 }
@@ -184,9 +180,7 @@ fn create_view(above: LayoutId, definition: &Layout) -> Layout {
     view
 }
 
-// What `{ kind: 1; a: A }` and `{ kind: 5; a: A }` declare together is `kind: 1..5`: which literals were written is lost, and with
-// them which names an object with a given literal has. So where the definitions of a layout write different literals, what is
-// declared under each stays in the program: a type below the layout that nothing allocates and no position names.
+// What `{ kind: 1; a: A }` and `{ kind: 5; a: A }` declare together is `kind: 1..5`: which literals were written is lost, and with them which names an object with a given literal has.
 fn collect_views_of_literals(
     id: LayoutId,
     first: &Layout,
@@ -278,9 +272,7 @@ fn split_united_layouts<'a>(
 
 const LAYOUTS_IN_A_TASK: usize = 256;
 
-// `others` has a list for each unit, in the order of the units. Whatever needs no new type is done for all layouts at a
-// time. The table of types is then asked in the order of the layouts, of their definitions and of their fields, so the types that
-// this adds have the same numbers in every build. Answers with the views of literals, for add_views_of_literals().
+// `others` has a list for each unit, in the order of the units.
 pub(super) fn unite_layout_definitions(
     layouts: &mut [Layout],
     others: Vec<Vec<(LayoutId, Layout)>>,
@@ -361,8 +353,6 @@ fn find_types_of_made_objects(layouts: &[Layout]) -> Vec<bool> {
 }
 
 // The units name no view, so the views come behind every layout that has a number, and behind the steps that go by those numbers.
-// What such a step has found about a name holds of it in every record. Only of an object of a maker does anybody ask which names
-// it will have: an object literal is born with its names.
 pub(super) fn add_views_of_literals(layouts: &mut Vec<Layout>, views: Vec<Layout>) {
     if views.is_empty() {
         return;

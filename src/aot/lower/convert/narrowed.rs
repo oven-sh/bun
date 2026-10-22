@@ -265,8 +265,7 @@ fn find_private_slot(file: &mut FileLowering<'_, '_, '_, '_>, access: ExprId) ->
     }
 }
 
-// Nothing narrows a method: its type names its declaration, whatever the type arguments of the receiver are. The layouts of
-// the receiver say which function it is, so a test of what was read would only guard the callee.
+// Nothing narrows a method: its type names its declaration, whatever the type arguments of the receiver are.
 fn method_position() -> DeclaredType {
     DeclaredType::from_compiler(TypeTable::FUNCTION)
 }
@@ -283,8 +282,7 @@ fn map_position(
     DeclaredType::new(mapped, None, PositionFlags::default())
 }
 
-// What is written at a field of a class is the type of its slot, whoever inherits or instantiates the class. What an index
-// signature gives was converted where it was read, to a type that lists the `undefined` of a name that the object lacks.
+// What is written at a field of a class is the type of its slot, whoever inherits or instantiates the class.
 fn find_declared_position(
     file: &mut FileLowering<'_, '_, '_, '_>,
     access: ExprId,
@@ -352,8 +350,7 @@ fn find_position_before_narrowing(
     }
 }
 
-// A type that lists all that the position lists adds nothing to it. The receiver of a method is an instance, and what the
-// checker's type of it maps to also lists `undefined` and `null`.
+// A type that lists all that the position lists adds nothing to it.
 fn includes_all_of(file: &mut FileLowering<'_, '_, '_, '_>, ty: TypeId, position: TypeId) -> bool {
     if ty == position || position == TypeTable::ANYTHING {
         return ty == position;
@@ -361,8 +358,7 @@ fn includes_all_of(file: &mut FileLowering<'_, '_, '_, '_>, ty: TypeId, position
     file.fragment.types.union(ty, position) == ty
 }
 
-// The checker keeps what it knows of a member across calls and aliases, so each read has its own conversion and nothing
-// rests on an earlier one.
+// The checker keeps what it knows of a member across calls and aliases, so each read has its own conversion and nothing rests on an earlier one.
 pub(in crate::lower) fn convert_narrowed_reference(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,

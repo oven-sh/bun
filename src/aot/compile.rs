@@ -423,8 +423,7 @@ impl<'a> Build<'a> {
         self.retired_sessions.extend([application, runtime]);
     }
 
-    // Nothing waits for the memory of what a stage has read for the last time, and one thread takes a while to free it. So it is
-    // freed while the engine runs, or with the build.
+    // Nothing waits for the memory of what a stage has read for the last time, and one thread takes a while to free it.
     pub(crate) fn retire(&mut self, leftovers: Leftovers) {
         self.leftovers.push(leftovers);
     }
@@ -438,8 +437,7 @@ impl<'a> Build<'a> {
         let body_remap = core::mem::take(&mut output.body_remap);
         let in_parallel = self.parallel_runner();
         let started = Instant::now();
-        // Emit asks nothing of the sessions, and few threads have something to free. Nobody waits until the pages are back with the
-        // system: that takes one thread most of a second, and the allocator does it by itself a moment later.
+        // Emit asks nothing of the sessions, and few threads have something to free.
         let sessions = core::mem::take(&mut self.retired_sessions);
         let runner_of_drops = self.parallel_runner();
         let ((), emitted) = run_beside(

@@ -52,8 +52,7 @@ impl DeclaredType {
         DeclaredType::new(Mapped::UNKNOWN, None, PositionFlags::default())
     }
 
-    /// In a definition of a plain layout that says which names a type has and not what they hold. No position of a program has
-    /// the type `never`. The link unites the definitions of a layout, and what none of them says is untyped.
+    /// In a definition of a plain layout that says which names a type has and not what they hold.
     pub fn unsaid() -> DeclaredType {
         DeclaredType {
             ty: TypeTable::NEVER,

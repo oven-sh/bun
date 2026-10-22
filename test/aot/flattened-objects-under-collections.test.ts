@@ -1,5 +1,5 @@
 // Objects that lie in the cells of other objects, with the collector at every fifth, seventh and eleventh allocation that leaves the fast path, writing over what it frees.
-// A collection at EVERY such allocation (variant-validate-collecting) did not show the fault of 10-21: an inner object that was let go kept its header in the live cell, and a stale word of the stack
+// A collection at EVERY such allocation (variant-validate-collecting) did not show this fault: an inner object that was let go kept its header in the live cell, and a stale word of the stack
 // named it two collections later, when what it referred to was freed. For that the word has to outlast collections, and at every allocation the stack is too fresh:
 // programs/inner-objects/three-levels-are-held-let-go-and-filled-again.ts died at every second, third, fifth, seventh and eleventh. At every second and third some of the programs take minutes.
 import { programsBuiltWith } from "./run-programs";

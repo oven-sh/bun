@@ -26,8 +26,7 @@ pub(super) fn lower_loop_subject(
     value
 }
 
-// JSC reports the calls of the iteration protocol at the end of what stands before `of`, which the
-// source map takes back to this token.
+// JSC reports the calls of the iteration protocol at the end of what stands before `of`, which the source map takes back to this token.
 pub(super) fn last_mapped_head_position(
     file: &FileLowering<'_, '_, '_, '_>,
     statement: StmtId,

@@ -1,5 +1,4 @@
-//! `bun test` hands every file the names of the test runner. A file that loads none of the runner's modules gets the names that it
-//! uses and does not declare out of "bun:test", as if it had imported them.
+//! `bun test` hands every file the names of the test runner.
 
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::Binding;
@@ -68,8 +67,6 @@ fn find_uses(request: &TransformRequest<'_, '_>, names: &[Atom]) -> Vec<(ExprId,
     uses.collect()
 }
 
-// The value is the module's. The type stays what the checker finds under the name as it is written: a declaration of the program, of
-// the types that are installed, or of last resort: `local as any as typeof written`.
 fn write_use(file: &mut FileBuilder, expression: ExprId, written: Atom, local: Atom) {
     if file.is_js {
         file[expression].kind = ExprKind::Ident(local);
@@ -247,8 +244,7 @@ mod tests {
     use crate::compile::testing::{default_settings, with_loaded_test_run};
     use crate::load::ProjectId;
 
-    // The names that the first statement behind the directives takes out of "bun:test", how many names of the runner still stand for a value, and how many
-    // values have the type of a name of the runner.
+    // The names that the first statement behind the directives takes out of "bun:test", how many names of the runner still stand for a value, and how many values have the type of a name of the runner.
     fn describe(name: &str, text: &str) -> String {
         with_loaded_test_run(&[(name, text)], &default_settings(), |_, loaded| {
             let files = loaded.project(ProjectId::Application).loaded.files();

@@ -1,6 +1,8 @@
 use core::cell::{Cell, RefCell};
+use core::cmp::Ordering;
 use std::rc::Rc;
 
+use bun_sema::atom::Atom;
 use bun_sema::bind::Parent;
 use bun_sema::check::aot::{
     ListedMember, MemberName, ObjectMemberKind, ObjectOrigin, ShapeKind, TypeIdentity, WrittenType,
@@ -17,9 +19,10 @@ use super::{
 use crate::ir::generated::{
     Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
+use crate::builtins::resolve::SourceDialect;
 use crate::ir::{
     DeclaredType, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, StringId,
-    WellKnownSymbol,
+    WellKnownSymbol, classify_name,
 };
 use crate::lower::{CheckerTypeId, FileLowering, SourceKind, convert, member, positions, types};
 use crate::modules::ModuleRef;
@@ -39,20 +42,26 @@ struct Declaration {
     site: Option<(FileId, u32)>,
 }
 
+// A file names few of the names of the types it meets, so a name goes into the file's tables where a definition says it.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub(super) enum FieldName {
+    Text(Atom),
+    Key(PropertyKeyId),
+}
+
 struct ListedField {
-    key: PropertyKeyId,
+    name: FieldName,
     flags: Cell<FieldFlags>,
     // The member of each type that has the layout, in the order the types were met.
     members: RefCell<SmallVec<[(CheckerTypeId, ListedMember); 1]>>,
-    // What the first of these members declare, and how many they are. A large file has thousands of types with one layout,
-    // so a type that comes later is added to what is known.
+    // What the first of these members declare, and how many they are.
     declared: Cell<(Option<DeclaredType>, usize)>,
 }
 
 impl ListedField {
-    fn new(key: PropertyKeyId, ty: CheckerTypeId, member: ListedMember) -> ListedField {
+    fn new(name: FieldName, ty: CheckerTypeId, member: ListedMember) -> ListedField {
         ListedField {
-            key,
+            name,
             flags: Cell::new(member_flags(member.kind, member.is_optional)),
             members: RefCell::new(smallvec![(ty, member)]),
             declared: Cell::new((None, 0)),
@@ -63,15 +72,19 @@ impl ListedField {
 #[derive(Default)]
 pub(super) struct ListedFields {
     fields: Vec<ListedField>,
-    fields_by_key: Vec<u32>,
     is_known: bool,
 }
 
 impl ListedFields {
-    pub(super) fn find(&self, key: PropertyKeyId) -> Option<u32> {
-        let key_of = |&index: &u32| self.fields[index as usize].key;
-        let found = self.fields_by_key.binary_search_by_key(&key, key_of);
-        found.ok().map(|found| self.fields_by_key[found])
+    pub(super) fn find(&self, file: &FileLowering<'_, '_, '_, '_>, key: PropertyKeyId) -> Option<u32> {
+        let found = match describe_key(file, key) {
+            Some(description) => self
+                .fields
+                .binary_search_by(|field| compare_name(file, field.name, &description))
+                .ok(),
+            None => self.fields.iter().position(|field| field.name == FieldName::Key(key)),
+        };
+        found.map(|found| found as u32)
     }
 
     pub(super) fn flags(&self, field: u32) -> FieldFlags {
@@ -81,7 +94,7 @@ impl ListedFields {
     fn add_type(&self, fields_of_type: Vec<ListedField>) {
         debug_assert_eq!(self.fields.len(), fields_of_type.len(), "types with one layout have the same names");
         for (field, field_of_type) in self.fields.iter().zip(fields_of_type) {
-            debug_assert_eq!(field.key, field_of_type.key, "types with one layout have the same names");
+            debug_assert_eq!(field.name, field_of_type.name, "types with one layout have the same names");
             if !field_of_type.flags.get().contains(FieldFlags::IS_REQUIRED) {
                 field.flags.set(field.flags.get().without(FieldFlags::IS_REQUIRED));
             }
@@ -184,7 +197,7 @@ fn describe_names(
     let fields = sort_listed_fields(file, ty, members);
     let descriptions: Vec<(KeyDescription, ObjectMemberKind)> = fields
         .iter()
-        .filter_map(|field| Some((describe_key(file, field.key)?, field.members.borrow()[0].1.kind)))
+        .filter_map(|field| Some((describe_name(file, field.name)?, field.members.borrow()[0].1.kind)))
         .collect();
     let names = descriptions.iter().map(|(name, kind)| (name.as_slice(), *kind));
     NamesOfObjectType {
@@ -194,9 +207,7 @@ fn describe_names(
     }
 }
 
-// A layout says where each property of an object lies, so it is known by the set of their names. Two types with the same names
-// share it, whatever else tells them apart: the order of the names, `readonly`, a type argument, the literal type of a
-// field, an alias, the file. A field holds what any of them declares for it.
+// A layout says where each property of an object lies, so it is known by the set of their names.
 fn declare_object_type(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
@@ -211,8 +222,7 @@ fn declare_object_type(
             names
         }
     };
-    // The names of an object that is born without a known name, `{}` or `{ a: 1, ...anything }`, are those that are stored later,
-    // which differ from one place of birth to the next.
+    // The names of an object that is born without a known name, `{}` or `{ a: 1, ...anything }`, are those that are stored later, which differ from one place of birth to the next.
     let origin = match (file.queries.object_origin(ty), literal) {
         _ if !names.is_empty => ObjectOrigin::Computed,
         (_, Some(expression)) => ObjectOrigin::ObjectLiteral {
@@ -243,8 +253,7 @@ fn declare_object_type(
     Some(layout)
 }
 
-// Every member of such a type is a type that nothing has made yet, with the same layout, and looking at its members makes the
-// next ones. It is cut off where the checker cuts off its own comparisons.
+// Every member of such a type is a type that nothing has made yet, with the same layout, and looking at its members makes the next ones.
 fn grows_without_end(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> bool {
     const LONGEST_PATH: usize = 64;
     let Some(holder) = file.layouts.holder_in_progress.filter(|&holder| holder != ty) else {
@@ -276,8 +285,7 @@ fn create_position_of_member(
     }
 }
 
-// What passes for an interface passes for what the interface extends. The names say so for a plain object. They do not for an
-// instance of a class, whose methods lie in its prototype.
+// What passes for an interface passes for what the interface extends.
 fn add_edges_to_extended_types(
     file: &mut FileLowering<'_, '_, '_, '_>,
     layout: LayoutId,
@@ -405,21 +413,35 @@ fn collect_listed_fields(
     members: &[ListedMember],
 ) -> Vec<ListedField> {
     let mut listed = Vec::with_capacity(members.len());
-    let mut keys = FxHashSet::with_capacity_and_hasher(members.len(), Default::default());
+    let mut names = FxHashSet::with_capacity_and_hasher(members.len(), Default::default());
     for &listed_member in members {
-        let key = match listed_member.name {
-            MemberName::String(name) => member::name_key(file, name),
-            MemberName::Symbol(name) => match member::created_symbol_key(file, name) {
-                Some(key) => key,
+        let name = match (listed_member.name, file.source.dialect()) {
+            (MemberName::String(name), SourceDialect::Program) => FieldName::Text(name),
+            (MemberName::String(name), SourceDialect::Runtime) => {
+                FieldName::Key(member::name_key(file, name))
+            }
+            (MemberName::Symbol(name), _) => match member::created_symbol_key(file, name) {
+                Some(key) => FieldName::Key(key),
                 None => continue,
             },
-            MemberName::Private(_) => continue,
+            (MemberName::Private(_), _) => continue,
         };
-        if can_be_field(file, key) && keys.insert(key) {
-            listed.push(ListedField::new(key, ty, listed_member));
+        let can_be_field = match name {
+            FieldName::Text(text) => is_field_name(classify_name(file.queries.atom_bytes(text))),
+            FieldName::Key(key) => can_be_field(file, key),
+        };
+        if can_be_field && names.insert(name) {
+            listed.push(ListedField::new(name, ty, listed_member));
         }
     }
     listed
+}
+
+fn find_key(file: &mut FileLowering<'_, '_, '_, '_>, name: FieldName) -> PropertyKeyId {
+    match name {
+        FieldName::Text(text) => file.atom_key(text),
+        FieldName::Key(key) => key,
+    }
 }
 
 // In the one order that every type with these names gives: field `i` of one is field `i` of the other.
@@ -429,12 +451,12 @@ fn sort_listed_fields(
     members: &[ListedMember],
 ) -> Vec<ListedField> {
     if let Some(sorted) = file.layouts.sorted_members.get(&ty) {
-        return sorted.iter().map(|&(key, member)| ListedField::new(key, ty, member)).collect();
+        return sorted.iter().map(|&(name, member)| ListedField::new(name, ty, member)).collect();
     }
     let mut fields = collect_listed_fields(file, ty, members);
-    fields.sort_by_cached_key(|field| describe_key(file, field.key));
+    fields.sort_by_cached_key(|field| describe_name(file, field.name));
     fields.truncate(file.inputs.limits.get(LimitId::FieldsInKeyOrder) as usize);
-    let sorted = fields.iter().map(|field| (field.key, field.members.borrow()[0].1)).collect();
+    let sorted = fields.iter().map(|field| (field.name, field.members.borrow()[0].1)).collect();
     file.layouts.sorted_members.insert(ty, sorted);
     fields
 }
@@ -463,10 +485,6 @@ fn compute_listed_fields(
         listed.fields = fields_of_type;
         listed.is_known = true;
     }
-    let fields = &listed.fields;
-    let mut fields_by_key: Vec<u32> = (0..fields.len() as u32).collect();
-    fields_by_key.sort_unstable_by_key(|&index| fields[index as usize].key);
-    listed.fields_by_key = fields_by_key;
     listed
 }
 
@@ -540,8 +558,7 @@ pub(super) fn compute_object_type_fields(
     if !listed.is_known {
         return OwnFields::default();
     }
-    // The type of a field may be the first mention of another type with this very layout (`interface Even { other: Odd }`),
-    // which then adds to the fields that have been looked at. `Nest<Nest<T>>` goes on for ever.
+    // The type of a field may be the first mention of another type with this very layout (`interface Even { other: Odd }`), which then adds to the fields that have been looked at.
     for _ in 0..MAX_ROUNDS_OF_FIELD_TYPES {
         let number_of_types = file.layouts.source_types(layout).len();
         for index in 0..listed.fields.len() as u32 {
@@ -556,7 +573,7 @@ pub(super) fn compute_object_type_fields(
     for field in &listed.fields {
         let declared = field.declared.get().0.filter(|_| !is_growing);
         fields.add(Field {
-            key: Some(field.key),
+            key: Some(find_key(file, field.name)),
             declared: declared.unwrap_or_else(DeclaredType::untyped),
             flags: field.flags.get(),
             ..Field::default()
@@ -591,7 +608,6 @@ struct FieldsOfType {
 }
 
 // The fields in the order in which the type lists its members: the order that a text written for the type is likely to have.
-// Nothing where that is the order of the fields.
 fn find_declared_order(listed: &[ListedField]) -> Vec<u32> {
     let mut order: Vec<u32> = (0..listed.len() as u32).collect();
     order.sort_by_key(|&field| listed[field as usize].members.borrow()[0].1.property_index);
@@ -627,7 +643,7 @@ fn compute_fields_of_type(
             false => declared,
         };
         fields.push(Field {
-            key: Some(field.key),
+            key: Some(find_key(file, field.name)),
             declared,
             flags: field.flags.get(),
             ..Field::default()
@@ -648,8 +664,7 @@ fn compute_fields_of_type(
     })
 }
 
-// All that such a definition says: two types that say the same have one key. A layout is shown at the place of a type that has
-// one, so a type without a place does not stand for one that has.
+// All that such a definition says: two types that say the same have one key.
 fn create_key_of_names(flags: TypeIdentity, has_place: bool) -> ObjectTypeKey {
     ObjectTypeKey {
         origin: ObjectOrigin::Computed,
@@ -719,7 +734,7 @@ fn define_names_of_type(
     let fields: Vec<Field> = listed
         .iter()
         .map(|field| Field {
-            key: Some(field.key),
+            key: Some(find_key(file, field.name)),
             declared: DeclaredType::unsaid(),
             flags: field.flags.get(),
             ..Field::default()
@@ -735,9 +750,7 @@ fn define_names_of_type(
     file.fragment.define_object_type(layout, definition, Some((key, level)));
 }
 
-// One definition for each type, which says what that type declares: the link unites them. What an earlier file has said of a
-// type is not said again. Whether a type is defined hangs on that type alone: which other types with the layout the file has
-// met differs from one build to the next.
+// One definition for each type, which says what that type declares: the link unites them.
 pub(super) fn define_object_type_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     layout: LayoutId,
@@ -789,8 +802,7 @@ pub(super) fn define_object_type_layout(
     }
 }
 
-// Which types with the layout a file meets first hangs on what it leaves to earlier files, so a definition is shown under the
-// name of its own type.
+// Which types with the layout a file meets first hangs on what it leaves to earlier files, so a definition is shown under the name of its own type.
 fn create_layout_of_type(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
@@ -817,6 +829,35 @@ fn create_layout_of_type(
         fields,
         declared_order,
         ..Layout::default()
+    }
+}
+
+fn describe_name(file: &FileLowering<'_, '_, '_, '_>, name: FieldName) -> Option<KeyDescription> {
+    match name {
+        FieldName::Text(text) => {
+            let mut description = KeyDescription::new();
+            description.push(PropertyKeyKind::Text.to_wire() as u8);
+            description.extend_from_slice(file.queries.atom_bytes(text));
+            Some(description)
+        }
+        FieldName::Key(key) => describe_key(file, key),
+    }
+}
+
+fn compare_name(
+    file: &FileLowering<'_, '_, '_, '_>,
+    name: FieldName,
+    description: &[u8],
+) -> Ordering {
+    match name {
+        FieldName::Text(text) => {
+            let kind = [PropertyKeyKind::Text.to_wire() as u8];
+            kind.iter().chain(file.queries.atom_bytes(text)).cmp(description)
+        }
+        FieldName::Key(key) => match describe_key(file, key) {
+            Some(described) => described.as_slice().cmp(description),
+            None => Ordering::Less,
+        },
     }
 }
 

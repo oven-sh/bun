@@ -96,13 +96,10 @@ pub enum ModuleField {
     Loaded,
 }
 
-/// What a file does with a module object that it comes to by binding. `module.exports`, `module.paths`, `module.require` and a
-/// test of `module` are no use of the object of the own file, and are not listed. `const { parent } = module` is listed as `Object`
-/// and as `Parent`, both at `module`.
+/// What a file does with a module object that it comes to by binding.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleObjectUse {
-    /// `module.id`, `require.main.filename`: a plain read off what is that object in every run. It is a constant as long as
-    /// nobody holds the object of the owner, who could store there.
+    /// `module.id`, `require.main.filename`: a plain read off what is that object in every run.
     Field(ModuleField),
     /// `!require.main`: only whether there is an object.
     Tested,
@@ -118,9 +115,7 @@ pub enum ModuleObjectUse {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ModuleObjectMention {
-    /// The member for `Field`, `ParentTested`, `Parent` and `Children`, else what stands for the object. `ExprId::NONE`
-    /// where no expression does: a direct `eval`, `arguments`, `with`, `var module`, a store to one of the five names but
-    /// `exports = module.exports = value`.
+    /// The member for `Field`, `ParentTested`, `Parent` and `Children`, else what stands for the object.
     pub expr: ExprId,
     pub owner: ModuleObjectOwner,
     pub object_use: ModuleObjectUse,
@@ -259,8 +254,7 @@ impl ResolvedBuiltins {
         Some(mentions[at])
     }
 
-    /// Whether `target` is the name `exports` in `exports = module.exports = value` as a statement of the body of a CommonJS file:
-    /// from there on both name the one value, so the store needs no parameter to go to.
+    /// Whether `target` is the name `exports` in `exports = module.exports = value` as a statement of the body of a CommonJS file: from there on both name the one value, so the store needs no parameter to go to.
     pub fn is_stored_with_module_exports(&self, target: ExprId) -> bool {
         self.stores_with_module_exports.contains(&target)
     }
@@ -294,9 +288,7 @@ pub fn resolve_file(input: &ResolveInput<'_, '_>) -> ResolvedBuiltins {
     resolver::run(input, None)
 }
 
-/// The built-ins of a part of a file: the code in these ranges of positions, which are in order and do not overlap. The targets
-/// are those of the import sites in them. A built-in that a binding takes out of the part counts as exposed, so the parts of a file
-/// together need at least what the file needs.
+/// The built-ins of a part of a file: the code in these ranges of positions, which are in order and do not overlap.
 pub fn resolve_within(input: &ResolveInput<'_, '_>, ranges: &[Range<u32>]) -> ResolvedBuiltins {
     resolver::run(input, Some(ranges))
 }

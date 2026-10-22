@@ -63,7 +63,10 @@ use property_keys::merge_property_keys;
 use state::{Definitions, ModuleRecords, ModuleTable, ProgramTables, Retained};
 use step_times::StepTimes;
 use strings::merge_strings;
-use types::{TypeTableInput, build_type_table, merge_types, order_types_by_contents};
+use types::{
+    TypeTableInput, collision_between, intern_prepared_types, merge_types,
+    order_types_by_contents, prepare_types,
+};
 use unit::KeyList;
 use united_layouts::{add_views_of_literals, unite_layout_definitions};
 use unused_records::{UseInput, mark_unused_records};
@@ -161,8 +164,7 @@ pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     Ok(linked)
 }
 
-/// Calls `meanwhile` with the keys of the program, once, on the calling thread, unless link fails first. One thread does
-/// meanwhile what has to be done in order, so the others are free for what `meanwhile` starts.
+/// Calls `meanwhile` with the keys of the program, once, on the calling thread, unless link fails first.
 pub fn link_while(
     input: LinkInput<'_, '_>,
     meanwhile: &mut dyn FnMut(&ProgramKeys),
@@ -222,7 +224,7 @@ pub fn link_while(
     times.end_step(StatisticId::LinkMergeStringsAndTypesNanoseconds);
 
     // No type names a property key.
-    let (merged_property_keys, (keys, types)) = run_beside(
+    let (merged_property_keys, (keys, prepared_types)) = run_beside(
         beside,
         || merge_property_keys(&units, &retained.units, &numbering.units, in_parallel),
         || {
@@ -230,7 +232,7 @@ pub fn link_while(
                 beside,
                 || ProgramKeys::new(&functions, &layouts, &variables, &modules, &numbering),
                 || {
-                    build_type_table(&TypeTableInput {
+                    prepare_types(&TypeTableInput {
                         units: &units,
                         type_representatives: &type_representatives,
                         ids: &numbering.units,
@@ -246,24 +248,32 @@ pub fn link_while(
         ids.property_keys = property_keys;
     }
     times.end_step(StatisticId::LinkMergePropertyKeysNanoseconds);
-    let mut types = types.map_err(|error| vec![error])?;
+    let prepared_types = prepared_types.map_err(|error| vec![error])?;
     times.end_step(StatisticId::LinkBuildTypeTableNanoseconds);
 
-    let mut tables = move_definitions(
-        &mut units,
-        &MoveInput {
-            functions: &functions,
-            layouts: &layouts,
-            variables: &variables,
-            definitions: &definitions,
-            retained: &retained,
-            numbering: &numbering,
-            atoms,
-            in_parallel,
-            beside,
+    let (types, mut tables) = run_beside(
+        beside,
+        || intern_prepared_types(prepared_types),
+        || {
+            move_definitions(
+                &mut units,
+                &MoveInput {
+                    functions: &functions,
+                    layouts: &layouts,
+                    variables: &variables,
+                    definitions: &definitions,
+                    retained: &retained,
+                    numbering: &numbering,
+                    atoms,
+                    in_parallel,
+                    beside,
+                },
+                &mut strings,
+            )
         },
-        &mut strings,
     );
+    let mut types = types
+        .map_err(|places| vec![collision_between(&units, &type_representatives, places)])?;
     let unit_marks = core::mem::take(&mut retained.units);
     // The records of the modules name no layout and no type, and the layouts are united without a look at a unit or a string.
     let (views, records) = run_beside(

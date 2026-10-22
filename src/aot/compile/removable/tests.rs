@@ -9,9 +9,6 @@ use super::{Removable, RemovableOptions};
 use crate::compile::testing::{default_settings, with_loaded_build};
 use crate::load::ProjectId;
 
-// One program a line: the answer for the statement with MARK in it, what `bun build` does with that statement when nothing
-// uses it, the same with --minify-syntax, why the first two differ, the configuration, the extension, the text.
-// test/aot/removable-statements.test.ts holds the second and the third column against the bundler.
 const TABLE: &str = include_str!("rows.tsv");
 
 const DEPENDENCY: &str = "export const value = \"v\"; export function fn() {} export class Base {} \
@@ -191,8 +188,6 @@ fn every_configuration_of_the_table_is_run() {
     }
 }
 
-// More than the bundler removes only where nothing runs: the folder has put a constant in place of the expression or has
-// found the code dead, the table of built-ins knows the value that is read, or the statement compiles to nothing.
 #[test]
 fn every_difference_from_the_bundler_has_its_reason() {
     for row in parse_table() {

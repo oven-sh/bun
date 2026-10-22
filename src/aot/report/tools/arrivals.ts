@@ -1,27 +1,4 @@
-// What arrived at the property accesses that went by name, against what the compiler expected there, and which functions arrived at the calls that went by value.
-//
-//   bun build --compile --aot --aot-count-arrivals --aot-report=r.json --aot-report-detail=sites app.ts --outfile app
-//   BUN_JSC_aotCountsPath=counts.txt ./app
-//   bun src/aot/report/tools/arrivals.ts r.json counts.txt --top 100
-//   bun src/aot/report/tools/arrivals.ts r.json counts.txt --kinds call,construct     only the calls by value: what arrives is the callee, function:<number> or function:native
-//
-// The build numbers every by-name access in the code it emits and lists the numbers in the report ("arrivalSites"),
-// each with the layouts it expects. The run counts, per number, what the receiver was. Inlining and the typed and
-// generic versions of a function make several numbered sites out of one place in the source: the sites of one place
-// that expect the same are printed as one.
-//
-// The verdict on an arrival says how it differs from the closest of the expected layouts:
-//   expected                                    listed, so another test of the guard failed, such as an empty slot
-//   expected, no fast arm                       listed, but the code has no fast arm for the access
-//   left its shape                              listed, but the object has extra properties or another prototype
-//   below <layout> by class                     an instance of a class below the expected one
-//   same fields, same order as <layout>         another layout with the same names
-//   same fields, other order than <layout>
-//   <layout> without optional <names>
-//   <layout> plus <names>
-//   foreign object with the fields of <layout>  no compiled code made it: JSON.parse, native code, a spread
-//   unrelated                                   another layout, a built-in class, a function, a primitive
-//   nothing expected                            the site lists no layout
+// What arrived at the property accesses that went by name, against what the compiler expected there.
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 

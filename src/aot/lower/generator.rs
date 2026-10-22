@@ -130,7 +130,6 @@ pub(in crate::lower) fn emit_resume_switch(
 }
 
 // The position takes what the operand is fulfilled with: the operand itself where its type has no promise in it.
-// A promise never enters the position, so only the type of what it holds flows there.
 pub(in crate::lower) fn find_awaited_source(
     file: &mut FileLowering<'_, '_, '_, '_>,
     operand: ExprId,

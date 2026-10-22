@@ -136,8 +136,7 @@ impl<'a> LoadHost<'a> {
         }
     }
 
-    /// The caller runs `read_in_background` for `background_reads` once the program is loaded, and calls
-    /// `finish_background_reads` when it needs the contents.
+    /// The caller runs `read_in_background` for `background_reads` once the program is loaded, and calls `finish_background_reads` when it needs the contents.
     pub(crate) fn reading_in_background_after_load(self) -> LoadHost<'a> {
         LoadHost {
             reads_in_background_after_load: true,
@@ -263,8 +262,7 @@ impl LoadHost<'_> {
         paths.binary_search_by(|it| it.as_slice().cmp(path)).is_ok()
     }
 
-    /// Returns false if a plugin answered one of the background reads with something other than an asset. The program must
-    /// then be loaded again.
+    /// Returns false if a plugin answered one of the background reads with something other than an asset.
     pub(crate) fn finish_background_reads(&self) -> bool {
         let paths = std::mem::take(&mut *self.background_reads.lock());
         let (provider, messages) = (self.input.provider, self.input.messages);
@@ -339,8 +337,7 @@ impl Host for LoadHost<'_> {
         }
     }
 
-    // The files that run have been read by now, each through the plugins. Any other file is read for its types alone. No plugin
-    // sees it, as in a build that checks no types.
+    // The files that run have been read by now, each through the plugins.
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         let is_on_disk = matches!(self.served_by(path), ServedBy::Disk);
         if is_on_disk && !self.plugins.was_read(path) && !self.is_background_read(path) {

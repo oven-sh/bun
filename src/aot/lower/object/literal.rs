@@ -33,8 +33,6 @@ struct Dictionary {
 }
 
 // The types are asked in the order in which a literal finds its layout: the type it is written under, then its own.
-// No type decides for `{}`. What becomes of it is seen where the whole program is analyzed: the names that the program spells become its fields, and where a name may be
-// added under a key that nobody knows it makes an ordinary object.
 fn find_dictionary(file: &mut FileLowering<'_, '_, '_, '_>, literal: ExprId) -> Option<Dictionary> {
     if let ExprKind::Object(properties) = file.hir[literal].kind
         && properties.iter().next().is_none()
@@ -65,8 +63,7 @@ fn has_only_written_names(hir: &File<'_>, literal: ExprId) -> bool {
     })
 }
 
-// `Object.defineProperties(target, { .. })`, `Object.create(base, { .. })`: the built-in takes the literal as a map, name by name, and nobody else sees it. The analysis follows an ordinary object
-// through the two more exactly than one with a layout.
+// `Object.defineProperties(target, { .. })`, `Object.create(base, { .. })`: the built-in takes the literal as a map, name by name, and nobody else sees it.
 fn is_map_of_descriptors(file: &FileLowering<'_, '_, '_, '_>, literal: ExprId) -> bool {
     let hir = file.hir;
     let mut child = literal;
@@ -92,9 +89,7 @@ fn is_marked_literal(file: &FileLowering<'_, '_, '_, '_>, literal: ExprId) -> bo
     has_only_written_names(file.hir, literal) && !is_map_of_descriptors(file, literal)
 }
 
-// `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name, and the names that the object has are written. It has their layout, like the literal
-// without the type. Whether it is used as the type allows is seen where the whole program is analyzed: where a name may be added to it or taken from it, it is made an ordinary
-// object there. So the layout is marked, and the members are defined one by one behind the allocation, as those of an ordinary object are.
+// `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name, and the names that the object has are written.
 fn begin_under_dictionary_type(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     literal: ExprId,
@@ -106,9 +101,7 @@ fn begin_under_dictionary_type(
     object
 }
 
-// `{ ...source, a }` where no type says which names the object will have: the place asks for a type variable or for one of
-// several types, and the type of the literal itself is no object type, because that of the source is a type variable, a union or
-// `any`. The source knows: the copy makes the object, with the layout of what it copies.
+// `{ ...source, a }` where no type says which names the object will have.
 fn begins_as_copy(file: &mut FileLowering<'_, '_, '_, '_>, literal: ExprId) -> bool {
     let hir = file.hir;
     let ExprKind::Object(properties) = hir[literal].kind else {
@@ -287,8 +280,7 @@ fn find_member_types(
     }
 }
 
-// A member of the literal is converted like the value of `dictionary[key] = value`. No conversion of the whole literal
-// reaches it: that one compares the named members of its target, and a dictionary type has none.
+// A member of the literal is converted like the value of `dictionary[key] = value`.
 fn convert_dictionary_member(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     dictionary: Option<Dictionary>,
@@ -323,8 +315,7 @@ fn record_flow_into_signature(
     }
 }
 
-// What is read out of the dictionary is tested against the type of its index signature, so what a spread copies into it
-// goes into the family of that type.
+// What is read out of the dictionary is tested against the type of its index signature, so what a spread copies into it goes into the family of that type.
 fn record_spread_flow(
     file: &mut FileLowering<'_, '_, '_, '_>,
     dictionary: Option<Dictionary>,

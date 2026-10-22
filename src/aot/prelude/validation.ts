@@ -281,9 +281,7 @@ function kindsDescribedAt(run: Run, at: number): { arrays: boolean; otherObjects
     return kinds;
 }
 
-// Reading an object may run code of the program: getters, the traps of a proxy, an iterator. It runs once for each place
-// where the plan describes the object. The copy takes the place of the object in its holder, which is such a copy itself,
-// so the arms that are tried one after the other and the report of issues all read what was read the first time.
+// Reading an object may run code of the program: getters, the traps of a proxy, an iterator.
 function heldAt(run: Run, holder: any, key: any, at: number): any {
     const value = holder[key];
     if (!isObject(value) || run.copies.has(value)) return value;

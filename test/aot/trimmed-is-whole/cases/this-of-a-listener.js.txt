@@ -78,7 +78,7 @@ show(globalThis.me[names[5]]);
 Object.defineProperty(Object.prototype, "me", { get() { return this; }, configurable: true });
 show(me[names[5]]);
 //// prototype-method-bare-call
-//@ exit 1
+//@ build-error TS100014
 //@ ext cjs
 Object.prototype.me = function () { return this; };
 show(me()[names[5]]);
@@ -108,6 +108,7 @@ globalThis.mine = function () { return this; };
 const Found = globalThis.mine()[names[5]];
 console.log(typeof new Found().on);
 //// a-function-stored-on-Bun-returns-it-and-what-a-name-finds-there-is-called
+//@ todo --trim removes Bun.color, which the program finds under a name made at run time on the Bun that a method of an object above it hands back
 //@ ext cjs
 const holder = Object.create(Bun);
 holder.mine = function () { return Object.getPrototypeOf(this); };

@@ -181,8 +181,7 @@ impl ChildTypes for ComponentChildren<'_> {
 }
 
 fn map_mapped_child(file: &mut FileLowering<'_, '_, '_, '_>, edge: TypeEdge) -> Mapped {
-    // The checker does not memoize a shape it cut short on a low stack, so the table can see an
-    // edge that the exploration did not.
+    // The checker does not memoize a shape it cut short on a low stack, so the table can see an edge that the exploration did not.
     let Some(&entry) = file.types.mapped.get(&edge.target) else {
         return Mapped::UNKNOWN;
     };

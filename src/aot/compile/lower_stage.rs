@@ -172,12 +172,7 @@ impl Build<'_> {
         units
     }
 
-    /// Bun's own modules are lowered beside the application, from one thread of the pool, which the idle ones help. The
-    /// application has as many workers as the build has threads. In a pool of that many threads the last worker waits for a
-    /// thread, and begins when Bun's modules are done.
-    ///
-    /// The types of those modules must not lead in circles. The checker believes a circle only of the first file in order that
-    /// enters it, so every other thread that meets one lowers its file twice: `types_of_bun_modules_lead_in_no_circle`.
+    /// Bun's own modules are lowered beside the application, from one thread of the pool, which the idle ones help.
     fn lower_projects(
         &self,
         loaded: &LoadedBuild<'_, '_>,
@@ -275,9 +270,7 @@ impl Build<'_> {
         }
     }
 
-    /// Unless somebody chose a thread count, no more threads than there is source text for: each thread has a checker of its
-    /// own, which finds out again what the others know. Past 16 threads a large program takes more processor time and more
-    /// memory, and no less time.
+    /// Unless somebody chose a thread count, no more threads than there is source text for: each thread has a checker of its own, which finds out again what the others know.
     fn threads_to_lower(&self, source_bytes: usize) -> NonZeroUsize {
         const SOURCE_BYTES_PER_THREAD: usize = 256 << 10;
         const MOST_USEFUL_THREADS: usize = 16;
@@ -444,10 +437,7 @@ fn roles_for_lowering<'r>(
     erased_roles
 }
 
-// The tree of a text that does not parse has holes that no rule of the language allows, and a class declaration without a
-// name has a symbol that is in no scope. Such a file is not lowered. The checker reports both for every file, however it
-// is checked, and they stop the build.
-// The code of a module whose load fails never runs. One that is not lowered has an error that stops the build.
+// The tree of a text that does not parse has holes that no rule of the language allows, and a class declaration without a name has a symbol that is in no scope.
 fn drop_reports_on_unloadable_modules(
     files: &Files<'_>,
     graph: &ModuleGraph,

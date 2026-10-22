@@ -47,8 +47,7 @@ pub(in crate::lower) fn lower_global_path_holder(
     GlobalPathMember { holder, name }
 }
 
-// The functions of Bun's own modules are created in the scope of the global object, below the `let` and `const`
-// bindings of scripts, so a script that declares `let process` does not shadow the global there.
+// The functions of Bun's own modules are created in the scope of the global object, below the `let` and `const` bindings of scripts, so a script that declares `let process` does not shadow the global there.
 fn sees_script_bindings(lowering: &FunctionLowering<'_, '_, '_, '_, '_>) -> bool {
     match lowering.file.source.dialect() {
         SourceDialect::Program => true,

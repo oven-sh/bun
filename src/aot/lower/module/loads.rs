@@ -557,8 +557,7 @@ fn lower_guarded_call(
     lowering.builder.read_variable(result)
 }
 
-// The callee is a binding that one statement fills with `import.meta.require` or with what `createRequire` makes, and nothing else stores
-// to. Above that statement a `var` holds `undefined`, and the call throws as any call of `undefined` does.
+// The callee is a binding that one statement fills with `import.meta.require` or with what `createRequire` makes, and nothing else stores to.
 fn lower_call_of_filled_binding(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
@@ -609,8 +608,7 @@ fn lower_call_of_filled_binding(
     lowering.builder.read_variable(result)
 }
 
-// `require.call(receiver, p)` and `require.apply(receiver, [p])`. Everything is evaluated as the call evaluates it. Where the method is the one of
-// Function.prototype and its receiver the `require` of the file, the module is loaded as `require(p)` loads it. Anything else is called.
+// `require.call(receiver, p)` and `require.apply(receiver, [p])`.
 fn lower_call_through_method(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     guarded: GuardedCall,
@@ -769,16 +767,14 @@ fn expect_exports_layout(
     lowering.expect_type(required, expected)
 }
 
-// The module has run, is running, or throws its error. Who required whom first is known to time alone, and is written down
-// before the body of the module can ask. `children` lists the module once the call has returned: the second record.
+// The module has run, is running, or throws its error.
 fn emit_evaluation(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, plan: PlannedSite) {
     let module = lowering.file.fragment.declare_module(plan.target);
     let referrer = commonjs::current_module_id(lowering);
     if plan.records {
         lowering.builder.record_require(module, referrer);
     }
-    // The function that holds the text of a file with a wrapper is not the body of the module, and what stands behind a `using`
-    // declaration stands under the handler that disposes of the resource.
+    // The function that holds the text of a file with a wrapper is not the body of the module, and what stands behind a `using` declaration stands under the handler that disposes of the resource.
     let is_bare =
         plan.is_bare && commonjs::is_module_body(lowering) && lowering.handler().is_none();
     lowering.builder.evaluate_module(module, referrer, is_bare);
@@ -907,8 +903,7 @@ fn find_modules_of_every_value(
     Some(modules)
 }
 
-// The build spells a candidate from the folder of the file: "./plugins/a.js". The text begins with that folder as `__dirname` names it,
-// unless a computed part of `path.join(__dirname, part)` has led out of the folder: such a text is no spelling of a candidate.
+// The build spells a candidate from the folder of the file: "./plugins/a.js".
 fn emit_path_from_own_directory(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     text: ValueId,
@@ -947,9 +942,7 @@ struct PathTest {
     written: StringId,
 }
 
-// The build has followed `path.join(__dirname, "..", "a.js")` to a file, and has bound names to what that file declares. The
-// program can put another function in the place of `path.join`, so the text that the call gave is compared with the text that
-// Bun's own function gives.
+// The build has followed `path.join(__dirname, "..", "a.js")` to a file, and has bound names to what that file declares.
 fn branch_on_path_made_by_call(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     specifier: ImportSpecifier,

@@ -59,8 +59,7 @@ fn create_body_header(file: &mut FileLowering<'_, '_, '_, '_>, kind: ModuleKind)
     if file.inputs.modules.has_top_level_await(file.file) {
         header.flags |= FunctionFlags::IS_ASYNC;
     }
-    // Nobody passes the body anything. What the scopes of the file ask of their function is asked of the function that holds
-    // the text, where that is another one, and `this` at the top is the object that the body begins with.
+    // Nobody passes the body anything.
     if kind == ModuleKind::CommonJs {
         header.flags = header.flags.without(file.scopes.entry_flags(key));
     }

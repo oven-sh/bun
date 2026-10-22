@@ -37,9 +37,7 @@ fn find_asserted_layout(
     Some((object_type_layout(file, ty)?, ty))
 }
 
-// `Object.assign({ ...defaults }, given) as unknown as Options` makes an `Options`: the literal is where the object is born, and the first declared type on its way
-// out says where its members lie. Without one the type of the last call does: that of `Object.assign({}, a, b)` has the names of `a` and of `b`.
-// It decides a placement alone: what the object holds is what the program stores.
+// `Object.assign({ ...defaults }, given) as unknown as Options` makes an `Options`: the literal is where the object is born, and the first declared type on its way out says where its members lie.
 pub(super) fn find_target_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     literal: ExprId,

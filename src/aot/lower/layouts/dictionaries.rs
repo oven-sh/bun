@@ -20,8 +20,7 @@ fn compute_is_dictionary_type(file: &mut FileLowering<'_, '_, '_, '_>, ty: Check
     members.is_ok_and(|members| members.is_empty())
 }
 
-// The keys of `Record<string, Item>` are data: no name is known at build time, so a layout would have no field. It asks the
-// checker alone, because the search for the layout of a type asks it.
+// The keys of `Record<string, Item>` are data: no name is known at build time, so a layout would have no field.
 pub(in crate::lower) fn is_dictionary_type(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,

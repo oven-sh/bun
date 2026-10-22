@@ -171,6 +171,8 @@ The entry points that native code calls are compiled into the executable, so the
 
 On Linux 6.7 or later, the executable tells the kernel at startup that none of its memory will ever be both writable and executable, and that no memory will become executable. All of its code comes from files: the executable itself, shared libraries and native addons. `cc()` compiles C into memory, so it can't work. Compile the C file when you build and load the library with `dlopen()`. Child processes aren't restricted.
 
+A sandbox or launcher can make the same request before it starts the executable (`PR_SET_MDWE` without `PR_MDWE_NO_INHERIT`, on Linux 6.3 or later). The executable runs the same way and leaves the request as it found it. In that case its child processes are restricted too, so a child with a JIT, such as `node`, may not start.
+
 ### --preload can't be used with this executable
 
 ```txt

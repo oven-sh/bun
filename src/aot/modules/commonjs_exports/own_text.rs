@@ -464,8 +464,7 @@ impl Scan<'_, '_, '_> {
             .then_some(AliasTarget::Binding(symbol))
     }
 
-    // What a getter stands for that does nothing but return `returned`. A read of the name is then a read of that, whether or not
-    // the definition has run: nobody sees the module half evaluated.
+    // What a getter stands for that does nothing but return `returned`.
     fn find_alias_target(
         &self,
         index: usize,
@@ -570,8 +569,7 @@ impl Scan<'_, '_, '_> {
         true
     }
 
-    // `_export(exports, { name: function () { return e; }, .. })` as a statement that every run of the body passes: the helper
-    // defines an enumerable getter for each name of the literal, in the order in which they are written.
+    // `_export(exports, { name: function () { return e; }, .. })` as a statement that every run of the body passes: the helper defines an enumerable getter for each name of the literal, in the order in which they are written.
     fn add_definitions_of_helper(&mut self, index: usize, object: ExprId, call_node: ExprId) -> bool {
         let text = self.text;
         let hir = text.hir;
@@ -876,8 +874,7 @@ impl Scan<'_, '_, '_> {
         }
     }
 
-    // `module.exports = { a, b: e, c() {} }`: the literal takes the place of the object that the module was born with, which nobody
-    // has seen. Nobody looks at the literal either, so its values are all there is to it.
+    // `module.exports = { a, b: e, c() {} }`: the literal takes the place of the object that the module was born with, which nobody has seen.
     fn add_literal(&mut self, index: usize, literal: ExprId) -> bool {
         let text = self.text;
         let hir = text.hir;
@@ -924,8 +921,7 @@ impl Scan<'_, '_, '_> {
             return false;
         };
         let end = text.hir[replacement.statement].end;
-        // In front of the store every mention is one of the first object, also in a function that is written there. Behind it
-        // `this` is, and so is `exports` unless the statement stores to it too.
+        // In front of the store every mention is one of the first object, also in a function that is written there.
         let names_new_value = |mention: &Mention| {
             text.hir[mention.node].pos >= end
                 && (mention.kind == MentionKind::ModuleExports
@@ -953,8 +949,7 @@ impl Scan<'_, '_, '_> {
         }
     }
 
-    // `E.n || (E.n = v)` and `E.n ?? (E.n = v)`: whichever way the choice goes, the name is there behind it. TypeScript up to 3.8
-    // writes an exported enum or namespace so.
+    // `E.n || (E.n = v)` and `E.n ?? (E.n = v)`: whichever way the choice goes, the name is there behind it.
     fn find_stores_that_fill(&mut self, index: usize) {
         let (text, body) = (self.text, self.drafts[index].body);
         let found = &self.drafts[index].found;
@@ -985,8 +980,7 @@ impl Scan<'_, '_, '_> {
         }
     }
 
-    // A definition takes no store, and a getter none but `undefined` in front of it: TypeScript stores `void 0` under every name
-    // first.
+    // A definition takes no store, and a getter none but `undefined` in front of it: TypeScript stores `void 0` under every name first.
     fn check_definitions(&mut self, index: usize) {
         let (text, body) = (self.text, self.drafts[index].body);
         let found = &self.drafts[index].found;
@@ -1018,8 +1012,7 @@ impl Scan<'_, '_, '_> {
                 refused = Some(creation.node);
             }
         }
-        // A name that stands for another is there from the start, the property only from its definition on. Whoever finds the
-        // module half evaluated can tell, unless nothing but the body itself has run by then.
+        // A name that stands for another is there from the start, the property only from its definition on.
         if found.is_half
             && let Some(alias) = found.aliases.iter().max_by_key(|alias| alias.start)
             && !self.runs_nothing_else_in_front_of(body, alias.start)
@@ -1034,8 +1027,7 @@ impl Scan<'_, '_, '_> {
         found.creations.retain(|creation| !cleared.contains(&creation.name));
     }
 
-    // Whether no code but that of `body` itself runs until `body` gets to the position: an accessor, a conversion or an iterator
-    // runs code as a call does, and a function that only makes the helpers of a compiler runs none.
+    // Whether no code but that of `body` itself runs until `body` gets to the position: an accessor, a conversion or an iterator runs code as a call does, and a function that only makes the helpers of a compiler runs none.
     fn runs_nothing_else_in_front_of(&self, body: CodeUnit, position: u32) -> bool {
         let text = self.text;
         let statements = match body {
@@ -1068,8 +1060,7 @@ impl Scan<'_, '_, '_> {
         in_front.all(|statement| quiet.is_quiet_statement(statement))
     }
 
-    // `exports.__esModule = true` and `Object.defineProperty(exports, "__esModule", { value: true })`: once, in order, a true
-    // constant. Then the name is a constant for every reader and has no code. Else it is a name like any other.
+    // `exports.__esModule = true` and `Object.defineProperty(exports, "__esModule", { value: true })`: once, in order, a true constant.
     fn find_marker(&mut self, index: usize) {
         let text = self.text;
         let found = &self.drafts[index].found;

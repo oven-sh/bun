@@ -38,8 +38,7 @@ pub(super) fn find_module_export(
     name: Atom,
     platform: Platforms,
 ) -> ModuleExport {
-    // An export is a location of the module. The object it holds may also be in a location the
-    // program can write, such as a global.
+    // An export is a location of the module.
     let data = table::module_data(module);
     let export = match names.get(name) {
         Some(name) => table::find_export(data.namespace, name),

@@ -154,8 +154,7 @@ impl Walker<'_, '_> {
         self.push_expressions([index], context);
     }
 
-    // `exports.a` and `module.exports.a` in the callback of `__commonJS((exports, module) => { .. })`, where `a` is a variable of
-    // the module. Nothing reads the parameter, so a function in the callback that names `exports.a` does not capture it.
+    // `exports.a` and `module.exports.a` in the callback of `__commonJS((exports, module) => { .. })`, where `a` is a variable of the module.
     fn names_variable_of_inner_module(&self, access: ExprId) -> bool {
         if self.inner_module_parameters.is_empty() {
             return false;
@@ -213,8 +212,7 @@ impl Walker<'_, '_> {
         self.push_expressions(self.hir.ids(call.args), context);
     }
 
-    // The lowering emits the load of the module and never reads the callee. Taken as a use, `require` would be captured by every
-    // function with a `require("./a")` in it, and `require_a` of a bundle would be a variable that holds a closure.
+    // The lowering emits the load of the module and never reads the callee.
     fn loads_module_without_callee(&self, expression: ExprId, call: &Call) -> bool {
         self.evaluates_inner_module(expression, call)
             || (self.input.has_wrapper_parameters && self.is_bound_module_call(expression, call))
@@ -231,8 +229,7 @@ impl Walker<'_, '_> {
         }
     }
 
-    // `require("./a")`, `require.resolve("./a")`, `module.require("./a")` in a file that keeps the five names as parameters, where
-    // nothing can put another value behind the name.
+    // `require("./a")`, `require.resolve("./a")`, `module.require("./a")` in a file that keeps the five names as parameters, where nothing can put another value behind the name.
     fn is_bound_module_call(&self, expression: ExprId, call: &Call) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let analysis = &self.input.compiled.analysis;

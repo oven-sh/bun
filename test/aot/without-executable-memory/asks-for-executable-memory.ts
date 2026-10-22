@@ -6,7 +6,14 @@ if (process.platform === "win32") {
   process.exit(0);
 }
 const isDarwin = process.platform === "darwin";
-const library = dlopen(isDarwin ? "libSystem.B.dylib" : process.platform === "android" ? "libc.so" : "libc.so.6", {
+const libraryName = isDarwin ? "libSystem.B.dylib" : process.platform === "android" ? "libc.so" : "libc.so.6";
+if (process.argv[2] === "has-it-denied-itself") {
+  const getMDWE = 66;
+  const bits = isDarwin ? 0 : dlopen(libraryName, { prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 } }).symbols.prctl(getMDWE, 0, 0, 0, 0);
+  console.log(bits > 0 ? "yes" : "no");
+  process.exit(0);
+}
+const library = dlopen(libraryName, {
   mmap: { args: [FFIType.u64, FFIType.u64, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i64], returns: FFIType.i64 },
 });
 const read = 1, write = 2, execute = 4;

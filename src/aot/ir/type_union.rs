@@ -62,9 +62,7 @@ pub(super) fn union_all_types(
     table.intern(union)
 }
 
-/// `target`, and the kinds of object that `source` may hold and `target` has none of. A class that both have keeps the
-/// contents of `target`, and one that is added has unknown contents: nothing tests them here. No test tells a layout, a
-/// built-in object or an instance of a class such as `TypedArray` from another object, so they count as any object.
+/// `target`, and the kinds of object that `source` may hold and `target` has none of.
 pub(super) fn add_missing_objects(table: &mut TypeTable, target: TypeId, source: TypeId) -> TypeId {
     let (held, offered) = (table.get(target), table.get(source));
     if held.is_internal() || offered.is_internal() || held.flags.contains(TypeFlags::ANY_OBJECT) {

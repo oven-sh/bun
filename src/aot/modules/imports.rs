@@ -119,9 +119,7 @@ pub(super) fn bind_imports(
         .collect()
 }
 
-/// Whether an alias of a checked file may name a value. A name imported from `export = value` can
-/// be a type in the namespace of the value and a property of the value at once, and the symbol
-/// tables have only the type.
+/// Whether an alias of a checked file may name a value.
 pub(super) fn may_name_value(files: &Files<'_>, alias: Sym) -> bool {
     files.symbol_flags(alias).intersects(SymFlags::VALUE) || files.has_symbol_to_combine(alias)
 }
@@ -336,8 +334,7 @@ impl<'a, 's> FileBinder<'a, 's> {
         }
     }
 
-    // The default import of a CommonJS module of the program that has no `__esModule`, or whose package says that it counts for
-    // nothing, is `module.exports`.
+    // The default import of a CommonJS module of the program that has no `__esModule`, or whose package says that it counts for nothing, is `module.exports`.
     fn is_default_whole_exports(&self, exporter: ModuleRef) -> bool {
         let context = self.context;
         let interop = context.modules.interop(exporter);
@@ -547,9 +544,7 @@ fn compute_required_name(
     }
 }
 
-/// A property of the object of a built-in module holds what the module has put there until a store replaces it,
-/// whether the body of the module or native code makes the object. An import of the name holds what the property
-/// held when the module was loaded.
+/// A property of the object of a built-in module holds what the module has put there until a store replaces it, whether the body of the module or native code makes the object.
 fn is_property_that_a_store_replaces(member: BuiltinId) -> bool {
     let entry = table::entry(member);
     entry.module.is_none()

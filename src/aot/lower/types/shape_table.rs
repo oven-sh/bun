@@ -43,8 +43,7 @@ pub(super) fn map_shape(
     mapped
 }
 
-// `undefined` and `null` are members of every type that holds a reference. A number or a boolean is held raw, so its
-// type has them only where the checker's type lists them.
+// `undefined` and `null` are members of every type that holds a reference.
 fn holds_reference(ty: &Type) -> bool {
     let raw_primitives = Primitives::NUMBER | Primitives::BOOLEAN | Primitives::NULLISH;
     let raw_part = Type {
@@ -196,8 +195,7 @@ fn map_union(
         mapped_members.push(map_child(file, children, EdgeKind::Transparent, member));
         enum_member_count += usize::from(is_numeric_enum_member(file, member));
     }
-    // TypeScript lets every number into a type that lists members of a numeric enum, and `a | b` of two flags is no
-    // member. One member alone is a tag.
+    // TypeScript lets every number into a type that lists members of a numeric enum, and `a | b` of two flags is no member.
     if enum_member_count > 1 {
         mapped_members.push(Mapped::checked(TypeTable::INT32));
     }

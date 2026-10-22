@@ -1211,8 +1211,8 @@
     "jit": 109.4
   },
   "generator/a-generator-function-made-for-each-call": {
-    "typed": 5491.6,
-    "untyped": 5759,
+    "typed": 4105.4,
+    "untyped": 4375.7,
     "jit": 3682.4
   },
   "class/instanceof-a-class-of-another-commonjs-module": {

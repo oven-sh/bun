@@ -92,8 +92,7 @@ pub enum Int32FlowValue {
     SpreadArgument,
 }
 
-/// What the front end knows about a flow into an `int32` position. Whether the flow is proven is the engine's answer,
-/// and the message about one that is not is written from both.
+/// What the front end knows about a flow into an `int32` position.
 #[derive(Clone, Debug)]
 pub struct Int32Flow {
     pub file: FileId,

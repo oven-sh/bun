@@ -60,8 +60,7 @@ impl LibraryFunctions {
         }
     }
 
-    /// Nothing that the program can run names these functions at the top of their files. One in a file of library functions
-    /// is not lowered. One in a module keeps its name and gets a body that throws.
+    /// Nothing that the program can run names these functions at the top of their files.
     pub fn leave_out(&mut self, functions: FxHashSet<FunctionRef>) {
         self.left_out_functions = functions;
     }
@@ -70,8 +69,7 @@ impl LibraryFunctions {
         self.left_out_functions.contains(&function)
     }
 
-    /// Nothing that the program can run names what these declare at the top of their files, and nobody can tell whether they
-    /// were evaluated. The body of the module passes over them.
+    /// Nothing that the program can run names what these declare at the top of their files, and nobody can tell whether they were evaluated.
     pub fn leave_out_declarations(&mut self, declarations: LeftOutDeclarations) {
         self.left_out_declarations = declarations;
     }

@@ -4,9 +4,7 @@ use crate::ir::{InParallel, PropertyKeyId, for_each_mut};
 use core::mem::take;
 use std::sync::Arc;
 
-/// The functions of the program where lowering made them, a list for each unit, and what maps the ids of each unit. The link
-/// moves no function and rewrites none: records and bodies hold unit-local ids. Only `function_types`, which the link fills,
-/// holds program ids. The functions of a unit have consecutive program ids, in unit order.
+/// The functions of the program where lowering made them, a list for each unit, and what maps the ids of each unit.
 #[derive(Default)]
 pub struct BodyRemap {
     units: Vec<UnitIds>,

@@ -159,8 +159,7 @@ enum ParsedShape {
     Other,
 }
 
-// `010`, `08` and `"\1"` are errors in strict code alone, and the tree does not say that one was met. What only looks like one, in a
-// string or a comment, is left to the run time too.
+// `010`, `08` and `"\1"` are errors in strict code alone, and the tree does not say that one was met.
 fn may_hold_legacy_octal(text: &[u8]) -> bool {
     let continues_a_token = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'.');
     text.windows(2).enumerate().any(|(at, pair)| match *pair {
@@ -212,8 +211,7 @@ fn has_syntax_error(hir: &File<'_>) -> bool {
 // `await` or `yield` in a list of parameters, and `for (var a = 1 in b)`.
 const SYNTAX_THAT_MAY_BE_AN_ERROR: u32 = rare::SUSPENDS_IN_PARAMETERS | rare::ODD_LOOP_HEAD;
 
-// The parameters of an arrow function are read as if no generator stood around them: `(a = yield) => 1` has a name there, where the
-// language has the operator, which is an error.
+// The parameters of an arrow function are read as if no generator stood around them: `(a = yield) => 1` has a name there, where the language has the operator, which is an error.
 fn has_yield_as_name(hir: &File<'_>) -> bool {
     hir.exprs.iter().any(|expression| matches!(expression.kind, ExprKind::Ident(name) if name == known::r#yield))
 }
@@ -247,8 +245,7 @@ fn declares_function_twice_in_block(hir: &File<'_>) -> bool {
     })
 }
 
-// Each is legal in sloppy code and an early error in strict code, or the other way round by where it stands. No stage of the build
-// reports these in JavaScript, so the run time decides.
+// Each is legal in sloppy code and an early error in strict code, or the other way round by where it stands.
 fn has_syntax_that_strict_code_forbids(hir: &File<'_>) -> bool {
     hir.rare_syntax & SYNTAX_THAT_MAY_BE_AN_ERROR != 0
         || has_yield_as_name(hir)

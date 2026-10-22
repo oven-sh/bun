@@ -92,8 +92,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
     FoldInputs::new(options, arena)
 }
 
-/// `bun run` replaces these three names where nothing declares them. A later define of the same path wins,
-/// and one that renames or replaces a global takes what hangs below that global along.
+/// `bun run` replaces these three names where nothing declares them.
 fn after_constant_globals<'s>(
     defines: &[Define<'s>],
     platform: Platforms,

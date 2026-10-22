@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { test } from "./supported";
 import { bunEnv, bunExe, isGlibc, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
+import { release } from "node:os";
 import { join } from "node:path";
 import { findImage, imageHeader } from "./cli/compiled-image";
 
@@ -155,11 +156,42 @@ test.skipIf(!isLinux)("zero-initialized data of the runtime takes no bytes of th
   expect(sizesOf(await build(String(dir)))).toEqual(sizesOf(bunExe()));
 }, 120_000);
 
-test.skipIf(!isLinux || !isGlibc)("falls back to the segment the loader mapped when mmap with PROT_EXEC is refused", async () => {
+const [kernelMajor, kernelMinor] = release().split(".").map(Number);
+const canMoveFileMappings = isLinux && (kernelMajor > 5 || (kernelMajor === 5 && kernelMinor >= 13));
+
+async function placesOfCode(executable: string, codeOffset: number, cmd: string[]) {
+  return await Promise.all(
+    Array.from({ length: 4 }, async () => {
+      const { stdout, stderr, exitCode, signalCode } = await run(cmd);
+      expect({ firstLine: stdout.split("\n")[0], stderr, exitCode, signalCode }).toEqual({ firstLine: "5", stderr: "", exitCode: 0, signalCode: null });
+      return mappingsOf(stdout).filter(mapping => mapping.path === executable && mapping.offset === codeOffset);
+    }),
+  );
+}
+
+function expectCodeAtAnotherAddressEachTime(places: Awaited<ReturnType<typeof placesOfCode>>) {
+  const executablePlaces = places.map(mappings => mappings.filter(mapping => mapping.access.includes("x")));
+  expect(executablePlaces.map(mappings => mappings.map(mapping => mapping.access))).toEqual(places.map(() => ["r-xp"]));
+  expect(new Set(executablePlaces.map(mappings => mappings[0].start)).size).toBe(places.length);
+}
+
+test.skipIf(!isLinux || !isGlibc)("runs from the segment the loader mapped when mmap with PROT_EXEC is refused", async () => {
   using dir = tempDir("aot-code-mapping-refused", { "program.ts": program, "launcher.ts": seccompLauncher });
   const executable = await build(String(dir));
-  const { stdout, stderr, exitCode, signalCode } = await run([bunExe(), join(String(dir), "launcher.ts"), executable]);
-  expect({ firstLine: stdout.split("\n")[0], stderr, exitCode, signalCode }).toEqual({ firstLine: "5", stderr: "", exitCode: 0, signalCode: null });
+  const file = readFileSync(executable);
+  const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
+  const places = await placesOfCode(executable, codeOffset, [bunExe(), join(String(dir), "launcher.ts"), executable]);
+  if (canMoveFileMappings) expectCodeAtAnotherAddressEachTime(places);
+}, 120_000);
+
+test.skipIf(!isLinux)("an executable that may be run but not read has its compiled code at another address each time", async () => {
+  using dir = tempDir("aot-code-mapping-unreadable", { "program.ts": program });
+  const executable = await build(String(dir));
+  const file = readFileSync(executable);
+  const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
+  chmodSync(executable, 0o111);
+  const places = await placesOfCode(executable, codeOffset, [executable]);
+  if (canMoveFileMappings) expectCodeAtAnotherAddressEachTime(places);
 }, 120_000);
 
 test.skipIf(!isLinux || !Bun.which("setarch"))("with ASLR disabled, compiled code runs from the segment the loader mapped", async () => {

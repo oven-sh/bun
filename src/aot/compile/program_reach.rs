@@ -64,8 +64,7 @@ enum Interest {
     Export(ModuleRef, Atom),
     CalledExport(ModuleRef, Atom),
     EveryExport(ModuleRef),
-    // A name that the body of a CommonJS module stores under, and the module that it is read from, which may have it from the
-    // other one.
+    // A name that the body of a CommonJS module stores under, and the module that it is read from, which may have it from the other one.
     Name(SyntheticExportId, ModuleRef),
     CalledName(SyntheticExportId, ModuleRef),
     // A mention of an object of the loader that stands for a module.
@@ -108,10 +107,7 @@ impl ModuleUnits {
     }
 }
 
-// The regions of a file: the code at its top level, then its units. A unit is a statement at the top level, or a declarator of
-// one, that nothing would miss if what it declares is not used, by the rules of the bundler; the bindings are ones that nothing
-// stores to. Of a function or a class whose declaration has to run, the bodies are a unit. The body of a module that is written
-// inside the file is a unit, and has units of its own as a file has them.
+// The regions of a file: the code at its top level, then its units.
 #[derive(Default)]
 struct FileUnits {
     functions: Vec<SmallVec<[FnId; 1]>>,
@@ -184,8 +180,7 @@ fn module_with_code(module: ModuleRef) -> ModuleRef {
     }
 }
 
-// The module that the statement names which imports the symbol. A name of a CommonJS module may be a variable of another one,
-// which runs because the body of the named one requires it.
+// The module that the statement names which imports the symbol.
 fn find_module_imported_from(
     input: &ProgramReachInput<'_, '_>,
     file: FileId,
@@ -345,8 +340,7 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // A statement that has no code as long as the module has no exports object: the definition of a name that stands for
-    // another one, the mark of an ES module.
+    // A statement that has no code as long as the module has no exports object: the definition of a name that stands for another one, the mark of an ES module.
     fn add_part_of_object(&mut self, statement: StmtId) {
         let written_at = self.hir[statement].loc;
         let unit = self.add_part(Part::Statement(statement), written_at.pos..written_at.end, &[]);
@@ -422,8 +416,7 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // What runs when the class is defined stays with the code around it: the class it extends, a computed key. A static field
-    // and a static block get at the class without its name, so a class that has one is no unit.
+    // What runs when the class is defined stays with the code around it: the class it extends, a computed key.
     fn add_class_unit(&mut self, class: ClassId) {
         let hir = self.hir;
         let unit = self.units.functions.len() as u32;
@@ -695,8 +688,7 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // The member of the object of a module that is read where `holder` evaluates to the object. `None`: the object is used in
-    // another way, which can get at all that it holds.
+    // The member of the object of a module that is read where `holder` evaluates to the object.
     fn find_member_read_from(&self, holder: ExprId) -> Option<(ExprId, Atom)> {
         let hir = self.hir;
         let mut node = holder;
@@ -733,8 +725,7 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `(await import(x)).name` and `const { name } = await import(x)`: the names that the object is read by, and `then`, which
-    // `await` reads. `false`: the object is used in another way.
+    // `(await import(x)).name` and `const { name } = await import(x)`: the names that the object is read by, and `then`, which `await` reads.
     fn add_names_read_from_awaited_import(
         &self,
         module: ModuleRef,
@@ -820,8 +811,7 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     fn interest_in_symbol(&self, symbol: SymbolId, reference: Option<ExprId>) -> Option<Interest> {
-        // A name that stands for a module holds nothing. Each member that is read from it says what it reads, and the call that
-        // it is initialized with says whether something looks at the object. Where no expression is written, something does.
+        // A name that stands for a module holds nothing.
         if let Some(view) = self.input.graph.holder(self.file, symbol) {
             return match reference {
                 Some(_) => None,
@@ -859,8 +849,7 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.add_interest(hir[reference].pos, interest);
             }
         }
-        // A name that is imported from a CommonJS file is looked for when the graph is linked, whether or not something refers
-        // to it.
+        // A name that is imported from a CommonJS file is looked for when the graph is linked, whether or not something refers to it.
         for &(symbol, binding) in self.input.graph.import_bindings(self.file) {
             if let ImportBinding::Synthetic(_) = binding
                 && let Some(ModuleRef::File(exporter)) = self.find_module_imported_from(symbol)
@@ -923,8 +912,7 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `exports.name`, `required.name`: a member that is bound to a variable asks for what is stored there. A store asks for
-    // nothing.
+    // `exports.name`, `required.name`: a member that is bound to a variable asks for what is stored there.
     fn add_members(&mut self) {
         let (hir, graph) = (self.hir, self.input.graph);
         let decisions = &self.input.files.analysis(self.file).decisions;
@@ -1221,8 +1209,7 @@ struct Walk<'a, 's> {
     // What `reach_binding` returned.
     reached_bindings: FxHashMap<Sym, bool>,
     pending: Vec<(FileId, u32)>,
-    // By a module: the CommonJS modules whose own text hands on names of it, by a star, by a name that stands for one of its
-    // names, or by `module.exports = require(..)`.
+    // By a module: the CommonJS modules whose own text hands on names of it, by a star, by a name that stands for one of its names, or by `module.exports = require(..)`.
     takers: FxHashMap<ModuleRef, SmallVec<[ModuleRef; 2]>>,
     // The modules whose object somebody was found to look at, until what follows from that is followed.
     newly_looked_at: Vec<ModuleRef>,
@@ -1361,9 +1348,7 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // The files through which `importer` gets the binding. One that hands it on by its name has a statement for it, which is
-    // part of the program, and so the file is evaluated. `export *` names nothing: the import goes past it. Where the binding
-    // comes by two ways, both count.
+    // The files through which `importer` gets the binding.
     fn reach_files_between(&mut self, importer: FileId, defined: Sym) {
         if importer == defined.file
             || !self.exporters.contains_key(&defined)
@@ -1386,8 +1371,7 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // Whether the file only asks for the other one to hand on names of it, none of which has been asked for so far. As the
-    // bundler does it: such a statement of a barrel waits for a name. `export *` and an import that binds no name never wait.
+    // Whether the file only asks for the other one to hand on names of it, none of which has been asked for so far.
     fn is_request_waiting(&self, file: FileId, target: ModuleRef) -> bool {
         let ModuleRef::File(target) = target else {
             return false;
@@ -1642,8 +1626,7 @@ impl<'a, 's> Walk<'a, 's> {
         units.is_region_reached[units.modules[found.1].body as usize]
     }
 
-    // A name that stands for a name of a module with an object is a property like any other, so whoever takes names from such
-    // a module has an object too.
+    // A name that stands for a name of a module with an object is a property like any other, so whoever takes names from such a module has an object too.
     fn follow_look(&mut self, module: ModuleRef) {
         if self.has_stored_names(module) {
             for taker in self.takers.get(&module).cloned().unwrap_or_default() {
@@ -1655,8 +1638,7 @@ impl<'a, 's> Walk<'a, 's> {
         {
             return self.reach_what_object_shows(found);
         }
-        // The graph gives an object to all that such a module takes names from, whether or not the module runs. They are not
-        // evaluated for that, but those that are define their names on their objects.
+        // The graph gives an object to all that such a module takes names from, whether or not the module runs.
         let graph = self.input.graph;
         for &source in graph.name_sources(module) {
             self.look_at(source);
@@ -1846,8 +1828,7 @@ impl<'a, 's> Walk<'a, 's> {
     }
 }
 
-// The decisions of the bundler (src/bundler/barrel_imports.rs): a barrel is a file of a package with `"sideEffects": false`, no
-// entry point, that defines none of the names it exports, and that no file exports with `export *`.
+// The decisions of the bundler (src/bundler/barrel_imports.rs): a barrel is a file of a package with `"sideEffects": false`, no entry point, that defines none of the names it exports, and that no file exports with `export *`.
 fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) -> Vec<bool> {
     let graph = input.graph;
     let hands_on_all_it_exports = |file: FileId| {
@@ -1894,8 +1875,7 @@ pub(crate) struct LeftOutCode {
 }
 
 impl LeftOutCode {
-    // An import by a name is bound to the variable and asks nothing of the object of the module. So, as in a bundle, an export
-    // that is read in no other way is a variable like any other, and one that nothing is bound to is no export at all.
+    // An import by a name is bound to the variable and asks nothing of the object of the module.
     pub(crate) fn find_export_use(&self, file: FileId, export: &ModuleExport) -> ExportUse {
         if self.files_read_by_name.binary_search(&file).is_err()
             || self.names_read_from_objects.contains(&(file, export.name))
@@ -1913,16 +1893,14 @@ impl LeftOutCode {
     }
 }
 
-// What the code that is reached does with the modules that are evaluated. Each list is in the order of the files, but for the
-// second, which is in the order in which the modules were found.
+// What the code that is reached does with the modules that are evaluated.
 #[derive(Default)]
 pub(crate) struct ReachedModules {
     // Somebody looks at the object that shows what the module exports: the exports object, or the namespace object.
     pub looked_at: Vec<ModuleRef>,
     // A read that the build resolved hands out the object of the loader that stands for the module.
     pub with_module_objects: Vec<ModuleRef>,
-    // Code that is reached in the file names `children` or `parent` of such an object, or `require.main` or `process.mainModule`
-    // for more than a test or a field that is a constant. A file may be listed more than once.
+    // Code that is reached in the file names `children` or `parent` of such an object, or `require.main` or `process.mainModule` for more than a test or a field that is a constant.
     pub naming_ways: Vec<ModuleRef>,
     // Modules that are written inside a file and that nothing calls.
     pub left_out_inner_modules: Vec<ModuleRef>,
@@ -1954,9 +1932,7 @@ fn leave_out_texts_of_left_out_files(sources: &Sources, files: &mut Vec<FileId>)
     }
 }
 
-// What of the program nothing that it can run refers to, found the way a bundler finds it: by bindings, never by what a value
-// is. It stands in front of the type checker and of the analysis of the flow of values, which see nothing of what is dropped
-// here and may drop more.
+// What of the program nothing that it can run refers to, found the way a bundler finds it: by bindings, never by what a value is.
 pub(crate) fn find_left_out_code(
     input: &ProgramReachInput<'_, '_>,
     in_parallel: InParallel<'_>,

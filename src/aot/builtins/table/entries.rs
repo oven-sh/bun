@@ -209,8 +209,7 @@ bitflags::bitflags! {
 pub enum ObjectDemand {
     /// The entry converts an object, iterates over it or calls it, or takes none.
     None,
-    /// An object or array literal of the statement itself, whose properties are data under written names. The entry lists
-    /// its keys, reads its values or changes it, and nobody else has it.
+    /// An object or array literal of the statement itself, whose properties are data under written names.
     Literal,
     /// An array literal without holes and spread elements.
     ArrayLiteral,
@@ -242,8 +241,7 @@ pub enum OperandShape {
     BigInt,
     /// An object literal as `ObjectDemand::Literal` describes it.
     ObjectLiteral,
-    /// An array literal without holes and spread elements. `holds_only_literals`: each element is an `ObjectLiteral` or
-    /// such an array literal.
+    /// An array literal without holes and spread elements.
     ArrayLiteral { holds_only_literals: bool },
     /// Any other object.
     Object,

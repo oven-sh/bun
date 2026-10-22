@@ -87,8 +87,7 @@ fn find_type_of_position(
     }
 }
 
-// In a checked file the conversions at the edges carry what the checker says, so only what the uses of a value add to an
-// `any` is left. In any other file all that the checker says is an expectation.
+// In a checked file the conversions at the edges carry what the checker says, so only what the uses of a value add to an `any` is left.
 pub(super) fn expect_inferred_type(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,

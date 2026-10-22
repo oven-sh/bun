@@ -154,10 +154,7 @@ fn find_time_of_last_store(
     (stability == BindingStability::Stable).then_some(time)
 }
 
-// A closure would copy what the name holds, because the name is never stored again and is initialized before the closure is
-// made. The name holds no value, so there is nothing to copy, and the closure need not ask whether the initializer has run.
-// A `var` is in scope outside the branch that its declaration stands in, so there a closure that is made behind the declaration
-// in the text may be made without it.
+// A closure would copy what the name holds, because the name is never stored again and is initialized before the closure is made.
 fn drop_users_behind_initialization(
     context: &Context<'_, '_>,
     owner: WalkedFunctionId,
@@ -229,8 +226,7 @@ fn find_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option<V
     create_variable_key(context, binding)
 }
 
-// The body of a module is called and never created, so it captures nothing. What the callback of an inner module names of the
-// file around it is a variable, in a CommonJS file too: the body of the file runs at most once.
+// The body of a module is called and never created, so it captures nothing.
 fn find_variable_key_between_bodies(
     context: &Context<'_, '_>,
     binding: BindingRef,

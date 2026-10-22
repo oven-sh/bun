@@ -15,8 +15,7 @@ impl Resolver<'_, '_> {
         is_locked(BuiltinId::ArrayPrototypeSymbolIterator) && is_locked(BuiltinId::ArrayIteratorPrototypeNext)
     }
 
-    // `list.forEach(function)`: the list. `forEach` calls the function with the elements one after the other, drops what it answers and
-    // keeps it nowhere. The function gets neither hold of itself nor of the list.
+    // `list.forEach(function)`: the list.
     fn find_receiver_of_for_each(&self, function: FnId) -> Option<ExprId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let FnOwner::Expr(callback) = bound.fns[function.idx()].owner else {

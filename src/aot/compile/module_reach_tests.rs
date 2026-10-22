@@ -7,8 +7,6 @@ use super::{BoundProject, LoadedBuild};
 use crate::load::ProjectId;
 use crate::modules::{ModuleRef, Shape};
 
-// One line a file of the program, in order: its name, then `left out`, or its shape and the statements at its top that are left
-// out.
 fn describe_project(loaded: &LoadedBuild<'_, '_>, bound: &BoundProject<'_>) -> Vec<String> {
     let files = loaded.project(ProjectId::Application).loaded.files();
     let describe_file = |file: FileId| {

@@ -93,7 +93,6 @@ pub(crate) fn freeze_sources(
 }
 
 /// The image has one module table: a module of the application and one of Bun's own cannot have the same path either.
-/// Both projects read the same declaration files, which have no module record.
 pub(crate) fn check_unique_paths_across_projects(
     projects: PerProject<(&Files<'_>, &Sources)>,
 ) -> Result<(), InternalError> {

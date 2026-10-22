@@ -1,5 +1,4 @@
-//! What stands in for `@types/bun` where it is not installed: every global and every module that the run time provides, of type
-//! `any`. A name without a declaration is an error to TypeScript, and a class that extends one has no members.
+//! What stands in for `@types/bun` where it is not installed: every global and every module that the run time provides, of type `any`.
 
 use std::sync::OnceLock;
 
@@ -13,8 +12,7 @@ pub(crate) const PATH: &[u8] = b"/$bun/types/runtime.d.ts";
 const NAMES_OF_EVERY_MODULE: [&[u8]; 5] =
     [b"require", b"module", b"exports", b"__filename", b"__dirname"];
 
-// No file declares these two: TypeScript knows them by itself. A variable of the name would take their place, and no comparison with
-// `undefined` would narrow a type.
+// No file declares these two: TypeScript knows them by itself.
 const NAMES_WITHOUT_DECLARATIONS: [&[u8]; 2] = [b"undefined", b"globalThis"];
 
 pub(crate) const NAMES_OF_EVERY_TEST_FILE: [&[u8]; 14] = [
@@ -94,8 +92,7 @@ fn collect_global_names(runs_tests: bool) -> Vec<&'static [u8]> {
     names
 }
 
-// Where a library of TypeScript, a package of types or the program declares a name, that declaration counts and the one here does not:
-// `Options::declarations_of_last_resort`.
+// Where a library of TypeScript, a package of types or the program declares a name, that declaration counts and the one here does not: `Options::declarations_of_last_resort`.
 fn write_declarations(runtime_modules: &RuntimeModules, runs_tests: bool) -> Vec<u8> {
     let mut text = Vec::new();
     for name in collect_global_names(runs_tests) {

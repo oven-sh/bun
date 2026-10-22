@@ -32,8 +32,7 @@ pub(super) fn find_validating_function(builtin: BuiltinId) -> Option<ValidatingF
     }
 }
 
-// `const config: Config = JSON.parse(text)`, `JSON.parse(text) as Order`: the parse may build its answer with the layouts of the type that it is written under. Nothing else in the
-// program need make such an object or store a property of these names. Not every built-in that answers `any` builds something: `f.call(..)` and `Object.create(..)` do not.
+// `const config: Config = JSON.parse(text)`, `JSON.parse(text) as Order`: the parse may build its answer with the layouts of the type that it is written under.
 fn note_what_a_parse_may_build(file: &mut FileLowering<'_, '_, '_, '_>, call: ExprId) {
     let Ok(Some(written)) = file.queries.contextual_type(call) else {
         return;
@@ -209,8 +208,7 @@ pub(super) fn result_type(
     if !mapped.is_checked || mapped.ty == TypeTable::ANYTHING {
         return TypeTable::ANYTHING;
     }
-    // Every mapped type admits `undefined` and `null`. What is made for a type is one of them only where the type
-    // lists it.
+    // Every mapped type admits `undefined` and `null`.
     match file.queries.without_nullish(ty) {
         Ok(listed) if listed == ty => {
             file.fragment.types.without_primitives(mapped.ty, Primitives::NULLISH)
@@ -255,8 +253,7 @@ fn find_written_result(
         site: None,
         validation: Vec::new(),
     };
-    // A built-in may build what its type argument says: `response.json<T>()`. A member of an interface or a declared function is a function of the program, which allocates what it
-    // allocates, or code that the compiler does not see, which cannot make an object with one of the program's layouts.
+    // A built-in may build what its type argument says: `response.json<T>()`.
     let builtin_types = file.inputs.builtin_types;
     let is_builtin = target
         .declaration

@@ -150,8 +150,7 @@ pub(super) fn emit_module_value(
     }
 }
 
-// The text of the module hands `module` to somebody, who can put an accessor in the place of `exports`:
-// `Object.defineProperty(module, "exports", { get() { .. } })`. The object shows the variable until then.
+// The text of the module hands `module` to somebody, who can put an accessor in the place of `exports`: `Object.defineProperty(module, "exports", { get() { .. } })`.
 fn is_asked_of_module_object(file: &FileLowering<'_, '_, '_, '_>, module: ModuleRef) -> bool {
     file.inputs.modules.commonjs().uses_module_object(module)
 }
@@ -217,8 +216,7 @@ pub(super) fn read_imported_name(
     read_named_export(lowering, module, name)
 }
 
-/// What `require` of a module has under a name that no member access spells: a key of a pattern. `None`: the module never has
-/// the name.
+/// What `require` of a module has under a name that no member access spells: a key of a pattern.
 pub(super) fn read_named_export(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     module: ModuleRef,
@@ -272,9 +270,7 @@ fn is_stored_for(lowering: &FunctionLowering<'_, '_, '_, '_, '_>, holder: Symbol
     }
 }
 
-// What stands in front of the first dot does what it always did: a name may be in its dead zone, and a call of `require`
-// evaluates the module. The answer is what a `var` holds, which may still be `undefined`, for the access to test.
-// `exports`, `module.exports` and `this` of the module itself do nothing.
+// What stands in front of the first dot does what it always did: a name may be in its dead zone, and a call of `require` evaluates the module.
 fn lower_root(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
@@ -508,8 +504,7 @@ fn find_exports_mention(
     is_mention.then_some(module)
 }
 
-/// A read of `module.exports` is a read of the variable, and of one of the five names what the name stands for. The table of
-/// built-ins has one entry for `exports` and `module.exports`, which are two places once one of them is stored to.
+/// A read of `module.exports` is a read of the variable, and of one of the five names what the name stands for.
 pub(super) fn try_lower_mention(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,

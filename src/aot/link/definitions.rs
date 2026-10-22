@@ -107,8 +107,7 @@ pub(super) fn synthetic_export_keys(
     KeyList::new(keys)
 }
 
-// A file of the application names a class or a function of Bun's own modules as what a class of its own inherits from. Whether
-// that declaration has a layout is for the file that holds it to say.
+// A file of the application names a class or a function of Bun's own modules as what a class of its own inherits from.
 pub(super) fn forget_library_layouts_without_definition(
     units: &mut [LinkUnit],
     layouts: &MergedKeys<ProgramLayoutKey>,
@@ -260,9 +259,7 @@ fn choose_functions(
     }
 }
 
-// A plain layout is shown under the name, and at the place, of its first definition by a type that is declared in a file of the
-// program. A type that the checker has computed is declared nowhere, and which file is the first to meet one says nothing of the
-// objects. Where no definition has a place the first is shown.
+// A plain layout is shown under the name, and at the place, of its first definition by a type that is declared in a file of the program.
 fn choose_layouts(
     input: &MergeInput<'_, '_>,
     unit: u32,
@@ -552,8 +549,7 @@ impl<'a> FamilyCloser<'a> {
         false
     }
 
-    // A conversion whose parts the lowering could not follow leaves a layout outside the family it flows into. The family
-    // is widened, and the build counts it.
+    // A conversion whose parts the lowering could not follow leaves a layout outside the family it flows into.
     fn widen_families(&mut self) -> Vec<(u32, u32)> {
         let units = self.units;
         let mut outside = Vec::new();
@@ -597,8 +593,7 @@ impl<'a> FamilyCloser<'a> {
     }
 }
 
-// The family of a type is what reaches it over the conversions that the program performs, each in the direction the checker
-// allows, and over the base of each class. Every entry and every store is tested, so nothing has to flow against an edge.
+// The family of a type is what reaches it over the conversions that the program performs, each in the direction the checker allows, and over the base of each class.
 fn close_families(
     input: &MergeInput<'_, '_>,
     layouts: &[Option<DefinitionSite>],

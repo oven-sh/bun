@@ -20,9 +20,7 @@ pub struct ObjectTypeKey {
     pub is_checked: bool,
 }
 
-// How far a type is from the code of a file: the code mentions a type of level 0, and the fields of a type name types of the
-// next level. A file defines the types up to the last level. What the fields of those name stays declared: whoever reads
-// its fields mentions it.
+// How far a type is from the code of a file: the code mentions a type of level 0, and the fields of a type name types of the next level.
 pub(super) const LAST_DEFINITION_LEVEL: u8 = 1;
 const LEVEL_COUNT: usize = LAST_DEFINITION_LEVEL as usize + 1;
 // Beside the level of a definition: every file sees alike what the fields of the type name.
@@ -30,8 +28,7 @@ pub(super) const NAMES_THE_SAME_IN_EVERY_FILE: u8 = 1 << 7;
 // Beside the level of a definition: the type is declared in a file of the program.
 pub(super) const HAS_PLACE: u8 = 1 << 6;
 
-// A type under a layout. The type of a literal has one layout in the file where the literal stands, which knows what the
-// literal is written under, and another in the files that only see the type.
+// A type under a layout.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct DefinedObjectType {
     names: TypeIdentity,
@@ -61,21 +58,11 @@ impl DefinedObjectType {
     }
 }
 
-// The first file, in the order of the files, that has defined each type at each level, among the files that are lowered for
-// good. A file keeps no definition of a type that an earlier file has defined: the link keeps the first definition of each
-// type. A type of the last level it leaves alone then: it would not go on to what the fields of the type name. The fields of a
-// type of an earlier level it computes all the same, because what they name is not the same in every file: where two literals
-// stand they are the types that are written, and a file that only sees them sees their normalized union, which is made of
-// computed types. A file that left such a type to the file of the literals would never meet what only it sees. So what a file
-// meets hangs on the file alone. Which files find an entry in time differs from one build to the next, and the program does
-// not: the first file that meets a type finds none and defines it.
-// Where every file sees alike what the fields name, a file that has gone on from the type has met all that a later file would
-// meet, and has defined it or left it to a file before itself. The later file leaves such a type alone at every level.
+// The first file, in the order of the files, that has defined each type at each level, among the files that are lowered for good.
 #[derive(Default)]
 pub struct DefinedObjectTypes {
     first_definers: ShardedMap<DefinedObjectType, FirstDefiners>,
-    // The first file that has defined any type under each layout, and the first that has defined one with a place. The link shows
-    // a layout under the name of its first definition with a place, and where none has one, of its first.
+    // The first file that has defined any type under each layout, and the first that has defined one with a place.
     first_definers_of_layouts: ShardedMap<TypeIdentity, AtomicU32>,
     first_placed_definers_of_layouts: ShardedMap<TypeIdentity, AtomicU32>,
     names_of_types: ShardedMap<TypeId, NamesOfObjectType>,
@@ -83,8 +70,7 @@ pub struct DefinedObjectTypes {
     names_of_files: Guarded<FxHashMap<FileId, Vec<(TypeId, NamesOfObjectType)>>>,
 }
 
-// What the layout of an object type is known by. It hangs on the listed members of the type alone, so the first file that has
-// put them in order and is lowered for good says it for all.
+// What the layout of an object type is known by.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct NamesOfObjectType {
     pub identity: TypeIdentity,
@@ -203,8 +189,7 @@ impl DefinedObjectTypes {
     }
 }
 
-// In a build with many threads an earlier file may become known too late for any of the questions about it. A test says
-// which: a test is a process of its own.
+// In a build with many threads an earlier file may become known too late for any of the questions about it.
 #[cfg(test)]
 pub(crate) mod late_answers {
     use core::hash::BuildHasher;

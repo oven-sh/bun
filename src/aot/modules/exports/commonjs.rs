@@ -32,8 +32,7 @@ impl CommonJsNames {
         self.targets.get(&(module, name)).copied()
     }
 
-    /// Whether the CommonJS module of the program may be without the name when an ES module that imports it is linked: a run of the
-    /// body may end without it, or the link may come while the body runs.
+    /// Whether the CommonJS module of the program may be without the name when an ES module that imports it is linked: a run of the body may end without it, or the link may come while the body runs.
     pub(super) fn may_lack(&self, module: ModuleRef, name: Atom) -> bool {
         let Some(&index) = self.index.get(&module) else {
             return false;

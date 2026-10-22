@@ -1,6 +1,4 @@
-// What a program writes to make a list of a given length. Nobody sees the list before it is whole, so it is filled in one loop.
-// A length that is no small whole number, or a mapper that is no function, goes the way that the program wrote. That way is written in two steps here:
-// in one expression it would be made a call of these functions again. A stack trace names none of them.
+// What a program writes to make a list of a given length.
 declare var $visibility: "Public" | "Private" | "PrivateRecursive";
 
 // Array(length) throws where the length is a number that no list can have. What the program evaluates behind it comes behind this.

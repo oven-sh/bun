@@ -87,8 +87,7 @@ fn enter_pattern(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, node: Patt
     lowering.enter_nesting(position)
 }
 
-// What a pattern takes out of an object or a list has the type the checker gives the node that receives it. The target of
-// an assignment converts what is stored into it.
+// What a pattern takes out of an object or a list has the type the checker gives the node that receives it.
 fn convert_element(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     node: PatternNode,
@@ -155,8 +154,7 @@ fn finish_target(
     }
 }
 
-// Under an annotation the node has the type the annotation gives the member, and the default is converted to it. Without one
-// the type of the node is inferred from the member and the default together.
+// Under an annotation the node has the type the annotation gives the member, and the default is converted to it.
 fn convert_default(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     target: PatternNode,

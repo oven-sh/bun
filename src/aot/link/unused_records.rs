@@ -116,9 +116,7 @@ fn find_written_keys(layouts: &[Layout], input: &UseInput<'_>) -> Vec<AtomicBool
     is_written
 }
 
-/// Says of a plain record that nothing in the program makes an object with it: it only describes objects. And of a field of one
-/// that nothing in the program puts a property of that name into any object, so no object can be asked to have it.
-/// A store under a computed key is not seen. Nothing rests on either flag but which layouts a type stands for.
+/// Says of a plain record that nothing in the program makes an object with it: it only describes objects.
 pub(super) fn mark_unused_records(layouts: &mut [Layout], input: &UseInput<'_>) {
     let is_allocated = find_allocated_layouts(input);
     let is_written = find_written_keys(layouts, input);

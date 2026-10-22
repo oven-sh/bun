@@ -30,8 +30,7 @@ pub(in crate::lower) enum Reference {
         object: ValueId,
         access: ExprId,
     },
-    // What a module has under a name, or `module.exports`. `holder`: what the `var` in front of the dot holds, which may be
-    // `undefined`: the access throws then, a store only when the value has been evaluated.
+    // What a module has under a name, or `module.exports`.
     ModuleVariable {
         variable: VariableId,
         holder: Option<ValueId>,

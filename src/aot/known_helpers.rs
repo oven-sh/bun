@@ -163,9 +163,7 @@ impl KnownHelpers {
         }
     }
 
-    /// The helper that a callee is whenever the call runs: the name resolves by binding to one definition of the table
-    /// in the same file, the binding holds it before any code of the file can run and never anything else, and all
-    /// that the definition names is settled in the same way.
+    /// The helper that a callee is whenever the call runs.
     pub fn certain_callee(
         &self,
         files: &Files<'_>,

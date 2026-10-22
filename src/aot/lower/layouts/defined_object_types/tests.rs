@@ -119,8 +119,6 @@ fn a_layout_with_a_home_is_left_to_nobody() {
     assert_eq!(DefinedObjectType::new(home, key(0)), None);
 }
 
-// A model of the files of a program that are lowered side by side: what the code of each mentions, and what the fields of each
-// type name, in order. A type is its index in `named_by_fields`.
 struct Model {
     mentioned: Vec<Vec<u64>>,
     named_by_fields: Vec<Vec<u64>>,
@@ -148,8 +146,6 @@ struct ModelFile {
     is_committed: bool,
 }
 
-// What the link keeps of each file, in order: the first definition of each type in the order of the files. And what any file
-// has met, which is declared.
 #[derive(PartialEq, Eq, Debug)]
 struct Linked {
     kept: Vec<Vec<u64>>,
@@ -190,8 +186,6 @@ impl Model {
         files.collect()
     }
 
-    // One step of a file: it settles the next type of its level, or goes on to the next level, or is done, or what it has defined
-    // becomes known to the others.
     fn step(&self, files: &mut [ModelFile], index: usize, rule: Rule) {
         let defined = DefinedObjectTypes::default();
         for (id, file) in (0..).map(FileId).zip(&*files) {

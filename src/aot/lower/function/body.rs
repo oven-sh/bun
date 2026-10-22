@@ -27,8 +27,7 @@ pub(super) fn lower_source_function(
     lowering.finish();
 }
 
-// Nothing that the build sees names the function. In the program's own code a call of it is a fault of the compiler, and a loud
-// one. A function of Bun's library may still be found by text that is evaluated at run time, which is refused as documented.
+// Nothing that the build sees names the function.
 pub(super) fn lower_left_out_function(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionId,

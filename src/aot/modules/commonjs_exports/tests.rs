@@ -457,8 +457,6 @@ fn a_function_that_only_looks_like_the_helper_of_swc_gets_the_object() {
     }
 }
 
-// The property is there from its definition on, the name from the start. Nobody can look in between where nothing but the body
-// itself has run by then.
 #[test]
 fn whoever_sees_a_module_half_evaluated_finds_the_getters_that_its_head_defines() {
     let main = "exports.look = () => require('./module.cjs').a; require('./module.cjs');";

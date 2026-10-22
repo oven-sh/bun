@@ -639,8 +639,6 @@ fn count_lowered_files_of_bun(source: &str) -> usize {
     })
 }
 
-// One row of the table of built-ins can hang half of Bun's modules behind every program: the four functions of builtins/Ipc did,
-// through `node:net`. Every build then lowers them on one thread and throws them away.
 #[test]
 fn small_program_lowers_little_of_bun() {
     let of_empty_program = count_lowered_files_of_bun("export {};\n");
@@ -653,8 +651,6 @@ fn small_program_lowers_little_of_bun() {
     assert!(of_listeners < 90, "{of_listeners} files of Bun are lowered for two listeners");
 }
 
-// The importer runs for what it does itself. The package says that nothing is lost without it, nothing that is reached uses the
-// names, and only a run can tell which names the file has.
 #[test]
 fn names_of_commonjs_package_that_is_left_out_are_not_looked_for() {
     let manifest = r#"{ "name": "tools", "version": "1.0.0", "main": "index.js", "sideEffects": false }"#;
@@ -808,8 +804,6 @@ fn types_of_bun_modules_lead_in_no_circle() {
             let unit_count = build.check_and_lower(loaded, bound).len();
             assert!(unit_count > 150, "{unit_count} files were lowered");
             let files = loaded.projects.runtime.loaded.files();
-            // JavaScript that the bundler shares, so no type can be written there. `next` in `__callDispose` returns what it
-            // returns, and no other file reaches the type of that arrow function.
             let is_excused = |file: FileId| files.module(file).file_name() == b"/$bun/js/runtime.bun.js";
             let circular = build.circular_runtime_files.iter().filter(|it| !is_excused(it.0));
             let circular: Vec<String> = circular

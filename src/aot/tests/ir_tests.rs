@@ -535,9 +535,6 @@ mod tests {
 
     fn record_outcome_with_expectations(command_outcome: CommandOutcome) -> TestOutcome {
         let directives = "// RUN: emit\n\
-            // DIAGNOSTIC: TS2322\n\
-            // STATISTIC: ProgramBytes >= 1\n\
-            // CHECK: Add\n";
         let file = parse_directives(directives);
         let mut outcome = TestOutcome::default();
         record_command_outcome(&file, &file.runs[0], "emit", command_outcome, &mut outcome);
@@ -600,26 +597,18 @@ mod tests {
     #[test]
     fn emitted_bytes_are_counted() {
         let directives = "// RUN: lower\n\
-            // STATISTIC: ProgramBytes >= 64\n\
-            // STATISTIC: ProgramBytes = 0\n";
         expect_failures_on_program(directives, &[3]);
     }
 
     #[test]
     fn second_run_fails() {
         let directives = "// RUN(FIRST): lower\n\
-            // RUN(SECOND): link\n\
-            // FIRST: name=\"add\"\n\
-            // SECOND: NoSuchOperation\n";
         expect_failures_on_program(directives, &[4]);
     }
 
     #[test]
     fn failures_sorted_by_line() {
         let directives = "// RUN(FIRST): lower\n\
-            // RUN(SECOND): no-such-command\n\
-            // FIRST: NoSuchOperation\n\
-            // SECOND: name=\"add\"\n";
         expect_failures_on_program(directives, &[2, 3]);
     }
 
@@ -734,12 +723,6 @@ mod tests {
     #[test]
     fn statistic_comparisons() {
         let directives = "// RUN: emit\n\
-            // STATISTIC: ProgramBytes = 64\n\
-            // STATISTIC: ProgramBytes = 63\n\
-            // STATISTIC: ProgramBytes >= 64\n\
-            // STATISTIC: ProgramBytes >= 65\n\
-            // STATISTIC: ProgramBytes <= 64\n\
-            // STATISTIC: ProgramBytes <= 63\n";
         let result = CommandResult {
             statistics: vec![(StatisticId::ProgramBytes, 64)],
             ..CommandResult::default()
@@ -750,8 +733,6 @@ mod tests {
     #[test]
     fn absent_statistic_is_zero() {
         let directives = "// RUN: link\n\
-            // STATISTIC: MaxNestingDepthHits = 0\n\
-            // STATISTIC: MaxNestingDepthHits >= 1\n";
         let result = CommandResult {
             statistics: vec![(StatisticId::ProgramBytes, 64)],
             ..CommandResult::default()

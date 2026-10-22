@@ -156,8 +156,7 @@ fn renumber<I: Id>(id: &mut I, ids: &[Option<I>]) {
     *id = ids[id.index()].expect("what a record names stays");
 }
 
-/// Mapping a type brings what the type leads to into the tables of the file, and most of that no record of the file names in
-/// the end. The link would find that out; until then every file would hold it.
+/// Mapping a type brings what the type leads to into the tables of the file, and most of that no record of the file names in the end.
 pub(super) fn drop_unnamed_entries(fragment: &mut Fragment) {
     let mut named = NamedEntries::new(fragment);
     named.add_records(fragment);

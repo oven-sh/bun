@@ -49,10 +49,7 @@ fn find_modules_loaded_at_start(input: &BindInput<'_, '_>, scans: &Scans) -> Vec
     is_loaded
 }
 
-// An `import` or `export .. from` that names nothing fails the load of every module that reaches it through such statements, before
-// one of them runs. Where an entry point is among them the program cannot start, and the build stops. Any other is loaded by a
-// site that can catch the failure, as code does with a package that need not be installed: it stays a module whose body throws.
-// It asks for nothing but the module that fails its load, which so has a record, and which the failure names.
+// An `import` or `export .. from` that names nothing fails the load of every module that reaches it through such statements, before one of them runs.
 pub(super) fn find_unloadable_modules(
     input: &BindInput<'_, '_>,
     scans: &mut Scans,

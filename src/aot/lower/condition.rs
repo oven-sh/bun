@@ -587,8 +587,7 @@ pub(in crate::lower) fn find_typeof_operand(
     leaf_test::find_typeof_operand(lowering, expression)
 }
 
-/// `switch (typeof operand)` over written names. No value has two of the names, so the order of the tests is free:
-/// "function" goes first, because no type stands for the objects that cannot be called.
+/// `switch (typeof operand)` over written names.
 pub(in crate::lower) fn jump_by_typeof(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     operand: ExprId,

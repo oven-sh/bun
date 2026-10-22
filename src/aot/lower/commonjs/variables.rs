@@ -91,8 +91,7 @@ pub(in crate::lower) fn is_commonjs_module(file: &FileLowering<'_, '_, '_, '_>) 
     }
 }
 
-/// Something in the text can only be said of a function that has the five names as parameters: a store to one of them, the
-/// `arguments` of the file, a name that is looked up at run time.
+/// Something in the text can only be said of a function that has the five names as parameters: a store to one of them, the `arguments` of the file, a name that is looked up at run time.
 pub(in crate::lower) fn keeps_wrapper(
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
@@ -300,8 +299,7 @@ fn text_key(file: &mut FileLowering<'_, '_, '_, '_>, text: &[u8]) -> PropertyKey
     file.text_key(text)
 }
 
-// The path of a file and its folder, as the record of the file has them. `None`: the host of the target spells a path in a way of
-// its own.
+// The path of a file and its folder, as the record of the file has them.
 fn find_path_text(
     file: &FileLowering<'_, '_, '_, '_>,
     owner: FileId,
@@ -349,8 +347,7 @@ fn emit_module_value(
     emit_value_of_module(lowering, own_file, builtin)
 }
 
-/// `module.id`, `.filename`, `.path` and `.loaded`, and the same of `require.main`: what the record of the module says, as long as
-/// nobody holds the object, who could store there.
+/// `module.id`, `.filename`, `.path` and `.loaded`, and the same of `require.main`: what the record of the module says, as long as nobody holds the object, who could store there.
 pub(super) fn try_lower_module_field(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,

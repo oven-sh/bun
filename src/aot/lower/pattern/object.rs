@@ -9,8 +9,7 @@ use crate::lower::member::{self, PropertyName};
 use crate::lower::{FunctionLowering, commonjs, condition, exception, layouts};
 use crate::modules::ModuleRef;
 
-// JSC records no position for what an object pattern reads, so it is reported where the destructured
-// expression ends.
+// JSC records no position for what an object pattern reads, so it is reported where the destructured expression ends.
 pub(super) fn destructure_object(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     node: PatternNode,
@@ -45,8 +44,7 @@ pub(super) fn destructure_object(
     }
 }
 
-// `const { a, b: c = d } = require(K)`, where nobody looks at what the call yields: each name is read once, here, from where the
-// module keeps it. There is no object to test or to convert.
+// `const { a, b: c = d } = require(K)`, where nobody looks at what the call yields: each name is read once, here, from where the module keeps it.
 pub(super) fn destructure_exports(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     node: PatternNode,

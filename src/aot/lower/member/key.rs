@@ -21,7 +21,6 @@ pub(super) fn name_key(file: &mut FileLowering<'_, '_, '_, '_>, name: Atom) -> P
 }
 
 // The key that the engine gives the symbol of `const name = Symbol(..)`: where the call stands, and the description.
-// None for a symbol whose module is not in the program: nothing makes it.
 pub(in crate::lower) fn created_symbol_key(
     file: &mut FileLowering<'_, '_, '_, '_>,
     name: Atom,
@@ -169,8 +168,7 @@ pub(in crate::lower) fn find_key_text(
     file.fragment.property_keys.get(key).string_name()
 }
 
-/// The name in the header of a function defined under the key. A function under a symbol has none: SetFunctionName gives it
-/// the property `name`, and stack traces and the console go on showing it without a name, as they do in the engine.
+/// The name in the header of a function defined under the key.
 pub(in crate::lower) fn find_function_name(
     file: &FileLowering<'_, '_, '_, '_>,
     key: PropertyKeyId,

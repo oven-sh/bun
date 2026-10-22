@@ -5,8 +5,7 @@ use bun_sema::hir::{self, ClassId, StmtId, StmtKind, VarDeclId};
 use bun_sema::program::FileId;
 use rustc_hash::FxHashSet;
 
-/// One declarator of `const a = f(), b = 1` can go while the other stays, so a declarator is named by itself. So is a class:
-/// the type of its binding asks after it.
+/// One declarator of `const a = f(), b = 1` can go while the other stays, so a declarator is named by itself.
 #[derive(Default, Clone)]
 pub struct LeftOutDeclarations {
     declarators: FxHashSet<(FileId, VarDeclId)>,

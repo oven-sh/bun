@@ -6,8 +6,6 @@ import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// A launcher that wants no descendant of its own to make machine code asks the kernel for that before it starts them: PR_SET_MDWE without PR_MDWE_NO_INHERIT, then execve.
-// The restriction then holds from the executable's first instruction, for the loader too, and a second request with other bits is refused.
 const libc = JSON.stringify(isLinux ? libcPathForDlopen() : "");
 const prctl = "prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 }";
 
@@ -73,11 +71,17 @@ const sharedNames = readdirSync(shared)
   .filter(name => name !== "asks-for-executable-memory")
   .sort();
 
-const getMDWE = 66;
-const hasMDWE =
-  isLinux &&
-  dlopen(libcPathForDlopen(), { prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 } }).symbols.prctl(getMDWE, 0, 0, 0, 0) >= 0;
-if (isLinux && !hasMDWE) console.error("SKIPPED: test/aot/memory-deny-write-execute-is-inherited.test.ts: this kernel has no PR_SET_MDWE, which came with Linux 6.3");
+function whyItCannotBeShown() {
+  const getMDWE = 66;
+  try {
+    const { symbols } = dlopen(libcPathForDlopen(), { prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 } });
+    return symbols.prctl(getMDWE, 0, 0, 0, 0) < 0 ? "this kernel has no PR_SET_MDWE, which came with Linux 6.3" : "";
+  } catch (error) {
+    return String(error);
+  }
+}
+const obstacle = isLinux ? whyItCannotBeShown() : "it is a request to Linux";
+if (isLinux && obstacle) console.error(`SKIPPED: test/aot/memory-deny-write-execute-is-inherited.test.ts: ${obstacle}`);
 
 const tsconfigWithTypesOfBun = JSON.stringify({ compilerOptions: { strict: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] } });
 
@@ -91,7 +95,7 @@ const free = (cmd: string[], directory: string) => spawned(cmd, directory, bunEn
 const inherited = (cmd: string[], directory: string) => spawned([bunExe(), join(directory, "launcher.ts"), ...cmd], directory, bunEnv);
 const restricted = { stdout: JSON.stringify({ bits: 1, isGranted: false, compiler: "ERR_FFI_CC_DISABLED" }) + "\n", stderr: "", exitCode: 0, signal: null };
 
-describe.skipIf(!hasMDWE)("an executable that is started with memory-deny-write-execute already on", () => {
+describe.skipIf(!!obstacle)("an executable that is started with memory-deny-write-execute already on", () => {
   test("leaves the request as the launcher made it", async () => {
     using dir = tempDir("aot-mdwe-inherited", { "launcher.ts": launcher, "state.ts": state, "twice.c": "int twice(int x) { return 2 * x; }\n" });
     const directory = String(dir);

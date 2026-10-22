@@ -83,8 +83,7 @@ pub(super) struct WalkInput<'x, 's> {
     pub(super) compiled: &'x CompiledModule<'s>,
     pub(super) modules: &'x ModuleGraph,
     pub(super) is_commonjs: bool,
-    // The text of the file is a function of `this` and the five names of a CommonJS module. In every other file the names are
-    // operations where they are written, and nothing stores them.
+    // The text of the file is a function of `this` and the five names of a CommonJS module.
     pub(super) has_wrapper_parameters: bool,
     pub(super) moves_statements_to_file_start: bool,
     pub(super) lexical_owners: &'x [ScopeId],
@@ -126,8 +125,7 @@ pub(super) struct ScopeWalk {
     pub(super) eval_uses: Vec<EvalUse>,
     pub(super) stored_slots: Vec<(ScopeId, ScopeSlot)>,
     pub(super) symbol_initializations: Vec<Option<Initialization>>,
-    // The initialization stands under a branch, a loop, a `try`, a `switch`, a label or a `with` of its function, so code
-    // behind it in the text may run without it.
+    // The initialization stands under a branch, a loop, a `try`, a `switch`, a label or a `with` of its function, so code behind it in the text may run without it.
     pub(super) is_initialized_conditionally: Vec<bool>,
     pub(super) slot_initializations: Vec<((ScopeId, ScopeSlot), u32)>,
     pub(super) hoisted_functions: Vec<(ScopeId, SymbolId, FnId)>,
@@ -135,7 +133,6 @@ pub(super) struct ScopeWalk {
     // Each identifier that a symbol is stored through, with the function that it stands in.
     pub(super) symbol_stores: Vec<(SymbolId, ExprId, WalkedFunctionId)>,
     // The time behind which none of those stores runs in the activation that owns the symbol, as long as they all stand in its own function.
-    // `u32::MAX` where the walk has not seen the end of a store.
     pub(super) last_store_times: Vec<u32>,
     pub(super) is_switch_scope: Vec<bool>,
     pub(super) is_repeated_scope: Vec<bool>,

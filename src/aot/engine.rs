@@ -55,8 +55,7 @@ pub struct EngineOptions {
     fits_threads_to_program: bool,
 }
 
-/// A thread that joins a build touches megabytes of its own first. This much of a program takes about a fifth of a second to
-/// compile, many times as long as that.
+/// A thread that joins a build touches megabytes of its own first.
 const PROGRAM_BYTES_PER_THREAD: usize = 512 << 10;
 
 // SAFETY: an abi record of integers, a float, byte arrays, flag words, records of integers and `repr(u32)` enums that each have a member 0.
@@ -234,8 +233,7 @@ struct ProgramOwner {
     frees_on_pool_thread: bool,
 }
 
-/// # Safety
-/// `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until the engine returns.
+/// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until the engine returns.
 unsafe extern "C" fn release_program(owner: *mut c_void) {
     // SAFETY: the caller's promise.
     let owner = unsafe { &mut *owner.cast::<ProgramOwner>() };
@@ -251,8 +249,7 @@ unsafe extern "C" fn release_program(owner: *mut c_void) {
     unsafe { bun_sema_driver::run_on_region_thread(free_program, program) };
 }
 
-/// # Safety
-/// `program` is a `Box<ProgramBytes>` that has no other owner.
+/// SAFETY: `program` is a `Box<ProgramBytes>` that has no other owner.
 unsafe extern "C" fn free_program(program: *mut c_void) {
     // SAFETY: the caller's promise.
     drop(unsafe { Box::from_raw(program.cast::<ProgramBytes>()) });
@@ -264,8 +261,7 @@ pub struct EngineResult {
 }
 
 impl EngineResult {
-    /// # Safety
-    /// `result` comes from `Bun__AOT__compile` and has no other owner.
+    /// SAFETY: `result` comes from `Bun__AOT__compile` and has no other owner.
     unsafe fn new(result: NonNull<BunAOTResult>) -> EngineResult {
         let sections = ResultSection::ALL.map(|section| {
             // SAFETY: the result is not freed yet.
@@ -428,8 +424,7 @@ impl BunAOTBytes {
         }
     }
 
-    /// # Safety
-    /// While `self` is borrowed, `ptr` is readable for `len` bytes, aligned for `T`, and holds valid values of `T`.
+    /// SAFETY: While `self` is borrowed, `ptr` is readable for `len` bytes, aligned for `T`, and holds valid values of `T`.
     unsafe fn as_slice<T>(&self) -> &[T] {
         if self.len == 0 {
             return &[];

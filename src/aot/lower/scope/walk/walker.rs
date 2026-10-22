@@ -133,9 +133,7 @@ impl<'x, 's> Walker<'x, 's> {
         }
     }
 
-    // The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module of its own. Whoever evaluates that module calls it,
-    // and nothing creates a closure of it, so it has no creator and no captures. It is declared ahead of the statement that it
-    // is written in, which then finds nothing to walk.
+    // The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module of its own.
     fn declare_inner_module_bodies(&mut self) -> Vec<(FnId, WalkedFunctionId)> {
         let file = self.input.file;
         let callbacks = self.input.modules.inner_modules(file);

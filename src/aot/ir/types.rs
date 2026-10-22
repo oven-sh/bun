@@ -149,6 +149,12 @@ pub struct PreparedType {
     hash: Option<u64>,
 }
 
+impl PreparedType {
+    pub fn ty(&self) -> &Type {
+        &self.ty
+    }
+}
+
 pub struct TypeTable {
     types: TypeList,
     type_ids: HashTable<TypeId>,
@@ -274,8 +280,7 @@ impl TypeTable {
         }))
     }
 
-    /// For a table that is complete and waits with many others. While it grows its types lie side by side, which is what
-    /// reading them over and over wants.
+    /// For a table that is complete and waits with many others.
     pub fn share_types(&mut self) {
         let TypeList::Own(types) = &mut self.types else {
             return;

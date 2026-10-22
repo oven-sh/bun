@@ -407,8 +407,6 @@ pub(in crate::lower) fn emit_brand_definition(
 }
 
 // A base constructor that returns an object lets a derived class initialize that object twice.
-// Private methods and accessors are refused before any field initializer runs. Without them the
-// initializers run up to the first private field.
 fn fails_at_first_private_field(file: &FileLowering<'_, '_, '_, '_>, class: ClassId) -> bool {
     let mut names = file.bound.private_names_of_class(class);
     class::is_derived_class(file.hir, class)

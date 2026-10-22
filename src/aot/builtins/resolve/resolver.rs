@@ -53,8 +53,7 @@ pub(super) enum ExprState {
     NotEvaluated,
     Unresolved,
     Builtin(ResolvedValue),
-    // The value may be the built-in: a read of a variable or of a parameter that it is stored into, among other values. What is
-    // done with it counts as done with the built-in, and nothing else is concluded from it.
+    // The value may be the built-in: a read of a variable or of a parameter that it is stored into, among other values.
     Held(ResolvedValue),
     DynamicGlobal(BuiltinPath),
     Intrinsic(Intrinsic),
@@ -222,8 +221,7 @@ impl<'a, 's> Resolver<'a, 's> {
         })
     }
 
-    // Whether a name that is written outside the part of the file that is resolved is bound to the symbol. Nobody follows what the
-    // binding holds to there.
+    // Whether a name that is written outside the part of the file that is resolved is bound to the symbol.
     pub(super) fn is_named_outside(&self, symbol: SymbolId) -> bool {
         if self.within.is_none() {
             return false;

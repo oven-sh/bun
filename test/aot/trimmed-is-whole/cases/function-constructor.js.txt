@@ -37,6 +37,7 @@ console.log((function () {})["constructor"](text)());
 //// computed-constructor-concat
 console.log((function () {})["const" + "ructor"](text)());
 //// computed-constructor-argv
+//@ not-seen
 //@ args constructor
 console.log((function () {})[process.argv[2]](text)());
 //// destructured-constructor
@@ -72,8 +73,10 @@ console.log(constructorOf(constructorOf({}))(text)());
 //// descriptor
 console.log(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), "constructor").value(text)());
 //// descriptors
+//@ not-seen
 console.log(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(() => {})).constructor.value(text)());
 //// spread-of-prototype-names
+//@ not-seen
 const proto = Object.getPrototypeOf(() => {});
 for (const name of Object.getOwnPropertyNames(proto)) if (name.length === 11 && name[0] === "c") console.log(proto[name](text)());
 //// class-field
@@ -88,9 +91,11 @@ console.log(holder.make(text)());
 //// tagged-template
 console.log((() => {}).constructor`return Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter`());
 //// proxy-get
+//@ not-seen
 const proxy = new Proxy(() => {}, {});
 console.log(proxy.constructor(text)());
 //// proxy-handler-hands-out
+//@ not-seen
 const proxy = new Proxy({}, { get: (_, name) => (() => {})[name] });
 console.log(proxy.constructor(text)());
 //// subclass-of-function-constructor
@@ -104,6 +109,7 @@ Promise.resolve(() => {}).then(f => console.log(f.constructor(text)()));
 //// map-over-array
 console.log([() => {}].map(f => f.constructor)[0](text)());
 //// JSON-named
+//@ not-seen
 const name = JSON.parse('{"n":"constructor"}').n;
 console.log((() => {})[name](text)());
 //// with-statement

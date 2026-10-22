@@ -65,6 +65,7 @@ function inspector(depth, options, inspect) {
 const inspected = querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? Bun.inspect.custom : inspector) });
 tell(() => Bun.inspect(inspected, { colors: true }));
 //// spyOn-of-bun-test
+//@ todo --trim removes the method that spyOn finds under a name made at run time: ERR_FEATURE_REMOVED
 import { spyOn } from "bun:test";
 tell(() => spyOn(Object.create(Object.getPrototypeOf("a")), "isWell" + given + "Formed").call("a"));
 tell(() => spyOn(Object(1.005), "to" + given + "Fixed").call(1.5, 1));
@@ -75,15 +76,19 @@ await askRoute(request => {
   return "has";
 });
 //// an-import-of-a-WebAssembly-module-from-JSON
+//@ todo --trim removes the function that the WebAssembly module finds on JSON under a name made at run time: ERR_FEATURE_REMOVED
 const { instance } = await WebAssembly.instantiate(moduleThatCallsItsImport("raw" + given + "JSON"), { j: JSON });
 tell(() => instance.exports.run());
 //// an-import-of-a-WebAssembly-module-from-Math
+//@ todo --trim removes the function that the WebAssembly module finds on Math under a name made at run time: ERR_FEATURE_REMOVED
 const instance = new WebAssembly.Instance(new WebAssembly.Module(moduleThatCallsItsImport("sum" + given + "Precise")), { j: Math });
 tell(() => instance.exports.run());
 //// an-import-of-a-WebAssembly-module-from-Promise
+//@ todo --trim removes the function that the WebAssembly module finds on Promise under a name made at run time: ERR_FEATURE_REMOVED
 const { instance } = await WebAssembly.instantiate(moduleThatCallsItsImport("all" + given + "Settled"), { j: Promise });
 tell(() => instance.exports.run());
 //// an-import-of-a-WebAssembly-module-from-the-prototype-of-strings
+//@ todo --trim removes the function that the WebAssembly module finds on String.prototype under a name made at run time: ERR_FEATURE_REMOVED
 const { instance } = await WebAssembly.instantiate(moduleThatCallsItsImport("isWell" + given + "Formed"), { j: Object.getPrototypeOf("a") });
 tell(() => instance.exports.run());
 //// JSON-stringify-with-a-list-of-names

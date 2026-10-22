@@ -1,4 +1,4 @@
-// The pairs whose build that knows more has more code than ../knowing-more-adds-no-code.test.ts allows today, each with what the build of 2026-10-20, 22:39, said.
+// The pairs whose build that knows more has more code than ../knowing-more-adds-no-code.test.ts allows today, each with what the build said when the line was written.
 // They are listed as todo. A pair that has come within the bound is taken out of here, and from then on the test holds it there. `bun test --todo` says which have.
 
 /** bytes of code of the program's own functions: less | more, and where the bytes stand */

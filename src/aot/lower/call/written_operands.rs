@@ -10,9 +10,7 @@ use crate::lower::expression::{self, lower_expression, lower_expression_for_effe
 use crate::lower::member::{self, PropertyName};
 use crate::lower::{FileLowering, FunctionLowering, convert, layouts, object, types};
 
-// A call of a built-in that writes out the structure of what it takes makes what the text says. The built-in is known by its binding, and nobody can replace
-// what it looks up on the way: the iterator of an array, `set` of a map, `add` of a set. The lists that are written for the call alone are never made.
-// Each expression is evaluated where it stands, once. No expression is evaluated at the build.
+// A call of a built-in that writes out the structure of what it takes makes what the text says.
 
 struct Entry {
     key: PropertyName,
@@ -151,8 +149,7 @@ fn lower_object_from_entries(
     Some(convert::claim_call_result(lowering, call, made))
 }
 
-// `Object.defineProperties(target, Object.getOwnPropertyDescriptors(source))`: nobody but the outer call has the descriptors. Each half stands where its call stood,
-// and the second is handed the source too: it says what the target gets.
+// `Object.defineProperties(target, Object.getOwnPropertyDescriptors(source))`: nobody but the outer call has the descriptors.
 fn lower_definition_by_descriptors(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,

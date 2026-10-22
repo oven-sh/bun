@@ -39,9 +39,7 @@ fn find_class_position(file: &FileLowering<'_, '_, '_, '_>, class: ClassRef) -> 
     }
 }
 
-// Type mapping only lists the class types it meets, because a flow asks for layouts and types in turn. The list is emptied,
-// so what is mapped later is recorded by another call. It keeps the order in which the file names the types: the order of
-// the checker's ids depends on the schedule.
+// Type mapping only lists the class types it meets, because a flow asks for layouts and types in turn.
 pub(super) fn record_class_type_arguments_of_file(file: &mut FileLowering<'_, '_, '_, '_>) {
     let mut recorded: FxHashSet<(ClassRef, CheckerTypeId)> = FxHashSet::default();
     while !file.layouts.class_types.is_empty() {

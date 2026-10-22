@@ -125,8 +125,7 @@ fn mark_imports_of_marked_files(loads: &mut Loads) {
     }
 }
 
-/// For each file, whether code of another file can call what the file exports before the file has run to its end: the
-/// file lies on a cycle of imports and requires, a `require` names it, or such a file imports it.
+/// For each file, whether code of another file can call what the file exports before the file has run to its end: the file lies on a cycle of imports and requires, a `require` names it, or such a file imports it.
 pub(super) fn find_files_held_early(files: &Files<'_>) -> Vec<bool> {
     match collect_loads(files) {
         Some(mut loads) => {

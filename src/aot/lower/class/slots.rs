@@ -29,7 +29,6 @@ pub(in crate::lower) fn set_class_slot(
 }
 
 // The text has no place for what belongs to private state, and the code that uses it stands inside and outside the class.
-// So it is kept once for the program, like the static fields of a class.
 fn private_state_variable(
     file: &mut FileLowering<'_, '_, '_, '_>,
     state: SymbolId,

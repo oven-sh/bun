@@ -91,8 +91,7 @@ struct Finder<'a, 'i, 's> {
     candidates: Vec<Candidate>,
 }
 
-// An entry that is in a field is missing in the collection. Nothing notices as long as nothing but the built-in methods
-// looks into the collection, and they are called by the helpers alone.
+// An entry that is in a field is missing in the collection.
 fn are_methods_locked() -> bool {
     let mut methods = METHODS_OF_COLLECTIONS.iter();
     methods.all(|&method| table::entry(method).mutability == Mutability::AlwaysLocked)
@@ -184,8 +183,7 @@ impl Finder<'_, '_, '_> {
         }
     }
 
-    // Only the first collection that a variable holds has its entries in fields. A class that is evaluated again and
-    // again would pay for fields that stay empty.
+    // Only the first collection that a variable holds has its entries in fields.
     fn is_at_top_level(&self, expression: ExprId) -> bool {
         let statement = self.enclosing_statement(expression);
         statement.is_some_and(|statement| self.bound.parent_of_stmt(statement) == Parent::File)
@@ -371,8 +369,7 @@ impl Finder<'_, '_, '_> {
             && !arguments.any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
     }
 
-    // `W.set(x, v)` and `W.add(x)` answer the collection. A call that puts its entry into the collection although a field
-    // holds one would change what no site reads.
+    // `W.set(x, v)` and `W.add(x)` answer the collection.
     fn find_definition(&self, mention: ExprId, kind: PrivateStateKind) -> Option<ExprId> {
         let (hir, bound) = (self.hir, self.bound);
         let Parent::Expr(method) = bound.parent_of_expr(mention) else {

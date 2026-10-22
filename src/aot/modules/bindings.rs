@@ -10,8 +10,7 @@ use bun_sema::program::Sym;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct SyntheticExportId(pub u32);
 
-/// `const a = require(K)`, where nothing stores to `a` again: from that statement on `a` stands for the module. It holds `true`,
-/// so that it has the dead zone, or the `undefined`, that the language gives it.
+/// `const a = require(K)`, where nothing stores to `a` again: from that statement on `a` stands for the module.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Holder {
     pub symbol: SymbolId,
@@ -41,8 +40,7 @@ pub enum ImportBinding {
         phase: ImportPhase,
     },
     Builtin(BuiltinId),
-    /// A property of the object of a built-in module that the program can store to. The import holds what
-    /// the property held when the module was loaded.
+    /// A property of the object of a built-in module that the program can store to.
     CapturedBuiltin {
         member: BuiltinId,
         export: SyntheticExportId,

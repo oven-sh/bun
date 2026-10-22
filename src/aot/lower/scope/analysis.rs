@@ -205,8 +205,7 @@ impl ScopeAnalysis {
         }
     }
 
-    /// `Some`: the function has more captures than a closure has room for, also with an environment for each scope that it
-    /// reaches. The number is one that no other function of the file has.
+    /// `Some`: the function has more captures than a closure has room for, also with an environment for each scope that it reaches.
     pub(in crate::lower) fn packed_captures(&self, key: FunctionKey) -> Option<u32> {
         let captures = &self.find_function(key)?.captures;
         (captures.len() > captures::max_captures()).then_some(captures.start)
@@ -227,8 +226,7 @@ impl ScopeAnalysis {
         function.is_some_and(|function| function.has_too_many_captures)
     }
 
-    /// The name holds a required module that is only read by members, so it holds no value, and every run of the function comes
-    /// behind its initialization. The function neither captures the name nor reads it.
+    /// The name holds a required module that is only read by members, so it holds no value, and every run of the function comes behind its initialization.
     pub(in crate::lower) fn is_initialized_holder(
         &self,
         function: FunctionKey,

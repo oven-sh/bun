@@ -38,8 +38,7 @@ pub(crate) enum Arguments {
     List(ValueId),
 }
 
-// A marked call goes where `bun build` lets it go, and `Removable` decides that. An engine that knew of the mark would also let
-// the call go where only a variable that nothing reads holds its result.
+// A marked call goes where `bun build` lets it go, and `Removable` decides that.
 const IS_ANNOTATED_PURE: bool = false;
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -201,8 +200,7 @@ pub(in crate::lower) fn lower_new(
     value
 }
 
-// Bun's transpiler prints a `new` without arguments without `()`, unless something is read from the
-// result or the result is called. JSC reports a `new` without `()` where it starts.
+// Bun's transpiler prints a `new` without arguments without `()`, unless something is read from the result or the result is called.
 fn construct_position(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> u32 {
     let site = call_site(file, expression);
     let is_reported_at_callee = !site.args.is_empty()
@@ -234,8 +232,7 @@ fn is_base_of_access(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) ->
     false
 }
 
-// A native error constructor does the same with and without `new`, and Bun's transpiler prints the
-// call, so a stack trace shows the position of a call.
+// A native error constructor does the same with and without `new`, and Bun's transpiler prints the call, so a stack trace shows the position of a call.
 fn is_printed_as_call(file: &FileLowering<'_, '_, '_, '_>, callee: ExprId) -> bool {
     let inner = skip_type_syntax(file, callee);
     if !matches!(file.hir[inner].kind, ExprKind::Ident(_)) {

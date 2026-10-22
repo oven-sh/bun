@@ -2,10 +2,7 @@ use bun_sema::bind::Parent;
 
 use super::*;
 
-// `simplify_unused_expr` of src/js_parser/scan/scan_side_effects.rs: what `bun build` and `bun run` leave of an expression whose
-// value nothing uses. Their parser asks it of every expression that is a statement, wherever the statement stands, and of the
-// test of a conditional expression whose outcome it knows. It asks it of nothing else without --minify-syntax: not of the
-// initializer of a variable that nothing reads, not of the left of a comma whose right is used, not of the head of a loop.
+// `simplify_unused_expr` of src/js_parser/scan/scan_side_effects.rs: what `bun build` and `bun run` leave of an expression whose value nothing uses.
 impl Removable<'_, '_> {
     fn has_marks(&self) -> bool {
         let hir = self.hir;
@@ -26,9 +23,7 @@ impl Removable<'_, '_> {
         }
     }
 
-    // The expressions of the file of which only parts are evaluated, each for what it does, ascending:
-    // of a marked call, a marked `new` and a JSX element the arguments, and neither the callee nor the call;
-    // of `a ? b : c`, `a && b`, `a || b` and `a ?? b` only `a`; of a comparison, of `typeof` and of a literal the operands.
+    // The expressions of the file of which only parts are evaluated, each for what it does, ascending.
     pub(crate) fn find_simplified_expressions(&self) -> Vec<ExprId> {
         let hir = self.hir;
         let decisions = &self.analysis.decisions;

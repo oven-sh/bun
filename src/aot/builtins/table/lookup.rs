@@ -68,16 +68,14 @@ pub fn namespace_of(module: RuntimeModule) -> BuiltinId {
     module_data(module).namespace
 }
 
-/// `bun run` replaces `import * as ns from "bun"` by `var ns = globalThis.Bun` and `import("bun")`
-/// by `Promise.resolve(globalThis.Bun)`.
+/// `bun run` replaces `import * as ns from "bun"` by `var ns = globalThis.Bun` and `import("bun")` by `Promise.resolve(globalThis.Bun)`.
 pub fn object_replacing_namespace(module: RuntimeModule) -> Option<BuiltinId> {
     let data = module_data(module);
     let is_replaced = data.flags.contains(ModuleFlags::HAS_OPEN_NAMESPACE);
     is_replaced.then_some(data.namespace)
 }
 
-/// A module of Bun's whose source is an ES module, as "bun:wrap" is. Every other module with source is the body of a
-/// function that returns the module's value.
+/// A module of Bun's whose source is an ES module, as "bun:wrap" is.
 pub fn is_es_module(module: RuntimeModule) -> bool {
     module_data(module).flags.contains(ModuleFlags::IS_ES_MODULE)
 }
@@ -318,8 +316,7 @@ pub fn host_reads(context: HostReadContext) -> impl Iterator<Item = &'static Hos
     HOST_READS.iter().filter(move |read| read.context == context)
 }
 
-/// The ways to call or construct `builtin`, which is a canonical id, so that nothing a program can see happens when nobody
-/// uses the result. A call that meets the demands of one of them is removable.
+/// The ways to call or construct `builtin`, which is a canonical id, so that nothing a program can see happens when nobody uses the result.
 pub fn removable_calls(
     builtin: BuiltinId,
     is_construction: bool,
@@ -331,8 +328,7 @@ pub fn removable_calls(
         .filter(move |call| call.is_construction == is_construction)
 }
 
-/// Whether the call or construction of `builtin`, which is a canonical id, does nothing a program can see when nobody uses its
-/// result. The operands themselves are evaluated all the same: whether that can be left out is the caller's question.
+/// Whether the call or construction of `builtin`, which is a canonical id, does nothing a program can see when nobody uses its result.
 pub fn is_removable_call(
     builtin: BuiltinId,
     is_construction: bool,

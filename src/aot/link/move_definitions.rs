@@ -207,8 +207,7 @@ impl<T> RecordsById<T> {
     }
 }
 
-// The ids of the records of a unit follow each other, and the first follows the last of the unit before. So each unit has a part
-// of the table to itself, which any thread fills.
+// The ids of the records of a unit follow each other, and the first follows the last of the unit before.
 fn join_records<I: Id + Send, T: Send>(
     lists: Vec<Vec<(I, T)>>,
     count: usize,

@@ -238,8 +238,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // `object.method.call(object, ..)`, and `apply` and `bind`, for a method that the object itself holds: what `object.method(..)`
-    // does with the object. A method that it inherits may be one that looks for a member of whatever it is called on.
+    // `object.method.call(object, ..)`, and `apply` and `bind`, for a method that the object itself holds: what `object.method(..)` does with the object.
     fn is_receiver_of_own_method(&self, e: ExprId, callee: ExprId) -> bool {
         let hir = self.input.hir;
         let takes_receiver = match self.state(callee) {

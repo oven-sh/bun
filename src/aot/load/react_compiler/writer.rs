@@ -131,8 +131,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
         file
     }
 
-    /// The compiler's tree has no types. `useState<Item | null>(null)` without its type argument is a state that is
-    /// always `null`, also for whoever calls a hook that returns it.
+    /// The compiler's tree has no types.
     pub(super) fn type_arguments_of_call(&self, loc: Loc) -> ListAt<TypeNodeId> {
         let written = self.source_range_of(loc);
         let written = written.and_then(|range| self.written_type_arguments.get(&range));

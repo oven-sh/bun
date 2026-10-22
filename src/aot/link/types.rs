@@ -190,8 +190,6 @@ fn find_runs_by_depth(units: &[LinkUnit], representatives: &[(u32, TypeId)]) -> 
 }
 
 /// `merge_types` numbers the types that one file is the first to name, at one depth, in the order in which the file met them.
-/// That order hangs on which types the file left to an earlier file, which differs from one build to the next. Here they get
-/// the order of their contents, in the ids of the program. What a type contains is less deep, so it has its number by then.
 pub(super) fn order_types_by_contents(
     units: &[LinkUnit],
     ids: &mut [UnitIds],
@@ -267,7 +265,7 @@ fn remap_type_representatives(input: &TypeTableInput<'_>) -> Vec<PreparedType> {
     remapped
 }
 
-fn collision_between(
+pub(super) fn collision_between(
     units: &[LinkUnit],
     representatives: &[(u32, TypeId)],
     positions: [usize; 2],
@@ -276,18 +274,17 @@ fn collision_between(
     LinkError::TypeHashCollision { files }
 }
 
-fn intern_types(input: &TypeTableInput<'_>, table: &mut TypeTable) -> Result<(), LinkError> {
-    let representatives = input.type_representatives;
-    let remapped = remap_type_representatives(input);
-    table.reserve(remapped.len());
-    for (position, ty) in remapped.into_iter().enumerate() {
+/// The table of the types that `prepare_types` has answered with.
+pub(super) fn intern_prepared_types(prepared: Vec<PreparedType>) -> Result<TypeTable, [usize; 2]> {
+    let mut table = TypeTable::new();
+    table.reserve(prepared.len());
+    for (position, ty) in prepared.into_iter().enumerate() {
         let id = table.intern_prepared(ty).index();
         if id != position {
-            let positions = [id.min(position), position];
-            return Err(collision_between(input.units, representatives, positions));
+            return Err([id.min(position), position]);
         }
     }
-    Ok(())
+    Ok(table)
 }
 
 struct Occurrences<'a> {
@@ -323,7 +320,7 @@ struct OccurrenceCheck<'a> {
     type_representatives: &'a [(u32, TypeId)],
     ids: &'a [UnitIds],
     marks: &'a [UnitMarks],
-    table: &'a TypeTable,
+    prepared: &'a [PreparedType],
 }
 
 impl OccurrenceCheck<'_> {
@@ -337,19 +334,19 @@ impl OccurrenceCheck<'_> {
             representatives: self.type_representatives,
         };
         let conflicting_unit = types.find_conflicting_unit(|local, program_id| {
-            remap_type(unit, &map, local) == *self.table.get(program_id)
+            remap_type(unit, &map, local) == *self.prepared[program_id.index()].ty()
         })?;
         Some([self.units[conflicting_unit as usize].file, unit.file])
     }
 }
 
-fn check_occurrences(input: &TypeTableInput<'_>, table: &TypeTable) -> Result<(), LinkError> {
+fn check_occurrences(input: &TypeTableInput<'_>, prepared: &[PreparedType]) -> Result<(), LinkError> {
     let check = OccurrenceCheck {
         units: input.units,
         type_representatives: input.type_representatives,
         ids: input.ids,
         marks: input.marks,
-        table,
+        prepared,
     };
     let mut slots: Vec<(usize, Option<[ProgramFile; 2]>)> = (0..input.units.len())
         .map(|position| (position, None))
@@ -363,11 +360,22 @@ fn check_occurrences(input: &TypeTableInput<'_>, table: &TypeTable) -> Result<()
     }
 }
 
-pub(super) fn build_type_table(input: &TypeTableInput<'_>) -> Result<TypeTable, LinkError> {
+/// The types of the program in its ids, each as its first unit has it and in the form in which a table holds it, once every other unit that has the type is known to read it the same.
+pub(super) fn prepare_types(input: &TypeTableInput<'_>) -> Result<Vec<PreparedType>, LinkError> {
     debug_assert_eq!(input.units.len(), input.ids.len());
     debug_assert_eq!(input.units.len(), input.marks.len());
-    let mut table = TypeTable::new();
-    intern_types(input, &mut table)?;
-    check_occurrences(input, &table)?;
+    let prepared = remap_type_representatives(input);
+    check_occurrences(input, &prepared)?;
+    Ok(prepared)
+}
+
+#[cfg(test)]
+pub(super) fn build_type_table(input: &TypeTableInput<'_>) -> Result<TypeTable, LinkError> {
+    let prepared = remap_type_representatives(input);
+    let positions = intern_prepared_types(remap_type_representatives(input));
+    let table = positions.map_err(|positions| {
+        collision_between(input.units, input.type_representatives, positions)
+    })?;
+    check_occurrences(input, &prepared)?;
     Ok(table)
 }

@@ -17,6 +17,7 @@ console.log(globalThis["eval"](text));
 //// globalThis-concat
 console.log(globalThis["ev" + "al"](text));
 //// globalThis-argv
+//@ not-seen
 //@ args eval
 console.log(globalThis[process.argv[2]](text));
 //// destructured

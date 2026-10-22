@@ -206,47 +206,68 @@ A type error ends the process with exit code `1`, just like `bun compile`. Mocks
 
 Servers start faster and use less memory. Requests per second depend on how much of the code that handles a request is typed.
 
-Here are eight small servers. Each row compares the server run with Bun 1.4.3 to the same server compiled with `bun compile`.
+Here are eight small servers with the same eight routes: plain text, JSON, path parameters, async, a stream, and a `POST` whose body is validated with zod, validated by hand, or only cast. Each row compares the server run with Bun 1.4.3 to the same server compiled with `bun compile`.
 
-|                  | Requests per second | Peak memory (RSS) | Start to first response | CPU time per request |
-| ---------------- | ------------------: | ----------------: | ----------------------: | -------------------: |
-| `Bun.serve`      |               +8.5% |        42 → 32 MB |              16 → 11 ms |                -5.8% |
-| `node:http`      |               +3.6% |        66 → 45 MB |              37 → 14 ms |                +1.3% |
-| Hono             |               +2.4% |        47 → 33 MB |              20 → 11 ms |                -1.6% |
-| TanStack Start   |               -1.2% |        62 → 41 MB |              48 → 15 ms |                +3.2% |
-| Elysia           |               -1.6% |        48 → 40 MB |              39 → 14 ms |                +4.1% |
-| Express          |               -6.3% |        82 → 54 MB |              75 → 22 ms |               +12.1% |
-| Fastify          |              -12.6% |        82 → 53 MB |              85 → 19 ms |               +19.8% |
-| Effect           |              -16.1% |        75 → 46 MB |             111 → 34 ms |               +22.1% |
+|                | Peak memory (RSS) | Peak private memory | Start to first response |
+| -------------- | ----------------: | ------------------: | ----------------------: |
+| `Bun.serve`    |    41.8 → 34.4 MB |      16.4 → 12.9 MB |           15.8 → 8.2 ms |
+| Hono           |    47.2 → 34.9 MB |      19.7 → 12.8 MB |           18.8 → 8.8 ms |
+| Elysia         |    48.1 → 41.5 MB |      20.4 → 13.0 MB |                         |
+| TanStack Start |    61.3 → 43.1 MB |      30.9 → 15.6 MB |                         |
+| `node:http`    |    71.0 → 44.9 MB |      35.8 → 19.0 MB |          31.2 → 11.8 ms |
+| Fastify        |    80.7 → 54.7 MB |      52.4 → 21.0 MB |          77.7 → 17.9 ms |
+| Express        |    83.5 → 54.7 MB |      51.0 → 23.4 MB |          64.2 → 18.2 ms |
+| Koa            |    89.8 → 59.5 MB |      56.3 → 29.9 MB |          84.1 → 21.8 ms |
 
-One server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections, after warm-up. Each number is the mean over the routes of the application, including plain text, JSON, path parameters, a validated `POST`, async and streaming. The whole benchmark ran twice, on two machines. Each application was compiled five times, with its machine code in a different order each time. Each number is the mean of those five builds. Requests per second are ±0.4 to ±0.8 points. The time to the first response is a median.
+Requests per second, next to the same server built with `--no-aot`. That executable runs your JavaScript with the JIT of the same Bun: same built-in modules, same native code. It's the column that shows what the compiler does.
 
-- **Startup.** Every server answers its first request sooner. There's no source to parse and no bytecode to generate.
-- **Memory.** Peak memory is 17% to 39% lower. The process has no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
-- **Throughput.** Five of the eight are slower today. Express, Fastify and Effect lose the most. Most of their code is untyped JavaScript from npm that runs once per request. A JIT learns which objects reach a property access by watching the code run. The compiler has to prove it at build time, and where it can't, the access is a lookup at run time.
+|                | Compiled | `--no-aot` | Bun 1.4.3 | Against `--no-aot` | Against Bun 1.4.3 |
+| -------------- | -------: | ---------: | --------: | -----------------: | ----------------: |
+| `node:http`    |   44,838 |     38,954 |    31,506 |             +12.5% |            +37.8% |
+| `Bun.serve`    |   55,065 |     52,647 |    51,340 |              +3.2% |             +6.2% |
+| Hono           |   42,948 |     42,716 |    41,409 |              +0.3% |             +4.0% |
+| Express        |   53,352 |     51,581 |    40,733 |              -0.7% |            +26.5% |
+| TanStack Start |   22,130 |     23,012 |    22,451 |              -4.8% |             -2.5% |
+| Elysia         |   47,112 |     50,503 |    48,258 |              -7.3% |             -3.8% |
+| Fastify        |   59,678 |     65,807 |    50,255 |             -10.9% |            +16.9% |
+| Koa            |   34,175 |     46,540 |    37,075 |             -31.5% |            -13.0% |
 
-Typed code does better. Two programs written in strict TypeScript:
+Measured on October 22, 2026: one server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections. Each JIT was warmed with at least 200,000 requests a route. Requests per second are means over the eight routes, and the percentages are geometric means of the routes' ratios. Express, Fastify and Koa ran in one run and the other five in a second one on a busier machine, so compare columns, not rows. The time to the first response is the median of 200 starts. Elysia and TanStack Start weren't in that run.
 
-|                                                                        | Bun 1.4.3 | Compiled |
-| ---------------------------------------------------------------------- | --------: | -------: |
-| The TypeScript 6 compiler, type checking the `effect` repository: time |   14.20 s |   3.83 s |
-| Its peak memory                                                        |  2,680 MB |   928 MB |
+- **Startup.** Every server answers its first request sooner. There's no source to parse and no bytecode to generate. A program that prints one line goes the other way: 5.05 ms against 4.57 ms.
+- **Memory.** Peak memory is 14% to 37% lower, and the larger frameworks hold about half the private memory or less. The process has no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
+- **Throughput.** Against the JIT of the same Bun, two of the eight are faster, two are level and four are slower. Koa loses the most. It's untyped JavaScript from npm in many small packages, and one plain-text request makes about 450 lookups by name. A JIT learns which objects reach a property access by watching the code run. The compiler has to prove it at build time, and where it can't, the access is a lookup at run time.
+- **Code from strings.** The route that validates with zod is 20% to 54% slower on all eight servers. zod 4 builds its validators with `new Function`, and [that code is interpreted](/bundler/aot-compatibility#code-from-strings). The same body validated by hand is within 6% of the JIT on `Bun.serve`, Hono, Elysia, TanStack Start and `node:http`.
+- **`node:http`.** Bun 1.4.3 has an older `node:http`, which is why `node:http`, Express and Fastify gain so much in the last column. They gain most of that without `bun compile` too.
 
-The second program is an issue tracker on `Bun.serve` and Postgres. Here it is next to the same application written in Rust and in Go:
+Typed code does better. The TypeScript 6 compiler, built from its own TypeScript source, type checking the `effect` repository on one thread:
 
-|                         |   Rust |     Go | Compiled | Bun 1.4.3 |
-| ----------------------- | -----: | -----: | -------: | --------: |
-| Requests per second     |  8,883 |  5,135 |    4,517 |     2,796 |
-| Peak memory (RSS)       |  27 MB |  43 MB |    61 MB |    100 MB |
-| Start to first response |  14 ms |  18 ms |    24 ms |     48 ms |
-| CPU time per request    | 109 µs | 190 µs |   219 µs |    355 µs |
+|                   | Bun 1.4.3 | Compiled |
+| ----------------- | --------: | -------: |
+| Time              |   15.05 s |   4.14 s |
+| CPU time          |    31.3 s |    5.3 s |
+| Peak memory (RSS) |  2,568 MB |   961 MB |
 
-Each server ran alone on one core of the same kind of machine as above, one after the other: two runs with two fresh starts each. Requests per second are ±91 to ±170. The connection pool has 64 connections for Rust and Go, 8 for the compiled server and 4 for Bun 1.4.3.
+The median of five runs on the same kind of machine, the same day.
 
-Two things get worse:
+Here are five of the servers next to the same eight routes written in Go (`net/http`, `GOMAXPROCS=1`) and in Rust (axum, a current-thread tokio runtime). Every response has the same bytes.
 
-- **The executable is larger.** It contains a copy of Bun, as with `--compile`, plus the machine code of your program and of the built-in modules it imports. The todo server at the top of this page grows by 0.4 MB. A large application grows by tens of megabytes. [`bun compile --trim`](/bundler/aot-size) removes the Bun APIs that your program doesn't use.
-- **The build takes longer.** Bun type checks the whole program and compiles every function in it.
+|                          | K instructions per request | Peak private memory | RSS when ready | M instructions to first response |
+| ------------------------ | -------------------------: | ------------------: | -------------: | -------------------------------: |
+| `node:http`, compiled    |                       49.8 |             21.0 MB |        25.1 MB |                               19 |
+| Elysia, compiled         |                       56.7 |             12.8 MB |        27.0 MB |                               18 |
+| Hono, compiled           |                       58.2 |             12.4 MB |        20.0 MB |                               11 |
+| Rust                     |                       70.8 |              2.0 MB |         3.4 MB |                                1 |
+| Express, compiled        |                       74.9 |             23.2 MB |        33.1 MB |                               48 |
+| TanStack Start, compiled |                       87.2 |             16.1 MB |        25.3 MB |                               19 |
+| Go                       |                      130.2 |              6.9 MB |         7.1 MB |                                3 |
+
+Private memory is the peak over 400,000 requests. By requests per second on one core, five of seven compiled servers are ahead of Go, from 1.1x (Fastify) to 1.6x (`Bun.serve`). Express and TanStack Start are behind it. All seven are behind Rust, from 1.1x (`Bun.serve`) to 2.6x (TanStack Start). Memory and startup lose to both: 1.8x to 3.4x Go's private memory and 6x to 12x Rust's.
+
+What it costs:
+
+- **The build takes longer.** Bun type checks the whole program and compiles every function that can be reached, and there's no cache between builds. The TypeScript 6 compiler builds in 8.2 s on a machine with many cores, with 121 s of CPU time and 1.5 GB of memory.
+- **The machine code is part of the file.** That's a few megabytes for a small server and tens of megabytes for a large application. The executable is still smaller than with `bun build --compile`, because `bun compile` leaves out the `bun` command line and the JIT compilers: the todo server at the top of this page is 68 MB instead of 142 MB. [`bun compile --trim`](/bundler/aot-size) also removes the Bun APIs that your program doesn't use.
 
 ## Compare on your application
 

@@ -1,1 +1,0 @@
-The build stops with "internal compiler error (NumberAndEncode): PlacementCheckFailed: placement broke its rule 3", for every program. The switch takes the expected mark off every position, those of the library included.

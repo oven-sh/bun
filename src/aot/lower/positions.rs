@@ -65,9 +65,7 @@ fn map_source(
 ) -> PositionSource {
     let position = origin.map_or(0, |origin| origin.position);
     let mut mapped = types::map_type_at(file, ty, position);
-    // `x as never` silences the checker and says nothing about `x`. A location that is written `never` holds what such a cast
-    // lets in, and `(_: never) => _` returns it, so the type says nothing there either. That a function does not return shows
-    // in its body.
+    // `x as never` silences the checker and says nothing about `x`.
     if mapped.ty == TypeTable::NEVER {
         mapped = Mapped::UNKNOWN;
     }
@@ -147,8 +145,7 @@ fn find_listed_nullish(
     }
 }
 
-// The type of a position that holds a reference lists `undefined` and `null` whatever the program has written, because nothing
-// keeps them out. What the program has left out is still rare there.
+// The type of a position that holds a reference lists `undefined` and `null` whatever the program has written, because nothing keeps them out.
 fn find_omitted_nullish(
     file: &FileLowering<'_, '_, '_, '_>,
     source: PositionSource,

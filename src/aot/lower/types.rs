@@ -117,8 +117,7 @@ fn find_fact(
     holds
 }
 
-/// Whether mapping the type declares the same in whichever file it is mapped. A literal, a class, a type parameter and a module
-/// are seen otherwise in their own file.
+/// Whether mapping the type declares the same in whichever file it is mapped.
 pub(in crate::lower) fn is_mapped_alike_in_every_file(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,

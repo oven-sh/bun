@@ -9,15 +9,13 @@ use bun_sema::hir::{
     PropKey, PropKind, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 
-/// Tells the code that runs nothing of its file: it calls no function, stores to nothing that was there before it and
-/// hands nothing of the file to anybody.
+/// Tells the code that runs nothing of its file: it calls no function, stores to nothing that was there before it and hands nothing of the file to anybody.
 pub struct Quiet<'a, 's> {
     pub atoms: &'a Interner<'s>,
     pub hir: &'a hir::File<'s>,
     pub bound: &'a Bound<'s>,
     pub decisions: &'a Decisions<'s>,
-    /// A read of a global, or of a member of one, that start-up does not lock counts as quiet. Another file may have put
-    /// an accessor there, so code of other files may run. Without it no code of the program runs at all.
+    /// A read of a global, or of a member of one, that start-up does not lock counts as quiet.
     pub allows_reads_of_open_globals: bool,
     /// A call that runs nothing of the program once its arguments are there.
     pub runs_nothing: &'a dyn Fn(hir::CallId) -> bool,
@@ -300,7 +298,6 @@ impl Quiet<'_, '_> {
     }
 
     /// Where the first statement of the file starts that is not quiet, or the first such declaration of that statement.
-    /// Everything in front of it is the head of the file.
     pub fn find_end_of_head(&self) -> u32 {
         let hir = self.hir;
         let mut statements = hir.ids(hir.body);

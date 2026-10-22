@@ -44,9 +44,7 @@ fn take_fields(layouts: &mut [Layout], layout: usize, base: LayoutId) -> u32 {
     taken
 }
 
-/// A constructor function stores its fields before what is below it stores its own, so they come first. A function lists what the
-/// functions store that it hands its `this` to, but no file sees into the other project. With the same fields in the same order
-/// the members of a family keep them at the same places, which is what makes an access to any of them one load.
+/// A constructor function stores its fields before what is below it stores its own, so they come first.
 pub(super) fn take_fields_of_base_functions(layouts: &mut [Layout], keys: &[ProgramLayoutKey]) {
     let mut taken = vec![0; layouts.len()];
     for layout in 0..layouts.len() {

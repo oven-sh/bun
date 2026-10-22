@@ -73,9 +73,7 @@ fn compute_binding_kind(kind: BindingKind) -> EvalBindingKind {
     }
 }
 
-// A function keeps its top-level lexical declarations in an environment of their own, inside the
-// environment of its variables: a `var` of the evaluated text that meets one of them is a
-// SyntaxError. So each scope has two depths, and this one is the outer.
+// A function keeps its top-level lexical declarations in an environment of their own, inside the environment of its variables: a `var` of the evaluated text that meets one of them is a SyntaxError.
 fn compute_scope_depths(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -298,8 +296,7 @@ fn add_eval_mapped_argument(
     builder.add_operand(binding, operand);
 }
 
-// The loader fills the variable of a name of a library module. What an ES module holds of a name of a CommonJS file of the
-// program never changes once the module is linked, and where it is kept is for the read of the import to say.
+// The loader fills the variable of a name of a library module.
 fn is_filled_by_loader(file: &FileLowering<'_, '_, '_, '_>, export: SyntheticExportId) -> bool {
     let modules = file.inputs.modules;
     match modules.shape(modules.synthetic_export(export).module) {

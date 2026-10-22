@@ -72,8 +72,7 @@ pub(super) fn write_level_counts(json: &mut JsonWriter, key: &str, counts: &Leve
     json.end_object();
 }
 
-/// The three columns, which add up to every access. Then two counts of their own: the tested accesses whose receiver is
-/// known and whose slot alone is tested, and the accesses that are proven with no test anywhere in the program.
+/// The three columns, which add up to every access.
 pub(super) fn write_access_counts(json: &mut JsonWriter, key: &str, totals: &SiteTotals) {
     let costs = &totals.access_costs;
     json.begin_object(key);

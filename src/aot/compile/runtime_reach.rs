@@ -44,15 +44,7 @@ pub(crate) struct ReachInput<'a, 's> {
     pub can_load_code_at_run_time: bool,
 }
 
-/// The part of Bun's own code that the program can run, found the way a bundler finds it: by bindings, never by what a value
-/// is. It stands in front of the analysis of the flow of values, which sees nothing of what is dropped here and may drop more.
-///
-/// A file is loaded for whatever is written in it, and one mention counts for all of it: the function that starts the queue of
-/// ticks stands in one file with the one that opens the channel to a parent process, which asks for `node:net`, which asks for
-/// half of the modules there are. So a file is taken apart into units: the code at its top level, which runs when the module is
-/// evaluated, and each function at its top level whose binding is never stored to. A function is reached by a reference to its
-/// binding in a unit that is reached, or through the object that its module exports, under a name that a reached unit reads
-/// from what `require` returns. Any other use of that object reaches all that it holds.
+/// The part of Bun's own code that the program can run, found the way a bundler finds it: by bindings, never by what a value is.
 pub(crate) struct ReachedRuntimeCode {
     is_file_reached: Vec<bool>,
     pub left_out_functions: FxHashSet<FunctionRef>,
@@ -164,8 +156,7 @@ impl<'a, 's> FileScan<'a, 's> {
         });
     }
 
-    // What runs when the class is defined stays with the code around it: the class it extends, a computed key, a static field
-    // or block. So does the initializer of a field, which has no function of its own in the source.
+    // What runs when the class is defined stays with the code around it: the class it extends, a computed key, a static field or block.
     fn add_class_unit(&mut self, class: ClassId) {
         let hir = self.hir;
         let unit = self.units.len() as u32;
@@ -291,8 +282,7 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // Whether the expression calls nothing and reads no member but `.prototype` of a name. It is evaluated with the module
-    // whether or not the functions that it names are left out. The functions that are written in it go into `functions`.
+    // Whether the expression calls nothing and reads no member but `.prototype` of a name.
     fn is_evaluated_without_calls(
         &self,
         expression: ExprId,
@@ -390,9 +380,7 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `F.prototype.name = function () {}`, `F.name = value`, `Object.defineProperty(F.prototype, ..)`, `$toClass(F, "F", Base)` at
-    // the top level of a module give `F` its methods. Nobody sees what they did who does not name `F`: so the statement is a
-    // piece of the unit, and what it names is reached with `F`. It still runs with the module, on a function that is left out.
+    // `F.prototype.name = function () {}`, `F.name = value`, `Object.defineProperty(F.prototype, ..)`, `$toClass(F, "F", Base)` at the top level of a module give `F` its methods.
     fn add_statements_that_set_up_units(&mut self) {
         let hir = self.hir;
         for statement in hir.ids(hir.body) {
@@ -640,8 +628,7 @@ impl<'a, 's> FileScan<'a, 's> {
             )
     }
 
-    // `setName(f, "f")`, where `setName` is a function of the file that only defines a property of what it is handed, and
-    // `if (f)`: nothing enters the function.
+    // `setName(f, "f")`, where `setName` is a function of the file that only defines a property of what it is handed, and `if (f)`: nothing enters the function.
     fn is_function_only_looked_at(&self, reference: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let call = match bound.parent_of_expr(reference) {
@@ -1019,9 +1006,7 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
 
-    // A load under a name that is put together at run time finds every module that the program holds, whole. So does a loader
-    // that is taken as a value: `const load = process.getBuiltinModule`. Text that is evaluated at run time finds the module too:
-    // a call of what the program never calls is refused there, as documented.
+    // A load under a name that is put together at run time finds every module that the program holds, whole.
     fn loads_modules_by_computed_names(&self) -> bool {
         let (application, graph) = (self.input.application, self.input.application_graph);
         application.compiled_files().iter().any(|&file| {
@@ -1033,8 +1018,7 @@ impl<'a, 's> Walk<'a, 's> {
         })
     }
 
-    // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else. An import without names keeps the
-    // module whole. The modules that a file of the application names in no other way are returned.
+    // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else.
     fn reach_named_imports(&mut self, file: FileId) -> SmallVec<[RuntimeModule; 4]> {
         let (application, graph) = (self.input.application, self.input.application_graph);
         let mut read_by_name: SmallVec<[RuntimeModule; 4]> = SmallVec::new();
@@ -1277,8 +1261,7 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // What a region asks for is read off its text alone, and a region that is reached stays reached. So the regions that wait
-    // are read side by side, and what they ask for is followed in the order they waited in.
+    // What a region asks for is read off its text alone, and a region that is reached stays reached.
     fn visit_pending_regions(&mut self, in_parallel: InParallel<'_>) {
         let mut regions: Vec<(RegionText, RuntimeUses)> = take(&mut self.pending)
             .into_iter()

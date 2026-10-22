@@ -112,9 +112,7 @@ impl Walker<'_, '_> {
         }
     }
 
-    // The module graph turned the statement into facts of the build, `exports.__esModule = true` or a getter that only names a
-    // variable of another module: it has no code, so nothing in it is a use and no function in it is created. Such a statement
-    // stands in the body of a module.
+    // The module graph turned the statement into facts of the build, `exports.__esModule = true` or a getter that only names a variable of another module: it has no code, so nothing in it is a use and no function in it is created.
     fn is_erased(&self, statement: StmtId, context: Context) -> bool {
         self.is_module_body(context.function)
             && self.input.modules.erased(self.input.file, statement)

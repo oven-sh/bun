@@ -26,8 +26,7 @@ fn record_default(file: &mut FileLowering<'_, '_, '_, '_>, pattern: PatId, defau
     }
 }
 
-// The name under a pattern has the type of what the pattern takes out, so only the whole value and the defaults are
-// converted.
+// The name under a pattern has the type of what the pattern takes out, so only the whole value and the defaults are converted.
 pub(in crate::lower) fn record_binding_pattern_flow(
     file: &mut FileLowering<'_, '_, '_, '_>,
     pattern: PatId,

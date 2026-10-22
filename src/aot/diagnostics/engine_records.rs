@@ -15,7 +15,6 @@ use crate::link::{ModuleOrigin, ProgramNames};
 use crate::report::{ModuleLocator, SourceTexts};
 
 // The files of dependencies that declare an `int32` which the engine could not prove, by the paths that messages name them by.
-// Who builds the program cannot mend such a file, so one message a file says all there is to say.
 fn find_dependencies_with_unproven_int32(
     result: &EngineResult,
     names: &ProgramNames,

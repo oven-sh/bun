@@ -1,8 +1,4 @@
 //! What ES modules see of a CommonJS file.
-//!
-//! An ES importer holds copies, taken when the file is first linked into a graph of imports. Where the body of the file stores a name
-//! in order and nothing else ever stores it, a copy and the variable cannot be told apart, and the import is bound to the variable.
-//! For every other name a module of its own, the face, evaluates the file and takes the copy.
 
 use super::own_text::Form;
 use super::{CommonJsExports, CommonJsInput, CommonJsImport, Target};

@@ -306,9 +306,7 @@ impl RecordBuilder<'_, '_, '_> {
         record
     }
 
-    // A record that a file has beside its own: an inner module, the face, the check. Every function of the file names the record
-    // of the file, which alone has the line table and the text of the functions. Nothing looks for this one by its path, which
-    // only has to differ from every other path: no file, no plugin and no module of the library is spelled like it.
+    // A record that a file has beside its own: an inner module, the face, the check.
     fn build_further_record(
         &mut self,
         index: u32,
@@ -407,8 +405,7 @@ impl RecordBuilder<'_, '_, '_> {
             .collect();
     }
 
-    // A name of an ES module of the other project is bound here, where both export tables are at hand. The required name
-    // of the exporter reports one that is absent.
+    // A name of an ES module of the other project is bound here, where both export tables are at hand.
     fn find_binding_in_other_project(
         &self,
         project: ProjectId,
@@ -532,8 +529,7 @@ fn create_record(interop: Interop, path: StringId, display_path: StringId) -> ge
     }
 }
 
-// Code of Bun's that is loaded like a file of the program: what the bundler imports for the constructs it lowers, as
-// "bun:wrap" is. Every other module of Bun's with source has a kind of its own.
+// Code of Bun's that is loaded like a file of the program: what the bundler imports for the constructs it lowers, as "bun:wrap" is.
 fn is_bundler_helper(source: SourceKind, kind: ModuleKind) -> bool {
     match source {
         SourceKind::RuntimeModule(_) => match kind {

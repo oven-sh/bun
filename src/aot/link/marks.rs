@@ -493,8 +493,7 @@ impl<'a> Marker<'a> {
         variable.for_each_reference(&mut self.reference_visitor(LayoutUse::Direct));
     }
 
-    // The united layout has the name of the first definition, and each of its fields has the site of that one. Which other files
-    // define the layout differs from one build to the next, so nothing that only they say may stay.
+    // The united layout has the name of the first definition, and each of its fields has the site of that one.
     fn process_layout_definition(&mut self, definition: u32, is_chosen: bool) {
         let (_, layout) = &self.link_unit().layout_definitions[definition as usize];
         layout.for_each_reference(&mut |reference| match LocalReference::new(reference) {

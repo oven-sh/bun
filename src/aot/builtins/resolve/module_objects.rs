@@ -34,8 +34,7 @@ fn some_module_object() -> ResolvedValue {
     })
 }
 
-/// `require.main`, `process.mainModule` and `module.parent` hold a module object, so a member of what they hold is a member
-/// of one.
+/// `require.main`, `process.mainModule` and `module.parent` hold a module object, so a member of what they hold is a member of one.
 pub(super) fn find_module_object_in(location: ResolvedValue) -> Option<ResolvedValue> {
     match table::canonical_id(location.path.id) {
         BuiltinId::ModuleRequireMain

@@ -880,9 +880,8 @@ Bun itself looks at five properties of `process`: `noDeprecation`, `throwDepreca
 
 `bun compile` compiles for arm64 and x64, on the platform that runs the build.
 
-| Platform                            | State                  |
-| ----------------------------------- | ---------------------- |
-| Linux x64 and arm64, glibc and musl | Tested in Bun's CI     |
-| macOS arm64                         | Tested in Bun's CI     |
-| Windows x64 and arm64               | Tested in Bun's CI     |
-| macOS x64, FreeBSD, Android         | Builds. Not tested yet |
+| Platform                                                      | State                                              |
+| ------------------------------------------------------------- | -------------------------------------------------- |
+| Linux x64, glibc                                              | Tested                                             |
+| macOS arm64                                                   | The compiler runs. What it builds isn't tested yet |
+| Linux arm64, Linux musl, Windows, macOS x64, FreeBSD, Android | Not tested yet                                     |

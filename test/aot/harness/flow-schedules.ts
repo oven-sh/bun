@@ -10,8 +10,8 @@ export const schedules: Record<string, string[]> = {
   third: ["--aot-testing=DelayFlowRules,DelayOtherFlowRules"],
 };
 /**
- * Today the code moves by up to 21 percent: the ten lines of a server on node:http took 3.04 MB in the place of 2.51 under the second on the trees of 2026-10-21 03:43. The program that imports
- * eleven modules had 5,000 functions under the usual schedule and 3,900 under the first until 2026-10-21 04:35; since then 4,004 | 4,016 | 4,000 | 3,999. Lower it as the rest is cured; never raise it.
+ * Today the code moves by up to 21 percent: the ten lines of a server on node:http took 3.04 MB in the place of 2.51 under the second. The program that imports
+ * eleven modules had 5,000 functions under the usual schedule and 3,900 under the first; since a cure 4,004 | 4,016 | 4,000 | 3,999. Lower it as the rest is cured; never raise it.
  */
 export const mostSpread = 0.25;
 

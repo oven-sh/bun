@@ -125,6 +125,7 @@ console.log(new DatabaseSync(":memory:").prepare("select 1 + 1 as two").get().tw
 import { heapSize } from "bun:jsc";
 console.log(typeof heapSize());
 //// wasi
+//@ exit 1
 import { WASI } from "node:wasi";
 console.log(typeof new WASI({ version: "preview1" }).getImportObject());
 //// repl

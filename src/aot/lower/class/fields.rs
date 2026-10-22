@@ -90,8 +90,7 @@ fn member_annotation_position(
     }
 }
 
-// An entry of a collection that is private state of the class. The variable that holds the collection names the field: no
-// `#x` is in the text.
+// An entry of a collection that is private state of the class.
 pub(in crate::lower) fn private_state_fields(
     file: &mut FileLowering<'_, '_, '_, '_>,
     layout: LayoutId,

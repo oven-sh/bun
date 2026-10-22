@@ -1,7 +1,6 @@
 use bun_sema::program::FileId;
 
-/// By file: which of a few files the edges of a graph lead to from it, itself among them. A walk from one file that looks only for
-/// those passes by whatever leads to none that it has not found yet, so the walks from many files do not each cover the graph.
+/// By file: which of a few files the edges of a graph lead to from it, itself among them.
 pub(super) struct ReachedTargets {
     words: usize,
     /// By file. `u32::MAX`: the file is no target.

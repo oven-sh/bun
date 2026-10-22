@@ -67,10 +67,7 @@ impl Primitive {
     }
 }
 
-// The table says what the value is, so no getter of the program or of the host stands behind the name. The first read of a
-// member that is made late can load a module of Bun. A global that is made late is a class, a function or an object that
-// the host makes at the first read: the bundler's list has those too. A global data property that is not made late is
-// listed because some runs have it (`gc`, `$vm`). The others do not, and there the read throws a ReferenceError.
+// The table says what the value is, so no getter of the program or of the host stands behind the name.
 fn is_read_without_code(builtin: BuiltinId, is_global: bool) -> bool {
     let entry = table::entry(builtin);
     match entry.kind {
@@ -135,10 +132,7 @@ fn find_written_name(key: PropKey, name_kind: NameKind) -> Option<Atom> {
     }
 }
 
-// Whether evaluating a piece of a file's top level can be left out when nothing uses what it declares: the rules of
-// `stmts_can_be_removed_if_unused`, `expr_can_be_removed_if_unused`, `class_can_be_removed_if_unused` and
-// `pattern_can_be_removed_if_unused` in src/js_parser/p.rs. The bundler asks them of the tree that its visitor has folded.
-// Here the folder's decisions stand for that pass, and the table of built-ins for the bundler's list of pure globals.
+// Whether evaluating a piece of a file's top level can be left out when nothing uses what it declares, by the rules of src/js_parser/p.rs.
 pub(crate) struct Removable<'a, 's> {
     pub hir: &'a hir::File<'s>,
     pub bound: &'a Bound<'s>,
@@ -197,8 +191,7 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // An import, and an export from another module, answer for themselves alone: whether the other module is evaluated is
-    // the caller's question.
+    // An import, and an export from another module, answer for themselves alone: whether the other module is evaluated is the caller's question.
     pub(crate) fn statement(&self, statement: StmtId) -> bool {
         let hir = self.hir;
         if self.never_runs(statement) || hir.is_erased_statement(statement) {
@@ -700,8 +693,7 @@ impl<'a, 's> Removable<'a, 's> {
             || self.is_builtin_read(expression)
     }
 
-    // The read of a binding of another module, whatever becomes of the object that the member is written on. A call of
-    // `require` in front of the dot evaluates the module, which nothing may drop.
+    // The read of a binding of another module, whatever becomes of the object that the member is written on.
     fn is_bound_to_binding(&self, member: ExprId, object: ExprId) -> bool {
         matches!(self.hir[object].kind, ExprKind::Ident(_))
             && self.modules.is_some_and(|(modules, file)| {
@@ -844,8 +836,7 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // The bundler's parser puts the value in place of a member of an enum that it has visited, and it visits the enums of
-    // a file, in their order, before the other statements.
+    // The bundler's parser puts the value in place of a member of an enum that it has visited, and it visits the enums of a file, in their order, before the other statements.
     fn inlined_member(&self, reference: ExprId) -> Option<Primitive> {
         let hir = self.hir;
         let member = self.find_enum_member(reference)?;

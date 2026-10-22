@@ -80,5 +80,5 @@ console.log(control.control);
   const ran = await run({ "lib.ts": library("((handler: Handler) => () => handler({ body: 1, query: {}, path: '/' }))"), "app.ts": app }, "./app.ts");
   expect(ran).toEqual(prints("/\n1\n"));
   // Only the parsed data is explained, which shows that the report is read. Nothing is said of the handler's parameter.
-  expect(explained(ran.buildOutput)).toEqual(["unexpected-shape at app.ts:9"]);
+  expect(explained(ran.buildOutput)).toEqual(["unknown-object at app.ts:9"]);
 }, 120_000);

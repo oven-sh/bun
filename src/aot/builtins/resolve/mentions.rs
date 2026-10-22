@@ -193,8 +193,7 @@ impl Resolver<'_, '_> {
         self.find_texts_of(operand).is_some_and(|texts| texts.iter().all(is_other))
     }
 
-    // `process.on("exit", listener);`: the call itself says that the entry does not call what it calls for some texts alone. Nobody
-    // gets what the call answers, which may be the object that it was made on.
+    // `process.on("exit", listener);`: the call itself says that the entry does not call what it calls for some texts alone.
     fn is_called_with_other_texts(&self, function: ExprId, id: BuiltinId) -> bool {
         let lists = table::entry(table::canonical_id(id)).calls_for_texts();
         if lists.is_empty() {

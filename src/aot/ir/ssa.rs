@@ -308,8 +308,7 @@ impl SsaState {
         block != ENTRY_BLOCK && state.is_sealed && state.predecessors.is_empty()
     }
 
-    // A block is a predecessor of its handler from its creation, also the block that follows a
-    // `return` or a `throw`. `finish` drops that block with its edges.
+    // A block is a predecessor of its handler from its creation, also the block that follows a `return` or a `throw`.
     fn unique_predecessors(&self, block: BlockId) -> Predecessors {
         let mut predecessors = self.states[block.index()].predecessors.clone();
         predecessors.retain(|predecessor| !self.is_never_entered(*predecessor));

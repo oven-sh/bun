@@ -30,8 +30,7 @@ struct Context<'x, 's> {
     loop_updates: Vec<(ScopeId, ExprId)>,
     // For each walked function the body that it is written in: the body of the file, or the callback of an inner module.
     module_bodies: Vec<WalkedFunctionId>,
-    // The names that hold a required module of which only members are read, in order. Such a name holds no value: it only
-    // tells whether its initializer has run.
+    // The names that hold a required module of which only members are read, in order.
     holders_without_value: Vec<SymbolId>,
 }
 

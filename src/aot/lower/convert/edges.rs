@@ -125,8 +125,7 @@ fn classify_flow(
     }
 }
 
-// What a function with a body returns was converted to its result. A signature in a type stands for the functions that were
-// converted to it. Nothing compares an overload or a `declare` with the code that runs.
+// What a function with a body returns was converted to its result.
 fn classify_call_result(
     file: &FileLowering<'_, '_, '_, '_>,
     declaration: Option<FunctionRef>,

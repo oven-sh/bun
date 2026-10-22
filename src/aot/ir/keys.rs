@@ -10,8 +10,7 @@ use crate::modules::SyntheticExportId;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum FunctionKey {
     ModuleBody(FileId),
-    /// The text of a CommonJS file as a function of `this` and the five names, for a file that stores to one of them or
-    /// shows them to `eval`. The body of such a file only calls it.
+    /// The text of a CommonJS file as a function of `this` and the five names, for a file that stores to one of them or shows them to `eval`.
     WrappedModuleBody(FileId),
     /// The body of the module that ES modules request in place of a CommonJS file.
     FaceBody(FileId),
@@ -32,8 +31,7 @@ pub enum FunctionKey {
 pub enum LayoutKey {
     Class(ClassRef),
     ConstructorFunction(FunctionRef),
-    /// A class or a constructor function of Bun's own modules, as a file of the application names it. The link has the key
-    /// that the project of those modules gives it.
+    /// A class or a constructor function of Bun's own modules, as a file of the application names it.
     Library(ClassDeclaration),
     ObjectType {
         origin: ObjectOrigin,

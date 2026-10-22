@@ -103,8 +103,7 @@ pub(in crate::lower) fn last_mapped_position(
     }
 }
 
-// An operation JSC records no position for is reported at the last position recorded before it, which
-// belongs to the end of the operand.
+// An operation JSC records no position for is reported at the last position recorded before it, which belongs to the end of the operand.
 pub(in crate::lower) fn last_reported_position(
     file: &FileLowering<'_, '_, '_, '_>,
     operand: ExprId,

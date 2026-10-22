@@ -325,6 +325,7 @@ const nativeFiles = [
 export default b.declarations(
   unseenCodeEntries.flatMap(path => b.extend(path, { runsUnseenCode: true })),
   seenCodeEntries.flatMap(path => b.extend(path, { runsUnseenCode: false })),
+  b.extend("Bun.serve", { runsUnseenCode: b.whenOperandHasProperty("options", "app") }),
   b.seenCodeOnly({
     holders: [...hostObjects, ...classesWithConstructor, ...prototypesWithoutConstructor, ...moduleNamespaces],
     nativeFiles,

@@ -24,9 +24,6 @@ const pinsPath = join(import.meta.dir, `serial-time.${process.platform}-${proces
 const sizes = [150, 600];
 const runs = 2;
 const slack = 500;
-// TODO: a step of its own since the facts of selected bodies are handed to the call graph on one thread: 634, where a phase that is not in the file may take 500.
-const overToday = ["Select | give references to the call graph"];
-
 
 function moduleSource(i: number): string {
   const imports = i > 1 ? [...new Set([(i * 7 + 3) % i, i - 1])].sort((a, b) => a - b) : i === 1 ? [0] : [];
@@ -122,9 +119,8 @@ test(
     console.log("serial time in parts per million of the build's CPU time: now, pinned");
     for (const name of names.filter(name => now[name] >= 100 || (pins[name] ?? 0) >= 100)) console.log(`${String(now[name]).padStart(8)}${String(pins[name] ?? 0).padStart(8)}  ${name}`);
     if (!isJudged) return void console.error(`NOT JUDGED: ${pinsPath} is missing`);
-    const worse = names.filter(name => !overToday.includes(name) && now[name] > 2 * (pins[name] ?? 0) + slack).map(name => `${name}: ${now[name]}, pinned ${pins[name] ?? 0}`);
+    const worse = names.filter(name => now[name] > 2 * (pins[name] ?? 0) + slack).map(name => `${name}: ${now[name]}, pinned ${pins[name] ?? 0}`);
     expect(worse).toEqual([]);
   },
   600_000,
 );
-for (const name of overToday) test.todo(`compile/aot/perf/serial-time: ${name}`);

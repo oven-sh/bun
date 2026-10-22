@@ -50,8 +50,7 @@ pub(in crate::lower) fn is_derived_class(hir: &hir::File<'_>, class: ClassId) ->
     hir[class].extends.is_some()
 }
 
-// No property of the class object holds this value, so each evaluation of the class needs a
-// location of its own for it.
+// No property of the class object holds this value, so each evaluation of the class needs a location of its own for it.
 pub(in crate::lower) fn has_private_static_storage(hir: &hir::File<'_>, member: MemberId) -> bool {
     let node = hir[member];
     node.kind == MemberKind::Property

@@ -1,8 +1,4 @@
 //! When the bodies of the modules run, as far as the text of the program says it.
-//!
-//! A `require` with a constant specifier is a request of the module that it is written in. Where it stands decides what may be
-//! said of its target: a site that every run of the body passes runs its target at a known point, a site in a function runs it
-//! at any time, also while another body is half done.
 
 #[cfg(test)]
 mod tests;
@@ -45,8 +41,7 @@ pub(super) enum SiteKey {
     ImportEquals(ImportEqualsId),
 }
 
-/// `require(K)`, `module.require(K)`, `import.meta.require(K)`, `import a = require(K)`, a call of what `createRequire` made for
-/// the file itself, `require_x()` and `init_x()` of a bundle.
+/// `require(K)`, `module.require(K)`, `import.meta.require(K)`, `import a = require(K)`, a call of what `createRequire` made for the file itself, `require_x()` and `init_x()` of a bundle.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct PlannedSite {
     pub key: SiteKey,
@@ -118,14 +113,12 @@ impl PlannedSites {
         &self.by_file[file.idx()]
     }
 
-    /// The modules that a computed specifier of `require` in the file can name and that the site evaluates itself, each with the
-    /// module that the site is written in.
+    /// The modules that a computed specifier of `require` in the file can name and that the site evaluates itself, each with the module that the site is written in.
     pub(super) fn candidates_of(&self, file: FileId) -> &[(ModuleRef, ModuleRef)] {
         &self.candidates_by_file[file.idx()]
     }
 
-    /// An ES module answers `require` with its namespace object unless it exports the name "module.exports", which the export
-    /// tables know.
+    /// An ES module answers `require` with its namespace object unless it exports the name "module.exports", which the export tables know.
     pub(super) fn settle(&mut self, files: &Files<'_>, modules: &ModuleSet, tables: &ExportTables) {
         for site in self.by_file.iter_mut().flatten() {
             site.evaluates &= match modules.interop(site.target).kind {
@@ -240,8 +233,7 @@ struct FileText<'a, 's> {
     decisions: &'a Decisions<'s>,
     inner_modules: &'a [InnerModule],
     has_top_level_await: bool,
-    /// For the body of the file and of each inner module: where the first `return` or `using` stands. What is written behind a
-    /// `return` may be skipped, and what is written behind a `using` runs under the handler that disposes of the resource.
+    /// For the body of the file and of each inner module: where the first `return` or `using` stands.
     first_turns: OnceCell<Vec<(CodeUnit, u32)>>,
     may_replace_require: OnceCell<bool>,
     may_replace_module: OnceCell<bool>,
@@ -743,8 +735,7 @@ fn find_reached(edges: &[Vec<u32>], mut pending: Vec<u32>) -> Vec<bool> {
     is_reached
 }
 
-// The run time's own algorithm waits for promises, asks the host for code that was not compiled, and finds out what a deferred
-// import has to evaluate. It takes a module that needs one of these, and every module that imports such a module.
+// The run time's own algorithm waits for promises, asks the host for code that was not compiled, and finds out what a deferred import has to evaluate.
 fn find_modules_that_need_loader(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -881,8 +872,7 @@ pub(super) fn compute_order(
 
 impl EvaluationOrder {
     pub(super) fn can_evaluate(&self, modules: &ModuleSet, referrer: ModuleRef, target: ModuleRef) -> bool {
-        // Whoever requires an ES module while its body runs gets an object without keys, which is no view of its variables. The requests, late ones
-        // too, say where that happens.
+        // Whoever requires an ES module while its body runs gets an object without keys, which is no view of its variables.
         let is_seen_whole = match modules.interop(target).kind {
             ModuleKind::SourceText => !self.has(&self.is_on_cycle, target),
             _ => true,

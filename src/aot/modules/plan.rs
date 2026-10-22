@@ -1,7 +1,4 @@
 //! What the build knows of the module graph, as the rest of the front end asks for it.
-//!
-//! A module is a function without parameters and a set of variables. A site says where its body runs, a holder is a name that
-//! stands for it, and a member is a variable of it that is read, stored or called under a name.
 
 #[cfg(test)]
 mod tests;
@@ -216,8 +213,7 @@ impl ModuleGraph {
         self.plan().has(&self.plan().is_code_of_program, module)
     }
 
-    /// `require(K)`, `module.require(K)`, `import.meta.require(K)`, a call of what `createRequire` made for the file itself,
-    /// `require_x()` and `init_x()`. `None`: no live site is at that node.
+    /// `require(K)`, `module.require(K)`, `import.meta.require(K)`, a call of what `createRequire` made for the file itself, `require_x()` and `init_x()`.
     pub fn site(&self, file: FileId, call: ExprId) -> Option<Site> {
         if let Some(site) = self.find_stored_site(file, SiteKey::Call(call)) {
             return Some(self.finish_site(site));
@@ -272,8 +268,7 @@ impl ModuleGraph {
         }
     }
 
-    /// `false`: the call is a statement, the initializer of a holder or of a bound pattern, the object of a bound member, or
-    /// only tested. Of such a call only this counts: the module has run.
+    /// `false`: the call is a statement, the initializer of a holder or of a bound pattern, the object of a bound member, or only tested.
     pub fn is_site_read_as_value(&self, file: FileId, call: ExprId) -> bool {
         let Some(is_unread_in_every_shape) = find(self.unread_sites(file), call) else {
             return true;
@@ -321,8 +316,7 @@ impl ModuleGraph {
         self.finish_member(accessed.module, binding, accessed.is_imported)
     }
 
-    /// `R.N` for a name that no expression spells: a key of `const { N } = require(K)`, a key of `module.exports = { N }`, the
-    /// source of a copy. `None`: nobody reads the name.
+    /// `R.N` for a name that no expression spells: a key of `const { N } = require(K)`, a key of `module.exports = { N }`, the source of a copy.
     pub fn member_named(&self, module: ModuleRef, name: Atom) -> Option<Member> {
         match self.plan().named_members.get(&(module, name)) {
             Some(&NamedMember::Fixed(member)) => Some(self.finish_fixed_member(module, member)),
@@ -421,8 +415,7 @@ impl ModuleGraph {
         self.plan().has(&self.plan().keeps_module_object, module)
     }
 
-    /// Code of the file names a way from one module object to another. In a program without such a file the run time shows
-    /// `children`, `parent`, `require.main` and `process.mainModule` to nobody.
+    /// Code of the file names a way from one module object to another.
     pub fn names_way_to_module_objects(&self, module: ModuleRef) -> bool {
         self.plan().has(&self.plan().names_way_to_module_objects, module)
     }
@@ -507,8 +500,7 @@ impl ModuleGraph {
         }
     }
 
-    /// The object of the module is a value somewhere: the module is `Value`, and with it every module whose names stand for names
-    /// of it.
+    /// The object of the module is a value somewhere: the module is `Value`, and with it every module whose names stand for names of it.
     pub fn look_at(&mut self, module: ModuleRef) {
         self.commonjs_mut().look_at(module);
     }
@@ -541,8 +533,7 @@ impl ModuleGraph {
         self.plan().is_finished
     }
 
-    /// Behind the last change to a shape and to the files that are left out: which holders do without the object, and what each
-    /// module asks for at last.
+    /// Behind the last change to a shape and to the files that are left out: which holders do without the object, and what each module asks for at last.
     pub fn finish_plan(&mut self, in_parallel: InParallel<'_>) {
         if self.is_plan_finished() {
             return;
@@ -569,8 +560,7 @@ impl ModuleGraph {
         }
     }
 
-    // The CommonJS files, or their faces, that imports between ES modules reach from `root`, depth first, in the order of the
-    // imports. `bun run` evaluates them when it links the graph, before the body of any ES module of it.
+    // The CommonJS files, or their faces, that imports between ES modules reach from `root`, depth first, in the order of the imports.
     fn collect_prefix(&self, root: FileId, below: &ReachedTargets) -> Vec<ModuleRef> {
         let mut prefix = Vec::new();
         let mut remaining = below.start_walk(root);
@@ -678,8 +668,7 @@ impl ModuleGraph {
         &self.plan().prefix_roots
     }
 
-    /// The faces of the other files that have the names which the face of `file` shows, in the order of its copies. Each holds the
-    /// copies of its own file.
+    /// The faces of the other files that have the names which the face of `file` shows, in the order of its copies.
     pub fn faces_behind(&self, file: FileId) -> Vec<FileId> {
         let mut owners = Vec::new();
         for &copy in self.commonjs().copies(file) {

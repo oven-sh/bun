@@ -332,8 +332,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         Ok(!is_primitive_kind(kind))
     }
 
-    /// Where several arms accept a value, the one that is written first builds the result. The other arms stay where
-    /// the checker has them, which is how it prints the type.
+    /// Where several arms accept a value, the one that is written first builds the result.
     fn order_arms(
         &mut self,
         union: CheckerTypeId,
@@ -357,8 +356,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         Ok(ordered)
     }
 
-    /// `(A | B) & Schema.Strict` is the union of `A & Schema.Strict` and `B & Schema.Strict`, which nobody wrote: each
-    /// goes by its base.
+    /// `(A | B) & Schema.Strict` is the union of `A & Schema.Strict` and `B & Schema.Strict`, which nobody wrote: each goes by its base.
     fn find_written_type(&mut self, arm: CheckerTypeId) -> Result<CheckerTypeId, ValidationError> {
         let mut ty = arm;
         for _ in 0..MAX_NESTED_CONSTRAINT_LISTS {

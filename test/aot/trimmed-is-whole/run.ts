@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { canTrim, featureOf, model } from "../../bundler/compile-trim-features";
-import { slot, unsupported } from "../run-programs";
+import { inShare, slot, unsupported } from "../run-programs";
 import { readRemovedFeatures } from "../trimmed-against-whole/removed-features";
 
 interface Program {
@@ -20,6 +20,8 @@ interface Program {
   todo?: string;
   buildError?: string;
   evaluatedCodeUsesRemovedApi: boolean;
+  /** The build does not see that the call reaches an evaluator, or the script of the Worker is a text: both executables end with the same EvalError. */
+  isNotSeen: boolean;
   removes: string[];
 }
 
@@ -31,7 +33,7 @@ function programsOf(file: string): Program[] {
   const programs: Program[] = [];
   for (let index = 0; index < sections.length; index += 2) {
     const source = prelude + sections[index + 1];
-    const program: Program = { group, name: sections[index].trim(), extension: defaultExtension, source, args: [], env: {}, stdin: "", buildFlags: [], files: {}, exitCode: 0, evaluatedCodeUsesRemovedApi: false, removes: [] };
+    const program: Program = { group, name: sections[index].trim(), extension: defaultExtension, source, args: [], env: {}, stdin: "", buildFlags: [], files: {}, exitCode: 0, evaluatedCodeUsesRemovedApi: false, isNotSeen: false, removes: [] };
     for (const [, directive, value] of source.matchAll(/^\/\/@ *(\S+) ?(.*)$/gm)) {
       if (directive === "args") program.args.push(...value.split(" "));
       else if (directive === "env") program.env[value.slice(0, value.indexOf("="))] = value.slice(value.indexOf("=") + 1);
@@ -43,6 +45,7 @@ function programsOf(file: string): Program[] {
       else if (directive === "todo") program.todo = value;
       else if (directive === "build-error") program.buildError = value;
       else if (directive === "evaluated-code-uses-removed-api") program.evaluatedCodeUsesRemovedApi = true;
+      else if (directive === "not-seen") program.isNotSeen = true;
       else if (directive === "removes") program.removes.push(value);
       else throw new Error(`${file}: ${program.name}: unknown directive ${directive}`);
     }
@@ -81,7 +84,8 @@ export function testTrimmedMatchesUntrimmed(part: number, parts: number) {
   const programs = readdirSync(casesFolder)
     .sort()
     .flatMap(programsOf)
-    .filter((_, index) => index % parts === part - 1);
+    .filter((_, index) => index % parts === part - 1)
+    .filter(program => inShare(`trimmed matches untrimmed ${program.group}: ${program.name}`, 4));
 
   (!canTrim || unsupported || isWindows ? describe.skip : describe.concurrent)("an executable built with --trim behaves like one built without it", () => {
     for (const program of programs) {
@@ -101,6 +105,10 @@ export function testTrimmedMatchesUntrimmed(part: number, parts: number) {
             const untrimmed = (await builtAndRun(program, folder, []))?.ran;
             const { ran: trimmed, removed } = (await builtAndRun(program, folder, ["--trim"])) ?? {};
             if (!untrimmed) return;
+            if (program.isNotSeen) {
+              expect({ exitCode: untrimmed.exitCode, stdout: untrimmed.stdout, says: untrimmed.stderr.includes("the compiler couldn't tell at build time that this call reaches eval() or the Function constructor") }).toEqual({ exitCode: 1, stdout: "", says: true });
+              return expect(trimmed).toEqual(untrimmed);
+            }
             expect(untrimmed).toMatchObject({ exitCode: program.exitCode });
             if (program.exitCode === 0) expect(untrimmed.stdout).not.toBe("");
             const stillThere = program.removes.filter(api => !removed!.includes(model.features.find(feature => feature.name === featureOf(api))!.index));

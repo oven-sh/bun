@@ -1,5 +1,5 @@
 // One program, one answer: what flow finds may not hang on the order in which its rules run. `--aot-testing=DelayFlowRules`, `DelayOtherFlowRules` and both together are three
-// other valid schedules: about half of the rules that are due in a round wait for a later one. On 2026-10-20 the order alone moved the code of a server by 17 percent: a rule used
+// other valid schedules: about half of the rules that are due in a round wait for a later one. Once the order alone moved the code of a server by 17 percent: a rule used
 // every member of `console` if it looked before the value nobody knows had come to hide `console`, and none if it looked behind it.
 //
 // Here two programs that are mostly code of Bun's library are built under the usual schedule and the three others. They answer the same, and the code stays within `mostSpread` of the
@@ -47,7 +47,7 @@ server.listen(0, async () => {
 });
 
 // The loader is reached through a built-in whose meaning is code of the library, one body for all calls. There `process`, or the built-in `call` itself, stands beside a value nobody knows, and once it
-// had escaped no rule saw it any more: on 2026-10-21 the executable refused the load ("can't load a module from a dynamic path") under some schedules and not under others.
+// had escaped no rule saw it any more: the executable refused the load ("can't load a module from a dynamic path") under some schedules and not under others.
 for (const way of ["by-reflect-get", "by-call-of-call"]) {
   for (const member of ["buffer-is-utf8", "events-get-event-listeners", "fs-stat-sync", "net-is-ipv6"]) {
     test(`${member}: process.getBuiltinModule ${way} loads the module under every schedule`, async () => {

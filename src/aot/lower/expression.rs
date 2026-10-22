@@ -297,8 +297,7 @@ fn keyword_accepts(keyword: Keyword, constant: Constant) -> bool {
     }
 }
 
-// An `as` is a test at run time, so a constant stands for the whole expression only where the
-// syntax alone shows that each test passes.
+// An `as` is a test at run time, so a constant stands for the whole expression only where the syntax alone shows that each test passes.
 pub(in crate::lower) fn passes_every_assertion(
     file: &FileLowering<'_, '_, '_, '_>,
     expression: ExprId,

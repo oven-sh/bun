@@ -81,10 +81,7 @@ pub(super) fn lower_direct_eval(
     result
 }
 
-// `eval("require")`: a text that is known at the build and is nothing but the name of a binding that the call sees reads that
-// binding, like the name written in its place. Nothing is evaluated, so the call opens no scope to a text nobody has seen.
-// A `with` statement around the call, and the text of a sloppy call, which declares its variables outside itself, may put
-// another binding of the name in between: there the text is evaluated.
+// `eval("require")`: a text that is known at the build and is nothing but the name of a binding that the call sees reads that binding, like the name written in its place.
 fn find_binding_named_by_text(
     file: &FileLowering<'_, '_, '_, '_>,
     call: ExprId,

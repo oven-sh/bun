@@ -76,7 +76,6 @@ pub fn emit_from(
 }
 
 /// Like `emit_from`, for a program that lists no function: they are written as the link left them, with the ids of their units.
-/// The bytes hold no code: the engine reads it where it is.
 pub fn emit_with_external_bodies(
     program: &mut Program,
     mut remap: BodyRemap,

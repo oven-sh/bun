@@ -83,8 +83,7 @@ fn emit_variable_read(
     lowering.builder.check_initialized(value, name)
 }
 
-// A name of a library module is a variable that the loader fills. A name of a CommonJS file of the program is the file's own
-// variable where a copy could not be told from it, and else the copy that the face of the file took at the first ES link.
+// A name of a library module is a variable that the loader fills.
 fn emit_synthetic_read(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     export: SyntheticExportId,
@@ -174,8 +173,7 @@ fn text_key_of_name(file: &mut FileLowering<'_, '_, '_, '_>, name: BuiltinName) 
     file.text_key(text)
 }
 
-// A module that is not in the program has no object. It is left out only where no function that is called on the object can
-// look at `this`.
+// A module that is not in the program has no object.
 pub(super) fn lower_namespace_receiver(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     object: ExprId,
@@ -199,8 +197,7 @@ pub(super) fn lower_namespace_receiver(
     }
 }
 
-// `const a = require("./m.mjs")`: `a` stands for what `import * as a` stands for, and so does the call itself in
-// `require("./m.mjs").f()`, which the read of the member has evaluated.
+// `const a = require("./m.mjs")`: `a` stands for what `import * as a` stands for, and so does the call itself in `require("./m.mjs").f()`, which the read of the member has evaluated.
 fn find_required_namespace(
     file: &FileLowering<'_, '_, '_, '_>,
     name: ExprId,

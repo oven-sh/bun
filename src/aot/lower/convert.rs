@@ -274,8 +274,7 @@ pub(crate) fn convert_initializer(
     converted
 }
 
-// `false`, `"a"`, `undefined` and unions of them. No read is claimed to give one of a few such values: a comparison looks at the value itself, and a position of
-// such a type has a conversion of its own. An integer is claimed: the proof of an `int32` rests on its range.
+// `false`, `"a"`, `undefined` and unions of them.
 fn is_literal_type(ty: &Type) -> bool {
     let any_object = TypeFlags::ANY_OBJECT_OR_FUNCTION | TypeFlags::HAS_MEMBERS_WITHOUT_LAYOUT;
     let has_objects = ty.flags.intersects(any_object)
@@ -290,8 +289,7 @@ fn is_literal_type(ty: &Type) -> bool {
     ty.integer_range().is_none() && !has_whole_kind && !ty.primitives.contains(Primitives::BOOLEAN)
 }
 
-// `before` is the type of what the reference names, `narrowed` what the checker says of the reference at this place. The
-// narrowing is no edge of a family: it would pour the wide family into the narrow one.
+// `before` is the type of what the reference names, `narrowed` what the checker says of the reference at this place.
 pub(in crate::lower) fn convert_narrowed(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     value: ValueId,

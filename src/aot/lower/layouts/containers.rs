@@ -85,7 +85,6 @@ fn has_exports_object(file: &FileLowering<'_, '_, '_, '_>, module: FileId) -> bo
 }
 
 // The layout of the object that the body of a CommonJS module begins with as its `exports`, where its exports are one value.
-// Every file that asks about a module gets the answer of the module itself.
 pub(super) fn module_exports_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     module: FileId,
@@ -99,8 +98,7 @@ pub(super) fn module_exports_layout(
         return None;
     }
     let bound = file.queries.files().bound(module);
-    // `arguments.callee` is the function that holds the text of the module. Whoever calls it hands over what it likes as
-    // `exports`.
+    // `arguments.callee` is the function that holds the text of the module.
     if bound.file_uses_arguments() {
         return None;
     }
@@ -306,8 +304,7 @@ fn with_part(form: FieldForm, part: FieldForm, has_part: bool) -> FieldForm {
     }
 }
 
-// What ToPropertyDescriptor reads from an object literal. A wrong answer costs time only: a property is in its slot while
-// it has the form of the field.
+// What ToPropertyDescriptor reads from an object literal.
 fn find_defined_form(text: &ModuleText<'_, '_>, descriptor: ExprId) -> Option<FieldForm> {
     let hir = text.hir;
     let ExprKind::Object(properties) = hir[hir.skip_type_assertions(descriptor)].kind else {
@@ -632,8 +629,7 @@ pub(super) fn begins_with_exports_object(
     !replaces_exports_first(&text)
 }
 
-// The fields are in the order in which the body creates the properties, which is the one order of keys that a creating
-// store goes on from without a call. What a function stores comes after everything the body itself stores.
+// The fields are in the order in which the body creates the properties, which is the one order of keys that a creating store goes on from without a call.
 fn compute_exports_fields(file: &mut FileLowering<'_, '_, '_, '_>, module: FileId) -> OwnFields {
     let files = file.queries.files();
     let (Some(compiled), Some(inputs)) = (files.compiled(module), file.inputs.files[module.idx()])

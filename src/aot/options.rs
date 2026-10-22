@@ -114,7 +114,6 @@ impl LoadOptions {
 
 impl Options<'_> {
     // The inspector evaluates text, and an external package is read from the disk: code that the build does not see.
-    // A plugin or a URL can make an import external too: `RuntimeRoots::imports_uncompiled_code`.
     pub fn can_load_code_at_run_time(&self) -> bool {
         self.aot.admits_inspector || !self.load.externals.is_empty()
     }

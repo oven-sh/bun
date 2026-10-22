@@ -602,8 +602,7 @@ fn find_link_failure(
     Some(PendingFailure { order, failure })
 }
 
-// A name that an ES module imports and that some run of the body of the CommonJS module may end without. Only the run knows, and
-// every CommonJS module of the graph has run by the time that it is found out.
+// A name that an ES module imports and that some run of the body of the CommonJS module may end without.
 fn find_absent_name(
     tables: &ExportTables,
     modules: &ModuleSet,

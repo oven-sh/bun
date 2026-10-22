@@ -86,11 +86,11 @@
     "codeBytes": 6684672,
     "bytesAValue": 32.65,
     "tests": {
-      "executed": 14762,
+      "executed": 14651,
       "failed": 830
     },
     "typeTests": {
-      "executed": 8709,
+      "executed": 8598,
       "failed": 781
     },
     "alwaysFailing": {
@@ -362,11 +362,11 @@
     "codeBytes": 5619712,
     "bytesAValue": 27.27,
     "tests": {
-      "executed": 6720,
+      "executed": 6704,
       "failed": 780
     },
     "typeTests": {
-      "executed": 4158,
+      "executed": 4150,
       "failed": 696
     },
     "alwaysFailing": {
@@ -417,7 +417,7 @@
     },
     "allocated": {
       "cells": 953.23,
-      "bytes": 56148.48
+      "bytes": 55781.44
     },
     "closures": {
       "aRound": 282.03,
@@ -428,21 +428,21 @@
     "codeBytes": 27639808,
     "bytesAValue": 32.76,
     "tests": {
-      "executed": 298826,
-      "failed": 61870
+      "executed": 294714,
+      "failed": 61006
     },
     "typeTests": {
-      "executed": 213272,
-      "failed": 57889
+      "executed": 209029,
+      "failed": 56695
     },
     "alwaysFailing": {
       "bun": {},
-      "packages": 1571,
+      "packages": 1557,
       "program": 3
     },
     "uneven": 0,
     "calls": {
-      "all": 70571,
+      "all": 70407,
       "ofFunctionsNotExpectedToRun": 0
     },
     "accessesByName": 111562.6,
@@ -450,6 +450,7 @@
       "operationAOTAddPropertyBySlot": 49,
       "operationAOTAllocateSlow": 14,
       "operationAOTArrayCopy": 1,
+      "operationAOTArrayJoin": 2,
       "operationAOTArrayPush": 1,
       "operationAOTArraySplice": 4,
       "operationAOTCompareLess": 1,
@@ -457,25 +458,24 @@
       "operationAOTCopyObject": 3,
       "operationAOTDefineAccessors": 1,
       "operationAOTDoubleToString": 42,
-      "operationAOTEnsureExtensionGranules": 55,
-      "operationAOTFillSiteCache": 68,
+      "operationAOTEnsureExtensionGranules": 54,
+      "operationAOTFillSiteCache": 67,
       "operationAOTFindLandingOfMisfit": 33,
       "operationAOTFlatten": 2,
       "operationAOTGetByIdAndCache": 25,
       "operationAOTGetByVal": 1379,
-      "operationAOTGetByValGeneric": 1,
       "operationAOTIntToString": 12,
       "operationAOTMapClear": 13,
       "operationAOTMapGet": 471,
-      "operationAOTMapSet": 77,
+      "operationAOTMapSet": 76,
       "operationAOTMaterializeDeferredClosure": 39,
       "operationAOTNewArray": 3,
       "operationAOTNewArrayAtReviewedSite": 10,
-      "operationAOTNewClosureSlow": 1,
+      "operationAOTNewClosureSlow": 2,
       "operationAOTNewGenerator": 2,
       "operationAOTNewMap": 1,
       "operationAOTNewMapIterator": 4,
-      "operationAOTPutByIdAndCache": 10,
+      "operationAOTPutByIdAndCache": 11,
       "operationAOTPutByVal": 281,
       "operationAOTReadField": 1,
       "operationAOTReserveArrayCapacity": 18,

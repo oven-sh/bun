@@ -9,8 +9,6 @@ use crate::lower::late_answers;
 const TYPE_FILE_COUNT: usize = 3;
 const CODE_FILE_COUNT: usize = 15;
 
-// Interfaces that name each other over several files, in chains that are longer than a file follows them; types with the same
-// names; a generic type; a mapped type; a union by a discriminant; methods; literals that other files see.
 fn write_types(index: usize) -> String {
     let mut text = String::new();
     if index > 0 {

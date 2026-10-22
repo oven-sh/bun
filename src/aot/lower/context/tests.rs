@@ -321,8 +321,6 @@ fn constant_of_library_module_is_module_variable() {
     }
 }
 
-// The engine takes a symbol for a constant key where the call that creates it names `Symbol` itself, has a position and
-// describes the symbol with a constant.
 #[test]
 fn symbol_of_library_module_is_created_by_call_of_builtin() {
     let lowered = lower_in_both_projects(KEYED_STATE);

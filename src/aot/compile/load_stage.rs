@@ -37,8 +37,7 @@ const MAX_ASSET_READERS: usize = 64;
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum AssetReads {
     FinishedByLoad,
-    /// They go on while `then` runs, which calls `LoadedBuild::finish_asset_reads`. Where a plugin has made code of an asset,
-    /// the program is loaded again and `then` is called again.
+    /// They go on while `then` runs, which calls `LoadedBuild::finish_asset_reads`.
     FinishedLater,
 }
 

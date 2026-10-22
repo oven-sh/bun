@@ -123,7 +123,7 @@ Here `double` takes a raw number, so it can't take the string `"3"`. The guard s
 - **Nothing is converted or copied.** The string stays a string, and an object stays the same object.
 - **The fallback is per value.** The next call of `double` with a number takes the fast version again.
 
-A guard in the middle of a function works the same way. The function continues on its slow path from that point. It returns to the fast path at the next loop iteration or after the next call, once every live value matches its type again.
+A guard in the middle of a function works the same way. The function continues on its slow path from that point. It returns to the fast path at the next loop iteration, once every live value matches its type again.
 
 A [type error](/bundler/aot#type-errors-stop-the-build) stops the build, so all of this is about code that TypeScript accepts.
 

@@ -1031,7 +1031,7 @@ function runsOnlySeenCode(builder: ModelBuilder, seen: SeenCode, builtin: ModelB
 }
 
 function markUnseenCode(builtin: MutableBuiltin, condition: ModelCondition | null): void {
-  addFlag(builtin, "RunsUnseenCode");
+  if (condition === null || condition.hasProperty === null) addFlag(builtin, "RunsUnseenCode");
   builtin.attachments = { ...builtin.attachments, unseenCodeCondition: condition };
 }
 

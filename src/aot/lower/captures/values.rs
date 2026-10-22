@@ -12,8 +12,7 @@ use crate::lower::{FileLowering, FunctionLowering};
 // The environments of a file are numbered by their scopes.
 const FIRST_PACK: u32 = 1 << 31;
 
-// A closure has room for so many captures. A function that reaches more scopes than that gets all it captures in one object, which
-// whoever makes the closure fills: functions that are nested a few hundred deep, each with a parameter that the innermost one reads.
+// A closure has room for so many captures.
 fn find_pack_layout(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> Option<LayoutId> {
     let number = file.scopes.packed_captures(key)?;
     let layout = file.fragment.declare_layout(LayoutKey::Environment {
@@ -108,8 +107,6 @@ pub(super) fn capture_positions(
 
 fn list_positions(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> Vec<DeclaredType> {
     let captures: CaptureList = SmallVec::from_slice(file.scopes.captures(key));
-    // Its code is not compiled, so that it reads none of them, and the declaration of a binding that nothing else names may be
-    // left out too: then the closure is handed what the binding starts with.
     let is_left_out = matches!(key, FunctionKey::Source(source) if file.inputs.library_functions.is_left_out(source));
     let positions = captures.into_iter().map(|capture| match capture {
         Capture::Environment(scope) => {

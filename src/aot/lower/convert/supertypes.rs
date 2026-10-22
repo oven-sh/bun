@@ -34,9 +34,7 @@ struct PendingPair {
     is_accepted: bool,
 }
 
-// A literal is converted member by member where it is built, so only a value of one structural type that flows into another
-// needs the walk through their members, and what differs there lies near the top. Below that each step of a generic type
-// that refers to itself with larger arguments (`next: List<T[]>`) is an instantiation nobody else asks the checker for.
+// A literal is converted member by member where it is built, so only a value of one structural type that flows into another needs the walk through their members, and what differs there lies near the top.
 const MAX_COMPARED_DEPTH: u8 = 2;
 const MAX_ASSERTED_PAIRS: usize = 1024;
 const MAX_ASSERTED_MEMBER_DEPTH: u8 = 1;
@@ -44,9 +42,7 @@ const MAX_ASSERTED_MEMBER_DEPTH: u8 = 1;
 #[derive(Default)]
 struct Comparison {
     depth: u8,
-    // The checker lets the source of the pair at hand flow into its target. What it accepts as a whole it accepts part by part
-    // wherever a part is only read, so nobody has to ask about those parts: the checker has never compared them by
-    // themselves, and a single such question can take seconds.
+    // The checker lets the source of the pair at hand flow into its target.
     is_accepted: bool,
     pending: SmallVec<[PendingPair; 8]>,
 }
@@ -208,8 +204,7 @@ impl Comparison {
         self.is_accepted
     }
 
-    // Every entry and every store is tested, so nothing rests on a flow against the checker's direction: it would only put the
-    // family of the wider type into the narrower one.
+    // Every entry and every store is tested, so nothing rests on a flow against the checker's direction: it would only put the family of the wider type into the narrower one.
     fn follow_if_assignable(
         &mut self,
         file: &mut FileLowering<'_, '_, '_, '_>,
@@ -257,8 +252,7 @@ enum FlowingOperands {
     Two(ExprId, ExprId),
 }
 
-// The checker's union of two functions with equal signatures keeps one of them, so each operand that can be the value
-// flows for itself.
+// The checker's union of two functions with equal signatures keeps one of them, so each operand that can be the value flows for itself.
 fn find_flowing_operands(
     file: &FileLowering<'_, '_, '_, '_>,
     expression: ExprId,
@@ -539,9 +533,7 @@ fn has_layout(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> boo
     })
 }
 
-// Of `x as Type` with `x: Type | Node | Symbol`, only a Type is meant: the assertion picks among the objects that the union
-// names, and says nothing of the others. To ask whether each of them can be asserted is not enough: a type without a
-// required member can be asserted to be any object type, and any object type to be it.
+// Of `x as Type` with `x: Type | Node | Symbol`, only a Type is meant: the assertion picks among the objects that the union names, and says nothing of the others.
 fn find_asserted_members(
     file: &mut FileLowering<'_, '_, '_, '_>,
     members: &[CheckerTypeId],
@@ -613,8 +605,7 @@ fn compare_pair(
         (_, ComparedShape::Transparent(types)) => {
             follow_into_fitting_member(file, comparison, source, value_kind, types);
         }
-        // Two instantiations of one class share each field, whose type is the type parameter. A read through either of
-        // them is converted where it stands, so nothing has to come back.
+        // Two instantiations of one class share each field, whose type is the type parameter.
         (ComparedShape::Class(class), ComparedShape::Class(target_class))
             if class == target_class =>
         {
@@ -635,8 +626,7 @@ fn compare_pair(
                 comparison.follow_guessed_value(source, constraint);
             }
         }
-        // One node stands for every instantiation of a type parameter. Whatever flows into it fits its constraint, so it goes on
-        // to what the constraint fits. Any other edge out of it would join the families of all the types that ever replace it.
+        // One node stands for every instantiation of a type parameter.
         (
             ComparedShape::TypeParameter { constraint, .. },
             ComparedShape::Class(_) | ComparedShape::ObjectType,
@@ -660,8 +650,7 @@ fn compare_pair(
                 file.fragment.family_facts.add_member_without_layout(layout);
             }
         }
-        // The type of the position lists a value without a layout only where the checker lets it in, so no other one passes
-        // the test of the position.
+        // The type of the position lists a value without a layout only where the checker lets it in, so no other one passes the test of the position.
         (
             ComparedShape::Tuple(_)
             | ComparedShape::Function(_)
@@ -783,9 +772,7 @@ fn classify_union_member(
     }
 }
 
-// The type of a position is the union of the families of its members, so one member that takes the value is enough. The
-// checker looked for it in this order when it accepted the flow. To ask about every member would be to relate the value to
-// types that nobody has compared it with, which takes seconds for one large union of intersections.
+// The type of a position is the union of the families of its members, so one member that takes the value is enough.
 fn follow_into_fitting_member(
     file: &mut FileLowering<'_, '_, '_, '_>,
     comparison: &mut Comparison,
@@ -820,8 +807,7 @@ fn follow_into_fitting_member(
         comparison.follow_accepted_value(source, member);
         return;
     }
-    // Whether one function type fits another can take the checker seconds, and a function too many in the family of a function
-    // type costs little: it goes into every member that is one.
+    // Whether one function type fits another can take the checker seconds, and a function too many in the family of a function type costs little: it goes into every member that is one.
     if kind != ValueKind::Function {
         for member in of_same_kind() {
             if let Ok(true) = file.queries.is_assignable(source, member) {
@@ -900,9 +886,7 @@ fn find_types_with_layout(
     found
 }
 
-// An assertion down or sideways says that objects of the one type are objects of the other, and the program goes on as if they
-// were: `createBaseNode(kind) as Mutable<T>`, `(node as NamedDeclaration).name`. So they pass for it. The engine leaves out
-// those that a field of both tells apart: `kind: 80` against `kind: 245`.
+// An assertion down or sideways says that objects of the one type are objects of the other, and the program goes on as if they were: `createBaseNode(kind) as Mutable<T>`, `(node as NamedDeclaration).name`.
 fn admit_asserted_objects(
     file: &mut FileLowering<'_, '_, '_, '_>,
     source: CheckerTypeId,
@@ -1031,14 +1015,12 @@ fn compare_functions(
     let returned = file.queries.signature_result(signature);
     let expected = file.queries.signature_result(target);
     // What is passed to the function is tested at its entry, and passes if it has the names that the parameter's type requires.
-    // Asking the checker whether the one parameter fits the other took half of the time of lowering a large application.
     if let (Ok(returned), Ok(expected)) = (returned, expected) {
         comparison.follow(returned, expected);
     }
 }
 
-// What is read out of a container is tested where it is read, whatever was written through another type of the container. So
-// contents only flow forward: the way back would put every `Animal` into `Dog` at each `const all: Animal[] = [dog]`.
+// What is read out of a container is tested where it is read, whatever was written through another type of the container.
 fn compare_tuple_contents(
     file: &mut FileLowering<'_, '_, '_, '_>,
     comparison: &mut Comparison,
@@ -1082,14 +1064,12 @@ fn compare_objects(
     source: CheckerTypeId,
     target: CheckerTypeId,
 ) {
-    // Every entry and every store is tested, so nothing rests on an edge that the checker would not allow. Such an edge joins
-    // families that share no object, and the walk through the members of two unrelated types has no end worth reaching.
+    // Every entry and every store is tested, so nothing rests on an edge that the checker would not allow.
     if !comparison.accepts(file, source, target) {
         return;
     }
     match (find_layout(file, source), find_layout(file, target)) {
-        // A literal is allocated with the layout of the type it is written under, and each of its members is converted where
-        // the literal is built. Two other types with the same names still differ in what their members hold.
+        // A literal is allocated with the layout of the type it is written under, and each of its members is converted where the literal is built.
         (Some(layout), Some(supertype)) if layout == supertype => {
             layouts::add_conversion(file, layout, supertype);
             if let ObjectOrigin::ObjectLiteral { .. } = file.queries.object_origin(source) {

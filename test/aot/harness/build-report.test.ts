@@ -173,8 +173,9 @@ describe.concurrent("the build report", () => {
     () =>
       slot(async () => {
         using dir = tempDir("aot-build-report-twice", { "main.ts": source });
-        // How often the checker is asked is work done, as a time is: each thread keeps the answers that it has got, so the sum follows from which files fall to which thread.
-        const withoutTimes = (path: string) => JSON.parse(readFileSync(path, "utf8"), (key, value) => (key.endsWith("anoseconds") || key === "CheckerQueries" ? undefined : value));
+        // How often the checker is asked, and how often it gives up inside an answer, is work done, as a time is: each thread keeps the answers that it has got, so the sums follow from which files fall to which thread.
+        const isWorkDone = (key: string) => key.endsWith("anoseconds") || key === "CheckerQueries" || key === "CheckerMembersGivenUp";
+        const withoutTimes = (path: string) => JSON.parse(readFileSync(path, "utf8"), (key, value) => (isWorkDone(key) ? undefined : value));
         const first = await writeReport(String(dir), "first", "sites");
         const second = await writeReport(String(dir), "second", "sites");
         expect(Object.keys(readBuildReport(first).statistics).filter(name => name.endsWith("Nanoseconds"))).not.toEqual([]);

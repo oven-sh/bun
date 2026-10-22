@@ -10,8 +10,6 @@ use crate::report::testing::{
     self, LINE_2_COLUMN_14, NO_LOCATION, ReportFixture, location, witness,
 };
 
-// The counts of a file by level. Its unknown accesses are by name, its guarded accesses test their receiver and its proven
-// accesses are free, unless a test says otherwise.
 type File<'f> = (&'f str, [u32; 3]);
 
 const MAIN: &str = "/p/main.ts";

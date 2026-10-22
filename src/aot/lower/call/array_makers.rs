@@ -10,8 +10,6 @@ use crate::lower::expression::{self, lower_expression};
 use crate::lower::{FileLowering, FunctionLowering, condition, convert};
 
 // The ways in which programs write "a list of this length": `Array.from({ length }, mapper)`, `Array(length).fill(value)`, `[...Array(length).keys()]`.
-// Nobody has the list before it is whole, and nobody can replace what is looked up on a new list, so one function of the library makes it in one loop.
-// That function goes the way that the program wrote wherever the length is no small whole number or the mapper is no function.
 
 fn is_named(file: &FileLowering<'_, '_, '_, '_>, key: PropKey, name: &[u8]) -> bool {
     matches!(key, PropKey::Name(atom) if file.queries.atom_bytes(atom) == name)

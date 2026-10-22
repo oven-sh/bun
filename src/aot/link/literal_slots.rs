@@ -40,9 +40,7 @@ fn keeps_typed_slot(ty: &Type) -> bool {
         && ty.functions.is_empty()
 }
 
-/// Object literals are written through every type their property names satisfy, so a typed slot needs a check and a slow path at
-/// each store and a presence check at each read. Slots declared with strings or functions hold any value instead, and the declared
-/// type becomes a prediction. Numbers, booleans, containers and objects keep typed slots: their readers use the proven type.
+/// Object literals are written through every type their property names satisfy, so a typed slot needs a check and a slow path at each store and a presence check at each read.
 pub(super) fn widen_literal_slots(layouts: &mut [Layout], input: &UseInput<'_>, types: &TypeTable) {
     let is_literal_layout = find_literal_layouts(input);
     input.for_each_layout(layouts, &is_literal_layout, &|layout, is_literal_layout| {

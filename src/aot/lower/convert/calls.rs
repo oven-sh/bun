@@ -43,8 +43,7 @@ fn has_instantiated_result(file: &mut FileLowering<'_, '_, '_, '_>, target: Call
     called != file.queries.function_signature(declaration).result.checked
 }
 
-// The type comes from the call, not from the type of the callee: a function type lists the functions that were converted to
-// it, and says nothing of what they return.
+// The type comes from the call, not from the type of the callee: a function type lists the functions that were converted to it, and says nothing of what they return.
 pub(super) fn claim_call_result(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
@@ -132,8 +131,7 @@ pub(super) fn convert_arguments(
     };
     layouts::record_call_type_arguments(lowering.file, call);
     let shape = lowering.file.queries.signature(target.signature);
-    // The signature of a call holds the receiver's type arguments, which may be inferred. Only the
-    // declaration says what somebody wrote.
+    // The signature of a call holds the receiver's type arguments, which may be inferred.
     let declared_parameters = match target.declaration {
         Some(declaration) => lowering.file.queries.function_signature(declaration).parameters,
         None => shape.parameters,
@@ -185,8 +183,7 @@ fn find_int32_position(
     })
 }
 
-// The callee tests its parameters where it is entered. The call only says what flows into them, and asks for the proof of an
-// `int32`.
+// The callee tests its parameters where it is entered.
 fn convert_argument(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     expression: ExprId,
@@ -215,8 +212,7 @@ fn convert_argument(
     super::convert_initializer(lowering, value, declared, Some(expression))
 }
 
-// No operation holds one element of a spread argument, so the flow into the first `int32` parameter that the spread can reach
-// is a request for the list, which no proof admits.
+// No operation holds one element of a spread argument, so the flow into the first `int32` parameter that the spread can reach is a request for the list, which no proof admits.
 pub(super) fn convert_argument_list(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
@@ -267,8 +263,7 @@ pub(super) fn convert_argument_list(
     }
 }
 
-// In front of the first spread each argument has its parameter. Behind it nothing says which parameter a value reaches, so
-// it flows into those that the checker would let it into, like the operand of an assertion.
+// In front of the first spread each argument has its parameter.
 fn record_listed_arguments(
     file: &mut FileLowering<'_, '_, '_, '_>,
     call: ExprId,

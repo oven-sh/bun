@@ -12,7 +12,7 @@ const host = join(import.meta.dir, "typed-packages", "react-reconciler-host");
 const typedReconciler = join(import.meta.dir, "..", "..", "packages", "bun-sound", "react-reconciler", "0.33.0", "lay", "cjs", "react-reconciler.production.js");
 const whyNotCounted = unsupported ? "" : await whyInstructionsCannotBeCounted();
 
-// The build of 2026-10-20 costs 1.10 times the instructions of the erased build and 1.12 times its bytes. Neither share may pass these. Both belong at 1 or below: the two todo tests.
+// The build costs 1.10 times the instructions of the erased build and 1.12 times its bytes. Neither share may pass these. Both belong at 1 or below: the two todo tests.
 const known = { instructionsOfATurn: 1.12, bytesOfCode: 1.15 };
 
 describe.skipIf(!!unsupported)("compile/aot/typed-react-costs-no-more-than-erased", () => {

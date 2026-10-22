@@ -29,7 +29,7 @@ use self::defined_object_types::{
 pub(crate) use self::defined_object_types::late_answers;
 pub use self::defined_object_types::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 pub(in crate::lower) use self::dictionaries::is_dictionary_type;
-use self::object_types::ListedFields;
+use self::object_types::{FieldName, ListedFields};
 pub(in crate::lower) use self::own_fields::OwnFields;
 pub(in crate::lower) use self::type_parameters::{record_call_type_arguments, type_parameter_layout};
 
@@ -44,13 +44,12 @@ pub(crate) struct LayoutState {
     // The type whose members are being looked at, and for each type the one that was when it was first met.
     holder_in_progress: Option<CheckerTypeId>,
     holders: FxHashMap<CheckerTypeId, CheckerTypeId>,
-    // The layouts of types that grow without end: `interface Tree<T> { left?: Tree<[T]> }`. No list of types says what their
-    // fields hold.
+    // The layouts of types that grow without end: `interface Tree<T> { left?: Tree<[T]> }`.
     growing: FxHashSet<LayoutId>,
     class_types: Vec<(ClassRef, CheckerTypeId)>,
     object_types: FxHashMap<CheckerTypeId, Option<LayoutId>>,
     // The members of an object type that are fields, in the order of their keys.
-    sorted_members: FxHashMap<CheckerTypeId, Rc<[(PropertyKeyId, ListedMember)]>>,
+    sorted_members: FxHashMap<CheckerTypeId, Rc<[(FieldName, ListedMember)]>>,
     // What the file is the first to have worked out.
     described_names: Vec<(CheckerTypeId, NamesOfObjectType)>,
     dictionaries: FxHashMap<CheckerTypeId, bool>,
@@ -117,8 +116,7 @@ impl LayoutState {
         }
     }
 
-    // A field holds what any type with the layout declares for it, so the fields that were put together without this type no
-    // longer stand. Says whether the type is new.
+    // A field holds what any type with the layout declares for it, so the fields that were put together without this type no longer stand.
     fn add_source_type(&mut self, layout: LayoutId, ty: CheckerTypeId) -> bool {
         if !self.types_of_layouts.insert((layout, ty)) {
             return false;
@@ -189,7 +187,7 @@ pub(crate) fn find_field(
     key: PropertyKeyId,
 ) -> Option<u32> {
     match find_fields_without_types(file, layout) {
-        Some(listed) => listed.find(key),
+        Some(listed) => listed.find(file, key),
         None => own_fields(file, layout).find(key),
     }
 }
@@ -292,9 +290,7 @@ pub(crate) fn define_remaining_layouts(file: &mut FileLowering<'_, '_, '_, '_>) 
     file.inputs.defined_object_types.hold_names_of_file(file.file, described_names);
 }
 
-// The layouts through whose types the file may see an object that somebody makes: those with which it makes one, those that it
-// converts a value to, and what those extend. What a slot holds is what is stored there, and an object is stored into where it is
-// made or through a type that it was converted to. Of any other layout a file says the names alone.
+// The layouts through whose types the file may see an object that somebody makes: those with which it makes one, those that it converts a value to, and what those extend.
 fn find_layouts_of_objects(file: &FileLowering<'_, '_, '_, '_>) -> FxHashSet<LayoutId> {
     let mut found = file.layouts.conversion_targets.clone();
     let layouts = (0..file.fragment.layout_keys().len()).map(LayoutId::new);
@@ -312,8 +308,7 @@ fn find_layouts_of_objects(file: &FileLowering<'_, '_, '_, '_>) -> FxHashSet<Lay
     }
 }
 
-// The types that the file has met and not settled are of this level, whichever layout they have. What their fields name and the
-// file has not met before is of the next level, so the list is closed before the first of them is defined.
+// The types that the file has met and not settled are of this level, whichever layout they have.
 fn define_object_types(file: &mut FileLowering<'_, '_, '_, '_>, level: u8) -> bool {
     let mut types_of_level = Vec::new();
     for layout in (0..file.fragment.layout_keys().len()).map(LayoutId::new) {
@@ -326,7 +321,6 @@ fn define_object_types(file: &mut FileLowering<'_, '_, '_, '_>, level: u8) -> bo
         }
     }
     // Which types a file meets behind its code hangs on what it leaves to earlier files, which differs from one build to the next.
-    // What is said of such a type must not hang on the file that says it, so it is the names.
     let layouts_of_objects = match level {
         0 => find_layouts_of_objects(file),
         _ => FxHashSet::default(),

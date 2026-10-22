@@ -7,19 +7,14 @@ use bun_sema::bind::{Binding, BindingInitializer, Bound, SymbolId};
 use bun_sema::hir::{self, ExprId, ExprKind, PropId, PropKey, PropKind, Span, StmtKind};
 use bun_sema::program::Files;
 
-/// A getter of the object that one of Bun's own modules exports: `get WriteStream() { .. }` in the literal, or
-/// `Object.defineProperty(assert, "AssertionError", { get() { .. } })`. The host leaves such an export unread until a module that
-/// binds the name is linked, so that a run that links none does not load what the getter loads.
-/// A name that is missing here is read when its module is loaded.
+/// A getter of the object that one of Bun's own modules exports: `get WriteStream() { .. }` in the literal, or `Object.defineProperty(assert, "AssertionError", { get() { .. } })`.
 #[derive(Default)]
 pub struct DeferredExports {
     /// In the order of the registry, and of the bytes.
     names: Vec<(u32, Box<[u8]>)>,
 }
 
-/// The native modules that mirror an object of the host, which makes most of its members at their first read: `process.stdout`
-/// loads `node:stream`. The host defers every export of theirs that nothing has made yet:
-/// `BUN_FOREACH_LAZY_ESM_NATIVE_MODULE` in src/jsc/modules/NativeModuleList.h.
+/// The native modules that mirror an object of the host, which makes most of its members at their first read: `process.stdout` loads `node:stream`.
 const MODULES_THAT_MIRROR_AN_OBJECT: [RuntimeModule; 3] =
     [RuntimeModule::NodeModule, RuntimeModule::NodeProcess, RuntimeModule::Bun];
 

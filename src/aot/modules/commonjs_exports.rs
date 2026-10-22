@@ -1,14 +1,4 @@
 //! What the CommonJS modules of the program export.
-//!
-//! `exports.x = e` is `export var x`. A module has no exports object where every mention of it, by binding, reads, stores or calls
-//! a member under a constant name, or is one of the forms that compilers emit. A construct that fits no form is a use of the object
-//! as a value, and then that one module keeps `module.exports` in a variable. The table of names hangs on the module, not on the
-//! object that it was born with: behind `module.exports = X`, stored once and ahead of every other mention, `module.exports.x` is
-//! still the variable `x` of the module where `X` shows its variables.
-//!
-//! The text of each module is read first. The export tables follow the names that stand for names of other modules. Once the
-//! files that use the modules are bound, the stores that they make and the names that ES modules import are added. From then on
-//! a module only ever loses its names: `look_at`.
 
 mod faces;
 mod own_text;
@@ -505,8 +495,7 @@ impl CommonJsExports {
         self.marker(module) == Some(true) && text.is_some_and(|text| text.always_creates(known::default))
     }
 
-    // An ES module gets the object itself as `default`, unless the module has the marker and a `default` of its own. Where only the
-    // run knows the marker, or whether a name is there, the face asks the object.
+    // An ES module gets the object itself as `default`, unless the module has the marker and a `default` of its own.
     fn look_at_modules_whose_object_importers_see(
         &mut self,
         input: &CommonJsInput<'_, '_, '_>,
@@ -554,8 +543,7 @@ impl CommonJsExports {
         self.number_of(module).is_some_and(|number| self.has_object[number])
     }
 
-    /// The object of the module is a value somewhere: the module is `Value`, and with it every module whose names stand for names
-    /// of it.
+    /// The object of the module is a value somewhere: the module is `Value`, and with it every module whose names stand for names of it.
     pub fn look_at(&mut self, module: ModuleRef) {
         let mut pending = vec![module];
         let mut fallen = Vec::new();
@@ -617,8 +605,7 @@ impl CommonJsExports {
         self.number_of(module).map_or(&[], |number| &self.name_sources[number][..])
     }
 
-    // The module that has the variable of a name, and the name that it has there. `None`: the name is no variable of a CommonJS
-    // module of the program.
+    // The module that has the variable of a name, and the name that it has there.
     fn owner_of(&self, module: ModuleRef, name: Atom) -> Option<(ModuleRef, Atom)> {
         self.text_of(module)?;
         match self.targets.get(&(module, name)) {
@@ -628,8 +615,7 @@ impl CommonJsExports {
         }
     }
 
-    /// What the module has under a name, for whoever required it. `None`: nobody reads the name, so that it has no variable: a
-    /// value that would be stored is evaluated and dropped.
+    /// What the module has under a name, for whoever required it.
     pub fn member_named(&self, module: ModuleRef, name: Atom) -> Option<Member> {
         let number = self.number_of(module)?;
         if !self.keeps_names(number) {
@@ -653,9 +639,7 @@ impl CommonJsExports {
         }
     }
 
-    /// `access` is a `Dot` or an `Index` on the exports of a module that is written in the file, a call of `Object.defineProperty`
-    /// that is one store, or what says that the module has an `__esModule`. On a store `Undefined` and `Marker` say: the value is
-    /// evaluated and dropped.
+    /// `access` is a `Dot` or an `Index` on the exports of a module that is written in the file, a call of `Object.defineProperty` that is one store, or what says that the module has an `__esModule`.
     pub fn own_member(&self, file: FileId, access: ExprId) -> Option<Member> {
         let entry = find(&self.table(file)?.accesses, access)?;
         let number = entry.module as usize;
@@ -673,8 +657,7 @@ impl CommonJsExports {
         Some(self.member_named(text.module, entry.name).unwrap_or(Member::Undefined))
     }
 
-    /// `R.N`, where the access is bound to a variable. `accessed` is the module that the access is written on, which need not be
-    /// the one that has the variable.
+    /// `R.N`, where the access is bound to a variable.
     pub fn required_member(&self, accessed: ModuleRef, variable: SyntheticExportId) -> Member {
         let Some(number) = self.number_of(accessed) else {
             return Member::OnObject;
@@ -710,8 +693,7 @@ impl CommonJsExports {
         self.table(file).is_some_and(is_listed) && self.has_names(ModuleRef::File(file))
     }
 
-    /// Every run of the body stores the name, nothing stores it once the body has ended, and nobody sees the module half
-    /// evaluated: then what an importer took at the link and what the variable holds cannot be told apart.
+    /// Every run of the body stores the name, nothing stores it once the body has ended, and nobody sees the module half evaluated: then what an importer took at the link and what the variable holds cannot be told apart.
     pub fn settled(&self, module: ModuleRef, name: Atom) -> bool {
         let Some(text) = self.text_of(module) else {
             return false;
@@ -758,8 +740,7 @@ impl CommonJsExports {
         }
     }
 
-    /// The text stores to one of the five names, names `arguments` at the top, or shows its scope to `eval` or `with`: the body
-    /// only calls the function of five parameters that the text is.
+    /// The text stores to one of the five names, names `arguments` at the top, or shows its scope to `eval` or `with`: the body only calls the function of five parameters that the text is.
     pub fn needs_wrapped_body(&self, module: ModuleRef) -> bool {
         self.text_of(module).is_some_and(|text| text.needs_wrapped_body)
     }
@@ -787,8 +768,7 @@ impl CommonJsExports {
         self.faces.copies(face)
     }
 
-    /// The export table of the face, in the order of code units, with `default`. Empty: nobody looks at its namespace object, or
-    /// the run time lists the names.
+    /// The export table of the face, in the order of code units, with `default`.
     pub fn exports_of_face(&self, face: FileId) -> &[ModuleExport] {
         self.faces.exports(face)
     }
@@ -803,8 +783,7 @@ impl CommonJsExports {
         self.faces.checked_copies(check)
     }
 
-    /// The CommonJS files whose namespace object an ES module may look at: `ns` as a value, `import()`, `export *`. It shows the
-    /// value of the file as `default` unless the file has the marker and a `default` of its own.
+    /// The CommonJS files whose namespace object an ES module may look at: `ns` as a value, `import()`, `export *`.
     pub fn seen_namespaces(&self) -> &[FileId] {
         self.faces.seen_namespaces()
     }

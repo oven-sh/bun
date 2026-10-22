@@ -255,8 +255,7 @@ impl Finder<'_, '_> {
         }
     }
 
-    // The function becomes the body of a module, which has no parameters, no `this`, no `arguments` and no name, and
-    // whose value nobody sees.
+    // The function becomes the body of a module, which has no parameters, no `this`, no `arguments` and no name, and whose value nobody sees.
     fn can_be_body(&self, callback: FnId, kind: InnerModuleKind) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let record = hir[callback];
@@ -453,8 +452,7 @@ impl Finder<'_, '_> {
         if let Some(around) = self.candidate_of_callback(outermost) {
             return Some(SiteTime::WithBodyOf(around));
         }
-        // Nothing calls a function while the head runs. A declaration is there from the start, any other function from
-        // where it is written.
+        // Nothing calls a function while the head runs.
         Some(SiteTime::At(match hir[outermost].kind {
             FnKind::Decl => end_of_head,
             _ => end_of_head.max(hir[outermost].start),
@@ -600,8 +598,7 @@ impl Finder<'_, '_> {
         }
     }
 
-    // A call ahead of the definition finds the holder empty and throws. And the statement of an inner module has no
-    // code, so every variable that it declares has to be a holder.
+    // A call ahead of the definition finds the holder empty and throws.
     fn refuse_until_all_fit(&mut self) {
         loop {
             let starts = self.find_starts();
@@ -762,8 +759,7 @@ impl WrappedModules {
         self.of_callback(file, *functions.last()?)
     }
 
-    /// The inner module whose exports object the expression resolves to by binding: the first parameter of its
-    /// function, or `.exports` of the second.
+    /// The inner module whose exports object the expression resolves to by binding: the first parameter of its function, or `.exports` of the second.
     pub fn is_exports_object(
         &self,
         files: &Files<'_>,

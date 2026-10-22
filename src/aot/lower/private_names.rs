@@ -138,8 +138,7 @@ fn get_state_token(
     class::get_private_state_slot(lowering, state, PrivateStatePart::Token)
 }
 
-// A new collection is a new private name, and the fields have room for the entries of one. They are those of the recorded
-// collection. Every other value of the variable is a collection like any other: its entries are in it.
+// A new collection is a new private name, and the fields have room for the entries of one.
 fn continue_if_recorded(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: PrivateStateAccess,
@@ -168,8 +167,7 @@ fn emit_entry_of_collection(
     call::emit_call(lowering, method, Some(access.collection), arguments, CallSite::default());
 }
 
-// `new WeakMap()` that is stored in a variable of private state. What the program put in the place of the constructor may
-// keep the collection it makes, and sees which entries are missing in it: such a collection is not recorded.
+// `new WeakMap()` that is stored in a variable of private state.
 pub(in crate::lower) fn record_state_creation(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     creation: ExprId,

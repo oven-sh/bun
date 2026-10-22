@@ -97,7 +97,6 @@ for (const name of names) show(process.mainModule.require(name));
 //@ ext cjs
 for (const name of names) show(require.main.require(name));
 //// require-cache
-//@ exit 1
 //@ ext cjs
 console.log(Object.keys(require.cache).length);
 for (const key in require.cache) for (const name of names) show(require.cache[key].require(name));

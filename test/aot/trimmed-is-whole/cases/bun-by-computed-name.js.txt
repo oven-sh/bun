@@ -89,6 +89,7 @@ for (const name of names) show(Bun?.[name]);
 //// inspect-Bun
 console.log(Bun.inspect(Bun).split("\n").length > 10);
 //// console-log-Bun
+//@ todo printed whole, Bun shows `bufferedAmount: undefined` and no `connected` for a member that --trim removed, where the untrimmed executable shows 0 and false
 console.log(Bun);
 //// JSON-stringify-Bun
 console.log(Object.keys(JSON.parse(JSON.stringify(Bun))).sort().join());

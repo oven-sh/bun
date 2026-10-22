@@ -255,8 +255,7 @@ impl ModuleGraph {
         index.ok().map(|index| kinds[index].1)
     }
 
-    /// What the text of the file asks for: what it imports, and then what its sites evaluate. `requests_of` has the faces, the
-    /// checks and the CommonJS files that run first.
+    /// What the text of the file asks for: what it imports, and then what its sites evaluate.
     pub fn requests(&self, file: FileId) -> &[ModuleRequest] {
         slice(&self.requests, &self.entry(file).requests)
     }
@@ -316,8 +315,7 @@ impl ModuleGraph {
         }
     }
 
-    /// A member of a namespace. What a member of the exports of a CommonJS module comes to hangs on the shape of the module:
-    /// `member` answers that.
+    /// A member of a namespace.
     pub fn member_binding(&self, file: FileId, member: ExprId) -> Option<ImportBinding> {
         let members = self.bound_members(file);
         let index = members.binary_search_by_key(&member, |&(member, _)| member).ok()?;
@@ -372,9 +370,7 @@ impl ModuleGraph {
         binding.expect("a JSX import that is not in use").1
     }
 
-    /// The program never evaluates these files, which are in order. No export leads to them any more. Where a file asked for
-    /// one of them, it asks for what that one asked for, so the files that stay are evaluated in the order they always were.
-    /// What a package says of its side effects has decided which files these are, and says nothing of the files that stay.
+    /// The program never evaluates these files, which are in order.
     pub fn leave_out_files(&mut self, files: &[FileId], in_parallel: InParallel<'_>) {
         for entry in &mut self.entries {
             entry.has_no_side_effects = false;

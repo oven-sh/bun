@@ -133,8 +133,7 @@ impl<'a, 's> Text<'a, 's> {
         !is_number && !is_inherited && name != known::__proto__
     }
 
-    /// The access to a member of `object` that `object` is written in. `None`: it is written in something else, or in an
-    /// access that needs the object itself.
+    /// The access to a member of `object` that `object` is written in.
     pub(super) fn find_access(&self, object: ExprId) -> Option<Access> {
         let (object, Parent::Expr(node)) = self.parent(object) else {
             return None;
@@ -464,8 +463,7 @@ impl<'a, 's> Text<'a, 's> {
         }
     }
 
-    /// Whether every run of `body` passes the expression: it is in no function but one that is called where it is written, in
-    /// no branch, loop or `try`, and behind no `return`.
+    /// Whether every run of `body` passes the expression: it is in no function but one that is called where it is written, in no branch, loop or `try`, and behind no `return`.
     pub(super) fn is_in_order(&self, expression: ExprId, body: CodeUnit) -> bool {
         let bound = self.bound;
         let position = self.hir[expression].pos;
@@ -519,7 +517,6 @@ impl<'a, 's> Text<'a, 's> {
     }
 
     /// Whether nothing but a run of `body` gets to the expression: it is in no function but one that is called where it is written.
-    /// A branch, a loop or a `try` may be around it.
     pub(super) fn is_run_by_body_alone(&self, expression: ExprId, body: CodeUnit) -> bool {
         let Some(mut unit) = self.code_unit_of(expression) else {
             return false;
@@ -556,8 +553,7 @@ impl<'a, 's> Text<'a, 's> {
                 }))
     }
 
-    /// Only a plain call of the name `require` answers with the module for sure, and only in a file that cannot put something
-    /// else under the name.
+    /// Only a plain call of the name `require` answers with the module for sure, and only in a file that cannot put something else under the name.
     pub(super) fn is_call_of_free_require(&self, call: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let ExprKind::Call(id) = hir[call].kind else {

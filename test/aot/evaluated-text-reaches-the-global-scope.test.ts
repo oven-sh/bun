@@ -166,11 +166,13 @@ async function compileAndRun(text: string): Promise<{ report: BuildReport; stdou
 describe.concurrent("compile/aot/evaluated text reaches the global scope", () => {
   let functionsWithoutEvaluator = 0;
 
-  // Printing a value that nobody knows needs the printer of objects, and so do these programs.
+  // Printing a value that nobody knows needs the printer of objects, and so do these programs. Parsed data is printed without it, a Date is not.
   beforeAll(async () => {
-    const { report, stdout } = await slot(() => compileAndRun(`console.log(JSON.parse(text("[1]")));\n`));
-    expect({ stdout, unseenCode: report.unseenCode }).toEqual({ stdout: "[ 1 ]\n", unseenCode: [] });
+    const { report, stdout } = await slot(() => compileAndRun(`console.log(new Date(Number(text("0"))));\n`));
+    expect({ stdout, unseenCode: report.unseenCode }).toEqual({ stdout: "1970-01-01T00:00:00.000Z\n", unseenCode: [] });
     functionsWithoutEvaluator = report.summary.functions;
+    // Where this program no longer brings the printer in, it is nothing to hold the others against.
+    expect(functionsWithoutEvaluator).toBeGreaterThan(100);
   }, 600_000);
 
   for (const [name, { text, output, evaluator }] of Object.entries(programs)) {

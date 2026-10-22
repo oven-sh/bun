@@ -30,8 +30,7 @@ fn finish_body(mut lowering: FunctionLowering<'_, '_, '_, '_, '_>) {
     lowering.finish();
 }
 
-// An ES importer holds what the file had under a name when the file was first linked into an ES graph. A name that the file
-// does not have by then leaves its copy empty.
+// An ES importer holds what the file had under a name when the file was first linked into an ES graph.
 pub(super) fn lower_face_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
     let modules = file.inputs.modules;
     let own_file = file.file;

@@ -310,7 +310,6 @@ pub(super) fn convert_to_member(
 }
 
 // The slot of a field holds what the type of the field says, and an accessor returns what its getter was converted to.
-// Neither a container nor an object behind an index signature says what it holds.
 pub(super) fn claim_member_read(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,

@@ -586,11 +586,6 @@ fn lower_private_state_definition(
 }
 
 // Returning None here would pass the helper a collection that is missing the entries stored in fields.
-//
-// An entry is in a field only if its collection is recorded: the built-in constructor made it, and the variable, the
-// helpers and the built-in methods are all that ever held it. So it has no property of its own and the prototype it was
-// made with, whose methods are locked (`private_state::find_in_file` asks the table): what the helper would find under
-// `has`, `get` and `set` is not asked for.
 fn lower_private_field_access(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,

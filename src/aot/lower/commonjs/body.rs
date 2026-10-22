@@ -138,8 +138,7 @@ fn declare_wrapped_body(file: &mut FileLowering<'_, '_, '_, '_>) -> FunctionId {
     file.declare_function(key, create_wrapped_header)
 }
 
-// A file that stores to one of the five names, or shows them to code that finds names at run time, has them as the parameters
-// they are to `bun run`. The body of the module makes the five values and calls the function that holds the text.
+// A file that stores to one of the five names, or shows them to code that finds names at run time, has them as the parameters they are to `bun run`.
 fn lower_calling_body(file: &mut FileLowering<'_, '_, '_, '_>, function: FunctionId) {
     let wrapped = declare_wrapped_body(file);
     let own_module = ModuleRef::File(file.file);
@@ -235,8 +234,7 @@ fn find_inner_module(file: &FileLowering<'_, '_, '_, '_>, callback: FnId) -> Mod
     module.expect("the function is the callback of an inner module")
 }
 
-// The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module: nobody passes it anything, and nobody gets what it
-// returns.
+// The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module: nobody passes it anything, and nobody gets what it returns.
 pub(super) fn declare_inner_module_body(
     file: &mut FileLowering<'_, '_, '_, '_>,
     callback: FnId,

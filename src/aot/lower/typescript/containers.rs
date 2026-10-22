@@ -22,8 +22,7 @@ pub(super) fn find_container(
 ) -> Container {
     let bound = lowering.file.bound;
     let binding = bound.declared_symbol(declaration);
-    // Each block of a namespace has a binding of its own for what it exports, and a class or a function that a namespace merges
-    // with is the binding.
+    // Each block of a namespace has a binding of its own for what it exports, and a class or a function that a namespace merges with is the binding.
     let has_dead_zone = bound.binding_kind(binding) == BindingKind::TypeScriptContainer
         && bound.initial_state(binding) == InitialState::Uninitialized;
     let mut declarations = bound.symbol(binding).decls.iter().copied();

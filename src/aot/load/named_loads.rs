@@ -29,8 +29,7 @@ struct Scan<'a, 's> {
     named: Vec<NamedModule>,
 }
 
-// The library modules that the arms of `require(flag ? "node:vm" : "node:v8")` name. A bundler reads that as two calls. In
-// ascending order.
+// The library modules that the arms of `require(flag ? "node:vm" : "node:v8")` name.
 pub(crate) fn find_library_modules_named_in_choices(
     request: &FinishedFile<'_, '_>,
     builtins: &ResolvedBuiltins,
@@ -75,8 +74,7 @@ impl Scan<'_, '_> {
         }
     }
 
-    // A call of process.getBuiltinModule with a name that is no constant is no import site. Nor is a call of a require that createRequire
-    // has made for another file: it finds other packages than the file's own, and the same library modules.
+    // A call of process.getBuiltinModule with a name that is no constant is no import site.
     fn visit_calls_of_other_loaders(&mut self, builtins: &ResolvedBuiltins) {
         let &FinishedFile {
             hir,

@@ -505,8 +505,7 @@ fn find_layout_of_parent(
     }
 }
 
-// Where the type of the heritage is no class, its binding says what it is: a constructor function, or what a module of Bun's
-// exports. The objects of the class are objects of that function too: it makes them, and its methods are called on them.
+// Where the type of the heritage is no class, its binding says what it is: a constructor function, or what a module of Bun's exports.
 fn find_base_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     class: ClassId,
@@ -516,7 +515,6 @@ fn find_base_layout(
         return Some(super::class_layout(file, base));
     }
     // Each member more of the family of EventEmitter is one more place where its fields may lie, and an access tests few places.
-    // With the classes of Bun's own modules in it the stores in EventEmitter went by name: node:http +1.7% a request.
     if file.source != SourceKind::Program {
         return None;
     }
@@ -786,9 +784,7 @@ fn is_stored_as_property(file: &FileLowering<'_, '_, '_, '_>, function: FnId) ->
     }
 }
 
-// The type of the objects that the function makes. The declared `this` of a function that is stored as a property says what the
-// function is called on: it is a method of those objects, however many of their properties it stores. What `new` makes of it all
-// the same is no such object.
+// The type of the objects that the function makes.
 fn find_declared_this_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FunctionRef,

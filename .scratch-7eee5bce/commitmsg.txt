@@ -1,0 +1,28 @@
+node:assert: give deepEqual Node's loose relation, and both modes Node's Set, Map and Error rules
+
+assert.deepEqual and assert.notDeepEqual called Bun.deepEquals(a, b, false),
+the relation of expect().toEqual(). That relation is not Node's loose mode.
+It compares symbol keys, it takes a missing key for an undefined one, it
+ignores the extra own properties of built-ins, and it never uses `==`.
+
+The two functions now call a node-loose instantiation of the native
+comparator, Bun__deepEquals<false, false, true, true>. It is the node-strict
+relation without the prototype rule and without symbol keys. Non-objects
+compare with `==`, float arrays compare by value, and an expected null
+array element takes every element (Node's objEquiv and sparseArrayEquiv).
+
+These rules of lib/internal/util/comparisons.js hold in every mode, so the
+strict node relations get them too:
+- Set and Map members pair off one to one (setEquiv and mapEquiv). A key
+  that both Maps hold is settled by a lookup.
+- An Error compares message, name, cause and errors, then its own keys.
+- A callable is not an object, and a Proxy value is read with [[Get]].
+- A RegExp compares source, flags and lastIndex. A URL compares its href
+  with a URL or with an object that passes Node's isURL.
+
+Node compares type tags on every pair. Bun has non-enumerable tags where
+Node has none (fs.Stats, net.BlockList, a parsed query string). So the
+node-loose relation does not compare a non-enumerable Symbol.toStringTag
+with an operand that has no tag. Every other pair follows Node's rule.
+
+Co-authored-by: Ciro Spaciari <ciro.spaciari@gmail.com>

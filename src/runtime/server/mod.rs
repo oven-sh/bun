@@ -1730,7 +1730,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     bun_opaque::opaque_deref_mut(h3a).close();
                     self.h3_draining_listener = Some(h3l);
                 }
-            } else if let Some(h3l) = h3l.or(self.h3_draining_listener.take()) {
+            } else if let Some(h3l) = h3l.or_else(|| self.h3_draining_listener.take()) {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(h3l).close();
             }

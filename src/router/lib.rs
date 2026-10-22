@@ -476,7 +476,8 @@ impl<'a> RouteLoader<'a> {
             index: None,
             route_dirname_len,
         };
-        this.load(resolver, root_dir_info, base_dir);
+        let root = Fs::WalkRoot::new(root_dir_info.abs_path);
+        this.load(resolver, root_dir_info, base_dir, &root.descent());
         if this.all_routes.is_empty() {
             return Routes {
                 static_: this.static_list,
@@ -542,6 +543,7 @@ impl<'a> RouteLoader<'a> {
         resolver: &mut R,
         root_dir_info: &DirInfo,
         base_dir: &[u8],
+        walk: &Fs::Descent<'_>,
     ) {
         let fs = self.fs;
 
@@ -586,10 +588,13 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
 
+                    let Some(walk) = walk.enter(entry) else {
+                        continue 'outer;
+                    };
                     let abs_parts = [entry.dir(), entry.base()];
                     if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
                     {
-                        self.load(resolver, &dir_info, base_dir);
+                        self.load(resolver, &dir_info, base_dir, &walk);
                     }
                 }
 

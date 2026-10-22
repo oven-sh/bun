@@ -27,8 +27,8 @@ mod pseudo {
     pub(super) const PROTOCOL: u8 = 32;
     pub(super) const UNKNOWN: u8 = 64;
 
-    /// Whether nghttp2 takes every byte of a request pseudo-header's value (nghttp2_check_method,
-    /// nghttp2_check_path, check_scheme, check_authority).
+    /// Whether nghttp2 takes the value of a pseudo-header (nghttp2_check_method,
+    /// nghttp2_check_path, check_scheme, check_authority, parse_status_code).
     pub(super) fn is_valid_value(bit: u8, value: &[u8]) -> bool {
         let all = |extra: &[u8]| {
             value
@@ -40,6 +40,8 @@ mod pseudo {
             PATH => value.iter().all(|&c| c > b' ' && c != 0x7f),
             SCHEME => value.first().is_some_and(u8::is_ascii_alphabetic) && all(b"+-."),
             AUTHORITY => all(b"!$%&'()*+,-.:;=[]_~"),
+            // Three digits from 100 up. HTTP/2 has no 101 (RFC 9113 §8.6).
+            STATUS => matches!(value, [b'1'..=b'9', b'0'..=b'9', b'0'..=b'9']) && value != b"101",
             _ => true,
         }
     }
@@ -61,6 +63,8 @@ pub(crate) struct Stream {
     /// A non-informational inbound header block was delivered: the next inbound HEADERS on this
     /// stream is a trailer section (RFC 9113 §8.1).
     pub recv_final_headers: bool,
+    /// A request's header section had a `host`: its trailer section cannot have another.
+    pub recv_host: bool,
     /// Declared `content-length` of the inbound message, if any (RFC 9113 §8.1.1).
     pub content_length: Option<u64>,
     /// DATA payload bytes (padding excluded) received so far.
@@ -76,6 +80,7 @@ impl Stream {
             send_window: SendWindow::new(initial_send),
             recv_window: RecvWindow::new(initial_recv),
             recv_final_headers: false,
+            recv_host: false,
             content_length: None,
             recv_body_bytes: 0,
             opened_after_goaway: false,
@@ -1259,7 +1264,7 @@ impl Connection {
         // block) is a request; a later HEADERS on the same stream is a trailer section.
         let mut saw_connect = false;
         let mut saw_options = false;
-        let mut saw_host = false;
+        let mut saw_host = self.streams.get(&target).is_some_and(|s| s.recv_host);
         let mut http_scheme = false;
         let mut origin_form = false;
         let mut asterisk_form = false;
@@ -1369,7 +1374,11 @@ impl Connection {
                                     if !pseudo::is_valid_value(pseudo::AUTHORITY, value_b) {
                                         continue;
                                     }
-                                    saw_host |= is_request;
+                                    // check_pseudo_header: not empty, and one per stream.
+                                    if value_b.is_empty() || saw_host {
+                                        malformed = true;
+                                    }
+                                    saw_host = true;
                                 }
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
@@ -1451,6 +1460,7 @@ impl Connection {
         }
         if push_parent.is_none() && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
+                s.recv_host = saw_host;
                 if !saw_connect && s.content_length.is_none() {
                     s.content_length = content_length;
                 }

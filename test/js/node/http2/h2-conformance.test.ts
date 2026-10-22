@@ -2457,9 +2457,13 @@ describe("received field values (RFC 9113 §8.2.1, §8.3)", () => {
   });
 
   /** Answers one request of a fresh client with `frames`. Resolves once the client has answered `until`. */
-  async function answerRequest(frames: (raw: RawH2Server) => void, until: (f: Frame) => boolean) {
+  async function answerRequest(
+    frames: (raw: RawH2Server) => void,
+    until: (f: Frame) => boolean,
+    options: http2.ClientSessionOptions = {},
+  ) {
     const raw = await RawH2Server.listen();
-    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, options);
     const events: [string, http2.IncomingHttpHeaders][] = [];
     try {
       client.on("error", () => {});
@@ -2603,5 +2607,85 @@ describe("received field values (RFC 9113 §8.2.1, §8.3)", () => {
       expect(answer.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
       expect(events.map(([event]) => event)).toEqual(expected);
     }
+  });
+
+  test("an empty or a second host in a request is a stream PROTOCOL_ERROR", async () => {
+    const { ":authority": authority, ...rest } = request;
+    for (const base of [Object.entries(rest), Object.entries(request)]) {
+      for (const hosts of [[""], ["a", "a"], ["a", "b"], ["a", ""]]) {
+        const fields: Fields = [...base, ...hosts.map(host => ["host", host] as const)];
+        expect([hosts, await sendRequest(fields)]).toEqual([hosts, refused]);
+      }
+      // An invalid host is ignored, so it is not the first of two.
+      expect((await sendRequest([...base, ["host", "a b"], ["host", "a"], ["host", "a/b"]])).headers?.host).toBe("a");
+    }
+    const post = Object.entries({ ...request, ":method": "POST" });
+    for (const [extra, trailers] of [
+      [[["host", "a"]], [["host", "a"]]],
+      [[["host", "a"]], [["host", "b"]]],
+      [[], [["host", ""]]],
+      [
+        [],
+        [
+          ["host", "a"],
+          ["host", "a"],
+        ],
+      ],
+    ] as [Fields, Fields][]) {
+      const result = await sendRequest([...post, ...extra], {}, trailers);
+      expect([trailers, result.trailers, result.reset]).toEqual([trailers, undefined, ErrorCode.PROTOCOL_ERROR]);
+    }
+    expect((await sendRequest([...post, ["host", "a b"]], {}, [["host", "a"]])).trailers).toEqual({ host: "a" });
+  });
+
+  test("a :status with whitespace at an edge is a stream PROTOCOL_ERROR", async () => {
+    for (const strictFieldWhitespaceValidation of [true, false]) {
+      for (const value of [" 200", "200 ", "\t200", "200\t"]) {
+        const { events, answer } = await answerRequest(
+          raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock([[":status", value]])),
+          f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+          { strictFieldWhitespaceValidation },
+        );
+        expect([value, answer.payload.readUInt32BE(0), events]).toEqual([value, ErrorCode.PROTOCOL_ERROR, []]);
+      }
+    }
+  });
+
+  test("a :status that is not a status code of HTTP/2 is a stream PROTOCOL_ERROR", async () => {
+    const status = (value: string) => fieldBlock([[":status", value]]);
+    for (const value of [
+      "2x0",
+      "2000",
+      "20",
+      "+20",
+      "-20",
+      "1e2",
+      "2.0",
+      "0200",
+      "0xc8",
+      "200 OK",
+      "099",
+      "000",
+      "101",
+    ]) {
+      const { events, answer } = await answerRequest(
+        raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, status(value)),
+        f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+      );
+      expect([value, answer.payload.readUInt32BE(0), events]).toEqual([value, ErrorCode.PROTOCOL_ERROR, []]);
+    }
+    const { events } = await answerRequest(
+      raw => {
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, status("100"));
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, status("199"));
+        raw.sendFrame(FrameType.HEADERS, 0x5, 1, status("999"));
+      },
+      f => f.type === FrameType.SETTINGS && (f.flags & 1) !== 0,
+    );
+    expect(events).toEqual([
+      ["headers", { ":status": 100 }],
+      ["headers", { ":status": 199 }],
+      ["response", { ":status": 999 }],
+    ]);
   });
 });

@@ -1150,6 +1150,8 @@ pub(crate) struct H2FrameParser {
     // we buffer requests until we get the first settings ACK
     write_buffer: JsCell<Vec<u8>>,
     write_buffer_offset: Cell<usize>,
+    /// flush_stream_queue is on the stack: a flush() from the JS that it runs leaves the frame queue to it.
+    queue_dispatching: Cell<bool>,
     // TODO: this will be removed when I re-add header and data priorization
     outbound_queue_size: Cell<usize>,
 
@@ -2731,6 +2733,11 @@ impl H2FrameParser {
 
     /// be sure that we dont have any backpressure/data queued on writerBuffer before calling this
     fn flush_stream_queue(&self) -> usize {
+        // JS that a dequeue runs calls flush(), and the loop below goes on with the queue. A level for each call nests as deep as the queue is long.
+        if self.queue_dispatching.replace(true) {
+            return 0;
+        }
+        scopeguard::defer! { self.queue_dispatching.set(false); }
         bun_output::scoped_log!(
             H2FrameParser,
             "flushStreamQueue {}",
@@ -2747,6 +2754,10 @@ impl H2FrameParser {
                 // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the
                 // map entry exists. Separate heap allocation from `self`, so no aliasing.
                 let stream = unsafe { &mut *stream };
+                // A frame before this one, or a write from the JS of its dequeue, filled the write buffer.
+                if self.has_backpressure() {
+                    return written;
+                }
                 // reach backpressure
                 let result = stream.flush_queue(self, &mut written);
                 match result {
@@ -7607,6 +7618,7 @@ impl H2FrameParser {
             left_exception: Cell::new(false),
             write_buffer: JsCell::new(Vec::<u8>::default()),
             write_buffer_offset: Cell::new(0),
+            queue_dispatching: Cell::new(false),
             outbound_queue_size: Cell::new(0),
             streams: JsCell::new(BunHashMap::default()),
             hpack: JsCell::new(None),

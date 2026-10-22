@@ -8,7 +8,7 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, isDebug, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -1925,6 +1925,197 @@ describe("stream release after a queued END_STREAM", () => {
       server.close();
     }
   });
+});
+
+// A peer that opens with SETTINGS_INITIAL_WINDOW_SIZE = 0 leaves the last DATA frame of every response in
+// the queue of its stream. One SETTINGS frame that raises the window then lets one flush write them all.
+// The callback of each write ends its stream, and that ends in a flush of its own. If that flush runs the
+// queue again from inside the callback, the stack grows by one level for each stream.
+describe("one flush writes the queued frames of many streams", () => {
+  const initialWindowSize = (size: number) => {
+    const payload = Buffer.alloc(6);
+    payload.writeUInt16BE(0x4, 0);
+    payload.writeUInt32BE(size, 2);
+    return encodeFrame(FrameType.SETTINGS, 0, 0, payload);
+  };
+  const requests = (count: number) =>
+    Buffer.concat(
+      Array.from({ length: count }, (_, i) =>
+        encodeFrame(FrameType.HEADERS, 0x5, 1 + 2 * i, requestHeaderBlock("GET")),
+      ),
+    );
+
+  // [name, how the server answers one request]
+  const answers: [string, (stream: http2.ServerHttp2Stream) => void][] = [
+    [
+      "write(chunk); end()",
+      stream => {
+        stream.respond({ ":status": 200 });
+        stream.write("x");
+        stream.end();
+      },
+    ],
+    [
+      "end(chunk) with trailers",
+      stream => {
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        stream.end("x");
+      },
+    ],
+  ];
+  const compat = (_request: http2.Http2ServerRequest, response: http2.Http2ServerResponse) => response.end("x");
+
+  test.each([
+    ...answers.map(([name, answer]) => [name, answer, undefined] as const),
+    ["response.end(chunk)", undefined, compat] as const,
+  ])("%s: the flush of one stream's end does not run inside the flush of another", async (_, answer, onRequest) => {
+    const STREAMS = 50;
+    let depth = 0;
+    let maxDepth = 0;
+    let finished = 0;
+    const { promise: allAnswered, resolve: answered } = Promise.withResolvers<void>();
+    const { promise: allFinished, resolve: done } = Promise.withResolvers<void>();
+    const server = http2.createServer(onRequest);
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      stream.on("error", () => {});
+      // `_final` runs when the last write of the stream has completed. It flushes the session.
+      const final = stream._final;
+      stream._final = function (callback) {
+        maxDepth = Math.max(maxDepth, ++depth);
+        try {
+          return final.call(this, callback);
+        } finally {
+          depth--;
+        }
+      };
+      stream.on("finish", () => void (++finished === STREAMS && done()));
+      answer?.(stream);
+      if (stream.id === 2 * STREAMS - 1) answered();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.send(Buffer.concat([initialWindowSize(0), requests(STREAMS)]));
+      await allAnswered;
+      c.send(initialWindowSize(65535));
+      await allFinished;
+      expect({ maxDepth, finished }).toEqual({ maxDepth: 1, finished: STREAMS });
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // A chain of writes, each made from the callback of the one before it, to a peer that reads
+  // nothing. A write completes when its frame leaves the queue of its stream, so the chain must
+  // stop once the session has bytes that the socket refused.
+  test("a chain of writes stops when the session holds bytes that the socket refused", async () => {
+    const CHUNK = 8192;
+    const OFFERED = (12 << 20) / CHUNK;
+    let completed = 0;
+    const { promise: stopped, resolve: hasStopped } = Promise.withResolvers<void>();
+    const server = http2.createServer();
+    server.on("sessionError", () => {});
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      const chunk = Buffer.alloc(CHUNK, "x");
+      const next = (error?: Error | null) => {
+        if (error) return;
+        if (++completed === OFFERED) return hasStopped();
+        stream.write(chunk, next);
+      };
+      stream.write(chunk, next);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      // SETTINGS_INITIAL_WINDOW_SIZE = 2^31-1 and a connection WINDOW_UPDATE: every window is
+      // open, so only the socket holds the response back. The client never reads.
+      const windowSize = Buffer.alloc(6);
+      windowSize.writeUInt16BE(0x4, 0);
+      windowSize.writeUInt32BE(0x7fffffff, 2);
+      const increment = Buffer.alloc(4);
+      increment.writeUInt32BE(0x7fffffff - 65535, 0);
+      c.socket.pause();
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.SETTINGS, 0, 0, windowSize),
+          encodeFrame(FrameType.WINDOW_UPDATE, 0, 0, increment),
+          encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")),
+        ]),
+      );
+      // The chain either stops, or runs to the end because nothing stops it.
+      await Promise.race([stopped, Bun.sleep(2000)]);
+      expect({ stopped: completed < OFFERED, completed: completed > 0 }).toEqual({ stopped: true, completed: true });
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // 3000 streams take about 15 s on a debug build. The tests above cover the same flush there.
+  test.skipIf(isDebug || isASAN)(
+    "3000 queued streams do not overflow the stack of a default server",
+    async () => {
+      const fixture = String.raw`
+        const http2 = require("node:http2");
+        const net = require("node:net");
+        const STREAMS = 3000;
+        const frame = (type, flags, id, payload = Buffer.alloc(0)) => {
+          const header = Buffer.alloc(9);
+          header.writeUIntBE(payload.length, 0, 3);
+          header[3] = type;
+          header[4] = flags;
+          header.writeUInt32BE(id, 5);
+          return Buffer.concat([header, payload]);
+        };
+        // SETTINGS_INITIAL_WINDOW_SIZE
+        const initialWindowSize = size => frame(4, 0, 0, Buffer.from([0, 4, 0, 0, size >> 8, size & 255]));
+        const get = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 9]), Buffer.from("localhost")]);
+        let started = 0;
+        let ended = 0;
+        let socket;
+        const server = http2.createServer();
+        server.on("stream", stream => {
+          stream.respond({ ":status": 200 });
+          stream.write("x");
+          stream.end(() => {
+            if (++ended < STREAMS) return;
+            console.log(ended + " responses ended");
+            process.exit(0);
+          });
+          if (++started === STREAMS) socket.write(initialWindowSize(65535));
+        });
+        server.listen(0, "127.0.0.1", () => {
+          socket = net.connect(server.address().port, "127.0.0.1");
+          socket.resume();
+          const frames = [Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), initialWindowSize(0)];
+          for (let i = 0; i < STREAMS; i++) frames.push(frame(1, 0x5, 1 + 2 * i, get));
+          socket.write(Buffer.concat(frames));
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stderr is in the diff for debugging: it shows what the child threw.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "3000 responses ended\n",
+        stderr: expect.not.stringContaining("RangeError"),
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
 });
 
 // Stream resets are rate-limited per connection like nghttp2's stream_reset_ratelim (burst 1000,

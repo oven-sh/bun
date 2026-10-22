@@ -7,7 +7,7 @@ pub struct NoLonelyIf;
 const UNEXPECTED_LONELY_IF: Message =
     Message::new("unexpectedLonelyIf", "Unexpected if as the only statement in an else block.");
 
-/// `node` is the only statement of `block`, which is after an `else`.
+/// `node` is the only statement in `block`, which follows an `else`.
 fn fix<'a>(fixer: Fixer<'a>, node: Stmt<'a>, block: Stmt<'a>) -> Option<Fix> {
     let file = fixer.file();
     let StmtKind::If { yes: consequent, .. } = node.kind() else {
@@ -29,7 +29,7 @@ fn fix<'a>(fixer: Fixer<'a>, node: Stmt<'a>, block: Stmt<'a>) -> Option<Fix> {
             || last_if_token.is("++")
             || last_if_token.is("--"))
     {
-        // No semicolon would be inserted after the `if` statement any more.
+        // A semicolon would no longer be inserted after the `if` statement.
         return None;
     }
     let is_next_to_else = file.slice(Span::before(0, outer)).ends_with(b"else");
@@ -56,11 +56,11 @@ impl Rule for NoLonelyIf {
             && let Node::Stmt(outer) = block.parent()
             && matches!(outer.as_if(), Some((_, _, Some(no))) if no == block)
             && !ast_utils::are_braces_necessary(block)
-            // oxlint says nothing after an `else if`.
+            // oxlint doesn't report after an `else if`.
             && !(cx.language().is_oxlint && is_else_if(outer))
         {
             let whole = node.span();
-            // oxlint points at the keyword.
+            // oxlint reports at the keyword.
             let end = if cx.language().is_oxlint { whole.start + 2 } else { whole.end };
             cx.report(Span::new(whole.start, end), UNEXPECTED_LONELY_IF).fix(|fixer| fix(fixer, node, block));
         }

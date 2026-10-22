@@ -12,9 +12,9 @@ const NO_ACCESSOR_RECURSION: Message = Message::new("", "Disallow recursive acce
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The function whose `this` the `this` at a place is. `Some(None)`: that of a class.
+    /// Maps a node to the function that a `this` there belongs to. `Some(None)` means it belongs to a class.
     functions: AncestorMemo<'a, Option<Func<'a>>>,
-    /// The names of the accessors.
+    /// The accessors' names.
     keys: FxHashSet<Name<'a>>,
     /// `get #a() {}`, which is compared without the `#`.
     has_private_accessor: bool,
@@ -113,7 +113,7 @@ fn check<'a>(_: &NoAccessorRecursion, this: Expr<'a>, cx: &mut Cx<'a, NoAccessor
     }
 }
 
-/// `this.bar = 1`, `++this.bar`, and whatever is at most three levels below a destructuring assignment: `[this.bar] = a`,
+/// `this.bar = 1`, `++this.bar`, and anything at most three levels below a destructuring assignment: `[this.bar] = a`,
 /// but also `[a = this.bar] = b`.
 fn is_property_write(member: Expr) -> bool {
     if let Node::Expr(parent) = member.parent() {
@@ -127,7 +127,7 @@ fn is_property_write(member: Expr) -> bool {
     loop {
         let parent = child.parent();
         levels += match (child, parent) {
-            // A function and its body that is an expression are one level.
+            // A function and its expression body count as one level.
             (_, Node::Func(func)) if func.body_span().is_none() => 0,
             (Node::Expr(e), _) if e.is_parenthesized() => e.parens().len() + 1,
             _ => 1,

@@ -28,17 +28,17 @@ impl Rule for NoCaller {
         if !matches!(cx.text().get(name.start() as usize), Some(b'c' | b'#' | b'\\')) {
             return;
         }
-        // The `name` of ESLint's `PrivateIdentifier` is without the `#`.
+        // The `name` of ESLint's `PrivateIdentifier` doesn't include the `#`.
         let prop = name.bytes();
         let prop = prop.strip_prefix(b"#").unwrap_or(prop);
         if matches!(prop, b"callee" | b"caller") && obj.is_ident("arguments") && ast_utils::is_member_expression(e) {
-            // oxlint points at the property.
-            let place = if cx.language().is_oxlint { name.span() } else { e.span() };
-            cx.report(place, UNEXPECTED).data("prop", prop);
+            // oxlint reports at the property.
+            let report_span = if cx.language().is_oxlint { name.span() } else { e.span() };
+            cx.report(report_span, UNEXPECTED).data("prop", prop);
         }
     }
 
-    // What a class implements and what an interface extends is a `MemberExpression` too.
+    // The names in a class's `implements` and an interface's `extends` are `MemberExpression`s too.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         if let Some((name, _)) = ty.as_ref()
             && let (Some(object), Some(property)) = (name.get(0), name.get(1))

@@ -12,7 +12,8 @@ const NO_NEW_BUFFER: Message = Message::new(
 const USE_ALLOC_OR_FROM: Message =
     Message::new("", "`new Buffer()` is deprecated, use `Buffer.alloc()` or `Buffer.from()` instead.");
 
-/// `alloc` for a number, `from` for an array or a string. `None` if it cannot be told.
+/// `alloc` for a number, `from` for an array or a string. `None` if the argument's type can't be
+/// determined.
 fn determine_buffer_method<'a>(args: List<'a, Expr<'a>>) -> Option<&'static str> {
     if args.iter().any(|it| it.tag() == ExprTag::Spread) {
         return None;

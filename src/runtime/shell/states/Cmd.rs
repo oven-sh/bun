@@ -780,8 +780,6 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
                     // `get_body_value` is `&self`.
@@ -1030,7 +1028,7 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            self.exit_code = Some(e.get_errno() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1066,7 +1064,7 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            self.exit_code = Some(e.get_errno() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {

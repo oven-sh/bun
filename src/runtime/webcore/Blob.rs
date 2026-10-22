@@ -149,7 +149,7 @@ pub(crate) trait BlobExt {
         ctx: *mut H,
         cx: &bun_jsc::JsThread<'_>,
     ) -> JsResult<()>;
-    fn do_image(
+    fn image(
         &self,
         this_value: JsWrapper<'_, Blob>,
         cx: &mut JsScope<'_>,
@@ -181,7 +181,7 @@ pub(crate) trait BlobExt {
     where
         F: jsc::ConsoleFormatter,
         W: core::fmt::Write;
-    fn get_stream(
+    fn stream(
         &self,
         this_value: JsWrapper<'_, Blob>,
         cx: &mut JsScope<'_>,
@@ -195,27 +195,27 @@ pub(crate) trait BlobExt {
         get_cached: fn(JSValue) -> Option<JSValue>,
         set_cached: fn(JSValue, &JSGlobalObject, JSValue),
     ) -> JsResult<JSValue>;
-    fn get_text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
-    fn get_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
-    fn get_array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
-    fn get_bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
-    fn get_form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    fn text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    fn bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_exists_sync(&self) -> JSValue;
-    fn do_write(
+    fn write(
         &self,
         cx: &mut JsScope<'_>,
         data: JsLocal<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue>;
-    fn do_unlink(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue>;
-    fn get_exists(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    fn unlink(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue>;
+    fn exists(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn pipe_readable_stream_to_blob(
         &self,
         cx: &bun_jsc::JsThread<'_>,
         readable_stream: ReadableStream,
         options: &WriteFileOptions,
     ) -> JsResult<JSValue>;
-    fn get_writer(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue>;
+    fn writer(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue>;
     fn get_slice_from(
         &self,
         global_this: &JSGlobalObject,
@@ -223,7 +223,7 @@ pub(crate) trait BlobExt {
         relative_end: i64,
         content_type: BlobContentType,
     ) -> JSValue;
-    fn get_slice(
+    fn slice(
         &self,
         cx: &mut JsScope<'_>,
         start: JsLocal<'_>,
@@ -243,7 +243,7 @@ pub(crate) trait BlobExt {
     fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader>;
     fn get_last_modified(&self) -> f64;
     fn get_size_for_bindings(&self) -> u64;
-    fn get_stat(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    fn stat(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_size(&self) -> f64;
     fn resolve_size(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
@@ -644,7 +644,7 @@ impl BlobExt for Blob {
     /// the proto entry covers Blob/BunFile/S3File in one place; the actual
     /// construction is `Image::from_blob_js` so Blob.rs doesn't grow image
     /// knowledge.
-    fn do_image(
+    fn image(
         &self,
         this_value: JsWrapper<'_, Blob>,
         cx: &mut JsScope<'_>,
@@ -1091,7 +1091,7 @@ impl BlobExt for Blob {
         }
         Ok(())
     }
-    fn get_stream(
+    fn stream(
         &self,
         this_value: JsWrapper<'_, Blob>,
         cx: &mut JsScope<'_>,
@@ -1149,31 +1149,31 @@ impl BlobExt for Blob {
 
         Ok(stream)
     }
-    fn get_text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone(); // hold a ref across the call
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_string(&cx, Lifetime::Clone))
     }
 
-    fn get_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_json(&cx, Lifetime::Share))
     }
 
-    fn get_array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_array_buffer(&cx, Lifetime::Clone))
     }
 
-    fn get_bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_uint8_array(&cx, Lifetime::Clone))
     }
 
-    fn get_form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_form_data(&cx, Lifetime::Temporary))
@@ -1205,7 +1205,7 @@ impl BlobExt for Blob {
         };
         JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
-    fn do_write(
+    fn write(
         &self,
         cx: &mut JsScope<'_>,
         data: JsLocal<'_>,
@@ -1261,7 +1261,7 @@ impl BlobExt for Blob {
         )
     }
 
-    fn do_unlink(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    fn unlink(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
 
         validate_writable_blob(cx.global(), self)?;
@@ -1275,7 +1275,7 @@ impl BlobExt for Blob {
     }
 
     // This mostly means 'can it be read?'
-    fn get_exists(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn exists(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         if self.is_s3() {
             return crate::webcore::s3_file::S3BlobStatTask::exists(&cx.js_thread(), self);
         }
@@ -1493,7 +1493,7 @@ impl BlobExt for Blob {
         }
     }
 
-    fn get_writer(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    fn writer(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let (global_this, context) = (cx.global(), cx.context());
         let options = options.to_js();
@@ -1739,7 +1739,7 @@ impl BlobExt for Blob {
     }
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo
-    fn get_slice(
+    fn slice(
         &self,
         cx: &mut JsScope<'_>,
         start: JsLocal<'_>,
@@ -1938,7 +1938,7 @@ impl BlobExt for Blob {
 
         self.size.get()
     }
-    fn get_stat(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn stat(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_this = cx.global();
         // TODO: make this async for files

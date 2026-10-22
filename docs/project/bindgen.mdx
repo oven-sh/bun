@@ -587,8 +587,9 @@ A property of `proto` is one of these.
 | `[{ rustName, args, .. }, ..]`                | a native function with [overloads](#overloads)                                             |
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
-function is named after the property, and `rustName` names it otherwise, which tells apart the
-overloads of a function, and two members of `proto` and `static` that share a name. Two keys can
+function is named after the property. `rustName` is for a name that is taken: the overloads of a
+function, two members of `proto` and `static` that share a name, and a property whose name is already
+a native function of the struct (`close` is `do_close` beside a native `close`). Two keys can
 also have the same `rustName`. The getter of `x` is `get_x` and its setter is `set_x`, and a leading
 `_` of the property is dropped: `_idleStart` is `get_idle_start`.
 `setter: true` gives the setter the getter's `capability`, and `setter: { capability: "js" }` its own. An

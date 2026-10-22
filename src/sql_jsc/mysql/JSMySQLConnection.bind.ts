@@ -6,10 +6,10 @@ export const MySQLConnection = b.class({
   finalize: true,
   internalFields: ["onconnect", "onclose", "onretire", "checkServerIdentity", "columnTransform"],
   proto: {
-    close: { capability: "js", rustName: "do_close" },
-    flush: { rustName: "do_flush" },
-    hold: { rustName: "do_hold" },
+    close: { capability: "js" },
+    flush: {},
+    hold: {},
     inTransaction: { getter: b.bool },
-    unhold: { capability: "js", rustName: "do_unhold" },
+    unhold: { capability: "js" },
   },
 });

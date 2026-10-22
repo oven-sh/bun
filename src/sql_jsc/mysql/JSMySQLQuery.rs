@@ -123,7 +123,7 @@ impl JSMySQLQuery {
         Ok(())
     }
 
-    pub fn do_cancel(&self, _: &mut JsScope<'_>) {
+    pub fn cancel(&self, _: &mut JsScope<'_>) {
         let _entered = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
         // The queue drops a request that ended when it gets to it.
         self.reject_when(
@@ -132,7 +132,7 @@ impl JSMySQLQuery {
         );
     }
 
-    pub fn set_mode_from_js(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
+    pub fn set_mode(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
         let js_mode = mode.to_js();
         if !js_mode.is_number() {

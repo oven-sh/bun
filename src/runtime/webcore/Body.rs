@@ -1729,7 +1729,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
-    fn get_text(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn text(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_object = cx.global();
         let value = self.get_body_value();
@@ -1790,7 +1790,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     /// <https://fetch.spec.whatwg.org/#dom-body-textstream>
-    fn get_text_stream(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn text_stream(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_this = cx.global();
         // Step 1: If this is unusable, throw a TypeError.
@@ -1866,7 +1866,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(())
     }
 
-    fn get_json(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn json(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_object = cx.global();
         let value = self.get_body_value();
@@ -1911,7 +1911,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         result
     }
 
-    fn get_array_buffer(
+    fn array_buffer(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -1968,11 +1968,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         result
     }
 
-    fn get_bytes(
-        &self,
-        this_value: JsWrapper<'_, Self>,
-        cx: &mut JsScope<'_>,
-    ) -> JsResult<JSValue> {
+    fn bytes(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_object = cx.global();
         let value = self.get_body_value();
@@ -2020,7 +2016,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         result
     }
 
-    fn get_form_data(
+    fn form_data(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -2116,7 +2112,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(JSPromise::wrap_value(global_object, js_value))
     }
 
-    fn get_blob(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    fn blob(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.get_blob_with_this_value(cx.global(), this_value.to_js())
     }
 

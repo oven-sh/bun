@@ -9,9 +9,9 @@ export const SocketAddress = b.class({
   construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
   proto: {
     address: { getter: b.any, cache: true, capability: "js", throws: true },
-    addrfamily: { getter: b.u16, rustName: "addr_family", configurable: false },
+    addrfamily: { getter: b.u16, configurable: false },
     family: { getter: b.string.local, cache: true, capability: "heap" },
-    flowlabel: { getter: b.u32, rustName: "flow_label" },
+    flowlabel: { getter: b.u32 },
     port: { getter: b.u16 },
     toJSON: { returns: b.any, capability: "js", throws: true },
   },

@@ -43,7 +43,7 @@ const compressionStream = <Init extends object, Params extends object>(
     proto: {
       close: {},
       init: { ...method, ...init },
-      onerror: { getter: b.any, setter: { capability: "js" }, passThis: true, rustName: "on_error" },
+      onerror: { getter: b.any, setter: { capability: "js" }, passThis: true },
       params,
       reset: method,
       write,

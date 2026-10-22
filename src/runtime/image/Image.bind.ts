@@ -24,7 +24,7 @@ export const Image = b.class({
     buffer: terminal,
     bytes: terminal,
     /** toBase64() with the `data:{mime};base64,` prefix. */
-    dataurl: { ...terminal, rustName: "data_url" },
+    dataurl: terminal,
     flip: chainable,
     flop: chainable,
     heic: chainableWithOptions,

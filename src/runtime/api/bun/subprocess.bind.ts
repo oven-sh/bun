@@ -27,7 +27,6 @@ export const Subprocess = b.class({
       capability: "js",
       throws: true,
       length: 1,
-      rustName: "do_send",
     },
     signalCode: { getter: b.any, capability: "js" },
     stderr: { ...stdio, throws: true, cache: true },

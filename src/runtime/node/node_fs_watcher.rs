@@ -955,7 +955,7 @@ fn emit_js<const EVENT_TYPE: EventType>(
 }
 
 impl FSWatcher {
-    pub(crate) fn do_ref(&self) {
+    pub(crate) fn r#ref(&self) {
         if !self.closed.get() && !self.persistent.get() {
             self.persistent.set(true);
             let vm_ctx = self.vm_ctx();
@@ -963,7 +963,7 @@ impl FSWatcher {
         }
     }
 
-    pub(crate) fn do_unref(&self) {
+    pub(crate) fn unref(&self) {
         if self.persistent.get() {
             self.persistent.set(false);
             let vm_ctx = self.vm_ctx();

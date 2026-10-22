@@ -1053,7 +1053,7 @@ impl readable_stream::SourceContext for FileReader {
 }
 
 impl Source {
-    pub fn set_raw_mode_from_js(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) -> JSValue {
+    pub fn set_raw_mode(&self, cx: &mut JsScope<'_>, flag: JsLocal<'_>) -> JSValue {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
         match self.context.set_raw_mode(flag == JSValue::TRUE) {
@@ -1062,7 +1062,7 @@ impl Source {
         }
     }
 
-    pub fn set_flowing_from_js(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
+    pub fn set_flowing(&self, _: &mut JsScope<'_>, flag: JsLocal<'_>) {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
         self.context.set_flowing(flag == JSValue::TRUE);

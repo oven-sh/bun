@@ -7,12 +7,12 @@ export const PostgresSQLConnection = b.class({
   internalFields: ["onconnect", "onclose", "onretire", "checkServerIdentity", "columnTransform", "onnotification"],
   proto: {
     close: { capability: "js", rustName: "do_close" },
-    flush: { rustName: "do_flush" },
-    hold: { rustName: "do_hold" },
+    flush: {},
+    hold: {},
     inTransaction: { getter: b.bool },
     onnotification: { setter: true, internalField: "onnotification" },
-    ref: { rustName: "do_ref" },
+    ref: {},
     sasl: { getter: b.bool },
-    unhold: { capability: "js", rustName: "do_unhold" },
+    unhold: { capability: "js" },
   },
 });

@@ -528,7 +528,7 @@ impl S3Client {
         )
     }
 
-    pub(crate) fn list_objects(
+    pub(crate) fn list(
         &self,
         cx: &mut JsScope<'_>,
         input: JsLocal<'_>,
@@ -697,7 +697,7 @@ impl S3Client {
         S3File::S3BlobStatTask::stat(&cx, &blob)
     }
 
-    pub(crate) fn static_list_objects(
+    pub(crate) fn static_list(
         cx: &mut JsScope<'_>,
         input: JsLocal<'_>,
         options: JsLocal<'_>,

@@ -20,7 +20,7 @@ impl TimeoutObject {
         Self::init_with(cx, id, kind, interval, callback, arguments)
     }
 
-    pub(crate) fn do_refresh(
+    pub(crate) fn refresh(
         this: &Self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,

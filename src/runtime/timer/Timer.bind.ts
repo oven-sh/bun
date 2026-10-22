@@ -5,10 +5,10 @@ export default b.module({ rustPath: "crate::timer::timer::internal_bindings" });
 export const monotonicNowMs = b.fn({ returns: b.f64 });
 
 const chainable = { returns: b.self, passThis: true, invalidThis: "undefined" } as const;
-const destroyed = { getter: b.bool } as const;
-const hasRef = { returns: b.bool, invalidThis: "undefined" } as const;
 const ref = { ...chainable, rustName: "do_ref" } as const;
 const unref = { ...chainable, rustName: "do_unref" } as const;
+const destroyed = { getter: b.bool } as const;
+const hasRef = { returns: b.bool, invalidThis: "undefined" } as const;
 const dispose = { capability: "js", invalidThis: "undefined", name: "" } as const;
 const toPrimitive = { returns: b.u64, throws: true, invalidThis: "undefined", name: "" } as const;
 
@@ -27,7 +27,7 @@ export const Timeout = b.class({
     close: { ...chainable, capability: "js" },
     hasRef,
     ref,
-    refresh: { ...chainable, capability: "js", rustName: "do_refresh" },
+    refresh: { ...chainable, capability: "js" },
     unref,
     "@@dispose": dispose,
     "@@toPrimitive": toPrimitive,

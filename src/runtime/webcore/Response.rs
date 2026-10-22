@@ -528,7 +528,7 @@ impl Response {
         self.url.get().to_js(cx.global())
     }
 
-    pub(crate) fn get_response_type(&self, cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue {
         if self.init.get().status_code < 200 {
             return cx.global().common_strings().error();
         }
@@ -926,10 +926,7 @@ impl Response {
         }
     }
 
-    pub(crate) fn construct_redirect(
-        cx: &mut JsScope<'_>,
-        args: &[JsLocal<'_>],
-    ) -> JsResult<JSValue> {
+    pub(crate) fn redirect(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
         let global_this = cx.global();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         let args = JsLocal::to_js_slice(args);
@@ -980,7 +977,7 @@ impl Response {
         Ok(unsafe { Response::to_js(ptr, global_this) })
     }
 
-    pub(crate) fn construct_error(cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn error(cx: &mut JsScope<'_>) -> JSValue {
         let global_this = cx.global();
         let response = bun_core::heap::into_raw(Box::new(Response {
             init: JsCell::new(Init {

@@ -34,7 +34,7 @@ export const H2FrameParser = b.class({
   ],
   proto: {
     altsvc: { ...js, args: { origin: b.any, value: b.any, streamId: b.any } },
-    bufferSize: { returns: b.f64, rustName: "get_buffer_size" },
+    bufferSize: { returns: b.f64 },
     detach: { capability: "js", rustName: "detach_from_js" },
     emitAbortToAllStreams: { capability: "js" },
     emitErrorToAllStreams: { ...js, args: { code: b.any } },
@@ -60,11 +60,11 @@ export const H2FrameParser = b.class({
     rstStream: { ...method, args: { streamId: b.any, code: b.any }, length: 1 },
     sendTrailers: { ...js, args: { streamId: b.any, headers: b.any, sensitiveHeaders: b.any }, length: 2 },
     setLocalWindowSize: { ...js, args: { windowSize: b.any } },
-    setNativeSocket: { args: { socket: b.any }, capability: "js", rustName: "set_native_socket_from_js" },
+    setNativeSocket: { args: { socket: b.any }, capability: "js" },
     setNextStreamID: { ...js, args: { streamId: b.any } },
     setStreamContext: { ...js, args: { streamId: b.any, context: b.any } },
     setStreamReading: { args: { streamId: b.any, reading: b.any }, capability: "js" },
-    settings: { ...js, args: { settings: b.any }, returns: b.bool, rustName: "update_settings" },
+    settings: { ...js, args: { settings: b.any }, returns: b.bool },
     writeStream: {
       ...method,
       args: { streamId: b.any, data: b.any, encoding: b.any, close: b.any, callback: b.any, deferCallback: b.any },

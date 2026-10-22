@@ -7,6 +7,6 @@ export const S3Stat = b.class({
     etag: { getter: b.string, cache: true },
     lastModified: { getter: b.f64.asDate, cache: true },
     size: { getter: b.u64, cache: true },
-    type: { getter: b.string, cache: true, rustName: "content_type" },
+    type: { getter: b.string, cache: true },
   },
 });

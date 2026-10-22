@@ -407,7 +407,7 @@ impl PostgresSQLQuery {
         Ok(this_value)
     }
 
-    pub fn set_pending_value_from_js(
+    pub fn set_pending_value(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -416,7 +416,7 @@ impl PostgresSQLQuery {
         js::pending_value_set_cached(this_value.to_js(), cx.global(), value.to_js());
     }
 
-    pub fn set_mode_from_js(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
+    pub fn set_mode(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
         let js_mode = mode.to_js();
         if !js_mode.is_number() {
@@ -438,7 +438,7 @@ impl PostgresSQLQuery {
         Ok(())
     }
 
-    pub fn do_run(
+    pub fn run(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -536,10 +536,10 @@ impl PostgresSQLQuery {
         Ok(())
     }
 
-    pub fn do_cancel(&self, _: &mut JsScope<'_>) {
+    pub fn cancel(&self, _: &mut JsScope<'_>) {
         match self.connection() {
             Some(connection) => connection.cancel(self),
-            // `do_run` has not queued it: it refuses a query that is not `Pending`.
+            // `run` has not queued it: it refuses a query that is not `Pending`.
             None if self.status.get() == Status::Pending => self.status.set(Status::Fail),
             None => {}
         }

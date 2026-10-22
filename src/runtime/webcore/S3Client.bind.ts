@@ -9,7 +9,7 @@ const members = (prefix: "" | "static_") =>
     delete: { ...pathMethod, rustName: `${prefix}unlink` },
     exists: { ...pathMethod, rustName: `${prefix}exists` },
     file: { ...pathMethod, rustName: `${prefix}file` },
-    list: { ...method, args: { input: b.any, options: b.any }, rustName: `${prefix}list_objects` },
+    list: { ...method, args: { input: b.any, options: b.any }, rustName: `${prefix}list` },
     /** `presign(path, undefined)` is not `presign(path)`: see `presign_args`. */
     presign: { ...method, args: { args: b.any.variadic }, length: 2, rustName: `${prefix}presign` },
     size: { ...pathMethod, rustName: `${prefix}size` },

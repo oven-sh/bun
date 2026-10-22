@@ -870,7 +870,7 @@ pub struct NewSource<C: SourceContext> {
     /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
     /// interior-mutable.
     pub is_closed: Cell<bool>,
-    /// The context of the script that started reading ([`Self::start_from_js`]). The stream's
+    /// The context of the script that started reading ([`Self::start`]). The stream's
     /// end is not reported to a `Bun.ModuleGraph` that was disposed meanwhile: closing the JS
     /// stream settles every read its script is waiting on.
     pub reader_context: Cell<Option<jsc::ContextId>>,
@@ -1072,7 +1072,7 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { &mut *Self::new(init) }
     }
 
-    pub fn set_ref(&self, enable: bool) {
+    pub fn update_ref(&self, enable: bool) {
         self.context.set_ref_unref(enable);
     }
 
@@ -1249,7 +1249,7 @@ impl<C: SourceContext> NewSource<C> {
 // ─── codegen-facing inherent methods ─────────────────────────────────────────
 // The thunks of `ReadableStream.bind.ts` call these by exact name on `NewSource<C>`.
 impl<C: SourceContext> NewSource<C> {
-    pub fn pull_from_js(
+    pub fn pull(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -1271,7 +1271,7 @@ impl<C: SourceContext> NewSource<C> {
         Self::process_result(this_value.to_js(), &cx, flags.to_js(), result)
     }
 
-    pub fn start_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn start(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_this = cx.global();
         self.global_this
@@ -1286,7 +1286,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn get_is_closed_from_js(&self) -> bool {
+    pub fn get_is_closed(&self) -> bool {
         self.is_closed.get()
     }
 
@@ -1332,7 +1332,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn drain_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn drain(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let mut list = self.context.drain_internal_buffer();
         if list.len() > 0 {
             // Ownership of the buffer transfers to JSC: `to_js` installs
@@ -1356,23 +1356,23 @@ impl<C: SourceContext> NewSource<C> {
         self.context.to_buffered_value(&cx.js_thread(), action)
     }
 
-    pub fn text_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.to_buffered_value_from_js(cx, streams::BufferActionTag::Text)
     }
 
-    pub fn array_buffer_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.to_buffered_value_from_js(cx, streams::BufferActionTag::ArrayBuffer)
     }
 
-    pub fn blob_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn blob(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.to_buffered_value_from_js(cx, streams::BufferActionTag::Blob)
     }
 
-    pub fn bytes_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.to_buffered_value_from_js(cx, streams::BufferActionTag::Bytes)
     }
 
-    pub fn json_from_js(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.to_buffered_value_from_js(cx, streams::BufferActionTag::Json)
     }
 }

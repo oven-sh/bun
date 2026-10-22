@@ -14,7 +14,7 @@ export const Listener = b.class({
     getsockname: { args: { out: b.any }, capability: "js", throws: true },
     hostname: { getter: b.string.utf8.optional, cache: true },
     port: { getter: b.u16.optional },
-    ref: { capability: "js", passThis: true, rustName: "ref_" },
+    ref: { capability: "js", passThis: true },
     reload: { args: { options: b.any }, capability: "js", throws: true },
     stop: { args: { closeActiveConnections: b.any }, capability: "js" },
     unix: { getter: b.string.utf8.optional, cache: true },

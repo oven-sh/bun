@@ -213,8 +213,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
 const args = (names: readonly string[]): Record<string, b.Type> =>
   Object.fromEntries(names.map(name => (name.startsWith("...") ? [name.slice(3), b.any.variadic] : [name, b.any])));
 
-const eventHandler = (rustName: string) =>
-  ({ getter: b.any, setter: { capability: "js" }, passThis: true, rustName }) as const;
+const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 
 export const RedisClient = b.class({
   rustPath: "crate::valkey_jsc::JSValkeyClient",
@@ -240,11 +239,11 @@ export const RedisClient = b.class({
           ] as const,
       ),
       ["bufferedAmount", { getter: b.usize }] as const,
-      ["close", { capability: "js", throws: true, rustName: "js_disconnect" }] as const,
+      ["close", { capability: "js", throws: true }] as const,
       ["connected", { getter: b.bool }] as const,
       ["duplicate", { returns: b.any, capability: "js", throws: true }] as const,
-      ["onclose", eventHandler("on_close")] as const,
-      ["onconnect", eventHandler("on_connect")] as const,
+      ["onclose", eventHandler] as const,
+      ["onconnect", eventHandler] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });

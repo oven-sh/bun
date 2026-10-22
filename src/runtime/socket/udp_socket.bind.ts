@@ -38,7 +38,7 @@ export const UDPSocket = b.class({
     fd: { getter: b.i32 },
     hostname: { ...js, getter: b.any, cache: true },
     port: { getter: b.i32.optional, cache: true },
-    ref: { rustName: "ref_" },
+    ref: {},
     reload: { ...js, passThis: true, args: { options: b.any } },
     remoteAddress: { ...js, getter: b.any, cache: true },
     /** `(data)` when connected, `(data, port, address)` when not. */

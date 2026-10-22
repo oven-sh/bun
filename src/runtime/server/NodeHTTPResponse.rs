@@ -503,7 +503,7 @@ impl NodeHTTPResponse {
     /* Pipelined flood prevention pauses READS on the connection, legal after the in-flight
      * response has ended — so this intentionally skips doPause's ENDED/REQUEST_HAS_COMPLETED
      * guards (those exist for request-body flow control). */
-    pub(crate) fn pause_socket_reads(&self) {
+    pub(crate) fn pause_reads(&self) {
         let flags = self.flags.get();
         let Some(raw) = self.reader() else {
             return;
@@ -1360,7 +1360,7 @@ impl NodeHTTPResponse {
         self.handle_abort_or_timeout::<{ AbortEvent::Timeout }>(JSValue::ZERO);
     }
 
-    pub(crate) fn do_pause(&self) -> bool {
+    pub(crate) fn pause(&self) -> bool {
         scoped_log!(NodeHTTPResponse, "doPause");
         let flags = self.flags.get();
         let ended = flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::ENDED);
@@ -1375,7 +1375,7 @@ impl NodeHTTPResponse {
         true
     }
 
-    pub(crate) fn do_resume(&self) -> bool {
+    pub(crate) fn resume(&self) -> bool {
         scoped_log!(NodeHTTPResponse, "doResume");
         // Unconditional: a paused socket defers the peer's FIN until it is resumed.
         self.resume_socket();
@@ -2045,7 +2045,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn set_on_writable(
+    pub(crate) fn set_onwritable(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -2073,7 +2073,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn get_on_writable(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+    pub(crate) fn get_onwritable(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         // Only the armed drain callback of a live response: end() and a close leave the slot as it was.
         if self.is_done() {
             return JSValue::UNDEFINED;
@@ -2083,7 +2083,7 @@ impl NodeHTTPResponse {
             .unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn get_on_abort(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+    pub(crate) fn get_onabort(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::UNDEFINED;
@@ -2091,7 +2091,7 @@ impl NodeHTTPResponse {
         js::on_aborted_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn set_on_abort(
+    pub(crate) fn set_onabort(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -2114,7 +2114,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn get_on_data(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+    pub(crate) fn get_ondata(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::on_data_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 
@@ -2143,7 +2143,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn set_on_data(
+    pub(crate) fn set_ondata(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,

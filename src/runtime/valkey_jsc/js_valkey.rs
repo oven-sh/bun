@@ -972,7 +972,7 @@ impl JSValkeyClient {
         self.do_connect(cx.global(), this_value.to_js())
     }
 
-    pub(crate) fn js_disconnect(&self, _: &mut JsScope<'_>) -> JsResult<()> {
+    pub(crate) fn close(&self, _: &mut JsScope<'_>) -> JsResult<()> {
         // `disconnect()` -> `close()` can dispatch `on_close` synchronously,
         // which derefs. Hold a ref so `&self` stays live across the call.
         let _guard = self.ref_guard();
@@ -1001,11 +1001,11 @@ impl JSValkeyClient {
 
     // Both continue the `Bun.ModuleGraph` whose script set them, whoever's turn of the loop the
     // connection's events arrive in (and nothing, outside a graph).
-    pub(crate) fn get_on_connect(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+    pub(crate) fn get_onconnect(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::onconnect_get_cached(this_value.to_js())
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
-    pub(crate) fn set_on_connect(
+    pub(crate) fn set_onconnect(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -1018,11 +1018,11 @@ impl JSValkeyClient {
             value.to_js().with_graph_context_if_needed(global),
         );
     }
-    pub(crate) fn get_on_close(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+    pub(crate) fn get_onclose(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         js::onclose_get_cached(this_value.to_js())
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
-    pub(crate) fn set_on_close(
+    pub(crate) fn set_onclose(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,

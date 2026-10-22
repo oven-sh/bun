@@ -1481,7 +1481,7 @@ where
         GetOrStartLoadResult::Ready(None)
     }
 
-    pub(crate) fn do_subscriber_count(
+    pub(crate) fn subscriber_count(
         &self,
         cx: &mut JsScope<'_>,
         topic: JsLocal<'_>,
@@ -1505,7 +1505,7 @@ where
         Ok(self.app_mut().num_subscribers(topic.slice()))
     }
 
-    pub(crate) fn do_publish(
+    pub(crate) fn publish(
         &self,
         cx: &mut JsScope<'_>,
         topic: JsLocal<'_>,
@@ -1550,7 +1550,7 @@ where
         Ok(send_status_to_js(status, bytes.len(), "publish"))
     }
 
-    pub(crate) fn do_request_ip(
+    pub(crate) fn request_ip(
         &self,
         cx: &mut JsScope<'_>,
         request: JsLocal<'_>,
@@ -1573,7 +1573,7 @@ where
         )
     }
 
-    pub(crate) fn do_timeout<'a>(
+    pub(crate) fn timeout<'a>(
         &self,
         heap: &JsHeap<'a>,
         request: JsLocal<'a>,
@@ -1582,7 +1582,7 @@ where
         set_request_timeout(&self.config.get().address, heap, request, seconds)
     }
 
-    pub(crate) fn do_upgrade(
+    pub(crate) fn upgrade(
         &self,
         cx: &mut JsScope<'_>,
         request: JsLocal<'_>,
@@ -1818,7 +1818,7 @@ where
     ) {
         httplog!("onReload");
 
-        // SAFETY: `do_reload` is only reachable while the server is running
+        // SAFETY: `reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
         self.app_mut().clear_routes();
         for_each_mux_app!(self, |mux| {
@@ -1829,7 +1829,7 @@ where
         // config omits them. The async-context re-wrap is unconditional:
         // `with_async_context_if_needed` is a no-op when no ALS frame is
         // active, so re-wrapping on every reload keeps the captured frame in
-        // sync with the call-time context. The wrapper is `this` of the JS call to `do_reload`, alive even if
+        // sync with the call-time context. The wrapper is `this` of the JS call to `reload`, alive even if
         // `js_value` was downgraded after stop(). The slot writes must reach
         // it so the new handlers are GC-rooted.
         let server_js = self.js_value_assert_alive();
@@ -1947,7 +1947,7 @@ where
         Ok(true)
     }
 
-    pub(crate) fn do_reload<'a>(
+    pub(crate) fn reload<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
@@ -1976,7 +1976,7 @@ where
         Ok(this_value)
     }
 
-    pub(crate) fn do_fetch(
+    pub(crate) fn fetch(
         &self,
         cx: &mut JsScope<'_>,
         input: JsLocal<'_>,

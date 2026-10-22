@@ -181,7 +181,7 @@ pub(crate) trait CompressionStreamImpl:
 
     // Members shared by the classes in `node_zlib_binding.bind.ts`, with their helpers.
     #[inline]
-    fn set_on_error(
+    fn set_onerror(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -197,7 +197,7 @@ pub(crate) trait CompressionStreamImpl:
         }
     }
     #[inline]
-    fn get_on_error(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+    fn get_onerror(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
         Self::error_callback_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
     }
 

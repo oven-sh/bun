@@ -7,7 +7,7 @@ export const FSWatcher = b.class({
   internalFields: ["listener"],
   proto: {
     close: { capability: "js", rustName: "do_close" },
-    ref: { rustName: "do_ref" },
-    unref: { rustName: "do_unref" },
+    ref: {},
+    unref: {},
   },
 });

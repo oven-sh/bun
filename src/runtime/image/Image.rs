@@ -987,7 +987,7 @@ impl Image {
 
     /// `data:image/{format};base64,{…}`. Same encode as `.toBase64()` plus the
     /// MIME prefix, so it drops straight into `<img src>`.
-    pub(crate) fn data_url<'a>(
+    pub(crate) fn dataurl<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,

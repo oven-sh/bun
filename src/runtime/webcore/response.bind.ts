@@ -10,15 +10,15 @@ const read = { ...method, passThis: true } as const;
 /** Members of the trait `BodyMixin`. */
 const body = {
   rustTraits: ["crate::webcore::body::BodyMixin"],
-  arrayBuffer: { ...read, rustName: "get_array_buffer" },
-  blob: { ...read, rustName: "get_blob" },
+  arrayBuffer: read,
+  blob: read,
   body: cached,
   bodyUsed: { getter: b.bool, capability: "js" },
-  bytes: { ...read, rustName: "get_bytes" },
-  formData: { ...read, rustName: "get_form_data" },
-  json: { ...read, rustName: "get_json" },
-  text: { ...read, rustName: "get_text" },
-  textStream: { ...method, rustName: "get_text_stream" },
+  bytes: read,
+  formData: read,
+  json: read,
+  text: read,
+  textStream: method,
 } as const;
 const clone = { ...method, passThis: true, rustName: "do_clone", length: 1 } as const;
 
@@ -83,14 +83,14 @@ export const Response = b.class({
     statusText: cached,
     text: body.text,
     textStream: body.textStream,
-    type: { ...getter, rustName: "response_type" },
+    type: getter,
     url: cached,
   },
   static: {
-    error: { returns: b.any, capability: "js", rustName: "construct_error" },
+    error: { returns: b.any, capability: "js" },
     /** `Response.json()` is an empty body and `Response.json(undefined)` throws. */
     json: { ...method, args: { args: b.any.variadic }, rustName: "construct_json" },
     /** `Response.redirect()` is to "" and `Response.redirect(undefined)` to "undefined". */
-    redirect: { ...method, args: { args: b.any.variadic }, rustName: "construct_redirect" },
+    redirect: { ...method, args: { args: b.any.variadic } },
   },
 });

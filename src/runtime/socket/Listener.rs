@@ -918,7 +918,7 @@ impl Listener {
         JsLocal::new(heap, fd)
     }
 
-    pub(crate) fn ref_<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
+    pub(crate) fn r#ref<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
         if matches!(self.listener.get(), ListenerType::None) {
             return;
         }

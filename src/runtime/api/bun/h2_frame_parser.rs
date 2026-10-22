@@ -4573,11 +4573,7 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn update_settings(
-        &self,
-        cx: &mut JsScope<'_>,
-        settings: JsLocal<'_>,
-    ) -> JsResult<bool> {
+    pub(crate) fn settings(&self, cx: &mut JsScope<'_>, settings: JsLocal<'_>) -> JsResult<bool> {
         let global_object = cx.global();
         let settings = settings.to_js();
         self.load_settings_from_js_value(global_object, settings)?;
@@ -5116,7 +5112,7 @@ impl H2FrameParser {
     }
 
     // get memory in bytes
-    pub(crate) fn get_buffer_size(&self) -> f64 {
+    pub(crate) fn buffer_size(&self) -> f64 {
         (self.write_buffer.get().len_u32() as u64 + self.queued_data_size.get()) as f64
     }
 
@@ -7284,7 +7280,7 @@ impl H2FrameParser {
         self.detach_native_socket();
     }
 
-    pub(crate) fn set_native_socket_from_js(&self, _: &mut JsScope<'_>, socket: JsLocal<'_>) {
+    pub(crate) fn set_native_socket(&self, _: &mut JsScope<'_>, socket: JsLocal<'_>) {
         let socket = socket.to_js();
         self.detach_native_socket();
         if let Some(socket) = TLSSocket::from_js(socket) {

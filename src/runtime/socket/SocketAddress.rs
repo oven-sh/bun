@@ -559,7 +559,7 @@ impl SocketAddress {
     }
 
     /// `sockaddr.addrfamily`
-    pub(crate) fn get_addr_family(&self) -> u16 {
+    pub(crate) fn get_addrfamily(&self) -> u16 {
         self.family() as u16
     }
 
@@ -588,7 +588,7 @@ impl SocketAddress {
         u16::from_be(self._addr.port_raw())
     }
 
-    pub(crate) fn get_flow_label(&self) -> u32 {
+    pub(crate) fn get_flowlabel(&self) -> u32 {
         self.flow_label().unwrap_or(0)
     }
 
@@ -641,7 +641,7 @@ impl SocketAddress {
             address,
             family,
             port: JSValue::js_number(f64::from(self.port())),
-            flowlabel: JSValue::js_number(f64::from(self.get_flow_label())),
+            flowlabel: JSValue::js_number(f64::from(self.get_flowlabel())),
         };
         Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
     }

@@ -707,7 +707,7 @@ impl Subprocess<'_> {
         }
     }
 
-    pub(crate) fn do_send(
+    pub(crate) fn send(
         &self,
         cx: &mut JsScope<'_>,
         message: JsLocal<'_>,

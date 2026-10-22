@@ -2069,30 +2069,30 @@ fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
 }
 
 impl BuildArtifact {
-    pub(crate) fn get_text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.blob.get_text(cx)
+    pub(crate) fn text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.blob.text(cx)
     }
 
-    pub(crate) fn get_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.blob.get_json(cx)
+    pub(crate) fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.blob.json(cx)
     }
 
-    pub(crate) fn get_array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.blob.get_array_buffer(cx)
+    pub(crate) fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.blob.array_buffer(cx)
     }
 
-    pub(crate) fn get_slice(
+    pub(crate) fn slice(
         &self,
         cx: &mut JsScope<'_>,
         start: JsLocal<'_>,
         end: JsLocal<'_>,
         content_type: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        self.blob.get_slice(cx, start, end, content_type)
+        self.blob.slice(cx, start, end, content_type)
     }
 
-    /// Not `Blob::get_stream`, which writes `JSBlob::m_stream`: `this_value` is a `JSBuildArtifact` with its own slot.
-    pub(crate) fn get_stream(
+    /// Not `Blob::stream`, which writes `JSBlob::m_stream`: `this_value` is a `JSBuildArtifact` with its own slot.
+    pub(crate) fn stream(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -2131,15 +2131,15 @@ impl BuildArtifact {
         self.blob.get_size()
     }
 
-    pub(crate) fn get_mime_type(&self, cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue {
         self.blob.get_type(cx)
     }
 
-    pub(crate) fn get_output_kind(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn get_kind(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         BunString::static_(<&'static str>::from(self.output_kind)).to_js(cx.global())
     }
 
-    pub(crate) fn get_source_map(&self, _: &JsHeap<'_>) -> JSValue {
+    pub(crate) fn get_sourcemap(&self, _: &JsHeap<'_>) -> JSValue {
         // The value lives in the wrapper's `m_sourcemap` WriteBarrier (seeded
         // by `on_complete`); the C++ getter returns that slot before calling
         // here, so reaching this means no sourcemap was assigned.

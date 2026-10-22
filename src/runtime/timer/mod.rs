@@ -35,10 +35,10 @@ pub(crate) mod timer;
 // `Timer.bind.ts` class over `{ref_count, event_loop_timer, internals}` whose
 // JS-facing host-fns are pure forwarders to `TimerObjectInternals`. The macro
 // emits the parts shared by both types so each `*.rs` file holds only its
-// type-specific surface (`init`, `do_refresh`, the `_idleStart` accessors,
+// type-specific surface (`init`, `refresh`, the `_idleStart` accessors,
 // `run_immediate_task`).
 //
-// Type-specific items (`init`, `do_refresh`, `close`, `_idleStart` get/set,
+// Type-specific items (`init`, `refresh`, `close`, `_idleStart` get/set,
 // `run_immediate_task`) go in a *second* `impl $T` block in the caller's file.
 //
 // Paths in the body are written `super::…` / `::crate_name::…` because the

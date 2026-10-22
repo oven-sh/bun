@@ -36,7 +36,6 @@ function server(name: string) {
         capability: "js",
         throws: true,
         length: 1,
-        rustName: "do_fetch",
       },
       hostname: { getter: b.any, cache: true, capability: "js", throws: true },
       id: { getter: b.string.utf8, cache: true },
@@ -51,7 +50,6 @@ function server(name: string) {
         capability: "js",
         throws: true,
         length: 3,
-        rustName: "do_publish",
       },
       ref: { returns: b.self, passThis: true, rustName: "do_ref" },
       reload: {
@@ -61,14 +59,12 @@ function server(name: string) {
         throws: true,
         passThis: true,
         length: 2,
-        rustName: "do_reload",
       },
       requestIP: {
         args: { request: b.any },
         returns: b.any,
         capability: "js",
         throws: true,
-        rustName: "do_request_ip",
       },
       stop: {
         args: { closeActiveConnections: b.any },
@@ -81,14 +77,12 @@ function server(name: string) {
         returns: b.u32,
         capability: "js",
         throws: true,
-        rustName: "do_subscriber_count",
       },
       timeout: {
         args: { request: b.any, seconds: b.any },
         returns: b.any,
         capability: "heap",
         throws: true,
-        rustName: "do_timeout",
       },
       unref: { returns: b.self, passThis: true, rustName: "do_unref" },
       upgrade: {
@@ -97,7 +91,6 @@ function server(name: string) {
         capability: "js",
         throws: true,
         length: 1,
-        rustName: "do_upgrade",
       },
       url: { getter: b.any, cache: true, capability: "js", throws: true },
       "@@dispose": { capability: "js" },

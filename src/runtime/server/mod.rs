@@ -110,7 +110,7 @@ macro_rules! for_each_mux_app {
     }};
 }
 
-// `server_body.rs` holds the large method bodies (`on_request`, `do_upgrade`,
+// `server_body.rs` holds the large method bodies (`on_request`, `upgrade`,
 // route setup, …) split out to keep this module declaration file readable.
 
 #[path = "server_body.rs"]
@@ -1624,7 +1624,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     // `on_reload_from_zig` body lives in `server_body.rs` (`impl NewServer { … }`);
-    // same crate, separate file, alongside `do_reload`/`reload_static_routes`.
+    // same crate, separate file, alongside `reload`/`reload_static_routes`.
 
     pub(crate) fn on_static_request_complete(&self) {
         self.on_request_complete();

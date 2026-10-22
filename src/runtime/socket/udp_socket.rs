@@ -1504,7 +1504,7 @@ impl UDPSocket {
         Ok(true)
     }
 
-    pub(crate) fn ref_(&self) {
+    pub(crate) fn r#ref(&self) {
         if !self.closed.get() {
             self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         }

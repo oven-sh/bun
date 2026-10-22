@@ -1226,24 +1226,24 @@ impl<const SSL: bool> SocketHandler<SSL> {
 }
 
 impl PostgresSQLConnection {
-    pub fn do_ref(&self) {
+    pub fn r#ref(&self) {
         self.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
         self.poll_ref.with_mut(|p| p.ref_(self.vm_ctx()));
         self.update_has_pending_activity();
     }
 
-    pub fn do_flush(&self) {
+    pub fn flush(&self) {
         self.register_auto_flusher();
     }
 
-    pub fn do_hold(&self) {
+    pub fn hold(&self) {
         self.timers.set_checked_out(true);
         if self.status.get() == Status::Connected {
             self.reset_connection_timeout();
         }
     }
 
-    pub fn do_unhold(&self, _: &mut JsScope<'_>) {
+    pub fn unhold(&self, _: &mut JsScope<'_>) {
         self.timers.set_checked_out(false);
         if self.status.get() == Status::Connected {
             self.reset_connection_timeout();

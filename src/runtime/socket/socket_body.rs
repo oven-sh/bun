@@ -716,7 +716,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    pub(crate) fn resume_from_js(&self, _: &mut JsScope<'_>) {
+    pub(crate) fn resume(&self, _: &mut JsScope<'_>) {
         if self.socket.get().is_detached() {
             return;
         }
@@ -733,7 +733,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    pub(crate) fn pause_from_js(&self, _: &mut JsScope<'_>) {
+    pub(crate) fn pause(&self, _: &mut JsScope<'_>) {
         if self.socket.get().is_detached() {
             return;
         }

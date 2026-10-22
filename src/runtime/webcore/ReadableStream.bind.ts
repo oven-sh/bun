@@ -4,20 +4,20 @@ const method = { returns: b.any, capability: "js", throws: true } as const;
 
 const members = {
   cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
-  drain: { ...method, rustName: "drain_from_js", length: 1 },
-  isClosed: { getter: b.bool, rustName: "is_closed_from_js" },
-  pull: { ...method, args: { view: b.any, flags: b.any }, passThis: true, rustName: "pull_from_js", length: 1 },
-  start: { ...method, rustName: "start_from_js", length: 1 },
-  updateRef: { args: { enable: b.bool.loose }, rustName: "set_ref" },
+  drain: { ...method, length: 1 },
+  isClosed: { getter: b.bool },
+  pull: { ...method, args: { view: b.any, flags: b.any }, passThis: true, length: 1 },
+  start: { ...method, length: 1 },
+  updateRef: { args: { enable: b.bool.loose } },
 } as const;
 
 /** Reads the whole stream. */
 const buffered = {
-  arrayBuffer: { ...method, rustName: "array_buffer_from_js" },
-  blob: { ...method, rustName: "blob_from_js" },
-  bytes: { ...method, rustName: "bytes_from_js" },
-  json: { ...method, rustName: "json_from_js" },
-  text: { ...method, rustName: "text_from_js" },
+  arrayBuffer: method,
+  blob: method,
+  bytes: method,
+  json: method,
+  text: method,
 } as const;
 
 const bufferedSource = {
@@ -57,8 +57,8 @@ export const FileInternalReadableStreamSource = b.class({
     drain: members.drain,
     isClosed: members.isClosed,
     pull: members.pull,
-    setFlowing: { args: { flag: b.any }, capability: "js", rustName: "set_flowing_from_js" },
-    setRawMode: { args: { flag: b.any }, returns: b.any, capability: "js", rustName: "set_raw_mode_from_js" },
+    setFlowing: { args: { flag: b.any }, capability: "js" },
+    setRawMode: { args: { flag: b.any }, returns: b.any, capability: "js" },
     start: members.start,
     updateRef: members.updateRef,
   },

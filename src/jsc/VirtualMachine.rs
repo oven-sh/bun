@@ -6266,14 +6266,6 @@ impl VirtualMachine {
                 rare.node_quic_callbacks.deinit();
             }
         }
-        // Cached macro functions belong to the outgoing global, which must not run again.
-        if !shares_global {
-            for callback in self.macros.values() {
-                callback.unprotect();
-            }
-            self.macros.clear_retaining_capacity();
-            self.transpiler.macro_context = None;
-        }
         let _ = self.event_loop_mut().drain_microtasks();
 
         let _ = self.auto_killer.kill();

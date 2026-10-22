@@ -2417,3 +2417,383 @@ describe("Valkey: Offline Queue", () => {
     }
   });
 });
+
+describe("Valkey: Auto-Pipelining", () => {
+  const FLAG = "BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING";
+  const KEYS = ["a", "b", "c", "d"];
+  const ONE_AT_A_TIME = ">a <a >b <b >c <c >d <d";
+  const ONE_BATCH = ">a >b >c >d <a <b <c <d";
+  // `enableAutoPipelining: false`: the first command of a burst goes out
+  // alone, and the rest go out as one batch when its reply arrives.
+  const FIRST_THEN_BATCH = ">a <a >b >c >d <b <c <d";
+  const CLOSED = "ERR_REDIS_CONNECTION_CLOSED";
+
+  // Answers every command and keeps one wire log per connection, in the order
+  // the connections arrive. `GET k` is logged as `>k` when it arrives and as
+  // `<k` when its reply goes out: the key, or an error for the key "bad". Any
+  // other command is logged by name and answered with OK, except HELLO, which
+  // is not logged. Every command of a socket read is logged before the first
+  // of them is answered. So a client that writes `b` only once it has the reply
+  // to `a` gives ">a <a >b <b", and a client that writes both in one batch
+  // gives ">a >b <a <b". Two options cut the first connection short. `dropOn`
+  // closes it, with no reply, when the command with that label arrives.
+  // `rejectLarge` answers a command that one read does not hold with an error
+  // and closes, as redis-server does for a value above its limit.
+  function wireLogServer({ dropOn, rejectLarge }: { dropOn?: string; rejectLarge?: boolean } = {}) {
+    const logs: string[][] = [];
+    const server = Bun.listen<{ buffer: Buffer; chunks: Buffer[]; log: string[]; dropped: boolean }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buffer: Buffer.alloc(0), chunks: [], log: [], dropped: false };
+          logs.push(socket.data.log);
+        },
+        error() {},
+        close() {},
+        data(socket, chunk) {
+          const state = socket.data;
+          if (state.dropped) return;
+          const first = state.log === logs[0];
+          // A command ends with CRLF. Until the bytes read so far do, the
+          // command is not complete, and a large one is not parsed again at
+          // each read. The CR can be the last byte of the read before.
+          state.chunks.push(chunk);
+          const beforeLast = chunk.length > 1 ? chunk[chunk.length - 2] : state.chunks.at(-2)?.at(-1);
+          if (beforeLast !== 0x0d || chunk[chunk.length - 1] !== 0x0a) {
+            if (rejectLarge && first) {
+              state.dropped = true;
+              state.log.push("<ERR");
+              socket.end("-ERR Protocol error: invalid bulk length\r\n");
+            }
+            return;
+          }
+          state.buffer = Buffer.concat([state.buffer, ...state.chunks]);
+          state.chunks = [];
+          const commands = readCommands(state).map(([name = "", key = ""]) => {
+            name = name.toUpperCase();
+            if (name !== "GET") return { label: name, reply: "+OK\r\n", logged: name !== "HELLO" };
+            return {
+              label: key,
+              reply: key === "bad" ? "-ERR boom\r\n" : `$${key.length}\r\n${key}\r\n`,
+              logged: true,
+            };
+          });
+          for (const { label, logged } of commands) {
+            if (logged) state.log.push(`>${label}`);
+          }
+          for (const { label, reply, logged } of commands) {
+            if (label === dropOn && first) {
+              if (!logged) state.log.push(`>${label}`);
+              state.dropped = true;
+              socket.end();
+              return;
+            }
+            socket.write(reply);
+            if (logged) state.log.push(`<${label}`);
+          }
+        },
+      },
+    });
+    return {
+      url: `redis://127.0.0.1:${server.port}`,
+      // A connection that carried only HELLO has an empty log.
+      wire: () => logs.map(log => log.join(" ")).filter(log => log !== ""),
+      [Symbol.dispose]: () => server.stop(true),
+    };
+  }
+
+  // The flag is read once from the environment of the process, so a flag
+  // state needs its own child.
+  async function runChild(script: string, env: Record<string, string>, flag: boolean) {
+    const childEnv: Record<string, string | undefined> = { ...bunEnv, ...env };
+    delete childEnv[FLAG];
+    if (flag) childEnv[FLAG] = "1";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: childEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The expression of each shape is its name. `url` is the server of the test.
+  const SHAPES = [
+    "Bun.redis",
+    "new RedisClient()",
+    "new RedisClient(url)",
+    "new RedisClient(url, undefined)",
+    "new RedisClient(url, null)",
+    "new RedisClient(url, {})",
+    "new RedisClient(url, { enableAutoPipelining: undefined })",
+    "new RedisClient(url).duplicate()",
+    "new RedisClient(url, { enableAutoPipelining: null })",
+    "new RedisClient(url, { enableAutoPipelining: false })",
+    "new RedisClient(url, { enableAutoPipelining: false }).duplicate()",
+    "new RedisClient(url, { enableAutoPipelining: true })",
+    "new RedisClient(url, { enableAutoPipelining: true }).duplicate()",
+  ] as const;
+
+  // The child builds one client per shape, in order, and each client makes
+  // one connection, so the nth wire log is the nth shape's. Each burst is
+  // issued one event loop turn after connect() resolved.
+  async function wireOfEachShape({ flag }: { flag: boolean }) {
+    using server = wireLogServer();
+    const script = `
+      const { RedisClient } = Bun;
+      const url = process.env.REDIS_URL;
+      for (const make of [${SHAPES.map(shape => `() => ${shape}`).join(", ")}]) {
+        const client = await make();
+        await client.connect();
+        await new Promise(resolve => setImmediate(resolve));
+        const replies = await Promise.all(${JSON.stringify(KEYS)}.map(key => client.get(key)));
+        console.log(replies.join(""));
+        client.close();
+      }
+    `;
+    expect(await runChild(script, { REDIS_URL: server.url }, flag)).toEqual({
+      stdout: SHAPES.map(() => `${KEYS.join("")}\n`).join(""),
+      stderr: "",
+      exitCode: 0,
+    });
+    const wire = server.wire();
+    return Object.fromEntries(SHAPES.map((shape, i) => [shape, wire[i]]));
+  }
+
+  test.concurrent(
+    `${FLAG} makes every client that does not set enableAutoPipelining send one command at a time`,
+    async () => {
+      expect(await wireOfEachShape({ flag: true })).toEqual({
+        "Bun.redis": ONE_AT_A_TIME,
+        "new RedisClient()": ONE_AT_A_TIME,
+        "new RedisClient(url)": ONE_AT_A_TIME,
+        "new RedisClient(url, undefined)": ONE_AT_A_TIME,
+        "new RedisClient(url, null)": ONE_AT_A_TIME,
+        "new RedisClient(url, {})": ONE_AT_A_TIME,
+        "new RedisClient(url, { enableAutoPipelining: undefined })": ONE_AT_A_TIME,
+        "new RedisClient(url).duplicate()": ONE_AT_A_TIME,
+        "new RedisClient(url, { enableAutoPipelining: null })": FIRST_THEN_BATCH,
+        "new RedisClient(url, { enableAutoPipelining: false })": FIRST_THEN_BATCH,
+        "new RedisClient(url, { enableAutoPipelining: false }).duplicate()": FIRST_THEN_BATCH,
+        "new RedisClient(url, { enableAutoPipelining: true })": ONE_BATCH,
+        "new RedisClient(url, { enableAutoPipelining: true }).duplicate()": ONE_BATCH,
+      });
+    },
+  );
+
+  test.concurrent(`without ${FLAG}, every client sends a burst as it did before`, async () => {
+    expect(await wireOfEachShape({ flag: false })).toEqual({
+      "Bun.redis": ONE_BATCH,
+      "new RedisClient()": ONE_BATCH,
+      "new RedisClient(url)": ONE_BATCH,
+      "new RedisClient(url, undefined)": ONE_BATCH,
+      "new RedisClient(url, null)": ONE_BATCH,
+      "new RedisClient(url, {})": ONE_BATCH,
+      "new RedisClient(url, { enableAutoPipelining: undefined })": ONE_BATCH,
+      "new RedisClient(url).duplicate()": ONE_BATCH,
+      "new RedisClient(url, { enableAutoPipelining: null })": FIRST_THEN_BATCH,
+      "new RedisClient(url, { enableAutoPipelining: false })": FIRST_THEN_BATCH,
+      "new RedisClient(url, { enableAutoPipelining: false }).duplicate()": FIRST_THEN_BATCH,
+      "new RedisClient(url, { enableAutoPipelining: true })": ONE_BATCH,
+      "new RedisClient(url, { enableAutoPipelining: true }).duplicate()": ONE_BATCH,
+    });
+  });
+
+  // Each case runs in the child with the flag set, against its own server.
+  // `run` is the body of an async function of `url`, and the child prints what
+  // it returns. `client(...)` is `new RedisClient(...)`, `burst(client)` issues
+  // a GET of each of KEYS in one tick, and `settled(promise)` gives the value,
+  // or the code of the error.
+  const FLAG_CASES: {
+    name: string;
+    dropOn?: string;
+    rejectLarge?: boolean;
+    run: string;
+    replies: string[];
+    wire: string[];
+  }[] = [
+    {
+      name: "a burst issued in the continuation of connect()",
+      run: `const c = client(url); await c.connect(); return burst(c);`,
+      replies: KEYS,
+      wire: [ONE_AT_A_TIME],
+    },
+    {
+      name: "a burst queued before the connection is up",
+      run: `return burst(client(url));`,
+      replies: KEYS,
+      wire: [ONE_AT_A_TIME],
+    },
+    {
+      name: "a burst on a client that selects the database of its URL",
+      run: `const c = client(url + "/2"); await c.connect(); return burst(c);`,
+      replies: KEYS,
+      wire: [`>SELECT <SELECT ${ONE_AT_A_TIME}`],
+    },
+    {
+      name: "a burst issued from onconnect",
+      run: `
+        const c = client(url);
+        const replies = Promise.withResolvers();
+        c.onconnect = () => replies.resolve(burst(c));
+        await c.connect();
+        return replies.promise;`,
+      replies: KEYS,
+      wire: [ONE_AT_A_TIME],
+    },
+    {
+      name: "a command that is never batched in the middle of a burst",
+      run: `
+        const c = client(url);
+        await c.connect();
+        return Promise.all([c.get("a"), c.send("WATCH", ["w"]), c.get("b"), c.get("c")]);`,
+      replies: ["a", "OK", "b", "c"],
+      wire: [">a <a >WATCH <WATCH >b <b >c <c"],
+    },
+    {
+      name: "an error reply in the middle of a burst",
+      run: `
+        const c = client(url);
+        await c.connect();
+        return Promise.all(["a", "bad", "c", "d"].map(key => c.get(key).catch(error => error.message)));`,
+      replies: ["a", "ERR boom", "c", "d"],
+      wire: [">a <a >bad <bad >c <c >d <d"],
+    },
+    {
+      name: "a command larger than one socket write in the middle of a burst",
+      run: `
+        const c = client(url);
+        await c.connect();
+        return Promise.all([c.get("a"), c.set("k", Buffer.alloc(8 * 1024 * 1024, "x").toString()), c.get("b")]);`,
+      replies: ["a", "OK", "b"],
+      wire: [">a <a >SET <SET >b <b"],
+    },
+    {
+      name: "a command issued from the continuation of a reply, while others wait",
+      run: `
+        const c = client(url);
+        await c.connect();
+        const ax = c.get("a").then(async a => a + (await c.get("x")));
+        return Promise.all([ax, c.get("b"), c.get("c")]);`,
+      replies: ["ax", "b", "c"],
+      wire: [">a <a >b <b >c <c >x <x"],
+    },
+    {
+      // The connection was ready, so the commands that wait reject with the
+      // one in flight. A command issued after the drop goes out on the next
+      // connection.
+      name: "a connection drop under a burst",
+      dropOn: "b",
+      run: `
+        const c = client(url);
+        await c.connect();
+        const outcomes = await Promise.all(${JSON.stringify(KEYS)}.map(key => settled(c.get(key))));
+        return [...outcomes, await c.get("x")];`,
+      replies: ["a", CLOSED, CLOSED, CLOSED, "x"],
+      wire: [">a <a >b", ">x <x"],
+    },
+    {
+      // With the offline queue off, a command issued after the drop rejects too.
+      name: "a connection drop under a burst, with enableOfflineQueue: false",
+      dropOn: "b",
+      run: `
+        const c = client(url, { enableOfflineQueue: false });
+        await c.connect();
+        const outcomes = await Promise.all(${JSON.stringify(KEYS)}.map(key => settled(c.get(key))));
+        return [...outcomes, await settled(c.get("x"))];`,
+      replies: ["a", CLOSED, CLOSED, CLOSED, CLOSED],
+      wire: [">a <a >b"],
+    },
+    {
+      // A client without the flag keeps a never-batched command that waits,
+      // here EXEC, and sends it on the next connection.
+      name: "a connection drop in the body of a MULTI",
+      dropOn: "INCR",
+      run: `
+        const c = client(url);
+        await c.connect();
+        const commands = [c.send("MULTI", []), c.incr("n"), c.incr("n"), c.send("EXEC", [])];
+        return [...(await Promise.all(commands.map(settled))), await c.get("x")];`,
+      replies: ["OK", CLOSED, CLOSED, CLOSED, "x"],
+      wire: [">MULTI <MULTI >INCR", ">x <x"],
+    },
+    {
+      // The error reply arrives while the client still writes the command, so
+      // nothing is in flight when the connection closes.
+      name: "a connection drop after an early error reply to a large command",
+      rejectLarge: true,
+      run: `
+        const c = client(url);
+        await c.connect();
+        const outcomes = await Promise.all([
+          settled(c.get("a")),
+          c.set("k", Buffer.alloc(8 * 1024 * 1024, "x").toString()).then(() => "resolved", () => "rejected"),
+          settled(c.get("b")),
+          settled(c.get("c")),
+        ]);
+        return [...outcomes, await c.get("x")];`,
+      replies: ["a", "rejected", CLOSED, CLOSED, "x"],
+      wire: [">a <a <ERR", ">x <x"],
+    },
+    {
+      // The first connection is not ready when it drops, so the queue is kept.
+      name: "a connection drop before the connection is ready",
+      dropOn: "HELLO",
+      run: `
+        const c = client(url);
+        return Promise.all(${JSON.stringify(KEYS)}.map(key => settled(c.get(key))));`,
+      replies: KEYS,
+      wire: [">HELLO", ONE_AT_A_TIME],
+    },
+    {
+      // A client that sets the option keeps the rule of main at a drop: only
+      // the command in flight rejects, and the rest goes out on the next
+      // connection.
+      name: "a connection drop under a burst of a client that sets enableAutoPipelining",
+      dropOn: "a",
+      run: `
+        const c = client(url, { enableAutoPipelining: false });
+        await c.connect();
+        await new Promise(resolve => setImmediate(resolve));
+        const outcomes = await Promise.all(${JSON.stringify(KEYS)}.map(key => settled(c.get(key))));
+        return [...outcomes, await c.get("x")];`,
+      replies: [CLOSED, "b", "c", "d", "x"],
+      wire: [">a", ">b >c >d <b <c <d >x <x"],
+    },
+  ];
+
+  test.concurrent(`with ${FLAG}, a client sends one command at a time in every state of its queue`, async () => {
+    const servers = FLAG_CASES.map(({ dropOn, rejectLarge }) => wireLogServer({ dropOn, rejectLarge }));
+    try {
+      const script = `
+        const urls = JSON.parse(process.env.URLS);
+        const clients = [];
+        const client = (...args) => {
+          clients.push(new Bun.RedisClient(...args));
+          return clients.at(-1);
+        };
+        const burst = c => Promise.all(${JSON.stringify(KEYS)}.map(key => c.get(key)));
+        const settled = promise => promise.catch(error => error.code);
+        const cases = [${FLAG_CASES.map(({ run }) => `async url => {${run}\n}`).join(", ")}];
+        const replies = [];
+        for (let i = 0; i < cases.length; i++) replies.push(await cases[i](urls[i]));
+        console.log(JSON.stringify(replies));
+        for (const client of clients) client.close();
+      `;
+      const { stdout, stderr, exitCode } = await runChild(
+        script,
+        { URLS: JSON.stringify(servers.map(s => s.url)) },
+        true,
+      );
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const replies = JSON.parse(stdout);
+      expect(
+        Object.fromEntries(FLAG_CASES.map(({ name }, i) => [name, { replies: replies[i], wire: servers[i].wire() }])),
+      ).toEqual(Object.fromEntries(FLAG_CASES.map(({ name, replies, wire }) => [name, { replies, wire }])));
+    } finally {
+      for (const server of servers) server[Symbol.dispose]();
+    }
+  });
+});

@@ -475,14 +475,11 @@ impl JSValkeyClient {
         }
 
         let cmd_str = command.to_utf8();
-        let mut cmd = Command {
+        let cmd = Command {
             command: cmd_str.slice(),
             args: CommandArgs::Args(&args),
             meta: CommandMeta::default(),
         };
-        // Note: reshaped for borrowck (cmd.meta = cmd.meta.check(&cmd))
-        let checked_meta = cmd.meta.check(&cmd);
-        cmd.meta = checked_meta;
         // Send command with slices directly
         let promise = match this.send(global, frame.this(), &cmd) {
             Ok(p) => p,

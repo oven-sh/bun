@@ -42,6 +42,8 @@ pub(crate) struct ConnectionFlags {
     /// `Disconnected`.
     pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
+    /// Set by `BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING` only. Unlike `enable_auto_pipelining: false`, the queue is never written as a batch.
+    pub(crate) one_command_at_a_time: bool,
     pub(crate) finalized: bool,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two
@@ -65,6 +67,7 @@ impl Default for ConnectionFlags {
             is_reconnecting: false,
             failed: false,
             enable_auto_pipelining: true,
+            one_command_at_a_time: false,
             finalized: false,
             connection_promise_returns_client: false,
         }
@@ -162,22 +165,9 @@ pub(crate) struct Options {
     pub(crate) max_retries: u32,
     pub(crate) enable_offline_queue: bool,
     pub(crate) enable_auto_pipelining: bool,
+    pub(crate) one_command_at_a_time: bool,
 
     pub(crate) tls: TLS,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            idle_timeout_ms: 0,
-            connection_timeout_ms: 10000,
-            enable_auto_reconnect: true,
-            max_retries: 20,
-            enable_offline_queue: true,
-            enable_auto_pipelining: true,
-            tls: TLS::None,
-        }
-    }
 }
 
 pub(crate) enum Address {
@@ -518,8 +508,13 @@ impl ValkeyClient {
         result
     }
 
-    fn reject_in_flight_commands(&mut self, message: &[u8], err: RedisError) -> JsResult<()> {
-        if self.in_flight.is_empty() {
+    fn reject_in_flight_commands(
+        &mut self,
+        mut queue: command::entry::Queue,
+        message: &[u8],
+        err: RedisError,
+    ) -> JsResult<()> {
+        if self.in_flight.is_empty() && queue.is_empty() {
             return Ok(());
         }
 
@@ -530,7 +525,7 @@ impl ValkeyClient {
                 err,
                 global_this: GlobalRef::from(vm.global()),
                 in_flight: core::mem::take(&mut self.in_flight),
-                queue: command::entry::Queue::new(),
+                queue,
             });
             deferred_failure.enqueue();
             return Ok(());
@@ -538,8 +533,7 @@ impl ValkeyClient {
 
         let global_this = self.global_object();
         let jsvalue = valkey_error_to_js(&global_this, message, err);
-        let mut entries = command::entry::Queue::new();
-        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut queue, &global_this, jsvalue)
     }
 
     /// The open socket's TLS session broke, and uSockets closes it next: what was sent over it
@@ -664,8 +658,8 @@ impl ValkeyClient {
         }
     }
 
-    /// Handle connection closed event
-    pub(crate) fn on_close(&mut self) -> JsResult<()> {
+    /// Handle connection closed event. `closed` is the status the connection had.
+    pub(crate) fn on_close(&mut self, closed: Status) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
         // A partial reply can never complete now; left in place it counts as
@@ -709,10 +703,23 @@ impl ValkeyClient {
             delay_ms, self.retry_attempts, self.max_retries
         );
 
+        // A one-at-a-time client fails its queue with a connection that was ready, so no part of a burst runs on the next one.
+        let waiting = if self.flags.one_command_at_a_time
+            && closed == Status::Connected
+            && !self.flags.is_selecting_db_internal
+        {
+            core::mem::take(&mut self.queue)
+        } else {
+            command::entry::Queue::new()
+        };
         self.flags.is_reconnecting = true;
         self.flags.is_selecting_db_internal = false;
 
-        self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
+        self.reject_in_flight_commands(
+            waiting,
+            b"Connection closed",
+            RedisError::ConnectionClosed,
+        )?;
 
         // Signal reconnect timer should be started
         self.on_valkey_reconnect();
@@ -1446,7 +1453,9 @@ impl ValkeyClient {
     ) -> Result<*mut JSPromise, crate::Error> {
         // FIX: Check meta before using it for routing decisions
         let mut checked_command = *command;
-        checked_command.meta = command.meta.check(command);
+        checked_command.meta = command
+            .meta
+            .check(command, self.flags.one_command_at_a_time);
 
         let mut promise = command::Promise::create(global_this, checked_command.meta);
 

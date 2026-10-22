@@ -153,11 +153,11 @@ bun_core::comptime_string_set! {
 }
 
 impl Meta {
-    pub(crate) fn check(self, command: &Command<'_>) -> Self {
+    pub(crate) fn check(self, command: &Command<'_>, one_command_at_a_time: bool) -> Self {
         let mut new = self;
         new.set(
             Meta::SUPPORTS_AUTO_PIPELINING,
-            !AUTO_PIPELINE_DISALLOWED_COMMANDS.contains(command.command),
+            !one_command_at_a_time && !AUTO_PIPELINE_DISALLOWED_COMMANDS.contains(command.command),
         );
         if is_subscription_command(command.command) {
             new.insert(Meta::SUBSCRIPTION_REQUEST);

@@ -613,6 +613,18 @@ pub(crate) fn is_malformed_field_value(value: &[u8]) -> bool {
     strings::contains_any(value, b"\0\r\n")
 }
 
+/// RFC 9110 §5.5: HTAB is the only control byte a field value can have.
+#[inline]
+pub(crate) fn has_control_byte(value: &[u8]) -> bool {
+    value.iter().any(|&c| (c < b' ' && c != b'\t') || c == 0x7f)
+}
+
+/// RFC 9113 §8.2.1: a field value does not start or end with SP or HTAB.
+#[inline]
+pub(crate) fn has_edge_whitespace(value: &[u8]) -> bool {
+    matches!(value.first(), Some(b' ' | b'\t')) || matches!(value.last(), Some(b' ' | b'\t'))
+}
+
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
 bun_core::comptime_string_map! {
@@ -1123,6 +1135,7 @@ pub(crate) struct H2FrameParser {
     dispatch_depth: Cell<u32>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
+    strict_field_whitespace: Cell<bool>,
     stream_reset_burst: Cell<u32>,
     stream_reset_rate: Cell<u32>,
     goaway_sent: Cell<bool>,
@@ -3674,6 +3687,7 @@ impl H2FrameParser {
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
             engine.max_settings = self.max_settings.get();
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
+            engine.strict_field_whitespace = self.strict_field_whitespace.get();
             engine.set_stream_reset_limit(
                 self.stream_reset_burst.get(),
                 self.stream_reset_rate.get(),
@@ -7589,6 +7603,7 @@ impl H2FrameParser {
             pending_settings_window_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
+            strict_field_whitespace: Cell::new(true),
             stream_reset_burst: Cell::new(crate::api::h2::connection::DEFAULT_STREAM_RESET_BURST),
             stream_reset_rate: Cell::new(crate::api::h2::connection::DEFAULT_STREAM_RESET_RATE),
             goaway_sent: Cell::new(false),
@@ -7729,6 +7744,13 @@ impl H2FrameParser {
                         this_ref
                             .max_session_invalid_frames
                             .set(Self::session_option_u32(max_session_invalid_frames));
+                    }
+                }
+                if let Some(strict) =
+                    settings_js.get(global_object, "strictFieldWhitespaceValidation")?
+                {
+                    if strict.is_boolean() {
+                        this_ref.strict_field_whitespace.set(strict.as_boolean());
                     }
                 }
                 // node: MathMax(1, x) per key (util.js), applied when both are given (node_http2.cc).

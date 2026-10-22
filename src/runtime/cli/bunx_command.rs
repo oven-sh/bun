@@ -498,7 +498,7 @@ impl BunxCommand {
             if let Some(entry) = entry
                 && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
                 && (is_in_package(real)
-                    || Self::is_in_optional_dependency(transpiler, &package_json, real))
+                    || Self::is_in_platform_package(transpiler, &package_json, real))
             {
                 return Ok(InProject::Run(entry));
             }
@@ -542,34 +542,49 @@ impl BunxCommand {
         }
     }
 
-    /// Whether `real` is in one of the `optionalDependencies` of the package at `package_json`.
-    fn is_in_optional_dependency(
+    /// Whether `real` is in one of the `optionalDependencies` of the package at `package_json` that
+    /// has an `os` and a `cpu`. The installer links the bin of a package into no other package.
+    fn is_in_platform_package(
         transpiler: &mut Transpiler,
         package_json: &ZStr,
         real: &[u8],
     ) -> bool {
-        let Some((_, in_node_modules)) = strings::rsplit_once(real, b"/node_modules/") else {
+        let Some((parent, in_node_modules)) = strings::rsplit_once(real, b"/node_modules/") else {
             return false;
         };
-        let Ok(contents) = bun_sys::File::read_from(Fd::cwd(), package_json.as_bytes()) else {
+        let name_len = Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
+            let optional = root.get(b"optionalDependencies")?;
+            let ExprData::EObjectJSON(optional) = &optional.data else {
+                return None;
+            };
+            (optional.get().properties().iter())
+                .map(|dependency| dependency.key.slice())
+                .find(|name| {
+                    (in_node_modules.strip_prefix(*name)).is_some_and(|rest| rest.starts_with(b"/"))
+                })
+                .map(<[u8]>::len)
+        });
+        let Some(Some(name_len)) = name_len else {
             return false;
         };
-        let source =
-            bun_ast::Source::init_path_string(package_json.as_bytes(), contents.as_slice());
-        bun_ast::initialize_store();
-        let Ok(parsed) = json::ParsedJson::parse_package_json(&source, transpiler.log_mut()) else {
-            return false;
-        };
-        let Some(optional) = parsed.root.get(b"optionalDependencies") else {
-            return false;
-        };
-        let ExprData::EObjectJSON(optional) = &optional.data else {
-            return false;
-        };
-        optional.get().properties().iter().any(|dependency| {
-            (in_node_modules.strip_prefix(dependency.key.slice()))
-                .is_some_and(|rest| rest.starts_with(b"/"))
+        let name = &in_node_modules[..name_len];
+        let dependency_json = [parent, b"/node_modules/", name, b"/package.json"].concat();
+        Self::read_package_json(transpiler, &dependency_json, |root| {
+            root.get(b"os").is_some() && root.get(b"cpu").is_some()
         })
+        .unwrap_or(false)
+    }
+
+    fn read_package_json<T>(
+        transpiler: &mut Transpiler,
+        path: &[u8],
+        read: impl FnOnce(&bun_ast::Expr) -> T,
+    ) -> Option<T> {
+        let contents = bun_sys::File::read_from(Fd::cwd(), path).ok()?;
+        let source = bun_ast::Source::init_path_string(path, contents.as_slice());
+        bun_ast::initialize_store();
+        let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log_mut()).ok()?;
+        Some(read(&parsed.root))
     }
 
     fn tree_state(bunx_cache_dir: &[u8]) -> Tree {

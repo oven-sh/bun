@@ -9524,9 +9524,13 @@ declare module "bun" {
    * decode → transform → encode pipeline runs on a worker thread when a
    * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
    *
-   * Chainables overwrite (calling `.resize()` twice keeps the second). Order
-   * of execution is fixed regardless of call order:
-   * `autoOrient → rotate → flip/flop → resize → modulate`.
+   * `resize()` and `rotate()` replace their earlier call, options included.
+   * `modulate()` and the format methods (`jpeg`, `png`, `webp`, `heic`,
+   * `avif`) set only the options a call names: an option from an earlier
+   * call stays. Each format keeps its own options, so an option never
+   * applies to another format: `.jpeg({ quality: 10 }).webp()` encodes WebP
+   * at its default quality. Order of execution is fixed regardless of call
+   * order: `autoOrient → rotate → flip/flop → resize → modulate`.
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
    * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB

@@ -543,9 +543,12 @@ impl BunxCommand {
         real_dir: &[u8],
     ) -> InProject {
         let mut buf = bun_paths::path_buffer_pool::get();
+        let kinds = [b"optionalDependencies".as_slice()];
         if let Some(entry) = entry
             && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
-            && Self::is_in_optional_dependency(transpiler, package_json, real_dir, real, |_| true)
+            && Self::dependencies_with(transpiler, package_json, real_dir, real, &kinds)
+                .iter()
+                .any(|dependency_json| bun_sys::exists(dependency_json))
         {
             return InProject::Run(entry);
         }
@@ -567,7 +570,7 @@ impl BunxCommand {
     }
 
     /// Whether the installer linked the bin of the package at `package_json` to `real`. It does that
-    /// for a native dependency of `project`, into an optional dependency with an `os` and a `cpu`.
+    /// for a native dependency of `project`, into a dependency with an `os` and a `cpu`.
     fn is_in_platform_package(
         transpiler: &mut Transpiler,
         project: &[u8],
@@ -575,11 +578,16 @@ impl BunxCommand {
         real_dir: &[u8],
         real: &[u8],
     ) -> bool {
-        let has_platform = |dependency: &bun_ast::Expr| {
-            dependency.get(b"os").is_some() && dependency.get(b"cpu").is_some()
-        };
-        if !Self::is_in_optional_dependency(transpiler, package_json, real_dir, real, has_platform)
-        {
+        let kinds = [b"dependencies".as_slice(), b"optionalDependencies"];
+        let dependencies =
+            Self::dependencies_with(transpiler, package_json, real_dir, real, &kinds);
+        let has_platform = dependencies.iter().any(|dependency_json| {
+            Self::read_package_json(transpiler, dependency_json, |dependency| {
+                dependency.get(b"os").is_some() && dependency.get(b"cpu").is_some()
+            })
+            .unwrap_or(false)
+        });
+        if !has_platform {
             return false;
         }
         // Under an alias, the folder does not have the name of the package.
@@ -596,35 +604,42 @@ impl BunxCommand {
         .unwrap_or(false)
     }
 
-    /// Whether `real` is in one of the `optionalDependencies` of the package at `package_json`, in
-    /// `real_dir`, whose package.json `is_match`.
-    fn is_in_optional_dependency(
+    /// Where the package.json is of each dependency of the package at `package_json`, in `real_dir`,
+    /// that `real` can be in. `kinds` are the fields of package.json that list the dependencies.
+    fn dependencies_with(
         transpiler: &mut Transpiler,
         package_json: &ZStr,
         real_dir: &[u8],
         real: &[u8],
-        is_match: impl Fn(&bun_ast::Expr) -> bool,
-    ) -> bool {
-        let candidates = Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
-            let optional = root.get(b"optionalDependencies")?;
-            let ExprData::EObjectJSON(optional) = &optional.data else {
-                return None;
-            };
-            // `node_modules` can be a link to a folder of another name, which is the name in `real`.
-            // A folder above the project can have the name of a dependency. The package is in it too.
-            let candidates = optional.get().properties().iter().filter_map(|dependency| {
-                let name = dependency.key.slice();
-                let (parent, _) = strings::rsplit_once(real, &[b"/", name, b"/"].concat())?;
-                let dir = [parent, b"/", name, b"/"].concat();
-                (!real_dir.starts_with(&dir)).then(|| [dir.as_slice(), b"package.json"].concat())
-            });
-            Some(candidates.collect::<Vec<_>>())
+        kinds: &[&[u8]],
+    ) -> Vec<Vec<u8>> {
+        let mut found = Vec::new();
+        Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
+            for kind in kinds {
+                let Some(dependencies) = root.get(kind) else {
+                    continue;
+                };
+                let ExprData::EObjectJSON(dependencies) = &dependencies.data else {
+                    continue;
+                };
+                for dependency in dependencies.get().properties().iter() {
+                    let name = dependency.key.slice();
+                    // `node_modules` can be a link to a folder of another name, which is the name in `real`.
+                    let Some((parent, _)) =
+                        strings::rsplit_once(real, &[b"/", name, b"/"].concat())
+                    else {
+                        continue;
+                    };
+                    let dir = [parent, b"/", name, b"/"].concat();
+                    // A folder above the project, which the package is in too, or `@scope/<name>`.
+                    if real_dir.starts_with(&dir) || bun_paths::basename(parent).starts_with(b"@") {
+                        continue;
+                    }
+                    found.push([dir.as_slice(), b"package.json"].concat());
+                }
+            }
         });
-        candidates.flatten().is_some_and(|candidates| {
-            candidates.iter().any(|dependency_json| {
-                Self::read_package_json(transpiler, dependency_json, &is_match).unwrap_or(false)
-            })
-        })
+        found
     }
 
     fn read_package_json<T>(

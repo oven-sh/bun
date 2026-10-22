@@ -2430,6 +2430,34 @@ describe("bundler", () => {
       stdout: "1 a,z 2 3 one,two 1\nc",
     },
   });
+  // The namespace object of a stylesheet needs the `__export` helper, and on
+  // main nothing makes the helper stay for it (#38286). Such a bundle runs
+  // while another namespace object keeps the helper. So no declaration takes
+  // copies in a bundle with `import * as` of a stylesheet.
+  itBundled("dce/DestructuringOfImportNamespaceNextToANamespaceOfAStylesheet", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as styles from './own.module.css'
+        import * as ns from './lib.js'
+        const { version } = ns
+        const key = 'o' + 'wn'
+        console.log(typeof styles[key], version)
+      `,
+      "/own.module.css": `.own { color: red }`,
+      "/lib.js": /* js */ `
+        export const version = 'lib'
+        export const other = 1
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatch(/\{ version(: \w+)? \} = exports_lib;/);
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "string lib",
+    },
+  });
   // A file with `export * from` can export a namespace object through it:
   // barrel.js has `export * as viaStar`. No declaration of such a file takes
   // copies, also not one over another module.

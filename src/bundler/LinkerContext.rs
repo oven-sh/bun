@@ -120,6 +120,9 @@ pub struct LinkerContext<'a> {
 
     pub(crate) has_any_css_locals: AtomicU32,
 
+    /// Is a stylesheet imported with `import * as`? `None` until `imports_stylesheet_namespace` asks.
+    pub(crate) stylesheet_namespace_import: Option<bool>,
+
     /// Used by Bake to extract []CompileResult before it is joined.
     /// CYCLEBREAK GENUINE: erased bake::DevServer (see bundle_v2::dispatch).
     pub dev_server: Option<crate::dispatch::DevServerHandle>,
@@ -174,6 +177,7 @@ impl<'a> Default for LinkerContext<'a> {
             source_maps: Default::default(),
             pending_task_count: AtomicU32::new(0),
             has_any_css_locals: AtomicU32::new(0),
+            stylesheet_namespace_import: None,
             dev_server: None,
             framework: None,
             mangled_props: Default::default(),
@@ -568,6 +572,7 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
+        self.stylesheet_namespace_import = None;
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -5024,6 +5029,9 @@ impl<'a> LinkerContext<'a> {
         imports_to_bind: &mut crate::RefImportData,
         member_resolutions: &mut ImportMemberResolutions,
     ) {
+        if self.imports_stylesheet_namespace() {
+            return;
+        }
         let mut plans: Vec<NamespacePatternPlan> = Vec::new();
         for &part_index in pattern_parts {
             if let Some(plan) = self.plan_namespace_pattern(
@@ -5082,6 +5090,26 @@ impl<'a> LinkerContext<'a> {
             let _ = part.symbol_uses.swap_remove(&plan.base);
             part.dependencies.extend_from_slice(&dependencies);
         }
+    }
+
+    /// #38286: the namespace object of a stylesheet needs `__export`, and nothing makes the runtime reachable for it. Such a bundle runs on main while another namespace object keeps the helper, so no declaration drops one.
+    fn imports_stylesheet_namespace(&mut self) -> bool {
+        if let Some(known) = self.stylesheet_namespace_import {
+            return known;
+        }
+        let stylesheets = self.graph.ast.items_css();
+        let found = self.graph.ast.items_import_records().iter().any(|records| {
+            records.as_slice().iter().any(|record| {
+                record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                    && stylesheets
+                        .get(record.source_index.get() as usize)
+                        .is_some_and(|stylesheet| stylesheet.is_some())
+            })
+        });
+        self.stylesheet_namespace_import = Some(found);
+        found
     }
 
     /// Checks that each key of the part's one declarator is a static export to copy. Changes nothing but the memo.

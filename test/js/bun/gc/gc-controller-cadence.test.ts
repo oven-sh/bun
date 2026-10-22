@@ -671,9 +671,19 @@ describe.concurrent.skipIf(isDebug)("marking helper threads", () => {
   });
 
   // The GC race tests depend on this: with the threshold at 0 they join from the start. A ring four times the size gives
-  // each collection about 1 MB to mark, of which the collector donates some to them.
+  // each collection 1.3 MB to mark. That is under the 2 MB of the default, where no helper marks any of it. With the
+  // threshold at 0 the collector donates some of it to them. (A collection can then mark two or three rings: it runs
+  // while the program replaces the ring.)
   test("join from the start with BUN_JSC_minimumBytesMarkedForParallelMarking=0", async () => {
-    const edens = await edenCollectionsOf(4096, { BUN_JSC_minimumBytesMarkedForParallelMarking: "0" });
+    const [byDefault, edens] = await Promise.all([
+      edenCollectionsOf(4096),
+      edenCollectionsOf(4096, { BUN_JSC_minimumBytesMarkedForParallelMarking: "0" }),
+    ]);
+    for (const eden of byDefault) expect(eden.markedKB, JSON.stringify(eden)).toBeLessThan(2048);
+    expect(
+      byDefault.map(c => c.helpersKB),
+      JSON.stringify(byDefault),
+    ).toEqual(byDefault.map(() => 0));
     expect(
       edens.reduce((sum, c) => sum + c.helpersKB, 0),
       JSON.stringify(edens),

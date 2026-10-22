@@ -45,6 +45,7 @@ type Bitset = DynamicBitSet;
 pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
     pub(crate) tree_id: lockfile::tree::Id,
+    pub(crate) dependency_id: DependencyID,
     pub(crate) optional: bool,
 }
 
@@ -458,25 +459,24 @@ pub struct TreeContext {
 
 type TreeContextId = lockfile::tree::Id;
 
-/// Finds the tree whose `node_modules` contains `target_pkg_id`, walked in
+/// Finds the tree whose `node_modules` contains a dependency that `is_target` accepts, walked in
 /// Node resolution order from `<start_tree>/<alias>/`: the child tree at
 /// `<start_tree>/<alias>/node_modules/`, then `start_tree`, then each ancestor.
-fn find_native_binlink_target_tree(
+fn find_tree_resolved_from(
     trees: &[Tree],
     hoisted_deps: &[DependencyID],
-    resolutions: &[PackageID],
     deps: &[crate::Dependency],
     string_buf: &[u8],
     start_tree: lockfile::tree::Id,
     alias: &[u8],
-    target_pkg_id: PackageID,
+    is_target: impl Fn(DependencyID) -> bool,
 ) -> Option<lockfile::tree::Id> {
     let tree_contains = |id: lockfile::tree::Id| -> bool {
         trees[id as usize]
             .dependencies
             .get(hoisted_deps)
             .iter()
-            .any(|&dep_id| resolutions[dep_id as usize] == target_pkg_id)
+            .any(|&dep_id| is_target(dep_id))
     };
 
     for t in trees {
@@ -504,6 +504,48 @@ fn find_native_binlink_target_tree(
     }
 }
 
+/// The platform package, and the tree it is in, that the native binlink optimization links the bins
+/// of `package_id` at `<tree_id>/<alias>` into.
+fn native_binlink_target(
+    manager: &PackageManager,
+    tree_id: lockfile::tree::Id,
+    alias: &[u8],
+    package_id: PackageID,
+) -> Option<(lockfile::tree::Id, PackageID)> {
+    if !manager.postinstall_optimizer.is_native_binlink_enabled() {
+        return None;
+    }
+    let lockfile: &Lockfile = &manager.lockfile;
+    let pkgs = lockfile.packages.slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let optimizer = manager
+        .postinstall_optimizer
+        .get(&postinstall_optimizer::PkgInfo {
+            name_hash: pkgs.items_name_hash()[package_id as usize],
+            ..Default::default()
+        })?;
+    if optimizer != PostinstallOptimizer::NativeBinlink {
+        return None;
+    }
+    let replacement_pkg_id = PostinstallOptimizer::get_native_binlink_replacement_package_id(
+        pkgs.items_resolutions()[package_id as usize].get(resolutions),
+        pkgs.items_meta(),
+        manager.options.cpu,
+        manager.options.os,
+        manager.options.libc,
+    )?;
+    let target_tree_id = find_tree_resolved_from(
+        lockfile.buffers.trees.as_slice(),
+        lockfile.buffers.hoisted_dependencies.as_slice(),
+        lockfile.buffers.dependencies.as_slice(),
+        lockfile.buffers.string_bytes.as_slice(),
+        tree_id,
+        alias,
+        |dep_id| resolutions[dep_id as usize] == replacement_pkg_id,
+    )?;
+    Some((target_tree_id, replacement_pkg_id))
+}
+
 fn abs_node_modules_path(
     lockfile: &Lockfile,
     string_buf: &[u8],
@@ -526,6 +568,132 @@ fn abs_node_modules_path(
     let mut abs = AbsPath::init_top_level_dir();
     abs.try_append(rel.as_bytes()).ok()?;
     Some(abs)
+}
+
+/// Links the bins of the dependencies of the package at `<tree_id>/<dependency_id>` into the `.bin`
+/// of its own `node_modules`, the first `PATH` entry of its lifecycle scripts. The `.bin` that a
+/// dependency is hoisted to is shared, and there another package can have the name.
+pub fn link_dependency_bins(
+    manager: &PackageManager,
+    tree_id: lockfile::tree::Id,
+    dependency_id: DependencyID,
+) -> crate::Result<()> {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let pkgs = lockfile.packages.slice();
+    let alias = dependencies[dependency_id as usize].name.slice(string_buf);
+
+    let own = pkgs.items_dependencies()[resolutions[dependency_id as usize] as usize];
+    let mut placed: Vec<(DependencyID, lockfile::tree::Id)> = (own.begin()..own.end())
+        .filter(|&own_id| {
+            (pkgs.items_bin().get(resolutions[own_id as usize] as usize))
+                .is_some_and(|bin| bin.tag != bin::Tag::None)
+        })
+        .filter_map(|own_id| {
+            let placed_tree_id = find_tree_resolved_from(
+                lockfile.buffers.trees.as_slice(),
+                lockfile.buffers.hoisted_dependencies.as_slice(),
+                dependencies,
+                string_buf,
+                tree_id,
+                alias,
+                |dep_id| {
+                    resolutions[dep_id as usize] == resolutions[own_id as usize]
+                        && dependencies[dep_id as usize].name_hash
+                            == dependencies[own_id as usize].name_hash
+                },
+            )?;
+            Some((own_id, placed_tree_id))
+        })
+        .collect();
+    if placed.is_empty() {
+        return Ok(());
+    }
+    bun_collections::index_sort::sort_slice_by(&mut placed, |a, b| {
+        let [a, b] = [a, b].map(|&(own_id, _)| {
+            bin::LinkOrder::new(
+                false,
+                pkgs.items_resolution()[resolutions[own_id as usize] as usize].tag,
+                dependencies[own_id as usize].name.slice(string_buf),
+            )
+        });
+        a.cmp(&b)
+    });
+
+    let mut node_modules_path =
+        abs_node_modules_path(lockfile, string_buf, tree_id).ok_or(NAME_TOO_LONG)?;
+    node_modules_path
+        .try_append(alias)
+        .map_err(|_| NAME_TOO_LONG)?;
+    // A workspace, or a `link:` or `file:` directory: its `node_modules` is not the installer's.
+    if !bun_sys::lstat(node_modules_path.slice_z()).is_ok_and(|st| {
+        bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::EntryKind::Directory
+    }) {
+        return Ok(());
+    }
+    // The tree of a workspace is reached through a link, and a relative link starts from the real
+    // directory.
+    let mut real_buf = bun_paths::path_buffer_pool::get();
+    let real_path = bun_sys::realpath(node_modules_path.slice_z(), &mut real_buf)?;
+    let mut node_modules_path = AbsPath::from(real_path).map_err(|_| NAME_TOO_LONG)?;
+    let package_path_len = node_modules_path.len();
+    node_modules_path
+        .try_append(b"node_modules")
+        .map_err(|_| NAME_TOO_LONG)?;
+    {
+        let mut bin_dir = node_modules_path.save();
+        bin_dir.try_append(b".bin").map_err(|_| NAME_TOO_LONG)?;
+        crate::prune::remove_planted_links(bin_dir.slice(), package_path_len)?;
+    }
+
+    let mut seen: StringHashMap<()> = StringHashMap::default();
+    let mut link_target_buf = bun_paths::path_buffer_pool::get();
+    let mut link_dest_buf = bun_paths::path_buffer_pool::get();
+    let mut link_rel_buf = bun_paths::path_buffer_pool::get();
+
+    for (own_id, placed_tree_id) in placed {
+        let package_id = resolutions[own_id as usize];
+        let name = dependencies[own_id as usize].name.slice(string_buf);
+        // Returns false if a file of a bin is missing.
+        let mut link_into = |target_tree_id, target_name: &[u8]| -> crate::Result<bool> {
+            let target_node_modules_path =
+                abs_node_modules_path(lockfile, string_buf, target_tree_id).ok_or(NAME_TOO_LONG)?;
+            let mut bin_linker = bin::Linker {
+                bin: pkgs.items_bin()[package_id as usize],
+                global_bin_path: ZStr::EMPTY,
+                package_name: strings::StringOrTinyString::init(name),
+                target_package_name: strings::StringOrTinyString::init(target_name),
+                string_buf,
+                extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
+                seen: Some(&mut seen),
+                target_node_modules_path: &raw const target_node_modules_path,
+                node_modules_path: &mut node_modules_path,
+                abs_target_buf: link_target_buf.as_mut_slice(),
+                abs_dest_buf: link_dest_buf.as_mut_slice(),
+                rel_buf: link_rel_buf.as_mut_slice(),
+                is_behind_link: Some(false),
+                err: None,
+                skipped_due_to_missing_bin: false,
+            };
+            bin_linker.link(false);
+            match bin_linker.err {
+                Some(err) => Err(err),
+                None => Ok(!bin_linker.skipped_due_to_missing_bin),
+            }
+        };
+
+        let native = native_binlink_target(manager, placed_tree_id, name, package_id);
+        let linked_native = native.is_some_and(|(native_tree_id, native_id)| {
+            let native_name = pkgs.items_name()[native_id as usize].slice(string_buf);
+            link_into(native_tree_id, native_name).unwrap_or(false)
+        });
+        if !linked_native {
+            link_into(placed_tree_id, name)?;
+        }
+    }
+    Ok(())
 }
 
 /// For a workspace or a `link:` package, this only removes the link.
@@ -724,10 +892,6 @@ impl<'a> PackageInstaller<'a> {
         let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
 
         let pkgs = lockfile.packages.slice();
-        let pkg_name_hashes = pkgs.items_name_hash();
-        let pkg_metas = pkgs.items_meta();
-        let pkg_resolutions_lists = pkgs.items_resolutions();
-        let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
         let pkg_names = pkgs.items_name();
 
         let completed_trees = &self.completed_trees;
@@ -774,74 +938,31 @@ impl<'a> PackageInstaller<'a> {
             let mut defer_this_bin = false;
 
             'native_binlink_optimization: {
-                if !manager.postinstall_optimizer.is_native_binlink_enabled() {
+                let Some((target_tree_id, replacement_pkg_id)) =
+                    native_binlink_target(manager, tree_id, alias, package_id)
+                else {
                     break 'native_binlink_optimization;
-                }
-                // Check for native binlink optimization
-                let name_hash = pkg_name_hashes[package_id as usize];
-                if let Some(optimizer) =
-                    manager
-                        .postinstall_optimizer
-                        .get(&postinstall_optimizer::PkgInfo {
-                            name_hash,
-                            ..Default::default()
-                        })
-                {
-                    match optimizer {
-                        PostinstallOptimizer::NativeBinlink => {
-                            let target_cpu = manager.options.cpu;
-                            let target_os = manager.options.os;
-                            let target_libc = manager.options.libc;
-                            if let Some(replacement_pkg_id) =
-                                PostinstallOptimizer::get_native_binlink_replacement_package_id(
-                                    pkg_resolutions_lists[package_id as usize]
-                                        .get(pkg_resolutions_buffer),
-                                    pkg_metas,
-                                    target_cpu,
-                                    target_os,
-                                    target_libc,
-                                )
-                            {
-                                let Some(target_tree_id) = find_native_binlink_target_tree(
-                                    lockfile.buffers.trees.as_slice(),
-                                    lockfile.buffers.hoisted_dependencies.as_slice(),
-                                    lockfile.buffers.resolutions.as_slice(),
-                                    lockfile.buffers.dependencies.as_slice(),
-                                    string_buf,
-                                    tree_id,
-                                    alias,
-                                    replacement_pkg_id,
-                                ) else {
-                                    break 'native_binlink_optimization;
-                                };
+                };
 
-                                if target_tree_id != tree_id {
-                                    if pass == BinPass::TreeDone
-                                        && !completed_trees.is_set(target_tree_id as usize)
-                                    {
-                                        // Platform package's tree isn't installed
-                                        // yet: link the package's own bin now and
-                                        // re-queue for `link_remaining_bins`.
-                                        defer_this_bin = true;
-                                        break 'native_binlink_optimization;
-                                    }
-                                    target_node_modules_path_opt =
-                                        abs_node_modules_path(lockfile, string_buf, target_tree_id);
-                                    if target_node_modules_path_opt.is_none() {
-                                        break 'native_binlink_optimization;
-                                    }
-                                }
-
-                                let replacement_name =
-                                    pkg_names[replacement_pkg_id as usize].slice(string_buf);
-                                target_package_name =
-                                    strings::StringOrTinyString::init(replacement_name);
-                                can_retry_without_native_binlink_optimization = true;
-                            }
-                        }
-                        PostinstallOptimizer::Ignore => {}
+                if target_tree_id != tree_id {
+                    if pass == BinPass::TreeDone && !completed_trees.is_set(target_tree_id as usize)
+                    {
+                        // Platform package's tree isn't installed
+                        // yet: link the package's own bin now and
+                        // re-queue for `link_remaining_bins`.
+                        defer_this_bin = true;
+                        break 'native_binlink_optimization;
+                    }
+                    target_node_modules_path_opt =
+                        abs_node_modules_path(lockfile, string_buf, target_tree_id);
+                    if target_node_modules_path_opt.is_none() {
+                        break 'native_binlink_optimization;
                     }
                 }
+
+                let replacement_name = pkg_names[replacement_pkg_id as usize].slice(string_buf);
+                target_package_name = strings::StringOrTinyString::init(replacement_name);
+                can_retry_without_native_binlink_optimization = true;
             }
 
             if defer_this_bin {
@@ -1035,6 +1156,9 @@ impl<'a> PackageInstaller<'a> {
     fn spawn_scripts(&mut self, entry: PendingLifecycleScript, log_level: Options::LogLevel) {
         let name = entry.list.package_name.clone();
         let output_in_foreground = false;
+        if let Err(err) = link_dependency_bins(self.manager(), entry.tree_id, entry.dependency_id) {
+            return self.on_scripts_error(log_level, "link bins for life-cycle", &name, err);
+        }
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
             self.command_ctx,
             entry.list,
@@ -2801,6 +2925,7 @@ impl<'a> PackageInstaller<'a> {
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {
             list: scripts_list,
             tree_id: self.current_tree_id,
+            dependency_id,
             optional,
         });
         true

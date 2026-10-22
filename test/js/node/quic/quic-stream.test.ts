@@ -6,7 +6,7 @@ import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -178,6 +178,53 @@ describe("HTTP/3 header encoding", () => {
 
     expect(seen.length).toBe(1);
     expect(Object.keys(seen[0])).not.toContain("authorization");
+  });
+
+  test("a value of more than 64 KB arrives intact in both directions under a raised maxHeaderLength", async () => {
+    const value = Buffer.alloc(70_000, "v").toString();
+    const application = { maxHeaderLength: 100_000 };
+    const requested = Promise.withResolvers<string>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        application,
+        onheaders(this: any, headers: Record<string, any>) {
+          requested.resolve(headers["x-value"]);
+          this.sendHeaders({ ":status": "200", "x-value": value }, { terminal: true });
+        },
+      },
+    );
+
+    // An endpoint keeps the limits it was created with, so not the shared one.
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      application,
+    } as SessionOptions);
+    await client.opened;
+    const answered = Promise.withResolvers<string>();
+    await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost", "x-value": value },
+      onheaders(headers: Record<string, any>) {
+        answered.resolve(headers["x-value"]);
+      },
+    });
+    // Not toBe(value): a mismatch would print the values.
+    expect({ request: (await requested.promise) === value, response: (await answered.promise) === value }).toEqual({
+      request: true,
+      response: true,
+    });
+    client.close();
   });
 
   test("reports request headers that can't be sent", async () => {

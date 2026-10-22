@@ -1325,27 +1325,6 @@ describe("the origin ended the stream with no final response", () => {
       await origin.destroy();
     }
   });
-
-  test("Bun.serve could not send the response headers: POST", async () => {
-    let handled = 0;
-    await using origin = Bun.serve({
-      port: 0,
-      tls,
-      http3: true,
-      http1: false,
-      async fetch(req) {
-        await req.text();
-        handled++;
-        // lsxpack holds the length of a value in 16 bits.
-        return new Response("body", { headers: { "x-value": Buffer.alloc(70_000, "v").toString() } });
-      },
-    });
-    const outcome = await fetch(origin.url, { ...h3, method: "POST", body: "one order" }).then(
-      res => res.status,
-      err => err.code,
-    );
-    expect({ outcome, handled }).toEqual({ outcome: "HTTP3StreamReset", handled: 1 });
-  });
 });
 
 // A server that shuts down gracefully sends a GOAWAY with the id of the first

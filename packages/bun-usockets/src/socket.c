@@ -403,14 +403,16 @@ void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
-/* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so
- * nothing may follow them: the send fails with ECONNABORTED and the write side is shut down, which also
- * stops the writers that take any failed send for backpressure from sending the same bytes again. */
-static ssize_t us_internal_check_sent(struct us_socket_t *s, ssize_t sent, size_t length) {
-    if (sent < 0 || (size_t) sent <= length) {
-        return sent;
+/* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
+ * may follow them. ECONNABORTED is a peer-gone errno, so it is never retried; the shutdown is for the writers that
+ * take any failed send for backpressure. No write may close under its caller: the writable event does. */
+static ssize_t us_internal_reject_excess_send(struct us_socket_t *s, ssize_t written, size_t length) {
+    if (written < 0 || (size_t) written <= length) {
+        return written;
     }
     us_internal_socket_raw_shutdown(s);
+    s->send_rejected = !s->ssl;
+    us_internal_rearm_writable(s);
 #ifdef _WIN32
     WSASetLastError(WSAECONNABORTED);
 #endif
@@ -437,8 +439,8 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
         return 0;
     }
 
-    int written = us_internal_check_sent(s, bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length),
-                                         (size_t) header_length + (size_t) payload_length);
+    ssize_t sent = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    int written = us_internal_reject_excess_send(s, sent, (size_t) header_length + (size_t) payload_length);
     if (written != header_length + payload_length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -473,6 +475,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->send_rejected = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -511,7 +514,7 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
         return 0;
     }
 
-    int written = us_internal_check_sent(s, bsd_send(us_poll_fd(&s->p), data, length), length);
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -609,7 +612,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         return written;
     }
 
-    int written = us_internal_check_sent(s, bsd_send(us_poll_fd(&s->p), data, length), length);
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     if (written < 0) {
         int fatal_send_error = us_internal_classify_failed_send(s);
         if (!fatal_send_error) {
@@ -645,7 +648,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     size_t total = 0;
     for (int i = 0; i < count; i++) total += iov[i].iov_len;
 
-    ssize_t written = us_internal_check_sent(s, bsd_writev(us_poll_fd(&s->p), iov, count), total);
+    ssize_t written = us_internal_reject_excess_send(s, bsd_writev(us_poll_fd(&s->p), iov, count), total);
     if (written != (ssize_t)total) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -663,7 +666,7 @@ int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int le
         return 0;
     }
 
-    int written = us_internal_check_sent(s, bsd_send(us_poll_fd(&s->p), data, length), length);
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     int fatal = 0;
     if (written >= 0) {
         s->unclassified_send_failures = 0;

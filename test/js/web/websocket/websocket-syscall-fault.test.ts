@@ -394,9 +394,11 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
     expect(exitCode).toBe(0);
   });
 
-  // Same route to the writev hook as the test above.
-  test("writev → more bytes than it was given on a ≥16 KB server frame: both ends close and the frame is not sent again", async () => {
-    const fixture = /* js */ `
+  // Same route to the writev hook as the test above. A paused socket defers the client's hangup, so only the server can close it.
+  test.each(["reading", "paused"] as const)(
+    "writev → more bytes than it was given on a ≥16 KB frame of a %s server socket: both ends close and the frame is not sent again",
+    async state => {
+      const fixture = /* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       const seen = { messages: 0 };
       const done = () => {
@@ -409,6 +411,7 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
         fetch(req, server) { if (server.upgrade(req)) return; return new Response("no", {status:426}); },
         websocket: {
           message(ws) {
+            ${state === "paused" ? "ws.pause();" : ""}
             fault.set({ syscall: "writev", action: "excess" });
             ws.send(Buffer.alloc(20000, 0x57));
           },
@@ -419,20 +422,21 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
       ws.onmessage = () => { seen.messages++; };
       ws.onclose = (e) => { seen.client = e.code; done(); };
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: JSON.parse(stdout.trim() || "{}"), signal: proc.signalCode, stderr }).toEqual({
-      out: { messages: 0, server: 1006, client: 1006 },
-      signal: null,
-      stderr: expect.any(String),
-    });
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim() || "{}"), signal: proc.signalCode, stderr }).toEqual({
+        out: { messages: 0, server: 1006, client: 1006 },
+        signal: null,
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("client disconnect under server short sends: every ws reaches close()", async () => {
     const fixture = /* js */ `

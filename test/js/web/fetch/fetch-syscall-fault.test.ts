@@ -224,7 +224,7 @@ describe.skipIf(skip)("fetch() under injected syscall faults (https)", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  test("send → more bytes than it was given rejects", async () => {
+  test("send → more bytes than it was given: rejects with ECONNRESET", async () => {
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",

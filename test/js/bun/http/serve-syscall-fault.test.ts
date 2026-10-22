@@ -75,34 +75,41 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
   });
 
   // The response writer takes a failed send for backpressure and would send the same bytes again.
-  test("send → more bytes than it was given: that connection ends and the server goes on", async () => {
-    const { proc, port } = await spawnServer(/* js */ `
+  // A body above 16 KB is not copied into the cork buffer and leaves through writev().
+  test.each([
+    ["send", 16384],
+    ["writev", 32768],
+  ] as const)(
+    "%s → more bytes than it was given: that connection ends and the server goes on",
+    async (syscall, length) => {
+      const { proc, port } = await spawnServer(/* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
         fetch(req) {
-          if (req.url.endsWith("/excess")) fault.set({ syscall: "send", action: "excess" });
-          return new Response(Buffer.alloc(16384, 0x61));
+          if (req.url.endsWith("/excess")) fault.set({ syscall: "${syscall}", action: "excess" });
+          return new Response(Buffer.alloc(${length}, 0x61));
         } });
       console.log(s.port);
       process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
     `);
-    const bodyLength = (path: string) =>
-      fetch(`http://127.0.0.1:${port}/${path}`)
-        .then(res => res.arrayBuffer())
-        .then(
-          body => body.byteLength,
-          error => error.code,
-        );
-    try {
-      expect(await bodyLength("excess")).toBe("ECONNRESET");
-      expect(await bodyLength("")).toBe(16384);
-    } finally {
-      proc.kill("SIGTERM");
-      await proc.exited;
-    }
-    expect(proc.signalCode).toBeNull();
-    expect(proc.exitCode).toBe(0);
-  });
+      const lengthOrCode = (path: string) =>
+        fetch(`http://127.0.0.1:${port}/${path}`)
+          .then(res => res.arrayBuffer())
+          .then(
+            body => body.byteLength,
+            error => error.code,
+          );
+      try {
+        expect(await lengthOrCode("excess")).toBe("ECONNRESET");
+        expect(await lengthOrCode("")).toBe(length);
+      } finally {
+        proc.kill("SIGTERM");
+        await proc.exited;
+      }
+      expect(proc.signalCode).toBeNull();
+      expect(proc.exitCode).toBe(0);
+    },
+  );
 
   test("recv → short reads (1 byte) deliver complete request body to handler", async () => {
     const { proc, port } = await spawnServer(/* js */ `

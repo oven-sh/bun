@@ -332,6 +332,33 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
 // wait on child processes; `serialized` chains them behind one another. The
 // time a test spends waiting in that chain counts against its own timeout, so
 // each one gets an explicit timeout instead of Bun's 5000ms default.
+// The peer stays half-open and never answers the FIN, so only the writer can close the socket.
+test.skipIf(skip).each(["reading", "paused"] as const)(
+  "send → more bytes than it was given: a %s Bun.connect socket closes",
+  async state => {
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: { data() {}, end() {} },
+    });
+    try {
+      const closed = Promise.withResolvers<string | undefined>();
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        socket: { data() {}, close: (_, error) => closed.resolve((error as NodeJS.ErrnoException | undefined)?.code) },
+      });
+      if (state === "paused") socket.pause();
+      fault.set({ syscall: "send", action: "excess", fd: (socket as any).fd });
+      expect(socket.write("hello")).toBe(-1);
+      expect(await closed.promise).toBe("ECONNRESET");
+    } finally {
+      listener.stop(true);
+    }
+  },
+);
+
 describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOTYPE)", () => {
   const H2_TIMEOUT_MS = 30_000;
   let chain: Promise<unknown> = Promise.resolve();

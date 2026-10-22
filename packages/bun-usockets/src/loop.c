@@ -595,6 +595,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
+                        s->send_rejected = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -642,7 +643,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             /* Set once recv() returns 0 below: the only proof that the peer's stream ended with a FIN. The
              * eof hint this dispatch was called with (EPOLLHUP, kqueue's EV_EOF) also rides on a reset. */
             int read_fin = 0;
-            if (events & LIBUS_SOCKET_WRITABLE && !error) {
+            if (events & LIBUS_SOCKET_WRITABLE && !error && !s->send_rejected) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE
                 /* Kqueue EVFILT_WRITE is one-shot so the filter is removed after delivery.
@@ -670,6 +671,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
                     #endif
                 }
+            }
+
+            if (s->send_rejected) {
+                error = 1;
             }
 
             /* An error event (EPOLLERR, EV_EOF with the socket error in fflags, an AFD

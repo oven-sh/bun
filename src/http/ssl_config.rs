@@ -128,6 +128,12 @@ impl SSLConfig {
         Self::default()
     }
 
+    /// What `tls.setDefaultCACertificates` was given, for a client config without `ca`. It then needs a context of its own.
+    pub fn set_default_ca(&mut self, certs: &[Box<[u8]>]) {
+        self.ca = Some(certs.iter().map(|cert| bun_core::dupe_z(cert)).collect());
+        self.requires_custom_request_ctx = true;
+    }
+
     /// What was assigned to `tls.DEFAULT_CIPHERS`, for a config without `ciphers`. It then needs a context of its own, like one with `ciphers`.
     pub fn set_default_ciphers(&mut self, ciphers: &[u8]) {
         self.ssl_ciphers = bun_core::dupe_z(ciphers);
@@ -361,6 +367,8 @@ impl SSLConfig {
         }
         macro_rules! hash_slice {
             ($f:ident) => {
+                // An empty list trusts nothing; no list means the default store.
+                hasher.update(&[u8::from(self.$f.is_some())]);
                 if let Some(slice) = &self.$f {
                     for s in slice.iter() {
                         hasher.update(cstr_bytes(*s));

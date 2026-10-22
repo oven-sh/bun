@@ -311,6 +311,7 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
 // win-x64; BUN_DECLARE_HOST_FUNCTION carries SYSV_ABI so both sides agree.
 BUN_DECLARE_HOST_FUNCTION(Bun__getTLSDefaultCiphers);
 BUN_DECLARE_HOST_FUNCTION(Bun__setTLSDefaultCiphers);
+BUN_DECLARE_HOST_FUNCTION(Bun__setTLSDefaultCA);
 
 JSC_DEFINE_HOST_FUNCTION(getDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -320,6 +321,11 @@ JSC_DEFINE_HOST_FUNCTION(getDefaultCiphers, (JSC::JSGlobalObject * globalObject,
 JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return Bun__setTLSDefaultCiphers(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(setDefaultCA, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return Bun__setTLSDefaultCA(globalObject, callFrame);
 }
 
 // (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.

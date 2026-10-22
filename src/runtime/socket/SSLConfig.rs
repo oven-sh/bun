@@ -277,6 +277,12 @@ impl SSLConfigFromJs for SSLConfig {
         if generated.ciphers.is_none() {
             apply_default_ciphers(vm, &mut result);
         }
+        // `ca: []` parses to no list, but it was given, so it skips the default.
+        if matches!(generated.ca, generated::TLSOptionsFile::None) && result.ca_file_name.is_null()
+        {
+            apply_default_ca(vm, &mut result);
+        }
+        apply_empty_default_ca(vm, &mut result);
         Ok(Some(result))
     }
 }
@@ -287,12 +293,15 @@ pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConf
     let mut cfg = SSLConfig::zero();
     cfg.reject_unauthorized = (is_server || vm.get_tls_reject_unauthorized()) as i32;
     apply_default_ciphers(vm, &mut cfg);
+    apply_default_ca(vm, &mut cfg);
     cfg
 }
 
-/// For a request without TLS options: its default context is built on the HTTP thread, which does not see `tls.DEFAULT_CIPHERS`.
+/// For a request without TLS options: its default context is built on the HTTP thread, which sees neither `tls.DEFAULT_CIPHERS` nor `tls.setDefaultCACertificates`.
 pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_config::SharedPtr> {
-    vm.tls_default_ciphers()?;
+    if !vm.tls_client_defaults_set() {
+        return None;
+    }
     Some(bun_http::ssl_config::global_registry::intern(
         tls_true_defaults(vm, false),
     ))
@@ -302,6 +311,23 @@ pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_
 fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
     if let Some(ciphers) = vm.tls_default_ciphers() {
         cfg.set_default_ciphers(ciphers);
+    }
+}
+
+/// No `ca` means `tls.setDefaultCACertificates`' list, as in Node's `configSecureContext`.
+fn apply_default_ca(vm: &VirtualMachine, cfg: &mut SSLConfig) {
+    if let Some(certs) = vm.tls_default_ca() {
+        cfg.set_default_ca(certs);
+    }
+}
+
+/// `tls.setDefaultCACertificates([])` for a `SecureContext`: its `ca: []` parses as no list, which would mean the default store.
+pub(crate) fn apply_empty_default_ca(vm: &VirtualMachine, cfg: &mut SSLConfig) {
+    if cfg.ca.is_none()
+        && cfg.ca_file_name.is_null()
+        && vm.tls_default_ca().is_some_and(<[_]>::is_empty)
+    {
+        cfg.set_default_ca(&[]);
     }
 }
 

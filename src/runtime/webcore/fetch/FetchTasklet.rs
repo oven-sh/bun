@@ -1658,6 +1658,15 @@ impl FetchTasklet {
             ..Default::default()
         };
 
+        if matches!(fail, http::Error::Cert(_)) {
+            // Node's fetch reports the TLS error as `.cause`.
+            let global = &self.global_this;
+            let cause = fetch_error.clone().to_error_instance(global);
+            let err_js = fetch_error.to_type_error_instance(global);
+            err_js.put(global, b"cause", cause);
+            return BodyValueError::JSValue(StrongOptional::create(err_js, global));
+        }
+
         BodyValueError::SystemTypeError(fetch_error)
     }
 

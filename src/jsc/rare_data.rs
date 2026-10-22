@@ -273,6 +273,9 @@ pub struct RareData {
     /// [`Self::tls_default_ciphers`] strips it.
     pub(crate) tls_default_ciphers: Option<Box<[u8]>>,
 
+    /// PEM blocks given to `tls.setDefaultCACertificates`, for clients built natively.
+    pub(crate) tls_default_ca: Option<Box<[Box<[u8]>]>>,
+
     // proxy_env_storage moved to VirtualMachine — see comment there on why
     // lazy RareData creation raced with worker spawn.
     spawn_sync_event_loop_: Option<Box<SpawnSyncEventLoop>>,
@@ -313,6 +316,7 @@ impl Default for RareData {
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
+            tls_default_ca: None,
             spawn_sync_event_loop_: None,
             path_buf: PathBuf::default(),
         }
@@ -827,6 +831,17 @@ impl RareData {
         self.default_client_ssl_ctx = None;
     }
 
+    pub(crate) fn tls_default_ca(&self) -> Option<&[Box<[u8]>]> {
+        self.tls_default_ca.as_deref()
+    }
+
+    /// An empty list trusts nothing, as in Node.
+    pub(crate) fn set_tls_default_ca(&mut self, certs: Vec<Box<[u8]>>) {
+        self.tls_default_ca = Some(certs.into_boxed_slice());
+        // Built from the previous list. Open connections hold their own reference.
+        self.default_client_ssl_ctx = None;
+    }
+
     pub fn push_cleanup_hook(
         &mut self,
         global_this: &JSGlobalObject,
@@ -1099,6 +1114,33 @@ fn set_tls_default_ciphers_from_js(
         .as_mut()
         .rare_data()
         .set_tls_default_ciphers(utf8.slice());
+    Ok(JSValue::UNDEFINED)
+}
+
+#[crate::host_fn(export = "Bun__setTLSDefaultCA")]
+fn set_tls_default_ca_from_js(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let args = callframe.arguments();
+    let list = if !args.is_empty() {
+        args[0]
+    } else {
+        JSValue::UNDEFINED
+    };
+    if !list.is_array() {
+        return Err(global_this.throw_invalid_argument_type_value(b"certs", b"array", list));
+    }
+    let mut certs = Vec::new();
+    let mut iter = list.array_iterator(global_this)?;
+    while let Some(cert) = iter.next()? {
+        certs.push(Box::<[u8]>::from(cert.to_utf8(global_this)?.slice()));
+    }
+    global_this
+        .bun_vm()
+        .as_mut()
+        .rare_data()
+        .set_tls_default_ca(certs);
     Ok(JSValue::UNDEFINED)
 }
 

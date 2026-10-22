@@ -1441,14 +1441,20 @@ for (const rejectUnauthorized of [true, false]) {
   });
 }
 
-// A write that waits for the handshake fails with it, and the socket reports the handshake: the close of the handle
-// alone has no cause to give either of them.
+// A write that waits for the handshake changes nothing of that: it is cancelled behind the error of the socket.
 async function failsWithItsWaitingWrite(client: tls.TLSSocket) {
-  const written = new Promise<NodeJS.ErrnoException | null | undefined>(resolve => client.write("early", resolve));
-  // Bun reports the handshake ahead of the end of the stream.
-  const events = isBun ? DISCONNECTED_IN_HANDSHAKE.slice(1) : DISCONNECTED_IN_HANDSHAKE;
-  assert.deepStrictEqual(await eventsUntilClose(client), events);
-  assert.strictEqual((await written)?.code, isBun ? "ERR_SOCKET_CLOSED" : "ECANCELED");
+  const events: string[] = [];
+  client.write("early", err => events.push(`write ${(err as NodeJS.ErrnoException | null | undefined)?.code}`));
+  client.on("end", () => events.push("end"));
+  client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
+  await new Promise<void>(closed =>
+    client.on("close", hadError => {
+      events.push(`close ${hadError}`);
+      closed();
+    }),
+  );
+  const [end, error, close] = DISCONNECTED_IN_HANDSHAKE;
+  assert.deepStrictEqual(events, [end, error, "write ECANCELED", close]);
 }
 
 test("over a Duplex: a close_notify in answer to the ClientHello is the error of a socket with a write that waits for the handshake", async () => {

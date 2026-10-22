@@ -502,42 +502,42 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("a bad record on an established %
 // Linux only: rows of each mode need the peer's `open` to run before the first send() of its client, in the same turn of
 // the event loop. Only the order of epoll's ready list is known to give that.
 const refusals = isLinux ? ["peer-closed", ...(socketFault.available() ? ["ECONNRESET", "EPIPE"] : [])] : [];
-test.concurrent.each(refusals)(
-  "a ClientHello that the kernel refuses to send is a reset for its owner (%s)",
-  async refusal => {
-    using dir = tempDir("tls-refused", {});
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "tls-refused-client-hello-fixture.ts"), refusal],
-      env: {
-        ...bunEnv,
-        TLS_FIXTURE_UNIX_PATH: join(String(dir), "peer.sock"),
-        TLS_FIXTURE_KEY: cert.key,
-        TLS_FIXTURE_CERT: cert.cert,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const reset = "Client network socket disconnected before secure TLS connection was established";
-    expect({ rows: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-      rows: [
-        "Bun.connect, no write, then nothing: handshake(false, ECONNRESET) close(ECONNRESET)",
-        "Bun.connect, no write, then terminate: handshake(false, ECONNRESET) close()",
-        "Bun.connect, no write, then end: handshake(false, ECONNRESET) close()",
-        "Bun.connect, write in open, then nothing: handshake(false, ECONNRESET) close(ECONNRESET)",
-        "Bun.connect, write in open, then terminate: handshake(false, ECONNRESET) close()",
-        "Bun.connect, write in open, then end: handshake(false, ECONNRESET) close()",
-        ...(refusal === "peer-closed"
-          ? []
-          : [`WebSocket: error(ECONNRESET, WebSocket connection to 'URL' failed: TLS handshake failed: ${reset})`]),
-        `node:tls, write before connect: write callback(ERR_SOCKET_CLOSED) error(ECONNRESET, ${reset})`,
-        `RedisClient: close() onclose(ERR_REDIS_CONNECTION_CLOSED) set rejected(ECONNRESET, ${reset})`,
-        "Bun.connect, paused, no write: handshake(false, EPROTO) close()",
-        "Bun.connect, paused, write in open: handshake(false, EPROTO) close()",
-        "Bun.connect, paused after the handshake: resume() data(late) close",
-      ],
-      stderr: "",
-      exitCode: 0,
-    });
-  },
-);
+// Not concurrent: three of these fixtures at once need most of the default timeout on a debug build.
+test.each(refusals)("a ClientHello that the kernel refuses to send is a reset for its owner (%s)", async refusal => {
+  using dir = tempDir("tls-refused", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "tls-refused-client-hello-fixture.ts"), refusal],
+    env: {
+      ...bunEnv,
+      TLS_FIXTURE_UNIX_PATH: join(String(dir), "peer.sock"),
+      TLS_FIXTURE_KEY: cert.key,
+      TLS_FIXTURE_CERT: cert.cert,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const reset = "Client network socket disconnected before secure TLS connection was established";
+  expect({ rows: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    rows: [
+      "Bun.connect, no write, then nothing: handshake(false, ECONNRESET) close(ECONNRESET)",
+      "Bun.connect, no write, then terminate: handshake(false, ECONNRESET) close()",
+      "Bun.connect, no write, then end: handshake(false, ECONNRESET) close()",
+      "Bun.connect, write in open, then nothing: handshake(false, ECONNRESET) close(ECONNRESET)",
+      "Bun.connect, write in open, then terminate: handshake(false, ECONNRESET) close()",
+      "Bun.connect, write in open, then end: handshake(false, ECONNRESET) close()",
+      ...(refusal === "peer-closed"
+        ? []
+        : [`WebSocket: error(ECONNRESET, WebSocket connection to 'URL' failed: TLS handshake failed: ${reset})`]),
+      "node:tls, write before connect, rejectUnauthorized false: error(ECONNRESET, read ECONNRESET) write callback(ECANCELED)",
+      `node:tls, write before connect, rejectUnauthorized true: end error(ECONNRESET, ${reset}) write callback(ECANCELED)`,
+      `node:tls, write before connect, rejectUnauthorized true, a callback that throws: end error(ECONNRESET, ${reset}) write callback(ECANCELED) uncaughtException(from the write callback)`,
+      `RedisClient: close() onclose(ERR_REDIS_CONNECTION_CLOSED) set rejected(ECONNRESET, ${reset})`,
+      "Bun.connect, paused, no write: handshake(false, EPROTO) close()",
+      "Bun.connect, paused, write in open: handshake(false, EPROTO) close()",
+      "Bun.connect, paused after the handshake: resume() data(late) close",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});

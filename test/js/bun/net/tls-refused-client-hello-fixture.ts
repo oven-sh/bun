@@ -114,19 +114,34 @@ if (tcpListener) {
   console.log(`WebSocket: ${events.join(" ")}`);
 }
 
-// node:tls sends a write that was queued ahead of the connection in `open`.
-{
+// node:tls sends a write that was queued ahead of the connection in `open`. That write is cancelled behind the error
+// of the socket, which is the one of a socket with no write: the engine's own close carries the reset, and the close
+// of a client that rejects what it cannot verify is a clean one that 'end' reports. A callback that throws is the
+// caller's own error.
+for (const [rejectUnauthorized, throws] of [
+  [false, false],
+  [true, false],
+  [true, true],
+]) {
   refuseNextSend();
   const socket = tls.connect({
     ...(tcpListener ? { host: "127.0.0.1", port: tcpListener.port } : { path: unix }),
-    rejectUnauthorized: false,
+    rejectUnauthorized,
   });
   const events: string[] = [];
-  socket.write("x", error => events.push(`write callback(${(error as NodeJS.ErrnoException | undefined)?.code})`));
+  const uncaught = (error: Error) => events.push(`uncaughtException(${error.message})`);
+  process.on("uncaughtException", uncaught);
+  socket.write("x", error => {
+    events.push(`write callback(${(error as NodeJS.ErrnoException | undefined)?.code})`);
+    if (throws) throw new Error("from the write callback");
+  });
   socket.on("secureConnect", () => events.push("secureConnect"));
+  socket.on("end", () => events.push("end"));
   socket.on("error", (error: NodeJS.ErrnoException) => events.push(`error(${error.code}, ${error.message})`));
   await new Promise(resolve => socket.on("close", resolve));
-  console.log(`node:tls, write before connect: ${events.join(" ")}`);
+  process.off("uncaughtException", uncaught);
+  const row = `rejectUnauthorized ${rejectUnauthorized}${throws ? ", a callback that throws" : ""}`;
+  console.log(`node:tls, write before connect, ${row}: ${events.join(" ")}`);
 }
 
 // A RedisClient has no `open` to close from. The peer's `open` is in the turn in which the client sends: a close()

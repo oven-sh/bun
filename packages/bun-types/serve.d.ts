@@ -854,6 +854,24 @@ declare module "bun" {
       idleTimeout?: number;
 
       /**
+       * Also serve HTTP/2 on the same listener. With {@link tls}, clients that
+       * offer "h2" via ALPN get HTTP/2 and everyone else gets HTTP/1.1;
+       * without it, connections that open with the HTTP/2 preface
+       * ("prior knowledge") get HTTP/2.
+       * @default false
+       * @experimental
+       */
+      http2?: boolean;
+
+      /**
+       * Serve HTTP/1.1. Set to `false` together with `http2: true` and/or
+       * `http3: true` to refuse HTTP/1.x clients.
+       * @default true
+       * @experimental
+       */
+      http1?: boolean;
+
+      /**
        * Whether to render contextual errors with Bun's error page
        * @default process.env.NODE_ENV !== 'production'
        */
@@ -939,24 +957,6 @@ declare module "bun" {
        * @experimental
        */
       http3?: boolean;
-
-      /**
-       * Also serve HTTP/2 on the same port. With {@link tls}, clients that
-       * offer "h2" via ALPN get HTTP/2 and everyone else gets HTTP/1.1;
-       * without it, connections that open with the HTTP/2 preface
-       * ("prior knowledge") get HTTP/2.
-       * @default false
-       * @experimental
-       */
-      http2?: boolean;
-
-      /**
-       * Serve HTTP/1.1. Set to `false` together with `http2: true` and/or
-       * `http3: true` to refuse HTTP/1.x clients.
-       * @default true
-       * @experimental
-       */
-      http1?: boolean;
     }
 
     interface UnixServeOptions<WebSocketData> extends BaseServeOptions<WebSocketData> {

@@ -85,16 +85,29 @@ const s4 = Bun.serve({
   },
 });
 
-// idleTimeout applies to a unix socket listener as well as to hostname+port
+// idleTimeout, http2 and http1 apply to a unix socket listener as well as to hostname+port
 Bun.serve({
   unix: "/tmp/bun-types-fixture.sock",
   idleTimeout: 0,
+  http2: true,
+  http1: false,
   fetch: () => new Response("ok"),
 });
 
 Bun.serve({
   port: 0,
   idleTimeout: 30,
+  http2: true,
+  http1: false,
+  fetch: () => new Response("ok"),
+});
+
+// http3 stays hostname+port only: Bun skips the HTTP/3 listener on a unix socket
+// @ts-expect-error - http3 is not accepted with unix
+Bun.serve({
+  unix: "/tmp/bun-types-fixture.sock",
+  http3: true,
+  tls: { key: "key", cert: "cert" },
   fetch: () => new Response("ok"),
 });
 

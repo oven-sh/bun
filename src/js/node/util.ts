@@ -551,6 +551,8 @@ function prepareCallSites(_err, callSites) {
   const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
+    // node returns the frames that are on the stack. An async frame is a function that waits.
+    if (callSite.isAsync()) continue;
     // node exposes the column under both names.
     const columnNumber = callSite.getColumnNumber() ?? 0;
     result.push({

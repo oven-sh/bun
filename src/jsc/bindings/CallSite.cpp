@@ -93,11 +93,11 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (!stackFrame.codeBlock()) {
-        m_flags |= static_cast<unsigned int>(Flags::IsNative);
-    }
     if (stackFrame.isAsync()) {
+        // Not native, also when a collection took its code and it has no CodeBlock.
         m_flags |= static_cast<unsigned int>(Flags::IsAsync);
+    } else if (!stackFrame.codeBlock()) {
+        m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
 }
 
@@ -147,6 +147,9 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
 
     std::optional<OrdinalNumber> column = columnNumber().zeroBasedInt() >= 0 ? std::optional(columnNumber()) : std::nullopt;
     std::optional<OrdinalNumber> line = lineNumber().zeroBasedInt() >= 0 ? std::optional(lineNumber()) : std::nullopt;
+
+    if (isAsync())
+        sb.append("async "_s);
 
     if (functionName.length() > 0) {
 

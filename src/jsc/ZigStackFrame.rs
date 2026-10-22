@@ -87,6 +87,11 @@ impl ZigStackFrame {
         }
     }
 
+    /// For a frame with no name. A module that waits is one: `at async file:line:column`.
+    pub fn location_prefix(&self) -> &'static str {
+        if self.is_async { "async " } else { "" }
+    }
+
     pub(crate) fn source_url_formatter<'a>(
         &'a self,
         root_path: &'a [u8],

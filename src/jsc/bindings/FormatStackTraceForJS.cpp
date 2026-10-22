@@ -16,6 +16,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/StackFrame.h"
@@ -335,7 +336,12 @@ WTF::String formatStackTrace(
         remappedFrame.position.byte_position = -1;
         originalLineColumns[i] = {};
 
-        if (!frame.hasLineAndColumnInfo()) continue;
+        if (!frame.hasLineAndColumnInfo()) {
+            // The async frame of a module that lost its CodeBlock has a file and no position.
+            if (frame.isAsyncFrame() && dynamicDowncast<JSC::JSModuleRecord>(frame.callee()))
+                sourceURLs[i] = Zig::sourceURL(vm, frame);
+            continue;
+        }
 
         originalLineColumns[i] = frame.computeLineAndColumn();
 
@@ -430,6 +436,9 @@ WTF::String formatStackTrace(
             }
             sb.append(functionName);
             sb.append(" ("_s);
+        } else if (frame.isAsyncFrame()) {
+            // A module that waits at a top-level await: `at async file:line:column`, as in V8.
+            sb.append("async "_s);
         }
 
         if (!sourceURLForFrame.isEmpty()) {

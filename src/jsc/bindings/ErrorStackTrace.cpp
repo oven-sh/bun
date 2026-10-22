@@ -23,6 +23,7 @@
 #include <wtf/IterationStatus.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
+#include <JavaScriptCore/JSModuleRecord.h>
 
 #include "ErrorStackFrame.h"
 
@@ -132,8 +133,9 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     // JSC. If the caller is deep, capping at stackTraceLimit here would collect
     // only frames that get removed, leaving an empty trace. Stack depth is
     // bounded by native stack size so this walk is still O(actual depth).
+    // An await chain has no such bound, so it gets stackTraceLimit as its limit.
     WTF::Vector<JSC::StackFrame> rawFrames;
-    vm.interpreter.getStackTrace(owner, rawFrames, 1, std::numeric_limits<size_t>::max());
+    vm.interpreter.getStackTrace(owner, rawFrames, 1, std::numeric_limits<size_t>::max(), nullptr, nullptr, nullptr, stackTraceLimit);
 
     // JSC's getStackTrace uses StackVisitor::isImplementationVisibilityPrivate
     // which differs from Bun's helper — post-filter to keep behavior consistent
@@ -159,11 +161,12 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     // because a resumed async function's frame callee is the generator's `next`
     // function (a different cell) but Zig::functionName still reports the
     // original async function's name.
+    // Async frames do not end the sync frames: a job inside a job has its async frames above the outer job.
     size_t removeCount = stackTrace.size();
     for (size_t i = 0; i < stackTrace.size(); i++) {
         const auto& frame = stackTrace.at(i);
         if (frame.isAsyncFrame())
-            break;
+            continue;
         if (frame.callee() == callerObject) {
             removeCount = i + 1;
             break;
@@ -408,6 +411,11 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
     }
 
     if (!frame.hasLineAndColumnInfo()) [[unlikely]] {
+        // A module that waits, after a collection took its code: the module record has the file.
+        if (frame.isAsyncFrame()) {
+            if (auto* moduleRecord = dynamicDowncast<JSC::JSModuleRecord>(frame.callee()))
+                return sourceURL(moduleRecord->sourceCode());
+        }
         return "[native code]"_s;
     }
 

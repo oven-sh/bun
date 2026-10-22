@@ -32,7 +32,7 @@ fn split_by_or_and(e: Expr<'_>) -> OrOperands<'_> {
     split(BinOp::Or, e).into_iter().map(|it| split(BinOp::And, it)).collect()
 }
 
-/// Whether `a` and `b` can consist of the same tokens: then they are parsed alike.
+/// True if `a` and `b` could consist of the same tokens, in which case they parse to the same shape.
 pub(super) fn can_have_equal_tokens<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
     let mut pending: SmallVec<[(Expr<'a>, Expr<'a>); 8]> = SmallVec::new();
     pending.push((a, b));
@@ -83,7 +83,7 @@ fn is_subset<'a>(a: &[Expr<'a>], b: &[Expr<'a>]) -> bool {
     a.iter().all(|a| b.iter().any(|b| equal(*a, *b)))
 }
 
-/// The `if` whose `else` is `statement`.
+/// Returns the `if` whose `else` is `statement`.
 #[inline]
 fn previous_if(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     let parent = statement.parent().as_stmt()?;
@@ -91,7 +91,7 @@ fn previous_if(statement: Stmt<'_>) -> Option<Stmt<'_>> {
 }
 
 impl NoDupeElseIf {
-    /// `current`: the `if` whose `else` is `statement`.
+    /// `current` is the `if` whose `else` is `statement`.
     #[inline(never)]
     fn check<'a>(&self, statement: Stmt<'a>, mut current: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let Some((test, ..)) = statement.as_if() else {
@@ -111,7 +111,7 @@ impl NoDupeElseIf {
                 operands.retain(|operand| !current_operands.iter().any(|it| is_subset(it, operand)));
             }
             if list_to_check.iter().any(|operands| operands.is_empty()) {
-                // oxlint points at the test with which nothing is left.
+                // oxlint reports at the earlier test that covers the last remaining condition.
                 cx.report(if cx.language().is_oxlint { current_test } else { test }, UNEXPECTED)
                     .labels_with(|labels| labels.push(test, "this branch will never be executed"));
                 return;

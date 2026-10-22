@@ -65,6 +65,7 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
     pub(crate) unknown_long_flags_are_positional: bool,
     pub(crate) unknown_long_flags_are_errors: bool,
+    pub(crate) ignored_long_flags: clap::IgnoredLongFlags,
 }
 
 // ArgIterator is the
@@ -157,7 +158,34 @@ where
                 }
 
                 if self.unknown_long_flags_are_errors && !self.iter.last_is_from_bun_options() {
-                    return Err(self.err(arg, None, Some(name), ArgError::InvalidArgument));
+                    let ignored = self.ignored_long_flags;
+                    let next = self.iter.remain().first().copied().unwrap_or_default();
+                    let value_is_next_arg = if ignored.options.contains(&name) {
+                        !next.starts_with(b"-")
+                    } else if ignored.flags.contains(&name)
+                        || name.strip_prefix(b"no-").is_some_and(|positive| {
+                            ignored.flags.contains(&positive)
+                                || ignored.options.contains(&positive)
+                                || (!ignored.flags.is_empty()
+                                    && params
+                                        .iter()
+                                        .any(|param| param.names.matches_long(positive)))
+                        })
+                    {
+                        next == b"true" || next == b"false"
+                    } else if ignored
+                        .prefixes
+                        .iter()
+                        .any(|prefix| name.starts_with(prefix))
+                    {
+                        false
+                    } else {
+                        return Err(self.err(arg, None, Some(name), ArgError::InvalidArgument));
+                    };
+                    if value_is_next_arg && maybe_value.is_none() {
+                        let _ = self.iter.next();
+                    }
+                    return self.next();
                 }
 
                 // unrecognized command
@@ -400,6 +428,7 @@ mod tests {
             short_aliases: &[],
             unknown_long_flags_are_positional: false,
             unknown_long_flags_are_errors: false,
+            ignored_long_flags: Default::default(),
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -435,6 +464,7 @@ mod tests {
             short_aliases: &[],
             unknown_long_flags_are_positional: false,
             unknown_long_flags_are_errors: false,
+            ignored_long_flags: Default::default(),
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -909,6 +939,7 @@ mod tests {
             short_aliases: &[],
             unknown_long_flags_are_positional: true,
             unknown_long_flags_are_errors: false,
+            ignored_long_flags: Default::default(),
             params: &params,
             iter: &mut iter,
             state: State::Normal,
@@ -960,6 +991,7 @@ mod tests {
             ],
             unknown_long_flags_are_positional: true,
             unknown_long_flags_are_errors: false,
+            ignored_long_flags: Default::default(),
             params: &params,
             iter: &mut iter,
             state: State::Normal,
@@ -1006,6 +1038,7 @@ mod tests {
                 short_aliases: &[],
                 unknown_long_flags_are_positional: false,
                 unknown_long_flags_are_errors: true,
+                ignored_long_flags: Default::default(),
                 params: &params,
                 iter: &mut iter,
                 state: State::Normal,

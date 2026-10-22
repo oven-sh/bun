@@ -1,6 +1,7 @@
-// Errors about names that oxlint has and ESLint's parsers word differently or don't have: a name that is declared twice, what a
-// JavaScript module exports, names that are keywords in some places. Every expectation is what oxlint 1.87 prints with `-f json`.
-// The tables of every pair of declarations and of assignment targets are in lint.test.ts.
+// Tests for oxlint's errors about names, which ESLint's parsers word differently or don't report: duplicate
+// declarations, undeclared exports in a JavaScript module, and names that are keywords in some contexts. Every
+// expectation is what oxlint 1.87 prints with `-f json`. The tables with every pair of declarations and every
+// assignment target are in lint.test.ts.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { endChildren, spawn } from "../children";
@@ -41,16 +42,19 @@ async function lint(files: Record<string, string>, flags: string[]) {
   return { dir, stdout, stderr, exitCode };
 }
 
-// Which names are declared twice is found in two ways. With no-unused-vars on, as in `{}`, the variables of every file are there to
-// be asked. Without it the parser looks out for a file that may have such a name.
+// Duplicate declarations are found in two ways. With no-unused-vars on, as with the config `{}`, every file's scopes
+// are analyzed, and the check uses them. Otherwise the parser flags the files that may have a duplicate.
 const configs: [string, string][] = [
-  ["no rule needs the variables", JSON.stringify({ categories: { correctness: "off" }, rules: {} })],
+  ["no rule needs scope analysis", JSON.stringify({ categories: { correctness: "off" }, rules: {} })],
   ["no-unused-vars is on", JSON.stringify({ categories: { correctness: "off" }, rules: { "no-unused-vars": "warn" } })],
 ];
 
 type Row = [extension: string, code: string, errors: string];
 
-/** The rows with what is printed: "message (help) offset+length,offset+length | ..", in order. "": the file is linted. */
+/**
+ * Returns the rows with their actual errors, as "message (help) offset+length,offset+length | ..", in printed order.
+ * "" means the file has no errors and is linted.
+ */
 async function found(rows: Row[], config: string) {
   const files = Object.fromEntries(rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\n"]));
   const result = await lint({ ".oxlintrc.json": config, ...files }, ["-f", "json"]);
@@ -60,16 +64,16 @@ async function found(rows: Row[], config: string) {
   const print = ({ message, help, labels }: Diagnostic) =>
     `${message}${help ? ` (${help})` : ""} ${labels.map(({ span }) => `${span.offset}+${span.length}`).join(",")}`;
   return rows.map(([extension, code], i): Row => {
-    const ofFile = errors.filter(it => it.filename === `a${i}.${extension}`);
-    return [extension, code, ofFile.map(print).join(" | ")];
+    const fileErrors = errors.filter(it => it.filename === `a${i}.${extension}`);
+    return [extension, code, fileErrors.map(print).join(" | ")];
   });
 }
 
 const declared = (name: string, labels: string) => `Identifier \`${name}\` has already been declared ${labels}`;
 
-describe.each(configs)("beside an .oxlintrc.json, when %s", (_, config) => {
-  // oxc looks for these when it is through with the file, and goes through the hash table of the file's names.
-  test.concurrent("imports that are declared again come in oxlint's order", async () => {
+describe.each(configs)("with an .oxlintrc.json, when %s", (_, config) => {
+  // oxc checks for these after it has parsed the whole file, by iterating over the hash table of the file's names.
+  test.concurrent("redeclared imports are reported in oxlint's order", async () => {
     const rows: Row[] = [
       [
         "mjs",
@@ -97,7 +101,40 @@ describe.each(configs)("beside an .oxlintrc.json, when %s", (_, config) => {
     expect(await found(rows, config)).toEqual(rows);
   });
 
-  test.concurrent('a member of an enum that is written as ["A"] has the name A', async () => {
+  // The type checker parses a program's files itself, as tsc does. tsgolint also lints a file that oxc rejects.
+  test.concurrent("--type-aware reports the same errors about names", async () => {
+    const { rules, ...rest } = JSON.parse(config);
+    const compilerOptions = { strict: true, noEmit: true, allowJs: true, lib: ["es2015"], types: [] };
+    const result = await lint(
+      {
+        ".oxlintrc.json": JSON.stringify({
+          ...rest,
+          plugins: ["typescript"],
+          rules: { ...rules, "typescript/no-floating-promises": "error" },
+        }),
+        "tsconfig.json": JSON.stringify({ compilerOptions }),
+        "a.ts": "declare const p: Promise<number>;\nlet a = 1;\nlet a = 2;\np;\nexport { a };\n",
+        "b.js": "export const one = 1;\nexport const one = 2;\n",
+        "c.js": "export { nothing };\n",
+        "d.js": "export {};\nif (true) {\n  export const a = 1;\n}\n",
+        "e.js": 'export {};\nfunction f() {\n  import "./c.js";\n}\nf();\n',
+      },
+      ["--type-aware", "-f", "json"],
+    );
+    using _ = result.dir;
+    const diagnostics: Diagnostic[] = JSON.parse(result.stdout).diagnostics;
+    expect(diagnostics.map(it => `${it.filename}:${it.labels[0].span.line} ${it.message}`).sort()).toEqual([
+      "a.ts:2 Identifier `a` has already been declared",
+      "a.ts:4 Promises must be awaited, add void operator to ignore.",
+      "b.js:1 Duplicated export 'one'",
+      "c.js:1 Export 'nothing' is not defined",
+      "d.js:3 'export statement' declaration can only be used at the top level of a module",
+      "e.js:3 'import statement' declaration can only be used at the top level of a module",
+    ]);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test.concurrent('an enum member written as ["A"] has the name A', async () => {
     const rows: Row[] = [
       ["ts", "enum E { ['A'], A }", declared("A", "10+3,16+1")],
       ["ts", "enum E { A, ['A'] }", declared("A", "9+1,13+3")],
@@ -108,7 +145,7 @@ describe.each(configs)("beside an .oxlintrc.json, when %s", (_, config) => {
     expect(await found(rows, config)).toEqual(rows);
   });
 
-  test.concurrent("what a JavaScript module exports has to be declared at the top", async () => {
+  test.concurrent("a JavaScript module can only export names declared at the top level", async () => {
     const rows: Row[] = [
       // A module is strict, so the function stays in its block.
       ["js", "{ function f() {} }\nexport { f };", "Export 'f' is not defined 29+1"],
@@ -118,7 +155,7 @@ describe.each(configs)("beside an .oxlintrc.json, when %s", (_, config) => {
       ["js", "const [f] = [];\nexport { f };", ""],
       ["js", "function f() {}\nexport { f };", ""],
       ["js", 'import f, * as g from "m"; import { h, i as j } from "m";\nexport { f, g, h, j };', ""],
-      // Of names that are as close, the one that oxc's hash table has first.
+      // Among equally similar names, it suggests the one that comes first in oxc's hash table.
       ["js", "const ab = 1, ac = 1, ad = 1;\nexport { aa };", "Export 'aa' is not defined (Did you mean 'ad'?) 39+2"],
       [
         "js",
@@ -129,7 +166,7 @@ describe.each(configs)("beside an .oxlintrc.json, when %s", (_, config) => {
     expect(await found(rows, config)).toEqual(rows);
   });
 
-  test.concurrent("`await` in a static block is refused only where oxc's scope is that of the block", async () => {
+  test.concurrent("`await` in a static block is only an error where oxc's current scope is the block's", async () => {
     const inBlock = "Cannot use await in class static initialization block";
     const rows: Row[] = [
       ["ts", "class W { static { enum E { A = await } } }", ""],
@@ -145,12 +182,13 @@ describe.each(configs)("beside an .oxlintrc.json, when %s", (_, config) => {
   });
 });
 
-// The check of the exports used to index a list that has holes after the parser gives up: "index out of bounds".
+// The export check used to index a list that has gaps after the parser gives up, and panicked with "index out of
+// bounds".
 test.each([
   ["export const b = 1;\nx y;", 2],
   ['import { a } from "b";\nwidget W() {\n  a();\n}', 7],
   ["export { nope };\nf() {}", 4],
-])("a JavaScript module that doesn't parse gets the parser's error alone: %j", async (code, column) => {
+])("a JavaScript module that doesn't parse only gets the parser's error: %j", async (code, column) => {
   const result = await lint({ ".oxlintrc.json": "{}", "a.js": code + "\n" }, ["-f", "unix"]);
   using _ = result.dir;
   expect(result.stdout.split("\n").filter(line => line.startsWith("a.js:"))).toEqual([
@@ -159,7 +197,7 @@ test.each([
   expect(result.exitCode).toBe(1);
 });
 
-describe("beside an .oxlintrc.json, like oxc's parser", () => {
+describe("with an .oxlintrc.json, matches oxc's parser", () => {
   const quiet = configs[0][1];
   const semicolon =
     "Expected a semicolon or an implicit semicolon after a statement, but found none (Try inserting a semicolon here)";
@@ -168,8 +206,9 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
   const onlyInAsync =
     "`await` is only allowed within async functions and at the top levels of modules (Either remove this `await` or add the `async` keyword to the enclosing function)";
 
-  // At the start of a statement it takes `let` for the start of a declaration, unless an operator with two operands, a `.`, a `(` or
-  // a `;` follows. Where there can be no declaration the word is a name, and the statement ends after it. It gives up at either error.
+  // At the start of a statement, oxc treats `let` as the start of a declaration unless a binary operator, a `.`, a `(`
+  // or a `;` follows. Where a declaration isn't allowed, `let` is an identifier, and the statement ends after it. oxc
+  // stops at either error.
   test.concurrent("`let` at the start of a statement", async () => {
     const rows: Row[] = [
       ["js", "let && x;", "Unexpected token 4+2"],
@@ -264,8 +303,8 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // A reserved word where it looks for the name of the declaration. In JavaScript the parser here fails there, too.
-  test.concurrent("`let` on a line of its own before a reserved word, in TypeScript", async () => {
+  // oxc finds a reserved word where it expects the declaration's name. In JavaScript, Bun's parser fails there too.
+  test.concurrent("`let` on its own line before a reserved word, in TypeScript", async () => {
     const rows: Row[] = [
       [
         "ts",
@@ -308,7 +347,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  test.concurrent("`let` where only one statement can be, in TypeScript", async () => {
+  test.concurrent("`let` where only a single statement is allowed, in TypeScript", async () => {
     const rows: Row[] = [
       ["ts", "if (x) let\nfunction f() {}", ""],
       ["ts", "if (x) let\nclass A {}", ""],
@@ -350,8 +389,8 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // What follows `async` is read as an expression. In the await context that is an `await` without its operand, and a statement in no
-  // function is read again that way once the file turns out to be a module.
+  // oxc parses what follows `async` as an expression. In an await context that's an `await` without an operand. A
+  // top-level statement is reparsed that way once the file turns out to be a module.
   test.concurrent("`async await => 1`, without parentheses", async () => {
     const rows: Row[] = [
       ["mjs", "async await => 1;", "Unexpected token 12+2"],
@@ -409,9 +448,10 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // A `.cjs` or `.cts` file is a script, so outside an async function `await` is a name there: `await (x)` is a call, `await [x]` a
-  // member, `await + x` a sum. Only before a word or a literal does oxc take it for the operator, and that is an error it goes on after.
-  test.concurrent("`await` outside an async function in a file that is CommonJS by its name", async () => {
+  // A `.cjs` or `.cts` file is a script, so outside an async function `await` is an identifier: `await (x)` is a call,
+  // `await [x]` is a member access and `await + x` is a sum. oxc only treats it as the operator before a word or a
+  // literal, and it recovers from that error.
+  test.concurrent("`await` outside an async function in a .cjs or .cts file", async () => {
     const rows: Row[] = [
       ["cjs", "await (x);", ""],
       ["cjs", "await(x);", ""],
@@ -649,8 +689,8 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // In a file that can be either, such an `await` is the operator once anything makes the file a module. `import.meta` does,
-  // wherever it is.
+  // In a file that can be either, an `await` like that is the operator once anything makes the file a module.
+  // `import.meta` does, anywhere in the file.
   test.concurrent(
     "`await` before a parenthesis or an operator in a file that can be a script or a module",
     async () => {
@@ -768,9 +808,10 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     },
   );
 
-  // At the end of a file that turned out to be a module, oxc reads each statement again in which `await` was a reference. It
-  // doesn't after an error that stops it, and not an `export`. The name in `{ await }` is no reference to its parser.
-  test.concurrent("`await` as a reference before what makes the file a module", async () => {
+  // At the end of a file that turned out to be a module, oxc reparses each statement in which `await` was a reference.
+  // It doesn't do that after a fatal error, or for an `export`. Its parser doesn't count the name in `{ await }` as a
+  // reference.
+  test.concurrent("`await` as a reference before the syntax that makes the file a module", async () => {
     const reserved = "The keyword 'await' is reserved";
     const both: [code: string, errors: string][] = [
       ["new await; export {};", `${asyncContext} 4+5`],
@@ -789,7 +830,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
       ["{ ({ await = 1 } = {}); } import.meta;", `${reserved} 5+5`],
       ["await of; export {};", `${semicolon} 5+0`],
       ["{ await () => 1; } import.meta;", `${semicolon} 10+0`],
-      // Before a parenthesis or an operator `await` is a reference the first time.
+      // Before a parenthesis or an operator, `await` is a reference in the first parse.
       ["await (x), class await {}; import.meta;", `${asyncContext} 17+5`],
       ["await (x), class await {};", ""],
       ["await (x), function await() {}; import.meta;", `${reserved} 20+5`],
@@ -819,16 +860,16 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
       ["{ await (x); function await() {} } import.meta;", `${asyncContext} 22+5`],
       ["{ var await; new await; } import.meta;", `${asyncContext} 6+5 | ${asyncContext} 17+5`],
       ["if (a) { await (x); } else { var await; } import.meta;", `${asyncContext} 33+5`],
-      // Only that statement.
+      // Only that statement is reparsed.
       ["await (x); x = class await {}; import.meta;", `${reserved} 21+5`],
       ["x = class await {}; await (x); import.meta;", `${reserved} 10+5`],
       ["{ var await; } { await (x); } import.meta;", `${reserved} 6+5`],
       ["function w() { await (x); } x = class await {}; import.meta;", `${reserved} 15+5 | ${reserved} 38+5`],
       ["{ var await; await (x); } { var await; } import.meta;", `${asyncContext} 6+5`],
-      // Where it goes back to the next such statement, it forgets what it has said since it first came there.
+      // When it rewinds to the next statement like that, it drops the errors it has reported since it first got there.
       ["await (x), class await {}; await (y); import.meta;", `${reserved} 17+5`],
       ["{ var await; await (x); } { var await; await (x); } import.meta;", `${asyncContext} 32+5`],
-      // After an error that stops it, it reads nothing again.
+      // After a fatal error, it doesn't reparse anything.
       ["await (x), class await {}; a b; import.meta;", `${semicolon} 28+0`],
       ["await (x), class await {}; import.meta; a b;", `${semicolon} 41+0`],
       ["f(await), class await {}; export {};", "Unexpected token 7+1"],
@@ -841,20 +882,17 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // A known difference. The second time, oxc has the error about the name before it stops at the `await` without an operand:
-  // oxlint 1.87 prints "Cannot use `await` as an identifier in an async context" at 10+5 first.
-  test.concurrent(
-    "a name before the `await` without an operand at which oxc stops has no error of its own",
-    async () => {
-      const rows: Row[] = [
-        ["js", "x = class await {}, f(await); export {};", "Unexpected token 27+1"],
-        ["ts", "x = class await {}, f(await); export {};", "Unexpected token 27+1"],
-      ];
-      expect(await found(rows, quiet)).toEqual(rows);
-    },
-  );
+  // A known difference. In the second parse, oxc reports the error about the name before it stops at the `await`
+  // without an operand, so oxlint 1.87 prints "Cannot use `await` as an identifier in an async context" at 10+5 first.
+  test.concurrent("doesn't report a name before the `await` without an operand that oxc stops at", async () => {
+    const rows: Row[] = [
+      ["js", "x = class await {}, f(await); export {};", "Unexpected token 27+1"],
+      ["ts", "x = class await {}, f(await); export {};", "Unexpected token 27+1"],
+    ];
+    expect(await found(rows, quiet)).toEqual(rows);
+  });
 
-  test.concurrent("the error has the word, however it is spelled", async () => {
+  test.concurrent("the error prints the keyword unescaped, however it's spelled", async () => {
     const both: [code: string, errors: string][] = [
       ["yi\\u0065ld; export {};", "The keyword 'yield' is reserved 0+10"],
       ["var yi\\u0065ld; export {};", "The keyword 'yield' is reserved 4+10"],
@@ -882,9 +920,10 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // A type is in the await context of what is around it. oxc leaves that context for a declaration that starts with `type`,
-  // `interface`, `enum`, `abstract`, `declare`, `namespace` or `module`, but not for one after `export` or a decorator.
-  test.concurrent("`await` and `yield` as names of parameters in types", async () => {
+  // A type inherits the await context of the code around it. oxc leaves that context for a declaration that starts with
+  // `type`, `interface`, `enum`, `abstract`, `declare`, `namespace` or `module`, but not for one after `export` or a
+  // decorator.
+  test.concurrent("`await` and `yield` as parameter names in types", async () => {
     const rows: Row[] = [
       ["ts", "async function f() { let g: (await: number) => void; }", `${asyncContext} 29+5`],
       ["ts", "async function f() { let g: (await) => void; }", `${asyncContext} 29+5`],
@@ -1108,8 +1147,9 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // It tells a function type from a type in parentheses by what follows the `(`. A pattern with such a name in it isn't one to it, so
-  // it reads a type: a type literal for an object pattern, a tuple for an array pattern. Then it wants a `)`.
+  // oxc tells a function type from a parenthesized type by what follows the `(`. It doesn't recognize a pattern that
+  // binds one of these names, so it parses a type instead: a type literal for an object pattern, a tuple for an array
+  // pattern. Then it expects a `)`.
   test.concurrent("a function type that starts with a pattern that binds `await` or `yield`", async () => {
     const rows: Row[] = [
       ["ts", "async function f() { let g: ({ await }: any) => void; }", "Expected `)` but found `:` 38+1"],
@@ -1198,7 +1238,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
       ["ts", "async function f() { let g: [({ await }: any) => void]; }", "Expected `)` but found `:` 39+1"],
       ["ts", "async function f() { let g: { a: ({ await }: any) => void }; }", "Expected `)` but found `:` 43+1"],
       ["ts", "async function f() { for (let g: ({ await }: any) => void of []) ; }", "Expected `)` but found `:` 43+1"],
-      // After `|`, `&` and `keyof` it reads no function type at all.
+      // After `|`, `&` and `keyof` it never parses a function type.
       ["ts", "async function f() { let g: 1 | ({ await }: any) => void; }", "Expected `)` but found `:` 42+1"],
       ["ts", "async function f() { let g: 1 | ({ await }) => void; }", `${semicolon} 43+0`],
       ["ts", "async function f() { let g: keyof ({ await }) => void; }", `${semicolon} 45+0`],
@@ -1216,8 +1256,8 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // TypeScript recovers from a function type without parentheses there. oxc reads a type in parentheses, a name or a `<`.
-  test.concurrent("no function type starts after `|`, `&` or `keyof`", async () => {
+  // TypeScript recovers from an unparenthesized function type there. oxc parses a parenthesized type, a name or a `<`.
+  test.concurrent("a function type can't start after `|`, `&` or `keyof`", async () => {
     const rows: Row[] = [
       ["ts", "let g: 1 | () => void;", "Unexpected token 12+1"],
       ["ts", "let g: | () => void;", "Unexpected token 10+1"],
@@ -1262,53 +1302,57 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // Known differences. Where the `)` is right after the pattern, oxc has read a whole type in parentheses, and what it says about
-  // the `=>` depends on where the type is. The type arguments of a call it reads again as an expression. These files are
-  // refused here too, with the error about the name or about the `:`. The third column is what oxlint 1.87 prints.
-  test.concurrent("such a function type without a type for the pattern is refused, in other words", async () => {
-    const rows: Row[] = [
-      ["ts", "async function f() { let g: ({ await }) => void; }", `${semicolon} 39+0`],
-      ["ts", "function* f() { let g: ({ yield }) => void; }", `${semicolon} 34+0`],
-      ["ts", "async function f() { let g: ({ await }?) => void; }", `${semicolon} 40+0`],
-      ["ts", "async function f() { x as ({ await }) => void; }", `${semicolon} 37+0`],
-      ["ts", "async function f() { g<({ await }) => void>(); }", "Expected `:` but found `}` 32+1"],
-      [
-        "ts",
-        "async function f() { const h = (a: ({ await }) => void) => 1; }",
-        "Expected `,` or `)` but found `=>` 47+2,31+1",
-      ],
-      ["ts", "async function f() { let g: ({ await }) => void = 1; }", `${semicolon} 39+0`],
-      ["ts", "async function f() { let g: ({ await }) => void, h; }", `${semicolon} 39+0`],
-      ["ts", "async function f() { let g: (({ await }) => void); }", "Expected `)` but found `=>` 41+2"],
-      ["ts", "async function f() { let g: ({ await }) => void | 1; }", `${semicolon} 39+0`],
-      ["ts", "async function f() { let g: ({ await }) => void[]; }", `${semicolon} 39+0`],
-      ["ts", "async function f() { const h = (): ({ await }) => void => 1; }", "Unexpected token 55+2"],
-      ["ts", "async function f() { class A { p: ({ await }) => void; } }", "Expected `;` but found `=>` 46+2"],
-      ["ts", "async function f() { let g: [({ await }) => void]; }", "Expected `,` or `]` but found `=>` 41+2,28+1"],
-      ["ts", "async function f() { let g: { a: ({ await }) => void }; }", `${semicolon} 44+0`],
-      ["ts", "async function f() { let g: A<({ await }) => void>; }", "Expected `,` or `>` but found `=>` 42+2,29+1"],
-      ["ts", "async function f() { x satisfies ({ await }) => void; }", `${semicolon} 44+0`],
-      ["ts", "async function f() { (x as ({ await }) => void); }", "Expected `,` or `)` but found `=>` 39+2,21+1"],
-      ["ts", "async function f() { h(x as ({ await }) => void); }", "Expected `,` or `)` but found `=>` 40+2,22+1"],
-      [
-        "ts",
-        "async function f() { let g: typeof x extends ({ await }) => void ? 1 : 2; }",
-        "Expected `?` but found `=>` 57+2",
-      ],
-      ["ts", "async function f() { g<({ await }: any) => void>(); }", "Expected `:` but found `}` 32+1"],
-    ];
-    const printed = await found(rows, quiet);
-    expect(printed.map(([, code, errors]) => [code, errors.replace(/ \d+\+\d+$/, "")])).toEqual(
-      rows.map(([, code]) => [
-        code,
-        code.includes(": any")
-          ? "Expected `)` but found `:`"
-          : code.includes("yield")
-            ? generatorContext
-            : asyncContext,
-      ]),
-    );
-  });
+  // Known differences. If the `)` comes right after the pattern, oxc has parsed a complete parenthesized type, and its
+  // error for the `=>` depends on where the type is. It reparses a call's type arguments as an expression. `bun lint`
+  // rejects these files too, with the error about the name or about the `:`. The third column is what oxlint 1.87
+  // prints.
+  test.concurrent(
+    "a function type like that without a type for the pattern is rejected with a different error",
+    async () => {
+      const rows: Row[] = [
+        ["ts", "async function f() { let g: ({ await }) => void; }", `${semicolon} 39+0`],
+        ["ts", "function* f() { let g: ({ yield }) => void; }", `${semicolon} 34+0`],
+        ["ts", "async function f() { let g: ({ await }?) => void; }", `${semicolon} 40+0`],
+        ["ts", "async function f() { x as ({ await }) => void; }", `${semicolon} 37+0`],
+        ["ts", "async function f() { g<({ await }) => void>(); }", "Expected `:` but found `}` 32+1"],
+        [
+          "ts",
+          "async function f() { const h = (a: ({ await }) => void) => 1; }",
+          "Expected `,` or `)` but found `=>` 47+2,31+1",
+        ],
+        ["ts", "async function f() { let g: ({ await }) => void = 1; }", `${semicolon} 39+0`],
+        ["ts", "async function f() { let g: ({ await }) => void, h; }", `${semicolon} 39+0`],
+        ["ts", "async function f() { let g: (({ await }) => void); }", "Expected `)` but found `=>` 41+2"],
+        ["ts", "async function f() { let g: ({ await }) => void | 1; }", `${semicolon} 39+0`],
+        ["ts", "async function f() { let g: ({ await }) => void[]; }", `${semicolon} 39+0`],
+        ["ts", "async function f() { const h = (): ({ await }) => void => 1; }", "Unexpected token 55+2"],
+        ["ts", "async function f() { class A { p: ({ await }) => void; } }", "Expected `;` but found `=>` 46+2"],
+        ["ts", "async function f() { let g: [({ await }) => void]; }", "Expected `,` or `]` but found `=>` 41+2,28+1"],
+        ["ts", "async function f() { let g: { a: ({ await }) => void }; }", `${semicolon} 44+0`],
+        ["ts", "async function f() { let g: A<({ await }) => void>; }", "Expected `,` or `>` but found `=>` 42+2,29+1"],
+        ["ts", "async function f() { x satisfies ({ await }) => void; }", `${semicolon} 44+0`],
+        ["ts", "async function f() { (x as ({ await }) => void); }", "Expected `,` or `)` but found `=>` 39+2,21+1"],
+        ["ts", "async function f() { h(x as ({ await }) => void); }", "Expected `,` or `)` but found `=>` 40+2,22+1"],
+        [
+          "ts",
+          "async function f() { let g: typeof x extends ({ await }) => void ? 1 : 2; }",
+          "Expected `?` but found `=>` 57+2",
+        ],
+        ["ts", "async function f() { g<({ await }: any) => void>(); }", "Expected `:` but found `}` 32+1"],
+      ];
+      const printed = await found(rows, quiet);
+      expect(printed.map(([, code, errors]) => [code, errors.replace(/ \d+\+\d+$/, "")])).toEqual(
+        rows.map(([, code]) => [
+          code,
+          code.includes(": any")
+            ? "Expected `)` but found `:`"
+            : code.includes("yield")
+              ? generatorContext
+              : asyncContext,
+        ]),
+      );
+    },
+  );
 
   test.concurrent("the first name on the right of `import a = b.c`", async () => {
     const rows: Row[] = [
@@ -1329,7 +1373,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  test.concurrent("`await` and `yield` as names of parameters, and where a function ends their context", async () => {
+  test.concurrent("`await` and `yield` as parameter names, and where a function ends their context", async () => {
     const rows: Row[] = [
       ["js", "async (await) => 1;", `${asyncContext} 7+5`],
       ["js", "async await => 1;", `${asyncContext} 6+5`],
@@ -1367,7 +1411,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
   });
 
   // The await context ends where a type begins. The yield context doesn't.
-  test.concurrent("`yield` as the name of a parameter in a type, in a generator", async () => {
+  test.concurrent("`yield` as a parameter name in a type, in a generator", async () => {
     const rows: Row[] = [
       ["ts", "function* w() { type F = (...yield: any[]) => void; }", `${generatorContext} 29+5`],
       ["ts", "function* w() { let f: (a: any, yield: any) => void; }", `${generatorContext} 32+5`],
@@ -1404,7 +1448,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  test.concurrent("`await` and `yield` as names that an import declares", async () => {
+  test.concurrent("`await` and `yield` as imported names", async () => {
     const rows: Row[] = [
       [
         "d.ts",
@@ -1479,61 +1523,58 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // A file that can be a script or a module is a module from the statement after the first one that only a module has. `export`
-  // counts at once.
-  test.concurrent(
-    "`await` outside every function is a keyword from where the file is known to be a module",
-    async () => {
-      const rows: Row[] = [
-        ["js", "export let await;", `${asyncContext} 11+5`],
-        ["js", "export var await = 1;", `${asyncContext} 11+5`],
-        ["js", "export function await() {}", `${asyncContext} 16+5`],
-        ["js", "export class await {}", `${asyncContext} 13+5`],
-        ["js", "export default class await {}", `${asyncContext} 21+5`],
-        ["js", "export default function await() {}", `${asyncContext} 24+5`],
-        ["js", "export const x = () => { let await; };", "The keyword 'await' is reserved 29+5"],
-        [
-          "js",
-          "export { await };",
-          "A reserved word cannot be used as an exported binding without `from` (Did you mean `export { await as await } from 'some-module'`?) 9+5",
-        ],
-        ["js", "export { x as await }; var x;", ""],
-        ["js", "export * as await from 'a';", ""],
-        ["mjs", "export * as await from 'a';", ""],
-        ["ts", "export * as await from 'a';", ""],
-        ["mjs", "export * as yield from 'a';", ""],
-        ["mjs", "export * as let from 'a';", ""],
-        ["mjs", "export * as static from 'a';", ""],
-        ["mjs", "export * as arguments from 'a';", ""],
-        ["js", "export {}; export * as await from 'a';", ""],
-        ["mjs", "export {}; export * as await from 'a';", ""],
-        ["ts", "export {}; export * as await from 'a';", ""],
-        ["mjs", "export { x as await } from 'a';", ""],
-        ["mjs", "export { await as x } from 'a';", ""],
-        ["mjs", "export { await } from 'a';", ""],
-        ["mjs", "import { await as x } from 'a';", ""],
-        ["mjs", "export { default as await } from 'a';", ""],
-        ["js", "let await; export {};", "The keyword 'await' is reserved 4+5"],
-        ["js", "import.meta; let await;", `${asyncContext} 17+5`],
-        ["js", "let await; import.meta;", "The keyword 'await' is reserved 4+5"],
-        ["js", "x = import.meta, y = function await() {};", "The keyword 'await' is reserved 30+5"],
-        ["js", "import 'a'; let await;", `${asyncContext} 16+5`],
-        ["js", "let await; import 'a';", "The keyword 'await' is reserved 4+5"],
-        ["js", "import a from 'a'; { let await; }", `${asyncContext} 25+5`],
-        ["js", "{ let await; } import a from 'a';", "The keyword 'await' is reserved 6+5"],
-        ["js", "import a from 'a'; function f() { let await; }", "The keyword 'await' is reserved 38+5"],
-        ["js", "import a from 'a'; class await {}", `${asyncContext} 25+5`],
-        ["js", "import a from 'a'; function await() {}", `${asyncContext} 28+5`],
-        ["js", "await x; let await;", `${asyncContext} 13+5`],
-        ["js", "let await; await x;", "The keyword 'await' is reserved 4+5"],
-        ["ts", "import x = require('x'); let await;", ""],
-        ["ts", "export import x = require('x'); let await;", `${asyncContext} 36+5`],
-        ["ts", "import type a from 'a'; let await;", `${asyncContext} 28+5`],
-        ["ts", "export type { a } from 'a'; let await;", `${asyncContext} 32+5`],
-      ];
-      expect(await found(rows, quiet)).toEqual(rows);
-    },
-  );
+  // A file that can be a script or a module becomes a module at the statement after the first module-only one. `export`
+  // takes effect immediately.
+  test.concurrent("top-level `await` is a keyword from the point where the file is known to be a module", async () => {
+    const rows: Row[] = [
+      ["js", "export let await;", `${asyncContext} 11+5`],
+      ["js", "export var await = 1;", `${asyncContext} 11+5`],
+      ["js", "export function await() {}", `${asyncContext} 16+5`],
+      ["js", "export class await {}", `${asyncContext} 13+5`],
+      ["js", "export default class await {}", `${asyncContext} 21+5`],
+      ["js", "export default function await() {}", `${asyncContext} 24+5`],
+      ["js", "export const x = () => { let await; };", "The keyword 'await' is reserved 29+5"],
+      [
+        "js",
+        "export { await };",
+        "A reserved word cannot be used as an exported binding without `from` (Did you mean `export { await as await } from 'some-module'`?) 9+5",
+      ],
+      ["js", "export { x as await }; var x;", ""],
+      ["js", "export * as await from 'a';", ""],
+      ["mjs", "export * as await from 'a';", ""],
+      ["ts", "export * as await from 'a';", ""],
+      ["mjs", "export * as yield from 'a';", ""],
+      ["mjs", "export * as let from 'a';", ""],
+      ["mjs", "export * as static from 'a';", ""],
+      ["mjs", "export * as arguments from 'a';", ""],
+      ["js", "export {}; export * as await from 'a';", ""],
+      ["mjs", "export {}; export * as await from 'a';", ""],
+      ["ts", "export {}; export * as await from 'a';", ""],
+      ["mjs", "export { x as await } from 'a';", ""],
+      ["mjs", "export { await as x } from 'a';", ""],
+      ["mjs", "export { await } from 'a';", ""],
+      ["mjs", "import { await as x } from 'a';", ""],
+      ["mjs", "export { default as await } from 'a';", ""],
+      ["js", "let await; export {};", "The keyword 'await' is reserved 4+5"],
+      ["js", "import.meta; let await;", `${asyncContext} 17+5`],
+      ["js", "let await; import.meta;", "The keyword 'await' is reserved 4+5"],
+      ["js", "x = import.meta, y = function await() {};", "The keyword 'await' is reserved 30+5"],
+      ["js", "import 'a'; let await;", `${asyncContext} 16+5`],
+      ["js", "let await; import 'a';", "The keyword 'await' is reserved 4+5"],
+      ["js", "import a from 'a'; { let await; }", `${asyncContext} 25+5`],
+      ["js", "{ let await; } import a from 'a';", "The keyword 'await' is reserved 6+5"],
+      ["js", "import a from 'a'; function f() { let await; }", "The keyword 'await' is reserved 38+5"],
+      ["js", "import a from 'a'; class await {}", `${asyncContext} 25+5`],
+      ["js", "import a from 'a'; function await() {}", `${asyncContext} 28+5`],
+      ["js", "await x; let await;", `${asyncContext} 13+5`],
+      ["js", "let await; await x;", "The keyword 'await' is reserved 4+5"],
+      ["ts", "import x = require('x'); let await;", ""],
+      ["ts", "export import x = require('x'); let await;", `${asyncContext} 36+5`],
+      ["ts", "import type a from 'a'; let await;", `${asyncContext} 28+5`],
+      ["ts", "export type { a } from 'a'; let await;", `${asyncContext} 32+5`],
+    ];
+    expect(await found(rows, quiet)).toEqual(rows);
+  });
 
   // A declaration after `declare` or `abstract` is outside the await context, unless `export` comes first.
   test.concurrent("`await` as the name of a declaration with modifiers", async () => {
@@ -1611,7 +1652,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // TypeScript's parser has a case of its own for `@await`. oxc's reads a decorator like the callee of `new`.
+  // TypeScript's parser special-cases `@await`. oxc's parses a decorator like the callee of `new`.
   test.concurrent("`await` and `yield` as decorators", async () => {
     const rows: Row[] = [
       ["js", "export {}; @await class A {}", `${asyncContext} 12+5`],
@@ -1641,7 +1682,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  test.concurrent("the help for `yield` before what could be its operand", async () => {
+  test.concurrent("the help text for `yield` before something that could be its operand", async () => {
     const rows: Row[] = [
       ["js", "function* f() { var yield }", `${generatorContext} 20+5`],
       ["js", "function* f() { var yield\nx }", `${generatorContext} 20+5`],
@@ -1673,8 +1714,8 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // Each against the one before it of that name. The name in the message is the text of that one.
-  test.concurrent("two members of a class with one name, in TypeScript", async () => {
+  // Each member is reported against the previous one with that name. The message prints the previous one's text.
+  test.concurrent("two class members with the same name, in TypeScript", async () => {
     const rows: Row[] = [
       ["ts", "class A { a = 1; a = 2; }", "Identifier `a` has already been declared 10+1,17+1"],
       [
@@ -1833,7 +1874,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  test.concurrent("what oxc looks for at the end of a file comes in its order", async () => {
+  test.concurrent("the errors oxc checks for at the end of a file come in its order", async () => {
     const rows: Row[] = [
       [
         "mjs",
@@ -1854,8 +1895,9 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expect(await found(rows, quiet)).toEqual(rows);
   });
 
-  // A line is for the uses in its second string. Its first string has a group for each of `names`, and in a group a cell for each
-  // of the places in the head of the table. A cell is what oxlint 1.87 prints about the file, a letter for each error:
+  // A table row covers the uses listed in its second string. Its first string has one group per entry in `names`, and
+  // each group has one cell per context in the table's header. A cell is what oxlint 1.87 prints for that file, with
+  // one letter per error:
   //   R  The keyword 'x' is reserved                        A  Cannot assign to 'x' in strict mode
   //   C  Cannot use `x` as an identifier in an async / a generator context
   //   L  `let` cannot be declared as a variable name inside of a `let` declaration
@@ -1863,8 +1905,9 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
   //   W  Cannot use await in class static initialization block
   //   E  A reserved word cannot be used as an exported binding without `from`
   //   I  Identifier expected. 'x' is a reserved word that cannot be used here.      U  Unexpected token
-  // "-": it lints the file. "x": not compared, it has another error. ".": there is no such file.
-  test("names that are keywords somewhere, eval and arguments: every use in many places", async () => {
+  // "-" means no error. "x" means it isn't compared, because the file has a different error. "." means there's no such
+  // file.
+  test("contextual keywords, eval and arguments: every kind of use in many contexts", async () => {
     const letters: [RegExp, string][] = [
       [/^The keyword '.*' is reserved$/, "R"],
       [/^Cannot assign to '(eval|arguments)' in strict mode$/, "A"],
@@ -1888,7 +1931,9 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
         })),
       ),
     );
-    /** Calls `cell` with each cell of a line and the name of its file, and returns the line with what that returns. */
+    /**
+     * Calls `cell` with each cell's expected value, file name and code. Returns the line with the results as its cells.
+     */
     const print = (line: (typeof lines)[number], cell: (expected: string, file: string, code: string) => string) =>
       `${line.extension} ${line.use}: ` +
       names
@@ -1923,7 +1968,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     ).toEqual(lines.map(line => print(line, expected => expected)));
   });
 
-  // $ is the name.
+  // $ is replaced by the name.
   const uses: Record<string, string> = {
     var: "var $;",
     let: "let $;",
@@ -2110,7 +2155,7 @@ describe("beside an .oxlintrc.json, like oxc's parser", () => {
     expasns: "export as namespace $;",
     decoparam: "class A { m(@$ a: any) {} }",
   };
-  // # is the use.
+  // # is replaced by the use.
   const around: Record<string, string> = {
     top: "#",
     mod: "export {}; #",

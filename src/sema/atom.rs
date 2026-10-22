@@ -1,22 +1,25 @@
-//! Interned names. One table for the whole program, filled from every parser thread, and frozen
-//! while the program is checked: a text first seen during checking becomes a task-local atom of the
-//! task that encounters it (`OwnStore`), and the merge at the barrier publishes it.
+//! Interned names. The whole program shares one table, which every parser thread fills. A task with
+//! `Sharing::Publishes` also adds the texts it first sees during checking. In any other checker
+//! such a text becomes a task-local atom (`OwnStore`).
 
 use crate::local::LOCAL;
 use crate::session::Session;
-use crate::types::OwnStore;
-use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
+use crate::types::{OwnStore, Sharing};
+use crate::util::memory::Cells;
+use crate::util::{AppendVec, GrowingSlots, SHARDS, spread_hash};
+use std::alloc::Global;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-/// A name. Its number is its index in a list that every parser thread appends to, so it differs
-/// from run to run: atoms have no order.
-/// Anything that is iterated over is ordered by declaration or by text.
+/// An interned name. Its number is its index in a list that every parser thread appends to, so it
+/// differs from run to run. Never order anything by atom number. Whatever gets iterated is ordered
+/// by declaration or by text.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Atom(pub u32);
 
 impl Atom {
     pub const NONE: Atom = Atom(u32::MAX);
 
-    /// Whether it is one of the words binder.go checks an `Identifier` for:
+    /// True if it's one of the words binder.go checks an `Identifier` for:
     /// `KindFirstFutureReservedWord` to `KindLastFutureReservedWord`, `await`
     /// (`checkContextualIdentifier`), `eval`, `arguments` (`isEvalOrArgumentsIdentifier`).
     #[inline]
@@ -27,7 +30,7 @@ impl Atom {
     pub fn is_none(self) -> bool {
         self == Atom::NONE
     }
-    /// Whether a task has created it, and it is not published yet.
+    /// True if a task created it and hasn't published it yet.
     #[inline]
     pub fn is_own(self) -> bool {
         self.0 & LOCAL != 0 && self != Atom::NONE
@@ -44,14 +47,15 @@ impl std::fmt::Debug for Atom {
     }
 }
 
-/// The texts of the atoms whose numbers are constants (`known`), by number.
+/// Texts of the atoms with constant numbers (`known`), indexed by number.
 pub const KNOWN_TEXTS: &[&[u8]] = known::ALL_TEXTS;
 
-/// An interner of the texts of one file numbers what it is asked for and is not in the file from
-/// here. An interner of many files does not get that far.
-pub const NOT_IN_THE_FILE: u32 = 1 << 29;
+/// A single-file interner numbers the texts that aren't in its file from here up. A multi-file
+/// interner never reaches this number.
+pub const FIRST_ATOM_NOT_IN_FILE: u32 = 1 << 29;
 
-/// Where the texts of the atoms of one file are, for a reader of many of them: nothing is called.
+/// Locations of one file's atom texts, so that code reading many atoms avoids a virtual call for
+/// each.
 #[derive(Copy, Clone, Default)]
 pub struct OwnTexts<'a> {
     spans: &'a [(u32, u32)],
@@ -59,19 +63,20 @@ pub struct OwnTexts<'a> {
 }
 
 impl<'a> OwnTexts<'a> {
-    /// In the start of a text: it is not in the source.
-    pub const ELSEWHERE: u32 = 1 << 31;
+    /// Set in a span's start if the text isn't in the source.
+    pub const NOT_IN_SOURCE: u32 = 1 << 31;
 
-    /// `spans`: by atom, where its text starts in `source`, and its length.
+    /// `spans` is indexed by atom. Each entry is the text's start in `source` and its length.
     pub fn new(spans: &'a [(u32, u32)], source: &'a [u8]) -> Self {
-        // A start with `ELSEWHERE` is past the end of the source.
-        match source.len() <= Self::ELSEWHERE as usize {
+        // A start with `NOT_IN_SOURCE` set has to be past the end of the source, so `in_source` misses.
+        match source.len() <= Self::NOT_IN_SOURCE as usize {
             true => OwnTexts { spans, source },
             false => OwnTexts::default(),
         }
     }
 
-    /// Where the text of `atom` starts, and its length. `None`: ask the interner.
+    /// Returns the start and length of `atom`'s text, or `None` if the caller has to ask the
+    /// interner.
     #[inline]
     pub fn span_of(&self, atom: Atom) -> Option<(u32, u32)> {
         self.spans.get(atom.0 as usize).copied()
@@ -82,7 +87,8 @@ impl<'a> OwnTexts<'a> {
         self.source
     }
 
-    /// The text of `atom` if it is in the source as it is. `None`: ask the interner.
+    /// Returns `atom`'s text if it's in the source verbatim, or `None` if the caller has to ask the
+    /// interner.
     #[inline]
     pub fn in_source(&self, atom: Atom) -> Option<&'a [u8]> {
         let (start, len) = self.span_of(atom)?;
@@ -91,33 +97,37 @@ impl<'a> OwnTexts<'a> {
     }
 }
 
-/// `Intern::number` for an interner that is not an `Interner`.
+/// `Intern::number` for an interner that isn't an `Interner`.
 pub fn next_interner_number() -> u64 {
     NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 type Texts = AppendVec<Text>;
 
-/// The text of an atom. Nearly all are short, and are where the list has them: a block for each would have to be freed
-/// one by one, by another thread than has made it.
+/// An atom's text. Nearly all texts are short and stored inline in the list. A separate allocation
+/// for each would have to be freed one at a time, on a different thread than the one that allocated
+/// it.
 pub(crate) enum Text {
-    Short { len: u8, bytes: [u8; Text::SHORT] },
+    Short {
+        len: u8,
+        bytes: [u8; Text::INLINE_LEN],
+    },
     Long(Box<[u8]>),
 }
 
 impl Text {
-    /// As large as fits beside the other.
-    const SHORT: usize = 22;
+    /// The most bytes that fit without making `Text` larger than `Long` needs.
+    const INLINE_LEN: usize = 22;
 }
 
 const _: () = assert!(size_of::<Text>() == 24);
 
 impl From<&[u8]> for Text {
     fn from(text: &[u8]) -> Text {
-        if text.len() > Text::SHORT {
+        if text.len() > Text::INLINE_LEN {
             return Text::Long(text.into());
         }
-        let mut bytes = [0; Text::SHORT];
+        let mut bytes = [0; Text::INLINE_LEN];
         bytes[..text.len()].copy_from_slice(text);
         Text::Short {
             len: text.len() as u8,
@@ -142,39 +152,110 @@ pub struct Interner<'s> {
     session: &'s Session,
     /// The atoms numbered `first` and up.
     tables: &'s Tables,
-    /// The atoms below `first`: see `over`. Other programs may add to this table concurrently.
-    below: &'s Tables,
+    /// The atoms numbered under `first`. See `over`. Other programs may add to this table
+    /// concurrently.
+    base: &'s Tables,
     first: u32,
+    /// Sequence number of `tables` among all tables ever created. Every `intern` call reads it. In
+    /// `Tables` it would be next to the length of `texts`, which every thread writes when it adds
+    /// an atom, and that would cause false sharing.
+    number: u64,
 }
 
-/// On the regular heap, and without a lifetime: they are written through a shared reference, so a lifetime in them
-/// would make an `Interner<'s>` invariant in `'s`, and it is covariant (`shortened`). The session has them
-/// (`Session::keep`): nothing drops what a program refers to.
+/// Allocated on the regular heap, without a lifetime parameter. They're written through a shared
+/// reference, so a lifetime in them would make `Interner<'s>` invariant in `'s`, and it has to be
+/// covariant (`assert_covariant`). The session owns them (`Session::keep`), so they outlive every program
+/// that refers to them.
 struct Tables {
-    shards: Box<[GrowingPlaces; SHARDS]>,
+    slots: Box<GrowingSlots<Global, SHARDS>>,
     texts: Texts,
-    /// Sequence number of this interner among all that have been created.
-    number: u64,
+    /// Class of each text (`class_of`), packed at `class::BITS` bits per text.
+    classes: Cells<AtomicU32>,
     /// `Interner::in_common`
-    is_in_common: bool,
+    is_shared: bool,
 }
 
 impl Tables {
-    fn new(is_in_common: bool) -> Tables {
+    fn new(is_shared: bool) -> Tables {
         Tables {
-            shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
+            slots: Box::default(),
             texts: AppendVec::new(),
-            number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            is_in_common,
+            classes: Cells::default(),
+            is_shared,
         }
+    }
+
+    /// Stores the class of `text`, the text at `index` of `texts`. The thread that adds a text must call this before
+    /// any other thread can see the atom. Nearly all texts have class 0, which needs no write.
+    fn set_class(&self, index: u32, text: &[u8]) {
+        let class = class_of(text);
+        if class != 0 {
+            let shifted = class << (index % class::PER_CELL * class::BITS);
+            (self.classes.cell(index / class::PER_CELL)).fetch_or(shifted, Ordering::Relaxed);
+        }
+    }
+
+    #[inline]
+    fn class(&self, index: u32) -> u32 {
+        let cell = self.classes.existing(index / class::PER_CELL);
+        let classes = cell.map_or(0, |cell| cell.load(Ordering::Relaxed));
+        classes >> (index % class::PER_CELL * class::BITS) & ((1 << class::BITS) - 1)
     }
 }
 
-/// It compiles because an `Interner<'s>` is covariant in `'s`: one that outlives a program is an interner of the program.
-fn shortened<'short, 'long: 'short>(atoms: Interner<'long>) -> Interner<'short> {
+/// Facts about a name that the checker can query without reading its text. A large program's texts don't fit in the CPU
+/// cache, but these bits do.
+mod class {
+    /// The name starts with `SYMBOL_NAME_PREFIX`.
+    pub(super) const IS_SYMBOL_NAME: u32 = 1;
+    /// The name starts with `PRIVATE_NAME_PREFIX`.
+    pub(super) const IS_PRIVATE_SYMBOL_NAME: u32 = 1 << 1;
+    /// The name starts with `#`.
+    pub(super) const STARTS_WITH_HASH: u32 = 1 << 2;
+    /// `is_numeric_literal_name`
+    pub(super) const IS_NUMERIC: u32 = 1 << 3;
+    pub(super) const BITS: u32 = 4;
+    pub(super) const PER_CELL: u32 = u32::BITS / BITS;
+}
+
+/// Returns the `class` bits for `text`.
+fn class_of(text: &[u8]) -> u32 {
+    match text {
+        [0xFE, b'@', ..] => class::IS_SYMBOL_NAME,
+        [0xFE, b'#', ..] => class::IS_PRIVATE_SYMBOL_NAME,
+        [b'#', ..] => class::STARTS_WITH_HASH,
+        _ if is_numeric_literal_name(text) => class::IS_NUMERIC,
+        _ => 0,
+    }
+}
+
+/// `isNumericLiteralName`: true if the name round-trips through a number and back to a string.
+fn is_numeric_literal_name(text: &[u8]) -> bool {
+    // A number's string form starts with a digit or `-`, or is `Infinity` or `NaN`.
+    match text.first().copied() {
+        Some(b'0'..=b'9') => {
+            // An `f64` represents an integer this short exactly, so it prints as the same digits.
+            if text.len() <= 15 && text.iter().all(u8::is_ascii_digit) {
+                return text[0] != b'0' || text.len() == 1;
+            }
+        }
+        Some(b'-') => {}
+        Some(b'I') => return text == b"Infinity",
+        Some(b'N') => return text == b"NaN",
+        _ => return false,
+    }
+    std::str::from_utf8(text)
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .is_some_and(|n| number_to_string(n) == text)
+}
+
+/// Compiles only if `Interner<'s>` is covariant in `'s`, which lets an interner that outlives a
+/// program serve as that program's interner.
+fn assert_covariant<'short, 'long: 'short>(atoms: Interner<'long>) -> Interner<'short> {
     atoms
 }
-const _: fn(Interner<'static>) -> Interner<'static> = shortened;
+const _: fn(Interner<'static>) -> Interner<'static> = assert_covariant;
 
 macro_rules! known_atoms {
     ($($name:ident = $text:literal,)*) => {
@@ -209,7 +290,7 @@ known_atoms! {
     returned = "return=",
     this = "this",
     undefined = "undefined",
-    // `Atom::is_keyword_identifier`: from here to `arguments`.
+    // `Atom::is_keyword_identifier` covers the range from here to `arguments`.
     implements = "implements",
     interface = "interface",
     let_ = "let",
@@ -345,7 +426,7 @@ known_atoms! {
     async_ = "async",
     AsyncDisposable = "AsyncDisposable",
     tslib = "tslib",
-    // Names that the rules of a linter look for.
+    // Names that lint rules look for.
     callee = "callee",
     caller = "caller",
     __proto__ = "__proto__",
@@ -374,51 +455,52 @@ known_atoms! {
     execScript = "execScript",
 }
 
-/// Prefix of the name of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. No text
-/// contains the byte 0xFE, so no name in the source is such a name.
+/// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never
+/// contains the byte 0xFE, so no name in the source collides with one.
 pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 
-/// Prefix of the name of a property that a class declares as `#x`
-/// (`GetSymbolNameForPrivateIdentifier`): `InternalSymbolNamePrefix` and `#`. The string `"#x"` is
-/// another name.
+/// Name prefix of a property that a class declares as `#x` (`GetSymbolNameForPrivateIdentifier`):
+/// `InternalSymbolNamePrefix` and `#`. The string key `"#x"` is a different name.
 pub const PRIVATE_NAME_PREFIX: &[u8] = b"\xFE#";
 
-/// `SymbolName`: the `#x` of a private name, which is spelled `\xFE#x@<class>`. Any other name
-/// unchanged.
+/// `SymbolName`: returns the `#x` of a private name, which is stored as `\xFE#x@<class>`. Returns
+/// any other name unchanged.
 pub fn written_name(name: &[u8]) -> &[u8] {
     if !name.starts_with(PRIVATE_NAME_PREFIX) {
         return name;
     }
-    let written = &name[1..];
-    &written[..bun_core::strings::index_of_char_usize(written, b'@').unwrap_or(written.len())]
+    let private_name = &name[1..];
+    &private_name
+        [..bun_core::strings::index_of_char_usize(private_name, b'@').unwrap_or(private_name.len())]
 }
 
-/// Per-thread cache of recently seen names, with the spelling stored inline: a file repeats the
-/// same few names, and a lookup in the shared table touches three distant memory locations.
+/// Per-thread cache of recently seen names, with the text stored inline. A file repeats the same
+/// few names, and a lookup in the shared table touches three distant memory locations.
 struct Recent {
     /// `Interner::number`
-    of: u64,
+    interner_number: u64,
     entries: Vec<RecentEntry>,
 }
 
 #[derive(Copy, Clone)]
 struct RecentEntry {
-    /// See `short`.
+    /// See `pack_short`.
     start: (u64, u64, u64),
     end: u32,
     atom: u32,
 }
 
 impl Recent {
-    /// Belongs to no interner: interner numbers start at 1. The entries are allocated on first use.
+    /// Doesn't belong to any interner, since interner numbers start at 1. The entries are allocated
+    /// on first use.
     const EMPTY: Recent = Recent {
-        of: 0,
+        interner_number: 0,
         entries: Vec::new(),
     };
-    const LONGEST: usize = 27;
+    const MAX_PACKED_LEN: usize = 27;
     const BITS: u32 = 11;
     /// No text has this length.
-    const NOTHING: RecentEntry = RecentEntry {
+    const EMPTY_ENTRY: RecentEntry = RecentEntry {
         start: (0, 0, 0),
         end: u32::MAX,
         atom: 0,
@@ -449,10 +531,10 @@ pub fn word(text: &[u8], from: usize) -> u64 {
     }
 }
 
-/// A text of at most `Recent::LONGEST` bytes as integers: the bytes padded with zeros, with the
-/// length in the very last byte.
+/// Packs a text of at most `Recent::MAX_PACKED_LEN` bytes into integers: the bytes padded with zeros, with
+/// the length in the last byte.
 #[inline]
-fn short(text: &[u8]) -> ((u64, u64, u64), u32) {
+fn pack_short(text: &[u8]) -> ((u64, u64, u64), u32) {
     (
         (word(text, 0), word(text, 8), word(text, 16)),
         word(text, 24) as u32 | (text.len() as u32) << 24,
@@ -462,10 +544,10 @@ fn short(text: &[u8]) -> ((u64, u64, u64), u32) {
 /// The lookup key of a text.
 #[inline]
 pub(crate) fn hash_of(text: &[u8]) -> u64 {
-    if text.len() > Recent::LONGEST {
+    if text.len() > Recent::MAX_PACKED_LEN {
         spread_hash(text)
     } else {
-        spread_hash(&short(text))
+        spread_hash(&pack_short(text))
     }
 }
 
@@ -474,7 +556,7 @@ thread_local! {
 }
 
 /// The calling thread's cache of recently interned atoms. A pool thread outlives a check, so the
-/// check owns the cache: a thread holds one only while it works for the check.
+/// check owns the cache, and a thread only has one installed while it works for that check.
 pub struct RecentAtoms(Recent);
 
 impl Default for RecentAtoms {
@@ -495,7 +577,7 @@ impl RecentAtoms {
     }
 }
 
-/// From 1 on.
+/// Starts at 1.
 static NEXT_NUMBER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl crate::table::Id for Atom {
@@ -513,20 +595,20 @@ impl crate::table::Id for Atom {
     }
 }
 
-/// An `Interner` for those who cannot name the lifetime of its session.
-// No method of an `impl` of it is `#[inline]`: one that is only reached through `&dyn Intern` would be compiled again in
-// every crate that makes the table of methods.
+/// An `Interner` for code that can't name its session's lifetime.
+// No `impl` marks a method `#[inline]`. An inline method that's only reached through `&dyn Intern`
+// would be compiled again in every crate that builds the vtable.
 pub trait Intern: Sync {
     fn intern(&self, text: &[u8]) -> Atom;
-    /// The atom of `text` if it has one. Nothing is entered. For the interner of one file: if it is
-    /// in the file.
+    /// Returns `text`'s atom if it has one, without interning. A single-file interner only finds
+    /// texts that are in the file.
     fn find(&self, text: &[u8]) -> Option<Atom>;
     fn bytes(&self, atom: Atom) -> &[u8];
     /// See `Interner::number`.
     fn number(&self) -> u64;
-    /// The same for the calling thread, without a look at which thread that is on every call.
-    fn of_this_thread(&self) -> &dyn Intern;
-    /// Empty unless it is the interner of one file.
+    /// Returns the calling thread's interner, which saves the thread lookup on every call.
+    fn for_current_thread(&self) -> &dyn Intern;
+    /// Empty unless this is a single-file interner.
     fn own_texts(&self) -> OwnTexts<'_> {
         OwnTexts::default()
     }
@@ -545,30 +627,30 @@ impl Intern for Interner<'_> {
     fn number(&self) -> u64 {
         Interner::number(self)
     }
-    fn of_this_thread(&self) -> &dyn Intern {
+    fn for_current_thread(&self) -> &dyn Intern {
         self
     }
 }
 
-/// An interner for each thread, for work in which no atom goes from one thread to another: what a
-/// thread interns is written and read by that thread only.
+/// One interner per thread, for work where atoms never cross threads. Only the thread that interns
+/// a text writes or reads it.
 pub struct InternerPerThread<'s> {
     all: Box<[Interner<'s>]>,
-    /// `Interner::number` of the first.
+    /// The first interner's `Interner::number`.
     number: u64,
-    /// How many threads have asked.
+    /// How many threads have been assigned an interner.
     threads: std::sync::atomic::AtomicUsize,
 }
 
 thread_local! {
-    /// `InternerPerThread::number` of the one that the thread has used last, and which of its
-    /// interners is the thread's.
+    /// The `InternerPerThread::number` this thread used last, and the index of the thread's
+    /// interner in it.
     static OWN: std::cell::Cell<(u64, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 impl<'s> InternerPerThread<'s> {
-    /// With one interner in each of `sessions`, of which there is at least one. More threads than
-    /// that share them.
+    /// Creates one interner per session. `sessions` must not be empty. If there are more threads
+    /// than sessions, threads share interners.
     pub fn new_in(sessions: &'s [Session]) -> Self {
         let all: Box<[Interner<'s>]> = sessions.iter().map(Interner::new_in).collect();
         InternerPerThread {
@@ -578,12 +660,12 @@ impl<'s> InternerPerThread<'s> {
         }
     }
 
-    /// The interner of the calling thread.
+    /// The calling thread's interner.
     #[inline]
     fn own(&self) -> &Interner<'s> {
-        let (of, at) = OWN.get();
+        let (owner_number, at) = OWN.get();
         match self.all.get(at) {
-            Some(own) if of == self.number => own,
+            Some(own) if owner_number == self.number => own,
             _ => self.assign(),
         }
     }
@@ -591,10 +673,10 @@ impl<'s> InternerPerThread<'s> {
     #[cold]
     #[inline(never)]
     fn assign(&self) -> &Interner<'s> {
-        let asked = self
+        let thread_index = self
             .threads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let at = asked % self.all.len();
+        let at = thread_index % self.all.len();
         OWN.set((self.number, at));
         &self.all[at]
     }
@@ -613,7 +695,7 @@ impl Intern for InternerPerThread<'_> {
     fn number(&self) -> u64 {
         self.own().number()
     }
-    fn of_this_thread(&self) -> &dyn Intern {
+    fn for_current_thread(&self) -> &dyn Intern {
         self.own()
     }
 }
@@ -624,20 +706,22 @@ impl<'s> Interner<'s> {
         Self::with_known_atoms(session, false)
     }
 
-    /// Shared by several programs, which may add names to it concurrently while they load. No program is type-checked with it
-    /// directly: the checker assumes that nobody else adds an atom (`Atoms::find_published`, `TypeStore::link`), so each
-    /// program layers its own interner on top with `over`.
+    /// Shared by several programs, which may add names to it concurrently while they load. A
+    /// program isn't type-checked with it directly. The checker assumes that no other program adds
+    /// atoms (`Atoms::find_published`, `TypeStore::link`), so each program layers its own interner
+    /// on top with `over`.
     pub fn in_common(session: &'s Session) -> Self {
         Self::with_known_atoms(session, true)
     }
 
-    fn with_known_atoms(session: &'s Session, is_in_common: bool) -> Self {
-        let tables = session.keep(Tables::new(is_in_common));
+    fn with_known_atoms(session: &'s Session, is_shared: bool) -> Self {
+        let tables = session.keep(Tables::new(is_shared));
         let this = Interner {
             session,
             tables,
-            below: tables,
+            base: tables,
             first: 0,
+            number: next_interner_number(),
         };
         for (i, text) in known::TEXTS.iter().enumerate() {
             let atom = this.intern(text.as_bytes());
@@ -653,51 +737,47 @@ impl<'s> Interner<'s> {
         this
     }
 
-    /// Layers a private interner over `below`, which must be `in_common`. It sees the atoms that `below` has right now, under
-    /// the same numbers, and numbers its own after them. Nobody else sees those.
-    pub fn over(session: &'s Session, below: Interner<'s>) -> Interner<'s> {
-        assert!(below.tables.is_in_common);
-        let Tables { shards, texts, .. } = below.tables;
+    /// Layers a private interner over `base`, which must be `in_common`. It sees the atoms that
+    /// `base` has right now, with the same numbers, and numbers its own after them. No other
+    /// interner sees those.
+    pub fn over(session: &'s Session, base: Interner<'s>) -> Interner<'s> {
+        assert!(base.tables.is_shared);
+        let Tables { slots, texts, .. } = base.tables;
         Interner {
             session,
             tables: session.keep(Tables::new(false)),
-            below: below.tables,
-            // Texts are pushed under their shard's lock. With all shards locked, none below this length is incomplete.
-            first: GrowingPlaces::while_none_grows(&shards[..], || texts.len()),
+            base: base.tables,
+            // Texts are pushed under their shard's lock. With all shards locked, every text before
+            // this length is complete.
+            first: slots.with_all_locked(|| texts.len()),
+            number: next_interner_number(),
         }
-    }
-
-    /// For the merge at the barrier. It writes without synchronization, so the tables must not be shared. The last value is
-    /// the number of the first text.
-    pub(crate) fn halves(&self) -> (&[GrowingPlaces], &Texts, u32) {
-        assert!(!self.tables.is_in_common);
-        (&self.tables.shards[..], &self.tables.texts, self.first)
     }
 
     pub fn session(&self) -> &'s Session {
         self.session
     }
 
-    /// Sequence number of this interner among all that have been created: data cached for one
+    /// Sequence number of this interner among all interners ever created. Data cached for one
     /// interner is invalid for another.
     #[inline]
     pub fn number(&self) -> u64 {
-        self.tables.number
+        self.number
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {
-        if text.len() > Recent::LONGEST {
+        if text.len() > Recent::MAX_PACKED_LEN {
             return self.intern_shared(hash_of(text), text);
         }
-        let (start, end) = short(text);
+        let (start, end) = pack_short(text);
         let spread = spread_hash(&(start, end));
         RECENT.with_borrow_mut(|recent| {
-            // Nothing in this scope re-enters it.
-            if recent.of != self.tables.number {
-                recent.of = self.tables.number;
+            // Nothing in this closure borrows `RECENT` again.
+            if recent.interner_number != self.number {
+                recent.interner_number = self.number;
                 match recent.entries.is_empty() {
-                    true => recent.entries = vec![Recent::NOTHING; 1 << Recent::BITS],
-                    false => recent.entries.fill(Recent::NOTHING),
+                    true => recent.entries = vec![Recent::EMPTY_ENTRY; 1 << Recent::BITS],
+                    false => recent.entries.fill(Recent::EMPTY_ENTRY),
                 }
             }
             let entry = &mut recent.entries[(spread >> (64 - Recent::BITS)) as usize];
@@ -715,49 +795,61 @@ impl<'s> Interner<'s> {
     }
 
     fn intern_shared(&self, spread: u64, text: &[u8]) -> Atom {
-        if let Some(atom) = self.find_below(spread, text) {
+        if let Some(atom) = self.find_in_base(spread, text) {
             return atom;
         }
-        let Tables { shards, texts, .. } = self.tables;
-        let shard = &shards[shard_of(spread)];
-        let is_it = |i: u32| &**texts.get(i - self.first) == text;
-        if let Some(atom) = shard.find(spread, is_it) {
+        let Tables { slots, texts, .. } = self.tables;
+        let matches = |i: u32| &**texts.get(i - self.first) == text;
+        if let Some(atom) = slots.find(spread, matches) {
             return Atom(atom);
         }
-        let add = || self.first + texts.push(text.into());
-        Atom(shard.find_or_add(spread, is_it, add))
+        let add = || {
+            let index = texts.push(text.into());
+            self.tables.set_class(index, text);
+            self.first + index
+        };
+        Atom(slots.find_or_add(spread, matches, add))
+    }
+
+    /// Returns the stored class of `atom`'s text.
+    #[inline]
+    fn class(&self, atom: Atom) -> u32 {
+        match atom.0.checked_sub(self.first) {
+            Some(own) => self.tables.class(own),
+            None => self.base.class(atom.0),
+        }
     }
 
     #[inline]
-    fn find_below(&self, spread: u64, text: &[u8]) -> Option<Atom> {
+    fn find_in_base(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         if self.first == 0 {
             return None;
         }
-        let Tables { shards, texts, .. } = self.below;
-        let is_it = |i: u32| i < self.first && &**texts.get(i) == text;
-        shards[shard_of(spread)].find(spread, is_it).map(Atom)
+        let Tables { slots, texts, .. } = self.base;
+        let matches = |i: u32| i < self.first && &**texts.get(i) == text;
+        slots.find(spread, matches).map(Atom)
     }
 
-    /// The atom of `text`, if it has been interned.
+    /// Returns `text`'s atom if it has been interned.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
         let spread = hash_of(text);
-        let Tables { shards, texts, .. } = self.tables;
-        let is_it = |i: u32| &**texts.get(i - self.first) == text;
-        let own = || shards[shard_of(spread)].find(spread, is_it).map(Atom);
-        self.find_below(spread, text).or_else(own)
+        let Tables { slots, texts, .. } = self.tables;
+        let matches = |i: u32| &**texts.get(i - self.first) == text;
+        let own = || slots.find(spread, matches).map(Atom);
+        self.find_in_base(spread, text).or_else(own)
     }
 
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &[u8] {
-        debug_assert!(!atom.is_own(), "only `Atoms` knows a task's own");
+        debug_assert!(!atom.is_own(), "only `Atoms` can read a task-local atom");
         match atom.0.checked_sub(self.first) {
             Some(own) => self.tables.texts.get(own),
-            None => self.below.texts.get(atom.0),
+            None => self.base.texts.get(atom.0),
         }
     }
 
-    /// The name of the property `[Symbol.name]` (`getPropertyNameForKnownSymbolName`). Given
-    /// `name@id`, the name of the property keyed by a `unique symbol`
+    /// Returns the property name for `[Symbol.name]` (`getPropertyNameForKnownSymbolName`). Given
+    /// `name@id`, returns the name of the property keyed by a `unique symbol`
     /// (`getESSymbolLikeTypeForNode`).
     pub fn symbol_name(&self, name: &[u8]) -> Atom {
         self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
@@ -783,7 +875,7 @@ pub struct Atoms<'p, 's> {
 impl<'p, 's> Atoms<'p, 's> {
     #[inline(always)]
     pub fn new(published: &'p Interner<'s>, own: &OwnStore<'s>) -> Atoms<'p, 's> {
-        // SAFETY: as in `Types::new`.
+        // SAFETY: same as in `Types::new`.
         let own = unsafe { &*std::ptr::from_ref(own) };
         Atoms { published, own }
     }
@@ -791,21 +883,27 @@ impl<'p, 's> Atoms<'p, 's> {
     #[inline]
     fn find_published(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         let Interner { tables, first, .. } = self.published;
-        let is_it = |i: u32| &**tables.texts.get(i - first) == text;
-        let own = || tables.shards[shard_of(spread)].find_frozen(spread, is_it);
-        let below = self.published.find_below(spread, text);
-        below.or_else(|| own().map(Atom))
+        let matches = |i: u32| &**tables.texts.get(i - first) == text;
+        // Other tasks may be adding atoms concurrently.
+        let own = || tables.slots.find(spread, matches);
+        let base = self.published.find_in_base(spread, text);
+        base.or_else(|| own().map(Atom))
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {
         let spread = hash_of(text);
         match self.find_published(spread, text) {
             Some(atom) => atom,
+            None if self.own.sharing() == Sharing::Publishes => {
+                self.own.count_published_atom();
+
+                self.published.intern_shared(spread, text)
+            }
             None => self.own.intern_atom(spread, text),
         }
     }
 
-    /// The atom of `text`, if it is published or the task has created it.
+    /// Returns `text`'s atom if it's published or this task created it.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
         let spread = hash_of(text);
         self.find_published(spread, text)
@@ -826,13 +924,40 @@ impl<'p, 's> Atoms<'p, 's> {
         self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
     }
 
+    /// Returns `class_of` for `atom`'s text.
+    #[inline]
+    fn class(&self, atom: Atom) -> u32 {
+        if atom.is_own() {
+            return class_of(self.bytes(atom));
+        }
+        self.published.class(atom)
+    }
+
     /// `isLateBoundName`
     #[inline]
     pub fn is_symbol_name(&self, atom: Atom) -> bool {
-        atom.is_some() && self.bytes(atom).starts_with(SYMBOL_NAME_PREFIX)
+        atom.is_some() && self.class(atom) & class::IS_SYMBOL_NAME != 0
     }
 
-    /// `EscapeInternalSymbolName`: the byte that no text contains is printed as `__`.
+    /// `IsPrivateIdentifierSymbol`: true if the name starts with `PRIVATE_NAME_PREFIX`.
+    #[inline]
+    pub fn is_private_symbol_name(&self, atom: Atom) -> bool {
+        self.class(atom) & class::IS_PRIVATE_SYMBOL_NAME != 0
+    }
+
+    /// True if the name starts with `PRIVATE_NAME_PREFIX` or `#`.
+    #[inline]
+    pub fn is_private_name(&self, atom: Atom) -> bool {
+        self.class(atom) & (class::IS_PRIVATE_SYMBOL_NAME | class::STARTS_WITH_HASH) != 0
+    }
+
+    /// `isNumericLiteralName`
+    #[inline]
+    pub fn is_numeric_name(&self, atom: Atom) -> bool {
+        self.class(atom) & class::IS_NUMERIC != 0
+    }
+
+    /// `EscapeInternalSymbolName`: prints the 0xFE prefix byte as `__`.
     #[cfg(feature = "baselines")]
     pub fn text(&self, atom: Atom) -> std::borrow::Cow<'p, str> {
         if atom.is_none() {
@@ -842,7 +967,7 @@ impl<'p, 's> Atoms<'p, 's> {
     }
 }
 
-/// `String(n)`, which is the property name of a number.
+/// `String(n)`, which is a number's property name.
 pub fn number_to_string(n: f64) -> Vec<u8> {
     bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], n).to_vec()
 }

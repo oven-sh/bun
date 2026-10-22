@@ -1,4 +1,4 @@
-use bun_lint_oxlint::regex_flags::regex_of_option;
+use bun_lint_oxlint::regex_flags::option_regex;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 
 /// Enforce a consistent case style for filenames.
 pub struct FilenameCase {
-    /// Those that are allowed, in the order of the message.
+    /// The allowed cases, in the message's order.
     cases: Vec<Case>,
     ignore: Vec<Regex>,
     multiple_file_extensions: bool,
@@ -33,8 +33,8 @@ const CASES: [(Case, &str, &str); 6] = [
     (Case::ScreamingSnake, "screamingSnakeCase", "SCREAMING_SNAKE_CASE"),
 ];
 
-/// Whether `c` belongs to the letter before it. Not all that Unicode says about that: the marks that names which are
-/// decomposed have.
+/// True if `c` belongs to the letter before it. This isn't Unicode's full definition, only the combining marks that
+/// decomposed names have.
 fn extends_grapheme(c: char) -> bool {
     matches!(
         u32::from(c),
@@ -65,19 +65,19 @@ fn is_digit(grapheme: &str) -> bool {
 }
 
 impl Case {
-    /// Whether `name` is in this case.
-    fn is_that_of(self, name: &str) -> bool {
+    /// True if `name` is in this case.
+    fn accepts(self, name: &str) -> bool {
         let has_no_capitals = matches!(self, Case::Kebab | Case::Snake | Case::Lowercase);
         !(has_no_capitals && name.bytes().any(|it| it.is_ascii_uppercase())) && self.convert(name) == name
     }
 
-    /// `name` in this case, as the crate `convert_case` makes it: words end at `_`, `-`, a blank, between `a` and `B`,
+    /// Converts `name` to this case like the `convert_case` crate. Words end at `_`, `-`, a space, between `a` and `B`,
     /// between `A` and `Bc`, and between a capital letter and a digit. A word can be empty.
     fn convert(self, name: &str) -> String {
         if self == Case::Lowercase || name.is_empty() {
             return name.to_lowercase();
         }
-        // Where each grapheme starts, and the end.
+        // The start of each grapheme, plus the end.
         let mut starts: SmallVec<[usize; 64]> =
             name.char_indices().filter(|it| it.0 == 0 || !extends_grapheme(it.1)).map(|it| it.0).collect();
         starts.push(name.len());
@@ -128,7 +128,7 @@ impl Case {
     }
 }
 
-/// What is before the element at `i` of a list of `len`.
+/// The separator before element `i` of a list of `len`.
 fn separator(i: usize, len: usize) -> &'static str {
     match i {
         0 => "",
@@ -138,7 +138,7 @@ fn separator(i: usize, len: usize) -> &'static str {
 }
 
 impl FilenameCase {
-    /// The name of the file, and the part of it that has to be in one of the cases. `None`: nothing is asked of it.
+    /// Returns the file name and the part of it that must be in one of the cases, or `None` if the file isn't checked.
     fn checked_part<'p>(&self, path: &'p [u8]) -> Option<(&'p [u8], &'p str)> {
         let raw_filename = bun_lint::paths::file_name(path);
         if raw_filename.is_empty()
@@ -158,10 +158,10 @@ impl FilenameCase {
         Some((raw_filename, filename.trim_matches('_')))
     }
 
-    /// The cases that the name of the file should be in, as the message lists them. `None` if it is in one.
+    /// The cases the file name should be in, as the message lists them. `None` if it's already in one.
     fn expected_cases(&self, path: &[u8]) -> Option<String> {
         let (_, trimmed_filename) = self.checked_part(path)?;
-        if self.cases.iter().any(|it| it.is_that_of(trimmed_filename)) {
+        if self.cases.iter().any(|it| it.accepts(trimmed_filename)) {
             return None;
         }
         let mut expected = String::new();
@@ -172,17 +172,17 @@ impl FilenameCase {
         Some(expected)
     }
 
-    /// The name of the file in each of the cases.
+    /// The file name converted to each of the cases.
     fn help(&self, path: &[u8]) -> String {
         let Some((raw_filename, trimmed_filename)) = self.checked_part(path) else {
             return String::new();
         };
-        let around: Vec<&[u8]> = strings::split(raw_filename, trimmed_filename.as_bytes()).collect();
+        let surrounding_parts: Vec<&[u8]> = strings::split(raw_filename, trimmed_filename.as_bytes()).collect();
         let mut help = b"Rename the file to ".to_vec();
         for (i, case) in self.cases.iter().enumerate() {
             help.extend_from_slice(separator(i, self.cases.len()).as_bytes());
             help.push(b'\'');
-            help.extend_from_slice(&around.join(case.convert(trimmed_filename).as_bytes()));
+            help.extend_from_slice(&surrounding_parts.join(case.convert(trimmed_filename).as_bytes()));
             help.push(b'\'');
         }
         bstr::BStr::new(&help).to_string()
@@ -204,7 +204,7 @@ impl Rule for FilenameCase {
         };
         FilenameCase {
             cases: CASES.iter().filter(|it| is_allowed(it)).map(|it| it.0).collect(),
-            ignore: options.strings("ignore").into_iter().filter_map(regex_of_option).collect(),
+            ignore: options.strings("ignore").into_iter().filter_map(option_regex).collect(),
             multiple_file_extensions: options.bool_or("multipleFileExtensions", true),
         }
     }

@@ -1051,7 +1051,8 @@ impl Stringifier {
             Negatable::<Npm::Architecture>::to_json(meta.arch, &mut AsFmt::new(writer))?;
         }
 
-        // Only a restriction to one libc matters; by name rather than `Negatable`'s "!musl".
+        // Only a restriction to a single libc matters. It's written by name instead of
+        // `Negatable`'s "!musl".
         if let Some(libc) = meta.libc.single_name() {
             write_key(&mut *writer, b" \"libc\": \"")?;
             writer.write_all(libc)?;
@@ -1517,7 +1518,8 @@ pub(crate) enum ResolveError {
     Unresolvable,
 }
 
-/// A package printed at several paths binds its edges per row; equal or better evidence wins.
+/// A package that's printed at several paths binds its dependencies once per path. Equal or better
+/// evidence wins.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
 enum RowEvidence {
     Unbound,
@@ -1531,7 +1533,8 @@ enum RowEvidence {
     /// The walk found a copy that is outside an optional peer's range. If the peer resolved to any
     /// other package, that package would be printed in this row's own path.
     Refused,
-    /// The copy printed in the package's own path, only there for the package's own edge.
+    /// The copy that's printed under the package's own path. It's only there for the package's own
+    /// dependency.
     OwnEntry,
     /// The walk found nothing, so the optional peer is unresolved. A resolved one has a copy above
     /// every path that its package is printed at.
@@ -2244,7 +2247,8 @@ pub(crate) fn parse_into_binary_lockfile(
 
         root_pkg.meta.id = 0;
         root_pkg.meta.origin = Origin::Local;
-        // Before the packages are read: a `<name>@root:` entry is this package, not a second one.
+        // Set before the packages are read, so that a `<name>@root:` entry is recognized as this
+        // package and not as a second one.
         root_pkg.resolution = Resolution::init(crate::resolution::TaggedValue::Root);
         let root_name_hash = root_pkg.name_hash;
         lockfile.packages.append(root_pkg)?;
@@ -2695,7 +2699,11 @@ pub(crate) fn parse_into_binary_lockfile(
                     // keep the path-traversal guard intact at every version.
                     let enforce_safe_tag =
                         tag == ResolutionTag::Github || lockfile_version.at_least(Version::V2);
-                    if enforce_safe_tag && !crate::repository::is_safe_resolved_tag(bun_tag_str) {
+                    let too_long = bun_tag_str.len() > crate::repository::MAX_RESOLVED_TAG_LEN;
+                    if too_long
+                        || (enforce_safe_tag
+                            && !crate::repository::is_safe_resolved_tag(bun_tag_str))
+                    {
                         fail!(
                             InvalidPackageInfo,
                             at_item(key_loc, bun_tag_idx),
@@ -2713,7 +2721,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 _ => {}
             }
 
-            // Optional: older lockfiles have none for tarball and git deps.
+            // Optional, because older lockfiles don't have one for tarball and git dependencies.
             if matches!(
                 res.tag,
                 ResolutionTag::LocalTarball
@@ -2797,6 +2805,7 @@ pub(crate) fn parse_into_binary_lockfile(
             )?;
             (members.clone()).find(|&id| pkg_name_hashes[id as usize] == name_hash)
         };
+        // Hoisting binds the peers again once every other dependency is resolved.
         let peer_by_version = |dep: &Dependency| {
             resolve_peer_dep_version_based(
                 dep,
@@ -3075,7 +3084,93 @@ pub(crate) fn resolve_peer_dep_version_based(
     )
 }
 
-/// What that scan looks for; `None` for an edge the path walk binds.
+/// For each package name: the packages that have no provider for a peer dependency on that name, and
+/// the required peer dependencies on it that have no provider in at least one place, one per
+/// distinct range. Filled on demand.
+#[derive(Default)]
+pub(crate) struct PeerRangeCache(
+    core::cell::RefCell<HashMap<PackageNameHash, (DynamicBitSet, Box<[DependencyID]>)>>,
+);
+
+/// Finds the version that packages with a peer dependency on the same name can share.
+#[derive(Clone, Copy)]
+pub(crate) struct PeerRanges<'a> {
+    pub(crate) cache: &'a PeerRangeCache,
+    pub(crate) lockfile: &'a BinaryLockfile,
+}
+
+impl PeerRanges<'_> {
+    /// `peer` is a peer dependency of `owner`. If no package provides it, returns the highest
+    /// installed version that satisfies it and every other required peer range on that name that no
+    /// package provides. As in pnpm, those packages share one copy.
+    pub(crate) fn shared_version(self, owner: PackageID, peer: &Dependency) -> Option<PackageID> {
+        let lockfile = self.lockfile;
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let (range, name_hash) =
+            version_based_peer_range(peer, &lockfile.catalogs, &lockfile.overrides, string_buf)?;
+        let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
+        if candidates.len() < 2 {
+            return None;
+        }
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let mut cache = self.cache.0.borrow_mut();
+        let (missing, rows) = cache
+            .entry(name_hash)
+            .or_insert_with(|| self.collect(name_hash));
+        if !missing.is_set(owner as usize) {
+            return None;
+        }
+        candidates.iter().copied().find(|&id| {
+            let resolution = &pkg_resolutions[id as usize];
+            resolution.satisfies_dependency_version(range, string_buf, string_buf)
+                && rows.iter().all(|&row| {
+                    let range =
+                        (lockfile.catalogs).resolve_range(string_buf, &dependencies[row as usize]);
+                    resolution.satisfies_dependency_version(range, string_buf, string_buf)
+                })
+        })
+    }
+
+    fn collect(self, name_hash: PackageNameHash) -> (DynamicBitSet, Box<[DependencyID]>) {
+        let lockfile = self.lockfile;
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let packages = lockfile.packages.items_resolution();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let missing =
+            super::reachable::packages_without_peer_provider(lockfile, resolutions, name_hash);
+        let somewhere = super::reachable::packages_reached_without_peer_provider(
+            lockfile,
+            resolutions,
+            name_hash,
+        );
+        let mut rows: Vec<(u64, DependencyID)> = Vec::new();
+        for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
+            if !somewhere.is_set(owner) || packages[owner].tag != ResolutionTag::Npm {
+                continue;
+            }
+            for id in list.begin()..list.end() {
+                if let Some((range, asks_for)) = version_based_peer_range(
+                    &dependencies[id as usize],
+                    &lockfile.catalogs,
+                    &lockfile.overrides,
+                    string_buf,
+                ) && asks_for == name_hash
+                    && range.tag == DependencyVersionTag::Npm
+                {
+                    rows.push((bun_wyhash::hash(range.literal.slice(string_buf)), id));
+                }
+            }
+        }
+        index_sort::sort_slice_unstable_by(&mut rows, |a, b| a.cmp(b));
+        rows.dedup_by_key(|row| row.0);
+        (missing, rows.into_iter().map(|row| row.1).collect())
+    }
+}
+
+/// Returns the range and the name that the scan looks for, or `None` for a dependency that the path
+/// walk binds.
 fn version_based_peer_range<'a>(
     dep: &'a Dependency,
     catalogs: &'a CatalogMap,
@@ -3110,7 +3205,7 @@ fn version_based_peer_range<'a>(
     Some((range, name_hash))
 }
 
-/// `package_index` is keyed by real package names; for an alias, `range` carries it.
+/// `package_index` is keyed by real package names. For an alias, `range` has the real name.
 pub(crate) fn peer_candidate_name_hash(
     dep: &Dependency,
     range: &DependencyVersion,
@@ -3127,7 +3222,7 @@ pub(crate) fn peer_candidate_name_hash(
     StringBuilder::string_hash(name.slice(string_buf))
 }
 
-/// The scan itself; the yarn.lock migration also binds `*` and overridden peers with it.
+/// The scan itself. The yarn.lock migration also uses it to bind `*` and overridden peers.
 pub(crate) fn resolve_peer_dep_by_range(
     range: &DependencyVersion,
     name_hash: PackageNameHash,
@@ -3145,7 +3240,7 @@ pub(crate) fn resolve_peer_dep_by_range(
     })
 }
 
-/// Call after hoisting: binds ranged peers whose target is in no tree the way a reload would.
+/// Call after hoisting. Binds the peers whose target isn't in any tree the way a reload would.
 pub(crate) fn rebind_peers_to_printed_packages(
     lockfile: &mut BinaryLockfile,
 ) -> Result<(), bun_alloc::AllocError> {

@@ -36,7 +36,7 @@ impl Rule for NoMutableExports {
                 if let StmtKind::ExportNamed(export) = stmt.kind()
                     && !export.has_from()
                 {
-                    // For oxlint the name in `export { type a }` and in `export type { a }` refers to a type.
+                    // For oxlint the name in `export { type a }` and `export type { a }` refers to a type.
                     let is_oxlint = cx.file().language().is_oxlint;
                     for specifier in export.items() {
                         if !(is_oxlint && (export.is_type_only() || specifier.is_type_only())) {
@@ -50,7 +50,7 @@ impl Rule for NoMutableExports {
     }
 }
 
-/// `export`: what exports it, which oxlint's rule is called with.
+/// `export`: the exporting statement, which is the node oxlint runs the rule on.
 fn check_declaration<'a>(declaration: Stmt<'a>, export: Stmt<'a>, cx: &Cx<'a, NoMutableExports>) {
     let StmtKind::Var(declarators) = declaration.kind() else {
         return;

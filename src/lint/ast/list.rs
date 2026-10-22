@@ -5,13 +5,13 @@ use crate::span::Spanned;
 use bun_sema::hir;
 use std::marker::PhantomData;
 
-/// The children of a node that come in a list: arguments, statements, members.
+/// A node's list of children: arguments, statements, members.
 #[derive(Copy, Clone)]
 pub struct List<'a, T> {
     file: &'a File<'a>,
     start: u32,
     len: u32,
-    /// The elements are `Hir::ids[start..]`, not `start..` themselves.
+    /// True if the elements are `Hir::ids[start..]` rather than the ids `start..` themselves.
     is_indirect: bool,
     of: PhantomData<T>,
 }
@@ -59,7 +59,7 @@ impl<'a, T: Handle<'a>> List<'a, T> {
         T::from_raw(self.file, id)
     }
 
-    /// The ids of the elements, if they are listed in `Hir::ids` and none of them is left out.
+    /// The elements' ids, if they're stored in `Hir::ids` and none of them is skipped.
     #[inline]
     pub(crate) fn listed_ids(self) -> Option<&'a [u32]> {
         match self.is_indirect && !self.file.has_synthetic_nodes() {
@@ -74,20 +74,20 @@ impl<'a, T: Handle<'a>> List<'a, T> {
             list: self,
             front: 0,
             back: self.len,
-            hides: self.file.has_synthetic_nodes(),
+            skips_synthetic: self.file.has_synthetic_nodes(),
         }
     }
 
     #[inline]
     pub fn len(self) -> usize {
         match self.file.has_synthetic_nodes() {
-            true => self.count_written(),
+            true => self.count_non_synthetic(),
             false => self.len as usize,
         }
     }
 
     #[inline(never)]
-    fn count_written(self) -> usize {
+    fn count_non_synthetic(self) -> usize {
         self.iter().count()
     }
 
@@ -99,13 +99,13 @@ impl<'a, T: Handle<'a>> List<'a, T> {
     #[inline]
     pub fn get(self, i: usize) -> Option<T> {
         match self.file.has_synthetic_nodes() {
-            true => self.get_written(i),
+            true => self.get_non_synthetic(i),
             false => (i < self.len as usize).then(|| self.at(i as u32)),
         }
     }
 
     #[inline(never)]
-    fn get_written(self, i: usize) -> Option<T> {
+    fn get_non_synthetic(self, i: usize) -> Option<T> {
         self.iter().nth(i)
     }
 
@@ -120,9 +120,9 @@ impl<'a, T: Handle<'a>> List<'a, T> {
     }
 }
 
-/// For a list whose elements are in the order of the source and do not overlap. Each takes the logarithm of its length.
+/// For a list whose elements are in source order and don't overlap. Each lookup is O(log n).
 impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
-    /// How many elements start at or before `offset`, those that lists leave out too.
+    /// The number of elements that start at or before `offset`, including the synthetic ones that iteration skips.
     fn count_until(self, offset: u32) -> u32 {
         let (mut from, mut to) = (0, self.len);
         while from < to {
@@ -135,7 +135,7 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         from
     }
 
-    /// The whole list, or if it is long and `offset` is given, only the last element that starts at or before `offset`.
+    /// The whole list, or if it's long and `offset` is given, only the last element that starts at or before `offset`.
     #[inline]
     pub(super) fn near(self, offset: Option<u32>) -> Iter<'a, T> {
         match offset {
@@ -147,20 +147,20 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
     #[inline(never)]
     fn near_in_long_list(self, offset: u32) -> Iter<'a, T> {
         let mut all = self.iter();
-        if !all.hides {
+        if !all.skips_synthetic {
             all.back = self.count_until(offset);
             all.front = all.back.saturating_sub(1);
         }
         all
     }
 
-    /// The element that `offset` is in.
+    /// The element that contains `offset`.
     pub fn around(self, offset: u32) -> Option<T> {
         let it = self.at(self.count_until(offset).checked_sub(1)?);
         (offset < it.span().end && !it.is_synthetic()).then_some(it)
     }
 
-    /// [`List::around`], and what [`List::before`] says of where that element starts.
+    /// [`List::around`], plus the element before it, as [`List::before`] would return for its start.
     pub fn around_with_previous(self, offset: u32) -> Option<(T, Option<T>)> {
         let at = self.count_until(offset).checked_sub(1)?;
         let it = self.at(at);
@@ -172,8 +172,8 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         Some((it, before.next_back()))
     }
 
-    /// The index of the element that starts at `start`. It counts the elements before it in a file that has nodes which are
-    /// synthesized from JSDoc comments.
+    /// The index of the element that starts at `start`. In a file with nodes synthesized from JSDoc comments, it has to
+    /// count the preceding elements one by one.
     pub fn index_of_start(self, start: u32) -> Option<usize> {
         let at = self.count_until(start).checked_sub(1)?;
         let it = self.at(at);
@@ -182,7 +182,7 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         }
         let mut before = self.iter();
         before.back = at;
-        Some(if before.hides {
+        Some(if before.skips_synthetic {
             before.count()
         } else {
             at as usize
@@ -224,8 +224,8 @@ pub struct Iter<'a, T> {
     list: List<'a, T>,
     front: u32,
     back: u32,
-    /// Whether some elements may be synthesized from JSDoc comments, which are left out.
-    hides: bool,
+    /// True if some elements may be synthesized from JSDoc comments. Those are skipped.
+    skips_synthetic: bool,
 }
 
 impl<'a, T: Handle<'a>> Iterator for Iter<'a, T> {
@@ -233,8 +233,8 @@ impl<'a, T: Handle<'a>> Iterator for Iter<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<T> {
-        if self.hides {
-            return self.next_written();
+        if self.skips_synthetic {
+            return self.next_non_synthetic();
         }
         (self.front < self.back).then(|| {
             self.front += 1;
@@ -245,15 +245,15 @@ impl<'a, T: Handle<'a>> Iterator for Iter<'a, T> {
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let rest = (self.back - self.front) as usize;
-        (if self.hides { 0 } else { rest }, Some(rest))
+        (if self.skips_synthetic { 0 } else { rest }, Some(rest))
     }
 }
 
 impl<'a, T: Handle<'a>> DoubleEndedIterator for Iter<'a, T> {
     #[inline]
     fn next_back(&mut self) -> Option<T> {
-        if self.hides {
-            return self.next_back_written();
+        if self.skips_synthetic {
+            return self.next_back_non_synthetic();
         }
         (self.front < self.back).then(|| {
             self.back -= 1;
@@ -262,10 +262,10 @@ impl<'a, T: Handle<'a>> DoubleEndedIterator for Iter<'a, T> {
     }
 }
 
-/// In a file that has nodes which are synthesized from JSDoc comments.
+/// The slow path for a file with nodes synthesized from JSDoc comments.
 impl<'a, T: Handle<'a>> Iter<'a, T> {
     #[inline(never)]
-    fn next_written(&mut self) -> Option<T> {
+    fn next_non_synthetic(&mut self) -> Option<T> {
         while self.front < self.back {
             let it = self.list.at(self.front);
             self.front += 1;
@@ -277,7 +277,7 @@ impl<'a, T: Handle<'a>> Iter<'a, T> {
     }
 
     #[inline(never)]
-    fn next_back_written(&mut self) -> Option<T> {
+    fn next_back_non_synthetic(&mut self) -> Option<T> {
         while self.front < self.back {
             self.back -= 1;
             let it = self.list.at(self.back);

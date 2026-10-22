@@ -411,7 +411,11 @@ static ssize_t us_internal_reject_excess_send(struct us_socket_t *s, ssize_t wri
         return written;
     }
     us_internal_socket_raw_shutdown(s);
-    s->send_rejected = !s->ssl;
+    if (s->ssl) {
+        s->ssl_send_rejected = 1;
+    } else {
+        s->send_rejected = 1;
+    }
     us_internal_rearm_writable(s);
 #ifdef _WIN32
     WSASetLastError(WSAECONNABORTED);

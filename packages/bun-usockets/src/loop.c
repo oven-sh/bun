@@ -673,10 +673,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
             }
 
-            if (s->send_rejected) {
-                error = 1;
-            }
-
             /* An error event (EPOLLERR, EV_EOF with the socket error in fflags, an AFD
              * abort) is the connection's death and this dispatch closes the socket with
              * it below. The kernel keeps the receive queue on a reset, so the tail of the
@@ -914,6 +910,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     break;
                 } while (s);
+            }
+
+            /* No write may close under its caller, so the dispatch after a rejected send does. */
+            if (s && s->send_rejected && !us_socket_is_closed(s)) {
+                us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
+                return;
             }
 
             /* The EOF hint (kqueue EV_EOF riding the final data's readable event,

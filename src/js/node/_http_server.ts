@@ -1344,6 +1344,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
   HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
   HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
+  HTTP_PARSER_ERROR_INVALID_URL = 18,
 }
 // Native callback fired when the HTTP parser rejects incoming bytes. Builds
 // the same error object Node's parser produces and routes it through
@@ -1425,6 +1426,9 @@ function onServerClientError(
       break;
     case HttpParserError.HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED:
       err = $HPE_STRICT("Parse Error: Expected LF after chunk data");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_URL:
+      err = $HPE_INVALID_URL("Parse Error: Invalid characters in url");
       break;
     default:
       err = $HPE_INTERNAL("Parse Error");

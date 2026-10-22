@@ -81,6 +81,7 @@ type FixturePackage = {
   version: string;
   bin?: Record<string, string>;
   dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
   scripts?: Record<string, string>;
   deprecated?: string;
   /** How long ago the version was published. Years, unless given. */
@@ -146,9 +147,9 @@ async function localRegistry(...packages: FixturePackage[]) {
       ? new Response(null, { status: down.get(pathname) })
       : (tarballs.get(pathname) ?? manifests.get(decodeURIComponent(pathname.slice(1))));
   });
-  for (const { name, version, bin, dependencies, scripts, deprecated, daysOld = 3650, files } of packages) {
+  for (const { deprecated, daysOld = 3650, files, ...packageJson } of packages) {
+    const { name, version } = packageJson;
     const tarballPath = `/${name}/-/${name.slice(name.lastIndexOf("/") + 1)}-${version}.tgz`;
-    const packageJson = { name, version, bin, dependencies, scripts };
     tarballs.set(
       tarballPath,
       await githubTarball("package", { "package.json": JSON.stringify(packageJson), ...files }),
@@ -2792,6 +2793,40 @@ describe("a package in node_modules", () => {
       requests: [],
     });
   });
+
+  // The install links the bin of a package with native builds into an optional dependency that has an `os` and a
+  // `cpu`. This one has neither, so the entry in .bin is its own bin.
+  it.concurrent.todoIf(isWindows)(
+    "after an install, a package whose optional dependency got the entry in .bin",
+    async () => {
+      using registry = await localRegistry(fixturePackage("aaa-first", "1.0.0", "tool"), {
+        ...fixturePackage("zzz-last", "1.0.0", "tool", echoBin("zzz-last 1.0.0")),
+        optionalDependencies: { "aaa-first": "1.0.0" },
+      });
+      using box = sandbox(registry, {
+        cwd: {
+          "package.json": JSON.stringify({ name: "app", dependencies: { "aaa-first": "1.0.0", "zzz-last": "1.0.0" } }),
+        },
+      });
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+      expect(join(box.cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+
+      expect(await box.run(["zzz-last", "arg"])).toEqual({
+        stdout: "zzz-last 1.0.0 arg\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+
+      chmodSync(join(box.cwd, "node_modules", "zzz-last", "cli.js"), 0o644);
+      expect(await box.run(["zzz-last", "arg"])).toEqual({
+        stdout: "",
+        stderr: expect.stringMatching(/^error: .*\/node_modules\/zzz-last\/cli\.js is not executable\n$/),
+        exitCode: 126,
+        requests: [],
+      });
+    },
+  );
 
   // The file is not there when the bins are linked. The install makes it executable after the script.
   it.concurrent(

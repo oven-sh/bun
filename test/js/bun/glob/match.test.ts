@@ -2462,7 +2462,11 @@ describe("Glob.match", () => {
     ["{src/**,lib}/{test,spec}/*", ["src/a/test/", "src/a/b/test/", "src/test/", "src/a/b/test/x"], ["src/"]],
     ["{{src/**,lib}/test,x}/*", ["src/a/b/test/", "src/test/", "x/"], ["src/"]],
     ["{src/**,lib}/{test**,spec}/*", ["src/a/b/testing/", "src/testing/", "lib/spec/"], ["src/"]],
+    ["{src/**,lib}/a{**,b}/*", ["src/x/y/ab/", "src/ab/", "lib/ab/"], ["src/"]],
+    // `src/**/b/*` matches `src/b/`, and `src/**/x/**/*` doesn't match `src/x/`.
+    ["{src/**,lib}/{x/**,b}/*", ["src/b/", "src/q/b/", "lib/b/", "src/x/y/"], ["src/x/", "src/q/x/", "lib/x/"]],
     ["a{/,[!x]/**}", ["a///", "a//", "ab/"], ["a/b/"]],
+    ["/*[!x]*{,x/**}/", ["/aa//", "/aa/"], ["/a/x/", "/aa"]],
     // Node reads `//*` as `/*`, and leaves the `/` at the end of a path out of account.
     ["/{,x/**,aa}/*", ["/x/", "/x/y", "/aa/"], ["/x", "/"]],
     ["{,**}{,x/**}/*", ["x///", "x/", "x/a"], [""]],
@@ -2553,7 +2557,11 @@ describe("Glob.match", () => {
     ["*{,[!x]}*", ["a/b", "a", "x"], ["a/b/c"]],
     ["*{[!x]*,*}/", ["a/a/", "a/", "x/"], ["a/a"]],
     ["*[!x]*{/**,b}", ["a//", "ab/c"], ["x"]],
-    ["*[!x]*{/**,}", ["a", "ab/c", "a/", "a//"], ["///", "x///", "///a"]],
+    // `*[!x]*/**` matches `///`, and `*[!x]/**/` matches `.//aa/../`.
+    ["*[!x]*{/**,}", ["a", "ab/c", "a//", "///", "x///"], ["x"]],
+    ["*{[!x],[!x]/**}{/,a/**}", [".//aa/../", "a//b/", "ab/"], ["x"]],
+    // Node reads these patterns the way the loop does, so how it reads the path doesn't count.
+    ["*[!x]{[!x]*,b}a", ["aba", "a/ba", "abba"], ["a//a"]],
     // Its `*` takes at least one character.
     ["{*,}[!x]/*", ["a/", "a/b", "ab/c"], ["a//"]],
     // A pattern that ends with `**/*` itself doesn't match `a/`.
@@ -2563,6 +2571,7 @@ describe("Glob.match", () => {
     ["*[/]{/**/*,x}", ["//", "a//", "a//b/", "a/x"], ["/", "a/", "a/x/"]],
     ["{*,[!x]}(a)", ["(a)", "x(a)", "b(a)", "/(a)"], ["a", "", "aa"]],
     ["{!,a}*[/]", ["!/", "!b/", "a/"], ["!b", "b/"]],
+    ["*{zz,[!x]}*/../!b", ["a/../!b", "ab/../!b"], ["a/b/../!b"]],
     ["*{[/]*,b}(a)", ["a/x(a)", "/(a)", "ab(a)"], ["a/x", "a/aa"]],
     // The first `*` is escaped.
     ["\\*{*,a}[/][/]", ["*b//", "*//", "*a//"], ["*b/"]],

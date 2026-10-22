@@ -3682,6 +3682,8 @@ struct Open {
     last_start: u32,
     /// A path segment of the pattern starts with the group.
     starts_segment: bool,
+    /// One of its alternatives ends with a `**` that is a globstar if a `/` follows the group.
+    ends_with_globstar: bool,
 }
 
 /// Bytes that are always literal in a pattern and never end anything.
@@ -3762,28 +3764,29 @@ struct Rest<'a> {
     next: Option<&'a Rest<'a>>,
 }
 
+/// How [`Parsed::write`] reads a pattern.
+#[derive(Clone, Copy, PartialEq)]
+enum Reading {
+    /// A `**` that ends an alternative is a `*`, which is all that the loop has ever taken it for.
+    Loop,
+    /// It's a `**`, as it is to a walk.
+    Walk,
+    /// So is everything else that comes to stand side by side.
+    Node,
+}
+
 /// What [`Parsed::write`] writes to.
 struct Writer {
     written: SmallVec<[u8; 128]>,
     all: WrittenOut,
-    /// Leaves what comes to stand side by side as it is, like Node, and only keeps the patterns for which that makes a difference.
-    is_literal: bool,
+    reading: Reading,
+    /// This isn't what [`Reading::Loop`] gives. Of the other two, only such patterns are kept.
     differs: bool,
 }
 
 impl Parsed {
     const MOST_WRITTEN_OUT: usize = 64;
     const LONGEST_WRITTEN_OUT: usize = 1024;
-
-    /// Returns whether an alternative of the group that closes at `close` ends with a `**`, by itself or with a group that does.
-    fn closes_with_globstar(found: &[Alternative], glob: &[u8], close: usize) -> bool {
-        let first = found.iter().find(|it| it.close as usize == close);
-        std::iter::successors(first, |it| found.get(it.next as usize)).any(|it| {
-            let text = &glob[it.start as usize..it.end as usize];
-            let closes = || Parsed::closes_with_globstar(found, glob, it.end as usize - 1);
-            text == b"**" || text.ends_with(b"/**") || text.ends_with(b"}") && closes()
-        })
-    }
 
     /// Writes `rest` in every way there is.
     fn write(&self, glob: &[u8], rest: Option<&Rest<'_>>, to: &mut Writer) {
@@ -3793,25 +3796,30 @@ impl Parsed {
             next,
         }) = rest
         else {
-            if to.is_literal {
-                let pattern = read_like_node(&to.written, false);
+            if to.reading == Reading::Node {
+                let mut pattern = read_like_node(&to.written, false);
                 if to.differs || pattern.len() < to.written.len() {
+                    if pattern.first() == Some(&b'!') {
+                        pattern.insert(0, b'\\');
+                    }
                     to.all.add(&pattern);
                 }
                 return;
             }
-            to.all.add(&to.written);
-            // Only at the end of the pattern itself does `a/**/*` not match `a/`, and there a walk knows.
-            if to.written.ends_with(b"**/*") {
+            if to.reading == Reading::Loop || to.differs {
+                to.all.add(&to.written);
+            }
+            // To the loop, only at the end of the pattern itself does `a/**/*` not match `a/`, and there a walk knows.
+            if to.reading == Reading::Loop && to.written.ends_with(b"**/*") {
                 to.all.add(&to.written[..to.written.len() - 1]);
             }
             return;
         };
         match (to.written.last(), glob[from..end].first()) {
             // Two `*` that come to stand side by side would be a `**`, and are one to Node.
-            (Some(b'*'), Some(b'*')) if !to.written.ends_with(b"\\*") => match to.is_literal {
-                true => to.differs = true,
-                false => from += glob[from..end].iter().take_while(|it| **it == b'*').count(),
+            (Some(b'*'), Some(b'*')) if !to.written.ends_with(b"\\*") => match to.reading {
+                Reading::Node => to.differs = true,
+                _ => from += glob[from..end].iter().take_while(|it| **it == b'*').count(),
             },
             // These would start a group, or negate the pattern.
             (Some(b'?' | b'*' | b'+' | b'@' | b'!'), Some(b'(')) | (None, Some(b'!')) => {
@@ -3829,10 +3837,19 @@ impl Parsed {
             .filter(|it| it.start as usize <= end)
         else {
             let text = &glob[from..end];
-            // The loop has never taken a `**` that ends an alternative for more than a `*`. To Node it's a `**`.
-            let is_star = end < glob.len() && (text == b"**" || text.ends_with(b"/**"));
-            to.differs |= is_star;
-            let len = text.len() - (is_star && !to.is_literal) as usize;
+            let ends_with_globstar = end < glob.len() && (text == b"**" || text.ends_with(b"/**"));
+            let mut after = next;
+            while let Some(it) = after.filter(|it| it.from == it.to) {
+                after = it.next;
+            }
+            let is_kept = match to.reading {
+                Reading::Loop => false,
+                // Only if nothing, a `/` or a group that may start with one comes after the groups that end with it.
+                Reading::Walk => after.is_none_or(|it| matches!(glob[it.from], b'/' | b'{')),
+                Reading::Node => true,
+            };
+            to.differs |= ends_with_globstar && is_kept;
+            let len = text.len() - (ends_with_globstar && !is_kept) as usize;
             to.written.extend_from_slice(&text[..len]);
             return self.write(glob, next, to);
         };
@@ -3867,14 +3884,20 @@ impl Parsed {
         let mut to = Writer {
             written: SmallVec::new(),
             all: WrittenOut::default(),
-            is_literal: false,
+            reading: Reading::Loop,
             differs: false,
         };
-        self.write(glob, Some(&all), &mut to);
-        to.all.own = to.all.ends.len();
-        to.written.clear();
-        to.is_literal = true;
-        self.write(glob, Some(&all), &mut to);
+        let ends_with_globstar = strings::contains(glob, b"**,") || strings::contains(glob, b"**}");
+        for reading in [Reading::Loop, Reading::Walk, Reading::Node] {
+            if reading == Reading::Node {
+                to.all.own = to.all.ends.len();
+            } else if reading == Reading::Walk && !ends_with_globstar {
+                continue;
+            }
+            (to.reading, to.differs) = (reading, false);
+            to.written.clear();
+            self.write(glob, Some(&all), &mut to);
+        }
         to.all
     }
 
@@ -4045,6 +4068,7 @@ impl Parsed {
             first_len: 0,
             last_start: 0,
             starts_segment: false,
+            ends_with_globstar: false,
         };
         let mut depth = 0_usize;
         let mut outer: SmallVec<[Open; 4]> = SmallVec::new();
@@ -4067,8 +4091,8 @@ impl Parsed {
         let (mut has_star, mut has_separator_class) = (false, false);
         // A `*` that isn't part of a `**`, and a class after it that can match a separator.
         let (mut has_lone_star, mut has_missed_matches) = (false, false);
-        // An alternative ends with a `**`, which isn't regular either.
-        let mut ends_with_globstar = false;
+        // An alternative ends with a `**`, which isn't regular either, and what follows its group is `/*`.
+        let (mut ends_with_globstar, mut has_late_end) = (false, false);
         let mut is_one_segment = !strings::contains_char(&glob[top..i], b'/');
         while let Some(&ch) = glob.get(i) {
             if IS_TEXT[ch as usize] {
@@ -4125,6 +4149,7 @@ impl Parsed {
                         first_len: 0,
                         last_start: i as u32 + 1,
                         starts_segment: starts_segment(at, &group),
+                        ends_with_globstar: false,
                     };
                     if depth > 0 {
                         outer.push(std::mem::replace(&mut group, inner));
@@ -4177,15 +4202,22 @@ impl Parsed {
                     {
                         it.next = Alternative::IS_SEQUENCE;
                     }
+                    let ends_with_globstar = group.ends_with_globstar;
+                    has_late_end |= ends_with_globstar && glob[i + 1..] == *b"/*";
                     if let Some(it) = outer.pop() {
                         group = it;
                         group.is_plain = false;
+                        group.ends_with_globstar |=
+                            ends_with_globstar && matches!(glob.get(i + 1), Some(b',' | b'}'));
                     }
                 }
                 b'*' if glob.get(i + 1) == Some(&b'*') => {
                     // Only a `**` that is a whole segment of the pattern.
                     match glob.get(i + 2) {
-                        Some(b',' | b'}') => ends_with_globstar = true,
+                        Some(b',' | b'}') => {
+                            ends_with_globstar = true;
+                            group.ends_with_globstar |= starts_segment(i, &group);
+                        }
                         it => {
                             is_regular &=
                                 matches!(it, None | Some(b'/')) && starts_segment(i, &group)
@@ -4245,10 +4277,7 @@ impl Parsed {
             && patterns() <= Parsed::MOST_WRITTEN_OUT
             && (glob.is_ascii() || std::str::from_utf8(glob).is_ok());
         self.has_missed_matches = is_written_out && has_missed_matches;
-        self.has_late_end = is_written_out
-            && ends_with_globstar
-            && glob.ends_with(b"}/*")
-            && Parsed::closes_with_globstar(found, glob, glob.len() - 3);
+        self.has_late_end = is_written_out && has_late_end;
         is_regular &= !ends_with_globstar;
         self.is_regular = is_regular && depth == 0 && !has_separator_class;
         self.has_group = has_group || has_choice && !self.is_regular;

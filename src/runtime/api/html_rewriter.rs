@@ -362,6 +362,12 @@ impl HTMLRewriter {
         listener: JSValue,
     ) -> JsResult<JSValue> {
         let selector_source = utf8_or_throw(global, selector_name)?;
+        if selector_nesting(selector_name) > MAX_SELECTOR_NESTING {
+            return Err(global.throw_value(create_lolhtml_error(
+                global,
+                &"Selector is nested too deeply.",
+            )));
+        }
         let selector = match selector_source.parse::<lol_html::Selector>() {
             Ok(s) => s,
             Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
@@ -2571,6 +2577,47 @@ fn lol_err_string(e: impl core::fmt::Display) -> BunString {
 /// text lol-html's C API `to_str!` used to stash in its last-error slot.
 fn utf8_or_throw<'a>(global: &JSGlobalObject, bytes: &'a [u8]) -> JsResult<&'a str> {
     core::str::from_utf8(bytes).map_err(|e| global.throw_value(create_lolhtml_error(global, &e)))
+}
+
+/// lol-html's selector parser recurses once per nested `(` and has no limit of its own.
+/// It overflows a Worker's 4 MB stack at about 1,500 levels in a release build.
+const MAX_SELECTOR_NESTING: usize = 32;
+
+/// The deepest nesting of `(`. A `)` in an escape, a string or a comment closes nothing.
+fn selector_nesting(selector: &[u8]) -> usize {
+    let mut depth: usize = 0;
+    let mut deepest: usize = 0;
+    let mut bytes = selector.iter().copied().peekable();
+    while let Some(byte) = bytes.next() {
+        match byte {
+            b'\\' => {
+                bytes.next();
+            }
+            b'"' | b'\'' => {
+                while let Some(in_string) = bytes.next() {
+                    if in_string == b'\\' {
+                        bytes.next();
+                    } else if in_string == byte {
+                        break;
+                    }
+                }
+            }
+            b'/' if bytes.next_if_eq(&b'*').is_some() => {
+                while let Some(in_comment) = bytes.next() {
+                    if in_comment == b'*' && bytes.next_if_eq(&b'/').is_some() {
+                        break;
+                    }
+                }
+            }
+            b'(' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
 }
 
 /// [`utf8_or_throw`] with a `bindgen::Error`.

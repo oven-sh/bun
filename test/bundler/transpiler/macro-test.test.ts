@@ -788,6 +788,40 @@ describe("--no-macros", () => {
   });
 });
 
+test("bun build of a macro call next to a property read of the same import", async () => {
+  using dir = tempDir("bundler-macro-property-read", {
+    "macro.ts": `export function m() {\n  return 42;\n}\n`,
+    "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m.name, m());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("console.log(m.name, 42);");
+  expect(exitCode).toBe(0);
+});
+
+test("bun build reports a macro result that is nested too deeply", async () => {
+  using dir = tempDir("bundler-macro-deep-result", {
+    "macro.ts": `export function m() {\n  let list = null;\n  for (let i = 0; i < 100000; i++) list = { i, next: list };\n  return list;\n}\n`,
+    "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nexport const list = m();\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: The value returned by this macro is nested too deeply");
+  expect(exitCode).toBe(1);
+});
+
 // Each parse thread creates a macro VM on its first macro call, and that VM loads the cwd's `.env` files.
 describe("macro VM env loader", () => {
   const macroModules = 8;

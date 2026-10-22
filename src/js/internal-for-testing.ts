@@ -722,7 +722,7 @@ export type SocketFaultSyscall =
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
-  action: "errno" | "short" | "zero" | "none";
+  action: "errno" | "short" | "zero" | "excess" | "none";
   /** errno name or numeric value (only used when action === "errno") */
   errno?:
     | "ECONNRESET"
@@ -771,6 +771,19 @@ export const namedPipeInternals = {
    * one per accepted pipe client. Always 0 on other platforms.
    */
   liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
+};
+
+export const duplexTLSInternals = {
+  /**
+   * Live native contexts behind TLS sockets that run over a JS stream
+   * (`tls.connect({ socket: duplex })`, `new tls.TLSSocket(duplex)`): one per
+   * socket, until the task that frees it after the close has run.
+   */
+  liveCount: $newRustFunction(
+    "runtime/socket/socket.rs",
+    "TestingAPIs.jsDuplexUpgradeContextLiveCount",
+    0,
+  ) as () => number,
 };
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (

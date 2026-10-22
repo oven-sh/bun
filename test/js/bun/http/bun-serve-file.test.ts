@@ -1990,3 +1990,80 @@ test.skipIf(isWindows)("the next response can read a FIFO fd after an aborted Re
     closeSync(fd);
   }
 });
+
+test.concurrent.skipIf(isWindows)(
+  "a handler that answers with Bun.file(FIFO) while its request body fails on maxRequestBodySize",
+  async () => {
+    using dir = tempDir("serve-fifo-body-limit", {
+      "fixture.ts": `
+import { closeSync, constants, openSync, writeSync } from "node:fs";
+const fifo = process.argv[2];
+// A writer that stays open, so the read end waits for bytes and sees no end.
+const writer = openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK);
+const answer = Promise.withResolvers<void>();
+const bodyOfX = Promise.withResolvers<ReadableStream>();
+const attached = Promise.withResolvers<void>();
+using server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  development: false,
+  maxRequestBodySize: 32,
+  error() {
+    answer.resolve();
+    return new Response("err", { status: 500 });
+  },
+  async fetch(req) {
+    if (req.method === "GET") return new Response("ok");
+    if (new URL(req.url).pathname === "/x") {
+      bodyOfX.resolve(req.body!);
+      await answer.promise;
+      return new Response(Bun.file(fifo));
+    }
+    const other = await bodyOfX.promise;
+    // One turn of the event loop later the server has taken the response of /y.
+    setImmediate(attached.resolve);
+    return new HTMLRewriter().on("p", { element() {} }).transform(new Response(other));
+  },
+});
+function post(path: string) {
+  let body!: ReadableStreamDefaultController<Uint8Array>;
+  const status = fetch(server.url.origin + path, {
+    method: "POST",
+    body: new ReadableStream<Uint8Array>({ start: c => void (body = c) }),
+  }).then(
+    res => res.status,
+    e => e.code,
+  );
+  return { status, overflow: () => body.enqueue(new Uint8Array(48)) };
+}
+const y = post("/y");
+const x = post("/x");
+await attached.promise;
+x.overflow();
+await x.status;
+const status = await y.status;
+// The FIFO becomes readable after the connection of /x is gone.
+for (let i = 0; i < 10; i++) await fetch(server.url).then(res => res.text());
+writeSync(writer, Buffer.alloc(4096, "z"));
+const later = await fetch(server.url).then(res => res.text());
+closeSync(writer);
+console.log(JSON.stringify({ status, later, pendingRequests: server.pendingRequests }));
+`,
+    });
+    const fifoPath = join(String(dir), "body.fifo");
+    mkfifo(fifoPath);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ status: 500, later: "ok", pendingRequests: 0 });
+    expect(exitCode).toBe(0);
+  },
+);

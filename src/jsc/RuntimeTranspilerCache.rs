@@ -69,9 +69,17 @@ bun_core::declare_scope!(cache, visible);
 /// an abstract class are mapped elsewhere.
 /// Version 37: A JSX spread no longer empties an object `--define`. Older entries can print it as `{}`.
 /// Version 38: `finally` is mapped, and the `{` after it is mapped elsewhere.
-/// Version 39: A `with` body keeps a read of a module-level `var` that it declares again.
+/// Version 39: `emitDecoratorMetadata` names the right type in the body of `a ? (b): T => {...} : c`.
+/// Version 40: `else` and the name of an `async` method are mapped elsewhere, the `}` of a pattern
+/// that became an assignment is mapped, what is in the value of a define is not, and `--coverage`
+/// participates in the features hash.
+/// Version 41: `case` and `default` are mapped.
+/// Version 42: The body of a class with lowered class decorators names the class by the
+/// binding that holds what the decorators return.
+/// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
+/// Version 44: A `with` body keeps a read of a module-level `var` that it declares again.
 /// Older entries can drop it.
-const EXPECTED_VERSION: u32 = 39;
+const EXPECTED_VERSION: u32 = 44;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

@@ -651,6 +651,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
 
+    /// `(inner_class_ref, class name)` of each enclosing class whose body
+    /// reads the class through `inner_class_ref`. A write to the name targets
+    /// the class's own binding, which throws as the immutable binding does.
+    pub(crate) decorated_class_names: List<'a, (Ref, Ref)>,
+
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
     // The old "var" statements are turned into regular assignments instead. This
@@ -2634,6 +2639,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 B::Object {
                     properties: bun_ast::StoreSlice::from_bump(items_hmr),
                     is_single_line: false,
+                    close_brace_loc: bun_ast::Loc::EMPTY,
                 },
                 bun_ast::Loc::EMPTY,
             );
@@ -4071,6 +4077,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     B::Object {
                         properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                         is_single_line: ex.is_single_line,
+                        close_brace_loc: ex.close_brace_loc,
                     },
                     expr.loc,
                 ));
@@ -4633,44 +4640,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.source.index.0 as js_ast::base::RefInt,
             js_ast::base::RefTag::Symbol,
         )
-    }
-
-    pub(crate) fn default_name_for_expr(&mut self, expr: Expr, loc: bun_ast::Loc) -> LocRef {
-        match &expr.data {
-            js_ast::ExprData::EFunction(func_container) => {
-                if let Some(_name) = &func_container.func.name {
-                    if let Some(r#ref) = _name.ref_.to_nullable() {
-                        return LocRef { loc, ref_: r#ref };
-                    }
-                }
-            }
-            js_ast::ExprData::EIdentifier(ident) => {
-                return LocRef {
-                    loc,
-                    ref_: ident.ref_,
-                };
-            }
-            js_ast::ExprData::EImportIdentifier(ident) => {
-                if !Self::ALLOW_MACROS
-                    || (Self::ALLOW_MACROS && !self.macro_.refs.contains(&ident.ref_))
-                {
-                    return LocRef {
-                        loc,
-                        ref_: ident.ref_,
-                    };
-                }
-            }
-            js_ast::ExprData::EClass(class) => {
-                if let Some(_name) = &class.class_name {
-                    if let Some(r#ref) = _name.ref_.to_nullable() {
-                        return LocRef { loc, ref_: r#ref };
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        self.create_default_name(loc)
     }
 
     pub(crate) fn discard_scopes_up_to(&mut self, scope_index: usize) {
@@ -6779,6 +6748,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("unreachable");
                 count != stmts.len()
             }
+            crate::parser::Runtime::ReplaceableExport::Inject { value, .. }
+                if replacement.injects_default() =>
+            {
+                self.inject_default_export(stmts, *value, loc)
+            }
             crate::parser::Runtime::ReplaceableExport::Inject { name, value } => {
                 let count = stmts.len();
                 // `ReplaceableExport::Inject` boxes the name, so copy into the bump
@@ -6806,6 +6780,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    pub(crate) fn inject_default_export(
+        &mut self,
+        stmts: &mut crate::parser::StmtList<'a>,
+        value: Expr,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        let count = stmts.len();
+        let mut export_default = self.s(
+            S::ExportDefault {
+                default_name: js_ast::LocRef::default(),
+                value: js_ast::StmtOrExpr::Expr(value),
+            },
+            loc,
+        );
+        // Hide `replace_exports` from the visitor so it doesn't replace the export generated here.
+        let replace_exports = core::mem::take(&mut self.options.features.replace_exports);
+        // The export that this one replaces is visited as dead code.
+        let was_dead = core::mem::replace(&mut self.is_control_flow_dead, false);
+        self.visit_and_append_stmt(stmts, &mut export_default)
+            .expect("unreachable");
+        self.is_control_flow_dead = was_dead;
+        self.options.features.replace_exports = replace_exports;
+        count != stmts.len()
+    }
+
     pub(crate) fn replace_decl_and_possibly_remove(
         &mut self,
         decl: &mut G::Decl,
@@ -6814,6 +6813,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         use crate::parser::Runtime::ReplaceableExport;
         match replacement {
             ReplaceableExport::Delete => false,
+            // `s_local` injects `export default` because `default` can't be a binding name.
+            ReplaceableExport::Inject { .. } if replacement.injects_default() => false,
             ReplaceableExport::Replace(value) => {
                 let mut v = *value;
                 self.visit_expr(&mut v);
@@ -9885,6 +9886,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            decorated_class_names: BumpVec::new_in(arena),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),

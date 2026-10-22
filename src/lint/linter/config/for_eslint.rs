@@ -37,6 +37,9 @@ fn number(severity: Severity) -> Json {
 /// Returns `None` if only running the config file itself can produce the config.
 pub(super) fn build(parts: &Parts) -> Option<Configuration> {
     let on = || parts.rules.iter().filter(|it| it.severity != Severity::Off);
+    // A comment that only sets a severity turns a rule on with the options it's off with.
+    let said =
+        || (parts.rules.iter()).filter(|it| it.severity != Severity::Off || !it.options.is_empty());
     // A parser nested in another parser's options is serialized as its name.
     let parser_options = parts.language_options.get(b"parserOptions");
     let has_object = |key: &[u8]| parser_options.is_some_and(|it| it.get(key).is_some());
@@ -44,7 +47,7 @@ pub(super) fn build(parts: &Parts) -> Option<Configuration> {
         || has_object(b"programs")
         || has_non_json_value(parts.language_options)
         || has_non_json_value(parts.settings)
-        || on().any(|it| it.options.iter().any(has_non_json_value))
+        || said().any(|it| it.options.iter().any(has_non_json_value))
     {
         return None;
     }
@@ -53,7 +56,7 @@ pub(super) fn build(parts: &Parts) -> Option<Configuration> {
         return None;
     }
     let options = options.iter().filter(|it| it.0 != b"parser");
-    let rules = on().map(|it| {
+    let rules = said().map(|it| {
         let setting = std::iter::once(number(it.severity)).chain(it.options.iter().cloned());
         (it.id.to_vec(), Json::Array(setting.collect()))
     });
@@ -78,6 +81,10 @@ pub(super) fn build(parts: &Parts) -> Option<Configuration> {
                 false => continue,
             }
         };
+        // A comment can turn on a rule that's off here. For a plugin that only the config has, the rule is found there.
+        let is_in_configuration =
+            location.get(b"module").is_none() && location.get(b"rules").is_none();
+        is_needed |= is_in_configuration && !parts.linter.no_inline_config;
         plugins.push((
             prefix.to_vec(),
             object(vec![

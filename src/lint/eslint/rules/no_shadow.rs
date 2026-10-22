@@ -657,7 +657,7 @@ impl Checker {
                 .symbol
                 .declaration_kinds()
                 .contains(DeclarationKinds::TS_ENUM_NAME);
-        let position = file.position(shadowed.identifier.start);
+        let position = file.display_position(shadowed.identifier.start);
         cx.report(
             variable.report_span,
             if is_enum { NO_ENUM_SHADOW } else { NO_SHADOW },

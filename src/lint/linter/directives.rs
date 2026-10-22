@@ -1,9 +1,13 @@
 //! Finds a file's comments that configure the linter.
 
-use super::comment::{Space, parse_directive};
+use super::comment::{Space, parse_directive, parse_json_like_config};
+use super::severity_of;
 use crate::ast::File;
+use crate::context::Severity;
+use crate::options::Json;
 use crate::span::Span;
 use crate::tokens::TokenKind;
+use bun_core::strings;
 
 /// The label at the start of a comment that configures the linter.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -78,6 +82,73 @@ fn range_in(outer: &[u8], inner: &[u8]) -> Span {
     Span::new(start as u32, (start + inner.len()).min(outer.len()) as u32)
 }
 
+/// The file span of `part`, a slice of the comment value `value`, whose span is `value_span`. The value can live
+/// outside the file's text: [`File::slice`].
+fn span_in_value(value: &[u8], value_span: Span, part: &[u8]) -> Span {
+    let start = (part.as_ptr().addr())
+        .saturating_sub(value.as_ptr().addr())
+        .min(value.len());
+    let end = (start + part.len()).min(value.len());
+    Span::new(
+        value_span.start + start as u32,
+        value_span.start + end as u32,
+    )
+}
+
+/// The rules that `/* eslint .. */` comments in `text` turn on, by the names the comments use, for callers that need
+/// them before the text is parsed. Every `/*` counts as a comment start, so ones inside strings or markup count too.
+pub fn rules_turned_on_in_comments(text: &[u8]) -> Vec<Vec<u8>> {
+    rules_in_comments(text, false)
+}
+
+/// The rules that `/* eslint .. */` comments in `text` configure in any way, including the ones they turn off: see
+/// [`rules_turned_on_in_comments`].
+pub fn rules_configured_in_comments(text: &[u8]) -> Vec<Vec<u8>> {
+    rules_in_comments(text, true)
+}
+
+fn rules_in_comments(text: &[u8], with_off: bool) -> Vec<Vec<u8>> {
+    let mut names = Vec::new();
+    // The first `*/` after the last `/*`.
+    let mut end = 0;
+    let mut from = 0;
+    while let Some(at) = strings::index_of(text.get(from..).unwrap_or_default(), b"/*") {
+        let start = from + at + 2;
+        from = start;
+        if end < start {
+            let rest = text.get(start..).unwrap_or_default();
+            let Some(found) = strings::index_of(rest, b"*/") else {
+                break;
+            };
+            end = start + found;
+        }
+        let value = text.get(start..end).unwrap_or_default();
+        let behind_label = strings::trim_js_whitespace_start(value).strip_prefix(b"eslint");
+        if behind_label.is_none_or(|it| strings::js_whitespace_len(it) == 0) {
+            continue;
+        }
+        let Some(directive) = parse_directive(value, Space::Js) else {
+            continue;
+        };
+        if Label::of(directive.label) != Some(Label::Rules) {
+            continue;
+        }
+        let Ok(rules) = parse_json_like_config(directive.value) else {
+            continue;
+        };
+        for (id, value) in rules {
+            let first = match &value {
+                Json::Array(items) => items.first(),
+                value => Some(value),
+            };
+            if with_off || first.and_then(severity_of) != Some(Severity::Off) {
+                names.push(id);
+            }
+        }
+    }
+    names
+}
+
 /// `getInlineConfigNodes` as the languages in ESLint's own plugins implement it. Any kind of comment can have any of
 /// these labels, and no other labels are recognized.
 fn config_comments_of_language(
@@ -136,7 +207,7 @@ pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
             TokenKind::Block => (comment.span(), false),
             _ => continue,
         };
-        let value = comment.comment_value();
+        let (value, value_span) = (comment.comment_value(), comment.comment_value_span());
         if !may_start_with_label(value) {
             continue;
         }
@@ -157,9 +228,9 @@ pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
             is_oxlint_only,
             span,
             label,
-            label_span: range_in(text, directive.label),
-            value: range_in(text, directive.value),
-            justification: range_in(text, directive.justification),
+            label_span: span_in_value(value, value_span, directive.label),
+            value: span_in_value(value, value_span, directive.value),
+            justification: span_in_value(value, value_span, directive.justification),
         });
     }
     comments

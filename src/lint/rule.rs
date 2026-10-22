@@ -37,6 +37,7 @@
 //!   node takes a few loads ([`Node::ancestors`](crate::ast::Node::ancestors)).
 //! - [`Rule::finish`] is called last.
 
+use crate::ast::svelte::{SvelteNode, SvelteTag};
 use crate::ast::{
     BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, ImportSpec, Member,
     Node, Param, Pat, PatTag, Prop, Stmt, StmtTag, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
@@ -185,6 +186,9 @@ plugins! {
     BunTest: ["bun:test"], Always, Whole;
     /// `prettier/prettier`
     Prettier: ["prettier"], Replaces(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
+    /// `svelte/no-at-html-tags`. They replace eslint-plugin-svelte's rules on natively linted components, whatever name
+    /// the config gives the plugin: see the driver's `svelte.rs`.
+    Svelte: ["svelte"], Here, Part;
     /// `json/no-duplicate-keys`
     Json: ["json"], Languages("@eslint/json", "2.1.1"), Whole;
     /// `markdown/no-html`
@@ -408,10 +412,9 @@ bitflags::bitflags! {
 pub enum When {
     /// Before any node, rule by rule: an oxlint rule's `run_once`, or [`Meta::reports_on_creation`].
     Once,
-    /// In a listener called on entering a node. Longer nodes come first.
+    /// In a listener called on entering a node. Longer nodes come first. On one node, listeners are ordered by selector
+    /// ([`Report::by_selector`](crate::context::Report::by_selector)).
     Entering,
-    /// [`Report::by_selector`](crate::context::Report::by_selector)
-    EnteringBySelector,
     /// [`Report::shorter_first`](crate::context::Report::shorter_first)
     EnteringShorterFirst,
     /// [`Meta::reports_on_exit`]
@@ -420,6 +423,8 @@ pub enum When {
     LeavingCodePath,
     /// [`Meta::reports_at_the_end`]
     AtTheEnd,
+    /// When the program's code path ends, which ESLint does after every `Program:exit` listener.
+    AfterTheEnd,
     /// After everything else, longer nodes first. This is for tsgolint's reports.
     Last,
 }
@@ -447,6 +452,10 @@ pub struct Meta {
     pub(crate) with_types: Option<&'static str>,
     /// The rule looks at several files. See [`modules`](crate::modules).
     pub needs_modules: bool,
+    /// True if it leaves its plugin's processor the directives that disable messages, which the processor then removes
+    /// from all the file's reports: eslint-plugin-svelte's `comment-directive` and `system`. If the file is linted
+    /// again for the rules that need modules, it runs again with them.
+    pub feeds_processor: bool,
     /// The rule is a port of oxlint's version, not of the ESLint plugin's, so the messages, locations, fixes and options are
     /// oxlint's. It doesn't exist with an ESLint config. The project's installed package runs there instead.
     pub follows_oxlint: bool,
@@ -483,6 +492,7 @@ impl Meta {
             extends_base_rule: None,
             with_types: None,
             needs_modules: false,
+            feeds_processor: false,
             follows_oxlint: false,
             hands_back: false,
             never_fixes: false,
@@ -560,9 +570,27 @@ impl Meta {
         self.requires_types || self.uses_types
     }
 
+    /// True for an eslint-plugin-svelte rule that [uses types](Meta::uses_types). On a component whose config creates a
+    /// TypeScript program, it runs on the type-checked program's file instead of the program the other rules see
+    /// ([`File::has_types_elsewhere`](crate::ast::File::has_types_elsewhere)).
+    pub const fn runs_where_types_are(&self) -> bool {
+        self.uses_types && matches!(self.plugin, Plugin::Svelte)
+    }
+
     pub const fn needs_modules(mut self) -> Meta {
         self.needs_modules = true;
         self
+    }
+
+    /// [`Meta::feeds_processor`](Meta#structfield.feeds_processor)
+    pub const fn feeds_processor(mut self) -> Meta {
+        self.feeds_processor = true;
+        self
+    }
+
+    /// True if it runs again when the file is linted again for the rules that need modules.
+    pub(crate) const fn runs_again(&self) -> bool {
+        self.needs_modules || self.feeds_processor
     }
 
     pub const fn hands_back(mut self) -> Meta {
@@ -720,6 +748,11 @@ pub trait Rule: Send + Sync + Sized + 'static {
     fn number_literal<'a>(&self, _literal: Literal<'a>, _cx: &mut Cx<'a, Self>) {}
     /// Every node of one of these kinds. For a rule whose kinds depend on its options.
     fn node<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every node of one of these kinds in the Svelte component whose program the file is
+    /// ([`File::svelte`](crate::ast::File::svelte)). Not in text order either: a rule that needs that order keeps the
+    /// nodes in its state and goes through them in [`Rule::finish`] by [`SvelteNode::id`], which follows text order.
+    /// Its reports are in component positions: see [`Domain`](crate::span::Domain).
+    fn svelte_node<'a>(&self, _node: SvelteNode<'a>, _cx: &mut Cx<'a, Self>) {}
 
     // These run after all rules' methods above, in source order.
 
@@ -769,6 +802,8 @@ pub struct On {
     pub(crate) nodes: NodeTags,
     pub(crate) enter: NodeTags,
     pub(crate) exit: NodeTags,
+    /// [`On::svelte_nodes`]: a bit for each [`SvelteTag`].
+    pub(crate) svelte: u64,
 }
 
 const _: () = assert!(ExprTag::COUNT <= 64 && StmtTag::COUNT <= 64 && TypeTag::COUNT <= 64);
@@ -840,7 +875,18 @@ impl On {
             nodes: NodeTags::EMPTY,
             enter: NodeTags::EMPTY,
             exit: NodeTags::EMPTY,
+            svelte: 0,
         }
+    }
+
+    /// [`Rule::svelte_node`]
+    pub const fn svelte_nodes(mut self, tags: &[SvelteTag]) -> On {
+        let mut at = 0;
+        while at < tags.len() {
+            self.svelte |= 1 << tags[at] as u32;
+            at += 1;
+        }
+        self
     }
 
     on_kinds! {
@@ -1033,14 +1079,16 @@ impl On {
     const TYPES: usize = On::STMTS + StmtTag::COUNT;
     const PATS: usize = On::TYPES + TypeTag::COUNT;
     pub(crate) const SORTS: usize = On::PATS + PatTag::COUNT;
+    /// The row for rules that listen to a Svelte component's nodes.
+    pub(crate) const SVELTE: usize = On::SORTS + 12;
     /// The row for rules that are started regardless of what a file contains.
-    pub const ALWAYS: usize = On::SORTS + 12;
+    pub const ALWAYS: usize = On::SVELTE + 1;
     /// Things a file can have or lack: one row per kind of expression, operator, statement, type and pattern, in this
-    /// order, one per sort from `optional_chains` to `export_specs`, and [`On::ALWAYS`].
+    /// order, one per sort from `optional_chains` to `export_specs`, one for a component's nodes, and [`On::ALWAYS`].
     pub const ROWS: usize = On::ALWAYS + 1;
 
     /// The rows this `On` selects, as pairs of a starting row and a bitmask of the rows from there on.
-    pub(crate) const fn rows(self) -> [(usize, u64); 8] {
+    pub(crate) const fn rows(self) -> [(usize, u64); 9] {
         let in_every_file = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
         let is_always = self.has_later() || self.has(in_every_file) || !self.nodes.is_empty();
         let named = ((self.call_name_groups()[3]) << ExprTag::Call as u32)
@@ -1053,6 +1101,7 @@ impl On {
             (On::TYPES, self.types),
             (On::PATS, self.pats),
             (On::SORTS, (self.sorts & 0xfff) as u64),
+            (On::SVELTE, (self.svelte != 0) as u64),
             (On::ALWAYS, is_always as u64),
         ]
     }
@@ -1112,6 +1161,7 @@ impl On {
             nodes: self.nodes.and(other.nodes),
             enter: self.enter.and(other.enter),
             exit: self.exit.and(other.exit),
+            svelte: self.svelte & other.svelte,
         }
     }
 

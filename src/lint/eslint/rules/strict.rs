@@ -223,6 +223,10 @@ impl Rule for Strict {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // In a component, which is a module, ESLint's `Program.body` has no directive.
+        if !ast_utils::is_program(Node::File(cx.file())) {
+            return;
+        }
         let mode = cx.state.mode;
         let body = cx.file().body();
         let mut directives = get_use_strict_directives(Some(body));

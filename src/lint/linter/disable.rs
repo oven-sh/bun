@@ -276,6 +276,9 @@ impl Input<'_, '_> {
             details: None,
             constant_help: None,
             reported: 0,
+            domain: crate::span::Domain::Linted,
+            anchor: None,
+            reported_on: None,
         }
     }
 
@@ -326,7 +329,8 @@ impl Input<'_, '_> {
         let mut enabled_at: FxHashMap<&RuleId, u32> = FxHashMap::default();
         let mut next = 0;
         for message in messages {
-            let message_position = (message.line as i32, message.column as i32);
+            let (line, column) = message.place_in_linted();
+            let message_position = (line as i32, column as i32);
             while let Some(switch) = switches.get(next)
                 && (switch.line as i32, switch.column as i32) <= message_position
             {
@@ -457,6 +461,6 @@ pub(crate) fn apply_disable_directives(input: &Input, messages: &mut Vec<LintMes
     input.apply(&lines, messages, &mut unused);
     if !unused.is_empty() {
         messages.append(&mut unused);
-        LintMessage::sort(messages);
+        LintMessage::sort_in_linted(messages);
     }
 }

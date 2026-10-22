@@ -155,6 +155,15 @@ pub enum TokenKind {
     Block,
     /// `#!..` on the first line
     Shebang,
+    /// In a Svelte component's markup, as svelte-eslint-parser has them: a word of text, an attribute value, the
+    /// contents of `<style>`.
+    HtmlText,
+    /// An element's or attribute's name.
+    HtmlIdentifier,
+    /// `<!-- .. -->`, which is a token, not a comment.
+    HtmlComment,
+    /// `#if`, `:else`, `/each`, `@html`, `then`.
+    MustacheKeyword,
 }
 
 impl TokenKind {
@@ -457,8 +466,14 @@ impl<'a> File<'a> {
         store.tokens.get_or_init(|| {
             let (tokens, comments) = scan::scan(self);
             // Already set if the comments were requested first.
-            let _ = store.comments.set(comments);
-            tokens
+            let _ = store.comments.get_or_init(|| match self.view() {
+                Some(view) => view.comments(comments),
+                None => comments,
+            });
+            match self.view() {
+                Some(view) => view.tokens(tokens),
+                None => tokens,
+            }
         })
     }
 
@@ -468,7 +483,10 @@ impl<'a> File<'a> {
             return comments;
         }
         if let Some(comments) = scan::comments(self) {
-            return store.comments.get_or_init(|| comments);
+            return store.comments.get_or_init(|| match self.view() {
+                Some(view) => view.comments(comments),
+                None => comments,
+            });
         }
         self.raw_tokens();
         store.comments.get().map_or(&[], |comments| comments)

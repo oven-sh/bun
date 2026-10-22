@@ -339,6 +339,12 @@ impl<'a> Symbol<'a> {
         Symbol { file, index }
     }
 
+    /// The symbol whose [`key`](Symbol::key) is `key`.
+    #[inline]
+    pub(crate) fn from_key(file: &'a File<'a>, key: usize) -> Self {
+        Symbol::at(file, key as u32)
+    }
+
     #[inline]
     fn variable(self) -> Option<&'a variables::Variable> {
         self.file.variables().list.get(self.index as usize)
@@ -429,8 +435,8 @@ impl<'a> Symbol<'a> {
         self.has_reference_mark(references::HAS_WRITE)
     }
 
-    /// True if one of its references writes it and isn't [`is_init`](Reference::is_init), i.e.
-    /// ESLint's `getModifyingReferences(variable.references)` isn't empty. This is one load.
+    /// True if one of its references [modifies](Reference::is_modifying) it, i.e. ESLint's
+    /// `getModifyingReferences(variable.references)` isn't empty. This is one load.
     #[inline]
     pub fn has_modifying_references(self) -> bool {
         self.has_reference_mark(references::HAS_MODIFYING_WRITE)
@@ -650,7 +656,7 @@ impl<'a> Declaration<'a> {
             },
             Declaration::Param(pat) => match variables::root_of_pattern(pat.file(), pat.id()) {
                 bind::PatParent::Param(p) => {
-                    Node::Func(crate::ast::Param::new(pat.file(), p).func()?)
+                    Node::Func(crate::ast::Param::new(pat.file(), p).func_in_program()?)
                 }
                 _ => return None,
             },
@@ -703,6 +709,18 @@ bitflags::bitflags! {
         /// typescript-eslint's `isValueReference`: it can refer to a value. `export { a }` and
         /// `export default a` can refer to either.
         const VALUE = 1 << 4;
+        /// ESLint's `reference.init` is neither `true` nor `false`: a write that svelte-eslint-parser synthesizes, for
+        /// `bind:` or a prop. `getModifyingReferences` leaves it out.
+        const INIT_UNSET = 1 << 5;
+    }
+}
+
+impl ReferenceFlags {
+    /// True if it writes and `reference.init` is `false`: [`Reference::is_modifying`].
+    #[inline]
+    pub(crate) fn is_modifying(self) -> bool {
+        self.contains(ReferenceFlags::WRITE)
+            && !self.intersects(ReferenceFlags::INIT | ReferenceFlags::INIT_UNSET)
     }
 }
 
@@ -758,6 +776,20 @@ impl<'a> Reference<'a> {
             file,
             raw: &all[index as usize],
         })
+    }
+
+    /// Its index in [`File::references`].
+    pub(crate) fn index(self) -> usize {
+        let all = &self.file.reference_list().all;
+        debug_assert!(all.as_ptr_range().contains(&std::ptr::from_ref(self.raw)));
+        let size = std::mem::size_of::<RawReference>().max(1);
+        (std::ptr::from_ref(self.raw).addr()).wrapping_sub(all.as_ptr().addr()) / size
+    }
+
+    /// The reference at `index` in [`File::references`].
+    pub(crate) fn at_index(file: &'a File<'a>, index: usize) -> Option<Reference<'a>> {
+        let raw = file.reference_list().all.get(index)?;
+        Some(Reference { file, raw })
     }
 
     /// The symbol it refers to. `None` if nothing in the file declares it, so it's a global or an error.
@@ -822,6 +854,13 @@ impl<'a> Reference<'a> {
         self.flags().contains(ReferenceFlags::INIT)
     }
 
+    /// ESLint's `isModifyingReference`, without its check of the previous reference: true if it writes and
+    /// `reference.init` is `false`.
+    #[inline]
+    pub(crate) fn is_modifying(self) -> bool {
+        self.flags().is_modifying()
+    }
+
     /// The identifier, if it's an expression.
     #[inline]
     pub fn expr(self) -> Option<Expr<'a>> {
@@ -851,13 +890,19 @@ impl<'a> Reference<'a> {
             ReferenceSite::ExportAsNamespace(s) => Node::Stmt(Stmt::new(file, s)),
             ReferenceSite::JsxName(e) => Node::Expr(Expr::new(file, e)),
             ReferenceSite::ExportSpec(s) => Node::ExportSpec(crate::ast::ExportSpec::new(file, s)),
-            ReferenceSite::Declaration(index) => {
+            ReferenceSite::Declaration(index) | ReferenceSite::Restored(index) => {
                 let first = Symbol::at(file, index).declarations().next();
                 first
                     .and_then(Declaration::node)
                     .unwrap_or(Node::File(file))
             }
         }
+    }
+
+    /// True if the file's view adds it with no source text: [`Adjustment::Add`](crate::ast::view::Adjustment::Add).
+    #[inline]
+    pub fn is_restored(self) -> bool {
+        matches!(self.raw().site, ReferenceSite::Restored(_))
     }
 
     /// True if it's JSX's implicit use of `React`, or of the names set by `jsxPragma` and

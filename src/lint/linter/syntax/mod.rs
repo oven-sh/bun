@@ -22,6 +22,7 @@ use crate::language::{Parser, SourceType};
 use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
 use bun_sema::hir::{Diagnostic, DiagnosticKind, StmtKind, rare};
+pub use espree::acorn_stops_at_typescript;
 use std::borrow::Cow;
 
 /// Why a parser throws, and where.
@@ -455,6 +456,9 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
         details,
         constant_help: None,
         reported: 0,
+        domain: crate::span::Domain::Linted,
+        anchor: None,
+        reported_on: None,
     }
 }
 

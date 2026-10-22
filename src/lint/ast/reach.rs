@@ -93,10 +93,11 @@ impl File<'_> {
         self.pat_tag_in_tree::<true>(i as u32)
     }
 
-    /// `MAY_BE_SYNTHETIC`, here and below, means the file may have nodes synthesized from JSDoc comments.
+    /// `MAY_BE_SYNTHETIC`, here and below, means the file may have nodes synthesized from JSDoc comments, or hidden by
+    /// its view.
     #[inline(always)]
     fn is_in_source<const MAY_BE_SYNTHETIC: bool>(&self, pos: u32) -> bool {
-        !MAY_BE_SYNTHETIC || !self.is_in_jsdoc(pos)
+        !MAY_BE_SYNTHETIC || (!self.is_in_jsdoc(pos) && !self.is_left_out_at(pos))
     }
 
     #[inline(always)]

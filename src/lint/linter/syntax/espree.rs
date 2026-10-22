@@ -113,6 +113,22 @@ const REJECTED_BY_BABEL: [&str; 48] = [
 /// The first TypeScript syntax in a JavaScript file. oxlint's parser doesn't accept it there and reports "Unexpected
 /// token".
 pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    typescript_stops(file, true).map(|at| SyntaxError {
+        at,
+        end: Diagnostic::NO_LENGTH,
+        message: b"Unexpected token".to_vec(),
+        ..SyntaxError::default()
+    })
+}
+
+/// Where acorn throws at the first TypeScript-only syntax in `file`, which is JavaScript. Svelte passes the JavaScript
+/// in its markup to acorn piece by piece.
+pub fn acorn_stops_at_typescript<'a>(file: &'a File<'a>) -> Option<u32> {
+    typescript_stops(file, false)
+}
+
+/// For `allows_modifiers`, see [`Checks::typescript_syntax`].
+fn typescript_stops<'a>(file: &'a File<'a>, allows_modifiers: bool) -> Option<u32> {
     if file.hir.diagnostics.is_empty() {
         return None;
     }
@@ -129,13 +145,8 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
         only_parser: false,
         is_oxfmt: false,
     };
-    checks.typescript_syntax(true);
-    checks.first.map(|it| SyntaxError {
-        at: it.1.at,
-        end: Diagnostic::NO_LENGTH,
-        message: b"Unexpected token".to_vec(),
-        ..SyntaxError::default()
-    })
+    checks.typescript_syntax(allows_modifiers);
+    checks.first.map(|it| it.1.at)
 }
 
 /// True if `statement` is an `import` or an `export`.

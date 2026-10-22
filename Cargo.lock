@@ -1004,6 +1004,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_glob",
+ "bun_md",
  "bun_node_path",
  "bun_parsers",
  "bun_paths",

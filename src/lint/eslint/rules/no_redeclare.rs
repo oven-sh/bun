@@ -171,8 +171,12 @@ fn check_declarations<'a, R: Rule<State<'a> = bool>>(config: Config, symbol: Sym
         return;
     }
     // With `globalReturn`, a module has two file-wide scopes under the global one: a function scope and, inside it, the
-    // module scope. Both rules check only the function scope.
-    if !is_oxlint && scope.kind() == ScopeKind::Module && cx.language().global_return {
+    // module scope. Both rules check only the function scope. They check the module scope where its block is the
+    // `Program`, which it isn't in a component, because svelte-eslint-parser analyzes another one.
+    if !is_oxlint
+        && scope.kind() == ScopeKind::Module
+        && (cx.language().global_return || !ast_utils::is_program(Node::File(cx.file())))
+    {
         return;
     }
     let name = symbol.name().bytes();

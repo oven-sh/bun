@@ -317,7 +317,7 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
             },
             // Bun's own keys. See `Config::from_flat_json_with_plugins`.
             b"$changesLinter" | b"$defaultOptions" | b"$framework" | b"$gitignoreLines" | b"$globsOfBun"
-            | b"$ignorePatterns" | b"$jsPlugins" | b"$otherPlugins" | b"$packageType" | b"$parser" | b"$pluginModules" | b"$processor"
+            | b"$ignorePatterns" | b"$jsPlugins" | b"$otherPlugins" | b"$packageType" | b"$parser" | b"$parsers" | b"$pluginModules" | b"$processor"
             | b"$severityByKind" | b"$source"
             | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
@@ -739,6 +739,7 @@ impl Reader<'_> {
         object.processor = json.get(b"processor").and_then(Json::as_str).map(Box::from);
         object.source = json.get(b"$source").cloned();
         object.parser_location = json.get(b"$parser").cloned();
+        object.parser_names = json.get(b"$parsers").cloned();
         object.changes_linter = json.get(b"$changesLinter").is_some();
         let framework = json.get(b"$framework").and_then(Json::as_str);
         let mut packages = Frameworks::PACKAGES.iter();

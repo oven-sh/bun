@@ -63,7 +63,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
         if self.limit == Some(node) {
             return None;
         }
-        node.parent()
+        node.parent_in_component()
     }
 
     /// Loops over nodes check this before each node. Otherwise every enclosing `:has()` would

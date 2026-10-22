@@ -499,6 +499,9 @@ pub struct ScannerStopsBuffer {
     planes: Vec<u8>,
     /// The address and the length of the text that `planes` is filled for.
     filled_for: Option<(usize, usize)>,
+    /// A copy of that text, to check that the text found again hasn't changed.
+    #[cfg(debug_assertions)]
+    filled_text: Vec<u8>,
 }
 
 /// Where runs of bytes end in a JavaScript or TypeScript source. One kernel call finds them for the
@@ -533,12 +536,9 @@ impl ScannerStopsBuffer {
         if self.filled_for != Some((text.as_ptr().addr(), text.len())) {
             self.fill(text);
         }
+        // Compared instead of scanned again, because a text with many parts is found again for each of them.
         #[cfg(debug_assertions)]
-        {
-            let found = self.planes.clone();
-            self.fill(text);
-            assert!(found == self.planes, "the text has changed");
-        }
+        assert!(self.filled_text == text, "the text has changed");
         self.filled(text)
     }
 
@@ -565,6 +565,11 @@ impl ScannerStopsBuffer {
             );
         }
         self.filled_for = Some((text.as_ptr().addr(), text.len()));
+        #[cfg(debug_assertions)]
+        {
+            self.filled_text.clear();
+            self.filled_text.extend_from_slice(text);
+        }
     }
 
     fn filled(&self, text: &[u8]) -> ScannerStops<'_> {

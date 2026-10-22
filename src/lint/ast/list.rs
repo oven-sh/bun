@@ -75,6 +75,16 @@ impl<'a, T: Handle<'a>> List<'a, T> {
             front: 0,
             back: self.len,
             skips_synthetic: self.file.has_synthetic_nodes(),
+            keeps_hidden: false,
+        }
+    }
+
+    /// The elements, including the ones the file's view hides.
+    #[inline]
+    pub fn with_hidden(self) -> Iter<'a, T> {
+        Iter {
+            keeps_hidden: true,
+            ..self.iter()
         }
     }
 
@@ -136,17 +146,24 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
     }
 
     /// The whole list, or if it's long and `offset` is given, only the last element that starts at or before `offset`.
+    /// Includes the elements that the file's view hides, whose children take their place.
     #[inline]
     pub(super) fn near(self, offset: Option<u32>) -> Iter<'a, T> {
         match offset {
             Some(offset) if self.len > 8 => self.near_in_long_list(offset),
-            _ => self.iter(),
+            _ => Iter {
+                keeps_hidden: true,
+                ..self.iter()
+            },
         }
     }
 
     #[inline(never)]
     fn near_in_long_list(self, offset: u32) -> Iter<'a, T> {
-        let mut all = self.iter();
+        let mut all = Iter {
+            keeps_hidden: true,
+            ..self.iter()
+        };
         if !all.skips_synthetic {
             all.back = self.count_until(offset);
             all.front = all.back.saturating_sub(1);
@@ -224,8 +241,10 @@ pub struct Iter<'a, T> {
     list: List<'a, T>,
     front: u32,
     back: u32,
-    /// True if some elements may be synthesized from JSDoc comments. Those are skipped.
+    /// True if some elements may be synthesized from JSDoc comments or hidden by the file's view. Those are skipped.
     skips_synthetic: bool,
+    /// True if the elements the view hides aren't skipped.
+    keeps_hidden: bool,
 }
 
 impl<'a, T: Handle<'a>> Iterator for Iter<'a, T> {
@@ -262,14 +281,14 @@ impl<'a, T: Handle<'a>> DoubleEndedIterator for Iter<'a, T> {
     }
 }
 
-/// The slow path for a file with nodes synthesized from JSDoc comments.
+/// The slow path for a file with nodes synthesized from JSDoc comments or hidden by its view.
 impl<'a, T: Handle<'a>> Iter<'a, T> {
     #[inline(never)]
     fn next_non_synthetic(&mut self) -> Option<T> {
         while self.front < self.back {
             let it = self.list.at(self.front);
             self.front += 1;
-            if !it.is_synthetic() {
+            if !self.leaves_out(it) {
                 return Some(it);
             }
         }
@@ -281,10 +300,18 @@ impl<'a, T: Handle<'a>> Iter<'a, T> {
         while self.front < self.back {
             self.back -= 1;
             let it = self.list.at(self.back);
-            if !it.is_synthetic() {
+            if !self.leaves_out(it) {
                 return Some(it);
             }
         }
         None
+    }
+
+    #[inline]
+    fn leaves_out(&self, it: T) -> bool {
+        match self.keeps_hidden {
+            true => it.is_from_jsdoc(),
+            false => it.is_synthetic(),
+        }
     }
 }

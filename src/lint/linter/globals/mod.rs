@@ -163,8 +163,7 @@ fn globals_ecma_version(language: &LanguageOptions) -> u32 {
 }
 
 /// ESLint's `configGlobals` in key order: what each ECMAScript version adds, what `sourceType: "commonjs"` defines,
-/// then `languageOptions.globals`. An existing entry keeps its position and gets the later setting. The entries of
-/// `languageOptions.globals` are sorted by name, because the config's order isn't kept.
+/// then `languageOptions.globals`. An existing entry keeps its position and gets the later setting.
 pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, [u8]>, Global)> {
     let mut all: Vec<(Cow<'static, [u8]>, Global)> =
         Vec::with_capacity(80 + language.globals.len());
@@ -188,12 +187,15 @@ pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, 
         add(tables::COMMONJS.0, tables::COMMONJS.1);
     }
     let defined = all.len();
-    for (name, setting) in language.globals.iter() {
+    for (name, setting) in language.globals_in_order() {
         match all.iter_mut().take(defined).find(|it| *it.0 == **name) {
             Some(existing) => existing.1 = *setting,
             None => all.push((Cow::Owned(name.to_vec()), *setting)),
         }
     }
+    crate::utils::sort::sort_by_cached_key(&mut all, |it| {
+        bun_core::fmt::js_array_index(&it.0).unwrap_or(u32::MAX)
+    });
     all
 }
 

@@ -78,11 +78,13 @@ impl Rule for Named {
         };
         for key in variable_imports.iter().filter_map(PatProp::key) {
             match key.kind() {
-                KeyKind::Ident(name) => check(name, key.inner_span(cx.file()), source, NameUse::Imported, cx),
+                KeyKind::Ident(name) => {
+                    check(name, key.inner_span(cx.file()), source, NameUse::Imported, node.into(), cx);
+                }
                 // Upstream doesn't check whether the key is computed.
                 KeyKind::Computed(e) => {
                     if let Some(name) = e.as_ident() {
-                        check(name, e.span(), source, NameUse::Imported, cx);
+                        check(name, e.span(), source, NameUse::Imported, node.into(), cx);
                     }
                 }
                 _ => {}
@@ -93,7 +95,8 @@ impl Rule for Named {
     fn import_spec<'a>(&self, im: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
         // oxlint only runs this rule on JavaScript files, where nothing is type-only.
         if !im.is_type_only() && !im.import().is_type_only() {
-            check(im.imported().name(), im.imported().span(), im.import().spec(), NameUse::Imported, cx);
+            let declaration = im.import().stmt().into();
+            check(im.imported().name(), im.imported().span(), im.import().spec(), NameUse::Imported, declaration, cx);
         }
     }
 
@@ -101,7 +104,7 @@ impl Rule for Named {
         let node = im.export();
         // Upstream checks an `ExportSpecifier`'s `importKind`, so `export { type a } from "m"` isn't skipped.
         if let Some(source) = node.spec().filter(|_| node.has_from() && !node.is_type_only()) {
-            check(im.local().name(), im.local().span(), source, NameUse::Reexported, cx);
+            check(im.local().name(), im.local().span(), source, NameUse::Reexported, node.stmt().into(), cx);
         }
     }
 
@@ -125,7 +128,7 @@ impl Rule for Named {
             let is_reexport_of_default_import = default_imports.contains(&(module_request.name, import_name.name))
                 && loaded_module(file, module_request.name).is_some_and(has_default_export);
             if !is_reexport_of_default_import {
-                check(import_name.name, import_name.span, module_request.name, NameUse::Reexported, cx);
+                check(import_name.name, import_name.span, module_request.name, NameUse::Reexported, Node::File(file), cx);
             }
         }
     }
@@ -139,8 +142,9 @@ fn has_default_export(remote: Loaded) -> bool {
     remote.record.has_export_default || remote.exports(b"default")
 }
 
-/// Checks that the module `source` exports `name`, which is written at `at`.
-fn check<'a>(name: Name<'a>, at: Span, source: Name<'a>, name_use: NameUse, cx: &mut Cx<'a, Named>) {
+/// Checks that the module `source` exports `name`, which is written at `at`. Upstream reports it from its `listened`
+/// listener, the declaration's, not the specifier's.
+fn check<'a>(name: Name<'a>, at: Span, source: Name<'a>, name_use: NameUse, listened: Node<'a>, cx: &mut Cx<'a, Named>) {
     let file = cx.file();
     let Some(maps) = &cx.state.maps else {
         let Some(remote) = loaded_module(file, source) else {
@@ -176,11 +180,12 @@ fn check<'a>(name: Name<'a>, at: Span, source: Name<'a>, name_use: NameUse, cx: 
         return;
     }
     let Some(modules) = file.modules().filter(|_| path.len() > 1) else {
-        cx.report(at, NOT_FOUND).data("name", name).data("source", source);
+        cx.report(at, NOT_FOUND).data("name", name).data("source", source).listened_by(listened, false);
         return;
     };
     let directory = paths::resolve(modules.cwd(), paths::dirname(&paths::portable(file.path(), file.path())));
     let relative = |i: &ExportMap| paths::to_native(paths::relative(&directory, i.path()));
     let deep_path: Vec<Vec<u8>> = path.iter().map(relative).collect();
-    cx.report(at, NOT_FOUND_VIA).data("name", name).data("deepPath", deep_path.join(&b" -> "[..]));
+    let deep_path = deep_path.join(&b" -> "[..]);
+    cx.report(at, NOT_FOUND_VIA).data("name", name).data("deepPath", deep_path).listened_by(listened, false);
 }

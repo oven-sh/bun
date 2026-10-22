@@ -188,7 +188,8 @@ impl<'a> Func<'a> {
 pub fn starts_code_path(node: Node<'_>) -> bool {
     match node {
         Node::File(_) => true,
-        Node::Func(func) => analyzer::has_code_path(func),
+        // The analysis walks the children of a function the file's view hides, as the children of a component block.
+        Node::Func(func) => analyzer::has_code_path(func) && !node.is_hidden(),
         Node::Member(member) => member.kind() == MemberKind::StaticBlock,
         Node::Expr(e) => matches!(
             e.parent(),

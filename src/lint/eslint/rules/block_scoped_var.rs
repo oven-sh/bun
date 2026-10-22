@@ -101,7 +101,7 @@ impl Rule for BlockScopedVar {
                 if context.contains(identifier) {
                     return true;
                 }
-                let definition = *definition.get_or_insert_with(|| cx.position(pat.span().start));
+                let definition = *definition.get_or_insert_with(|| cx.file().display_position(pat.span().start));
                 cx.report(identifier, OUT_OF_SCOPE)
                     .called_with(statement)
                     .data("name", reference.name())

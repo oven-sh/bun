@@ -71,38 +71,7 @@ pub(super) fn keys() -> NodeTags {
 
 /// The nodes an `Identifier` can be made from.
 pub(super) fn names() -> NodeTags {
-    keys()
-        | NodeTags::FUNC
-        | NodeTags::CLASS
-        | NodeTags::PAT
-        | NodeTags::TYPE_PARAM
-        | NodeTags::IMPORT_SPEC
-        | NodeTags::EXPORT_SPEC
-        | NodeTags::TUPLE_ELEM
-        | [
-            ExprTag::Ident,
-            ExprTag::Dot,
-            ExprTag::ImportMeta,
-            ExprTag::NewTarget,
-            ExprTag::AsConst,
-        ]
-        .into()
-        | [
-            StmtTag::Labeled,
-            StmtTag::Break,
-            StmtTag::Continue,
-            StmtTag::Interface,
-            StmtTag::TypeAlias,
-            StmtTag::Enum,
-            StmtTag::Module,
-            StmtTag::Import,
-            StmtTag::ImportEquals,
-            StmtTag::ExportNamed,
-            StmtTag::ExportStar,
-            StmtTag::ExportAsNamespace,
-        ]
-        .into()
-        | [TypeTag::Ref, TypeTag::Import, TypeTag::Predicate].into()
+    crate::ast::identifiers::owners()
 }
 
 /// The nodes a `Literal` can be made from.

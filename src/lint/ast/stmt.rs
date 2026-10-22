@@ -421,8 +421,12 @@ impl<'a> Stmt<'a> {
             StmtTag::Fn | StmtTag::Module => true,
             _ => false,
         };
-        (is_terminated && self.file.hir.text.get(end.wrapping_sub(1) as usize) == Some(&b';'))
-            .then(|| Span::new(end - 1, end))
+        // What the file's view has as glue isn't source text.
+        let is_written = |at: u32| self.file.view().is_none_or(|view| !view.is_glue(at));
+        (is_terminated
+            && self.file.hir.text.get(end.wrapping_sub(1) as usize) == Some(&b';')
+            && is_written(end.wrapping_sub(1)))
+        .then(|| Span::new(end - 1, end))
     }
 
     /// For a `Try` with a `catch`: from the `catch` to the end of its block, which is the range of ESLint's
@@ -551,6 +555,14 @@ impl<'a> Stmt<'a> {
         self.file
             .wrapped_in(self.id)
             .map(|parent| Stmt::new(self.file, parent))
+    }
+
+    /// True if svelte-eslint-parser has it as a `SvelteReactiveStatement`, whose `label` and `body` are a `Labeled`'s:
+    /// a `$:` statement at the top level of a component's scripts. No listener is called with it.
+    pub fn is_svelte_reactive(self) -> bool {
+        let view = self.file.view();
+        view.is_some_and(|it| it.is_retyped(self.span().start))
+            && matches!(self.kind(), StmtKind::Labeled { .. })
     }
 
     /// The label of a `Labeled`, a `Break` or a `Continue`, with its position.

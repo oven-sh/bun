@@ -1,5 +1,6 @@
 //! A node of the virtual ESTree: its type and its range.
 
+use super::svelte::svelte_type;
 use super::{Dialect, NodeType};
 use crate::ast::{
     EntityName, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Ident, ImportEqualsTarget, Key,
@@ -117,6 +118,14 @@ pub(super) enum Part {
     MemberName(u32),
     /// The `Identifier` at this index of a qualified name.
     NamePart(u32),
+    /// `File`: the node with this [`SvelteId`](crate::ast::svelte::SvelteId) in the file's svelte-eslint-parser
+    /// component, or the `Program` for 0. See `svelte.rs`.
+    Svelte(u32),
+    /// `Expr`: a `SvelteShorthandAttribute`'s `key`, which svelte-eslint-parser has as a separate `Identifier` besides
+    /// the `value`.
+    SvelteKey,
+    /// `Stmt`: the `generics` `TSTypeParameter` that the alias the program declares for it stands for.
+    Generic,
 }
 
 /// A node without children that's made from a token.
@@ -368,6 +377,54 @@ impl<'a> VNode<'a> {
     }
 }
 
+/// A [`VNode`] without the file reference.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) struct PackedVNode {
+    base: crate::ast::Packed,
+    part: Part,
+}
+
+impl<'a> VNode<'a> {
+    #[inline]
+    pub(crate) fn packed(self) -> PackedVNode {
+        PackedVNode {
+            base: self.base.packed(),
+            part: self.part,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn unpack(packed: PackedVNode, file: &'a File<'a>) -> VNode<'a> {
+        VNode {
+            base: packed.base.unpack(file),
+            part: packed.part,
+        }
+    }
+
+    /// The [`crate::ast`] node it's built from.
+    #[inline]
+    pub(crate) fn base(self) -> Node<'a> {
+        self.base
+    }
+
+    /// What ESLint calls a listener with where a native rule is called with `node`: a function for its `Expr` or
+    /// `Stmt`, not the `ChainExpression` or `ExportNamedDeclaration` around it. `None` for a hole.
+    pub(crate) fn from_listened(node: Node<'a>) -> Option<VNode<'a>> {
+        match node {
+            Node::Expr(e) => (!e.is_missing()).then(|| VNode::main_of_expr(e)),
+            Node::Stmt(statement) => match statement.kind() {
+                StmtKind::Expr(e) if statement.is_wrapper() => VNode::from_listened(Node::Expr(e)),
+                _ => Some(VNode::main_of_stmt(statement)),
+            },
+            Node::Pat(pat) => VNode::from_pat(pat),
+            Node::PatElem(element) => VNode::from_pat_elem(element),
+            Node::Param(param) => Some(VNode::from_param(param)),
+            Node::TupleElem(element) => Some(VNode::from_tuple_elem(element)),
+            _ => Some(VNode::new(node, Part::Main)),
+        }
+    }
+}
+
 // ───────────────────────────── to handles ─────────────────────────────
 
 impl<'a> VNode<'a> {
@@ -519,6 +576,9 @@ impl<'a> VNode<'a> {
                 }
             }
             (Node::Expr(e), Part::ConstName) => word(e.const_keyword_span()?),
+            (Node::Expr(e), Part::SvelteKey) => {
+                Some((Leaf::Identifier(e.as_ident()?.bytes()), e.span()))
+            }
             (Node::Prop(prop), Part::KeyNamespace | Part::KeyName) => {
                 let (namespace, name) =
                     file.jsx_namespace_and_name(prop.key()?.span(file).start)?;
@@ -650,6 +710,8 @@ impl<'a> VNode<'a> {
             return leaf.node_type();
         }
         match (self.base, self.part) {
+            (_, Part::Svelte(_)) => self.svelte().map_or(Program, |it| svelte_type(it.tag())),
+            (_, Part::Generic) => TSTypeParameter,
             (Node::File(_), _) => Program,
             (Node::Type(_), Part::Name) => TSThisType,
             (Node::Prop(_), Part::Key) => JSXNamespacedName,
@@ -887,6 +949,7 @@ fn stmt_type(statement: Stmt, part: Part) -> NodeType {
         StmtKind::Throw(_) => ThrowStatement,
         StmtKind::Break(_) => BreakStatement,
         StmtKind::Continue(_) => ContinueStatement,
+        StmtKind::Labeled { .. } if statement.is_svelte_reactive() => SvelteReactiveStatement,
         StmtKind::Labeled { .. } => LabeledStatement,
         StmtKind::Import(_) => ImportDeclaration,
         StmtKind::ImportEquals(_) => TSImportEqualsDeclaration,
@@ -1022,6 +1085,8 @@ impl<'a> VNode<'a> {
         let file = self.file();
         let through = |i: u32| Some(self.name_part_span(0)?.to(self.name_part_span(i)?));
         match (self.base, self.part) {
+            (_, Part::Svelte(_)) => Some(self.svelte()?.span()),
+            (_, Part::Generic) => super::svelte::generic_span(self),
             (Node::File(file), _) => Some(match Dialect::of(file) {
                 Dialect::TypeScript => file.program_span(),
                 // ESLint strips a byte order mark from the text.

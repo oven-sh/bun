@@ -31,7 +31,7 @@ fn is_fixable<'a>(
 
     let has_directives = known.find(Node::Stmt(statement), |_, ancestor| match ancestor {
         Node::Stmt(it) if it.tag() == StmtTag::Labeled => None,
-        Node::File(_) => Some(true),
+        Node::File(_) => Some(ast_utils::is_program(ancestor)),
         Node::Func(func) => Some(func.kind() != FnKind::StaticBlock),
         _ => Some(false),
     });

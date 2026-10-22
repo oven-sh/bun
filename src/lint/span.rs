@@ -107,6 +107,35 @@ pub trait Spanned {
     fn packed_node(&self) -> Option<crate::ast::Packed> {
         None
     }
+
+    /// The text `span` is in.
+    #[inline]
+    fn domain(&self) -> Domain {
+        Domain::Linted
+    }
+
+    /// For a node, how many of its ancestors in ESLint's tree have its range. `None` if unknown.
+    #[inline]
+    fn nesting(&self) -> Option<u8> {
+        None
+    }
+
+    /// The component node it is, if any.
+    #[inline]
+    fn svelte_id(&self) -> Option<crate::ast::svelte::SvelteId> {
+        None
+    }
+}
+
+/// The text that a report's positions, fix, suggestions and labels are in. Each report has one for all of them.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum Domain {
+    /// The linted text.
+    #[default]
+    Linted,
+    /// The file the linted program was lowered from, a Svelte component: its own rules' reports, and another linter's
+    /// reports about it. Nothing about the program is built from it, and nothing maps it back from the program.
+    Original,
 }
 
 impl Spanned for Span {
@@ -125,6 +154,21 @@ impl<T: Spanned> Spanned for &T {
     #[inline]
     fn packed_node(&self) -> Option<crate::ast::Packed> {
         (**self).packed_node()
+    }
+
+    #[inline]
+    fn domain(&self) -> Domain {
+        (**self).domain()
+    }
+
+    #[inline]
+    fn nesting(&self) -> Option<u8> {
+        (**self).nesting()
+    }
+
+    #[inline]
+    fn svelte_id(&self) -> Option<crate::ast::svelte::SvelteId> {
+        (**self).svelte_id()
     }
 }
 

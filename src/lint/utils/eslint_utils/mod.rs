@@ -47,7 +47,7 @@ pub use get_string_if_constant::get_string_if_constant;
 pub use has_side_effect::{HasSideEffectOptions, has_side_effect};
 pub use is_parenthesized::{is_parenthesized, is_parenthesized_times};
 pub use reference_tracker::{
-    Mode, ReferenceKind, ReferenceTracker, Trace, TraceMap, TrackedReference,
+    Mode, ReferenceKind, ReferenceTracker, SharedStack, Trace, TraceMap, TrackedReference,
 };
 pub use static_value::{IteratorKind, PropertyKey, StaticSymbol, StaticValue};
 pub use token_predicate::*;

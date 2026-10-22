@@ -31,6 +31,7 @@ mod decl;
 mod entities;
 mod expr;
 mod flow;
+pub mod identifiers;
 pub mod jsdoc;
 mod list;
 mod name;
@@ -38,7 +39,9 @@ mod node;
 mod pat;
 mod reach;
 mod stmt;
+pub mod svelte;
 mod ty;
+pub mod view;
 pub mod walk;
 
 pub use decl::*;
@@ -260,11 +263,26 @@ pub struct File<'a> {
     pub(crate) sink: crate::context::Sink,
     pub(crate) modules: std::cell::Cell<Option<&'a dyn crate::modules::Modules>>,
     pub(crate) formatter: std::cell::Cell<Option<crate::formats::Formatter<'a>>>,
+    pub(crate) svelte_compiler: std::cell::Cell<Option<crate::svelte_compiler::Compiler<'a>>>,
     pub(crate) handed_back: std::cell::Cell<Option<crate::formats::Reason>>,
     pub(crate) package_module: std::cell::OnceCell<std::sync::Arc<[u8]>>,
     pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
     pub(crate) inferred_globals: OnceCell<Option<crate::linter::globals::ProgramGlobals<'a>>>,
     is_later_script: Cell<bool>,
+    /// [`File::has_types_elsewhere`]
+    has_types_elsewhere: Cell<bool>,
+    /// [`File::view`]
+    view: Cell<Option<&'a view::View>>,
+    /// [`File::svelte`]
+    pub(crate) svelte: Cell<Option<(&'a svelte::Component, &'a svelte::Lowered)>>,
+    /// [`File::svelte_code`]
+    pub(crate) svelte_links: OnceCell<svelte::Links>,
+    /// [`File::svelte_variables`]: boxed, because most files aren't components.
+    pub(crate) svelte_variables: OnceCell<Box<svelte::variables::ComponentVariables>>,
+    /// [`File::svelte_runes`] when nothing configures runes.
+    pub(crate) svelte_has_rune: OnceCell<bool>,
+    /// [`File::svelte_shared`]
+    pub(crate) svelte_shared: Cell<Option<&'a svelte::shared::Shared>>,
     /// [`File::in_language`]
     parsed: Option<(&'a crate::languages::Parsed, crate::source::LineBreaks)>,
     language: &'a LanguageOptions,
@@ -336,11 +354,19 @@ impl<'a> File<'a> {
             sink: crate::context::Sink::default(),
             modules: std::cell::Cell::new(None),
             formatter: std::cell::Cell::new(None),
+            svelte_compiler: std::cell::Cell::new(None),
             handed_back: std::cell::Cell::new(None),
             package_module: std::cell::OnceCell::new(),
             inferred_from: Cell::new(None),
             inferred_globals: OnceCell::new(),
             is_later_script: Cell::new(false),
+            has_types_elsewhere: Cell::new(false),
+            view: Cell::new(None),
+            svelte: Cell::new(None),
+            svelte_links: OnceCell::new(),
+            svelte_variables: OnceCell::new(),
+            svelte_has_rune: OnceCell::new(),
+            svelte_shared: Cell::new(None),
             parsed: None,
             path,
         }
@@ -379,6 +405,38 @@ impl<'a> File<'a> {
         self.is_later_script.set(is_later);
     }
 
+    /// True if it's the program of a component whose types are checked in another program: the rules that [run where
+    /// types are](crate::rule::Meta::runs_where_types_are) run there instead of on this file. Their reports are merged
+    /// with the ones here ([`LintOptions::residual`](crate::linter::LintOptions::residual)).
+    #[inline]
+    pub fn has_types_elsewhere(&self) -> bool {
+        self.has_types_elsewhere.get()
+    }
+
+    pub fn set_types_elsewhere(&self, is_elsewhere: bool) {
+        self.has_types_elsewhere.set(is_elsewhere);
+    }
+
+    /// What rules see of the file, if it's the program that a file in another language is lowered to. Set before
+    /// anything is queried on the file.
+    #[inline]
+    pub fn view(&self) -> Option<&'a view::View> {
+        self.view.get()
+    }
+
+    pub fn set_view(&self, view: &'a view::View) {
+        self.view.set(Some(view));
+    }
+
+    /// The source position of `offset`, for reports that describe a position in words: [`File::position`], or its
+    /// position in the file the program is lowered from.
+    pub fn display_position(&self, offset: u32) -> crate::span::Position {
+        match (self.view(), self.svelte()) {
+            (Some(view), Some(component)) => component.position(view.in_file(offset)),
+            _ => self.position(offset),
+        }
+    }
+
     /// For a `hir` that doesn't store its text.
     pub fn with_text(mut self, text: &'a [u8]) -> File<'a> {
         self.hir.text = text;
@@ -399,6 +457,9 @@ impl<'a> File<'a> {
     /// The text of `span`.
     #[inline]
     pub fn slice(&self, span: Span) -> &'a [u8] {
+        if let Some(text) = self.view().and_then(|view| view.text_of(span)) {
+            return text;
+        }
         self.hir.text.get(span.range()).unwrap_or_default()
     }
 
@@ -787,7 +848,7 @@ impl<'a> File<'a> {
         flags: Flags,
         source_modifiers: List<'a, Modifier<'a>>,
     ) -> Flags {
-        if !self.has_synthetic_nodes() {
+        if self.hir.jsdoc_comments.is_empty() {
             return flags;
         }
         let from_tags =
@@ -819,10 +880,18 @@ impl<'a> File<'a> {
             .is_some_and(|it| pos < it.1)
     }
 
-    /// True if the file has nodes synthesized from JSDoc comments.
+    /// True if the file has nodes that rules don't see: synthesized from JSDoc comments, or hidden by its
+    /// [view](File::view).
     #[inline]
     pub(crate) fn has_synthetic_nodes(&self) -> bool {
-        !self.hir.jsdoc_comments.is_empty()
+        !self.hir.jsdoc_comments.is_empty() || self.view.get().is_some()
+    }
+
+    /// True if the [view](File::view) leaves the node that starts at `start` out of lists and calls no listener with
+    /// it.
+    #[inline]
+    pub(crate) fn is_left_out_at(&self, start: u32) -> bool {
+        self.view.get().is_some_and(|view| view.leaves_out(start))
     }
 }
 
@@ -835,10 +904,17 @@ pub trait Handle<'a>: Copy {
     #[doc(hidden)]
     fn count_in(file: &File<'a>) -> u32;
 
-    /// True if it's synthesized from a JSDoc comment, in which case lists skip it.
+    /// True if it's synthesized from a JSDoc comment, or the file's view hides it, in which case lists skip it.
     #[doc(hidden)]
     #[inline]
     fn is_synthetic(self) -> bool {
+        false
+    }
+
+    /// True if it's synthesized from a JSDoc comment, and so is everything in it.
+    #[doc(hidden)]
+    #[inline]
+    fn is_from_jsdoc(self) -> bool {
         false
     }
 }
@@ -887,6 +963,13 @@ macro_rules! handle {
             fn starts_in_jsdoc(self) -> bool {
                 self.file.is_in_jsdoc(self.span().start)
             }
+
+            /// The file's view leaves it out of lists, but not its contents:
+            /// [`View::leaves_out`](view::View::leaves_out).
+            #[inline(never)]
+            pub(crate) fn is_left_out(self) -> bool {
+                self.file.is_left_out_at(self.span().start)
+            }
         }
 
         impl PartialEq for $name<'_> {
@@ -924,6 +1007,10 @@ macro_rules! handle {
             }
             #[inline]
             fn is_synthetic(self) -> bool {
+                self.file.has_synthetic_nodes() && (self.starts_in_jsdoc() || self.is_left_out())
+            }
+            #[inline]
+            fn is_from_jsdoc(self) -> bool {
                 self.file.has_synthetic_nodes() && self.starts_in_jsdoc()
             }
         }

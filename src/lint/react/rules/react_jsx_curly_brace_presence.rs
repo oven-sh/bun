@@ -28,6 +28,9 @@ const MISSING_CURLY: Message = Message::new("missingCurly", "Need to wrap this l
 const UNNECESSARY: Message = Message::new("", "Curly braces are unnecessary here.");
 const NECESSARY: Message = Message::new("", "Curly braces are required here.");
 
+/// Upstream's listener for the values and texts that need braces.
+const MISSING_CURLY_LISTENER: &str = "JSXAttribute > JSXElement, Literal, JSXText";
+
 /// The kind of string that's in braces, or could be.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum StringLike {
@@ -96,13 +99,13 @@ impl JsxCurlyBracePresence {
                     let configured_mode = self.prop_element_values(is_oxlint);
                     if configured_mode != Mode::Ignore && configured_mode != unreported_mode {
                         cx.report(element, necessary)
-                            .by_selector()
+                            .by_selector(MISSING_CURLY_LISTENER)
                             .fix(|fixer| [fixer.insert_before(element, "{"), fixer.insert_after(element, "}")]);
                     }
                 }
                 AttributeValue::StringLiteral(string) => {
                     if self.props == Mode::Always {
-                        cx.report(string.span, necessary).by_selector().fix(|fixer| {
+                        cx.report(string.span, necessary).by_selector(MISSING_CURLY_LISTENER).fix(|fixer| {
                             // oxlint prints the text as a JavaScript string, even if it has line breaks.
                             let text = match is_oxlint {
                                 true => in_braces(string.value, is_oxlint),
@@ -329,7 +332,7 @@ fn report_missing_curly_for_text_node(span: Span, is_oxlint: bool, cx: &Cx<'_, J
     if !has_text {
         return;
     }
-    cx.report(span, if is_oxlint { NECESSARY } else { MISSING_CURLY }).by_selector().fix(|fixer| {
+    cx.report(span, if is_oxlint { NECESSARY } else { MISSING_CURLY }).by_selector(MISSING_CURLY_LISTENER).fix(|fixer| {
         let mut fixes = Vec::new();
         // `after_blanks`: start at the first non-whitespace character.
         let mut wrap = |start: usize, part: &[u8], after_blanks: bool| {

@@ -282,7 +282,7 @@ impl Cmd {
                         continue;
                     }
                     let assign_ctx = idx > 0
-                        && is_declaration_utility(&args[0])
+                        && args[0].is_declaration_utility()
                         && is_assignment_word(&args[idx as usize]);
                     let atom: *const ast::Atom = &raw const args[idx as usize];
                     let child = Expansion::init(interp, shell, atom, this, assign_ctx);
@@ -1092,12 +1092,6 @@ impl Cmd {
         );
         child.close_io(StdioKind::Stderr);
     }
-}
-
-/// True when argv0 is the literal word `export`, the only declaration
-/// builtin the Bun shell has.
-fn is_declaration_utility(argv0: &ast::Atom) -> bool {
-    matches!(argv0, ast::Atom::Simple(ast::SimpleAtom::Text(t)) if **t == b"export"[..])
 }
 
 /// True when the word starts with a literal `NAME=` prefix where `NAME` is a

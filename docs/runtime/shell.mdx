@@ -395,6 +395,38 @@ await $`pwd`.cwd("/"); // /
 
 ---
 
+## Arrays
+
+Bun Shell passes each element of an array as one argument. The shell escapes each element like any other interpolated value:
+
+```js
+import { $ } from "bun";
+
+const files = ["my file.txt", "notes.txt"];
+
+await $`ls -l ${files}`; // the same as: ls -l "my file.txt" "notes.txt"
+```
+
+The value of an assignment and the value of an `export NAME=value` operand take exactly one word. In those places, Bun Shell joins the elements with a space into one value, like bash does for `${array[@]}`:
+
+```js
+import { $ } from "bun";
+
+const words = ["hello", "world"];
+
+await $`GREETING=${words} bun -e 'console.log(process.env.GREETING)'`; // hello world\n
+```
+
+An array inside quotes is also one word: `"${words}"` is `hello world`.
+
+A redirect takes one file. An unquoted array with one element names that file. With two or more elements, the command fails with `ambiguous redirect`.
+
+For a command other than `export`, `NAME=${array}` is an argument and not an assignment. `env GREETING=${words} cmd` gives `env` the two arguments `GREETING=hello` and `world`.
+
+Nested arrays are flattened, and an empty array adds no argument. An array with a `{ raw: 'str' }` element is shell source: Bun Shell writes its elements with a space between them and does not join them.
+
+---
+
 ## Reading output
 
 To read the output of a command as a string, use `.text()`:

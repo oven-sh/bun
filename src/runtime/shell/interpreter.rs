@@ -426,17 +426,20 @@ impl Interpreter {
         src: &'a [u8],
         jsobjs: &'a mut [crate::jsc::JSValue],
         jsstrings_to_escape: &'a [bun_core::String],
+        array_ranges: &'a [bun_shell_parser::parse::ArrayRange],
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
         use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
         let jsobjs_len = jsobjs.len() as u32;
         let lex_result = if bun_core::is_all_ascii(src) {
-            let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
+            let mut lexer =
+                LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len, array_ranges);
             lexer.lex().map_err(crate::Error::from)?;
             lexer.get_result()
         } else {
-            let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
+            let mut lexer =
+                LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len, array_ranges);
             lexer.lex().map_err(crate::Error::from)?;
             lexer.get_result()
         };
@@ -702,6 +705,7 @@ impl Interpreter {
                 arena,
                 src,
                 &mut [],
+                &[],
                 &[],
                 &mut out_parser,
                 &mut out_lex_result,

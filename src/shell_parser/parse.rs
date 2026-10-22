@@ -668,6 +668,11 @@ pub mod ast {
                 Atom::Compound(c) => c.brace_expansion_hint,
             }
         }
+
+        /// The literal word `export`, the only declaration builtin of the Bun shell.
+        pub fn is_declaration_utility(&self) -> bool {
+            matches!(self, Atom::Simple(SimpleAtom::Text(t)) if **t == b"export"[..])
+        }
     }
 
     #[derive(Clone)]
@@ -724,6 +729,17 @@ pub struct Parser<'bump> {
     stack_check: StackCheck,
 }
 
+/// What a `Token::JSArraySep` is in the place where a word is parsed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WordMode {
+    /// An assignment value: the separator is a space in the word, as in bash.
+    One,
+    /// A command name or argument: the separator ends the word.
+    Argv,
+    /// An argument of `export`: `One` when it begins with a typed `NAME=`, else `Argv`.
+    Declaration,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SubshellKind {
     CmdSubst,
@@ -752,6 +768,12 @@ impl<'bump> Parser<'bump> {
         lex_result: LexResult<'bump>,
         jsobjs: &'bump mut [JSValue],
     ) -> ParseResult<Parser<'bump>> {
+        // `is_interpolated_position` does a binary search.
+        debug_assert!(
+            lex_result
+                .js_string_ranges
+                .is_sorted_by(|a, b| a.end <= b.start)
+        );
         Ok(Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
@@ -1056,12 +1078,12 @@ impl<'bump> Parser<'bump> {
                         }
 
                         let _ = self.expect(TokenTag::Text);
-                        if !self.r#match(TokenTag::Delimit) {
+                        if !self.match_operator_end() {
                             self.add_error(format_args!("Expected a single, simple word"))?;
                             return Err(ParseError::Expected.into());
                         }
 
-                        let arg = match self.parse_atom()? {
+                        let arg = match self.parse_atom(WordMode::Argv)? {
                             Some(a) => a,
                             None => {
                                 self.add_error(format_args!(
@@ -1099,7 +1121,7 @@ impl<'bump> Parser<'bump> {
         //     arg1 -eq arg2
         // Again the token associated with the operator (in this case `-eq`) *must* be a .Text token.
 
-        let arg1 = match self.parse_atom()? {
+        let arg1 = match self.parse_atom(WordMode::Argv)? {
             Some(a) => a,
             None => {
                 self.add_error(format_args!(
@@ -1120,7 +1142,7 @@ impl<'bump> Parser<'bump> {
         }
 
         let op_tok = self.expect(TokenTag::Text);
-        if !self.r#match(TokenTag::Delimit) {
+        if !self.match_operator_end() {
             self.add_error(format_args!("Expected a single, simple word"))?;
             return Err(ParseError::Expected.into());
         }
@@ -1140,7 +1162,7 @@ impl<'bump> Parser<'bump> {
                     return Err(ParseError::Unsupported.into());
                 }
 
-                let arg2 = match self.parse_atom()? {
+                let arg2 = match self.parse_atom(WordMode::Argv)? {
                     Some(a) => a,
                     None => {
                         self.add_error(format_args!(
@@ -1345,7 +1367,7 @@ impl<'bump> Parser<'bump> {
             return Ok(ast::CmdOrAssigns::Assigns(assigns.into_bump_slice()));
         }
 
-        let name = match self.parse_atom()? {
+        let name = match self.parse_atom(WordMode::Argv)? {
             Some(n) => n,
             None => {
                 if assigns.is_empty() {
@@ -1359,10 +1381,17 @@ impl<'bump> Parser<'bump> {
             }
         };
 
+        let is_declaration = name.is_declaration_utility();
         let mut name_and_args = bun_alloc::ArenaVec::new_in(self.alloc);
         name_and_args.push(name);
-        while let Some(arg) = self.parse_atom()? {
-            name_and_args.push(arg);
+        if is_declaration {
+            while let Some(arg) = self.parse_atom(WordMode::Declaration)? {
+                name_and_args.push(arg);
+            }
+        } else {
+            while let Some(arg) = self.parse_atom(WordMode::Argv)? {
+                name_and_args.push(arg);
+            }
         }
         let parsed_redirect = self.parse_redirect()?;
 
@@ -1390,10 +1419,13 @@ impl<'bump> Parser<'bump> {
                     let Token::JSObjRef(obj_ref) = self.prev() else {
                         unreachable!()
                     };
+                    if self.r#match(TokenTag::JSArraySep) {
+                        break 'redirect_file Some(self.ambiguous_redirect()?);
+                    }
                     break 'redirect_file Some(ast::Redirect::JsBuf(ast::JSBuf::new(obj_ref)));
                 }
 
-                let file = match self.parse_atom()? {
+                let file = match self.parse_atom(WordMode::Argv)? {
                     Some(f) => f,
                     None => {
                         if redirect.duplicate_out() {
@@ -1403,6 +1435,9 @@ impl<'bump> Parser<'bump> {
                         return Err(ParseError::Expected.into());
                     }
                 };
+                if self.prev().tag() == TokenTag::JSArraySep {
+                    break 'redirect_file Some(self.ambiguous_redirect()?);
+                }
                 break 'redirect_file Some(ast::Redirect::Atom(file));
             }
             None
@@ -1423,21 +1458,8 @@ impl<'bump> Parser<'bump> {
                 let _ = self.expect(TokenTag::Text);
                 let txt = self.text(txtrng);
                 let var_decl: Option<ast::Assign<'bump>> = 'var_decl: {
-                    if let Some(eq_idx) = has_eq_sign(txt) {
-                        // If it starts with = then it's not valid assignment (e.g. `=FOO`)
-                        if eq_idx == 0 {
-                            break 'var_decl None;
-                        }
-                        // An `=` that came from an interpolated JS value is data, not
-                        // shell syntax — it must not turn the word into an env
-                        // assignment (e.g. interpolating "LD_PRELOAD=/evil.so").
-                        if self.is_interpolated_position(txtrng.start + eq_idx) {
-                            break 'var_decl None;
-                        }
+                    if let Some(eq_idx) = self.assignment_eq_idx(txtrng) {
                         let label = &txt[..eq_idx as usize];
-                        if !is_valid_var_name(label) {
-                            break 'var_decl None;
-                        }
 
                         if eq_idx as usize == txt.len() - 1 {
                             if self.delimits(self.peek()) {
@@ -1447,7 +1469,9 @@ impl<'bump> Parser<'bump> {
                                     value: ast::Atom::Simple(ast::SimpleAtom::Text(b"")),
                                 });
                             }
-                            let atom = match self.parse_atom()? {
+                            // A separator that starts the value has no element before it.
+                            let _ = self.r#match(TokenTag::JSArraySep);
+                            let atom = match self.parse_atom(WordMode::One)? {
                                 Some(a) => a,
                                 None => {
                                     self.add_error(format_args!("Expected an atom"))?;
@@ -1466,7 +1490,7 @@ impl<'bump> Parser<'bump> {
                             });
                         }
 
-                        let right = match self.parse_atom()? {
+                        let right = match self.parse_atom(WordMode::One)? {
                             Some(a) => a,
                             None => {
                                 self.add_error(format_args!("Expected an atom"))?;
@@ -1495,7 +1519,80 @@ impl<'bump> Parser<'bump> {
         }
     }
 
-    fn parse_atom(&mut self) -> ParseResult<Option<ast::Atom<'bump>>> {
+    /// Parses one word. `mode` says what a `Token::JSArraySep` is in the place of the word.
+    #[inline]
+    fn parse_atom(&mut self, mode: WordMode) -> ParseResult<Option<ast::Atom<'bump>>> {
+        if mode == WordMode::Argv {
+            return self.parse_atom_part();
+        }
+        self.parse_joined_atom(mode)
+    }
+
+    /// A word in a place that takes one word.
+    fn parse_joined_atom(&mut self, mode: WordMode) -> ParseResult<Option<ast::Atom<'bump>>> {
+        let first = self.current;
+        if self.peek().tag() == TokenTag::JSArraySep {
+            return self.join_array_elements(mode, first, Ok(None));
+        }
+        let word = self.parse_atom_part();
+        if self.current == first || self.prev().tag() != TokenTag::JSArraySep {
+            return word;
+        }
+        self.join_array_elements(mode, first, word)
+    }
+
+    /// The rest of a word in a place that takes one word, at or after its first separator: the array elements are joined with a space, as in bash.
+    #[cold]
+    fn join_array_elements(
+        &mut self,
+        mode: WordMode,
+        first: u32,
+        word: ParseResult<Option<ast::Atom<'bump>>>,
+    ) -> ParseResult<Option<ast::Atom<'bump>>> {
+        let mut space = true;
+        if self.current == first {
+            let _ = self.expect(TokenTag::JSArraySep);
+        } else if mode == WordMode::Declaration {
+            let Some(name_only) = self.assignment_word_at(first) else {
+                return word;
+            };
+            // A separator that starts the value has no element before it.
+            space = !(name_only && self.current == first + 2);
+        }
+        let mut part = word?;
+        let mut atoms = bun_alloc::ArenaVec::with_capacity_in(8, self.alloc);
+        let mut joins = true;
+        loop {
+            match part.take() {
+                Some(ast::Atom::Simple(atom)) => atoms.push(atom),
+                Some(ast::Atom::Compound(compound)) => atoms.extend(compound.atoms.iter().cloned()),
+                None => {}
+            }
+            if !joins {
+                break;
+            }
+            if space {
+                atoms.push(ast::SimpleAtom::Text(b" "));
+            }
+            space = true;
+            part = self.parse_atom_part()?;
+            joins = part.is_some() && self.prev().tag() == TokenTag::JSArraySep;
+        }
+        if atoms.len() == 1 {
+            return Ok(atoms.pop().map(ast::Atom::new_simple));
+        }
+        let has = |atom: fn(&ast::SimpleAtom<'bump>) -> bool| atoms.iter().any(atom);
+        Ok(Some(ast::Atom::Compound(ast::CompoundAtom {
+            brace_expansion_hint: has(|atom| matches!(atom, ast::SimpleAtom::BraceBegin))
+                && has(|atom| matches!(atom, ast::SimpleAtom::BraceEnd))
+                && has(|atom| matches!(atom, ast::SimpleAtom::Comma)),
+            glob_hint: has(ast::SimpleAtom::glob_hint),
+            atoms: atoms.into_bump_slice(),
+        })))
+    }
+
+    /// Parses a word up to its end, or up to a `Token::JSArraySep` in it.
+    fn parse_atom_part(&mut self) -> ParseResult<Option<ast::Atom<'bump>>> {
         let mut atoms = bun_alloc::ArenaVec::with_capacity_in(1, self.alloc);
         let mut has_brace_open = false;
         let mut has_brace_close = false;
@@ -1642,6 +1739,12 @@ impl<'bump> Parser<'bump> {
                             }
                         }
                     }
+                    Token::JSArraySep => {
+                        let _ = self.expect(TokenTag::JSArraySep);
+                        if !atoms.is_empty() {
+                            break;
+                        }
+                    }
                     Token::OpenParen | Token::CloseParen => {
                         self.add_error(format_args!(
                             "Unexpected token: `{}`",
@@ -1693,16 +1796,74 @@ impl<'bump> Parser<'bump> {
     /// Whether the strpool position holds a byte that came from an
     /// interpolated JS value (a `\x08__bunstr_N` ref spliced in by the lexer).
     fn is_interpolated_position(&self, pos: u32) -> bool {
+        let after = self.js_string_ranges.partition_point(|r| r.end <= pos);
         self.js_string_ranges
-            .iter()
-            .any(|r| pos >= r.start && pos < r.end)
+            .get(after)
+            .is_some_and(|r| r.start <= pos)
     }
 
+    /// The index of the `=` when the text begins a `NAME=` assignment word.
+    #[inline(always)]
+    fn assignment_eq_idx(&self, txtrng: TextRange) -> Option<u32> {
+        let txt = self.text(txtrng);
+        let eq_idx = has_eq_sign(txt)?;
+        // If it starts with = then it's not valid assignment (e.g. `=FOO`)
+        if eq_idx == 0 {
+            return None;
+        }
+        // An `=` from an interpolated JS value is data: "LD_PRELOAD=/evil.so" must not be an assignment.
+        if self.is_interpolated_position(txtrng.start + eq_idx) {
+            return None;
+        }
+        if !is_valid_var_name(&txt[..eq_idx as usize]) {
+            return None;
+        }
+        Some(eq_idx)
+    }
+
+    /// Whether the word whose first token is `first` begins with a typed `NAME=`, quoted or not. `Some(true)`: that token ends at the `=`.
+    fn assignment_word_at(&self, first: u32) -> Option<bool> {
+        match self.tokens[first as usize] {
+            Token::Text(txtrng)
+            | Token::SingleQuotedText(txtrng)
+            | Token::DoubleQuotedText(txtrng) => self
+                .assignment_eq_idx(txtrng)
+                .map(|eq_idx| eq_idx + 1 == txtrng.len()),
+            _ => None,
+        }
+    }
+
+    /// A `[[ ]]` operator can be an element of an interpolated array.
+    fn match_operator_end(&mut self) -> bool {
+        self.r#match(TokenTag::Delimit) || self.r#match(TokenTag::JSArraySep)
+    }
+
+    /// Consumes the rest of a redirect target that has a separator; the empty target it returns fails as `ambiguous redirect`.
+    fn ambiguous_redirect(&mut self) -> ParseResult<ast::Redirect<'bump>> {
+        loop {
+            let part = self.current;
+            if !self.r#match(TokenTag::JSObjRef) {
+                let _ = self.parse_atom(WordMode::Argv)?;
+            }
+            if self.current == part
+                || self.prev().tag() == TokenTag::Delimit
+                || self.delimits(self.peek())
+            {
+                break;
+            }
+        }
+        Ok(ast::Redirect::Atom(ast::Atom::Simple(
+            ast::SimpleAtom::Text(b""),
+        )))
+    }
+
+    #[inline]
     fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
+        let tok = IfClauseTok::from_text(self.text(range))?;
         if self.is_interpolated_position(range.start) {
             return None;
         }
-        IfClauseTok::from_text(self.text(range))
+        Some(tok)
     }
 
     fn advance(&mut self) -> Token {
@@ -1754,6 +1915,7 @@ impl<'bump> Parser<'bump> {
                         .closing_tok())
     }
 
+    #[inline(always)]
     fn expect_delimit(&mut self) -> Token {
         debug_assert!(self.delimits(self.peek()));
         if self.check(TokenTag::Delimit)
@@ -1994,6 +2156,7 @@ pub enum TokenTag {
     SingleQuotedText,
     DoubleQuotedText,
     JSObjRef,
+    JSArraySep,
     DoubleBracketOpen,
     DoubleBracketClose,
     Delimit,
@@ -2047,6 +2210,8 @@ pub enum Token {
     SingleQuotedText(TextRange),
     DoubleQuotedText(TextRange),
     JSObjRef(u32),
+    /// Between two elements of an interpolated JS array; the parser reads it by `WordMode`.
+    JSArraySep,
 
     DoubleBracketOpen,
     DoubleBracketClose,
@@ -2103,6 +2268,7 @@ impl Token {
             Token::SingleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
             Token::DoubleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
             Token::JSObjRef(_) => b"JSObjRef",
+            Token::JSArraySep => b"an interpolated array",
             Token::DoubleBracketOpen => b"[[",
             Token::DoubleBracketClose => b"]]",
             Token::Delimit => b"Delimit",
@@ -2147,6 +2313,10 @@ const MAX_SUBSHELL_DEPTH: u32 = 128;
 pub const LEX_JS_OBJREF_PREFIX: &[u8] = b"\x08__bun_";
 pub const LEX_JS_STRING_PREFIX: &[u8] = b"\x08__bunstr_";
 pub const LEX_JS_REF_TERMINATOR: u8 = SPECIAL_JS_CHAR;
+/// Written between two elements of an interpolated JS array, where a space would end the word in every place.
+pub const LEX_JS_ARRAY_SEP: &[u8] = &[SPECIAL_JS_CHAR, b'0'];
+/// The source range of one interpolated JS array that has separators.
+pub type ArrayRange = core::ops::Range<usize>;
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum StringEncoding {
@@ -2225,6 +2395,9 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
 
     /// Number of JS object references expected (for bounds validation)
     pub(crate) jsobjs_len: u32,
+
+    /// The source ranges that `shell_cmd_from_js` wrote for arrays: only there is `LEX_JS_ARRAY_SEP` a separator.
+    pub(crate) array_ranges: &'bump [ArrayRange],
 }
 
 impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
@@ -2233,6 +2406,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         src: &'bump [u8],
         strings_to_escape: &'bump [BunString],
         jsobjs_len: u32,
+        array_ranges: &'bump [ArrayRange],
     ) -> Self {
         Self {
             chars: ShellCharIter::<ENCODING>::init(src),
@@ -2247,6 +2421,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             subshell_depth: 0,
             string_refs: strings_to_escape,
             jsobjs_len,
+            array_ranges,
         }
     }
 
@@ -2292,6 +2467,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             delimit_quote: false,
             string_refs: self.string_refs,
             jsobjs_len: self.jsobjs_len,
+            array_ranges: self.array_ranges,
         };
         sublexer.chars.state = CharState::Normal;
         sublexer
@@ -2421,6 +2597,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         self.tokens.push(tok);
                         continue;
                     }
+                } else if self.eat_js_array_sep() {
+                    if self.chars.state == CharState::Normal && !escaped {
+                        self.break_word_at_array_separator()?;
+                    } else {
+                        self.append_char_to_str_pool(u32::from(b' '))?;
+                    }
+                    continue;
                 }
             }
             // Handle non-escaped chars:
@@ -2462,7 +2645,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                         c2 if c2 == u32::from(b' ')
                                             || c2 == u32::from(b'\r')
                                             || c2 == u32::from(b'\n')
-                                            || c2 == u32::from(b'\t') =>
+                                            || c2 == u32::from(b'\t')
+                                            || self.is_js_array_sep_at(self.chars.cursor_pos()) =>
                                         {
                                             self.break_word(AddDelimiter::AfterText)?;
                                             self.tokens.push(Token::DoubleBracketOpen);
@@ -2513,7 +2697,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                                 | b'&'
                                                 | b'|'
                                                 | b'>')
-                                        ) =>
+                                        ) || self
+                                            .is_js_array_sep_at(self.chars.cursor_pos()) =>
                                         {
                                             self.break_word(AddDelimiter::AfterText)?;
                                             self.tokens.push(Token::DoubleBracketClose);
@@ -2974,7 +3159,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if add_delimiter != AddDelimiter::No {
                 self.tokens.push(Token::Delimit);
             }
-        } else if add_delimiter == AddDelimiter::AfterWord
+        } else if self.blank_ends_word(add_delimiter)
             && !self.tokens.is_empty()
             && match self.tokens[self.tokens.len() - 1].tag() {
                 TokenTag::Var
@@ -3001,6 +3186,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::OpenParen
                 | TokenTag::CloseParen
                 | TokenTag::JSObjRef
+                | TokenTag::JSArraySep
                 | TokenTag::DoubleBracketOpen
                 | TokenTag::DoubleBracketClose
                 | TokenTag::Delimit
@@ -3012,6 +3198,75 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         self.word_start = self.j;
         Ok(())
+    }
+
+    /// Whether a blank ends the word here. A separator that no word part followed was that blank.
+    fn blank_ends_word(&mut self, add_delimiter: AddDelimiter) -> bool {
+        if add_delimiter == AddDelimiter::No {
+            return false;
+        }
+        let after_separator = self.last_tok_tag() == Some(TokenTag::JSArraySep);
+        if after_separator {
+            self.tokens.pop();
+        }
+        after_separator || add_delimiter == AddDelimiter::AfterWord
+    }
+
+    /// Pushes a `JSArraySep` where a blank would push a `Delimit`, and after a `JSObjRef`: a redirect target.
+    fn break_word_at_array_separator(&mut self) -> Result<(), LexerError> {
+        if self.word_start == self.j && self.last_tok_tag() == Some(TokenTag::JSArraySep) {
+            return Ok(());
+        }
+        let tokens = self.tokens.len();
+        self.break_word(AddDelimiter::AfterWord)?;
+        if self.tokens.len() > tokens {
+            // After a typed keyword the blank stays the `Delimit` that makes it a keyword.
+            if !self.ends_with_keyword() {
+                let _ = self.tokens.pop();
+                self.tokens.push(Token::JSArraySep);
+            }
+        } else if self.last_tok_tag() == Some(TokenTag::JSObjRef) {
+            self.tokens.push(Token::JSArraySep);
+        }
+        Ok(())
+    }
+
+    /// The tokens end with a typed `if` clause keyword and its `Delimit`, and the parser can start a command at the keyword.
+    fn ends_with_keyword(&self) -> bool {
+        let (before, word) = match &self.tokens[..] {
+            [Token::Text(word), Token::Delimit] => return self.is_typed_keyword(*word),
+            [.., before, Token::Text(word), Token::Delimit] => (before.tag(), *word),
+            _ => return false,
+        };
+        // Not after a part of the same word, a redirect operator or a separator.
+        matches!(
+            before,
+            TokenTag::Delimit
+                | TokenTag::Semicolon
+                | TokenTag::Newline
+                | TokenTag::Pipe
+                | TokenTag::DoublePipe
+                | TokenTag::DoubleAmpersand
+                | TokenTag::OpenParen
+                | TokenTag::CloseParen
+                | TokenTag::CmdSubstBegin
+                | TokenTag::CmdSubstQuoted
+                | TokenTag::DoubleBracketClose
+                | TokenTag::JSObjRef
+        ) && self.is_typed_keyword(word)
+    }
+
+    fn is_typed_keyword(&self, word: TextRange) -> bool {
+        if IfClauseTok::from_text(word.slice(&self.strpool)).is_none() {
+            return false;
+        }
+        let range = self
+            .js_string_ranges
+            .partition_point(|r| r.end <= word.start);
+        !self
+            .js_string_ranges
+            .get(range)
+            .is_some_and(|r| r.start <= word.start)
     }
 
     fn eat_simple_redirect(&mut self, dir: RedirectDirection) -> ast::RedirectFlags {
@@ -3401,6 +3656,26 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return false;
         }
         true
+    }
+
+    fn eat_js_array_sep(&mut self) -> bool {
+        if self.array_ranges.is_empty() {
+            return false;
+        }
+        if !self.is_js_array_sep_at(self.chars.cursor_pos() - 1) {
+            return false;
+        }
+        // The next char sees a blank before it, as it did when the boundary was a space.
+        let new_idx = self.chars.cursor_pos() + LEX_JS_ARRAY_SEP.len() - 1;
+        self.bump_cursor_ascii(new_idx, None, b' ');
+        true
+    }
+
+    /// Whether the source has a separator at `at`: in a range that an array wrote.
+    fn is_js_array_sep_at(&self, at: usize) -> bool {
+        let range = self.array_ranges.partition_point(|r| r.end <= at);
+        self.array_ranges.get(range).is_some_and(|r| r.start <= at)
+            && self.chars.src_bytes()[at..].starts_with(LEX_JS_ARRAY_SEP)
     }
 
     fn eat_var(&mut self) -> Result<TextRange, LexerError> {
@@ -3795,6 +4070,7 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
 /// - a-zA-Z
 /// - _
 /// - 0-9 (but can't be first char)
+#[inline(always)]
 pub(crate) fn is_valid_var_name(var_name: &[u8]) -> bool {
     if is_all_ascii(var_name) {
         return is_valid_var_name_ascii(var_name);
@@ -3861,6 +4137,7 @@ fn is_valid_var_name_ascii(var_name: &[u8]) -> bool {
 // used by the `Test` namespace's debug-dump path (gated to `bun_runtime`), so
 // the lower-tier parser crate omits it.
 
+#[inline(always)]
 pub(crate) fn has_eq_sign(str: &[u8]) -> Option<u32> {
     if is_all_ascii(str) {
         return strings::index_of_char(str, b'=');

@@ -1057,6 +1057,194 @@ describe("parse shell", () => {
   });
 });
 
+describe("parse shell interpolated array", () => {
+  const text = (t: string) => ({ simple: { Text: t } });
+  const joined = (...texts: string[]) => ({
+    compound: { atoms: texts.map(t => ({ Text: t })), brace_expansion_hint: false, glob_hint: false },
+  });
+  const cmd = (script: string) => JSON.parse(script).stmts[0].exprs[0].cmd;
+
+  test("in an argument each element is one atom, the same as typed words", () => {
+    expect(parse`echo ${["a", "b"]} c`).toBe(parse`echo a b c`);
+    expect(parse`${["echo", "a", "b"]} c`).toBe(parse`echo a b c`);
+    expect(parse`echo ${[]} a ${[[], "b", []]} ${["c"]}`).toBe(parse`echo a b c`);
+    expect(parse`env A=${["a", "b"]} c`).toBe(parse`env A=a b c`);
+  });
+
+  test("in an assignment value the elements are one atom", () => {
+    const { assigns, name_and_args } = cmd(parse`A=${["a", "b"]} B=x${["c", "d"]}y C=${[]} cmd`);
+    expect(assigns).toEqual([
+      { label: "A", value: joined("a", " ", "b") },
+      { label: "B", value: joined("xc", " ", "dy") },
+      { label: "C", value: text("") },
+    ]);
+    expect(name_and_args).toEqual([text("cmd")]);
+  });
+
+  test("in an export operand that begins with a typed NAME= the elements are one atom", () => {
+    expect(cmd(parse`export A=${["a", "b"]} "B="${["c", "d"]} ${["e", "f"]} ${["G=g", "h"]}`).name_and_args).toEqual([
+      text("export"),
+      joined("A=a", " ", "b"),
+      joined("B=", "c", " ", "d"),
+      text("e"),
+      text("f"),
+      text("G=g"),
+      text("h"),
+    ]);
+  });
+
+  test("typed text that spells a keyword at the end of a longer word is a part of that word", () => {
+    const { assigns, name_and_args, redirect_file } = cmd(
+      parse`A="x"then${[[], "y"]} B=${["x", []]}fi${[[], "y", "z"]} export C='x'else${[[], "y"]} > "x"elif${[[], "y"]}`,
+    );
+    expect(assigns).toEqual([
+      { label: "A", value: joined("x", "then", " ", "y") },
+      { label: "B", value: joined("x", " ", "fi", " ", "y", " ", "z") },
+    ]);
+    expect(name_and_args).toEqual([text("export"), joined("C=", "x", "else", " ", "y")]);
+    expect(redirect_file).toEqual({ atom: text("") });
+  });
+
+  test("in [[ ]] an array parses like typed words", () => {
+    expect(parse`[[ ${["a", "==", "b"]} ]]`).toBe(parse`[[ a ${"=="} b ]]`);
+    expect(parse`[[ ${["-n", "a"]} ]]`).toBe(parse`[[ -n a ]]`);
+    expect(() => parse`[[ -n ${["a", "b"]} ]]`).toThrow('Expected "]]" but got: b');
+  });
+
+  test("as a redirect target, one element is the file and two or more are a target with no word", () => {
+    const ambiguous = { atom: text("") };
+    expect(cmd(parse`echo hi > ${["a"]}`).redirect_file).toEqual({ atom: text("a") });
+    expect(cmd(parse`echo hi > ${["a", "b"]}`).redirect_file).toEqual(ambiguous);
+    expect(cmd(parse`echo hi > x${["a", "b"]}y`).redirect_file).toEqual(ambiguous);
+    const buf = new Uint8Array(1);
+    expect(cmd(parse`echo hi > ${[buf]}`).redirect_file).toEqual({ jsbuf: { idx: 0 } });
+    expect(cmd(parse`echo hi > ${[buf, "a"]}`).redirect_file).toEqual(ambiguous);
+    expect(cmd(parse`echo hi > ${["a", buf, "b"]}`).redirect_file).toEqual(ambiguous);
+    expect(cmd(parse`echo hi 2>&1 ${["a", "b"]}`).redirect_file).toEqual(ambiguous);
+    expect(cmd(parse`echo hi 1>&2 ${[buf, "a"]}`).redirect_file).toEqual(ambiguous);
+    // A second redirect is an error after any target.
+    expect(() => parse`echo hi > ${["a", buf]}> x`).toThrow('expected a command or assignment but got: "Redirect"');
+    expect(() => parse`echo hi > ${["a"]} > x`).toThrow('expected a command or assignment but got: "Redirect"');
+
+    // No element is left for the command or for a second command.
+    for (const script of [
+      parse`echo hi > ${["a", "echo", "INJECTED"]}; next`,
+      parse`echo hi > ${["a", buf]}tail; next`,
+      parse`echo hi > ${["a", buf, "b", buf]}$(tail); next`,
+    ]) {
+      expect(
+        JSON.parse(script).stmts.map((stmt: any) => stmt.exprs.map((expr: any) => expr.cmd.name_and_args)),
+      ).toEqual([[[text("echo"), text("hi")]], [[text("next")]]]);
+    }
+  });
+
+  test("in a command name or argument, an array parses like its elements as separate values with a blank between them", () => {
+    const buf = () => new Uint8Array(1);
+    // "@" is where the array goes.
+    // prettier-ignore
+    const shapes = [
+      "echo @", "echo @ tail", "echo pre@post", "echo @@", "@", "@ tail", "cmd x @ | cat", "echo $(echo @) y", "(echo @)",
+      "env A=@ cmd", "basename A=@", "echo @ > out", "if @; then echo y; fi", "if true; then @; fi",
+      "echo {@,c}", "echo *.@", "echo ~@", "echo $V@", "echo a#@", "echo \\@", "export @", "export -p @", "[[ @ ]]", "[[ a @ ]]",
+      "i@; then echo a; fi", "if true; the@; fi", "if true; then echo a; f@", "if false; then echo a; els@; fi",
+      "if@; then echo a; fi", "if true; then@; fi", "[[@ ]]", "[[ a == b ]]@",
+      "true && if@; then echo a; fi", "true || if@; then echo a; fi", "true | if@; then cat; fi", "true; if@; then echo a; fi",
+      "true\nif@; then echo a; fi", "(if@; then echo a; fi)", "echo $(if@; then echo a; fi)", 'echo "$(if@; then echo a; fi)"',
+      "(true) if@; then echo a; fi", "[[ a == a ]] if@; then echo a; fi", "echo > out if@; then echo a; fi",
+      "if false; then echo a; elif@; then echo b; fi", "if false; then echo a; else@; fi", "if true; then echo a; fi@",
+      'echo "x"if@', "echo $V''fi@",
+    ];
+    const arrays: [string, () => unknown[]][] = [
+      ['["x","y"]', () => ["x", "y"]],
+      ['["a b","*","$HOME"]', () => ["a b", "*", "$HOME"]],
+      ['[buf,"y"]', () => [buf(), "y"]],
+      ['["x",buf]', () => ["x", buf()]],
+      ['["","y"]', () => ["", "y"]],
+      ['[1,"FOO=1"]', () => [1, "FOO=1"]],
+      ['["f","y"]', () => ["f", "y"]],
+      ['["n","y"]', () => ["n", "y"]],
+      ['["e","y"]', () => ["e", "y"]],
+      ['["i","y"]', () => ["i", "y"]],
+      ['["-n","x","y"]', () => ["-n", "x", "y"]],
+      ['["==","x","y"]', () => ["==", "x", "y"]],
+      ['[[],"x",[]]', () => [[], "x", []]],
+      ['[[],"-n","x"]', () => [[], "-n", "x"]],
+    ];
+    const run = (strings: string[], values: unknown[]) => {
+      try {
+        return parse({ raw: strings } as any, ...values);
+      } catch (e) {
+        return "throws: " + (e as Error).message;
+      }
+    };
+    const differing: string[] = [];
+    for (const shape of shapes) {
+      const parts = shape.split("@");
+      for (const [name, make] of arrays) {
+        const values = parts.slice(1).map(make);
+        const strings = [parts[0]];
+        for (const [i, array] of values.entries()) strings.push(...array.slice(1).map(() => " "), parts[i + 1]);
+        if (run(parts, values) !== run(strings, values.flat()))
+          differing.push(shape.replaceAll("@", "${" + name + "}"));
+      }
+    }
+    expect(differing).toEqual([]);
+  });
+
+  describe("as its own word, at the start, at the end and at every blank of a script", () => {
+    const scripts = [
+      "FOO=bar BAR=baz cmd a b > out.txt",
+      "a | b && c || d; e $X $(f g)",
+      "if [[ -n $A ]]; then echo {a,b}*.ts ~/x; elif false; then echo b; else (cd /; ls); fi",
+      "cmd 2>&1 | grep x",
+      "cmd < in.txt >> log.txt",
+      "cmd &> out.txt",
+      "[[ a == b ]] || echo no",
+      "export FOO=bar BAZ=qux",
+      "A=1; echo $A",
+    ];
+    const run = (strings: string[], ...values: unknown[]) => {
+      try {
+        return parse({ raw: strings } as any, ...values);
+      } catch (e) {
+        return "throws: " + (e as Error).message;
+      }
+    };
+    // The templates where `value` does not parse like `same`.
+    const differing = (value: unknown, same: (before: string, after: string) => string) => {
+      const out: string[] = [];
+      for (const script of scripts) {
+        const blanks = [...script.matchAll(/ /g)].map(match => match.index);
+        for (const [before, after] of [
+          ["", " " + script],
+          ...blanks.map(i => [script.slice(0, i) + " ", script.slice(i)]),
+          [script + " ", ""],
+        ]) {
+          if (run([before, after], value) !== same(before, after)) out.push(before + "${}" + after);
+        }
+      }
+      return out;
+    };
+
+    test("an array with no elements parses like the script without it", () => {
+      expect(differing([], (before, after) => run([(before + after).trim()]))).toEqual([]);
+    });
+
+    test("an array of one element parses like that element", () => {
+      expect(differing(["x"], (before, after) => run([before, after], "x"))).toEqual([]);
+    });
+
+    test("an array of two elements parses like two typed words, but not as a redirect target", () => {
+      expect(differing(["x", "y"], (before, after) => run([before + "x y" + after]))).toEqual([
+        "FOO=bar BAR=baz cmd a b > ${} out.txt",
+        "cmd 2>&1 ${} | grep x",
+        "cmd < ${} in.txt >> log.txt",
+        "cmd &> ${} out.txt",
+      ]);
+    });
+  });
+});
+
 describe("parse shell invalid input", () => {
   test("invalid js obj", async () => {
     const file = new Uint8Array(420);

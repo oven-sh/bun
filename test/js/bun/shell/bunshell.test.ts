@@ -3324,6 +3324,345 @@ describe("interpolated values in assignment position", () => {
     .runAsTest("interpolated equals in argument position passes through");
 });
 
+describe("interpolated arrays", () => {
+  // `basename` is a builtin. It prints each argument on its own line, so the
+  // output shows where one word ends and the next begins.
+  describe("each element is one word in a command name or argument", () => {
+    TestBuilder.command`basename ${["a b", "c", "d"]}`.stdout("a b\nc\nd\n").runAsTest("one argument per element");
+    TestBuilder.command`basename pre${["a b", "c"]}post`
+      .stdout("prea b\ncpost\n")
+      .runAsTest("text next to the array joins the first and the last element");
+    TestBuilder.command`basename ${["a", "b"]}${["c", "d"]}`.stdout("a\nbc\nd\n").runAsTest("adjacent arrays");
+    TestBuilder.command`basename ${["", "", "x"]} ${["y", ""]}`
+      .stdout("\n\nx\ny\n\n")
+      .runAsTest("an empty string element is an empty argument");
+    TestBuilder.command`basename x${[]}y ${[]} z ${[]}`.stdout("xy\nz\n").runAsTest("an empty array is no argument");
+    TestBuilder.command`basename ${["a", ["b", ["c d"]], [], "e"]}`
+      .stdout("a\nb\nc d\ne\n")
+      .runAsTest("nested arrays flatten");
+    TestBuilder.command`basename ${["*", "{a,b}", "$HOME", "x=y", "a;b", "|", ">"]}`
+      .stdout("*\n{a,b}\n$HOME\nx=y\na;b\n|\n>\n")
+      .runAsTest("an element with shell syntax is one literal argument");
+    TestBuilder.command`basename *.${["txt", "zzz"]}`
+      .file("g.txt", "")
+      .stdout("g.txt\nzzz\n")
+      .runAsTest("a glob applies to the word it is in");
+    TestBuilder.command`basename {${["a", "b"]},c}`.stdout("{a\nb,c}\n").runAsTest("braces around an array");
+    TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~${["/x", "~"]}`
+      .stdout("/home/user/x ~\n")
+      .runAsTest("a tilde before an array");
+    TestBuilder.command`basename "${["a b", "c"]}" '${["d", "e"]}' "${[]}" p"${["f", "g"]}"s`
+      .stdout("a b c\nd e\n\npf gs\n")
+      .runAsTest("inside quotes the elements are one word");
+    TestBuilder.command`V=val; basename $V${["a", "b"]}`.stdout("vala\nb\n").runAsTest("after a variable");
+    TestBuilder.command`echo $(basename ${["a", "b"]}) ${["c", "d"]}`
+      .stdout("a b c d\n")
+      .runAsTest("inside a command substitution");
+    TestBuilder.command`basename ${["a", "b"]} > out.txt`
+      .fileEquals("out.txt", "a\nb\n")
+      .runAsTest("before a redirect");
+    TestBuilder.command`${["echo", "hi", "there"]}`.stdout("hi there\n").runAsTest("command name and arguments");
+    TestBuilder.command`${[]}`.stdout("").runAsTest("an empty array alone is no command");
+    TestBuilder.command`${[]} A=1; ${[]} echo $A; if false; then echo a; ${[]} else echo b; fi`
+      .stdout("1\nb\n")
+      .runAsTest("an empty array writes nothing, in any place");
+    TestBuilder.command`${["A=a", "echo", "x"]}`
+      .exitCode(1)
+      .stderr("bun: command not found: A=a\n")
+      .runAsTest("an element with an equals sign is not an assignment");
+    TestBuilder.command`if ${["true", "ignored"]}; then ${["echo", "a", "b"]}; fi`
+      .stdout("a b\n")
+      .runAsTest("inside an if clause");
+    TestBuilder.command`basename A=${["a", "b"]} X=${["1", "Y=2"]}`
+      .stdout("A=a\nb\nX=1\nY=2\n")
+      .runAsTest("an argument that looks like an assignment is an argument");
+    TestBuilder.command`echo hi 2>&1 ${[]}; echo ho 2>&1 ${[]} | cat`
+      .stdout("hi\nho\n")
+      .runAsTest("an empty array after 2>&1");
+  });
+
+  describe("the elements are one value in an assignment", () => {
+    TestBuilder.command`A=${["a", "echo", "INJECTED"]} echo tail`
+      .stdout("tail\n")
+      .runAsTest("no element is run as the command");
+    TestBuilder.command`A=${["a", "b c", "d"]}; echo "[$A]"`.stdout("[a b c d]\n").runAsTest("joined with a space");
+    TestBuilder.command`A=${["a", "B=evil"]} B=ok ${BUN} -e ${"console.log(process.env.A + '|' + process.env.B)"}`
+      .stdout("a B=evil|ok\n")
+      .runAsTest("the command gets one variable");
+    TestBuilder.command`A=pre${["a", "b"]}post; echo "[$A]"`.stdout("[prea bpost]\n").runAsTest("with text around");
+    TestBuilder.command`A=${["", "x", ""]}; B=${["a", ["b", ["c"]]]}; echo "[$A] [$B]"`
+      .stdout("[ x ] [a b c]\n")
+      .runAsTest("empty string elements and nested arrays");
+    TestBuilder.command`A=set; A=${[]}; echo "[$A]"; A=${[]} echo tail`
+      .stdout("[]\ntail\n")
+      .runAsTest("an empty array is an empty value");
+    TestBuilder.command`DEBUG=${["x", []]} echo id -u`.stdout("id -u\n").runAsTest("one element and an empty array");
+    TestBuilder.command`A=${["*", "$HOME", "a;b", "x y"]}; echo "[$A]"`
+      .stdout("[* $HOME a;b x y]\n")
+      .runAsTest("elements with shell syntax stay literal");
+    TestBuilder.command`A=${["héllo", "日本"]}; echo "[$A]"`.stdout("[héllo 日本]\n").runAsTest("non-ASCII elements");
+    TestBuilder.command`echo x | A=${["a", "echo", "INJECTED"]} | cat`.stdout("x\n").runAsTest("in a pipeline");
+    TestBuilder.command`(A=${["a", "echo", "INJECTED"]}; echo "[$A]")`
+      .stdout("[a echo INJECTED]\n")
+      .runAsTest("in a subshell");
+    TestBuilder.command`echo $(A=${["a", "echo", "INJECTED"]}; echo "[$A]")`
+      .stdout("[a echo INJECTED]\n")
+      .runAsTest("in a command substitution");
+    TestBuilder.command`if A=${["a", "echo", "INJECTED"]}; then echo "[$A]"; fi`
+      .stdout("[a echo INJECTED]\n")
+      .runAsTest("in an if condition");
+    TestBuilder.command`true && A=${["a", "echo", "INJECTED"]} && echo "[$A]"`
+      .stdout("[a echo INJECTED]\n")
+      .runAsTest("after &&");
+    TestBuilder.command`${"FOO"}=${["a", "echo", "INJECTED"]} echo tail`
+      .stdout("tail\n")
+      .runAsTest("with the name from a string");
+
+    test("with $ as a function and with a Shell instance", async () => {
+      const arr = ["a", "echo", "INJECTED"];
+      const fromFunction = await $({ raw: ["A=", " echo tail"] } as any, arr).quiet();
+      expect(fromFunction.stdout.toString()).toBe("tail\n");
+      const shell = new $.Shell();
+      shell.nothrow();
+      const fromInstance = await shell`A=${arr} echo tail`.quiet();
+      expect(fromInstance.stdout.toString()).toBe("tail\n");
+    });
+  });
+
+  describe("the elements are one value in an export operand", () => {
+    const evil = ["a", "BAR=evil"];
+    TestBuilder.command`export FOO=${["a", "b", "c"]}; echo "[$FOO] [$b] [$c]"`
+      .stdout("[a b c] [] []\n")
+      .runAsTest("joined with a space");
+    TestBuilder.command`export FOO=${evil}; ${BUN} -e ${"console.log(process.env.FOO + '|' + process.env.BAR)"}`
+      .stdout("a BAR=evil|undefined\n")
+      .runAsTest("an element does not export a second variable");
+    TestBuilder.command`export A=${["1", "2"]} B=${["3", "4"]} C=${[]}; echo "[$A] [$B] [$C]"`
+      .stdout("[1 2] [3 4] []\n")
+      .runAsTest("each operand takes its own array");
+
+    const oneVariable = "[a BAR=evil] []\n";
+    TestBuilder.command`export "FOO="${evil}; echo "[$FOO] [$BAR]"`.stdout(oneVariable).runAsTest('"NAME=" in quotes');
+    TestBuilder.command`export 'FOO='${evil}; echo "[$FOO] [$BAR]"`.stdout(oneVariable).runAsTest("'NAME=' in quotes");
+    TestBuilder.command`export ${"FOO"}=${evil}; echo "[$FOO] [$BAR]"`
+      .stdout(oneVariable)
+      .runAsTest("with the name from a string");
+    TestBuilder.command`export ${[]} FOO=${evil}; echo "[$FOO] [$BAR]"`
+      .stdout(oneVariable)
+      .runAsTest("after an empty array");
+    TestBuilder.command`"export" FOO=${evil}; echo "[$FOO] [$BAR]"`.stdout(oneVariable).runAsTest('"export" in quotes');
+    TestBuilder.command`${"export"} FOO=${evil}; echo "[$FOO] [$BAR]"`
+      .stdout(oneVariable)
+      .runAsTest("export from a string");
+    TestBuilder.command`${["export"]} FOO=${evil}; echo "[$FOO] [$BAR]"`
+      .stdout(oneVariable)
+      .runAsTest("export from an array");
+    TestBuilder.command`X=1 export FOO=${evil}; echo "[$FOO] [$BAR]"`
+      .stdout(oneVariable)
+      .runAsTest("export after an assignment");
+
+    // An `=` from a value is data, so these arrays are not after a `NAME=`.
+    TestBuilder.command`export ${["FOO=1", "BAR=2"]}; echo "[$FOO] [$BAR]"`
+      .stdout("[1] [2]\n")
+      .runAsTest("an array of whole operands is one operand per element");
+    TestBuilder.command`export ${"FOO="}${evil}; echo "[$FOO] [$BAR]"`
+      .stdout("[a] [evil]\n")
+      .runAsTest("after a NAME= from a string, the array is one operand per element");
+  });
+
+  describe("a redirect target of two or more elements is ambiguous", () => {
+    const ambiguous = "bun: ambiguous redirect: at `echo`\n";
+    TestBuilder.command`echo hi > ${["out1", "echo", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(ambiguous)
+      .doesNotExist("out1")
+      .runAsTest(">");
+    TestBuilder.command`echo hi >> ${["out1", "echo", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(ambiguous)
+      .doesNotExist("out1")
+      .runAsTest(">>");
+    TestBuilder.command`echo hi 2> ${["out1", "echo", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(ambiguous)
+      .doesNotExist("out1")
+      .runAsTest("2>");
+    TestBuilder.command`echo hi &> ${["out1", "echo", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(ambiguous)
+      .doesNotExist("out1")
+      .runAsTest("&>");
+    TestBuilder.command`basename < ${["in1", "echo", "INJECTED"]}`
+      .file("in1", "")
+      .exitCode(1)
+      .stderr("bun: ambiguous redirect: at `basename`\n")
+      .runAsTest("<");
+    TestBuilder.command`${BUN} -e ${"console.log(1)"} > ${["out1", "echo", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(s => expect(s).toStartWith("bun: ambiguous redirect: at `"))
+      .doesNotExist("out1")
+      .runAsTest("for a command that is not a builtin");
+    TestBuilder.command`echo hi > pre${["a", "b"]}post; echo next`
+      .ensureTempDir()
+      .stdout("next\n")
+      .stderr(ambiguous)
+      .doesNotExist("prea")
+      .runAsTest("with text around, and the next command still runs");
+    TestBuilder.command`echo hi > ${[new Uint8Array(8), "echo", "INJECTED"]}`
+      .exitCode(1)
+      .stderr(ambiguous)
+      .runAsTest("a Buffer and more elements");
+    TestBuilder.command`echo hi > ${["out1", new Uint8Array(8), "echo", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(ambiguous)
+      .doesNotExist("out1")
+      .runAsTest("an element, a Buffer and more elements");
+    TestBuilder.command`echo hi > ${["", "out1"]}`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(ambiguous)
+      .doesNotExist("out1")
+      .runAsTest("an empty string element and a name");
+    TestBuilder.command`echo hi > ${["out1", new Uint8Array(8)]}tail; echo next`
+      .ensureTempDir()
+      .stdout("next\n")
+      .stderr(ambiguous)
+      .doesNotExist("out1")
+      .runAsTest("a Buffer as the last element, with text after it");
+    TestBuilder.command`echo hi 2>&1 ${["out1", "echo", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(ambiguous)
+      .doesNotExist("out1")
+      .runAsTest("after 2>&1");
+    TestBuilder.command`echo hi 1>&2 ${["out1", "echo", "INJECTED"]}`
+      .ensureTempDir()
+      .exitCode(1)
+      .stderr(ambiguous)
+      .doesNotExist("out1")
+      .runAsTest("after 1>&2");
+    TestBuilder.command`echo hi 2>&1 ${[new Uint8Array(8), "echo", "INJECTED"]}`
+      .exitCode(1)
+      .stderr(ambiguous)
+      .runAsTest("after 2>&1, a Buffer and more elements");
+
+    TestBuilder.command`echo hi > ${["out1"]}; echo ho > ${["out2", []]}; echo hu > ${["ou"]}${["t3"]}`
+      .fileEquals("out1", "hi\n")
+      .fileEquals("out2", "ho\n")
+      .fileEquals("out3", "hu\n")
+      .runAsTest("one element is the target");
+    TestBuilder.command`echo hi > "${["a", "b"]}"`.fileEquals("a b", "hi\n").runAsTest("inside quotes it is one name");
+
+    test("an array that holds one Buffer is the target", async () => {
+      const buf = new Uint8Array(3);
+      const { stdout, stderr, exitCode } = await $`echo hi > ${[buf]}; echo next`.quiet();
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toBe("next\n");
+      expect(Buffer.from(buf).toString()).toBe("hi\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an array with no elements is no target", () => {
+      expect(() => $`echo hi > ${[]}`).toThrow("Redirection with no file");
+    });
+  });
+
+  describe("an empty nested array is a blank", () => {
+    TestBuilder.command`V=val; basename ${["x", []]}suffix pre${[[], "a", "b"]} "${["c", [], "d"]}" $V${[[], "e"]}`
+      .stdout("x\nsuffix\npre\na\nb\nc  d\nval\ne\n")
+      .runAsTest("in arguments and inside quotes, as before");
+    TestBuilder.command`A=${[[], "a", [], "b", []]}; export B=${[[], "c", "d"]}; C=pre${[[], "e"]}; echo "[$A] [$B] [$C]"`
+      .stdout("[a b] [c d] [pre e]\n")
+      .runAsTest("in an assignment it adds nothing at the start and at the end of the value");
+    TestBuilder.command`if${[[], "true"]}; then [[${[[], "-n"]} x ]] && echo yes; fi`
+      .stdout("yes\n")
+      .runAsTest("after typed syntax, as before");
+    TestBuilder.command`true && if${[[], "true"]}; then${[[], "echo", "a"]}; fi; (if false; then echo no; elif${[[], "true"]}; then echo b; fi); echo $(if false; then echo no; else${[[], "echo", "c"]}; fi) "$(if${[[], "true"]}; then echo d; fi)"`
+      .stdout("a\nb\nc d\n")
+      .runAsTest("after a typed keyword where a command can start, as before");
+
+    describe("after typed text that ends in a keyword, in the same word", () => {
+      TestBuilder.command`A="x"then${[[], "echo", "INJECTED"]} echo tail`
+        .stdout("tail\n")
+        .runAsTest("no element is run as the command");
+      TestBuilder.command`D=d; A="$D"fi${[[], "y", "z"]}; B=${["x", []]}else${[[], "y"]}; echo "[$A] [$B]"`
+        .stdout("[dfi y z] [x else y]\n")
+        .runAsTest("an assignment keeps the elements in its value");
+      TestBuilder.command`export FOO="a"fi${[[], "BAR=evil"]}; echo "[$FOO] [$BAR]"`
+        .stdout("[afi BAR=evil] []\n")
+        .runAsTest("an element does not export a second variable");
+      TestBuilder.command`echo hi > "out"fi${[[], "echo", "INJECTED"]}`
+        .ensureTempDir()
+        .exitCode(1)
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .doesNotExist("outfi")
+        .runAsTest("a redirect target is ambiguous");
+    });
+  });
+
+  describe("[[ ]] reads an array as typed words, as before", () => {
+    TestBuilder.command`[[ ${["-n", "x"]} ]] && [[ ${["a", "==", "a"]} ]] && [[ a ${["!=", "b"]} ]] && [[ a ${["=="]} a ]] && echo yes`
+      .stdout("yes\n")
+      .runAsTest("an array can hold the operator");
+    test("two elements are not one operand", () => {
+      expect(() => $`[[ -n ${["a", "b"]} ]]`).toThrow('Expected "]]" but got: b');
+      expect(() => $`[[ x == ${["a", "b"]} ]]`).toThrow('Expected "]]" but got: b');
+      expect(() => $`[[ ${["a", "b"]} == x ]]`).toThrow("Unknown conditional expression operation: b");
+    });
+  });
+
+  describe("an array with a raw element is shell source, with a space between the elements", () => {
+    TestBuilder.command`basename ${["a", { raw: "b c" }, { raw: "" }, "d"]} "${["e", { raw: "" }, "f"]}" pre${[[], { raw: "g" }]}`
+      .stdout("a\nb\nc\nd\ne  f\npre\ng\n")
+      .runAsTest("in arguments");
+    TestBuilder.command`${[{ raw: "A=a" }, { raw: "B=b" }]}; echo $A $B`.stdout("a b\n").runAsTest("raw assignments");
+    TestBuilder.command`${["echo", "a", { raw: "&&" }, "echo", "b"]}; ${[{ raw: "[[ -n x ]]" }, { raw: "&&" }, "echo", "c"]}`
+      .stdout("a\nb\nc\n")
+      .runAsTest("a raw operator and a raw compound command");
+    TestBuilder.command`A=${["a", { raw: "b c" }, "d"]} echo tail`
+      .exitCode(1)
+      .stderr("bun: command not found: b\n")
+      .runAsTest("after an assignment the raw text is still source");
+    TestBuilder.command`A=${["a", "echo", "INJECTED"]} basename ${["x", { raw: "y" }, "z", { raw: "" }, "w"]}`
+      .stdout("x\ny\nz\nw\n")
+      .runAsTest("an array before it in the same script keeps its separators");
+  });
+
+  test("in every place that takes one value, an array is the same as its elements joined with a space", async () => {
+    let seed = 7;
+    const random = (n: number) => {
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      seed >>>= 0;
+      return seed % n;
+    };
+    // prettier-ignore
+    const pool = ["a", "b c", "", "*", "$HOME", "a;b", "x=y", "-n", "~", "é", "日本", "2", "if", "'", '"', "\\", "a\tb", "{a,b}", "|", ">", "&&", "#c", "[[", "$(echo z)", " ", "\x08" + "0", "0"];
+    const element = (depth: number): any =>
+      depth < 2 && random(6) === 0
+        ? Array.from({ length: 1 + random(3) }, () => element(depth + 1))
+        : pool[random(pool.length)];
+    const values = (v: string | any[]) =>
+      $`A=${v}; B="${v}"; C='${v}'; export D=${v} E=pre${v}post; echo "[$A] [$B] [$C] [$D] [$E]"`.text();
+
+    const fromArray: string[] = [];
+    const fromString: string[] = [];
+    for (let i = 0; i < 100; i++) {
+      const array = Array.from({ length: random(5) }, () => element(0));
+      fromArray.push(await values(array));
+      fromString.push(await values(array.flat(Infinity).join(" ")));
+    }
+    expect(fromArray).toEqual(fromString);
+  });
+});
+
 describe("interpolated values in reserved-word position", () => {
   TestBuilder.command`if true; then ${"if"} BUNISBAD; echo A; fi`
     .stdout("A\n")

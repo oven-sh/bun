@@ -32,9 +32,9 @@ pub(crate) use super::subproc; // declared once in `shell/mod.rs`
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
 pub(crate) use bun_shell_parser::parse::{
-    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, LexerAscii,
-    LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
-    needs_escape_utf8_ascii_latin1,
+    ArrayRange, IfClauseTok, LEX_JS_ARRAY_SEP, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR,
+    LEX_JS_STRING_PREFIX, LexerAscii, LexerUnicode, ParseError, Parser, Token, ast,
+    is_if_clause_keyword_bunstr, needs_escape_bunstr, needs_escape_utf8_ascii_latin1,
 };
 
 #[cfg(windows)]
@@ -134,6 +134,7 @@ pub(crate) mod test {
         SingleQuotedText(&'a [u8]),
         DoubleQuotedText(&'a [u8]),
         JSObjRef(u32),
+        JSArraySep,
         DoubleBracketOpen,
         DoubleBracketClose,
         Delimit,
@@ -153,6 +154,7 @@ pub(crate) mod test {
                     TestToken::DoubleQuotedText(&buf[txt.start as usize..txt.end as usize])
                 }
                 Token::JSObjRef(val) => TestToken::JSObjRef(val),
+                Token::JSArraySep => TestToken::JSArraySep,
                 Token::Pipe => TestToken::Pipe,
                 Token::DoublePipe => TestToken::DoublePipe,
                 Token::Ampersand => TestToken::Ampersand,
@@ -233,6 +235,7 @@ pub(crate) mod test {
                     w.write_char('}')
                 }
                 T::JSObjRef(n) => write!(w, "{{\"JSObjRef\":{}}}", n),
+                T::JSArraySep => unit!("JSArraySep"),
                 T::DoubleBracketOpen => unit!("DoubleBracketOpen"),
                 T::DoubleBracketClose => unit!("DoubleBracketClose"),
                 T::Delimit => unit!("Delimit"),
@@ -272,9 +275,11 @@ pub(crate) fn shell_cmd_from_js(
     jsstrings: &mut Vec<BunString>,
     out_script: &mut Vec<u8>,
     marked_argument_buffer: &mut MarkedArgumentBuffer,
-) -> JsResult<()> {
+) -> JsResult<ArrayRanges> {
     let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
     let mut jsobjref_buf = [0u8; 128];
+    let mut array_ranges = ArrayRanges::default();
+    let mut top_array = TemplateArray::default();
 
     let mut string_iter = string_args.array_iterator(global)?;
     let mut i: u32 = 0;
@@ -301,15 +306,62 @@ pub(crate) fn shell_cmd_from_js(
                 &mut jsobjref_buf[..],
                 marked_argument_buffer,
                 0,
+                &mut top_array,
             )?;
+            if top_array.has_separator {
+                top_array.has_separator = false;
+                array_ranges.append(top_array.start..out_script.len());
+            }
             builder = ShellSrcBuilder::init(global, out_script, jsstrings);
         }
         i += 1;
     }
-    Ok(())
+    Ok(array_ranges)
 }
 
 const MAX_TEMPLATE_ARRAY_DEPTH: u32 = 100;
+
+/// Most templates have no array, and few have more than two.
+pub(crate) type ArrayRanges = bun_collections::SmallList<ArrayRange, 2>;
+
+/// The output of one top-level array of a template, shared by its elements and nested arrays.
+#[derive(Default)]
+pub(crate) struct TemplateArray {
+    start: usize,
+    has_separator: bool,
+    /// An element is `{ raw }`: the array is shell source, with a space at each element boundary.
+    is_source: bool,
+}
+
+impl TemplateArray {
+    fn write_boundary(&mut self, script: &mut Vec<u8>) {
+        if self.is_source {
+            script.push(b' ');
+        } else {
+            script.extend_from_slice(LEX_JS_ARRAY_SEP);
+            self.has_separator = true;
+        }
+    }
+
+    /// Before the first `{ raw }` element the output has no raw text, so each `LEX_JS_ARRAY_SEP` in it is a separator.
+    fn write_as_source(&mut self, script: &mut Vec<u8>) {
+        self.is_source = true;
+        if !core::mem::take(&mut self.has_separator) {
+            return;
+        }
+        let mut write = self.start;
+        let mut read = self.start;
+        while let Some(at) = strings::index_of(&script[read..], LEX_JS_ARRAY_SEP) {
+            script.copy_within(read..read + at, write);
+            write += at;
+            script[write] = b' ';
+            write += 1;
+            read += at + LEX_JS_ARRAY_SEP.len();
+        }
+        script.copy_within(read.., write);
+        script.truncate(write + script.len() - read);
+    }
+}
 
 pub(crate) fn handle_template_value(
     global: &JSGlobalObject,
@@ -322,6 +374,7 @@ pub(crate) fn handle_template_value(
     jsobjref_buf: &mut [u8],
     marked_argument_buffer: &mut MarkedArgumentBuffer,
     depth: u32,
+    top_array: &mut TemplateArray,
 ) -> JsResult<()> {
     let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
     if !template_value.is_empty() {
@@ -426,6 +479,12 @@ pub(crate) fn handle_template_value(
                     MAX_TEMPLATE_ARRAY_DEPTH
                 )));
             }
+            if depth == 0 {
+                *top_array = TemplateArray {
+                    start: out_script.len(),
+                    ..Default::default()
+                };
+            }
             let mut array = template_value.array_iterator(global)?;
             let last = array.len.saturating_sub(1);
             let mut i: u32 = 0;
@@ -439,14 +498,10 @@ pub(crate) fn handle_template_value(
                     jsobjref_buf,
                     marked_argument_buffer,
                     depth + 1,
+                    top_array,
                 )?;
                 if i < last {
-                    let str = BunString::static_(" ");
-                    let mut b = ShellSrcBuilder::init(global, out_script, jsstrings);
-                    if !b.append_bun_str::<false>(str)? {
-                        return Err(global
-                            .throw(format_args!("Shell script string contains invalid UTF-16")));
-                    }
+                    top_array.write_boundary(out_script);
                 }
                 i += 1;
             }
@@ -467,6 +522,10 @@ pub(crate) fn handle_template_value(
                         .throw());
                 }
 
+                if depth > 0 {
+                    top_array.write_as_source(out_script);
+                }
+                let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
                 if !builder.append_bun_str::<false>(bunstr)? {
                     return Err(
                         global.throw(format_args!("Shell script string contains invalid UTF-16"))
@@ -743,7 +802,7 @@ pub(crate) mod testing_apis {
         let mut jsobjs: Vec<JSValue> = Vec::new();
 
         let mut script: Vec<u8> = Vec::new();
-        shell_cmd_from_js(
+        let array_ranges = shell_cmd_from_js(
             global,
             string_args,
             &mut template_args,
@@ -756,13 +815,25 @@ pub(crate) mod testing_apis {
         let jsobjs_len: u32 = u32::try_from(jsobjs.len()).expect("int cast");
         let lex_result = 'brk: {
             if strings::is_all_ascii(&script[..]) {
-                let mut lexer = LexerAscii::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
+                let mut lexer = LexerAscii::new(
+                    &arena,
+                    &script[..],
+                    &jsstrings[..],
+                    jsobjs_len,
+                    &array_ranges,
+                );
                 if let Err(err) = lexer.lex() {
                     return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
                 }
                 break 'brk lexer.get_result();
             }
-            let mut lexer = LexerUnicode::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
+            let mut lexer = LexerUnicode::new(
+                &arena,
+                &script[..],
+                &jsstrings[..],
+                jsobjs_len,
+                &array_ranges,
+            );
             if let Err(err) = lexer.lex() {
                 return Err(global.throw_error(crate::Error::from(err), "failed to lex shell"));
             }
@@ -820,7 +891,7 @@ pub(crate) mod testing_apis {
         // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
         let mut jsobjs: Vec<JSValue> = Vec::new();
         let mut script: Vec<u8> = Vec::new();
-        shell_cmd_from_js(
+        let array_ranges = shell_cmd_from_js(
             global,
             string_args,
             &mut template_args,
@@ -838,6 +909,7 @@ pub(crate) mod testing_apis {
             &script[..],
             &mut jsobjs[..],
             &jsstrings[..],
+            &array_ranges,
             &mut out_parser,
             &mut out_lex_result,
         ) {

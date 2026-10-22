@@ -8167,7 +8167,7 @@ describe("css tests", () => {
       return { stdout, stderr, exitCode };
     };
 
-    test("bun build keeps every family of a font-family list", async () => {
+    test.concurrent("bun build keeps every family of a font-family list", async () => {
       using dir = tempDir("css-font-palette-values-list", {
         "in.css": [
           "@font-palette-values --one { font-family: Bixa; base-palette: 1 }",
@@ -8211,7 +8211,7 @@ describe("css tests", () => {
       });
     });
 
-    test("bun build prints a font-family with a generic family keyword as written", async () => {
+    test.concurrent("bun build prints a font-family with a generic family keyword as written", async () => {
       using dir = tempDir("css-font-palette-values-keyword", {
         "in.css": [
           "@font-palette-values --a{font-family:emoji;base-palette:1}",

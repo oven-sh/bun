@@ -50,7 +50,7 @@ impl Rule for EmptyBraceSpaces {
     }
 }
 
-/// `braces`: from the `{` to the `}`, with nothing but whitespace and comments in between. `span`: what is reported.
+/// `braces` spans from the `{` to the `}`, with only whitespace and comments in between. `span` is what's reported.
 #[inline(never)]
 fn check(braces: Span, span: Span, replacement: &'static str, cx: &Cx<EmptyBraceSpaces>) {
     if braces.len() > 2 && cx.file().comments_in(span).next().is_none() {

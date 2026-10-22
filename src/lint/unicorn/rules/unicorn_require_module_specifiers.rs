@@ -9,7 +9,7 @@ pub struct RequireModuleSpecifiers;
 
 const EMPTY_SPECIFIER: Message = Message::new("", "Empty {{statement_type}} specifier is not allowed");
 
-/// The first `{` and the next `}` in `span`, if there is nothing but whitespace between them.
+/// The first `{` and the next `}` in `span`, if there's only whitespace between them.
 fn find_empty_braces_in_span<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
     let open_brace = find_next_token_within(file, span, b"{")?;
     let close_brace = find_next_token_within(file, Span::new(open_brace + 1, span.end), b"}")?;

@@ -20,6 +20,9 @@ struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
     // Storage in a sequence is explicitly unsupported, as this would create a
     // `Vector<JSValue>`, whose contents are invisible to the GC.
     using SequenceStorageType = void;
+    using NullableType = JSC::JSValue;
+    using NullableInnerParameterType = JSC::JSValue;
+    static JSC::JSValue nullValue() { return {}; }
 };
 
 // For use in unions, to represent a nullable union.
@@ -28,6 +31,10 @@ struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
 // Treats all falsy values as null.
 template<typename IDL>
 struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
+
+// Treats undefined, null and "" as null.
+template<typename IDL>
+struct IDLEmptyStringAsNull : WebCore::IDLNullable<IDL> {};
 
 enum class AllowBigInt : bool {
     No,
@@ -114,7 +121,7 @@ struct BytesOptions {
     bool refuseStringObject { false };
 };
 
-// `Sink` is JSBytesView, where a string is its UTF-8, or JSBlobOrStringOrBuffer, where it is the WTF::String.
+// `Sink` is JSBytesView, where a string is its UTF-8, JSBlobOrBufferView, which takes none, or JSBlobOrStringOrBuffer, where it is the WTF::String.
 template<typename Sink, BytesOptions>
 struct IDLBytes : WebCore::IDLType<Sink> {
     using SequenceStorageType = void;
@@ -125,9 +132,10 @@ struct IDLBytes : WebCore::IDLType<Sink> {
 
 // A BufferSource as the `JSValue` itself. See IDLRawAny.
 template<bool allowShared>
-struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
-    using SequenceStorageType = void;
-};
+struct IDLRawBufferSource : IDLRawAny {};
+
+// A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
+struct IDLRawCallable : IDLRawAny {};
 
 // An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
 template<typename JSClass>

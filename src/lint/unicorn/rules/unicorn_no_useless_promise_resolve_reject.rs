@@ -16,7 +16,7 @@ pub struct State<'a> {
     /// `resolve`, `reject`
     methods: [Name<'a>; 2],
     nearest_function: AncestorMemo<'a, Func<'a>>,
-    /// Whether there is a `try` statement around something, in the same function.
+    /// Caches whether a node is inside a `try` statement in the same function.
     is_in_try_statement: AncestorMemo<'a, bool>,
 }
 
@@ -119,7 +119,7 @@ impl NoUselessPromiseResolveReject {
                 // `=> Promise.resolve()` -> `=> {}`
                 fixer.replace(e, "{}")
             } else {
-                // All that is after the `return` or the `yield`.
+                // Everything after the `return` or the `yield`.
                 let start = match parent {
                     Node::Stmt(stmt) if stmt.tag() == StmtTag::Return => stmt.span().start + 6,
                     Node::Expr(outer) => outer.span().start + 5,
@@ -131,7 +131,7 @@ impl NoUselessPromiseResolveReject {
     }
 }
 
-/// Directives do not count.
+/// Directives don't count.
 fn is_only_statement_of_function(stmt: Stmt) -> bool {
     let Node::Func(func) = stmt.parent() else {
         return false;
@@ -143,8 +143,8 @@ fn is_only_statement_of_function(stmt: Stmt) -> bool {
         })
 }
 
-/// `e`: the operand of the `yield` that is `parent`. Whether the parent of the parent of `e` is an expression statement
-/// or parentheses, where parentheses are parents.
+/// `e` is the operand of the `yield` expression `parent`. True if `e`'s grandparent is an expression statement or
+/// parentheses, counting parentheses as parents.
 fn is_value_of_yield_discarded(e: Expr, parent: Node) -> bool {
     match (if e.is_parenthesized() { e.parens().len() } else { 0 }, parent) {
         (0, Node::Expr(outer)) => {

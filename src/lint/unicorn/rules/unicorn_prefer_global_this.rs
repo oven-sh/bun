@@ -34,7 +34,7 @@ const WINDOW_SPECIFIC_EVENTS: &[&str] = &[
     "pagehide", "pagereveal", "pageshow", "pageswap", "unload",
 ];
 
-/// `window[a]`, and the properties that only `window` or only the global object of a worker has.
+/// `window[a]`, and the properties that only `window` or only a worker's global object has.
 fn is_allowed(alias: &str, ident: Expr) -> bool {
     let Node::Expr(member) = ident.parent() else {
         return false;
@@ -49,7 +49,7 @@ fn is_allowed(alias: &str, ident: Expr) -> bool {
     match alias {
         "self" => property.is_any(WEB_WORKER_SPECIFIC_APIS),
         "window" if !property.is_any(WINDOW_SPECIFIC_APIS) => false,
-        // Where it is called: only for the events of `window`.
+        // As a callee, it's only allowed for `window`'s own events.
         "window" if property.is_any(&["addEventListener", "removeEventListener", "dispatchEvent"]) => {
             let call = member.parent().as_expr().filter(|_| !member.is_parenthesized() && !member.is_chain_root());
             call.and_then(Expr::as_call).filter(|it| it.callee() == member).is_none_or(|call| {
@@ -84,7 +84,7 @@ impl Rule for PreferGlobalThis {
                     continue;
                 }
                 cx.report(reference.span(), PREFER_GLOBAL_THIS).suggest(REPLACE_ALIAS, |fixer| {
-                    // `typeof window` does not throw where there is no `window`.
+                    // `typeof window` doesn't throw if there's no `window`.
                     let is_typeof = ident.is_some_and(|it| {
                         !it.is_parenthesized()
                             && matches!(it.parent(), Node::Expr(parent) if parent.unary_op() == Some(UnOp::Typeof))

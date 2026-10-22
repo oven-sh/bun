@@ -1,4 +1,4 @@
-//! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`/`timingSafeEqual`
+//! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
 use core::ffi::{c_char, c_void};
@@ -13,7 +13,7 @@ use bun_jsc::{
     JsThread, Protected, Strong,
 };
 
-use crate::node::{Flavor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
+use crate::node::{Flavor, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
 // are by-value `JSValue`, so no caller-side preconditions remain.
@@ -213,10 +213,11 @@ pub(crate) mod random {
         InPlace { bytes: JsPtr<u8>, length: usize },
         /// `randomFill`: the caller's buffer stays untouched until completion;
         /// `scratch` (empty, `size` bytes reserved) is filled off-thread and copied in at `offset` on the JS thread.
+        /// `offset` counts from the start of `memory` if the job has one.
         Scratch {
             scratch: Vec<u8>,
             size: usize,
-            offset: u32,
+            offset: usize,
         },
     }
 
@@ -224,6 +225,8 @@ pub(crate) mod random {
     struct RandomFillJs {
         callback: Strong,
         value: Protected,
+        /// The `WebAssembly.Memory` that `value` is a view of. `grow()` detaches `value`.
+        memory: Option<Protected>,
     }
 
     const MAX_POSSIBLE_LENGTH: usize = {
@@ -270,20 +273,18 @@ pub(crate) mod random {
 
         fn then(this: Self, js: RandomFillJs, cx: &JsThread<'_>) -> JsResult<()> {
             let global = cx.global();
+            let mut args = [JSValue::NULL, js.value.value()];
             if let RandomFillJob::Scratch {
                 scratch, offset, ..
             } = this
             {
-                if let Some(mut buf) = js.value.value().as_array_buffer(global) {
-                    let off = offset as usize;
-                    let dst = buf.slice_mut();
-                    match off.checked_add(scratch.len()) {
-                        Some(end) if end <= dst.len() => {
-                            dst[off..end].copy_from_slice(&scratch);
-                        }
-                        // Buffer was detached/shrunk while the job ran.
-                        _ => {}
-                    }
+                let target = js.memory.as_ref().unwrap_or(&js.value).value();
+                if !ArrayBuffer::write_to_live(target, offset, &scratch) {
+                    let error = global.err(
+                        jsc::ErrorCode::CRYPTO_OPERATION_FAILED,
+                        format_args!("The buffer was detached or resized before it was filled"),
+                    );
+                    args = [error.to_js(), JSValue::UNDEFINED];
                 }
             }
             global.bun_vm().event_loop_mut().run_callback(
@@ -291,7 +292,7 @@ pub(crate) mod random {
                 js.callback.get(),
                 global,
                 JSValue::UNDEFINED,
-                &[JSValue::NULL, js.value.value()],
+                &args,
             );
             Ok(())
         }
@@ -303,6 +304,7 @@ pub(crate) mod random {
         callback: JSValue,
         job: RandomFillJob,
         value: JSValue,
+        memory: Option<JSValue>,
     ) {
         let cx = global.js_thread_of_caller(call_frame);
         Job::<RandomFillJob>::schedule(
@@ -311,6 +313,7 @@ pub(crate) mod random {
             RandomFillJs {
                 callback: Strong::create(callback.with_async_context_if_needed(global), global),
                 value: Protected::new(value),
+                memory: memory.map(Protected::new),
             },
         );
     }
@@ -636,6 +639,7 @@ pub(crate) mod random {
                     length: size as usize,
                 },
                 result,
+                None,
             );
 
             Ok(JSValue::UNDEFINED)
@@ -742,6 +746,7 @@ pub(crate) mod random {
                 return Err(global.throw_out_of_memory());
             }
 
+            let (memory, view_offset) = buf.find_wasm_memory().unzip();
             schedule(
                 global,
                 call_frame,
@@ -749,9 +754,10 @@ pub(crate) mod random {
                 RandomFillJob::Scratch {
                     scratch,
                     size,
-                    offset,
+                    offset: view_offset.unwrap_or(0) + offset as usize,
                 },
                 buf_value,
+                memory,
             );
 
             Ok(JSValue::UNDEFINED)
@@ -821,11 +827,6 @@ mod _impl {
             ] = call_frame.arguments_as_array::<5>();
             let mut maybe_options_value: Option<JSValue> = Some(options_arg);
             let mut callback = callback_arg;
-            let flavor = if IS_ASYNC {
-                Flavor::Async
-            } else {
-                Flavor::Sync
-            };
 
             if IS_ASYNC {
                 if callback.is_undefined() {
@@ -834,13 +835,7 @@ mod _impl {
                 }
             }
 
-            let Some(password) = StringOrBuffer::from_js_maybe_async(
-                global,
-                password_value,
-                flavor,
-                StringObjects::Allow,
-            )?
-            else {
+            let Some(password) = StringOrBuffer::from_js(global, password_value)? else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"password",
                     b"string, ArrayBuffer, Buffer, TypedArray, or DataView",
@@ -848,13 +843,7 @@ mod _impl {
                 ));
             };
 
-            let Some(salt) = StringOrBuffer::from_js_maybe_async(
-                global,
-                salt_value,
-                flavor,
-                StringObjects::Allow,
-            )?
-            else {
+            let Some(salt) = StringOrBuffer::from_js(global, salt_value)? else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"salt",
                     b"string, ArrayBuffer, Buffer, TypedArray, or DataView",
@@ -992,16 +981,18 @@ mod _impl {
 
             ctx.check_scrypt_params(global)?;
 
-            if IS_ASYNC {
-                return Ok((ctx, callback));
-            }
-
+            // An option getter can detach or resize the buffers, so read them again.
             for input in [&mut ctx.password, &mut ctx.salt] {
-                if let StringOrBuffer::Buffer(buffer) = input {
+                if IS_ASYNC {
+                    input.make_thread_isolated_copy(global)?;
+                } else if let StringOrBuffer::Buffer(buffer) = input {
                     buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
                 }
             }
 
+            if IS_ASYNC {
+                return Ok((ctx, callback));
+            }
             Ok((ctx, JSValue::UNDEFINED))
         }
 
@@ -1011,7 +1002,7 @@ mod _impl {
             call_frame: &CallFrame,
         ) -> JsResult<(ThreadIsolated<Self>, JSValue)> {
             let (ctx, callback) = Self::from_js::<true>(global, call_frame)?;
-            // SAFETY: parsed with the async flavor (`from_js::<true>`).
+            // SAFETY: `from_js::<true>` copied the buffers and thread-isolated the strings.
             Ok((unsafe { ThreadIsolated::new(ctx) }, callback))
         }
 
@@ -1183,49 +1174,6 @@ mod _impl {
         }
 
         Ok(out_arraybuffer)
-    }
-
-    #[bun_jsc::host_fn]
-    pub(crate) fn timing_safe_equal(
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [l_value, r_value] = call_frame.arguments_as_array::<2>();
-
-        let Some(l_buf) = l_value.as_array_buffer(global) else {
-            return Err(global
-            .err(
-                ErrorCode::INVALID_ARG_TYPE,
-                format_args!(
-                    "The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
-                ),
-            )
-            .throw());
-        };
-        let l = l_buf.byte_slice();
-
-        let Some(r_buf) = r_value.as_array_buffer(global) else {
-            return Err(global
-            .err(
-                ErrorCode::INVALID_ARG_TYPE,
-                format_args!(
-                    "The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView."
-                ),
-            )
-            .throw());
-        };
-        let r = r_buf.byte_slice();
-
-        if l.len() != r.len() {
-            return Err(global
-                .err(
-                    ErrorCode::CRYPTO_TIMING_SAFE_EQUAL_LENGTH,
-                    format_args!("Input buffers must have the same byte length"),
-                )
-                .throw());
-        }
-
-        Ok(JSValue::from(boringssl::c::constant_time_eq(l, r)))
     }
 
     #[bun_jsc::host_fn]
@@ -1413,11 +1361,8 @@ mod _impl {
                 }
             };
 
-            // The validators admit sizes rust-argon2 would abort on
-            // (`vec![Block::zero(); mem_cost]` and the output Vec allocate
-            // infallibly). Pre-fail the job instead, so both paths deliver
-            // the same catchable error node produces when OpenSSL's argon2
-            // allocation fails.
+            // rust-argon2 ignores the synthetic allocation limit, so check it
+            // here. `hash_raw` reports real allocation failures.
             let limit = jsc::virtual_machine::synthetic_allocation_limit();
             let failed =
                 (memory as usize).saturating_mul(1024) > limit || tag_length as usize > limit;
@@ -1458,8 +1403,8 @@ mod _impl {
             };
             match rust_argon2::hash_raw(&self.message, &self.nonce, &config) {
                 Ok(hash) => self.output = hash,
-                // Unreachable via `node:crypto`: `checkArgon2()` bounds are a
-                // superset of rust-argon2's constraints.
+                // `checkArgon2()` already rejected every parameter rust-argon2
+                // rejects, so this is an allocation failure.
                 Err(_) => self.failed = true,
             }
         }
@@ -1640,17 +1585,6 @@ mod _impl {
                 Default::default(),
             ),
         );
-        crypto.put(
-            global,
-            b"timingSafeEqual",
-            JSFunction::create(
-                global,
-                "timingSafeEqual",
-                __jsc_host_timing_safe_equal,
-                2,
-                Default::default(),
-            ),
-        );
 
         crypto.put(
             global,
@@ -1747,4 +1681,4 @@ mod _impl {
     }
 } // mod _impl
 
-pub(crate) use _impl::{create_node_crypto_binding_zig, timing_safe_equal};
+pub(crate) use _impl::create_node_crypto_binding_zig;

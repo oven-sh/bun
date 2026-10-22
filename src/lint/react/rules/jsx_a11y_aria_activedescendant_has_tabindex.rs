@@ -34,7 +34,7 @@ impl Rule for AriaActivedescendantHasTabindex {
             None if is_interactive_element(&element_type, jsx_opening_el) => return,
             _ => {}
         }
-        // Not `<a.b>`, `<a:b>`, `<this>`, which the settings can make an element of HTML.
+        // Not `<a.b>`, `<a:b>` or `<this>`, which the settings can map to an HTML element.
         let name = jsx_opening_el.tag().filter(|it| match it.kind() {
             ExprKind::Ident(_) => true,
             ExprKind::String(name) => !bun_core::strings::contains_char(name.bytes(), b':'),

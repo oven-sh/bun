@@ -22,7 +22,7 @@ impl Rule for DefaultCaseLast {
             && cases.last() != Some(default)
         {
             let whole = default.span();
-            // oxlint points at the keyword.
+            // oxlint reports at the keyword.
             let end = if cx.language().is_oxlint { whole.start + "default".len() as u32 } else { whole.end };
             cx.report(Span::new(whole.start, end), NOT_LAST);
         }

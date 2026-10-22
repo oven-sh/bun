@@ -1,16 +1,16 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Require the comments that turn rules off and on again to start with one and the same word.
+/// Require comments that turn rules off and back on to start with the same word.
 ///
-/// By default `eslint`, which ESLint, oxlint and `bun lint` all read.
+/// The default is `eslint`, which ESLint, oxlint and `bun lint` all understand.
 pub struct ConsistentDirectivePrefix {
     prefers_oxlint: bool,
 }
 
 const OTHER_PREFIX: Message = Message::new("otherPrefix", "Use `{{expected}}` instead of `{{found}}`.");
 
-/// Whether a comment that starts with a prefix and goes on with `rest` turns rules off or on.
+/// True if a comment that consists of a prefix followed by `rest` turns rules off or on.
 fn is_directive(rest: &[u8]) -> bool {
     let after = rest.strip_prefix(b"-disable").or_else(|| rest.strip_prefix(b"-enable"));
     after.is_some_and(|it| it.first().is_none_or(|next| next.is_ascii_whitespace() || *next == b'-'))

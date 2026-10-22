@@ -500,13 +500,12 @@ describe.skipIf(isWindows).concurrent("dialogs on a non-blocking stdin", () => {
         if (line === null || line === "quit") break;
       }
     `;
-    await using child = spawnWithNonBlockingStdin([
-      "sh",
-      "-c",
-      '"$0" -e "$1" <&3 & exec "$0" -e "$1" <&3',
-      bunExe(),
-      reader,
-    ]);
+    // One reader is the parent of the other one. With BUN_FEATURE_FLAG_NO_ORPHANS, which the test runner sets for a
+    // build with ASAN, it kills its child when it exits.
+    await using child = spawnWithNonBlockingStdin(
+      ["sh", "-c", '"$0" -e "$1" <&3 & exec "$0" -e "$1" <&3', bunExe(), reader],
+      { env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined } },
+    );
     // prompt() writes "q" and " " with two writes, so the two questions can interleave. Count the spaces.
     await child.waitFor(" ");
     await child.waitFor(" ");

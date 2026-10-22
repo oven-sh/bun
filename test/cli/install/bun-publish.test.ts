@@ -511,7 +511,7 @@ describe.concurrent("otp", () => {
   });
 
   // A thread of its own reads ENTER. By the second poll of the done url, 500 ms after the first, it has found no
-  // input.
+  // input. Linux only: macOS opens the page with /usr/bin/open, which a test cannot replace.
   test.skipIf(!isLinux)("ENTER opens the web login page on a non-blocking stdin", async () => {
     const otp = "616161";
     using dir = tempDir("publish-web-login-non-blocking", {

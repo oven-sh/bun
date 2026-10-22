@@ -9363,13 +9363,18 @@ const EAGAIN: ErrorInt = libc::EAGAIN as ErrorInt;
 #[cold]
 #[inline(never)]
 fn read_stdin_when_readable(buf: &mut [u8]) -> core::result::Result<usize, ErrorInt> {
+    // The wait ended and the read after it found no input. Another reader of the same description took it, or the wait
+    // cannot watch this stdin: the kernel reports a descriptor without a poll handler as always readable.
+    let mut waited_for_nothing = false;
     loop {
         wait_for_stdin();
+        // The sleep keeps the loop from spinning. It is after the wait, so that a read that finds nothing goes straight
+        // back to the wait: on macOS, `select` reports the end of a FIFO only until one reader has read that end.
+        if waited_for_nothing {
+            std::thread::sleep(core::time::Duration::from_millis(1));
+        }
         match read(Fd::stdin(), buf).map_err(|e| e.errno) {
-            // Another reader of the same description took the input. Or the wait cannot watch this stdin and returned
-            // at once: the kernel reports a descriptor without a poll handler as always readable. The sleep keeps
-            // the loop from spinning.
-            Err(EAGAIN) => std::thread::sleep(core::time::Duration::from_millis(1)),
+            Err(EAGAIN) => waited_for_nothing = true,
             result => return result,
         }
     }
@@ -9381,22 +9386,27 @@ fn wait_for_stdin() {
     // poll(2) of macOS does not watch every device (`/dev/tty`) and misses the last writer of a FIFO closing.
     #[cfg(target_os = "macos")]
     {
-        let mut readable = core::mem::MaybeUninit::<libc::fd_set>::uninit();
-        // SAFETY: FD_ZERO initializes the whole set, and fd 0 is below FD_SETSIZE.
-        unsafe {
-            libc::FD_ZERO(readable.as_mut_ptr());
-            libc::FD_SET(0, readable.as_mut_ptr());
-        }
-        // SAFETY: `readable` is an initialized set that lives through the call. The other sets and the timeout may be
-        // null.
-        unsafe {
-            libc::select(
-                1,
-                readable.as_mut_ptr(),
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-            );
+        loop {
+            let mut readable = core::mem::MaybeUninit::<libc::fd_set>::uninit();
+            // SAFETY: FD_ZERO initializes the whole set, and fd 0 is below FD_SETSIZE.
+            unsafe {
+                libc::FD_ZERO(readable.as_mut_ptr());
+                libc::FD_SET(0, readable.as_mut_ptr());
+            }
+            // SAFETY: `readable` is an initialized set that lives through the call. The other sets and the timeout
+            // may be null.
+            let ready = unsafe {
+                libc::select(
+                    1,
+                    readable.as_mut_ptr(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            if ready >= 0 || last_errno() != libc::EINTR {
+                break;
+            }
         }
     }
     #[cfg(not(target_os = "macos"))]

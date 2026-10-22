@@ -21,12 +21,8 @@ use bun_core::vec::UninitBuf;
 static debug: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("copy_file", bun_core::output::Visibility::Hidden);
 
-#[cfg(windows)]
-type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
 #[cfg(not(windows))]
 type InputType<'a> = Fd;
-// lifetime param is unused on posix (Fd is Copy); kept so callers
-// can write `InputType<'_>` uniformly across platforms.
 
 // In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
 //
@@ -82,6 +78,7 @@ pub type CopyFileState = EmptyCopyFileState;
 
 type CopyFileReturnType = crate::Result<()>;
 
+#[cfg(not(windows))]
 pub fn copy_file_with_state(
     in_: InputType<'_>,
     out: InputType<'_>,
@@ -210,20 +207,7 @@ pub fn copy_file_with_state(
         }
     }
 
-    #[cfg(windows)]
-    {
-        // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
-        let rc = unsafe { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) };
-        if rc == 0 {
-            return Err(crate::Error::from_win32(
-                crate::windows::Win32Error::get(),
-                Tag::copyfile,
-            ));
-        }
-        return Ok(());
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         // macOS has no posix_fadvise; FreeBSD's matches Linux semantics.
         #[cfg(target_os = "freebsd")]
@@ -244,6 +228,7 @@ pub fn copy_file_with_state(
     }
 }
 
+#[cfg(not(windows))]
 pub fn copy_file(in_: InputType<'_>, out: InputType<'_>) -> CopyFileReturnType {
     let mut state: CopyFileState = CopyFileState::default();
     copy_file_with_state(in_, out, &mut state)
@@ -275,9 +260,11 @@ pub fn copy_file_replacing(in_: &bun_core::WStr, out: &bun_core::WStr) -> CopyFi
     if !exists {
         return Err(crate::Error::from_win32(err, Tag::copyfile));
     }
+    // WTF-8, with any `\\?\` prefix kept: `from_w_path` would turn `\\?\UNC\` into a relative name.
     let mut buf = bun_paths::path_buffer_pool::get();
-    let out_utf8 = bun_paths::string_paths::from_w_path(&mut buf[..], out.as_slice());
-    crate::Dir::cwd().delete_tree(out_utf8.as_bytes())?;
+    let written =
+        bun_core::strings::copy_utf16_into_utf8(&mut buf[..], out.as_slice()).written as usize;
+    crate::Dir::cwd().delete_tree(&buf[..written])?;
     if copy() {
         return Ok(());
     }

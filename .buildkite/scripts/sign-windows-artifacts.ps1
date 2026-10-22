@@ -258,6 +258,11 @@ try {
     }
     Log-Info "Will sign $($ArtifactList.Count) artifacts: $($ArtifactList -join ', ')"
 
+    # smctl runs signtool.exe and exits 0 when it cannot.
+    if (!(Get-Command signtool.exe -ErrorAction SilentlyContinue)) {
+        throw "signtool.exe is not in PATH. Run this script through scripts/vs-shell.ps1."
+    }
+
     Ensure-Secrets
     Setup-Certificate
     $smctl = Install-KeyLocker

@@ -7,7 +7,7 @@ pub struct NoSelfCompare;
 const COMPARING_TO_SELF: Message =
     Message::new("comparingToSelf", "Comparing to itself is potentially pointless.");
 
-/// Whether `text` ends with an escape as a name can have it: `\u0061`, `\u{61}`.
+/// True if `text` ends with an escape that's valid in an identifier: `\u0061`, `\u{61}`.
 fn ends_with_escape(text: &[u8]) -> bool {
     match text {
         [rest @ .., b'}'] => {
@@ -18,8 +18,8 @@ fn ends_with_escape(text: &[u8]) -> bool {
     }
 }
 
-/// Whether the first tokens and the last tokens of the two can be the same, without a look at the
-/// tokens. A name with an escape is the same token as the name it stands for.
+/// Fast check, without tokenizing: true if the two texts may have equal first tokens and equal last tokens. An
+/// identifier with an escape equals the same identifier written without it.
 fn can_have_equal_tokens(left: &[u8], right: &[u8]) -> bool {
     (left.first() == right.first() || left.first() == Some(&b'\\') || right.first() == Some(&b'\\'))
         && (left.last() == right.last() || ends_with_escape(left) || ends_with_escape(right))
@@ -47,13 +47,13 @@ impl Rule for NoSelfCompare {
         let Some((_, left, right)) = e.as_binary() else {
             return;
         };
-        // The same tokens are the same kind of expression.
+        // Equal tokens imply the same kind of expression.
         if left.tag() != right.tag() {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
         let is_same = match left.tag() {
-            // oxlint compares what literals stand for: `"a" === 'a'`, `1.0 === 1`.
+            // oxlint compares the values of literals: `"a" === 'a'`, `1.0 === 1`.
             ExprTag::String if is_oxlint => left.as_string() == right.as_string(),
             ExprTag::Number if is_oxlint => left.as_number() == right.as_number(),
             _ => {

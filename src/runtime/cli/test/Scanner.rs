@@ -100,13 +100,12 @@ impl<'a> Scanner<'a> {
 
     #[inline]
     fn top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
-        unsafe { (*self.fs).top_level_dir }
+        bun_core::top_level_dir()
     }
 
     #[inline]
     fn filename_store(&self) -> &'static fs::FilenameStore {
-        // SAFETY: same as `top_level_dir`.
+        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
         unsafe { (*self.fs).filename_store }
     }
 
@@ -380,7 +379,7 @@ impl<'a> Scanner<'a> {
             }
             fs::EntryKind::File => {
                 // already seen it!
-                if !entry.abs_path.is_empty() {
+                if !entry.abs_path().is_empty() {
                     return;
                 }
 
@@ -416,8 +415,8 @@ impl<'a> Scanner<'a> {
                     Ok(s) => s,
                     Err(_) => bun_core::out_of_memory(),
                 };
-                entry.abs_path = Interned::from_static(stored);
-                self.test_files.push(entry.abs_path);
+                let abs_path = entry.abs_path_or_fill(|| Interned::from_static(stored));
+                self.test_files.push(abs_path);
             }
             fs::EntryKind::Dangling => {}
         }

@@ -61,6 +61,18 @@ impl DeferredRequest {
         }
     }
 
+    /// Ends the response before the deref because until then uWS has an abort callback that points to this node.
+    pub(super) fn abort_and_deref(&mut self) {
+        if let Handler::ServerHandler(saved) = &self.handler {
+            // Releases `prepare_and_save_js_request_context`'s ref. `deref_` releases
+            // `defer_request`'s.
+            saved.ctx.end_with_internal_server_error();
+        } else {
+            self.abort();
+        }
+        self.deref_();
+    }
+
     pub(crate) fn weak_ref(&mut self) {
         debug_assert!(!self.weakly_referenced_by_requestcontext);
         self.weakly_referenced_by_requestcontext = true;
@@ -136,7 +148,7 @@ impl DeferredRequest {
         );
         let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
         match handler {
-            Handler::ServerHandler(saved) => {
+            Handler::ServerHandler(mut saved) => {
                 debug_log_dr!(
                     "  request url: {}",
                     // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
@@ -145,8 +157,8 @@ impl DeferredRequest {
                 saved
                     .ctx
                     .set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
-                // Note: saved.js_request (jsc::Strong) drops at end of arm
-                drop(saved);
+                // Releases `defer_request`'s ref. The context's abort handler has its own.
+                saved.deinit();
             }
             Handler::BundledHtmlPage(r) => {
                 // Reached from JS event-loop tasks (on_plugins_rejected, the
@@ -166,4 +178,15 @@ impl DeferredRequest {
 pub(crate) struct ResponseAndMethod {
     pub response: AnyResponse,
     pub method: Method,
+}
+
+/// A client script request waiting for the in-flight bundle to finish, even if that bundle doesn't include its route.
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct DeferredScriptRequest {
+    pub(super) ref_count: ::core::cell::Cell<u32>,
+    pub(super) route_bundle_index: route_bundle::Index,
+    /// Parsed from the request URL.
+    pub(super) generation: u32,
+    /// `None` once the client has disconnected.
+    pub(super) response: ::core::cell::Cell<Option<ResponseAndMethod>>,
 }

@@ -10,7 +10,7 @@ use bun_lint::utils::estree_parent;
 
 /// Enforces where React component static properties should be positioned.
 pub struct StaticPropertyPlacement {
-    /// upstream's `config`, in the order of `CLASS_PROPERTIES`.
+    /// Upstream's `config`, in `CLASS_PROPERTIES` order.
     config: [Placement; 6],
 }
 
@@ -52,7 +52,7 @@ impl Placement {
 const CLASS_PROPERTIES: [&str; 6] =
     ["propTypes", "defaultProps", "childContextTypes", "contextTypes", "contextType", "displayName"];
 
-/// The values of `propertiesToCheck`, in the order of `CLASS_PROPERTIES`.
+/// The values of `propertiesToCheck`, in `CLASS_PROPERTIES` order.
 const PROPERTIES_TO_CHECK: [fn(Node<'_>) -> bool; 6] = [
     is_prop_types_declaration,
     is_default_props_declaration,
@@ -62,7 +62,7 @@ const PROPERTIES_TO_CHECK: [fn(Node<'_>) -> bool; 6] = [
     is_display_name,
 ];
 
-/// What a declaration can be called. upstream takes a private name for its text, but for `displayName`.
+/// The names a declaration can have. Upstream treats `#a` like `a`, except for `displayName`.
 const NAMES: [&str; 13] = [
     "propTypes",
     "defaultProps",
@@ -79,10 +79,10 @@ const NAMES: [&str; 13] = [
     "#contextType",
 ];
 
-/// With a type, these fields count as `propTypes` and `contextTypes`.
+/// With a type annotation, these fields count as `propTypes` and `contextTypes`.
 const ANNOTATED_FIELDS: [&str; 4] = ["props", "context", "#props", "#context"];
 
-/// What `reportNodeIncorrectlyPositioned` reports.
+/// The data for a `reportNodeIncorrectlyPositioned` report.
 struct Misplaced {
     name: &'static str,
     message: Message,
@@ -110,7 +110,7 @@ impl Rule for StaticPropertyPlacement {
         if !file.has_classes() && !(file.mentions_any(&NAMES) && may_have_explicit_components(file)) {
             return On::new();
         }
-        // Where all are to be assigned, no assignment is wrong.
+        // If every property is configured as a property assignment, no assignment can be wrong.
         let is_any_in_the_class = self.config.iter().any(|it| *it != Placement::PropertyAssignment);
         match is_any_in_the_class && file.mentions_any(&NAMES) {
             true => Self::ON,
@@ -160,7 +160,7 @@ impl Rule for StaticPropertyPlacement {
 }
 
 impl StaticPropertyPlacement {
-    /// upstream's `reportNodeIncorrectlyPositioned`, but for the report.
+    /// Upstream's `reportNodeIncorrectlyPositioned`, minus the report itself.
     fn misplaced(&self, node: Node<'_>, expected_rule: Placement, is_static: bool) -> Option<Misplaced> {
         let property = PROPERTIES_TO_CHECK.iter().position(|is_declaration| is_declaration(node))?;
         let configured = *self.config.get(property)?;
@@ -183,13 +183,13 @@ fn is_display_name(node: Node<'_>) -> bool {
     }
 }
 
-/// Whether a getter is a `MethodDefinition` with `static`.
+/// True if a getter is a `static` `MethodDefinition`.
 fn is_static_getter(member: Member<'_>) -> bool {
     let flags = member.flags();
     flags.contains(Flags::STATIC) && !flags.contains(Flags::ABSTRACT) && !member.is_signature()
 }
 
-/// Whether there is a `node.parent.right`, which can be `node` itself.
+/// True if `node.parent.right` exists. It can be `node` itself.
 fn parent_has_right(node: Expr<'_>) -> bool {
     if node.is_chain_root() {
         return false;
@@ -209,7 +209,7 @@ fn parent_has_right(node: Expr<'_>) -> bool {
     }
 }
 
-/// upstream's `isContextInClass`: in a class declaration, not in a class expression.
+/// Upstream's `isContextInClass`. Only class declarations count, not class expressions.
 fn is_context_in_class(node: Expr<'_>) -> bool {
     let mut scopes = Node::Expr(node).scope().chain();
     scopes.any(|scope| matches!(scope.node(), Node::Class(class) if matches!(class.owner(), Node::Stmt(_))))

@@ -1904,6 +1904,13 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
         ranges = new_ranges;
     }
+    if current_line <= target_line {
+        let _ = ranges.push(LineRange {
+            start: prev_end,
+            // Wrapping cast.
+            end: text.len() as u32,
+        }); // OOM/capacity: fire-and-forget
+    }
 
     ranges
 }

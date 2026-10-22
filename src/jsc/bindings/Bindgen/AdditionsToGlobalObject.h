@@ -16,7 +16,7 @@ struct AdditionsToGlobalObject {
             lazyClass.visit(visitor);
     }
 
-    // By index into Tables::classes.
+    // By `classIndex`.
     JSC::LazyClassStructure m_classes[Counts::numberOfClasses];
 };
 

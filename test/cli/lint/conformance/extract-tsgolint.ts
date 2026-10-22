@@ -1,15 +1,16 @@
-// Turns the test cases of tsgolint (`internal/rules/*/*_test.go`) into input for `extra-cases.ts`. Only the inputs are
-// taken: what tsgolint expects for them is not, because typescript-eslint is the judge.
+// Turns tsgolint's test cases (`internal/rules/*/*_test.go`) into input for `extra-cases.ts`. Only the inputs are used.
+// tsgolint's expectations are ignored, because typescript-eslint decides what's correct.
 //
 //   bun extract-tsgolint.ts --tsgolint <checkout> --out <dir> [--fixtures <dir>] [rule...]
 //
-// Writes `<dir>/typescript-eslint/<rule>.json` for every rule that `fixtures/` has, and `<dir>/stats.json`. A case whose
-// code and options equal those of an upstream case is dropped.
+// Writes `<dir>/typescript-eslint/<rule>.json` for every rule in `fixtures/`, and `<dir>/stats.json`. A case with the
+// same code and options as an upstream case is dropped.
 //
-// The tests are Go: composite literals `{Code: "..", Options: .., TSConfig: "..", Tsx: true, FileName: ".."}`. They are read
-// by a scanner that knows the literals of Go and little else. `Options` is `rule_tester.OptionsFromJSON[T](json)`, or a
-// struct whose fields are typescript-eslint's names with a capital. A case with anything more (a variable, a function
-// call) is counted in `unparsed`, one with `Files` or with a tsconfig that upstream's project does not have in `unsupported`.
+// The tests are Go composite literals: `{Code: "..", Options: .., TSConfig: "..", Tsx: true, FileName: ".."}`. The
+// scanner that reads them understands Go literals and little else. `Options` is `rule_tester.OptionsFromJSON[T](json)`,
+// or a struct whose fields are typescript-eslint's option names, capitalized. A case with anything else (a variable, a
+// function call) is counted in `unparsed`. A case with `Files`, or with a tsconfig that upstream's project doesn't
+// have, is counted in `unsupported`.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -69,7 +70,7 @@ class Unparsed extends Error {}
 const OPEN = "([{";
 const CLOSE = ")]}";
 
-/** The index behind the value that starts at `from`: of the `,` or of the closing bracket. */
+/** Returns the index of the `,` or closing bracket that ends the value starting at `from`. */
 function endOfValue(tokens: Token[], from: number): number {
   let depth = 0;
   for (let i = from; i < tokens.length; i++) {
@@ -83,7 +84,7 @@ function endOfValue(tokens: Token[], from: number): number {
   return tokens.length;
 }
 
-/** `{Key: value, ..}` with `open` at the brace: the token range of each value. `null` if it is not that. */
+/** Returns each value's token range in the `{Key: value, ..}` whose brace is at `open`, or `null` if it isn't one. */
 function fieldsOf(tokens: Token[], open: number): { fields: Map<string, [number, number]>; end: number } | null {
   const fields = new Map<string, [number, number]>();
   let at = open + 1;
@@ -111,7 +112,7 @@ function stringOf(tokens: Token[], [from, to]: [number, number]): string {
 
 const lowerFirst = (name: string) => name[0].toLowerCase() + name.slice(1);
 
-/** A value in a struct of options. */
+/** Evaluates a value in an options struct. */
 function valueOf(tokens: Token[], [from, to]: [number, number]): unknown {
   const first = tokens[from];
   if (to - from === 1) {
@@ -129,7 +130,7 @@ function valueOf(tokens: Token[], [from, to]: [number, number]): unknown {
     let at = from + 2;
     while (tokens[at].text !== "{") at++;
     const items: unknown[] = [];
-    for (at++; at < to - 1; ) {
+    for (at++; at < to - 1;) {
       const end = endOfValue(tokens, at);
       items.push(valueOf(tokens, [at, end]));
       at = end + 1;
@@ -198,13 +199,13 @@ interface Stats {
   kept: number;
 }
 
-/** They stand for the `tsconfig.json` of upstream's project, which has the types of Node.js. */
+/** tsgolint's equivalents of the `tsconfig.json` in upstream's project, which includes the Node.js types. */
 const DEFAULT_TSCONFIGS = ["tsconfig.minimal.json", "tsconfig.json", "tsconfig.includeTypes.json"];
 
 function casesOfFile(source: string, label: string, project: string, stats: Stats): Case[] {
   const tokens = tokenizeGo(source);
   const cases: Case[] = [];
-  // The tsconfig that `RunRuleTester(root, "tsconfig.json", ..)` gives to the cases that name none.
+  // `RunRuleTester(root, "tsconfig.json", ..)` sets the tsconfig for cases that don't have their own.
   const runs: { start: number; tsconfig: string }[] = [];
   tokens.forEach((token, i) => {
     if (token.text !== "RunRuleTester" || tokens[i + 1]?.text !== "(") return;
@@ -230,7 +231,10 @@ function casesOfFile(source: string, label: string, project: string, stats: Stat
       if (fields.has("Tsx") && valueOf(tokens, fields.get("Tsx")!) === true) parserOptions.ecmaFeatures = { jsx: true };
       if (fields.has("FileName")) made.filename = stringOf(tokens, fields.get("FileName")!);
       const run = runs.findLast(it => it.start < tokens[i].start) ?? runs[0];
-      const tsconfig = (fields.has("TSConfig") ? stringOf(tokens, fields.get("TSConfig")!) : run?.tsconfig)?.replace(/^\.\//, "");
+      const tsconfig = (fields.has("TSConfig") ? stringOf(tokens, fields.get("TSConfig")!) : run?.tsconfig)?.replace(
+        /^\.\//,
+        "",
+      );
       stats.parsed++;
       if (tsconfig === "tsconfig.unstrict.json") {
         Object.assign(parserOptions, { tsconfigRootDir: "unstrict", projectService: true });

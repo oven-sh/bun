@@ -1,4 +1,4 @@
-//! What the functions in upstream's `callAllowed` return.
+//! Evaluates calls of the functions in upstream's `callAllowed`.
 
 use super::builtins::{Builtin, Member, get_member, set_property};
 use super::js_number::{parse_float, parse_int, to_int32, to_radix_string, to_uint32};
@@ -35,7 +35,7 @@ fn text_of_units<'a>(units: &[u16]) -> Eval<StaticValue<'a>> {
     Ok(StaticValue::string(strings::wtf16_to_wtf8(units)))
 }
 
-/// An index that counts from the end if it is negative, within `0..=len`.
+/// Clamps an index to `0..=len`. A negative index counts from the end.
 fn relative_index(index: f64, len: usize) -> usize {
     match index < 0.0 {
         true => (len as f64 + index).max(0.0) as usize,
@@ -43,7 +43,7 @@ fn relative_index(index: f64, len: usize) -> usize {
     }
 }
 
-/// `relative_index` of an argument, or `default` if that is `undefined`.
+/// `relative_index` of an argument, or `default` if it's `undefined`.
 fn relative_arg(value: &StaticValue<'_>, len: usize, default: usize) -> Eval<usize> {
     match value {
         StaticValue::Undefined => Ok(default),
@@ -51,12 +51,12 @@ fn relative_arg(value: &StaticValue<'_>, len: usize, default: usize) -> Eval<usi
     }
 }
 
-/// An index within `0..=len`.
+/// An index clamped to `0..=len`.
 fn clamped_index(value: &StaticValue<'_>, len: usize) -> Eval<usize> {
     Ok(value.to_integer()?.clamp(0.0, len as f64) as usize)
 }
 
-/// The index that `at(index)` is about.
+/// The index that `at(index)` reads.
 fn at_index(index: &StaticValue<'_>, len: usize) -> Eval<Option<usize>> {
     let index = index.to_integer()?;
     let index = if index < 0.0 {
@@ -67,7 +67,7 @@ fn at_index(index: &StaticValue<'_>, len: usize) -> Eval<Option<usize>> {
     Ok((index >= 0.0 && index < len as f64).then_some(index as usize))
 }
 
-/// An element of an array as it is read: a hole is `undefined`.
+/// Reads an array element. A hole reads as `undefined`.
 fn element<'a>(item: &StaticValue<'a>) -> StaticValue<'a> {
     match item {
         StaticValue::Hole => StaticValue::Undefined,
@@ -79,7 +79,7 @@ fn pair<'a>(a: StaticValue<'a>, b: StaticValue<'a>) -> StaticValue<'a> {
     StaticValue::Array(vec![a, b])
 }
 
-/// What `[...value]` consists of.
+/// The elements of `[...value]`.
 pub(super) fn iterate<'a>(value: &StaticValue<'a>) -> Eval<Vec<StaticValue<'a>>> {
     Ok(match value {
         StaticValue::Array(items) => items.iter().map(element).collect(),
@@ -100,7 +100,7 @@ pub(super) fn iterate<'a>(value: &StaticValue<'a>) -> Eval<Vec<StaticValue<'a>>>
     })
 }
 
-/// The own enumerable properties of `ToObject(value)` that are named by strings.
+/// The own enumerable string-keyed properties of `ToObject(value)`.
 pub(super) fn own_enumerable<'a>(
     value: &StaticValue<'a>,
 ) -> Eval<Vec<(Cow<'a, [u8]>, StaticValue<'a>)>> {
@@ -150,7 +150,7 @@ pub(super) fn string_raw<'a>(
     Ok(StaticValue::string(text))
 }
 
-/// `function.call(this, ...args)` for any value of `function`, as the standard library calls a
+/// `function.call(this, ...args)` for any value of `function`, the way the standard library calls a
 /// callback.
 fn call_value<'a>(
     function: &StaticValue<'a>,
@@ -168,9 +168,8 @@ fn call_value<'a>(
     }
 }
 
-/// Whether one of `values`, or an element of one that is an array, is `Array.prototype` or the
-/// like. Functions treat them as the array, the wrapper of a string, .. that they are, which is
-/// not modeled.
+/// True if one of `values`, or an element of one that's an array, is `Array.prototype` or the like.
+/// Functions treat those as the array, string wrapper, .. that they are, which isn't modeled.
 fn has_prototype(values: &[StaticValue<'_>]) -> bool {
     values.iter().any(|value| match value {
         StaticValue::Builtin(builtin) => builtin.is_prototype(),
@@ -238,7 +237,7 @@ pub(super) fn call<'a>(
                 .collect(),
         )),
         "Object.is" => boolean(first.same_value(arg(args, 1))?),
-        // Nothing here is frozen: `Object.freeze(a)` has the value of `a`.
+        // Nothing here is frozen, because `Object.freeze(a)` evaluates to `a`.
         "Object.isExtensible" => boolean(first.is_object()),
         "Object.isFrozen" | "Object.isSealed" => boolean(!first.is_object()),
         "RegExp" => construct(function, args),
@@ -299,7 +298,7 @@ pub(super) fn call<'a>(
         "unescape" => text_of_units(&unescape(&strings::wtf8_to_utf16(&first.to_string()?))),
         "isFinite" => boolean(first.to_number()?.is_finite()),
         "isNaN" => boolean(first.to_number()?.is_nan()),
-        // Nothing that is made by evaluating an expression is the prototype of anything.
+        // Nothing created by evaluating an expression is anything's prototype.
         "isPrototypeOf"
             if !first.is_object()
                 || (this.is_object() && !matches!(this, StaticValue::Builtin(_))) =>
@@ -311,11 +310,12 @@ pub(super) fn call<'a>(
             let text = first.to_string()?;
             number(parse_int(&text, to_int32(arg(args, 1).to_number()?)).ok_or(Stop::Abort)?)
         }
-        // A string, whatever the arguments are. Which one depends on the time and the time zone.
+        // A string, regardless of the arguments. Its content depends on the time and the time zone.
         "Date" => Ok(StaticValue::string(
             &b"Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)"[..],
         )),
-        // `Date.parse`, whose result depends on the time zone, and what throws without `new`.
+        // `Date.parse`, whose result depends on the time zone, and anything that throws without
+        // `new`.
         _ => Err(Stop::Abort),
     }
 }
@@ -392,12 +392,12 @@ pub(super) fn construct<'a>(function: Builtin, args: Args<'_, 'a>) -> Eval<Stati
             };
             new_regex(pattern, &flags).ok_or(Stop::Abort)
         }
-        // `Date`, and what is not a constructor.
+        // `Date`, and anything that isn't a constructor.
         _ => Err(Stop::Abort),
     }
 }
 
-/// `regex.flags` for a regular expression that is made with `flags`. `None` if they are not valid.
+/// `regex.flags` for a regular expression created with `flags`. `None` if they aren't valid.
 pub(super) fn sorted_flags(flags: &[u8]) -> Option<Cow<'_, [u8]>> {
     const ORDER: &[u8] = b"dgimsuvy";
     let sorted: Vec<u8> = ORDER
@@ -422,7 +422,7 @@ fn new_regex<'a>(pattern: Cow<'a, [u8]>, flags: &[u8]) -> Option<StaticValue<'a>
     let flags: Cow<'a, [u8]> = Cow::Owned(sorted_flags(flags)?.into_owned());
     validate_pattern(
         &pattern,
-        Mode::of_flags(&flags),
+        Mode::from_flags(&flags),
         Options::default(),
         &mut Ignore,
     )
@@ -433,7 +433,7 @@ fn new_regex<'a>(pattern: Cow<'a, [u8]>, flags: &[u8]) -> Option<StaticValue<'a>
     })
 }
 
-/// The keys of a `Map` and the elements of a `Set` have no `-0`.
+/// `Map` keys and `Set` elements never hold `-0`.
 fn without_negative_zero(value: StaticValue<'_>) -> StaticValue<'_> {
     match value {
         // `-0.0 + 0.0` is `0.0`.
@@ -442,7 +442,7 @@ fn without_negative_zero(value: StaticValue<'_>) -> StaticValue<'_> {
     }
 }
 
-/// Where in `items` the `SameValueZero` of `value` is.
+/// The index in `items` of the element that's `SameValueZero`-equal to `value`.
 fn find_same<'v, 'a: 'v>(
     items: impl Iterator<Item = &'v StaticValue<'a>>,
     value: &StaticValue<'a>,
@@ -517,7 +517,7 @@ fn string_method<'a>(
 
     let units = strings::wtf8_to_utf16(text);
     let len = units.len();
-    // The argument of the methods that throw if they are given a regular expression.
+    // The argument of the methods that throw when they're passed a regular expression.
     let search_text = || match first {
         StaticValue::Regex { .. } => Err(Stop::Abort),
         _ => Ok(strings::wtf8_to_utf16(&first.to_string()?)),
@@ -669,7 +669,7 @@ fn array_method<'a>(
 ) -> Eval<StaticValue<'a>> {
     let (first, second) = (arg(args, 0), arg(args, 1));
     let len = items.len();
-    // Whether the callback accepts the element at `i`.
+    // True if the callback accepts the element at `i`.
     let test = |i: usize, item: &StaticValue<'a>| -> Eval<bool> {
         let args = [
             element(item),
@@ -686,7 +686,7 @@ fn array_method<'a>(
     };
     let iterator =
         |items: Vec<StaticValue<'a>>| Ok(StaticValue::Iterator(IteratorKind::Array, items));
-    // An array without elements still requires a function.
+    // Even an empty array requires a function.
     if matches!(
         name,
         b"every" | b"some" | b"filter" | b"find" | b"findIndex"
@@ -738,13 +738,13 @@ fn array_method<'a>(
             boolean(false)
         }
         b"filter" => {
-            let mut kept = Vec::new();
+            let mut filtered = Vec::new();
             for (i, item) in present() {
                 if test(i, item)? {
-                    kept.push(item.clone());
+                    filtered.push(item.clone());
                 }
             }
-            Ok(StaticValue::Array(kept))
+            Ok(StaticValue::Array(filtered))
         }
         b"find" | b"findIndex" => {
             for (i, item) in items.iter().enumerate() {
@@ -877,7 +877,7 @@ pub(super) fn pow(base: f64, exponent: f64) -> f64 {
     base.powf(exponent)
 }
 
-/// The nearest number that has 11 significant bits and an exponent of 5 bits.
+/// The nearest number with 11 significant bits and a 5-bit exponent.
 fn round_to_half_precision(x: f64) -> f64 {
     if !x.is_finite() || x == 0.0 {
         return x;
@@ -892,8 +892,8 @@ fn round_to_half_precision(x: f64) -> f64 {
     }
 }
 
-/// `Math[name](...args)`. The last digit of what is not rounded correctly by every implementation,
-/// such as `Math.sin`, can differ from that of a JavaScript engine.
+/// `Math[name](...args)`. For functions that not every implementation rounds correctly, such as
+/// `Math.sin`, the last digit can differ from a JavaScript engine's.
 fn math<'a>(name: &str, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
     let numbers: Vec<f64> = args
         .iter()
@@ -986,8 +986,8 @@ fn push_percent_escape(text: &mut Vec<u8>, byte: u8) {
     text.extend_from_slice(&hex_byte_upper(byte));
 }
 
-/// `Encode`: `encodeURI` and `encodeURIComponent`, which leave letters, digits and `unescaped` as
-/// they are. It throws for half a surrogate pair.
+/// `Encode`: `encodeURI` and `encodeURIComponent`, which don't escape letters, digits and
+/// `unescaped`. It throws for a lone surrogate.
 fn encode_uri<'a>(text: &[u8], unescaped: &[u8]) -> Eval<StaticValue<'a>> {
     if std::str::from_utf8(text).is_err() {
         return Err(Stop::Abort);

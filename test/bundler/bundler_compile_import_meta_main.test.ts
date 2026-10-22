@@ -1,70 +1,79 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, isCI, isDebug, tempDir } from "harness";
-import { join } from "path";
+import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
-// The limit that `itBundled` gives a compile case.
-const compileTimeout = isCI ? undefined : isDebug ? Infinity : 30_000;
+// Starts a Worker and gives its first message.
+const startWorker = /* js */ `
+  function startWorker(file: string): Promise<unknown> {
+    return new Promise(resolve => {
+      const worker = new Worker(file);
+      worker.onmessage = event => {
+        resolve(event.data);
+        worker.terminate();
+      };
+      worker.onerror = event => resolve("error: " + event.message);
+    });
+  }
+`;
 
 // These cases are not in bundler_compile.test.ts. That file takes about 230 s on Windows arm64,
 // and the test runner stops a bundler_compile file at 300 s.
 describe("bundler", () => {
-  // An executable runs its first entry point as the main module. In a Worker, import.meta.main is
-  // false, as with `bun run`. This is true for the worker's own entry point, and for the copy of the
-  // first entry point that the worker's bundle holds because the worker imports it.
-  for (const format of ["esm", "cjs"] as const) {
-    itBundled("compile/ImportMetaMainInWorker+" + format, {
-      backend: "cli",
-      compile: true,
-      format,
-      files: {
-        "/entry.ts": /* js */ `
-          export function isMain() {
-            return import.meta.main;
-          }
-          if (Bun.isMainThread) {
-            const worker = new Worker("./worker.ts");
-            worker.onmessage = event => {
-              console.log(JSON.stringify({ main: import.meta.main, ...event.data }));
-              worker.terminate();
-            };
-          }
-        `,
-        "/worker.ts": /* js */ `
-          import { isMain } from "./entry.ts";
-          postMessage({ worker: import.meta.main, entryInWorker: isMain() });
-        `,
-      },
-      entryPointsRaw: ["./entry.ts", "./worker.ts"],
-      outfile: "dist/out",
-      run: { stdout: '{"main":true,"worker":false,"entryInWorker":false}', file: "dist/out", setCwd: true },
-    });
-  }
-  // With --splitting, the first entry point's module moves to a shared chunk when another entry
-  // point imports it. In the main thread, it is still the main module.
-  itBundled("compile/ImportMetaMainInWorker+splitting", {
-    backend: "cli",
+  // Without code splitting, the output of an entry point holds a copy of each module that it
+  // imports. A copy of another entry point is not the main module, as with `bun run app.ts`.
+  itBundled("edgecase/ImportMetaMainInCopyOfEntryPoint", {
+    files: {
+      "/cli.ts": /* js */ `
+        export const cliIsMain = import.meta.main;
+        if (import.meta.main) console.log("cli.ts ran as the main module");
+      `,
+      "/app.ts": /* js */ `
+        import { cliIsMain } from "./cli.ts";
+        console.log(JSON.stringify({ cliIsMain, appIsMain: import.meta.main }));
+      `,
+    },
+    entryPoints: ["/cli.ts", "/app.ts"],
+    target: "bun",
+    outdir: "/out",
+    run: { file: "/out/app.js", stdout: '{"cliIsMain":false,"appIsMain":true}' },
+  });
+
+  // The worker imports the first entry point, so the bundle of the worker holds a copy of it. The
+  // copy is not the main module. If it were, a worker that the first entry point starts under
+  // `if (import.meta.main)` starts a worker too, and so on until the process aborts.
+  const workerImportsFirstEntryPoint = {
     compile: true,
-    splitting: true,
     files: {
       "/entry.ts": /* js */ `
+        ${startWorker}
+        export function isMain() {
+          return [import.meta.main, require.main === module];
+        }
         if (Bun.isMainThread) {
-          const worker = new Worker("./worker.ts");
-          worker.onmessage = event => {
-            console.log(JSON.stringify({ main: import.meta.main, ...event.data }));
-            worker.terminate();
-          };
+          startWorker("./worker.ts").then(entryInWorker => console.log(JSON.stringify({ main: isMain(), entryInWorker })));
         }
       `,
       "/worker.ts": /* js */ `
-        import "./entry.ts";
-        postMessage({ worker: import.meta.main });
+        import { isMain } from "./entry.ts";
+        postMessage(isMain());
       `,
     },
     entryPointsRaw: ["./entry.ts", "./worker.ts"],
     outfile: "dist/out",
-    run: { stdout: '{"main":true,"worker":false}', file: "dist/out", setCwd: true },
-  });
+    run: { stdout: '{"main":[true,true],"entryInWorker":[false,false]}', file: "dist/out", setCwd: true },
+  };
+  itBundled("compile/ImportMetaMainInWorker", { ...workerImportsFirstEntryPoint, backend: "cli" });
+  // `--bytecode` makes CommonJS output. `Bun.build` does not inline `import.meta.main`, and its
+  // CommonJS output prints `require.main == module`, which is true in the entry module of a Worker.
+  for (const backend of ["cli", "api"] as const) {
+    for (const bytecode of [false, true]) {
+      itBundled(`compile/ImportMetaMainInWorker+${backend}+cjs${bytecode ? "+bytecode" : ""}`, {
+        ...workerImportsFirstEntryPoint,
+        backend,
+        format: "cjs",
+        bytecode,
+      });
+    }
+  }
   // With --minify-syntax, the literal for `import.meta.main` prints as `!0` or `!1`. On the left of
   // `**`, it needs parentheses. The parser folds `!import.meta.main` into the same node.
   itBundled("compile/ImportMetaMainExponentMinified", {
@@ -79,75 +88,63 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "1 0", file: "dist/out", setCwd: true },
   });
-  // The bundler lowers `require.main === module` to `import.meta.main`. So a CommonJS Worker entry
-  // point also sees false, as in the output of `Bun.build` and `bun build --outdir`.
-  itBundled("compile/RequireMainInCommonJSWorker", {
+  // An entry point that another entry point imports is copied into the bundle of that entry point.
+  // The copy is not the main module. The first entry point is: the linker inlines `true` there.
+  itBundled("compile/ImportMetaMainEntryImportedByOtherEntry", {
     backend: "cli",
     compile: true,
     files: {
       "/entry.ts": /* js */ `
-        const worker = new Worker("./worker.cjs");
-        worker.onmessage = event => {
-          console.log(JSON.stringify({ main: require.main === module, worker: event.data }));
-          worker.terminate();
+        import lib from "./lib.cjs";
+        console.log(JSON.stringify(lib), (() => import.meta.main).toString().includes("true"));
+      `,
+      "/lib.cjs": /* js */ `
+        module.exports = {
+          isMain: require.main === module,
+          cli: (function () { if (require.main === module) return "CLI-RAN"; return "lib"; })(),
         };
       `,
-      "/worker.cjs": /* js */ `postMessage(require.main === module);`,
     },
-    entryPointsRaw: ["./entry.ts", "./worker.cjs"],
+    entryPointsRaw: ["./entry.ts", "./lib.cjs"],
     outfile: "dist/out",
-    run: { stdout: '{"main":true,"worker":false}', file: "dist/out", setCwd: true },
+    run: { stdout: '{"isMain":false,"cli":"lib"} true', file: "dist/out", setCwd: true },
   });
-  // An entry point that another entry point imports is copied into the bundle of that entry point.
-  // The copy is not the main module. The first entry point keeps the inlined `true`.
-  for (const format of ["esm", "cjs"] as const) {
-    itBundled("compile/ImportMetaMainEntryImportedByOtherEntry+" + format, {
-      backend: "cli",
-      compile: true,
-      format,
-      files: {
-        "/entry.ts": /* js */ `
-          import lib from "./lib.cjs";
-          console.log(JSON.stringify(lib), (() => import.meta.main).toString().includes("true"));
-        `,
-        "/lib.cjs": /* js */ `
-          module.exports = {
-            isMain: require.main === module,
-            cli: (function () { if (require.main === module) return "CLI-RAN"; return "lib"; })(),
-          };
-        `,
-      },
-      entryPointsRaw: ["./entry.ts", "./lib.cjs"],
-      outfile: "dist/out",
-      run: { stdout: '{"isMain":false,"cli":"lib"} true', file: "dist/out", setCwd: true },
-    });
-  }
-  // `Bun.build({ compile })` does not inline `import.meta.main` in its entry points, but the copy is `false` there too.
-  test(
-    "Bun.build: a copy of an entry point in the bundle of another entry point is not the main module",
-    async () => {
-      using dir = tempDir("compile-import-meta-main-api", {
-        "entry.ts": `import lib from "./lib.cjs";\nconsole.log(JSON.stringify(lib));`,
-        "lib.cjs": `module.exports = { isMain: require.main === module };`,
-      });
-
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "entry.ts"), join(String(dir), "lib.cjs")],
-        compile: { outfile: join(String(dir), "app") },
-      });
-      expect(result.success).toBe(true);
-
-      await using proc = Bun.spawn({ cmd: [result.outputs[0].path], env: bunEnv, stdout: "pipe", stderr: "inherit" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-      expect(stdout).toBe('{"isMain":false}\n');
-      expect(exitCode).toBe(0);
+  // With two JavaScript entry points, the parser does not inline `import.meta.main`, because a copy
+  // needs the other value. So it cannot drop a branch that only a copy runs, and an import there
+  // must resolve. `--external` keeps such an import out of the bundle.
+  itBundled("compile/ImportMetaMainBranchOfCopyIsBundled", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `if (!import.meta.main) require("this-package-is-not-installed");`,
+      "/worker.ts": /* js */ `postMessage("worker");`,
     },
-    compileTimeout,
-  );
-  // The main module is the first server-side JavaScript entry point. An HTML entry point is for
-  // the browser, and a CSS entry point has no JavaScript. With one JavaScript entry point, the
-  // parser still drops the branch that cannot run.
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    bundleErrors: {
+      "/entry.ts": ['Could not resolve: "this-package-is-not-installed". Maybe you need to "bun install"?'],
+    },
+  });
+  // A module graph of its own has a main module of its own: the first module that it imports.
+  itBundled("compile/ImportMetaMainInModuleGraph", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const graph = new Bun.ModuleGraph({});
+        const tenant = await graph.import(new URL("./tenant.ts", import.meta.url).href);
+        console.log(JSON.stringify({ main: import.meta.main, tenant: tenant.isMain }));
+        graph.dispose();
+      `,
+      "/tenant.ts": /* js */ `export const isMain = import.meta.main;`,
+    },
+    entryPointsRaw: ["./entry.ts", "./tenant.ts"],
+    outfile: "dist/out",
+    run: { stdout: '{"main":true,"tenant":true}', file: "dist/out", setCwd: true },
+  });
+  // An HTML entry point is for the browser, and a CSS entry point has no JavaScript. With one
+  // JavaScript entry point, no bundle can hold a copy of it. The parser still inlines `true` and
+  // drops the branch that cannot run.
   itBundled("compile/ImportMetaMainAfterHtmlAndCssEntryPoints", {
     backend: "cli",
     compile: true,
@@ -156,14 +153,111 @@ describe("bundler", () => {
       "/client.ts": /* js */ `console.log("client");`,
       "/style.css": /* css */ `body { color: red; }`,
       "/server.ts": /* js */ `
-        const branch = () => {
-          if (!import.meta.main) return "not main";
-        };
-        console.log(JSON.stringify({ main: import.meta.main, folded: !branch.toString().includes("not main") }));
+        if (!import.meta.main) require("this-package-is-not-installed");
+        console.log(JSON.stringify({ main: import.meta.main }));
       `,
     },
-    entryPointsRaw: ["./index.html", "./style.css", "./server.ts"],
+    entryPointsRaw: ["./index.html", "./style.css", "./server.ts", "./server.ts"],
     outfile: "dist/out",
-    run: { stdout: '{"main":true,"folded":true}', file: "dist/out", setCwd: true },
+    run: { stdout: '{"main":true}', file: "dist/out", setCwd: true },
+  });
+  // With a second JavaScript entry point after them, a copy is possible again.
+  itBundled("compile/ImportMetaMainInWorkerAfterHtmlAndCssEntryPoints", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/index.html": /* html */ `<!doctype html><html><head><script type="module" src="./client.ts"></script></head></html>`,
+      "/client.ts": /* js */ `console.log("client");`,
+      "/style.css": /* css */ `body { color: red; }`,
+      "/server.ts": /* js */ `
+        ${startWorker}
+        export const serverIsMain = import.meta.main;
+        if (Bun.isMainThread) {
+          startWorker("./worker.ts").then(serverInWorker => console.log(JSON.stringify({ main: serverIsMain, serverInWorker })));
+        }
+      `,
+      "/worker.ts": /* js */ `
+        import { serverIsMain } from "./server.ts";
+        postMessage(serverIsMain);
+      `,
+    },
+    entryPointsRaw: ["./index.html", "./style.css", "./server.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: '{"main":true,"serverInWorker":false}', file: "dist/out", setCwd: true },
+  });
+  // The worker imports only "helper" from a file that also exports from the first entry point. The
+  // bundler reads that other export when a file that the first entry point imports asks for it.
+  // After that, the bundle of the worker holds a copy of the first entry point.
+  itBundled("compile/ImportMetaMainInCopyThroughBarrelFile", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        ${startWorker}
+        import { command } from "./command.ts";
+        export function run() {
+          return "run";
+        }
+        globalThis.entryIsMain = [import.meta.main, command() === run];
+        if (Bun.isMainThread) {
+          const main = globalThis.entryIsMain;
+          startWorker("./worker.ts").then(worker => console.log(JSON.stringify({ main, worker })));
+        }
+      `,
+      "/command.ts": /* js */ `
+        import { run } from "./lib/index.ts";
+        export function command() {
+          return run;
+        }
+      `,
+      "/worker.ts": /* js */ `
+        import { helper } from "./lib/index.ts";
+        postMessage([helper, globalThis.entryIsMain]);
+      `,
+      "/lib/index.ts": /* js */ `
+        export { run } from "../entry.ts";
+        export { helper } from "./helper.ts";
+      `,
+      "/lib/helper.ts": /* js */ `export const helper = "helper";`,
+      "/lib/package.json": `{ "name": "lib", "sideEffects": false }`,
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: '{"main":[true,true],"worker":["helper",[false,true]]}', file: "dist/out", setCwd: true },
+  });
+  // The package has an ES module build and a CommonJS build, and the CommonJS build is the first
+  // entry point. When the bundle has both builds, the bundler moves each import of the ES module
+  // build to the CommonJS build. After that, the bundle of the worker holds a copy of it.
+  itBundled("compile/ImportMetaMainInCopyOfDualPackage", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "main": "./lib/index.js", "module": "./es/index.js" }`,
+      "/node_modules/pkg/es/index.js": /* js */ `
+        export const build = "es";
+        export const isMain = import.meta.main;
+      `,
+      "/node_modules/pkg/lib/index.js": /* js */ `
+        module.exports = { build: "commonjs", isMain: require.main === module };
+        if (Bun.isMainThread) {
+          const worker = new Worker("./worker.ts");
+          worker.onmessage = event => {
+            console.log(JSON.stringify({ main: module.exports.isMain, worker: event.data }));
+            worker.terminate();
+          };
+        }
+      `,
+      "/worker.ts": /* js */ `
+        import { build, isMain } from "pkg";
+        postMessage({ build, isMain });
+      `,
+    },
+    entryPointsRaw: ["./node_modules/pkg/lib/index.js", "./worker.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: '{"main":true,"worker":{"build":"commonjs","isMain":false}}',
+      file: "dist/out",
+      setCwd: true,
+    },
   });
 });

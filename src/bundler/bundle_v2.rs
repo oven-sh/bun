@@ -143,6 +143,9 @@ pub struct BundleV2<'a> {
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
+
+    /// The entry point tasks of an executable wait here for `schedule_held_entry_tasks`.
+    pub(crate) held_entry_tasks: Option<Vec<&'a mut ParseTask>>,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -3243,7 +3246,10 @@ pub mod bv2_impl {
                     self.graph.estimated_file_loader_count += 1;
                 }
 
-                self.graph.pool().schedule(task);
+                match &mut self.held_entry_tasks {
+                    Some(held) => held.push(task),
+                    None => self.graph.pool().schedule(task),
+                }
             }
 
             self.graph
@@ -3315,6 +3321,7 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
+                held_entry_tasks: None,
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
@@ -3578,6 +3585,13 @@ pub mod bv2_impl {
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
+            if num_entry_points > 1
+                && self.transpiler.options.inline_entrypoint_import_meta_main
+                && self.transpiler.options.compile_mode.is_executable()
+            {
+                self.held_entry_tasks = Some(Vec::with_capacity(num_entry_points));
+            }
+
             for entry_point in data {
                 let entry_point: &[u8] = entry_point.as_ref();
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
@@ -3624,7 +3638,32 @@ pub mod bv2_impl {
                 };
                 let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
             }
+            self.schedule_held_entry_tasks();
             Ok(())
+        }
+
+        /// Schedules the held entry point tasks of an executable. See `keep_import_meta_main`.
+        fn schedule_held_entry_tasks(&mut self) {
+            let Some(mut tasks) = self.held_entry_tasks.take() else {
+                return;
+            };
+            let is_server_javascript = |task: &ParseTask| {
+                task.known_target != Target::Browser
+                    && task
+                        .loader
+                        .is_some_and(|loader| loader.is_javascript_like())
+            };
+            // With one such entry point, no chunk can hold a copy of it. The parser inlines `true`.
+            let can_be_copied = (tasks.iter())
+                .filter(|task| is_server_javascript(task))
+                .nth(1)
+                .is_some();
+            for task in tasks.iter_mut() {
+                task.keep_import_meta_main = can_be_copied && is_server_javascript(task);
+            }
+            for task in tasks {
+                self.graph.pool().schedule(task);
+            }
         }
 
         pub(crate) fn enqueue_entry_points_dev_server(

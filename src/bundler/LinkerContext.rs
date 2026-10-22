@@ -142,8 +142,6 @@ pub struct LinkerContext<'a> {
     pub(crate) inits_already_done: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
-    /// `--compile`: the entry point the executable runs as its main module (see `compute_chunks`).
-    pub(crate) main_module: Option<Index>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -184,7 +182,6 @@ impl<'a> Default for LinkerContext<'a> {
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
             entry_point_part_indices: Vec::new(),
-            main_module: None,
         }
     }
 }
@@ -1454,7 +1451,7 @@ pub struct LinkerOptions {
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
-    /// `--compile`: the parser inlines `import.meta.main` (see `ParseTask`).
+    /// The parser inlines `import.meta.main` in entry points (see `ParseTask`).
     pub(crate) inline_entrypoint_import_meta_main: bool,
     pub(crate) metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)

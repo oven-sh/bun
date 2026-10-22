@@ -640,7 +640,6 @@ pub(crate) fn compute_chunks(
             && this.chunk_side(chunk) == Side::Server
         {
             compile_entry_point_pending = false;
-            this.main_module = Some(Index::init(chunk.entry_point.source_index()));
             chunk.template = PathTemplate {
                 data: Box::from(&b"./[name]"[..]),
                 placeholder: Placeholder {

@@ -980,9 +980,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         chunk.is_entry_point() && !chunk.is_entry_point_file(source_index as u32);
     let import_meta_main_value = if in_chunk_of_other_entry_point {
         Some(false)
-    } else if c.options.inline_entrypoint_import_meta_main {
-        c.main_module
-            .map(|main_module| main_module == part_range.source_index)
+    } else if c.options.inline_entrypoint_import_meta_main
+        && c.options.compile_mode.is_executable()
+        && c.graph.files.items_entry_point_kind()[source_index]
+            == crate::EntryPoint::Kind::UserSpecified
+    {
+        // What the parser inlines in an entry point of an executable (see `ParseTask`).
+        Some(true)
     } else {
         None
     };

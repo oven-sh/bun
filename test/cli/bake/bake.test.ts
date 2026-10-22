@@ -1010,9 +1010,15 @@ test.concurrent.each(["in place", "by rename"])(
 
     // That reload stopped before it loaded app/server.ts. The next save of it reloads all the same.
     rmSync(join(String(dir), "app/pages/[slug].html"));
+    let seen = output.text.length;
     await save("v3");
-    let body = await get(url, "/missing");
-    while (!body.includes("v3")) body = await get(url, "/missing");
+    let body: string;
+    do {
+      // Each reload prints the URL again. On Windows one can run between the two steps of the rename.
+      await output.waitFor(new RegExp(`^[\\s\\S]{${seen}}[\\s\\S]*url: http`));
+      seen = output.text.length;
+      body = await get(url, "/missing");
+    } while (!body.includes("v3"));
     expect(body).toBe("200 v3");
   },
 );

@@ -111,8 +111,7 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
         false,
       );
     }
-    // The resolver reads a folder again that it has listed only for an importer with an absolute
-    // path. This built-in module has none, so its import() would not find a page added since.
+    // import() from this built-in module does not find a page added since the resolver listed the folder.
     Bun.resolveSync(file, pagesDir);
     const route = routeOfPage(relative);
     const other = fileOfRoute[route];
@@ -517,8 +516,7 @@ async function main() {
   try {
     await start();
   } catch (error) {
-    // A save of app/server.ts takes it off the file watcher until the module loader loads it
-    // again. A reload that stopped before that loads it here, or no later save would reload.
+    // A save takes app/server.ts off the file watcher until it is loaded again, which this reload may not have done.
     if (runs > 1) {
       try {
         await loadAppServer(process.cwd());

@@ -46,6 +46,14 @@ impl Default for BuildConfigSubset {
 }
 
 impl SplitBundlerOptions {
+    /// `PluginJscExt::destroy` is the paired destructor of `Plugin::create`
+    /// in `parse_plugin_array`: it unprotects the JSCell.
+    pub(crate) fn destroy_plugin(&mut self) {
+        if let Some(p) = self.plugin.take() {
+            Plugin::destroy(p.as_ptr());
+        }
+    }
+
     pub(super) fn parse_plugin_array(
         &mut self,
         plugin_array: JSValue,

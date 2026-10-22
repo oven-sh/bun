@@ -1,9 +1,9 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Disallow a ref that gets a value on every render: in the body of a component, or in an effect that does only that.
+/// Disallow assigning to a ref on every render, either in a component's body or in an effect that does nothing else.
 ///
-/// See "Do not write or read `ref.current` during rendering" in React's reference of `useRef`, and `useEffectEvent`.
+/// See "Do not write or read `ref.current` during rendering" in React's `useRef` reference, and `useEffectEvent`.
 pub struct ReactNoLatestValueRef;
 
 const DURING_RENDER: Message = Message::new(
@@ -24,7 +24,7 @@ fn is_call_of(e: Expr, names: &[&str]) -> bool {
     })
 }
 
-/// The `a` of `a.current = value`, and the `const a = useRef(..)` that declares it.
+/// Returns the `a` in `a.current = value`, and the `const a = useRef(..)` that declares it.
 fn assigned_ref(e: Expr<'_>) -> Option<(Expr<'_>, VarDecl<'_>)> {
     let ExprKind::Assign { op: None, target, .. } = e.kind() else {
         return None;
@@ -41,7 +41,7 @@ fn assigned_ref(e: Expr<'_>) -> Option<(Expr<'_>, VarDecl<'_>)> {
     }
 }
 
-/// The expression that a statement is.
+/// Returns the expression of an expression statement.
 fn expression_of(statement: Stmt<'_>) -> Option<Expr<'_>> {
     match statement.kind() {
         StmtKind::Expr(e) => Some(e),
@@ -67,7 +67,7 @@ impl Rule for ReactNoLatestValueRef {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
-            // A statement of the function that has the ref, and in nothing else: not under a condition.
+            // Only a top-level statement of the function that declares the ref, so not one inside a condition.
             ExprTag::Assign => {
                 if let Node::Stmt(statement) = e.parent()
                     && statement.tag() == StmtTag::Expr

@@ -17,7 +17,8 @@ use crate::{PackageManager, PackageNameHash};
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait NpmAliasRegistry {
-    /// Takes the alias's text: a parsed `Version` is only valid with the buffer it was parsed in.
+    /// Takes the alias's text, because a parsed `Version` is only valid together with the buffer it
+    /// was parsed from.
     fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]);
 }
 
@@ -436,9 +437,11 @@ pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
     dependency.starts_with(b"https://") || dependency.starts_with(b"http://")
 }
 
-/// `2x`, `1beta`, `v2x`: like npm-package-arg, a word that only starts like a version is a tag.
+/// Matches `2x`, `1beta` and `v2x`. Like in npm-package-arg, a word that only starts like a version
+/// is a tag.
 fn is_dist_tag_with_leading_digit(dependency: &[u8]) -> bool {
-    // `1.2.3`, the usual case: three numbers leave no wildcard, and the caller parses it again.
+    // The usual case is `1.2.3`. Three numbers leave no room for a wildcard, and the caller parses
+    // it again.
     if dependency.len() <= 17 {
         let mut dots = 0;
         let mut after_digit = false;
@@ -570,7 +573,8 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
         return false;
     }
 
-    // One pass: this runs for every dependency row of a lockfile, on names of a dozen bytes.
+    // A single pass, because this runs for every dependency in a lockfile, on names of about a
+    // dozen bytes.
     let is_safe_component =
         |component: &[u8]| component.len() <= 255 && !matches!(component, b"" | b"." | b"..");
     let mut component_start = 0;
@@ -591,7 +595,8 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     is_safe_component(&name[component_start..])
 }
 
-/// C0 controls, DEL and UTF-8 encoded C1 controls (`C2 80`..`C2 9F`): terminals interpret them.
+/// Matches C0 controls, DEL and UTF-8 encoded C1 controls (`C2 80`..`C2 9F`), which terminals
+/// interpret.
 pub(crate) fn contains_control_character(name: &[u8]) -> bool {
     name.iter().enumerate().any(|(i, &byte)| {
         byte.is_ascii_control()
@@ -607,7 +612,8 @@ pub(crate) fn is_safe_lockfile_package_name(name: &[u8]) -> bool {
     is_safe_install_folder_name(name) && !strings::contains_char(&name[1..], b'@')
 }
 
-/// For a package whose package.json has no name: `https://host/foo.tgz?token=x` -> `foo`.
+/// For a package whose package.json has no name. For example, `https://host/foo.tgz?token=x` gives
+/// `foo`.
 pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
     let path = match strings::index_of_any(location, b"?#") {
         Some(end) if strings::contains(location, b"://") => &location[..end],
@@ -1131,7 +1137,8 @@ pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u
     None
 }
 
-/// Literals may carry leading whitespace; classify and parse these bytes, not the raw literal.
+/// A literal can have leading whitespace, so classify and parse these bytes instead of the raw
+/// literal.
 #[inline]
 pub fn trim_literal(literal: &[u8]) -> &[u8] {
     strings::trim_left(literal, b" \t\n\r")
@@ -1181,7 +1188,8 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     )
 }
 
-/// What follows `npm:`: `@scope/name@version` -> (`@scope/name`, `version`).
+/// Splits the text after `npm:`. For example, `@scope/name@version` gives (`@scope/name`,
+/// `version`).
 fn split_npm_alias(target: &[u8]) -> (&[u8], Option<&[u8]>) {
     let scope = target.starts_with(b"@") as usize;
     match strings::index_of_char_usize(&target[scope..], b'@') {
@@ -1211,7 +1219,8 @@ pub(crate) fn without_npm_protocol(literal: &[u8]) -> &[u8] {
     }
 }
 
-/// `npm:`, `npm:@1.0.0`, `npm:@scope/@1`: it parses, as a lockfile may hold one.
+/// Matches `npm:`, `npm:@1.0.0` and `npm:@scope/@1`. These still parse, because a lockfile may have
+/// one.
 pub(crate) fn nameless_npm_alias(literal: &[u8]) -> Option<&[u8]> {
     let (name, _) = split_npm_alias(trim_literal(literal).strip_prefix(b"npm:")?);
     is_scoped_package_name(name).is_err().then_some(name)
@@ -1363,7 +1372,7 @@ pub(crate) fn parse_with_tag(
                 None => String::default(),
                 // `/tree/<committish>`
                 Some(in_path) if fragment.is_empty() => find(in_path)?,
-                // The URL parser drops these; they must not reach the request either.
+                // The URL parser drops these, and they must not end up in the request either.
                 Some(_) if contains_control_character(fragment) => return None,
                 // The fragment goes into the request as written, and GitHub decodes it.
                 Some(_) => sliced.sub(fragment).value(),

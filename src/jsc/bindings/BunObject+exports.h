@@ -4,36 +4,18 @@
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
     macro(Archive) \
-    macro(CryptoHasher) \
     macro(FFI) \
     macro(FetchSession) \
-    macro(FileSystemRouter) \
-    macro(Glob) \
     macro(Image) \
-    macro(JSON5) \
-    macro(JSONC) \
-    macro(MD4) \
     macro(markdown) \
-    macro(MD5) \
     macro(S3Client) \
-    macro(SHA1) \
-    macro(SHA224) \
-    macro(SHA256) \
-    macro(SHA384) \
-    macro(SHA512) \
-    macro(SHA512_256) \
-    macro(TOML) \
-    macro(XML) \
-    macro(YAML) \
     macro(Terminal) \
-    macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \
     macro(cron) \
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \
-    macro(hash) \
     macro(inspect) \
     macro(isStandaloneExecutable) \
     macro(origin) \
@@ -47,26 +29,16 @@
     macro(connect) \
     macro(createParsedShellScript) \
     macro(createShellInterpreter) \
-    macro(deflateSync) \
     macro(file) \
-    macro(gunzipSync) \
-    macro(gzipSync) \
-    macro(inflateSync) \
     macro(jest) \
     macro(listen) \
-    macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \
-    macro(sha) \
     macro(spawn) \
     macro(spawnSync) \
     macro(udpSocket) \
     macro(write) \
-    macro(zstdCompressSync) \
-    macro(zstdDecompressSync) \
-    macro(zstdCompress) \
-    macro(zstdDecompress) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);

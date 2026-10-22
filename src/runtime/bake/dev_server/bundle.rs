@@ -48,6 +48,16 @@ impl DevServer {
                         route.file_layout,
                     )?;
                 }
+                // A router whose pages also run in the browser: the same files, in the client graph.
+                for path in self.client_page_files(bundle.route_index).iter() {
+                    let stale = match self.client_graph.get_file_index(path) {
+                        Some(index) => self.client_graph.stale_files.is_set(index.get() as usize),
+                        None => true,
+                    };
+                    if stale {
+                        entry_points.append_js(path, bake::Graph::Client)?;
+                    }
+                }
             }
             route_bundle::Data::Html(html) => {
                 entry_points.append_html(&html.html_bundle.bundle.path)?;
@@ -83,24 +93,34 @@ impl DevServer {
         let _g = self.graph_safety_lock.guard();
 
         macro_rules! check {
-            ($g:expr) => {{
+            ($g:expr, |$file:ident| $bundled_for_side:expr) => {{
                 let g = $g;
                 let index = g.bundled_files.get_index(path)?;
-                if !g.stale_files.is_set(index) {
-                    return Some(CacheEntry {
-                        kind: g
-                            .get_file_by_index(incremental_graph::FileIndex::init(
-                                u32::try_from(index).expect("int cast"),
-                            ))
-                            .file_kind(),
-                    });
+                if g.stale_files.is_set(index) {
+                    return None;
                 }
-                return None;
+                let $file = g.get_file_by_index(incremental_graph::FileIndex::init(
+                    u32::try_from(index).expect("int cast"),
+                ));
+                if !$bundled_for_side {
+                    return None;
+                }
+                return Some(CacheEntry {
+                    kind: $file.file_kind(),
+                });
             }};
         }
         match side {
-            bake::Graph::Client => check!(&self.client_graph),
-            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph),
+            bake::Graph::Client => check!(&self.client_graph, |_file| true),
+            // The server and SSR graphs share one record per file. Only a JS record tracks which graph bundled it.
+            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |file| {
+                file.file_kind() != FileKind::Js
+                    || if side == bake::Graph::Ssr {
+                        file.is_ssr
+                    } else {
+                        file.is_rsc
+                    }
+            }),
         }
     }
 
@@ -256,16 +276,28 @@ impl DevServer {
 
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
+        // Completing the last request on a stopped server frees `self`, so count as a pending request until the end.
+        let mut server = self.server;
+        if let Some(server) = server.as_mut() {
+            server.on_pending_request();
+        }
         while let Some(item) = self.next_bundle.requests.pop_first() {
             // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
             // `data` was initialized by `defer_request`.
             unsafe {
                 let d = (*item).data.assume_init_mut();
-                d.abort();
-                d.deref_();
+                d.abort_and_deref();
             }
         }
+        // Reset these routes so their next request gets the plugin error.
+        for &route_bundle_index in self.next_bundle.route_queue.keys() {
+            self.route_bundles[route_bundle_index.get() as usize].server_state =
+                route_bundle::State::Unqueued;
+        }
         self.next_bundle.route_queue.clear_retaining_capacity();
+        if let Some(server) = server.as_mut() {
+            server.on_static_request_complete();
+        }
         // TODO: allow recovery from this state
         Ok(())
     }
@@ -438,6 +470,7 @@ impl DevServer {
             start_data,
             had_reload_event,
             requests: ::core::mem::take(&mut self.next_bundle.requests),
+            script_requests: Vec::new(),
             resolution_failure_entries: Default::default(),
         });
 
@@ -528,6 +561,29 @@ impl DevServer {
                 rb.server_state = route_bundle::State::Bundling;
                 self.append_route_entry_points_if_not_stale(&mut entry_points, route_bundle_index)
                     .expect("oom");
+            }
+
+            // The bundle that just finished may have already bundled every file in the queued framework
+            // routes. Waiting requests are only answered when a bundle finishes, so bundle their pages again.
+            if entry_points.set.is_empty() {
+                for i in 0..self.next_bundle.route_queue.len() {
+                    let route_bundle_index = self.next_bundle.route_queue.keys()[i];
+                    if let route_bundle::Data::Framework(bundle) =
+                        &self.route_bundles[route_bundle_index.get() as usize].data
+                    {
+                        let route = self.router.route_ptr(bundle.route_index);
+                        let file = route.file_page.unwrap_or_else(|| {
+                            self.router.type_ptr_const(route.r#type).server_file
+                        });
+                        let file_index = from_opaque_file_id::<{ bake::Side::Server }>(file);
+                        self.server_graph.stale_files.set(file_index.get() as usize);
+                    }
+                    self.append_route_entry_points_if_not_stale(
+                        &mut entry_points,
+                        route_bundle_index,
+                    )
+                    .expect("oom");
+                }
             }
 
             if !entry_points.set.is_empty() {

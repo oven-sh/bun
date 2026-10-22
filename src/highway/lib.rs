@@ -241,8 +241,7 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     found
 }
 
-/// [`index_of_char`] of bytes that another thread may be writing, which is why they are not a `&[u8]`. The byte found
-/// can have changed by the time this returns.
+/// [`index_of_char`] of bytes that another thread may be writing. The byte found can have changed by the time this returns.
 ///
 /// # Safety
 /// `len` bytes at `haystack` are readable.

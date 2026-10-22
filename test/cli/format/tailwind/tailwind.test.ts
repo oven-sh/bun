@@ -185,6 +185,42 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(result).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
   });
 
+  // A Tailwind CSS 4 stub that follows `@import` with `loadStylesheet`, as Tailwind does.
+  const imports = `exports.__unstable__loadDesignSystem = async (css, { base, loadStylesheet }) => {
+  for (const [, id] of css.matchAll(/@import "([^"]*)"/g)) css += (await loadStylesheet(id, base)).content;
+  const sign = css.includes("reversed") ? -1 : 1;
+  return { getClassOrder: ${getClassOrder} };
+};
+`;
+  const version4WithImports = {
+    ...version4,
+    "node_modules/tailwindcss/index.js": `const order = ${JSON.stringify(order)};\n${imports}`,
+  };
+
+  test("`@import` of a package subpath in `stylesheet` takes the most specific `exports` pattern, like Node", async () => {
+    // Like @fontsource-variable/roboto: `./*` is listed before `./*.css`, and `./*` would map `a.css` to `a.css.css`.
+    const rows: [Record<string, unknown>, string][] = [
+      [{ "./*": "./*.css", "./*.css": "./*.css" }, "pkg/a.css"],
+      [{ "./*": { style: "./*.css" }, "./*.css": "./*.css" }, "pkg/a.css"],
+      // `./*` maps this to `./styles/a.css`, which exists, but `./styles/*` is more specific.
+      [{ "./*": "./*.css", "./styles/*": "./*.css" }, "pkg/styles/a"],
+    ];
+    await Promise.all(
+      rows.map(async ([exports, id]) => {
+        const files = {
+          ...version4WithImports,
+          ".oxfmtrc.json": '{ "sortTailwindcss": { "stylesheet": "./app.css" } }',
+          "app.css": `@import "${id}";\n`,
+          "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", exports }),
+          "node_modules/pkg/a.css": "/* reversed */\n",
+          "node_modules/pkg/styles/a.css": "",
+          "src/a.jsx": sorted,
+        };
+        expect(await format(files, ["src/a.jsx"])).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+      }),
+    );
+  });
+
   test("loads Tailwind CSS 3 with `config`, or with the nearest tailwind.config.*", async () => {
     const files = { ...version3, "other.js": "module.exports = { reversed: true };\n", "src/a.jsx": input };
     const nearest = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "tailwind.config.ts": "export default {};\n" };

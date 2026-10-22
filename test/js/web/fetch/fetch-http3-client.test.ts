@@ -1184,6 +1184,9 @@ test.skipIf(!isLinux || !cc)("a retry whose reconnect fails before it returns re
 // reports the failure and does not send it again (RFC 9110 section 9.2.2), as
 // over HTTP/1.1.
 test.each(["POST", "PATCH"])("does not send a %s again after it was written", async method => {
+  // Its own pool: a connection left over from a server that had the same port is not reused.
+  using session = new Bun.FetchSession();
+  const h3 = { protocol: "http3", tls: { rejectUnauthorized: false }, session } as const;
   const hits: string[] = [];
   const received = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
@@ -1237,6 +1240,7 @@ test.each(["POST", "PATCH"])("does not send a %s again after it was written", as
 // that lists only a reserved version, so the handshake fails before the request
 // is written. Each connection attempt uses a new connection ID.
 test.each(["GET", "POST"])("sends a %s again once if the connection failed before it was written", async method => {
+  using session = new Bun.FetchSession();
   const attempts = new Set<string>();
   const server = await Bun.udpSocket({
     hostname: "127.0.0.1",
@@ -1265,7 +1269,7 @@ test.each(["GET", "POST"])("sends a %s again once if the connection failed befor
   });
   try {
     const init = method === "GET" ? {} : { method, body: "payload" };
-    const outcome = await fetch(`https://127.0.0.1:${server.port}/`, { ...h3, ...init }).catch(e => e.code);
+    const outcome = await fetch(`https://127.0.0.1:${server.port}/`, { ...h3, ...init, session }).catch(e => e.code);
     expect(outcome).toBe("HTTP3HandshakeFailed");
     expect(attempts.size).toBe(2);
   } finally {
@@ -1276,10 +1280,14 @@ test.each(["GET", "POST"])("sends a %s again once if the connection failed befor
 // The origin can also end the stream itself, with the connection still up. A
 // second send then reaches the same origin and its handler runs again. Only
 // H3_REQUEST_REJECTED says that the origin did not process the request
-// (RFC 9114 section 4.1.1).
+// (RFC 9114 section 4.1.1). An origin that shuts down sends it, so that request
+// goes to a new connection. Any other one stays on the connection it was on.
 describe("the origin ended the stream with no final response", () => {
   const encoder = new TextEncoder();
-  const listenOrigin = (endWithoutResponse: (stream: any) => void, received: string[]) =>
+  const listenOrigin = (
+    endWithoutResponse: (stream: any) => void,
+    received: { methods: string[]; sessions: Set<unknown> },
+  ) =>
     listen(
       async (session: any) => {
         session.onstream = (stream: any) => stream.closed.catch(() => {});
@@ -1290,8 +1298,9 @@ describe("the origin ended the stream with no final response", () => {
         transportParams: { maxIdleTimeout: 5 },
         async onheaders(this: any, headers: Record<string, string>) {
           for await (const _ of this);
-          received.push(headers[":method"]);
-          if (received.length === 1) return endWithoutResponse(this);
+          received.methods.push(headers[":method"]);
+          received.sessions.add(this.session);
+          if (received.methods.length === 1) return endWithoutResponse(this);
           this.sendHeaders({ ":status": "200" });
           this.writer.writeSync(encoder.encode("ok"));
           this.writer.endSync();
@@ -1306,20 +1315,26 @@ describe("the origin ended the stream with no final response", () => {
   };
 
   test.each([
-    ["RESET_STREAM(H3_INTERNAL_ERROR)", "POST", internalError, { outcome: "HTTP3StreamReset", received: ["POST"] }],
-    ["RESET_STREAM(H3_INTERNAL_ERROR)", "PUT", internalError, { outcome: "ok", received: ["PUT", "PUT"] }],
-    ["a 103 and the end of the stream", "POST", interimOnly, { outcome: "HTTP3StreamReset", received: ["POST"] }],
-    ["a 103 and the end of the stream", "PUT", interimOnly, { outcome: "ok", received: ["PUT", "PUT"] }],
-    ["RESET_STREAM(H3_REQUEST_REJECTED)", "POST", requestRejected, { outcome: "ok", received: ["POST", "POST"] }],
-    ["RESET_STREAM(H3_REQUEST_REJECTED)", "PUT", requestRejected, { outcome: "ok", received: ["PUT", "PUT"] }],
-  ])("%s: %s", async (_name, method, endWithoutResponse, expected) => {
-    const received: string[] = [];
+    ["RESET_STREAM(H3_INTERNAL_ERROR)", "POST", internalError, "HTTP3StreamReset", ["POST"], true],
+    ["RESET_STREAM(H3_INTERNAL_ERROR)", "PUT", internalError, "ok", ["PUT", "PUT"], true],
+    ["a 103 and the end of the stream", "POST", interimOnly, "HTTP3StreamReset", ["POST"], true],
+    ["a 103 and the end of the stream", "PUT", interimOnly, "ok", ["PUT", "PUT"], true],
+    ["RESET_STREAM(H3_REQUEST_REJECTED)", "POST", requestRejected, "ok", ["POST", "POST"], false],
+    ["RESET_STREAM(H3_REQUEST_REJECTED)", "PUT", requestRejected, "ok", ["PUT", "PUT"], false],
+  ])("%s: %s", async (_name, method, endWithoutResponse, expectedOutcome, methods, oneConnection) => {
+    using session = new Bun.FetchSession();
+    const received = { methods: [] as string[], sessions: new Set() };
     const origin = await listenOrigin(endWithoutResponse, received);
     try {
-      const outcome = await fetch(`https://127.0.0.1:${origin.address!.port}/`, { ...h3, method, body: "one order" })
+      const init = { ...h3, session, method, body: "one order" };
+      const outcome = await fetch(`https://127.0.0.1:${origin.address!.port}/`, init)
         .then(r => r.text())
         .catch(e => e.code);
-      expect({ outcome, received }).toEqual(expected);
+      expect({ outcome, methods: received.methods, oneConnection: received.sessions.size === 1 }).toEqual({
+        outcome: expectedOutcome,
+        methods,
+        oneConnection,
+      });
     } finally {
       // Not close(): it waits for the session that fetch() keeps in its pool.
       await origin.destroy();
@@ -1337,14 +1352,14 @@ test.each([
   ["POST", "HTTP3StreamReset", ["a /below", "b /above"]],
   ["PUT", "b", ["a /below", "b /above", "b /at", "b /below"]],
 ])("sends a %s above the id of the server's GOAWAY again", async (method, otherOutcome, expected) => {
+  using pool = new Bun.FetchSession();
   const applied: string[] = [];
   const accepted = Promise.withResolvers<void>();
   let session: any;
   const a = await listen(
     async (incoming: any) => {
-      session = incoming;
-      session.onstream = (stream: any) => stream.closed.catch(() => {});
-      await session.closed.catch(() => {});
+      incoming.onstream = (stream: any) => stream.closed.catch(() => {});
+      await incoming.closed.catch(() => {});
     },
     {
       sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
@@ -1352,6 +1367,7 @@ test.each([
       async onheaders(this: any, headers: Record<string, string>) {
         for await (const _ of this);
         applied.push(`a ${headers[":path"]}`);
+        session = this.session;
         accepted.resolve();
       },
     },
@@ -1397,7 +1413,7 @@ test.each([
     },
   });
   const send = (path: string) =>
-    fetch(`https://127.0.0.1:${front.port}${path}`, { ...h3, method, body }).then(
+    fetch(`https://127.0.0.1:${front.port}${path}`, { ...h3, session: pool, method, body }).then(
       res => res.text(),
       err => err.code,
     );

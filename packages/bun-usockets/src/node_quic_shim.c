@@ -220,12 +220,14 @@ static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
                                                     struct lsxpack_header *hdr,
                                                     size_t space) {
     struct nq_hset *h = hset;
-    /* `space` is lsqpack's estimate and can exceed what the field decodes to.
-     * A field over max_bytes is decoded and dropped, so it needs room as well. */
+    /* `space` covers the bytes lsqpack has in hand (patches/lsqpack/decode-room-for-bytes-in-hand.patch).
+     * It is an estimate and can exceed what they decode to. A field over
+     * max_bytes is decoded and dropped, so it needs room as well. */
     if (space > (h->max_bytes > UINT16_MAX / 2 ? 2 * (size_t) h->max_bytes : UINT16_MAX))
         return NULL;
     if (space > h->decode_cap) {
-        size_t want = space < US_NQ_HSET_MIN_BUF ? US_NQ_HSET_MIN_BUF : space;
+        size_t want = h->decode_cap ? h->decode_cap : US_NQ_HSET_MIN_BUF;
+        while (want < space) want *= 2;
         char *nb = realloc(h->decode_buf, want);
         if (!nb) return NULL;
         h->decode_buf = nb;

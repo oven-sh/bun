@@ -144,6 +144,11 @@ export const lsquic: Dependency = {
     // A server's GOAWAY named the last request it accepted, which tells the
     // client that this request was rejected. Name the one after it.
     "patches/lsquic/goaway-first-rejected-id.patch",
+    // An Initial packet that carries a token left one byte for the token's
+    // length, which takes two from 64 bytes on. A client that refilled its
+    // ClientHello after a Retry could then fail the connection while it
+    // resized a packet that was one byte too large.
+    "patches/lsquic/initial-token-length.patch",
     // send_headers_ietf() encoded every header block into 64 KB on the stack
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.

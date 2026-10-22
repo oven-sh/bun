@@ -526,9 +526,10 @@ static int us_quic_field_is_malformed(const struct lsxpack_header *hdr) {
 
 static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_header *hdr, size_t space) {
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
-    /* `space` is lsqpack's estimate and can exceed what the field decodes to. */
-    size_t need = h->len + space;
-    if (need > us_quic_hset_hard_cap(h)) return NULL;
+    /* `space` covers the bytes lsqpack has in hand (patches/lsqpack/decode-room-for-bytes-in-hand.patch),
+     * so the buffer grows with what the peer has sent. It is an estimate and can exceed what they decode to. */
+    size_t need = h->len + space, hard_cap = us_quic_hset_hard_cap(h);
+    if (need > hard_cap) return NULL;
     if (need > h->cap) {
         size_t ncap = h->cap ? h->cap : 512;
         while (ncap < need) ncap *= 2;
@@ -537,16 +538,18 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
         h->buf = nb;
         h->cap = (unsigned int) ncap;
     }
+    /* The whole buffer, so that lsqpack doesn't come back for every few bytes. */
+    size_t room = (h->cap < hard_cap ? h->cap : hard_cap) - h->len;
     if (hdr == NULL) {
         hdr = &h->scratch;
         /* Offsets count from this field's start: lsxpack asserts that they fit lsxpack_strlen_t. */
-        lsxpack_header_prepare_decode(hdr, h->buf + h->len, 0, space);
+        lsxpack_header_prepare_decode(hdr, h->buf + h->len, 0, room);
     } else {
         /* Resize: lsqpack already wrote part of name/value into the previous
          * buffer; only the storage may move. Preserve offsets, repoint buf,
          * and report the larger window via val_len. */
         hdr->buf = h->buf + h->len;
-        hdr->val_len = (lsxpack_strlen_t) space;
+        hdr->val_len = (lsxpack_strlen_t) room;
     }
     return hdr;
 }

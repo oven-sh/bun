@@ -180,10 +180,10 @@ describe("HTTP/3 header encoding", () => {
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
 
-  test("a value of more than 64 KB arrives intact in both directions under a raised maxHeaderLength", async () => {
-    const value = Buffer.alloc(70_000, "v").toString();
+  test("a value of more than 64 KB arrives intact in both directions, up to a raised maxHeaderLength", async () => {
     const application = { maxHeaderLength: 100_000 };
-    const requested = Promise.withResolvers<string>();
+    const valueOf = (length: number) => Buffer.alloc(length, "v").toString();
+    let requested = Promise.withResolvers<string | undefined>();
     await using server = await listen(
       async serverSession => {
         serverSession.onstream = (stream: any) => {
@@ -197,7 +197,10 @@ describe("HTTP/3 header encoding", () => {
         application,
         onheaders(this: any, headers: Record<string, any>) {
           requested.resolve(headers["x-value"]);
-          this.sendHeaders({ ":status": "200", "x-value": value }, { terminal: true });
+          this.sendHeaders(
+            { ":status": "200", "x-value": valueOf(Number(headers[":path"].slice(1))) },
+            { terminal: true },
+          );
         },
       },
     );
@@ -212,17 +215,33 @@ describe("HTTP/3 header encoding", () => {
       application,
     } as SessionOptions);
     await client.opened;
-    const answered = Promise.withResolvers<string>();
-    await client.createBidirectionalStream({
-      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost", "x-value": value },
-      onheaders(headers: Record<string, any>) {
-        answered.resolve(headers["x-value"]);
-      },
-    });
-    // Not toBe(value): a mismatch would print the values.
-    expect({ request: (await requested.promise) === value, response: (await answered.promise) === value }).toEqual({
-      request: true,
-      response: true,
+    const exchange = async (length: number) => {
+      requested = Promise.withResolvers();
+      const answered = Promise.withResolvers<Record<string, any>>();
+      await client.createBidirectionalStream({
+        headers: {
+          ":method": "GET",
+          ":path": `/${length}`,
+          ":scheme": "https",
+          ":authority": "localhost",
+          "x-value": valueOf(length),
+        },
+        onheaders: answered.resolve,
+      });
+      // Lengths and not the values: a mismatch would print them.
+      const describe = (value: string | undefined) => (value === valueOf(length) ? "intact" : value?.length);
+      const response = await answered.promise;
+      return {
+        request: describe(await requested.promise),
+        status: response[":status"],
+        response: describe(response["x-value"]),
+      };
+    };
+
+    expect({ under: await exchange(70_000), over: await exchange(application.maxHeaderLength) }).toEqual({
+      under: { request: "intact", status: "200", response: "intact" },
+      // As in Node, the receiver drops the field that goes over the limit.
+      over: { request: undefined, status: "200", response: undefined },
     });
     client.close();
   });

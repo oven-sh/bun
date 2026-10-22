@@ -4054,6 +4054,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         } else if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let stream = unsafe { &mut *stream };
+            // A reset stream stays in the map until the next read. Another overflow there would send a second RST_STREAM.
+            if stream.state == StreamState::CLOSED && stream.rst_code != 0 {
+                return SendCredit::Applied;
+            }
             if overflows(stream.remote_window_size, stream.remote_used_window_size) {
                 return SendCredit::Overflow;
             }

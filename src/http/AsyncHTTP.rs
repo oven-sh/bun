@@ -102,7 +102,7 @@ unsafe fn free_owned_href(href: &'static [u8]) {
 
 /// Read the HTTP-thread monotonic timer in nanoseconds.
 #[inline]
-pub(crate) fn http_thread_timer_read() -> u64 {
+fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 

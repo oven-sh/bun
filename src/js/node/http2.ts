@@ -2143,6 +2143,8 @@ enum StreamState {
   EndAfterHeaders = 1 << 12, // 1000000000000 = 4096
   // User code didn't end the writable side. respond() did (HEAD, 204, 205, 304, endStream), or the peer's RST_STREAM with NO_ERROR or CANCEL.
   EndedForUser = 1 << 13, // 10000000000000 = 8192
+  // The client sent END_STREAM. Only a server stream records it.
+  PeerEnded = 1 << 14, // 100000000000000 = 16384
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2319,10 +2321,15 @@ function abortAndEndWritable(stream: Http2Stream) {
   stream[bunHTTP2StreamStatus] |= StreamState.EndedForUser;
   stream.end();
 }
+// close(code) ended a stream whose other half the peer had ended, so both halves were over before the peer's RST_STREAM and the code stays.
+function keepsOwnRstCode(stream: Http2Stream) {
+  const over = StreamState.Closed | StreamState.PeerEnded;
+  return (stream[bunHTTP2StreamStatus] & over) === over && !!stream.rstCode;
+}
 // Like node's onStreamClose, the peer's CANCEL ends an open writable side before the stream is destroyed, so 'finish' still fires.
 function abortOnPeerCancel(stream: Http2Stream) {
   stream[bunHTTP2StreamStatus] |= StreamState.Reset | StreamState.NativeClosed | StreamState.WritableClosed;
-  stream.rstCode = NGHTTP2_CANCEL;
+  if (!keepsOwnRstCode(stream)) stream.rstCode = NGHTTP2_CANCEL;
   abortAndEndWritable(stream);
 }
 function rstNextTick(this: Http2Stream, session: Http2Session, id: number, rstCode: number) {
@@ -3924,6 +3931,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       if (error !== 0 && !stream.rstCode) stream.rstCode = error;
       error = self[kSessionDestroyError];
     }
+    if (typeof error === "number" && keepsOwnRstCode(stream)) error = stream.rstCode;
     let error_instance: Error | number | undefined = undefined;
     if (stream.listenerCount("error") > 0) {
       if (typeof error === "number") {
@@ -4276,6 +4284,7 @@ class ServerHttp2Session extends Http2Session {
         return;
       }
       if (state == 6) {
+        stream[bunHTTP2StreamStatus] |= StreamState.PeerEnded;
         endReadableAtHalfClose(stream);
       } else if (state == 7 && stream.readable) {
         // Keep the 'end' this schedules out of the AsyncLocalStorage store of the respond(), end() or close() call that closed the stream.

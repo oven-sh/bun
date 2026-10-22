@@ -1,13 +1,24 @@
 // An LD_PRELOAD shim makes epoll_ctl(EPOLL_CTL_ADD) fail with ENOSPC (what the
 // kernel returns when fs.epoll.max_user_watches is exhausted) so Bun.serve /
 // Bun.listen must throw and accepted connections must be closed, not parked.
-// The shim also makes getaddrinfo() fail for two fixed names.
+// The shim also makes getaddrinfo() fail for a few fixed names.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+// For `eai-<key>.test` the shim's getaddrinfo() returns EAI_<KEY>. The values are the error's code and its errno, which is Node's (libuv's UV_EAI_<KEY>).
+const EAI_CASES = {
+  noname: ["ENOTFOUND", -3008],
+  nodata: ["ENOTFOUND", -3007],
+  again: ["EAI_AGAIN", -3001],
+  fail: ["EBADRESP", -3004],
+  memory: ["ENOMEM", -3006],
+  family: ["EBADFAMILY", -3005],
+  addrfamily: ["EBADFAMILY", -3000],
+} as const;
 
 // FAIL_EPOLL_ADD=listener: listening TCP sockets (SO_ACCEPTCONN).
 // FAIL_EPOLL_ADD=accepted: connected SOCK_STREAM. FAIL_EPOLL_ADD=udp: SOCK_DGRAM.
@@ -21,6 +32,14 @@ const SHIM_C = /* c */ `
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+
+// Not every libc's <netdb.h> has these two.
+#ifndef EAI_NODATA
+#define EAI_NODATA -5
+#endif
+#ifndef EAI_ADDRFAMILY
+#define EAI_ADDRFAMILY -9
+#endif
 
 static int (*real_epoll_ctl)(int, int, int, struct epoll_event *);
 static int mode = -1; // 0 = listener, 1 = accepted, 2 = udp
@@ -52,16 +71,17 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
     static int (*real)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
     if (!real) real = (int (*)(const char *, const char *, const struct addrinfo *, struct addrinfo **)) dlsym(RTLD_NEXT, "getaddrinfo");
-    if (node && strcmp(node, "eai-noname.test") == 0) return EAI_NONAME;
-    if (node && strcmp(node, "eai-again.test") == 0) return EAI_AGAIN;
+${Object.keys(EAI_CASES)
+  .map(key => `    if (node && strcmp(node, "eai-${key}.test") == 0) return EAI_${key.toUpperCase()};`)
+  .join("\n")}
     return real(node, service, hints, res);
 }
 `;
 
 const DNS_FIXTURE = /* js */ `
-const shape = ({ code, syscall, hostname, message }) => ({ code, syscall, hostname, message });
+const shape = ({ code, errno, syscall, hostname, message }) => ({ code, errno, syscall, hostname, message });
 const out = {};
-for (const hostname of ["eai-noname.test", "eai-again.test"]) {
+for (const hostname of ${JSON.stringify(Object.keys(EAI_CASES).map(key => `eai-${key}.test`))}) {
   try {
     Bun.serve({ hostname, port: 0, fetch: () => new Response() }).stop(true);
     out["Bun.serve " + hostname] = "listening";
@@ -376,31 +396,20 @@ test.concurrent.skipIf(!isLinux || !cc)(
   async () => {
     // Every listen fails before its epoll_ctl(), so the mode doesn't matter.
     const { stdout, stderr, exitCode } = await runWithShim("dns.js", "udp");
-    const notFound = {
-      code: "ENOTFOUND",
-      syscall: "getaddrinfo",
-      hostname: "eai-noname.test",
-      message: "getaddrinfo ENOTFOUND eai-noname.test",
-    };
-    const again = {
-      code: "EAI_AGAIN",
-      syscall: "getaddrinfo",
-      hostname: "eai-again.test",
-      message: "getaddrinfo EAI_AGAIN eai-again.test",
-    };
-    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({
-      out: {
-        "Bun.serve eai-noname.test": notFound,
-        "Bun.listen eai-noname.test": notFound,
-        "http eai-noname.test": notFound,
-        "net eai-noname.test": notFound,
-        "Bun.serve eai-again.test": again,
-        "Bun.listen eai-again.test": again,
-        "http eai-again.test": again,
-        "net eai-again.test": again,
-      },
-      stderr: "",
-    });
+    const out: Record<string, object> = {};
+    for (const [key, [code, errno]] of Object.entries(EAI_CASES)) {
+      const hostname = `eai-${key}.test`;
+      for (const api of ["Bun.serve", "Bun.listen", "http", "net"]) {
+        out[`${api} ${hostname}`] = {
+          code,
+          errno,
+          syscall: "getaddrinfo",
+          hostname,
+          message: `getaddrinfo ${code} ${hostname}`,
+        };
+      }
+    }
+    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({ out, stderr: "" });
     expect(exitCode).toBe(0);
   },
 );

@@ -183,10 +183,11 @@ describe.each([
       } catch (e) {
         error = e;
       }
-      const { name, code, syscall, hostname: errHostname, message } = error ?? {};
-      expect({ name, code, syscall, hostname: errHostname, message }).toEqual({
+      const { name, code, errno, syscall, hostname: errHostname, message } = error ?? {};
+      expect({ name, code, errno, syscall, hostname: errHostname, message }).toEqual({
         name: "Error",
         code: "ENOTFOUND",
+        errno: -3008,
         syscall: "getaddrinfo",
         hostname,
         message: `getaddrinfo ENOTFOUND ${hostname}`,

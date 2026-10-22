@@ -850,14 +850,19 @@ pub(crate) fn getaddrinfo_error(gai: c_int, hostname: &[u8]) -> Option<SystemErr
     if gai == 0 {
         return None;
     }
-    c_ares::Error::init_eai(gai)
-        .map(|error| system_error_with_syscall_and_hostname(error, b"getaddrinfo", hostname))
+    c_ares::Error::init_eai(gai).map(|error| {
+        let mut err = system_error_with_syscall_and_hostname(error, b"getaddrinfo", hostname);
+        err.errno = c_ares::Error::uv_eai(gai).unwrap_or(err.errno);
+        err
+    })
 }
 
 /// Thrown before uSockets' synchronous `getaddrinfo` can block on a name that can never resolve.
 pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]) -> JSValue {
-    system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname)
-        .to_error_instance(global_this)
+    let mut err =
+        system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname);
+    err.errno = c_ares::UV_EAI_NONAME;
+    err.to_error_instance(global_this)
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────

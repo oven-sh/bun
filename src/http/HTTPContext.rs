@@ -12,7 +12,7 @@ use crate::{
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 use bun_collections::{HiveArray, TaggedPtrUnion};
-use bun_core::strings;
+use bun_core::{Timespec, strings};
 use bun_ptr::RefPtr;
 use bun_uws as uws;
 
@@ -245,7 +245,7 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) pool_id: u64,
     /// Seconds it can be idle before the timer closes it.
     pub(crate) idle_timeout_seconds: u32,
-    /// `find_in` closes the socket instead of reusing it once `http_thread().timer` passes this many nanoseconds. `u64::MAX` is the default timeout, which only the timer enforces.
+    /// `find_in` closes the socket instead of reusing it once `Timespec::now_coarse()` passes this many nanoseconds. `u64::MAX` is the default timeout, which only the timer enforces.
     pub(crate) reuse_deadline_ns: u64,
 }
 
@@ -692,7 +692,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 idle_timeout_seconds: pool.idle_timeout_ms_or_default().div_ceil(1000),
                 reuse_deadline_ns: match pool.idle_timeout_ms {
                     0 => u64::MAX,
-                    ms => crate::async_http::http_thread_timer_read()
+                    ms => Timespec::now_coarse()
+                        .ns()
                         .saturating_add(u64::from(ms) * 1_000_000),
                 },
             };
@@ -929,7 +930,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 // The origin is about to close it, and a non-idempotent request that loses that race isn't retried.
                 if socket.reuse_deadline_ns != u64::MAX
-                    && crate::async_http::http_thread_timer_read() >= socket.reuse_deadline_ns
+                    && Timespec::now_coarse().ns() >= socket.reuse_deadline_ns
                 {
                     Self::close_socket(http_socket);
                     continue;

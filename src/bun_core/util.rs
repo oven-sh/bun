@@ -5028,6 +5028,24 @@ impl Timespec {
         }
     }
 
+    /// The monotonic clock as of the kernel's last timer tick on Linux, so 1 to 10 ms behind [`Timespec::now`] at a fifth of the cost.
+    pub fn now_coarse() -> Timespec {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let mut ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            if clock_gettime(libc::CLOCK_MONOTONIC_COARSE, &mut ts) == 0 {
+                return Timespec {
+                    sec: ts.tv_sec,
+                    nsec: ts.tv_nsec,
+                };
+            }
+        }
+        Self::now_real()
+    }
+
     #[inline]
     pub fn since_now(&self, mode: TimespecMockMode) -> u64 {
         Self::now(mode).duration(self).ns()

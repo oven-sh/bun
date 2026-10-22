@@ -2307,6 +2307,42 @@ describe("WINDOW_UPDATE and the 2^31-1 cap (RFC 9113 §6.9.1)", () => {
       server.close();
     }
   });
+
+  // A reset stream is only forgotten at the next read, so every frame goes out in one write.
+  test.each([
+    ["an open stream", []],
+    ["a stream the response has closed", [encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from("hello"))]],
+  ])("a client that gets two overflowing grants in one read resets %s once", async (_, restOfResponse) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const closed = Promise.withResolvers<void>();
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.on("close", closed.resolve);
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.socket!.write(
+        Buffer.concat([
+          encodeFrame(FrameType.SETTINGS, 0, 0),
+          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, Buffer.from([0x88])),
+          ...restOfResponse,
+          windowUpdate(1, MAX_WINDOW),
+          windowUpdate(1, MAX_WINDOW),
+          encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+        ]),
+      );
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      await closed.promise;
+      expect(raw.frames.filter(isReset).map(f => [f.type, f.payload.readUInt32BE(0)])).toEqual([
+        [FrameType.RST_STREAM, ErrorCode.FLOW_CONTROL_ERROR],
+      ]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });
 
 describe("request header and body framing (RFC 9113 §8.1)", () => {
@@ -4918,6 +4954,49 @@ describe("RST_STREAM from close(code) and destroy() (RFC 9113 §6.4)", () => {
       raw.close();
     }
   }
+
+  // The request is complete, so close(code) ends the stream and the reset behind it comes too late to change the code.
+  describe.each([
+    ["HEADERS", [encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"))]],
+    [
+      "DATA",
+      [
+        encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST")),
+        encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from("body")),
+      ],
+    ],
+  ])("server close(code) on a request that ends on %s", (_, request) => {
+    test.each([ErrorCode.NO_ERROR, ErrorCode.CANCEL, ErrorCode.INTERNAL_ERROR])(
+      "keeps its code when RST_STREAM(%d) arrives in the same read",
+      async peerCode => {
+        const closed = Promise.withResolvers<unknown[]>();
+        const errors: string[] = [];
+        const server = http2.createServer();
+        server.on("stream", stream => {
+          stream.on("error", err => errors.push(`${err.code}: ${err.message}`));
+          stream.on("close", () => closed.resolve([stream.rstCode, errors]));
+          stream.close(ErrorCode.REFUSED_STREAM);
+        });
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+        try {
+          const reset = Buffer.alloc(4);
+          reset.writeUInt32BE(peerCode);
+          c.sendPreface();
+          c.sendEmptySettings();
+          c.send(Buffer.concat([...request, encodeFrame(FrameType.RST_STREAM, 0, 1, reset)]));
+          expect(await closed.promise).toEqual([
+            ErrorCode.REFUSED_STREAM,
+            ["ERR_HTTP2_STREAM_ERROR: Stream closed with error code NGHTTP2_REFUSED_STREAM"],
+          ]);
+        } finally {
+          c.destroy();
+          server.close();
+        }
+      },
+    );
+  });
 
   test.each(["GET", "POST"] as const)(
     "server close(code) right after write() on a %s sends no END_STREAM",

@@ -281,12 +281,16 @@ private:
                 if (!remainingBytes && fin) {
                     /* Move the tip out before the handlers run, like the message above */
                     size_t messageLength = webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength;
-                    std::string controlTip(webSocketData->fragmentBuffer.data() + messageLength, webSocketData->controlTipLength);
+                    ReceiveBuffer controlBuffer;
+                    if (!controlBuffer.tryAppend(webSocketData->fragmentBuffer.data() + messageLength, webSocketData->controlTipLength)) {
+                        return failOutOfMemory(s);
+                    }
                     webSocketData->fragmentBuffer.truncate(messageLength);
                     webSocketData->controlTipLength = 0;
+                    std::string_view controlTip(controlBuffer.data(), controlBuffer.length());
 
                     if (opCode == CLOSE) {
-                        handleCloseFrame(webSocket, controlTip.data(), controlTip.length());
+                        handleCloseFrame(webSocket, controlBuffer.data(), controlBuffer.length());
                         return true;
                     } else {
                         if (opCode == PING) {

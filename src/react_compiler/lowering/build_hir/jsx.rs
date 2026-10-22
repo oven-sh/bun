@@ -224,20 +224,13 @@ pub(super) fn lower_jsx_call(
 
     // Only the callee tells the two shapes apart: `createElement(tag, {..}, child)`
     // has the arity and the E::Object args[1] of `jsx(tag, {..}, key)`.
-    let callee = jsx_import_kind(builder, &call.target);
+    let automatic = automatic_jsx_call(builder, call);
     let props_arg = args.get(1);
-    let automatic_props = match (callee, props_arg.map(|p| &p.data)) {
-        (
-            Some(JsxImportKind::Jsx | JsxImportKind::Jsxs | JsxImportKind::JsxDEV),
-            Some(ExprData::EObject(obj)),
-        ) => Some(obj),
-        _ => None,
-    };
 
     let mut props: HirVec<JsxAttribute> = AstAlloc::vec();
     let mut children: HirVec<Place> = AstAlloc::vec();
 
-    if let Some(obj) = automatic_props {
+    if let Some((callee, obj, _)) = automatic {
         // visit_expr.rs only wraps `children` in a synthetic E::Array when
         // `is_static_jsx` is true; for a single non-spread child the child
         // expression (which may itself be a user-authored array) is passed
@@ -246,7 +239,7 @@ pub(super) fn lower_jsx_call(
         let is_static_children = if args.len() == 6 {
             matches!(args[3].data, ExprData::EBoolean(b) if b.value)
         } else {
-            callee == Some(JsxImportKind::Jsxs)
+            callee == JsxImportKind::Jsxs
         };
 
         // `key` was hoisted out of the props object into args[2] by the visit
@@ -387,6 +380,24 @@ pub(super) fn lower_jsx_call(
         opening_loc,
         closing_loc,
     })
+}
+
+/// The callee, the props and the operands (tag, props, key) of an automatic-runtime call: "Hook placement" in DESIGN.md.
+pub(super) fn automatic_jsx_call<'a>(
+    builder: &HirBuilder,
+    call: &'a E::Call,
+) -> Option<(JsxImportKind, &'a E::Object, &'a [Expr])> {
+    let callee = jsx_import_kind(builder, &call.target)?;
+    if !matches!(
+        callee,
+        JsxImportKind::Jsx | JsxImportKind::Jsxs | JsxImportKind::JsxDEV
+    ) {
+        return None;
+    }
+    let ExprData::EObject(props) = &call.args.get(1)?.data else {
+        return None;
+    };
+    Some((callee, props, &call.args[..call.args.len().min(3)]))
 }
 
 /// The JSX runtime symbol `expr` refers to, if it is one the parser's visit

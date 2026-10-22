@@ -14,7 +14,7 @@ use super::helpers::{
     lower_object_property_key, lower_optional_call_expression, lower_optional_member_expression,
     lower_value_to_temporary,
 };
-use super::jsx::lower_jsx_call;
+use super::jsx::{automatic_jsx_call, lower_jsx_call};
 use crate::lowering::FunctionNode;
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
@@ -1424,6 +1424,15 @@ fn is_reorderable_expression(
             if call.was_jsx_element && !builder.environment().config.jsx_can_be_reordered =>
         {
             false
+        }
+        // The callee is the runtime's own, and a `jsxDEV` call ends in arguments that are no operands.
+        Data::ECall(call)
+            if call.was_jsx_element
+                && let Some((_, _, operands)) = automatic_jsx_call(builder, call) =>
+        {
+            operands
+                .iter()
+                .all(|operand| is_reorderable_expression(builder, operand, allow_local_identifiers))
         }
         Data::ECall(call) if call.optional_chain.is_none() => {
             is_reorderable_expression(builder, &call.target, allow_local_identifiers)

@@ -169,3 +169,11 @@ overlap in arity, so lowering tells them apart by the callee
 The callee is not an operand of the HIR `JsxExpression`: codegen resolves the
 classic factory again (`Host::jsx_classic_factory`). Lowering rejects a factory
 that is a local of the function, because the compiler would drop it as unused.
+
+The operands of an automatic-runtime call are its tag, props and key. The
+`isStaticChildren, source, self` that end a `jsxDEV` call are not expressions
+of the user: lowering reads `isStaticChildren` and drops the other two, and
+codegen writes all three again. `automatic_jsx_call` in
+`lowering/build_hir/jsx.rs` says which call is an automatic one and where its
+operands end. Lowering takes the shape from it, and `is_reorderable_expression`
+judges only the operands.

@@ -202,6 +202,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
+            // A write to the name of a class with lowered class decorators goes to
+            // the class's own immutable binding, not to `inner_class_ref`.
+            if let Some(&(inner_ref, name_ref)) = p
+                .decorated_class_names
+                .iter()
+                .find(|(inner, _)| *inner == result.r#ref)
+            {
+                p.ignore_usage(inner_ref);
+                p.record_usage(name_ref);
+                e_.ref_ = name_ref;
+            }
+
             if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant
             {
                 // TODO: silence this for runtime transpiler

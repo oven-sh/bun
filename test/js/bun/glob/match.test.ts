@@ -2461,6 +2461,7 @@ describe("Glob.match", () => {
     // Only a `**` right before the `/*`, and only a pattern that ends with `/*`.
     ["{src/**,lib}/{test,spec}/*", ["src/a/test/", "src/a/b/test/", "src/test/", "src/a/b/test/x"], ["src/"]],
     ["{{src/**,lib}/test,x}/*", ["src/a/b/test/", "src/test/", "x/"], ["src/"]],
+    ["{src/**,lib}/{test**,spec}/*", ["src/a/b/testing/", "src/testing/", "lib/spec/"], ["src/"]],
     ["a{/,[!x]/**}", ["a///", "a//", "ab/"], ["a/b/"]],
     // Node reads `//*` as `/*`, and leaves the `/` at the end of a path out of account.
     ["/{,x/**,aa}/*", ["/x/", "/x/y", "/aa/"], ["/x", "/"]],

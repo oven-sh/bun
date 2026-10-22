@@ -3781,7 +3781,7 @@ impl Parsed {
         std::iter::successors(first, |it| found.get(it.next as usize)).any(|it| {
             let text = &glob[it.start as usize..it.end as usize];
             let closes = || Parsed::closes_with_globstar(found, glob, it.end as usize - 1);
-            text.ends_with(b"**") || text.ends_with(b"}") && closes()
+            text == b"**" || text.ends_with(b"/**") || text.ends_with(b"}") && closes()
         })
     }
 

@@ -11003,6 +11003,41 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the right operand of a logical operator anew while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = "a";
+  while (more) {
+    x = (y !== "b" && z !== y) || y !== "b" ? next[z] : y;
+    y = list.find(item => item === x) ?? x;
+  }
+}
+export function g() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = "a";
+  while (z === y) {
+    do {
+      z = (next[z] === z || more) && next[y] === z ? x : next[x];
+    } while (more);
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(10,35): error TS2367: This comparison appears to be unintentional because the types '"a"' and '"b"' have no overlap.
+        a.ts(20,38): error TS2367: This comparison appears to be unintentional because the types '"b"' and '"a"' have no overlap."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

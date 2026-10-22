@@ -2776,7 +2776,10 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.check_expression_again(file, e)
         };
+        // The second visit has the mode of the first, also if a recheck has led here.
+        let mode_outside = std::mem::replace(&mut self.mode_of_recheck, check_mode);
         self.check_expression_in_flow_loop(file, e, before);
+        self.mode_of_recheck = mode_outside;
         self.type_only_node = outside;
         ty
     }

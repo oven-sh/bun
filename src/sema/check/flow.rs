@@ -8032,11 +8032,20 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_checked_with_incomplete_walk(file, e) || !self.flow_loops.is_empty() {
             return self.type_of_expr(file, e);
         }
+        self.check_expression_anew(file, e)
+    }
+
+    /// `checkExpression(e)` without any of the types that are stored or kept for the time being, and
+    /// what it finds is reported.
+    pub(super) fn check_expression_anew(&mut self, file: FileId, e: ExprId) -> TypeId {
         cold_path();
         let found_outside = self.set_rechecked_aside();
         let level = self.inference_contexts.len();
         let level = std::mem::replace(&mut self.context_free_level, level);
-        let depth = std::mem::replace(&mut self.flow_type_cache_depth, usize::MAX);
+        let depth = self.flow_type_cache_depth;
+        if self.flow_loops.is_empty() {
+            self.flow_type_cache_depth = usize::MAX;
+        }
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, e, CheckMode::empty());
         self.check_expression(file, e);

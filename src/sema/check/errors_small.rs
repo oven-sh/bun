@@ -208,7 +208,12 @@ impl<'p> Checker<'p, '_> {
             if let Some(check) = &mut self.check_in_flow_loop {
                 check.is_second_visit = false;
             }
-            let ty = self.check_expression_again(file, location);
+            // What's kept while a loop is analyzed was computed in `CheckModeTypeOnly`.
+            let ty = if self.is_in_flow_loop() {
+                self.check_expression_anew(file, location)
+            } else {
+                self.check_expression_again(file, location)
+            };
             (self.type_only_node, self.check_in_flow_loop) = outside;
             ty
         };

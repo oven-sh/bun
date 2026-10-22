@@ -18,6 +18,14 @@ test("should throw when importing malformed string (base64)", async () => {
   expect(() => import("data:text/javascript;base64,asdasdasd")).toThrowError("Base64DecodeError");
 });
 
+// https://fetch.spec.whatwg.org/#data-url-processor (step 11): the marker is
+// `;`, zero or more spaces, then an ASCII case-insensitive "base64".
+test.each(["BASE64", "Base64", " base64", "base64 "])("should treat %j as the base64 marker", async marker => {
+  const code = `export default ${JSON.stringify(marker)};`;
+  const mod = await import("data:text/javascript;" + marker + "," + btoa(code));
+  expect(mod.default).toBe(marker);
+});
+
 // data: URLs carry the module source inline and never touch the filesystem,
 // so no path-length limit applies. 200000 exceeds the largest platform cap
 // (Windows, ~147 KB); the smallest (macOS) is ~1.5 KB.

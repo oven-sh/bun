@@ -421,7 +421,7 @@ export async function report(mode, version) {
       break;
     }
     case "tls.connect({ socket }) and a destroy() of that socket": {
-      // The raw socket closes its handle two loop turns after its destroy().
+      // The raw socket closes its handle in its destroy(), and emits 'close' past the immediates of that tick.
       const raw = net.connect(port, "127.0.0.1");
       raw.on("error", () => {});
       await once(raw, "connect");

@@ -484,7 +484,7 @@ impl TestFailure {
     /// VirtualMachine::on_print_error_zig_exception thunk.
     #[optimize(size)]
     pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
-        // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
+        // SAFETY: `ctx` was set to an `&mut Option<TestFailure>` by
         // `on_uncaught_exception` for the duration of a single
         // `run_error_handler` call; single-threaded, no other borrow live.
         let slot = unsafe { &mut *ctx.cast::<Option<TestFailure>>() };
@@ -1122,10 +1122,6 @@ pub(crate) struct CommandLineReporter {
     /// is sent over the IPC pipe instead of to stderr; the coordinator owns
     /// the terminal.
     pub(crate) worker_ipc_file_idx: Option<u32>,
-    /// Errors thrown by the test now running, captured while a reporter
-    /// that attaches them to the test case (JUnit) is on. Taken by
-    /// `handle_test_completed`.
-    pub(crate) test_failure: Option<TestFailure>,
 
     pub(crate) failures_to_repeat_buf: Vec<u8>,
     pub(crate) skips_to_repeat_buf: Vec<u8>,
@@ -1541,7 +1537,7 @@ impl CommandLineReporter {
         // Under `--parallel` the flag is forwarded to workers, whose records
         // the coordinator replays into its own `JunitReporter`.
         let report = this.jest.test_options.reporters.junit.then(|| {
-            let failure = this.test_failure.take();
+            let failure = sequence.failure.take();
             let earlier = core::mem::take(&mut sequence.earlier_failures);
             Self::test_case_report(
                 result, buntest, sequence, test_entry, elapsed_ns, failure, earlier,
@@ -2115,7 +2111,6 @@ impl TestCommand {
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
-            test_failure: None,
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),

@@ -507,6 +507,50 @@ describe("junit reporter", () => {
     expect(proc.exitCode).toBe(0);
   });
 
+  it("reports a concurrent test's error under that test", async () => {
+    await using tmpDir = tempDir("junit-concurrent-errors", {
+      "package.json": "{}",
+      "concurrent.test.js": `
+        import { afterEach, test } from "bun:test";
+        const turn = () => new Promise(resolve => setImmediate(resolve));
+        const thrown = Promise.withResolvers();
+
+        // Keeps the first test open until the second one has thrown.
+        afterEach(async () => {
+          for (let i = 0; i < 5; i++) await turn();
+        });
+        test.concurrent("throws first", async () => {
+          thrown.resolve();
+          throw new Error("from the first");
+        });
+        test.concurrent("throws second", async () => {
+          await thrown.promise;
+          await turn();
+          throw new Error("from the second");
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+    const errorsOf = name =>
+      xmlContent.match(new RegExp(`<testcase[^>]*name="${name}"[^/]*>[\\s\\S]*?</testcase>`))[0].match(/from the \w+/g);
+    // Once in the message, once in the body.
+    expect({ "throws first": errorsOf("throws first"), "throws second": errorsOf("throws second") }).toEqual({
+      "throws first": ["from the first", "from the first"],
+      "throws second": ["from the second", "from the second"],
+    });
+    expect(proc.exitCode).toBe(1);
+  });
+
   it("reports an attempt that failed without an error like any other failed attempt", async () => {
     await using tmpDir = tempDir("junit-retry-no-error", {
       "package.json": "{}",

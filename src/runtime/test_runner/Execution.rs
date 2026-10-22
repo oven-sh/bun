@@ -175,6 +175,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) callback_done: bool,
     /// Names `Snapshots::add_count` counted during this attempt, for `reset_sequence` to undo.
     pub(crate) counted_snapshots: Vec<Box<[u8]>>,
+    /// Errors thrown during this attempt, for the JUnit report.
+    pub(crate) failure: Option<test_command::TestFailure>,
     /// Failures from earlier attempts, for the JUnit report.
     pub(crate) earlier_failures: Vec<test_command::TestFailure>,
 }
@@ -204,6 +206,7 @@ impl ExecutionSequence {
             pending_matchers: 0,
             callback_done: false,
             counted_snapshots: Vec::new(),
+            failure: None,
             earlier_failures: Vec::new(),
         }
     }
@@ -724,7 +727,6 @@ impl Execution {
                 sequence.remaining_repeat_count -= 1;
                 // SAFETY: arena-owned entry
                 sequence.remaining_retry_count = sequence.test_entry.map_or(0, |test| unsafe { test.as_ref() }.retry_count);
-                Execution::discard_junit_failure(buntest);
                 sequence.earlier_failures.clear();
                 Execution::reset_sequence(sequence);
                 return;
@@ -872,33 +874,18 @@ impl Execution {
         }
     }
 
-    /// Drop any captured failure so the next retry/repeat starts fresh.
-    /// Kept out of `reset_sequence` so within-attempt errors (e.g. a throwing
-    /// afterEach after the test body already threw) accumulate instead of
-    /// clobbering the primary failure.
-    fn discard_junit_failure(buntest: NonNull<BunTest>) {
+    /// Saves a failed attempt's failure before a retry, so it's reported with the test's final result.
+    fn save_attempt_failure(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         // SAFETY: `buntest` points at the live per-file BunTest; single-threaded
         // test runner, no other borrow live here.
         if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
-            // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
-            // provenance (see BunTest docs); single-threaded, no other borrow.
-            unsafe {
-                (*reporter.as_ptr()).test_failure = None;
-            }
-        }
-    }
-
-    /// Saves a failed attempt's failure before a retry, so it's reported with the test's final result.
-    fn save_attempt_failure(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
-        // SAFETY: as in `discard_junit_failure`.
-        if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
-            // SAFETY: as in `discard_junit_failure`.
-            let reporter = unsafe { &mut *reporter.as_ptr() };
+            // SAFETY: the reporter outlives every BunTest; single-threaded, no `&mut` to it is live.
+            let reporter = unsafe { reporter.as_ref() };
             if !reporter.jest.test_options.reporters.junit {
                 return;
             }
-            let failure = reporter
-                .test_failure
+            let failure = sequence
+                .failure
                 .take()
                 .or_else(|| {
                     test_command::TestFailure::from_result(

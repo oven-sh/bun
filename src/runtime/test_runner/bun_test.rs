@@ -1604,7 +1604,14 @@ impl BunTest {
             if !reporter.jest.test_options.reporters.junit {
                 core::ptr::null_mut()
             } else if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
-                core::ptr::from_mut(&mut reporter.test_failure).cast()
+                match self
+                    .execution
+                    .get_current_and_valid_execution_sequence(user_data)
+                {
+                    // SAFETY: points into `execution.sequences`, a boxed slice that lives until the file is done.
+                    Some((sequence, _)) => unsafe { &raw mut (*sequence.as_ptr()).failure }.cast(),
+                    None => core::ptr::null_mut(),
+                }
             } else {
                 core::ptr::from_mut(&mut unhandled_failure).cast()
             }

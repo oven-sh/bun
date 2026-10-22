@@ -95,6 +95,10 @@ pub enum Error {
     HTTP3ContentLengthMismatch,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
+    /// A socket option the caller asked for (`FetchSession` `tcp.userTimeout`)
+    /// was refused by the OS. `connect_errno` carries what `setsockopt` said.
+    #[error("SocketOptionRefused")]
+    SocketOptionRefused,
     #[error("InvalidCRL")]
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
@@ -313,6 +317,7 @@ impl Error {
             Self::HTTP3StreamReset => "HTTP3StreamReset",
             Self::HTTP3ContentLengthMismatch => "HTTP3ContentLengthMismatch",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
+            Self::SocketOptionRefused => "SocketOptionRefused",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
             Self::UnsupportedProtocol => "UnsupportedProtocol",

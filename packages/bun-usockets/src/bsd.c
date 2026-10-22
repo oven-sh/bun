@@ -599,6 +599,53 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     #endif
 }
 
+/* Bound how long sent data may stay unacknowledged before the kernel aborts
+ * the connection. `ms == 0` restores the OS default. Returns 0 on success,
+ * else errno (posix) or WSAGetLastError() (win32). */
+int bsd_socket_user_timeout(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int ms) {
+#if defined(_WIN32)
+    DWORD value = ms;
+    if (setsockopt(fd, IPPROTO_TCP, TCP_MAXRTMS, (const char *)&value, sizeof value) == 0) {
+        return 0;
+    }
+    int err = WSAGetLastError();
+    if (err != WSAENOPROTOOPT && err != WSAEINVAL) {
+        return err;
+    }
+    /* Older Windows has only the seconds variant. Round up so the bound is never shorter than asked. */
+    value = ms == 0 ? 0 : ms / 1000 + (ms % 1000 != 0);
+    if (setsockopt(fd, IPPROTO_TCP, TCP_MAXRT, (const char *)&value, sizeof value) == -1) {
+        return WSAGetLastError();
+    }
+    return 0;
+#elif defined(TCP_USER_TIMEOUT)
+    if (setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &ms, sizeof ms) == -1) {
+        return errno;
+    }
+    return 0;
+#elif defined(TCP_RXT_CONNDROPTIME)
+    /* Darwin counts in seconds and applies this to retransmissions only, not to
+     * zero-window probes (net.inet.tcp.max_persist_timeout governs those).
+     * Round up so the bound is never shorter than asked. */
+    int seconds = ms == 0 ? 0 : (int)(ms / 1000 + (ms % 1000 != 0));
+    if (setsockopt(fd, IPPROTO_TCP, TCP_RXT_CONNDROPTIME, &seconds, sizeof seconds) == -1) {
+        return errno;
+    }
+    return 0;
+#elif defined(TCP_MAXUNACKTIME)
+    /* FreeBSD counts in seconds. Round up so the bound is never shorter than asked. */
+    int seconds = ms == 0 ? 0 : (int)(ms / 1000 + (ms % 1000 != 0));
+    if (setsockopt(fd, IPPROTO_TCP, TCP_MAXUNACKTIME, &seconds, sizeof seconds) == -1) {
+        return errno;
+    }
+    return 0;
+#else
+    (void)fd;
+    (void)ms;
+    return ENOPROTOOPT;
+#endif
+}
+
 /* IP type-of-service / traffic-class. The option level depends on the socket
  * family (IP_TOS for IPv4, IPV6_TCLASS for IPv6), detected via getsockname.
  * Returns 0 on success or a negative platform errno on failure (the negative

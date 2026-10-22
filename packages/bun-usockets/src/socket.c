@@ -882,6 +882,13 @@ int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay) {
     return 0;
 }
 
+int us_socket_user_timeout(us_socket_r s, unsigned int ms) {
+    if (!us_socket_is_shut_down(s)) {
+        return bsd_socket_user_timeout(us_poll_fd((struct us_poll_t *) s), ms);
+    }
+    return 0;
+}
+
 void us_socket_unref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
     uv_unref((uv_handle_t *) s->p.uv_p);

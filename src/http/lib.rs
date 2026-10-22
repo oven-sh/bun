@@ -516,6 +516,9 @@ pub struct HTTPClientResult<'a> {
 pub struct PoolOptions {
     pub id: u64,
     pub idle_timeout_seconds: u32,
+    /// TCP user timeout (`TCP_USER_TIMEOUT`) in milliseconds for every TCP
+    /// connection the session opens. 0 = OS default (no setsockopt).
+    pub user_timeout_ms: u32,
     pub max_idle_sockets: u16,
 }
 
@@ -2025,6 +2028,17 @@ impl<'a> HTTPClient<'a> {
         // TCP options do not apply to a unix socket.
         if !self.flags.disable_keepalive && self.unix_socket_path.is_empty() {
             let _ = socket.set_keep_alive(true, 60);
+        }
+        // `FetchSession({ tcp: { userTimeout } })` is an explicit request, so a
+        // socket the OS will not bound is not used: the request fails with the
+        // setsockopt errno instead of running without the bound.
+        if self.pool.user_timeout_ms != 0 && self.unix_socket_path.is_empty() {
+            let err = socket.set_user_timeout(self.pool.user_timeout_ms);
+            if err != 0 {
+                self.state.connect_errno = err;
+                self.close_and_fail::<IS_SSL>(crate::Error::SocketOptionRefused, socket);
+                return Ok(());
+            }
         }
 
         self.on_open::<IS_SSL>(socket)?;

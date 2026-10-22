@@ -267,6 +267,7 @@ impl FetchSession {
             pool: http::PoolOptions {
                 id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
                 idle_timeout_seconds: 0,
+                user_timeout_ms: 0,
                 max_idle_sockets: 0,
             },
             keep_alive: true,
@@ -334,7 +335,9 @@ impl FetchSession {
             if keep_alive.is_boolean() {
                 this.keep_alive = keep_alive.as_boolean();
             } else if keep_alive.is_object() {
-                if let Some(seconds) = positive_number(global, keep_alive, "idleTimeout")? {
+                if let Some(seconds) =
+                    finite_number(global, keep_alive, "keepAlive", "idleTimeout", false)?
+                {
                     // The pool timer has the same wheel limits as the request idle timeout.
                     this.pool.idle_timeout_seconds =
                         http::normalize_idle_timeout_seconds(seconds.ceil() as u64);
@@ -366,6 +369,32 @@ impl FetchSession {
             } else if !keep_alive.is_undefined_or_null() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "FetchSession: 'keepAlive' must be a boolean or an object"
+                )));
+            }
+        }
+
+        if let Some(tcp) = options.get(global, "tcp")? {
+            if tcp.is_object() {
+                if let Some(ms) = finite_number(global, tcp, "tcp", "userTimeout", true)? {
+                    // Milliseconds, rounded up so the bound is never shorter than asked.
+                    // Linux reads the option as a signed int and rejects anything larger.
+                    let ms = ms.ceil();
+                    if ms > f64::from(i32::MAX) {
+                        return Err(global.throw_range_error(
+                            ms,
+                            jsc::RangeErrorOptions {
+                                field_name: b"tcp.userTimeout",
+                                min: 0,
+                                max: i64::from(i32::MAX),
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    this.pool.user_timeout_ms = ms as u32;
+                }
+            } else if !tcp.is_undefined_or_null() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "FetchSession: 'tcp' must be an object"
                 )));
             }
         }
@@ -425,13 +454,16 @@ impl FetchSession {
     }
 }
 
-/// `keepAlive[name]` as a finite number above zero; `undefined` is absent.
-fn positive_number(
+/// `object[name]` as a finite number, `None` when absent or `undefined`.
+/// `allow_zero` admits 0 (an "OS default" value) next to the positive numbers.
+fn finite_number(
     global: &JSGlobalObject,
-    keep_alive: JSValue,
+    object: JSValue,
+    object_name: &'static str,
     name: &'static str,
+    allow_zero: bool,
 ) -> JsResult<Option<f64>> {
-    let Some(value) = keep_alive.get(global, name)? else {
+    let Some(value) = object.get(global, name)? else {
         return Ok(None);
     };
     if value.is_undefined() {
@@ -442,9 +474,19 @@ fn positive_number(
     } else {
         f64::NAN
     };
-    if !(number.is_finite() && number > 0.0) {
+    let in_range = if allow_zero {
+        number >= 0.0
+    } else {
+        number > 0.0
+    };
+    if !(number.is_finite() && in_range) {
+        let kind = if allow_zero {
+            "non-negative"
+        } else {
+            "positive"
+        };
         return Err(global.throw_invalid_arguments(format_args!(
-            "FetchSession: 'keepAlive.{name}' must be a positive number"
+            "FetchSession: '{object_name}.{name}' must be a {kind} number"
         )));
     }
     Ok(Some(number))

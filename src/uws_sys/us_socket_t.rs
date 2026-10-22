@@ -197,6 +197,12 @@ impl us_socket_t {
         c::us_socket_keepalive(self, enabled as c_int, delay)
     }
 
+    /// TCP user timeout in milliseconds (0 = OS default). Returns 0 on success
+    /// or a platform error code.
+    pub(crate) fn set_user_timeout(&mut self, ms: u32) -> i32 {
+        c::us_socket_user_timeout(self, ms)
+    }
+
     /// Set the IP type-of-service / traffic class. Returns 0 on success or a
     /// negative platform errno.
     pub(crate) fn set_tos(&mut self, tos: i32) -> i32 {
@@ -540,6 +546,7 @@ mod c {
             enable: c_int,
             delay: c_uint,
         ) -> c_int;
+        pub(super) safe fn us_socket_user_timeout(s: &mut us_socket_t, ms: c_uint) -> c_int;
 
         pub(super) safe fn us_socket_ext(s: &mut us_socket_t) -> *mut c_void;
         pub(super) safe fn us_socket_group(s: &mut us_socket_t) -> *mut SocketGroup;

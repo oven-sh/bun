@@ -1423,7 +1423,7 @@ impl FetchTasklet {
             http::Error::ConnectionClosed => "ECONNRESET",
             http::Error::Timeout => "ETIMEDOUT",
             http::Error::ConnectionRefused => self.connect_errno_name().unwrap_or("ECONNREFUSED"),
-            http::Error::FailedToOpenSocket => {
+            http::Error::FailedToOpenSocket | http::Error::SocketOptionRefused => {
                 self.connect_errno_name().unwrap_or_else(|| fail.name())
             }
             http::Error::TLSHandshakeFailed => "EPROTO",
@@ -1436,6 +1436,9 @@ impl FetchTasklet {
             )),
             http::Error::FailedToOpenSocket => BunString::create_format(format_args!(
                 "{code}: Was there a typo in the url or port?"
+            )),
+            http::Error::SocketOptionRefused => BunString::create_format(format_args!(
+                "{code}: The OS refused the TCP user timeout of this FetchSession"
             )),
             http::Error::TooManyRedirects => BunString::create_format(format_args!(
                 "{code}: The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",

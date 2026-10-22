@@ -9137,6 +9137,46 @@ declare module "bun" {
      * Send the requests of this session over a Unix socket.
      */
     unix?: string | undefined;
+    /**
+     * TCP options for the connections of this session. They do not apply to
+     * Unix sockets or to HTTP/3 connections.
+     */
+    tcp?:
+      | {
+          /**
+           * Milliseconds that sent data may stay unacknowledged before the
+           * kernel aborts the connection. Use it to fail a request fast over a
+           * connection whose network path is gone, for example a pooled
+           * connection after a network change. The request then rejects with
+           * a connection error.
+           *
+           * Without it, such a request fails when the request `timeout` fires
+           * (5 minutes by default), or after the kernel's own retransmit limit
+           * (about 15 minutes on Linux) with `timeout: false`. A streaming
+           * upload that keeps writing can outlive `timeout`, because every
+           * write that the kernel buffers restarts it. This option bounds
+           * that too.
+           *
+           * It covers data Bun has sent and the peer has not acknowledged: the
+           * request line, headers and body. A live server that takes long to
+           * answer is not affected. On Linux the value also replaces the
+           * keepalive probe count as the abort rule for an idle connection.
+           * Bun probes after 60 seconds idle, and the kernel then drops the
+           * connection once no data arrived for `max(60 s, userTimeout)` and
+           * a probe is unanswered. With a value of 60 seconds or less, one
+           * lost probe is enough. On Linux it also aborts a connection to a
+           * peer that stops reading for that long.
+           *
+           * Linux: `TCP_USER_TIMEOUT`. macOS: `TCP_RXT_CONNDROPTIME`, in whole
+           * seconds, rounded up. Windows: `TCP_MAXRTMS`. `0` means the OS
+           * default. The largest value is 2147483647. If the OS refuses the
+           * option, the request fails with the `setsockopt` error code.
+           *
+           * @default 0
+           */
+          userTimeout?: number | undefined;
+        }
+      | undefined;
   }
 
   /**

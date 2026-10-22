@@ -185,7 +185,7 @@ describe("Bun.FetchSession", () => {
     }
     // The close crosses two threads after the collection; give it until a
     // deadline, and fail with a message instead of hanging.
-    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline;) {
+    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline; ) {
       await new Promise(resolve => setImmediate(resolve));
     }
     expect(done).toBe(true);
@@ -375,9 +375,11 @@ describe("Bun.FetchSession", () => {
           },
         });
         const IPPROTO_TCP = 6;
-        // Linux TCP_USER_TIMEOUT is in ms. Darwin's TCP_RXT_CONNDROPTIME is in whole seconds.
-        const OPT = isDarwin ? 0x80 : 18;
-        const expected = isDarwin ? 3 : 2500;
+        // Linux TCP_USER_TIMEOUT is in ms. Darwin's TCP_RXT_CONNDROPTIME and
+        // FreeBSD's TCP_MAXUNACKTIME are in whole seconds.
+        const isFreeBSD = process.platform === "freebsd";
+        const OPT = isDarwin ? 0x80 : isFreeBSD ? 68 : 18;
+        const expected = isDarwin || isFreeBSD ? 3 : 2500;
         // The values of every TCP socket of this process, by fd.
         function scan() {
           const found = {};

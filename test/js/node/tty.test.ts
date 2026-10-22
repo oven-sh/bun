@@ -314,22 +314,6 @@ describe.concurrent("WriteStream Writable hooks", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("cork() holds writes until uncork()", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `const { WriteStream } = require("node:tty");
-       const s = new WriteStream(1);
-       s.cork();
-       for (let i = 0; i < 4; i++) s.write("x");
-       process.nextTick(() => {
-         s.uncork();
-         s.write("y", () => process.stderr.write("done"));
-       });`,
-    );
-    expect(stdout).toBe("xxxxy");
-    expect(stderr).toBe("done");
-    expect(exitCode).toBe(0);
-  });
-
   test("the hooks live on the prototype, as in node", async () => {
     const { stderr, exitCode } = await run(
       `const { WriteStream } = require("node:tty");

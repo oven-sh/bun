@@ -28,11 +28,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
   flush: boolean;
   open: () => void;
   autoClose: boolean;
-  /**
-   * true = path must be opened
-   * sink = FileSink
-   */
-  [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kWriteStreamFastPath]?: undefined | FileSink;
 };
 type FD = number;
 
@@ -335,8 +331,8 @@ Object.defineProperty(readStreamPrototype, "pending", {
 });
 
 function close(stream, err, cb) {
-  const fastPath: FileSink | true = stream[kWriteStreamFastPath];
-  if (fastPath && fastPath !== true) {
+  const fastPath = stream[kWriteStreamFastPath];
+  if (fastPath) {
     stream.fd = null;
     const maybePromise = fastPath.end(err);
     thenIfPromise(maybePromise, () => {
@@ -415,16 +411,24 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
 
   const autoDestroy = (autoClose = options.autoDestroy = autoClose === undefined ? true : autoClose);
 
+  // $fastPath is internal: `true` opens a FileSink on the fd, a FileSink is
+  // adopted as is (writableFromFileSink). Without an fd or a sink there is
+  // nothing to write to and the general path takes over.
+  //
   // A writer cannot be opened for every fd a caller may hand us -- a read-only
   // descriptor is the common case, and node's tty.WriteStream accepts one. Fall
   // back to the general path there, which surfaces the failure at write time the
   // way node does, rather than throwing from the constructor.
-  let fastWriter;
-  if (fastPath && fd != null) {
-    try {
-      fastWriter = Bun.file(fd).writer();
-    } catch {
+  let fastWriter: FileSink | undefined = typeof fastPath === "object" ? fastPath : undefined;
+  if (fastPath === true) {
+    if (fd == null) {
       fastPath = false;
+    } else {
+      try {
+        fastWriter = Bun.file(fd).writer();
+      } catch {
+        fastPath = false;
+      }
     }
   }
 
@@ -441,8 +445,9 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     if (!write) this._write = null;
     if (!writev) this._writev = null;
   } else {
-    // The fast path keeps the prototype _writev so a corked or buffered burst
-    // reaches the FileSink as one chunk.
+    // The fast path keeps the prototype _writev so a buffered burst reaches
+    // the FileSink as one chunk. The general path has shadowed it since the
+    // port from node and keeps that shape here.
     if (!fastPath) this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
@@ -468,7 +473,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
   // instance or subclass override is visible to writeFast, which then routes
   // the chunk through Writable.prototype.write like node does.
   if (fastPath) {
-    this[kWriteStreamFastPath] = fd != null ? fastWriter : true;
+    this[kWriteStreamFastPath] = fastWriter;
     this.write = writeFast as any;
     if (typeof this._final !== "function") this._final = finalFast;
     // The fd (stdio) or the FileSink (child.stdin) is already open: skip the
@@ -580,7 +585,7 @@ function writeToSink(fileSink: FileSink, data: any, cb: (err?: any) => void) {
 function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
-  if (fileSink && fileSink !== true) {
+  if (fileSink) {
     writeToSink(fileSink, data, cb);
   } else {
     this[kIsPerformingIO] = true;
@@ -612,7 +617,7 @@ function _writev(data, cb) {
   }
 
   const fileSink = this[kWriteStreamFastPath];
-  if (fileSink && fileSink !== true) {
+  if (fileSink) {
     writeToSink(fileSink, Buffer.concat(chunks, size), cb);
   } else {
     this[kIsPerformingIO] = true;
@@ -634,7 +639,7 @@ writeStreamPrototype._writev = _writev;
 
 function finalFast(this: FSStream, cb: (err?: any) => void) {
   const fileSink = this[kWriteStreamFastPath];
-  if (!fileSink || fileSink === true) {
+  if (!fileSink) {
     cb(null);
     return;
   }
@@ -655,19 +660,20 @@ const writablePrototypeWrite = Writable.prototype.write;
 // The own write() of a fast-path stream. It hands the chunk to the FileSink
 // without touching the Writable state machine, so it must route through
 // Writable.prototype.write whenever that state matters: after end()/destroy()
-// (ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED), while corked or
-// buffered (order), and when an instance or subclass overrides _write or
-// _writev (the override must receive the chunk, as in node).
+// (ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED), while Writable still
+// holds chunks (order), and when an instance or subclass overrides _write or
+// _writev (the override must receive the chunk, as in node). The compare is
+// against the live prototype slot, so a patch of fs.WriteStream.prototype
+// does not capture stdio, which is not an fs.WriteStream in node.
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   const state = this._writableState;
   if (
     state !== undefined &&
     (state.ending ||
       state.destroyed ||
-      state.corked !== 0 ||
       state.length !== 0 ||
-      this._write !== _write ||
-      this._writev !== _writev)
+      this._write !== writeStreamPrototype._write ||
+      this._writev !== writeStreamPrototype._writev)
   ) {
     return writablePrototypeWrite.$call(this, data, encoding, cb);
   }
@@ -681,7 +687,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   }
 
   const fileSink = this[kWriteStreamFastPath];
-  $assert(fileSink && fileSink !== true, "writeFast requires an open FileSink");
+  $assert(fileSink, "writeFast requires an open FileSink");
   const maybePromise = fileSink.write(data);
   if ($isPromise(maybePromise)) {
     // Two-arg then(): a throw from the fulfillment handler must not be
@@ -706,7 +712,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
 writeStreamPrototype._destroy = function (err, cb) {
   const sink = this[kWriteStreamFastPath];
-  if (sink && sink !== true) {
+  if (sink) {
     const end = sink.end(err);
     if ($isPromise(end)) {
       end.then(() => cb(err), cb);
@@ -760,7 +766,10 @@ Object.defineProperty(writeStreamPrototype, "autoClose", {
 
 Object.defineProperty(writeStreamPrototype, "pending", {
   get() {
-    return this.fd === null;
+    if (this.fd !== null) return false;
+    // A stream over an adopted FileSink (child.stdin) has no fd and nothing
+    // left to open: it is pending only once destroyed, like node's net.Socket.
+    return this[kWriteStreamFastPath] === undefined || this.destroyed;
   },
   configurable: true,
 });
@@ -778,9 +787,7 @@ function writableFromFileSink(fileSink: any) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
-  const w = new WriteStream("", { $fastPath: true });
-  $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
-  w[kWriteStreamFastPath] = fileSink;
+  const w = new WriteStream("", { $fastPath: fileSink });
   w.path = undefined;
   return w;
 }

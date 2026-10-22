@@ -458,6 +458,11 @@ describe("spawn()", () => {
     const stderr = collect(child.stderr!);
     const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
 
+    // Born constructed over an open pipe, as in node: nothing is pending and
+    // no 'ready' is owed.
+    expect(child.stdin!.pending).toBe(false);
+    expect(child.stdin!.writableLength).toBe(0);
+
     const seen: string[] = [];
     child.stdin!._write = (chunk, encoding, callback) => {
       seen.push(chunk.toString());

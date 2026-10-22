@@ -1192,6 +1192,14 @@ fn expr_from_blob(
         );
 
     if is_text_like {
+        // Escaping never shortens the body: refuse one that is too long already, before its copy.
+        Str::check_len(
+            bytes.len(),
+            "Text of the macro result",
+            log,
+            Some(source),
+            loc,
+        )?;
         let mut output = bun_core::MutableString::init_empty();
         bun_core::quote_for_json(bytes, &mut output, true)?;
         let owned = output.to_owned_slice();

@@ -442,8 +442,8 @@ describe.concurrent("a macro result that does not fit in one string", () => {
     `export function base64(type: string, bytes: number) {`,
     `  return new Blob([new Uint8Array(bytes)], { type });`,
     `}`,
-    `export function text(bytes: number) {`,
-    `  return new Blob([new Uint8Array(bytes).fill(97)], { type: "text/plain" });`,
+    `export function text(bytes: number, fill = 97) {`,
+    `  return new Blob([new Uint8Array(bytes).fill(fill)], { type: "text/plain" });`,
     `}`,
     `export function propertyName(wide: number, narrow: number) {`,
     `  return { [Buffer.alloc(wide * 3, "あ").toString() + Buffer.alloc(narrow, "a").toString()]: 1 };`,
@@ -488,6 +488,12 @@ describe.concurrent("a macro result that does not fit in one string", () => {
       ],
       "text-at-limit": [entry("text", [LIMIT]), inlined(Buffer.alloc(LIMIT, "a").toString())],
       "text-past-limit": [entry("text", [LIMIT + 1]), [tooLarge("Text of the macro result"), atMacroCall]],
+      // The string that main stores is JSON-escaped (#42019 changes that), so a quote is 2 bytes. This body is
+      // under the limit and its string is past it.
+      "quoted-text-past-limit": [
+        entry("text", [LIMIT / 2 + 1, 34]),
+        [tooLarge("Text of the macro result", LIMIT + 2), atMacroCall],
+      ],
       "property-name-at-limit": [
         entry("propertyName", [THIRD, LIMIT - THIRD * 3], "Object.keys(result)[0]"),
         inlined(Buffer.alloc(THIRD * 3, "あ").toString() + Buffer.alloc(LIMIT - THIRD * 3, "a").toString()),
@@ -510,12 +516,13 @@ describe.concurrent("a macro result that does not fit in one string", () => {
     using dir = tempDir("macro-result-limit", {
       "macro.ts": macros,
       ...Object.fromEntries(Object.entries(cases).map(([name, [source]]) => [`${name}.ts`, source])),
-      "import.ts": `
+      // require() transpiles on the main thread, so each macro runs in the main VM.
+      "main.ts": `
         ${summarize}
         const results: Record<string, unknown> = {};
         for (const name of process.argv.slice(2)) {
           try {
-            results[name] = summarize((await import("./" + name + ".ts")).default);
+            results[name] = summarize(require("./" + name + ".ts").default);
           } catch (e: any) {
             results[name] = { error: e.message, name: e.name, line: e.position?.line, column: e.position?.column };
           }
@@ -523,7 +530,7 @@ describe.concurrent("a macro result that does not fit in one string", () => {
         console.log(JSON.stringify(results));
       `,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), "import.ts", ...Object.keys(cases));
+    const { stdout, stderr, exitCode } = await run(String(dir), "main.ts", ...Object.keys(cases));
     expect({ results: lastLine(stdout), stderr }).toEqual({
       results: Object.fromEntries(
         Object.entries(cases).map(([name, [, expected]]) => [
@@ -583,25 +590,27 @@ describe.concurrent("a macro result that does not fit in one string", () => {
     expect(exitCode).toBe(0);
   });
 
-  // A 96 MiB body is a 128 MiB data: URL. The same macro that returns only the size of the body is the baseline.
-  test("is refused before its base64 string is allocated", async () => {
+  // A 96 MiB body is refused before Bun makes its string: 128 MiB as a data: URL, 96 MiB as text. The same macro
+  // that returns only the size of the body is the baseline.
+  test("is refused before its string is allocated", async () => {
     const BYTES = 96 * 1024 * 1024;
     using dir = tempDir("macro-result-limit-rss", {
       "macro.ts": [
-        `const blob = () => new Blob([new Uint8Array(${BYTES})], { type: "application/octet-stream" });`,
-        `export function size() {`,
-        `  return blob().size;`,
+        `const blob = (type: string) => new Blob([new Uint8Array(${BYTES}).fill(97)], { type });`,
+        `export function size(type: string) {`,
+        `  return blob(type).size;`,
         `}`,
-        `export function whole() {`,
-        `  return blob();`,
+        `export function whole(type: string) {`,
+        `  return blob(type);`,
         `}`,
         ``,
       ].join("\n"),
-      "size.ts": entry("size"),
-      "whole.ts": entry("whole"),
-      "import.ts": `
+      "size.ts": entry("size", ["text/plain"]),
+      "base64.ts": entry("whole", ["application/octet-stream"]),
+      "text.ts": entry("whole", ["text/plain"]),
+      "main.ts": `
         try {
-          const { default: value } = await import("./" + process.argv[2] + ".ts");
+          const { default: value } = require("./" + process.argv[2] + ".ts");
           console.log(JSON.stringify(typeof value === "string" ? { inlined: value.length } : value));
         } catch (e: any) {
           console.log(JSON.stringify(e.message));
@@ -609,18 +618,26 @@ describe.concurrent("a macro result that does not fit in one string", () => {
       `,
     });
     const measure = (name: string) =>
-      runCommandMaxRSS({ cmd: [bunExe(), "import.ts", name], cwd: String(dir), env: withoutAsanQuarantine(env) });
-    const [size, whole] = await Promise.all([measure("size"), measure("whole")]);
-    expect({ size: lastLine(size.stdout), whole: lastLine(whole.stdout) }).toEqual({
-      size: BYTES,
-      whole: tooLarge("Base64 of the macro result", dataUrlLength("application/octet-stream", BYTES)),
+      runCommandMaxRSS({ cmd: [bunExe(), "main.ts", name], cwd: String(dir), env: withoutAsanQuarantine(env) });
+    const [size, base64, text] = await Promise.all([measure("size"), measure("base64"), measure("text")]);
+    const printed = ({ stdout, stderr, exitCode }: typeof size) => ({ printed: lastLine(stdout), stderr, exitCode });
+    expect({ size: printed(size), base64: printed(base64), text: printed(text) }).toEqual({
+      size: { printed: BYTES, stderr: "", exitCode: 0 },
+      base64: {
+        printed: tooLarge("Base64 of the macro result", dataUrlLength("application/octet-stream", BYTES)),
+        stderr: "",
+        exitCode: 0,
+      },
+      text: { printed: tooLarge("Text of the macro result", BYTES), stderr: "", exitCode: 0 },
     });
-    expect(whole.maxRSS - size.maxRSS).toBeLessThan(64 * 1024 * 1024);
+    expect(base64.maxRSS - size.maxRSS).toBeLessThan(64 * 1024 * 1024);
+    expect(text.maxRSS - size.maxRSS).toBeLessThan(64 * 1024 * 1024);
   });
 
   // At the lowered limit a result that nothing checks is still inlined whole. Only the real size shows the cut:
   // 3 GiB + 3 bytes are a data: URL of 2^32 + 41 characters, of which `bun build` wrote the first 41. The child
-  // holds the 3 GiB, and 7 GiB without the check.
+  // holds the 3 GiB, and 7 GiB without the check. In a debug build with ASAN it takes 2 to 5 seconds, and 20
+  // when the machine is short of page cache, so this one test carries its own ceiling.
   test.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
     "a 3 GiB Blob fails `bun build` with one error and no output file",
     async () => {

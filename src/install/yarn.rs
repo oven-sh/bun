@@ -782,7 +782,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 origin: Origin::Npm,
                 arch: entry.cpu.combine(),
                 os: entry.os.combine(),
-                man_dir: SemverString::default(),
+                package_json_version: SemverString::default(),
                 has_install_script: HasInstallScript::False,
                 integrity: entry.tarball_integrity(),
                 ..Default::default()

@@ -9,8 +9,10 @@ use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
-use crate::package_manager_real::options::LogLevel;
-use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
+use crate::package_manager_real::options::{Enable, LogLevel};
+use crate::package_manager_real::{
+    ArrivedPackage, PackageManager, RemoteTurn, directories, enqueue, run_tasks,
+};
 use crate::package_manager_task as Task;
 use crate::repository_real::{RepositoryExt as _, locked_scp_like};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
@@ -180,6 +182,16 @@ impl PackageManager {
                 _ => false,
             };
             if !(from_lockfile && moved) {
+                // The row has no version, or one that a migrator took from another lockfile.
+                let buf = self.lockfile.buffers.string_bytes.as_slice();
+                let version = package.meta.recorded_version(buf);
+                if version.is_some() && version != existing.meta.recorded_version(buf) {
+                    existing
+                        .meta
+                        .record_version(package.meta.package_json_version);
+                    self.lockfile.packages.set(existing_id as usize, existing);
+                    self.options.enable.set(Enable::FORCE_SAVE_LOCKFILE, true);
+                }
                 return existing;
             }
             if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {
@@ -198,6 +210,8 @@ impl PackageManager {
             existing.dependencies = package.dependencies;
             existing.resolutions = package.resolutions;
             existing.bin = package.bin;
+            existing.meta.package_json_version = package.meta.package_json_version;
+            existing.meta.version_record = package.meta.version_record;
             if data.integrity.tag.is_supported() {
                 existing.meta.integrity = data.integrity;
             }
@@ -457,6 +471,7 @@ impl PackageManager {
                         pkg.resolution = resolver
                             .resolve(&mut builder, &Expr::default())
                             .expect("unreachable");
+                        pkg.meta.record_version(SemverString::default());
                     }
 
                     pkg
@@ -488,6 +503,74 @@ impl PackageManager {
                 Some(self.append_extracted_package(package, data, package_id))
             }
             _ => None,
+        }
+    }
+
+    /// Before bun.lock is saved: a row with no version takes it from the package.json of its cache entry.
+    pub(crate) fn record_versions_from_cache(&mut self) -> Result<(), bun_alloc::AllocError> {
+        let mut versions: Vec<(PackageID, Box<[u8]>)> = Vec::new();
+        for id in 0..self.lockfile.packages.len() {
+            let tag = self.lockfile.packages.items_resolution()[id].tag;
+            if !tag.records_package_json_version() {
+                continue;
+            }
+            let meta = &mut self.lockfile.packages.items_meta_mut()[id];
+            if !meta.pins(tag) {
+                // The next install can get other bytes for this row.
+                meta.forget_version();
+            } else if !meta.has_recorded_version()
+                && let Some(version) = self.version_in_cache(id as PackageID)
+            {
+                versions.push((id as PackageID, version));
+            }
+        }
+        if versions.is_empty() {
+            return Ok(());
+        }
+        let before = self.lockfile.buffers.string_bytes.as_ptr();
+        for (package_id, version) in versions {
+            let version = self.lockfile.string_buf().append(&version)?;
+            self.lockfile.packages.items_meta_mut()[package_id as usize].record_version(version);
+        }
+        // An append can move the buffer that `UpdateRequest::version_buf` views.
+        let after = bun_ptr::RawSlice::new(self.lockfile.buffers.string_bytes.as_slice());
+        for request in &mut self.update_requests {
+            if request.version_buf.as_ptr().cast::<u8>() == before {
+                request.version_buf = after;
+            }
+        }
+        Ok(())
+    }
+
+    /// `None` when the cache has no entry with the pinned bytes, or when it declares another name than the row.
+    fn version_in_cache(&mut self, package_id: PackageID) -> Option<Box<[u8]>> {
+        let resolution = self.lockfile.packages.items_resolution()[package_id as usize];
+        let integrity = self.lockfile.packages.items_meta()[package_id as usize].integrity;
+        let cache_dir = self.get_cache_directory();
+        let folder = directories::cached_pinned_folder_name(self, &resolution, &integrity);
+        if folder.is_empty() {
+            return None;
+        }
+        let mut spill = Vec::new();
+        let path = bun_paths::resolve_path::join_z_spill::<bun_paths::platform::Auto>(
+            &mut spill,
+            &[folder.as_bytes(), b"package.json"],
+        );
+        match bun_sys::File::read_from(cache_dir, path.as_bytes()) {
+            Ok(json) => {
+                let buf = self.lockfile.buffers.string_bytes.as_slice();
+                let name = self.lockfile.packages.items_name()[package_id as usize].slice(buf);
+                crate::lockfile_real::package::version_for_row(&json, name)
+            }
+            // A checkout of a repository that has no package.json.
+            Err(err)
+                if resolution.tag.is_git()
+                    && err.get_errno() == bun_sys::E::ENOENT
+                    && directories::is_package_in_cache_at(cache_dir, folder, resolution.tag) =>
+            {
+                Some(Box::default())
+            }
+            Err(_) => None,
         }
     }
 

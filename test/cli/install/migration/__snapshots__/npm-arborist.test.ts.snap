@@ -3901,7 +3901,7 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "minimist": ["minimist@github:substack/minimist#3754568bfd43a841d2d72d7fb54598635aea8fa4", {}, "3754568bfd43a841d2d72d7fb54598635aea8fa4", "sha512-dYEyruIho8J+fbL60i3+R+9WbvX0YIN2uomWgCr06hT0AHu9O6BhIl5z5FRiJUgykJ1dzb092eR/FjBtnKEb8w=="],
+    "minimist": ["minimist@github:substack/minimist#3754568bfd43a841d2d72d7fb54598635aea8fa4", { "version": "0.0.8" }, "3754568bfd43a841d2d72d7fb54598635aea8fa4", "sha512-dYEyruIho8J+fbL60i3+R+9WbvX0YIN2uomWgCr06hT0AHu9O6BhIl5z5FRiJUgykJ1dzb092eR/FjBtnKEb8w=="],
   }
 }
 "
@@ -3927,7 +3927,7 @@ bun install --frozen-lockfile exit code: 0
   "packages": {
     "@isaacs/minimist-git-dep": ["@isaacs/minimist-git-dep@1.0.0", "", { "dependencies": { "minimist": "github:substack/minimist#3754568bfd43a841d2d72d7fb54598635aea8fa4" } }, "sha512-9jZFcJZJEGshpT6T5Y+wVnro7/5bPj/Kz5SJQz8h2gdDP3jZmmn5ojy1+ZI6Z+F3cEiSc8f5FVmsNZ0ODk9Fpw=="],
 
-    "minimist": ["minimist@github:substack/minimist#3754568bfd43a841d2d72d7fb54598635aea8fa4", {}, "3754568bfd43a841d2d72d7fb54598635aea8fa4", "sha512-dYEyruIho8J+fbL60i3+R+9WbvX0YIN2uomWgCr06hT0AHu9O6BhIl5z5FRiJUgykJ1dzb092eR/FjBtnKEb8w=="],
+    "minimist": ["minimist@github:substack/minimist#3754568bfd43a841d2d72d7fb54598635aea8fa4", { "version": "0.0.8" }, "3754568bfd43a841d2d72d7fb54598635aea8fa4", "sha512-dYEyruIho8J+fbL60i3+R+9WbvX0YIN2uomWgCr06hT0AHu9O6BhIl5z5FRiJUgykJ1dzb092eR/FjBtnKEb8w=="],
   }
 }
 "

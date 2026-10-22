@@ -103,3 +103,19 @@ tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer
 declare const webview: Bun.WebView;
 tsd.expectType(webview.goBack()).is<Promise<void>>();
 tsd.expectType(webview.goForward()).is<Promise<void>>();
+
+// bun.lock: the info object of a tarball, git or github package can carry the package.json version.
+declare const lockfile: Bun.BunLockFile;
+const tarballRow = ["pkg@https://example.com/pkg.tgz", { version: "1.2.3" }] satisfies Bun.BunLockFilePackageArray;
+tsd.expectType(tarballRow[1].version).is<string>();
+const gitRow = [
+  "pkg@git+https://example.com/pkg.git#abc",
+  { version: "" },
+  "abc",
+] satisfies Bun.BunLockFilePackageArray;
+tsd.expectType(gitRow[2]).is<string>();
+for (const row of Object.values(lockfile.packages)) {
+  if (row.length === 4) {
+    tsd.expectType(row[2].version).is<string | undefined>();
+  }
+}

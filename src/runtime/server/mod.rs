@@ -271,6 +271,9 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) active_connection_count: core::cell::Cell<u32>,
     /// The node:http tunnels in `active_connection_count` that do not read (stopped or at EOF) and have nothing left to send.
     pub(crate) idle_tunnel_count: core::cell::Cell<u32>,
+    /// The node:http tunnels that have bytes left to send. They hold the loop through `sending_tunnel_ref`, whatever `server.unref()` did to `poll_ref`.
+    sending_tunnel_count: core::cell::Cell<u32>,
+    sending_tunnel_ref: jsc::JsCell<KeepAlive>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
     /// `Cell` because the open/close accounting arrives through shared
@@ -508,7 +511,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
     /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3`: a node:http tunnel becomes idle. `+3` / `+4`: it is not idle any more, at read EOF / not at it. `-4`: it closes idle.
+    /// A node:http tunnel: `-3` / `+3` it becomes idle / is not idle any more, `-4` it closes idle, `+5` / `-5` it has bytes left to send / has none any more.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -527,16 +530,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     this.note_connection_opened();
                     return;
                 }
-                3 | 4 => {
+                3 => {
                     this.note_tunnel_idle(false);
-                    // With a listener open, the loop ref is the user's to drop (`server.unref()`).
-                    // Behind `server.unref()` reads do not hold the loop, and only at read EOF is it sure that the tunnel has bytes to send.
-                    if !this.has_listener()
-                        && (opened == 3 || !this.flags.contains(ServerFlags::UNREFED_BY_USER))
-                    {
+                    // With a listener open, the loop ref is the user's to drop (`server.unref()`), and what they dropped stays dropped.
+                    if !this.has_listener() && !this.flags.contains(ServerFlags::UNREFED_BY_USER) {
                         // SAFETY: `this` is not used again, and a tunnel write or read start never runs inside `app.close()`.
                         unsafe { &mut *user_data.cast::<Self>() }.ref_();
                     }
+                    return;
+                }
+                5 | -5 => {
+                    this.note_tunnel_sending(opened == 5);
                     return;
                 }
                 -3 => this.note_tunnel_idle(true),
@@ -1611,12 +1615,31 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn note_tunnel_idle(&self, idle: bool) {
         let count = self.idle_tunnel_count.get();
-        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3, +4 or -4.
+        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3 or -4.
         debug_assert!(idle || count > 0);
         self.idle_tunnel_count.set(if idle {
             count + 1
         } else {
             count.saturating_sub(1)
+        });
+    }
+
+    fn note_tunnel_sending(&self, sending: bool) {
+        let count = self.sending_tunnel_count.get();
+        // `AsyncSocketData::filteredSendingTunnel` pairs every +5 with one -5.
+        debug_assert!(sending || count > 0);
+        let count = if sending {
+            count + 1
+        } else {
+            count.saturating_sub(1)
+        };
+        self.sending_tunnel_count.set(count);
+        self.sending_tunnel_ref.with_mut(|keep_alive| {
+            if count > 0 {
+                keep_alive.ref_(self.vm.loop_ctx());
+            } else {
+                keep_alive.unref(self.vm.loop_ctx());
+            }
         });
     }
 
@@ -2207,6 +2230,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             pending_requests: core::cell::Cell::new(0),
             active_connection_count: core::cell::Cell::new(0),
             idle_tunnel_count: core::cell::Cell::new(0),
+            sending_tunnel_count: core::cell::Cell::new(0),
+            sending_tunnel_ref: jsc::JsCell::new(KeepAlive::default()),
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),

@@ -1,3 +1,4 @@
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { once } from "node:events";
@@ -178,6 +179,31 @@ describe.each(["http", "https"] as const)("%s: the request body behind the FIN o
     ["Content-Length", `Content-Length: ${payload.length}`, payload],
     ["chunked", "Transfer-Encoding: chunked", `3e8\r\n${payload}\r\n0\r\n\r\n`],
   ];
+
+  // TLS holds a part of the response, and the FIN behind it. Without TLS uWS holds that part, and closes behind it.
+  test
+    .skipIf(protocol === "http")
+    .concurrent("the body reaches the request behind a response that the send buffer does not take whole", async () => {
+      const { promise, resolve } = Promise.withResolvers<ReturnType<typeof observe>>();
+      await using server = createServer((req, res) => {
+        resolve(observe(req));
+        setSocketOptions(req.socket, 1, 4096);
+        res.writeHead(401, { "Content-Length": 64 * 1024, Connection: "close" });
+        res.end(Buffer.alloc(64 * 1024, "n"));
+        req.socket.end();
+      });
+
+      const client = await connectTo(server);
+      try {
+        const serverEnded = once(client, "end");
+        client.write(requestHead(`Content-Length: ${payload.length}`));
+        await serverEnded;
+        client.end(payload);
+        expect(await promise).toEqual({ body: payload, events: ["end", "close"] });
+      } finally {
+        client.destroy();
+      }
+    });
 
   describe.each(rejections)("%s", (_how, reject) => {
     describe.each(bodies)("%s", (_framing, framing, encoded) => {

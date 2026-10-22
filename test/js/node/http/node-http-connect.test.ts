@@ -1956,7 +1956,7 @@ function runTunnel(proto: string, event: string, listener: string, peer = "clien
   const request =
     event === "connect"
       ? "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
-      : "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n";
+      : "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
   return runToExit(
     "-e",
     `const server = require("node:${proto}").createServer(${JSON.stringify(proto === "https" ? tlsCert : {})});
@@ -1968,8 +1968,8 @@ function runTunnel(proto: string, event: string, listener: string, peer = "clien
      server.on("${event}", (req, socket) => {
        ${listener}
      });
-     server.listen(0, "127.0.0.1", () => {
-       client = require("node:${proto === "https" ? "tls" : "net"}").connect({
+     function connect() {
+       const client = require("node:${proto === "https" ? "tls" : "net"}").connect({
          port: server.address().port,
          host: "127.0.0.1",
          rejectUnauthorized: false,
@@ -1978,6 +1978,10 @@ function runTunnel(proto: string, event: string, listener: string, peer = "clien
        // Only the server's side of the tunnel may keep the process alive.
        client.unref();
        client.write(${JSON.stringify(request)});
+       return client;
+     }
+     server.listen(0, "127.0.0.1", () => {
+       client = connect();
        client.once("data", () => {
          ${peer}
        });
@@ -2086,6 +2090,234 @@ describe.concurrent.each(["http", "https"])("%s: a tunnel behind server.unref() 
       exitedWith({ sent: true }),
     );
   });
+});
+
+// In Node.js a write request holds the event loop until it is done, whatever is unref'd.
+describe.concurrent.each([
+  ["http", "connect"],
+  ["https", "connect"],
+  ["http", "upgrade"],
+  ["https", "upgrade"],
+])("%s '%s': a tunnel with bytes left to send, behind server.unref()", (proto, event) => {
+  // `lost` is what the tunnel wrote less what the peer read.
+  const peerReads = `
+    result.lost = 0;
+    client.on("data", chunk => (result.lost -= chunk.length)).on("end", () => client.destroy());`;
+  // From here on the peer keeps the process alive, until it has read up to the FIN.
+  const whenSent = `() => {
+    result.lost += socket.bytesWritten - reply.length;
+    result.sent = true;
+    client.ref();
+    socket.end();
+  }`;
+  // `hold` keeps the process alive until the reads have stopped. 'beforeExit': nothing keeps it alive.
+  const whenReadsHaveStopped = (close: string, then: string) => `
+    socket.write(reply);
+    server.unref();
+    ${close}
+    const hold = setInterval(() => {
+      if (socket.readableLength === full.length) clearInterval(hold);
+    }, 1);
+    process.once("beforeExit", () => {
+      ${writeUntilBytesAreLeftToSend}
+      ${then}
+    });`;
+
+  test.each([
+    ["after server.close()", "server.close();"],
+    ["while the server listens", ""],
+  ])("keeps the process alive until they are sent, with its reads stopped, %s", async (_, close) => {
+    const listener = whenReadsHaveStopped(close, `socket.write(chunk, ${whenSent});`);
+    expect(await runTunnel(proto, event, listener, `client.write(full); ${peerReads}`)).toEqual(
+      exitedWith({ lost: 0, sent: true }),
+    );
+  });
+
+  test("keeps the process alive until they are sent, at the end of the stream, before server.close()", async () => {
+    const listener = `
+      socket.write(reply);
+      server.unref();
+      const hold = setInterval(() => {}, 1000);
+      socket.on("end", () => clearInterval(hold)).resume();
+      process.once("beforeExit", () => {
+        ${writeUntilBytesAreLeftToSend}
+        socket.write(chunk, ${whenSent});
+        server.close();
+      });`;
+    expect(await runTunnel(proto, event, listener, `client.end(); ${peerReads}`)).toEqual(
+      exitedWith({ lost: 0, sent: true }),
+    );
+  });
+
+  // In Node.js the reads hold the event loop too: there this process does not exit.
+  test("does not keep the process alive once they are sent, when it reads again meanwhile", async () => {
+    const listener = whenReadsHaveStopped(
+      "server.close();",
+      `socket.write(chunk, () => (result.sent = true));
+       socket.resume();`,
+    );
+    expect(await runTunnel(proto, event, listener, "client.write(full); client.resume();")).toEqual(
+      exitedWith({ sent: true }),
+    );
+  });
+
+  test("does not keep the process alive once it is destroyed", async () => {
+    const listener = whenReadsHaveStopped(
+      "server.close();",
+      `result.left = socket.writableLength > 0;
+       socket.destroy();`,
+    );
+    expect(await runTunnel(proto, event, listener, "client.write(full); client.pause();")).toEqual(
+      exitedWith({ left: true }),
+    );
+  });
+
+  test("keeps the process alive for the second of two, once the first has sent its own", async () => {
+    const listener = `
+      socket.write(reply);
+      if (!server.first) return void (server.first = socket);
+      server.unref();
+      server.close();
+      Object.assign(result, { first: false, second: false });
+      const both = [server.first, socket];
+      for (const socket of both) {
+        ${writeUntilBytesAreLeftToSend}
+      }
+      server.first.end(() => (result.first = true));
+      socket.end(() => (result.second = true));`;
+    // The second peer reads nothing before the first has read up to the FIN.
+    const peer = `
+      const second = connect();
+      second.once("data", () => second.pause()).on("end", () => second.destroy());
+      client.on("end", () => (client.destroy(), second.resume())).resume();`;
+    expect(await runTunnel(proto, event, listener, peer)).toEqual(exitedWith({ first: true, second: true }));
+  });
+});
+
+test.concurrent.each(["http", "https"])(
+  "%s: a tunnel with bytes left to send does not keep the process alive once a WebSocket adopts its connection",
+  async proto => {
+    const listener = `
+      server.unref();
+      server.close();
+      ${writeUntilBytesAreLeftToSend}
+      result.left = socket.writableLength > 0;
+      const wss = new (require("ws").WebSocketServer)({ noServer: true });
+      wss.handleUpgrade(req, socket, Buffer.alloc(0), () => (result.adopted = true));`;
+    expect(await runTunnel(proto, "upgrade", listener, "client.pause();")).toEqual(
+      exitedWith({ left: true, adopted: true }),
+    );
+  },
+);
+
+// With a send buffer smaller than a TLS record, TLS holds a part of what the socket counts as written.
+const shrinkSendBuffer = `require("bun:internal-for-testing").setSocketOptions(socket, 1, 4096);`;
+
+describe.concurrent("https: a tunnel with bytes that only TLS holds", () => {
+  // Not where the kernel takes a write whole whatever its send buffer: there TLS holds nothing.
+  test.skipIf(!isLinux)("keeps the process alive until they are sent, behind server.unref()", async () => {
+    // The second 'beforeExit' comes when they are sent. From there on the peer keeps the process alive, up to the FIN.
+    const listener = `
+      socket.write(reply);
+      server.unref();
+      server.close();
+      const hold = setInterval(() => {
+        if (socket.readableLength === full.length) clearInterval(hold);
+      }, 1);
+      process.once("beforeExit", () => {
+        ${shrinkSendBuffer}
+        socket.write(full);
+        result.lost += full.length;
+        result.buffered = socket.writableLength;
+        process.once("beforeExit", () => {
+          client.ref();
+          socket.end();
+        });
+      });`;
+    const peer = `
+      client.write(full);
+      result.lost = 0;
+      client.on("data", chunk => (result.lost -= chunk.length)).on("end", () => client.destroy());`;
+    expect(await runTunnel("https", "connect", listener, peer)).toEqual(exitedWith({ lost: 0, buffered: 0 }));
+  });
+
+  // TLS holds the close of destroy() behind them. The server waits for that close as for any other.
+  test("emits 'close' when it is destroyed, and so does its server", async () => {
+    const listener = `
+      socket.write(reply);
+      server.close();
+      socket.on("close", () => (result.socketClosed = true));
+      server.on("close", () => (result.serverClosed = true));
+      process.once("beforeExit", () => {
+        ${shrinkSendBuffer}
+        socket.write(full);
+        result.buffered = socket.writableLength;
+        socket.destroy();
+      });`;
+    expect(await runTunnel("https", "connect", listener, "client.write(full); client.resume();")).toEqual(
+      exitedWith({ buffered: 0, socketClosed: true, serverClosed: true }),
+    );
+  });
+});
+
+// The FIN of end() waits behind what TLS holds. The peer reads up to the FIN and stays connected.
+describe.each([
+  ["server.close()", ""],
+  ["server.unref() and server.close()", "server.unref();"],
+])("https: a tunnel whose reads stopped, after %s", (_, unref) => {
+  test.concurrent.each([64 * 1024, 1024 * 1024])(
+    "sends the %d bytes of end() and then does not keep the process alive",
+    async size => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const server = require("node:https").createServer(${JSON.stringify(tlsCert)});
+           server.on("connect", (req, socket) => {
+             socket.write("HTTP/1.1 200 OK\\r\\n\\r\\n");
+             ${unref}
+             server.close();
+             const hold = setInterval(() => {
+               if (socket.readableLength < ${highWaterMark}) return;
+               clearInterval(hold);
+               ${shrinkSendBuffer}
+               socket.end(Buffer.alloc(${size}, "x"));
+             }, 1);
+           });
+           server.listen(0, "127.0.0.1", () => console.log(server.address().port));`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      let port = "";
+      for await (const chunk of proc.stdout) {
+        port += Buffer.from(chunk).toString();
+        if (port.includes("\n")) break;
+      }
+
+      const client = tls.connect({
+        port: Number(port),
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        allowHalfOpen: true,
+      });
+      using _ = { [Symbol.dispose]: () => void client.destroy() };
+      const ended = Promise.withResolvers<void>();
+      client.on("error", ended.reject).on("close", () => ended.reject(new Error("closed before the FIN")));
+      client.on("end", ended.resolve);
+      let received = 0;
+      client.once("data", () => {
+        client.on("data", chunk => (received += chunk.length));
+        client.write(Buffer.alloc(highWaterMark, "a"));
+      });
+      client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+      await ended.promise;
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ received, stderr, exitCode }).toEqual({ received: size, stderr: "", exitCode: 0 });
+    },
+  );
 });
 
 // A listener with nothing to send ends its side in the listener. It still reads: an http.Server

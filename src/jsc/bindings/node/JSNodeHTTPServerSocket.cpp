@@ -93,6 +93,8 @@ static void flushPartialResponseBeforeClose(us_socket_t* socket)
     }
 }
 
+static bool isTunnel(const JSNodeHTTPServerSocket* self);
+
 void JSNodeHTTPServerSocket::close()
 {
     if (socket) {
@@ -114,6 +116,10 @@ void JSNodeHTTPServerSocket::close()
         }
         // Forceful: code 0 defers the fd close until a close_notify reply that a half-open peer never sends.
         us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+        // TLS holds the close behind the bytes it has left. As in Node, destroy() does not keep the process alive for them.
+        if (is_ssl && isTunnel(this)) {
+            reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelSending(false);
+        }
     }
 }
 
@@ -398,6 +404,8 @@ JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globa
     if (socket && cycleReads) {
         us_socket_resume(socket);
     }
+    // The shutdown can send what TLS still held, and no writable event comes behind the FIN.
+    updateTunnelIdle();
     return result;
 }
 
@@ -886,16 +894,26 @@ extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* sock
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
 }
 
+template<bool SSL>
+static void updateTunnelIdleImpl(us_socket_t* socket, bool reads, bool buffered)
+{
+    auto* response = reinterpret_cast<uWS::HttpResponse<SSL>*>(socket);
+    const bool sending = buffered || !response->hasFullyDrained();
+    response->setNodeHttpTunnelSending(sending);
+    response->setNodeHttpTunnelIdle(!reads && !sending);
+}
+
 void JSNodeHTTPServerSocket::updateTunnelIdle()
 {
     if (!isTunnel(this)) {
         return;
     }
-    const bool idle = (tunnelReadEnded || tunnelReadsStopped) && streamBuffer.bufferedSize() == 0;
+    const bool reads = !tunnelReadEnded && !tunnelReadsStopped;
+    const bool buffered = streamBuffer.bufferedSize() > 0;
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(idle && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained(), tunnelReadEnded);
+        updateTunnelIdleImpl<true>(socket, reads, buffered);
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(idle && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained(), tunnelReadEnded);
+        updateTunnelIdleImpl<false>(socket, reads, buffered);
     }
 }
 

@@ -589,6 +589,7 @@ describe("DatabaseSync", () => {
       expect(() => backup(db, ":memory:", undefined)).toThrow(invalidOptions);
       // @ts-expect-error
       expect(() => backup(db, ":memory:", null)).toThrow(invalidOptions);
+      expect(() => Reflect.construct(backup, [db, ":memory:"])).toThrow(TypeError);
 
       // Controls: these are value-gated in Node (explicit undefined is the
       // same as omission) and must NOT throw.
@@ -1468,19 +1469,53 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
       // On regression ASAN aborts the process before any line is printed.
       // db.close(): deferred on the first authorizer call (catches nothing),
       //   throws ERR_INVALID_STATE on the second (db already marked closed).
-      // sess.close(): record->inUse → ERR_INVALID_STATE.
-      // Symbol.dispose: inUse → silent no-op (tolerant).
+      // sess.close() and Symbol.dispose: record->inUse → ERR_INVALID_STATE.
       expect({ lines, stderr, exitCode }).toEqual({
         lines: [
           { what: "db", len: 20, caught: "ERR_INVALID_STATE", dbOpen: false },
           { what: "sess", len: 20, caught: "ERR_INVALID_STATE", dbOpen: true },
-          { what: "dispose", len: 20, caught: null, dbOpen: true },
+          { what: "dispose", len: 20, caught: "ERR_INVALID_STATE", dbOpen: true },
         ],
         stderr: expect.any(String),
         exitCode: 0,
       });
     },
   );
+
+  test.concurrent.skipIf(!sqliteHasSession)("closing a session inside a SQLite callback throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { DatabaseSync, constants } = require("node:sqlite");
+          for (const close of [s => s.close(), s => s[Symbol.dispose]()]) {
+            const db = new DatabaseSync(":memory:");
+            db.exec("CREATE TABLE t(a PRIMARY KEY)");
+            const session = db.createSession();
+            let caught;
+            // The session's preupdate hook runs this pragma while it reads the session.
+            db.setAuthorizer((action, name) => {
+              if (action === constants.SQLITE_PRAGMA && /^table_x?info$/.test(name)) {
+                try { close(session); } catch (e) { caught = e.code + ": " + e.message; }
+              }
+              return constants.SQLITE_OK;
+            });
+            db.exec("INSERT INTO t VALUES (1)");
+            db.setAuthorizer(null);
+            console.log(caught, session.changeset().length > 0);
+            close(session);
+            db.close();
+          }
+        `,
+      ],
+      env: systemMallocEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = "ERR_INVALID_STATE: session cannot be closed while in a callback true\n";
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: line + line, stderr: expect.any(String), exitCode: 0 });
+  });
 
   test("default onConflict aborts and returns false", () => {
     const src = new DatabaseSync(":memory:");
@@ -1731,6 +1766,50 @@ describe("DatabaseSync.prototype.setAuthorizer()", () => {
     expect(() => db.prepare("SELECT 1")).toThrow(TypeError);
     db.setAuthorizer(() => 12345);
     expect(() => db.prepare("SELECT 1")).toThrow(RangeError);
+    db.close();
+  });
+
+  // An FTS5 index writes to its shadow tables when the transaction commits, which calls the authorizer.
+  test("close() works while an iterator's return() is committing a write", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+    db.setAuthorizer((_action, table) => {
+      if (table === "ft_data") db.close();
+      return constants.SQLITE_OK;
+    });
+    for (const row of db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1 AS one").iterate()) {
+      expect(row.one).toBe(1);
+      break;
+    }
+    expect(db.isOpen).toBe(false);
+  });
+
+  test("a statement rejects calls while run() commits its iterator's unfinished write", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+    const stmt = db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1");
+    const iterator = stmt.iterate();
+    iterator.next();
+    const errors: unknown[] = [];
+    db.setAuthorizer((_action, table) => {
+      if (table === "ft_data" && errors.length === 0) {
+        for (const call of [() => iterator.next(), () => stmt.get()]) {
+          try {
+            call();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+      }
+      return constants.SQLITE_OK;
+    });
+    expect(stmt.run().changes).toBe(1);
+    expect(errors).toEqual([
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "iterator was invalidated" }),
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "statement is currently executing" }),
+    ]);
+    db.setAuthorizer(null);
+    expect(db.prepare("SELECT count(*) AS n FROM ft").get()!.n).toBe(2);
     db.close();
   });
 });
@@ -2578,6 +2657,118 @@ describe("GC lifetime", () => {
       delta = count() - before;
     }
     expect(delta).toBeLessThanOrEqual(20);
+  });
+
+  // The write commits when the statement finishes. An FTS5 index writes to its shadow tables at commit, which
+  // calls the authorizer.
+  describe("a write statement that iterate() stopped after its first row", () => {
+    const open = (file: string, options = {}) => {
+      const db = new DatabaseSync(file, options);
+      db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+      db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next();
+      return db;
+    };
+
+    test("is finished by the next call on the connection after it's collected", () => {
+      const db = open(":memory:");
+      const asked: unknown[] = [];
+      db.setAuthorizer((_action, table) => (asked.push(table), constants.SQLITE_OK));
+      Bun.gc(true);
+      expect(asked).toEqual([]);
+      db.exec("SELECT 1");
+      expect(asked).toContain("ft_data");
+      db.close();
+    });
+
+    test.each([
+      ["serialize", "database is not open"],
+      ...(sqliteHasLoadExtension ? [["loadExtension", "database is not open"]] : []),
+      ["exec", "database is not open"],
+      ["prepare", "database is not open"],
+      ["all", "statement has been finalized"],
+    ])("%s() throws if the authorizer closes the database", (method, message) => {
+      const db = open(":memory:", { allowExtension: sqliteHasLoadExtension });
+      const target = method === "all" ? db.prepare("SELECT 1") : db;
+      db.setAuthorizer(() => (db[Symbol.dispose](), constants.SQLITE_OK));
+      Bun.gc(true);
+      expect(() => target[method]("SELECT 1")).toThrow(message);
+      expect(db.isOpen).toBe(false);
+    });
+
+    test("is rolled back when it's collected along with a database that has an authorizer", () => {
+      using dir = tempDir("node-sqlite-collected-write", {});
+      const file = path.join(String(dir), "db.sqlite");
+      let asked = 0;
+      (() => open(file).setAuthorizer(() => (asked++, constants.SQLITE_OK)))();
+      Bun.gc(true);
+      expect(asked).toBe(0);
+      const db = new DatabaseSync(file);
+      expect(db.prepare("SELECT count(*) AS n FROM ft").get()!.n).toBe(0);
+      db.close();
+    });
+
+    test("doesn't call the authorizer when the graph that opened its database is disposed", () => {
+      const graph = new Bun.ModuleGraph();
+      const db = graph.run(() => open(":memory:"));
+      let asked = 0;
+      db.setAuthorizer(() => (asked++, constants.SQLITE_OK));
+      graph.dispose();
+      expect(asked).toBe(0);
+      expect(db.isOpen).toBe(false);
+    });
+
+    test.concurrent("doesn't call the authorizer at process exit", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { DatabaseSync } = require("node:sqlite");
+            globalThis.db = new DatabaseSync(":memory:");
+            db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+            globalThis.iterator = db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate();
+            iterator.next();
+            db.setAuthorizer(() => (require("node:fs").writeSync(1, "asked\\n"), 0));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
+    });
+
+    test.concurrent.each([
+      ["a user function", `db.function("lower2", text => text.toLowerCase())`],
+      ["an authorizer that allowed a write before", `db.setAuthorizer(() => 0), db.exec("INSERT INTO ft VALUES (1)")`],
+    ])("is committed at process exit on a connection with %s", async (_, setup) => {
+      using dir = tempDir("node-sqlite-exit-write", {});
+      const file = path.join(String(dir), "db.sqlite");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { DatabaseSync } = require("node:sqlite");
+            const db = new DatabaseSync(process.argv[1]);
+            db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+            ${setup};
+            db.prepare("INSERT INTO ft VALUES ('a'), ('b') RETURNING 1").iterate().next();
+            console.log(db.prepare("INSERT INTO ft VALUES ('c')").run().changes);
+          `,
+          file,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: expect.any(String), exitCode: 0 });
+      const db = new DatabaseSync(file);
+      expect(db.prepare("SELECT count(*) AS n FROM ft WHERE ft MATCH 'a OR b OR c'").get()!.n).toBe(3);
+      db.close();
+    });
   });
 
   test.concurrent("a database swept before its statements leaves nothing that points into its cell", async () => {

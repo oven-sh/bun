@@ -15,6 +15,7 @@ impl DevServer {
         Ok(GraphTraceState {
             server_bits,
             client_bits,
+            failures: Vec::new(),
         })
     }
 }
@@ -70,6 +71,14 @@ impl DevServer {
                     }
                     let Some(p) = route.parent else { break };
                     route = self.router.route_ptr(p);
+                }
+
+                // A router whose pages also run in the browser: their client graph copies.
+                let client_pages = self.client_page_files(fw.route_index);
+                for path in client_pages.iter() {
+                    if let Some(index) = self.client_graph.get_file_index(path) {
+                        self.client_graph.trace_imports(index, gts, goal)?;
+                    }
                 }
             }
             route_bundle::Data::Html(html) => {

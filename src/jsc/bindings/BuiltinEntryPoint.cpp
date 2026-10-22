@@ -48,6 +48,9 @@ extern "C" JSPromise* Bun__loadBuiltinEntryPoint(Zig::GlobalObject* globalObject
     if (!promise) [[unlikely]] {
         BUN_PANIC("Failed to load the built-in entry point");
     }
+    // The VM reports a rejection of the entry point. Without this, the rejection tracker reports it
+    // again, as an unhandled rejection.
+    promise->markAsHandled();
     return promise;
 }
 

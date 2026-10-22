@@ -6,7 +6,7 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
@@ -357,6 +357,33 @@ test("a factory promise that resolves to a non-object is rejected like the synch
   expect(ns.default).toBe("real-default");
 });
 
+// For a module that isn't loaded yet, mock.module() only registers the factory. import() runs it.
+test.concurrent.each([
+  ["undefined", `async () => { await 1; }`],
+  ["a number", `async () => { await 1; return 42; }`],
+])("import() of a module that isn't loaded yet rejects when the factory promise resolves to %s", async (_, factory) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { mock } from "bun:test";
+      mock.module("mm-async-non-object", ${factory});
+      try {
+        await import("mm-async-non-object");
+        console.log("imported");
+      } catch (e) {
+        console.log("rejected:", e?.message);
+      }`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("rejected: mock(module, fn) requires a function that returns an object\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("a later mock.module for the same module is not overwritten when an earlier pending factory settles", async () => {
   using dir = tempDir("mock-module-superseded", {
     "a.ts": `export function a() { return "real-a"; }`,
@@ -550,5 +577,43 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});
+
+// In a URL, the "%de" in "50%deposit.ts" escapes the byte 0xDE, which isn't valid UTF-8. Windows decodes it to U+FFFD.
+test.concurrent.skipIf(isWindows)("supports module names with a % that isn't a valid UTF-8 escape", async () => {
+  using dir = tempDir("mock-module-percent", {
+    "real%deposit.ts": `export default "the real file";`,
+    "percent.test.ts": `
+      import { expect, mock, test } from "bun:test";
+
+      test("mocks a relative name that doesn't resolve", async () => {
+        mock.module("./50%deposit.ts", () => ({ default: "the mock" }));
+        expect((await import("./50%deposit.ts")).default).toBe("the mock");
+        expect(require("./50%deposit.ts").default).toBe("the mock");
+      });
+
+      test("mock.module() of a file: URL throws", () => {
+        expect(() => mock.module("file:///50%deposit.ts", () => ({}))).toThrow(new TypeError('Invalid "file:" URL'));
+      });
+
+      test("loads a real file with a % in its name", async () => {
+        expect((await import("./real%deposit.ts")).default).toBe("the real file");
+      });
+
+      test("import() of a file: URL rejects", async () => {
+        await expect(import("file:///50%deposit.ts")).rejects.toThrow("Cannot find module");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./percent.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 4 pass\n 0 fail");
   expect(exitCode).toBe(0);
 });

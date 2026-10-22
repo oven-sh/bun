@@ -6,6 +6,8 @@ const path = require("node:path");
 
 const env = Bun.env;
 
+const isRestarting = $newRustFunction("bake/config/plugins.rs", "isRestarting", 0);
+
 type ServeFlags = {
   /** `undefined` until `--host` or `--hostname` sets it. */
   hostname: string | undefined;
@@ -17,19 +19,29 @@ function defaultServeFlags(): ServeFlags {
   return { hostname: undefined, port: undefined, console: false };
 }
 
+/** The port in the value of `name`: a whole number from 0 to 65535. */
+function parsePort(name: string, value: string): number {
+  const port = Number(value);
+  // Only digits: `Number()` also reads " ", "0x1F90" and "1e3".
+  if (!/^\d+$/.test(value) || port > 65535) {
+    throw new Error(`"${name}" needs a port from 0 to 65535, not "${value}".`);
+  }
+  return port;
+}
+
 /** Sets the hostname, and the port if there is one: `host`, `host:3000`, `::1`, `[::1]` or `[::1]:3000`. */
 function applyHost(name: string, value: string, flags: ServeFlags) {
   const end = value.startsWith("[") ? value.indexOf("]") : -1;
   if (end !== -1) {
     flags.hostname = value.slice(1, end);
     const rest = value.slice(end + 1);
-    if (rest.startsWith(":")) flags.port = parseInt(rest.slice(1), 10);
+    if (rest.startsWith(":")) flags.port = parsePort(name, rest.slice(1));
   } else {
     const colon = value.indexOf(":");
     // More than one `:` is an IPv6 address without a port.
     if (colon !== -1 && colon === value.lastIndexOf(":")) {
       flags.hostname = value.slice(0, colon);
-      flags.port = parseInt(value.slice(colon + 1), 10);
+      flags.port = parsePort(name, value.slice(colon + 1));
     } else {
       flags.hostname = value;
     }
@@ -66,7 +78,7 @@ function parseServeFlag(args: string[], i: number, flags: ServeFlags): number {
       continue;
     }
     if (name === "--port") {
-      flags.port = parseInt(value, 10);
+      flags.port = parsePort(name, value);
     } else {
       applyHost(name, value, flags);
     }
@@ -197,10 +209,15 @@ function printBannerAndHandleShortcuts(banner: Banner) {
 
   // Keyboard shortcuts
   if (!installed && process.stdin.isTTY) {
-    // Handle Ctrl+C and other termination signals
-    process.on("SIGINT", () => process.exit());
-    process.on("SIGHUP", () => process.exit());
-    process.on("SIGTERM", () => process.exit());
+    // Handle Ctrl+C and other termination signals. Not during a restart, which sends one of them to
+    // run the app's listeners: `process.exit()` would end the restart before the listeners after
+    // this one run.
+    const exit = () => {
+      if (!isRestarting()) process.exit();
+    };
+    process.on("SIGINT", exit);
+    process.on("SIGHUP", exit);
+    process.on("SIGTERM", exit);
     process.stdin.on("data", data => {
       const key = data.toString().toLowerCase().replaceAll("\r\n", "\n");
 

@@ -83,6 +83,8 @@ type ReadyState = typeof CONNECTING | typeof OPEN | typeof CLOSING | typeof CLOS
 type Transport = typeof NATIVE_CLIENT | typeof NATIVE_SERVER | typeof STREAM;
 type Data = string | Buffer | ArrayBufferLike | Buffer[] | Blob;
 type SendCallback = (err?: Error | null) => void;
+// A send(), ping() or pong() callback that waits, with the async context of its call. `callback` is unset once it ran.
+type WaitingCallback = { callback: SendCallback | undefined; asyncContext: unknown };
 // Null-prototype literals are written `{ __proto__: null as never }` because TypeScript treats `__proto__` as a key.
 type Dictionary<T> = { [key: string]: T };
 
@@ -1053,7 +1055,7 @@ class WebSocket extends EventEmitter {
   declare _sender: null;
   declare _socket: ServerSocket | ClientSocket | null;
   declare _url: string | undefined;
-  declare [kCallbacks]: SendCallback[] | null;
+  declare [kCallbacks]: WaitingCallback[] | null;
   declare [kFinalCallback]: (() => void) | undefined;
   declare [kFirstFragment]: boolean;
   declare [kHandshakeTimer]: Timer | undefined;
@@ -1062,7 +1064,7 @@ class WebSocket extends EventEmitter {
   declare [kProxyUrl]: string | undefined;
   declare [kRequest]: ClientRequest | undefined;
   declare [kTransport]: Transport;
-  declare [kWriteCallback]: SendCallback | undefined;
+  declare [kWriteCallback]: WaitingCallback | undefined;
 
   declare onclose: ListenerFunction | null;
   declare onerror: ListenerFunction | null;
@@ -1377,7 +1379,7 @@ class WebSocket extends EventEmitter {
       this[kFirstFragment] = !!fin;
       scheduleSendCallback(this, sent === false || (this[kNative] as NativeClient).bufferedAmount !== 0, cb);
     } else {
-      this[kWriteCallback] = cb && bindAsyncContext(cb);
+      this[kWriteCallback] = cb ? waitingCallback(cb) : undefined;
       try {
         clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
       } catch (err) {
@@ -1493,7 +1495,7 @@ function sendControl(
     }
   }
 
-  if (isStream) websocket[kWriteCallback] = cb && bindAsyncContext(cb);
+  if (isStream) websocket[kWriteCallback] = cb ? waitingCallback(cb) : undefined;
 
   try {
     if (opcode === 0x09) native.ping(data);
@@ -1526,18 +1528,24 @@ function nativeBufferedAmount(websocket: WebSocket): number {
 
 // A callback that has to wait runs from a drain or close event, which doesn't have the caller's AsyncLocalStorage
 // context. That includes `socket.write()` callbacks on the stream transport.
-function bindAsyncContext<Args extends unknown[], Result>(fn: (...args: Args) => Result): (...args: Args) => Result {
-  const frame = $getInternalField($asyncContext, 0);
-  if (frame === undefined) return fn;
+function waitingCallback(callback: SendCallback): WaitingCallback {
+  return { callback, asyncContext: $getInternalField($asyncContext, 0) };
+}
 
-  const runInFrame = require("internal/async_context_frame").run;
-  return (...args) => runInFrame(frame, fn, undefined, ...args);
+function runWaitingCallback(entry: WaitingCallback, err: Error | null | undefined): void {
+  const { callback, asyncContext } = entry;
+  if (callback === undefined) return;
+
+  entry.callback = undefined;
+  // These are equal in every program without AsyncLocalStorage and Bun.ModuleGraph, which never loads the helper.
+  if (asyncContext === $getInternalField($asyncContext, 0)) callback(err);
+  else require("internal/async_context_frame").run(asyncContext, callback, undefined, err);
 }
 
 // A send callback runs once its frame has been written to the kernel, like a `socket.write()` callback.
 function scheduleSendCallback(websocket: WebSocket, buffered: boolean, cb: SendCallback | undefined): void {
   if (buffered) {
-    if (cb) (websocket[kCallbacks] ??= []).push(bindAsyncContext(cb));
+    if (cb) (websocket[kCallbacks] ??= []).push(waitingCallback(cb));
     return;
   }
 
@@ -1545,7 +1553,7 @@ function scheduleSendCallback(websocket: WebSocket, buffered: boolean, cb: SendC
   const queued = websocket[kCallbacks];
   if (queued !== null) {
     websocket[kCallbacks] = null;
-    for (let i = 0; i < queued.length; i++) process.nextTick(queued[i], null);
+    for (let i = 0; i < queued.length; i++) process.nextTick(runWaitingCallback, queued[i], null);
   }
 
   if (cb) process.nextTick(cb, null);
@@ -1553,11 +1561,11 @@ function scheduleSendCallback(websocket: WebSocket, buffered: boolean, cb: SendC
 
 // If the engine wrote nothing, the `write` handler never ran and the callback is still set. Fail it.
 function flushUnusedWriteCallback(websocket: WebSocket): void {
-  const cb = websocket[kWriteCallback];
-  if (cb === undefined) return;
+  const entry = websocket[kWriteCallback];
+  if (entry === undefined) return;
 
   websocket[kWriteCallback] = undefined;
-  process.nextTick(cb, $ERR_STREAM_DESTROYED("write"));
+  process.nextTick(runWaitingCallback, entry, $ERR_STREAM_DESTROYED("write"));
 }
 
 function settleCallbacks(websocket: WebSocket, failed: boolean): void {
@@ -1577,10 +1585,10 @@ function wroteEverything(websocket: WebSocket): boolean {
   return websocket._socket![kClosedWithUnsentData] === false;
 }
 
-function runCallbacks(callbacks: SendCallback[], start: number, err: Error | null): void {
+function runCallbacks(callbacks: WaitingCallback[], start: number, err: Error | null): void {
   let i = start;
   try {
-    for (; i < callbacks.length; i++) callbacks[i](err);
+    for (; i < callbacks.length; i++) runWaitingCallback(callbacks[i], err);
   } finally {
     // One of them threw. In node:stream each write has its own callback, so the rest still run.
     if (++i < callbacks.length) process.nextTick(runCallbacks, callbacks, i, err);
@@ -1681,6 +1689,8 @@ const receiverErrors = {
   ],
   WS_ERR_UNSUPPORTED_MESSAGE_LENGTH: [RangeError, "Max payload size exceeded", false, 1009],
   Z_DATA_ERROR: [Error, "invalid compressed data", false, 1007],
+  // Not an upstream ws code. Allocating a buffer for the message failed.
+  ERR_MEMORY_ALLOCATION_FAILED: [RangeError, "Out of memory", false, 1011],
 } as const;
 type ReceiverErrorCode = Exclude<keyof typeof receiverErrors, "__proto__">;
 
@@ -1698,6 +1708,7 @@ const serverFailures: (ReceiverErrorCode | undefined)[] = [
   "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH",
   "WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH",
   "Z_DATA_ERROR",
+  "ERR_MEMORY_ALLOCATION_FAILED",
 ];
 
 function createReceiverError(code: ReceiverErrorCode, detail: string | undefined): ReceiverError {
@@ -1940,10 +1951,10 @@ const clientHandlers: ClientHandlers = {
     this.emitClose();
   },
   write(chunk) {
-    const cb = this[kWriteCallback];
+    const entry = this[kWriteCallback];
     const socket = this._socket as ServerSocket;
 
-    if (cb === undefined) {
+    if (entry === undefined) {
       socket.write(chunk);
       return;
     }
@@ -1954,22 +1965,14 @@ const clientHandlers: ClientHandlers = {
     // emitClose() fails the ones that are left.
     const callbacks = (this[kCallbacks] ??= []);
 
-    let called = false;
-    const once: SendCallback = err => {
-      if (called) return;
-
-      called = true;
-      cb(err);
-    };
-
-    callbacks.push(once);
+    callbacks.push(entry);
     socket.write(chunk, err => {
       // node:net on Bun also calls a callback again if a later one threw while the socket was being destroyed.
-      if (called || this[kCallbacks] !== callbacks) return;
+      if (entry.callback === undefined || this[kCallbacks] !== callbacks) return;
 
       // Not always the oldest one: if a callback throws, node:stream skips the rest of that batch.
-      callbacks.splice(callbacks.indexOf(once), 1);
-      once(err);
+      callbacks.splice(callbacks.indexOf(entry), 1);
+      runWaitingCallback(entry, err);
     });
   },
   end() {
@@ -2102,14 +2105,20 @@ function keepIdentityError(websocket: WebSocket, tls: NativeTlsOptions): NativeT
   const enforced =
     typeof rejectUnauthorized === "boolean" ? rejectUnauthorized : process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0";
 
+  // The handshake calls it from the event loop, which doesn't have the AsyncLocalStorage context of `new WebSocket()`.
+  const asyncContext = $getInternalField($asyncContext, 0);
+
   // Inherit from `tls` instead of copying it, so that getters and inherited options keep working.
   return {
     __proto__: tls,
-    checkServerIdentity: bindAsyncContext((hostname: string, cert: unknown) => {
-      const verdict = checkServerIdentity(hostname, cert);
+    checkServerIdentity: (hostname: string, cert: unknown) => {
+      const verdict =
+        asyncContext === $getInternalField($asyncContext, 0)
+          ? checkServerIdentity(hostname, cert)
+          : require("internal/async_context_frame").run(asyncContext, checkServerIdentity, undefined, hostname, cert);
       if (enforced) websocket[kIdentityError] = verdict;
       return verdict;
-    }),
+    },
   };
 }
 

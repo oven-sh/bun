@@ -1,5 +1,5 @@
-//! `lib/util/pragma.js` of eslint-plugin-react. Each reads the settings, and the first all the
-//! comments: ask once for a file, in `register`.
+//! `lib/util/pragma.js` of eslint-plugin-react. Every function here reads the settings, and
+//! `get_from_context` also scans all the comments, so call each one once per file.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -17,13 +17,13 @@ fn is_js_identifier(name: &[u8]) -> bool {
     }
 }
 
-/// `settings.react[key]`, if that is a string and not empty.
+/// `settings.react[key]`, if it's a non-empty string.
 fn setting<'a>(file: &'a File<'a>, key: &[u8]) -> Option<&'a [u8]> {
     let value = file.settings().get(b"react")?.get(key)?.as_str()?;
     (!value.is_empty()).then_some(value)
 }
 
-/// What `JSX_ANNOTATION_REGEX` captures in `comment`: the `a.b` of `@jsx a.b`.
+/// `JSX_ANNOTATION_REGEX`'s capture in `comment`: the `a.b` in `@jsx a.b`.
 fn jsx_annotation(mut comment: &[u8]) -> Option<&[u8]> {
     loop {
         let at = strings::index_of(comment, b"@jsx")?;
@@ -43,7 +43,7 @@ fn jsx_annotation(mut comment: &[u8]) -> Option<&[u8]> {
     }
 }
 
-/// `getFromContext`: `React`, or what the file or the settings have in its place.
+/// `getFromContext`: `React`, or the replacement set by the file or the settings.
 pub(crate) fn get_from_context<'a>(file: &'a File<'a>) -> &'a [u8] {
     let annotation = || {
         let mut comments = file.comments().map(|it| it.comment_value());
@@ -56,7 +56,7 @@ pub(crate) fn get_from_context<'a>(file: &'a File<'a>) -> &'a [u8] {
     pragma.filter(|it| is_js_identifier(it)).unwrap_or(b"React")
 }
 
-/// `getCreateClassFromContext`. Where upstream throws, it is the default.
+/// `getCreateClassFromContext`. Returns the default where upstream throws.
 pub(crate) fn get_create_class_from_context<'a>(file: &'a File<'a>) -> &'a [u8] {
     let pragma = setting(file, b"createClass");
     pragma
@@ -64,14 +64,14 @@ pub(crate) fn get_create_class_from_context<'a>(file: &'a File<'a>) -> &'a [u8] 
         .unwrap_or(b"createReactClass")
 }
 
-/// Whether the file can have a call of `create_class`: `pragma.#createClass` is one for upstream.
+/// True if the file may contain a `create_class` call. Upstream counts `pragma.#createClass` as one.
 pub(crate) fn mentions_create_class(file: &File<'_>, create_class: &[u8]) -> bool {
     let mut private = SmallVec::<[u8; 32]>::from_slice(b"#");
     private.extend_from_slice(create_class);
     file.mentions_bit(mention_bit(create_class)) || file.mentions_bit(mention_bit(&private))
 }
 
-/// `getFragmentFromContext`. Where upstream throws, it is the default.
+/// `getFragmentFromContext`. Returns the default where upstream throws.
 pub(crate) fn get_fragment_from_context<'a>(file: &'a File<'a>) -> &'a [u8] {
     let pragma = setting(file, b"fragment");
     pragma

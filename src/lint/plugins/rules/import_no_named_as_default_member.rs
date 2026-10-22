@@ -18,11 +18,11 @@ const CAUTION: Message = Message::new(
 const OXLINT: Message = Message::new("", "{{module_name}} also has a named export {{export_name}}");
 
 pub struct State<'a> {
-    /// `None`: oxlint asks its own records.
+    /// `None` for oxlint, which uses its module records.
     maps: Option<ExportMaps<'a>>,
 }
 
-/// The module that a default import is from.
+/// The module that a default import comes from.
 #[derive(Copy, Clone)]
 enum Remote<'a> {
     Oxlint(Loaded<'a>),
@@ -61,7 +61,7 @@ impl Rule for NoNamedAsDefaultMember {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let Some(maps) = &cx.state.maps else {
-            // Once, if a name is declared several times.
+            // A name that's declared several times is only checked once.
             let mut seen = FxHashSet::default();
             for entry in import_entries(file).filter(|it| seen.insert(it.local_name().name())) {
                 let ImportImportName::Default(local) = entry.import_name else {
@@ -77,7 +77,7 @@ impl Rule for NoNamedAsDefaultMember {
                     return;
                 };
                 let file_import = FileImport::new(Remote::Oxlint(remote), entry.declaration.spec());
-                // oxlint looks at what means the import, and is not in parentheses.
+                // oxlint checks the references that resolve to the import and aren't parenthesized.
                 for ident in symbol.references().filter_map(Reference::expr).filter(|it| !it.is_parenthesized()) {
                     file_import.check(ident, cx);
                 }
@@ -88,13 +88,13 @@ impl Rule for NoNamedAsDefaultMember {
         if file_imports.is_empty() {
             return;
         }
-        // Upstream looks at whatever has the name of the import.
+        // Upstream checks every identifier with the import's name.
         for ident in file.exprs_of_kind(ExprTag::Ident) {
             if let Some(file_import) = ident.as_ident().and_then(|it| file_imports.get(&it)) {
                 file_import.check(ident, cx);
             }
         }
-        // What an interface extends and a class implements is a `MemberExpression` for typescript-eslint.
+        // In typescript-eslint's AST, what an interface extends or a class implements is a `MemberExpression`.
         let interfaces = file.stmts_of_kind(StmtTag::Interface).filter_map(|it| match it.kind() {
             StmtKind::Interface(interface) => Some(interface.extends()),
             _ => None,
@@ -110,7 +110,8 @@ impl Rule for NoNamedAsDefaultMember {
     }
 }
 
-/// Upstream's `fileImports`: of two imports of a name the last counts. It reports the modules that cannot be parsed.
+/// Upstream's `fileImports`. If two imports declare the same name, the last one wins. Also reports modules that fail to
+/// parse.
 fn file_imports<'a>(maps: &ExportMaps<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) -> FxHashMap<Name<'a>, FileImport<'a>> {
     let declarations = cx.file().stmts_of_kind(StmtTag::Import).filter_map(|it| match it.kind() {
         StmtKind::Import(declaration) => Some((declaration, declaration.default()?)),
@@ -136,11 +137,11 @@ fn file_imports<'a>(maps: &ExportMaps<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) 
     file_imports
 }
 
-/// `namespace.has(undefined)`: upstream has read the `name` of a node that has none, as in `export namespace A.B {}`.
-/// Among the names that key is the text `undefined`.
+/// `namespace.has(undefined)`: true if upstream read the `name` of a node that has none, as in `export namespace A.B
+/// {}`. Here that key is stored as the text `undefined`.
 fn has_undefined_key<'a>(maps: &ExportMaps<'a>, export_map: ExportMap<'a>) -> bool {
-    let written = usize::from(maps.namespace_has(export_map, b"undefined"));
-    maps.namespace_names(export_map).iter().filter(|it| ***it == *b"undefined").count() > written
+    let explicit_count = usize::from(maps.namespace_has(export_map, b"undefined"));
+    maps.namespace_names(export_map).iter().filter(|it| ***it == *b"undefined").count() > explicit_count
 }
 
 impl<'a> FileImport<'a> {
@@ -148,10 +149,10 @@ impl<'a> FileImport<'a> {
         FileImport { remote, source_path, has_undefined: OnceCell::new() }
     }
 
-    /// `ident`: the import, where a property of it is looked up.
+    /// `ident`: a reference to the import, possibly with a property access on it.
     fn check(&self, ident: Expr<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) {
         let is_oxlint = matches!(self.remote, Remote::Oxlint(_));
-        // oxlint quotes the name as it is written.
+        // oxlint quotes the name as written in the source.
         let object_name = match ident.as_ident() {
             Some(name) if !is_oxlint => name.bytes(),
             _ => ident.text(),
@@ -160,7 +161,7 @@ impl<'a> FileImport<'a> {
             Node::Expr(member)
                 if member.object() == Some(ident) && !member.is_jsx_tag_name() && !member.is_in_type_query() =>
             {
-                // oxlint takes `a["b"]` for `a.b`. Upstream reads the `name` of the property: `a[b]`, `a.#b`.
+                // oxlint treats `a["b"]` as `a.b`. Upstream reads the property's `name`: `a[b]`, `a.#b`.
                 let prop_name = if is_oxlint {
                     static_property_name(member).map(Name::bytes)
                 } else if let Some(property) = member.member_name() {
@@ -175,7 +176,8 @@ impl<'a> FileImport<'a> {
                     return;
                 };
                 for key in properties.iter().filter_map(PatProp::key) {
-                    // oxlint points at the declarator, and takes `{ "b": c }` for `{ b: c }`. Upstream: `{ [b]: c }`.
+                    // oxlint reports the declarator, and treats `{ "b": c }` as `{ b: c }`. Upstream does that for `{
+                    // [b]: c }`.
                     let (at, prop_name) = if is_oxlint {
                         (declarator.span(), key.name())
                     } else {
@@ -193,7 +195,7 @@ impl<'a> FileImport<'a> {
         }
     }
 
-    /// `prop_name`: `None` where the property has no `name`: `a["b"]`, `a[0]`, `{ "b": c }`.
+    /// `prop_name`: `None` if the property has no `name`: `a["b"]`, `a[0]`, `{ "b": c }`.
     fn report(
         &self,
         at: Span,

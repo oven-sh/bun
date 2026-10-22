@@ -63,6 +63,12 @@ impl Stream {
             opened_after_goaway: false,
         }
     }
+
+    /// RFC 9113 §8.1.1 (nghttp2_http_on_data_chunk): more DATA than the declared `content-length`.
+    fn body_exceeds_content_length(&self) -> bool {
+        self.content_length
+            .is_some_and(|declared| self.recv_body_bytes > declared)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1522,6 +1528,14 @@ impl Connection {
                         return StreamedDataStart::Fatal;
                     } else {
                         st.recv_body_bytes = st.recv_body_bytes.saturating_add(data_total as u64);
+                        if st.body_exceeds_content_length() {
+                            self.send_rst_stream(sink, hdr.stream_id, ErrorCode::ProtocolError);
+                            if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
+                                st2.state = State::Closed;
+                            }
+                            sink.on_stream_reset(hdr.stream_id, ErrorCode::ProtocolError.as_u32());
+                            discard = true;
+                        }
                     }
                 }
             }
@@ -1644,7 +1658,11 @@ impl Connection {
                         DataDecision::FlowControlViolation
                     } else {
                         s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);
-                        DataDecision::Deliver(0)
+                        if s.body_exceeds_content_length() {
+                            DataDecision::Rst(ErrorCode::ProtocolError)
+                        } else {
+                            DataDecision::Deliver(0)
+                        }
                     }
                 }
             }

@@ -8,11 +8,12 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
-import { once } from "node:events";
+import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tls as tlsCert } from "harness";
+import { EventEmitter, once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
+import tls from "node:tls";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -62,16 +63,18 @@ class RawH2 {
   closed = false;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  constructor(port: number) {
-    this.socket = net.connect(port, "127.0.0.1");
+  constructor(port: number, secure = false) {
+    this.socket = secure
+      ? tls.connect({ port, host: "127.0.0.1", ca: tlsCert.cert, ALPNProtocols: ["h2"] })
+      : net.connect(port, "127.0.0.1");
     this.socket.on("data", (d: Buffer) => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
   }
 
-  static async connect(port: number): Promise<RawH2> {
-    const c = new RawH2(port);
-    await once(c.socket, "connect");
+  static async connect(port: number, secure = false): Promise<RawH2> {
+    const c = new RawH2(port, secure);
+    await once(c.socket, secure ? "secureConnect" : "connect");
     return c;
   }
 
@@ -1044,6 +1047,175 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
     } finally {
       c.destroy();
     }
+  });
+});
+
+describe("DATA past the declared content-length (RFC 9113 §8.1.1)", () => {
+  type Probe = {
+    c: RawH2;
+    /** What 'data' delivered, by stream id. */
+    bodies: Map<number, string>;
+    /** The streams that emitted 'close'. */
+    closed: Set<number>;
+    /** Resolves once `condition` holds for `bodies` and `closed`. */
+    until(condition: () => boolean): Promise<void>;
+  };
+
+  async function withBodyServer(
+    { secure = false, compat = false }: { secure?: boolean; compat?: boolean },
+    run: (probe: Probe) => Promise<void>,
+  ) {
+    const bodies = new Map<number, string>();
+    const closed = new Set<number>();
+    const changes = new EventEmitter();
+    function track(id: number, body: Readable, respond: () => void) {
+      bodies.set(id, "");
+      body.on("error", () => {});
+      body.on("data", (chunk: Buffer) => {
+        bodies.set(id, bodies.get(id) + chunk.toString("latin1"));
+        changes.emit("change");
+      });
+      body.on("end", () => {
+        if (!body.destroyed) respond();
+      });
+      body.on("close", () => {
+        closed.add(id);
+        changes.emit("change");
+      });
+    }
+    const srv = secure ? http2.createSecureServer(tlsCert) : http2.createServer();
+    if (compat) {
+      srv.on("request", (req, res) => track(req.stream.id!, req, () => res.end("ok")));
+    } else {
+      srv.on("stream", stream =>
+        track(stream.id!, stream, () => {
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        }),
+      );
+    }
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port, secure);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await run({
+        c,
+        bodies,
+        closed,
+        async until(condition) {
+          while (!condition()) await once(changes, "change");
+        },
+      });
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  function openRequest(c: RawH2, streamId: number, contentLength: number) {
+    const field = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral(String(contentLength))]);
+    c.sendFrame(FrameType.HEADERS, 0x4, streamId, requestHeaderBlock("POST", field));
+  }
+
+  async function expectReset(c: RawH2, streamId: number) {
+    const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === streamId);
+    expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+  }
+
+  // Each entry sends a request on stream 1 that declares 5 bytes. `delivered` is what 'data' may see.
+  const framings: Record<string, { delivered: string; send(probe: Probe): void | Promise<void> }> = {
+    "in one frame that ends the stream": {
+      delivered: "",
+      send: ({ c }) => c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("hello, world")),
+    },
+    "in one frame that leaves the stream open": {
+      delivered: "",
+      send: ({ c }) => c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("hello, world")),
+    },
+    "in a second frame": {
+      delivered: "hello",
+      send: ({ c }) =>
+        c.send(
+          Buffer.concat([
+            encodeFrame(FrameType.DATA, 0, 1, Buffer.from("hello")),
+            encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from(", world")),
+          ]),
+        ),
+    },
+    "in a frame that follows a body already read": {
+      delivered: "hello",
+      send: async ({ c, bodies, until }) => {
+        c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("hello"));
+        await until(() => bodies.get(1) === "hello");
+        c.sendFrame(FrameType.DATA, 0, 1, Buffer.from(", world"));
+      },
+    },
+    "in a frame that arrives in pieces": {
+      delivered: "",
+      send: async ({ c }) => {
+        const frame = encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from("hello, world"));
+        c.send(frame.subarray(0, 12));
+        await expectReset(c, 1);
+        c.send(frame.subarray(12));
+      },
+    },
+    "in a padded frame": {
+      delivered: "",
+      send: ({ c }) =>
+        c.sendFrame(FrameType.DATA, 0x9, 1, Buffer.concat([Buffer.from([3]), Buffer.from("hello!"), Buffer.alloc(3)])),
+    },
+  };
+
+  describe.each(["h2c", "tls"])("%s", transport => {
+    test.each(Object.keys(framings))("is not delivered %s", async name => {
+      await withBodyServer({ secure: transport === "tls" }, async probe => {
+        const { c, bodies, closed, until } = probe;
+        openRequest(c, 1, 5);
+        await framings[name].send(probe);
+        await expectReset(c, 1);
+        // The session goes on, and padding does not count toward the next request's length.
+        openRequest(c, 3, 5);
+        c.sendFrame(FrameType.DATA, 0x9, 3, Buffer.concat([Buffer.from([4]), Buffer.from("again"), Buffer.alloc(4)]));
+        await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+        await until(() => closed.has(1));
+        expect(Object.fromEntries(bodies)).toEqual({ 1: framings[name].delivered, 3: "again" });
+        expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+      });
+    });
+  });
+
+  test("is not delivered to a request of the compatibility API", async () => {
+    await withBodyServer({ compat: true }, async ({ c, bodies, closed, until }) => {
+      openRequest(c, 1, 5);
+      c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("hel"));
+      c.sendFrame(FrameType.DATA, 0x1, 1, Buffer.from("lo, world"));
+      await expectReset(c, 1);
+      await until(() => closed.has(1));
+      expect(bodies.get(1)).toBe("hel");
+    });
+  });
+
+  test("goes back to the connection window", async () => {
+    await withBodyServer({}, async ({ c, bodies, closed, until }) => {
+      for (const streamId of [1, 3, 5]) {
+        openRequest(c, streamId, 5);
+        c.sendFrame(FrameType.DATA, 0x1, streamId, Buffer.alloc(16000, "x"));
+        await expectReset(c, streamId);
+      }
+      const returned = () =>
+        c.frames
+          .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0)
+          .reduce((sum, f) => sum + f.payload.readUInt32BE(0), 0);
+      await c.waitFor(() => returned() >= 48000);
+      expect(returned()).toBe(48000);
+      openRequest(c, 7, 64000);
+      for (let i = 0; i < 4; i++) c.sendFrame(FrameType.DATA, i === 3 ? 0x1 : 0, 7, Buffer.alloc(16000, "y"));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 7);
+      await until(() => closed.has(1) && closed.has(3) && closed.has(5));
+      expect([1, 3, 5, 7].map(streamId => bodies.get(streamId)!.length)).toEqual([0, 0, 0, 64000]);
+    });
   });
 });
 

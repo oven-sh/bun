@@ -55,7 +55,7 @@ export default [
       },
       detach: {
         fn: "detachFromJS",
-        length: 0,
+        length: 1,
       },
       rstStream: {
         fn: "rstStream",

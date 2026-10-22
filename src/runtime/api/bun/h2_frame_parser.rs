@@ -951,6 +951,17 @@ struct SendDataOptions {
     defer_write_callback: bool,
 }
 
+/// Frames count as sent once serialized, so `detach(true)` leaves the parser attached until the socket has them.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Draining {
+    #[default]
+    No,
+    /// Attached only to write that output: no streams, no JS context, no inbound frames.
+    Output,
+    /// And then to issue the half-close the socket asked for meanwhile (`defer_shutdown`).
+    OutputThenFin,
+}
+
 struct DispatchGuard<'a>(&'a Cell<u32>);
 
 impl Drop for DispatchGuard<'_> {
@@ -1176,6 +1187,7 @@ pub(crate) struct H2FrameParser {
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
     /// rejected the send). Latched once; the deferred tick closes the transport.
     transport_write_fatal: Cell<bool>,
+    draining: Cell<Draining>,
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
     pending_header_compression_error: Cell<bool>,
@@ -3670,6 +3682,9 @@ impl H2FrameParser {
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
+        if self.draining.get() != Draining::No {
+            return;
+        }
         // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed
         // bytes back into the same parser from inside such a dispatch (e.g. a custom Duplex whose
         // write path synchronously pushes back into the socket). The engine cell stays mutably
@@ -3828,9 +3843,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     /// A frame callback left an exception pending (a value it could not build): no later frame
     /// in this batch is dispatched over it; `read()` throws it and `on_native_read` returns it to
     /// the socket dispatch. (A termination between frames is what `run_callback`'s gate covers.)
+    /// Nor is one dispatched once a frame callback has ended the session (`Draining`).
     #[inline]
     fn should_stop(&self) -> bool {
-        self.left_exception.get()
+        self.left_exception.get() || self.draining.get() != Draining::No
     }
 
     fn on_frame_counters(&self, received: u64, sent: u64) {
@@ -7498,6 +7514,54 @@ impl H2FrameParser {
                 break;
             }
         }
+        if self.draining.get() != Draining::No {
+            self.finish_draining();
+        }
+    }
+
+    /// Lets go of the socket once it has taken the output a draining parser kept.
+    #[cold]
+    fn finish_draining(&self) {
+        if self.has_unsent_output() && self.socket_takes_output() {
+            return;
+        }
+        if self.draining.replace(Draining::No) == Draining::OutputThenFin {
+            match self.native_socket.get() {
+                BunSocket::Tcp(socket) => socket.get().socket.get().shutdown(),
+                BunSocket::Tls(socket) => socket.get().socket.get().shutdown(),
+                BunSocket::TcpWriteonly(_) | BunSocket::TlsWriteonly(_) | BunSocket::None => {}
+            }
+        }
+        self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        self.write_buffer_offset.set(0);
+        self.detach_native_socket();
+    }
+
+    fn has_unsent_output(&self) -> bool {
+        !self.write_buffer.get().slice()[self.write_buffer_offset.get()..].is_empty()
+    }
+
+    /// Whether a later writable event reaches this parser without running JS, on a write side that is still open.
+    fn socket_takes_output(&self) -> bool {
+        !self.transport_write_runs_js()
+            && match self.native_socket.get() {
+                BunSocket::Tcp(socket) => socket.get().write_side_open(),
+                BunSocket::Tls(socket) => socket.get().write_side_open(),
+                BunSocket::TcpWriteonly(_) | BunSocket::TlsWriteonly(_) | BunSocket::None => false,
+            }
+    }
+
+    fn owes_output(&self) -> bool {
+        self.has_unsent_output() && !self.transport_write_fatal.get() && self.socket_takes_output()
+    }
+
+    /// True when a draining parser holds back the socket's half-close: `finish_draining` issues it after the output.
+    pub(crate) fn defer_shutdown(&self) -> bool {
+        if self.draining.get() == Draining::No || !self.owes_output() {
+            return false;
+        }
+        self.draining.set(Draining::OutputThenFin);
+        true
     }
 
     pub(crate) fn on_native_close(&self) {
@@ -7507,6 +7571,11 @@ impl H2FrameParser {
         let _keepalive = self.keepalive();
         self.native_socket.note_socket_closed();
         self.detach_native_socket();
+        // Else the output a draining parser kept stays allocated until its wrapper is collected.
+        if self.draining.replace(Draining::No) != Draining::No {
+            self.write_buffer.with_mut(|wb| wb.clear_and_free());
+            self.write_buffer_offset.set(0);
+        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -7628,6 +7697,7 @@ impl H2FrameParser {
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
             transport_write_fatal: Cell::new(false),
+            draining: Cell::new(Draining::No),
             pending_header_compression_error: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),
@@ -7837,19 +7907,20 @@ impl H2FrameParser {
         Ok(scopeguard::ScopeGuard::into_inner(guard))
     }
 
+    /// `detach(keepOutput)`.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn detach_from_js(
         this: &Self,
         _global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
+        callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.release_from_js();
+        this.release_from_js(callframe.argument(0).to_boolean());
         Ok(JSValue::UNDEFINED)
     }
 
     /// The session is over: free its streams, let go of the socket, and stop keeping the wrapper
     /// (and through it the handlers and their context object) alive.
-    fn release_from_js(&self) {
+    fn release_from_js(&self, keep_output: bool) {
         let this = self;
         this.abort_handle.leave();
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
@@ -7860,7 +7931,7 @@ impl H2FrameParser {
             // cleared. `stream` points into a disjoint Box.
             unsafe { (*stream).free_resources::<false>(this) };
         }
-        this.detach();
+        this.detach(keep_output);
         if let Some(this_value) = this.strong_this.get().try_get() {
             // `global_this` is `GlobalRef` (JSC_BORROW) — Deref gives `&JSGlobalObject`.
             JSH2FrameParser::Gc::context.clear(this_value, &this.global_this);
@@ -7870,18 +7941,27 @@ impl H2FrameParser {
 
     /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
     /// this function can be called multiple times, it will erase stream info
-    pub(crate) fn detach(&self) {
+    pub(crate) fn detach(&self, keep_output: bool) {
         self.uncork();
         self.unregister_auto_flush();
-        self.detach_native_socket();
+        // The socket still owes this output to the peer: stay attached and write it (`Draining`).
+        let draining = keep_output && self.owes_output();
+        if !draining {
+            self.draining.set(Draining::No);
+            self.detach_native_socket();
+        } else if self.draining.get() == Draining::No {
+            self.draining.set(Draining::Output);
+        }
 
         // Free the allocation, not just the length: detach() is reachable from JS without a
         // following `deinit`, so the capacity must be released here.
-        self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        if !draining {
+            self.write_buffer.with_mut(|wb| wb.clear_and_free());
+            self.write_buffer_offset.set(0);
+        }
         self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());
-        self.write_buffer_offset.set(0);
 
         // `HpackHandle::drop` → `lshpack_wrapper_deinit` (cleanup + free).
         self.hpack.set(None);
@@ -7917,14 +7997,14 @@ impl H2FrameParser {
 bun_jsc::impl_abort_handle_owner!(H2FrameParser, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not dropped). The wrapper this makes
     // collectible is not finalized under this call.
-    unsafe { (*this).release_from_js() }
+    unsafe { (*this).release_from_js(false) }
 });
 
 impl Drop for H2FrameParser {
     fn drop(&mut self) {
         bun_output::scoped_log!(H2FrameParser, "deinit");
 
-        self.detach();
+        self.detach(false);
         // Note: take the map out first so `self` is free for
         // `free_resources(self)` while we walk the entries.
         let streams = self.streams.replace(BunHashMap::default());

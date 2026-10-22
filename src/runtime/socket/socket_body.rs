@@ -2680,6 +2680,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         res
     }
 
+    /// Whether a write refused with would-block can still be taken after a writable event.
+    pub(crate) fn write_side_open(&self) -> bool {
+        let socket = self.socket.get();
+        socket.is_established()
+            && !socket.is_shutdown()
+            && !socket.is_closed()
+            && !(SSL && self.flags.get().contains(Flags::REJECTED))
+    }
+
     pub(crate) fn write_maybe_corked(&self, buffer: &[u8]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
@@ -3279,7 +3288,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let [arg] = callframe.arguments_as_array::<1>();
         if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
-        } else {
+        } else if !this.native_callback.get().defer_shutdown() {
             this.socket.get().shutdown();
         }
 
@@ -4187,6 +4196,14 @@ impl NativeCallbacks {
         // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
         unsafe { (*h2).on_native_writable() };
         true
+    }
+    /// Whether the attached parser takes over the half-close, to send the FIN after its own output.
+    pub(crate) fn defer_shutdown(&self) -> bool {
+        match self {
+            // No JS runs under this call, so the cell keeps its ref on the parser.
+            NativeCallbacks::H2(h2) => h2.defer_shutdown(),
+            NativeCallbacks::None => false,
+        }
     }
 }
 

@@ -448,6 +448,14 @@ function emitSessionCloseNT(self: Http2Session, frame) {
     runInFrame(frame, self.emit, self, "close");
   }
 }
+// A graceful close leaves `closingSocket` to write what the session queued: 'close' follows its 'close', as in node.
+function emitSessionCloseAfterDestroy(self: Http2Session, frame, closingSocket) {
+  if (closingSocket && !closingSocket.destroyed) {
+    closingSocket.once("close", emitSessionCloseNT.bind(undefined, self, frame));
+  } else {
+    process.nextTick(emitSessionCloseNT, self, frame);
+  }
+}
 function emitErrorNT(self: any, error: any, destroy: boolean) {
   if (destroy) {
     if (self.listenerCount("error") > 0) {
@@ -4783,6 +4791,7 @@ class ServerHttp2Session extends Http2Session {
     }
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, this[bunHTTP2Socket]);
+    let closingSocket;
     try {
       const server = this[kServer];
       if (server) {
@@ -4834,6 +4843,7 @@ class ServerHttp2Session extends Http2Session {
           // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
           socket.resume();
           socket.end();
+          if (this.#closeCalled) closingSocket = socket;
         }
       }
       const parser = this.#parser;
@@ -4848,7 +4858,8 @@ class ServerHttp2Session extends Http2Session {
           FunctionPrototypeBind.$call(destroyStreamForSessionDestroy, undefined, error, streamRstCode),
         );
         parser.emitErrorToAllStreams(streamRstCode);
-        parser.detach();
+        // A graceful close keeps the frames the socket has not taken yet: the parser writes them.
+        parser.detach(closingSocket !== undefined);
         this.#parser = null;
       }
     } catch (e) {
@@ -4869,7 +4880,7 @@ class ServerHttp2Session extends Http2Session {
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    emitSessionCloseAfterDestroy(this, asyncFrame, closingSocket);
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
@@ -5888,6 +5899,7 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, socket);
+    let closingSocket;
     try {
       if (this[kTimeout]) {
         clearTimeout(this[kTimeout]);
@@ -5948,6 +5960,7 @@ class ClientHttp2Session extends Http2Session {
           // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
           socket.resume();
           socket.end();
+          if (this.#closeCalled) closingSocket = socket;
         }
       }
       const parser = this.#parser;
@@ -5966,7 +5979,8 @@ class ClientHttp2Session extends Http2Session {
         } finally {
           this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
         }
-        parser.detach();
+        // A graceful close keeps the frames the socket has not taken yet: the parser writes them.
+        parser.detach(closingSocket !== undefined);
       }
     } catch (e) {
       // A throwing destroy did not destroy: argument validation (goaway's
@@ -5987,7 +6001,7 @@ class ClientHttp2Session extends Http2Session {
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    emitSessionCloseAfterDestroy(this, asyncFrame, closingSocket);
   }
 
   request(headers?: HeadersObject | any[] | null, options?: ClientRequestOptions) {

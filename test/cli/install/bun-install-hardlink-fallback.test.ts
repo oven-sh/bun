@@ -4,7 +4,7 @@
 // does for EXDEV. https://github.com/oven-sh/bun/issues/36852
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
-import { cpSync, readdirSync, statSync } from "node:fs";
+import { chmodSync, cpSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -121,7 +121,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
 }
 `;
 
-  async function installWithShim(dir: string, projectDir: string, expectedInstalled: string) {
+  async function installWithShim(dir: string, projectDir: string, expectedInstalled: string, linker = "hoisted") {
     {
       await using compile = Bun.spawn({
         cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
@@ -141,7 +141,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
     }
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--backend", "hardlink", "--linker", "hoisted"],
+      cmd: [bunExe(), "install", "--backend", "hardlink", "--linker", linker],
       cwd: projectDir,
       env: {
         ...bunEnv,
@@ -152,6 +152,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("EXDEV");
+    expect(stderr).not.toContain("EACCES");
     expect(stdout).toContain(expectedInstalled);
     expect(exitCode).toBe(0);
   }
@@ -216,6 +217,64 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
       }
     },
   );
+
+  // `linkat` succeeds once, then fails with EXDEV. The walk order of the folder does not matter.
+  const shimLinkOnceC = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+
+int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
+           int flags) {
+  static int linked = 0;
+  if (linked) {
+    errno = EXDEV;
+    return -1;
+  }
+  int (*real)(int, const char *, int, const char *, int) = dlsym(RTLD_NEXT, "linkat");
+  int rc = real(olddirfd, oldpath, newdirfd, newpath, flags);
+  if (rc == 0) linked = 1;
+  return rc;
+}
+`;
+
+  // The isolated linker: the first file is hardlinked into the store, then `linkat` fails. The copy
+  // that follows must replace that hardlink, not write the source into itself through it, and a
+  // read-only source file must not stop it. https://github.com/oven-sh/bun/issues/45194
+  test.concurrent("isolated linker: the copy replaces the files the partial link left", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "local", version: "1.2.3" }),
+      "index.js": "module.exports = require('./other.js') + ' from index';",
+      "other.js": "module.exports = 'other';",
+    };
+    using dir = tempDir("hardlink-partial-folder-isolated", {
+      "shim.c": shimLinkOnceC,
+      "package.json": JSON.stringify({
+        name: "hardlink-partial-folder-isolated-test",
+        dependencies: { local: "file:./local" },
+      }),
+      ...Object.fromEntries(Object.entries(files).map(([name, content]) => [`local/${name}`, content])),
+    });
+    for (const name of Object.keys(files)) chmodSync(join(String(dir), "local", name), 0o444);
+
+    await installWithShim(String(dir), String(dir), "1 package installed", "isolated");
+
+    for (const [name, content] of Object.entries(files)) {
+      const source = join(String(dir), "local", name);
+      const installed = join(String(dir), "node_modules", "local", name);
+      expect({ name, source: await Bun.file(source).text(), installed: await Bun.file(installed).text() }).toEqual({
+        name,
+        source: content,
+        installed: content,
+      });
+      expect([name, statSync(source).nlink, statSync(installed).nlink, statSync(installed).mode & 0o777]).toEqual([
+        name,
+        1,
+        1,
+        0o444,
+      ]);
+    }
+  });
 });
 
 // This is what the kernel does for a file system without symlinks: the path is looked up first.

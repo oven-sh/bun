@@ -33,6 +33,7 @@ import {
   tempDir,
   toBeValidBin,
   toHaveBins,
+  unprivilegedSpawnOptions,
 } from "harness";
 import { createRequire } from "module";
 import { tmpdir } from "os";
@@ -3658,6 +3659,17 @@ describe.concurrent("a registry package and a workspace that has a peer dependen
   });
 });
 
+// A directory cannot be renamed to another file system, nor out of a lower overlayfs layer, and a
+// file cannot be hardlinked to another file system.
+const otherDevice = ["/dev/shm", "/tmp"].find(dir => {
+  try {
+    accessSync(dir, constants.W_OK | constants.X_OK);
+    return !isWindows && statSync(dir).dev !== statSync(tmpdir()).dev;
+  } catch {
+    return false;
+  }
+});
+
 describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
   test("root and workspace node_modules are reset", async () => {
     const { packageDir } = await registry.createTestDir({
@@ -3808,15 +3820,6 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps"]);
   });
 
-  // A directory can't be renamed to another file system or out of a lower overlayfs layer.
-  const otherDevice = ["/dev/shm", "/tmp"].find(dir => {
-    try {
-      accessSync(dir, constants.W_OK | constants.X_OK);
-      return !isWindows && statSync(dir).dev !== statSync(tmpdir()).dev;
-    } catch {
-      return false;
-    }
-  });
   test.skipIf(!otherDevice).concurrent("entries that can't be moved aside are deleted", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
@@ -3990,6 +3993,86 @@ for linker in "$@"; do "$BUN" install --linker="$linker"; done`,
       expect(exitCode).toBe(0);
     },
   );
+});
+
+// The folder is on another device: its files cannot be hardlinked into the store, so they are copied.
+describe.skipIf(!otherDevice)("a file: folder that is copied into the store", () => {
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.serial("read-only files are replaced by the next install", async () => {
+    const folder = mkdtempSync(join(otherDevice!, "bun-isolated-readonly-"));
+    const readOnly = (name: string, text: string, mode = 0o444) => {
+      const path = join(folder, name);
+      if (existsSync(path)) chmodSync(path, 0o644);
+      writeFileSync(path, text);
+      chmodSync(path, mode);
+    };
+    try {
+      chmodSync(folder, 0o755);
+      mkdirSync(join(folder, "bin"));
+      mkdirSync(join(folder, "data"));
+      readOnly("package.json", JSON.stringify({ name: "ro-pkg", version: "1.0.0", bin: { "ro-tool": "bin/ro-tool" } }));
+      readOnly("index.js", "module.exports = 'the longer first version';");
+      readOnly("util.js", "module.exports = 'the longer first version';");
+      readOnly(join("bin", "ro-tool"), "#!/bin/sh\necho tool\n", 0o555);
+      readOnly(join("data", "a.txt"), "a");
+
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({ name: "root", dependencies: { "ro-pkg": `file:${folder}` } }),
+        },
+      });
+      // Root ignores file modes, so as root the installs run as `nobody`.
+      using unprivileged = unprivilegedSpawnOptions(packageDir);
+      async function install() {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          env: { ...installEnv(packageDir), HOME: packageDir },
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+          ...unprivileged,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("EACCES");
+        expect(err).not.toContain("EISDIR");
+        expect(out).toContain("1 package installed");
+        expect(exitCode).toBe(0);
+      }
+      // The bin's mode is 0o777 & ~umask in the copy, the others keep the source's mode.
+      const snapshot = (dir: string, files: string[]) =>
+        Object.fromEntries(
+          files.map(name => {
+            const path = join(dir, name);
+            const text = readFileSync(path, "utf8");
+            return [name, name === join("bin", "ro-tool") ? { text } : { mode: statSync(path).mode & 0o777, text }];
+          }),
+        );
+      const copy = join(packageDir, "node_modules", "ro-pkg");
+      let files = ["package.json", "index.js", "util.js", join("bin", "ro-tool"), join("data", "a.txt")];
+
+      await install();
+      expect(snapshot(copy, files)).toEqual(snapshot(folder, files));
+      await install();
+      expect(snapshot(copy, files)).toEqual(snapshot(folder, files));
+
+      // The hardlink step deletes the first entry it finds in the copy before it gives up, so two
+      // of each: a file that shrank is copied whole, a directory that became a file is replaced.
+      readOnly("index.js", "module.exports = 2;");
+      readOnly("util.js", "module.exports = 3;");
+      readOnly("package.json", JSON.stringify({ name: "ro-pkg", version: "1.0.0" }));
+      rmSync(join(folder, "bin"), { recursive: true });
+      rmSync(join(folder, "data"), { recursive: true });
+      readOnly("bin", "not a directory");
+      readOnly("data", "not a directory either");
+      files = ["package.json", "index.js", "util.js", "bin", "data"];
+      await install();
+      expect(snapshot(copy, files)).toEqual(snapshot(folder, files));
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
 });
 
 describe.concurrent("--linker flag", () => {

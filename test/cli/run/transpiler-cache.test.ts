@@ -672,7 +672,10 @@ test("an entry written without a module record is replaced once records are on",
   // serve it (JSC would silently fall back to its own analysis).
   const filler = ("// " + "x".repeat(120) + "\n").repeat(40);
   writeFileSync(join(temp_dir, "lib.js"), `export const one = 1;\nexport function two() {}\n${filler}`);
-  writeFileSync(join(temp_dir, "main.js"), `import * as lib from "./lib.js";\nconsole.log(Object.keys(lib).join(","));`);
+  writeFileSync(
+    join(temp_dir, "main.js"),
+    `import * as lib from "./lib.js";\nconsole.log(Object.keys(lib).join(","));`,
+  );
 
   const off = { ...env, BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO: "1" };
   expect(await bunRun(join(temp_dir, "main.js"), off)).toSpawn("one,two");

@@ -1850,6 +1850,23 @@ describe.concurrent("bun run", () => {
         expect(await script(project, "path")).toEqual(linked);
       });
 
+      it("uses a real program that replaced the launcher", async () => {
+        using dir = tempDir("bun-run-bin-link-real-program", files(bins("bun"), { path: printPath("bun") }));
+        const { outer, script, install, binDir, removeTarget } = prepare(String(dir), bins("bun"));
+        await install(outer);
+
+        // The `.bunx` next to it still has a target that's gone, but `bun.exe` is no longer a launcher.
+        removeTarget(outer, "bun");
+        const replaced = join(binDir(outer), "bun.exe");
+        rmSync(replaced);
+        program(replaced);
+        expect(await script(join(outer, "project"), "path")).toEqual({
+          stdout: ran(replaced),
+          stderr: echoed("bun"),
+          exitCode: 0,
+        });
+      });
+
       it("only skips a link that the launcher can't start", async () => {
         using dir = tempDir("bun-run-bin-link-metadata", files(bins("bun"), { path: printPath("bun") }));
         const { tools, outer, script, install, binDir, targetOf } = prepare(String(dir), bins("bun"));
@@ -1927,8 +1944,29 @@ describe.concurrent("bun run", () => {
         });
       });
 
-      // A package bin's launcher searches for `node` itself, starting in its own folder.
-      it.todo("a package bin with a node shebang next to a node link whose target is gone");
+      // This case still fails. A package bin's launcher searches for `node` itself, starting in its own folder, so the
+      // shell's search isn't involved.
+      it("a package bin with a node shebang still starts a node link whose target is gone", async () => {
+        using dir = tempDir("bun-run-dead-bin-link-shebang", {
+          ...files({ ...bins("node"), mytool: "bin/mytool.js" }, { path: "mytool" }),
+          "outer/runtime-pkg/bin/mytool.js": "#!/usr/bin/env node\nconsole.log(process.execPath);\n",
+        });
+        const { outer, script, install, targetOf, removeTarget } = prepare(String(dir), bins("node"));
+        const project = join(outer, "project");
+        await install(outer);
+        expect(await script(project, "path")).toEqual({
+          stdout: ran(targetOf(outer, "node")),
+          stderr: "$ mytool\n",
+          exitCode: 0,
+        });
+
+        removeTarget(outer, "node");
+        expect(await script(project, "path")).toEqual({
+          stdout: "",
+          stderr: expect.stringContaining("error: bin executable does not exist on disk"),
+          exitCode: 255,
+        });
+      });
     });
   });
 });

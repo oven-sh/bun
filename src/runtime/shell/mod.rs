@@ -20,7 +20,7 @@ pub(crate) mod shell_body;
 // Codegen (`generated_js2native.rs`) addresses this as `crate::shell::shell::*`.
 pub(crate) use shell_body as shell;
 
-/// Resolves a command name. The exec state and the `which` builtin share it so that they agree.
+/// Searches `PATH` for a command name. The exec state and the `which` builtin share this search.
 #[cfg(windows)]
 pub(crate) use bun_install::windows_shim::which as which_command;
 #[cfg(not(windows))]

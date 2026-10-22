@@ -296,8 +296,6 @@ namespace uWS {
                 }
                 if (hasChunkSize(state) && chunkSize(state) == 2) {
 
-                    //printf("Setting state to trailer-parsing and emitting empty chunk\n");
-
                     /* node:http compat: the message is not complete until the trailer
                      * section has been consumed; capture it and emit the fin chunk
                      * from the trailer-section branch above instead of here. */

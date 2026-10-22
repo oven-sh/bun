@@ -93,7 +93,6 @@ function propRow(
     length = 0,
     enumerable = true,
     configurable = false,
-    builtin,
     writable = false,
   } = (defaultPropertyAttributes ? Object.assign({}, defaultPropertyAttributes, prop) : prop) as any;
 
@@ -130,14 +129,7 @@ function propRow(
     }
   }
 
-  if (builtin !== undefined) {
-    if (typeof builtin !== "string") throw new Error('"builtin" should be string');
-    return `
-{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, ${builtin}, ${
-      length || 0
-    } } }
-`.trim();
-  } else if (fn !== undefined) {
+  if (fn !== undefined) {
     return `
 { "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::NativeFunctionType, ${fn}, ${
       length || 0
@@ -165,11 +157,6 @@ function propRow(
 export function generateHashTable(nameToUse, symbolName, typeName, obj, props = {}, wrapped) {
   const rows = [];
   let defaultPropertyAttributes = undefined;
-
-  if ("enumerable" in obj) {
-    defaultPropertyAttributes ||= {};
-    defaultPropertyAttributes.enumerable = obj.enumerable;
-  }
 
   if ("configurable" in obj) {
     defaultPropertyAttributes ||= {};
@@ -988,11 +975,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         ~${name}();
 
         void* wrapped() const { return m_ctx; }
-
-        void detach()
-        {
-            m_ctx = nullptr;
-        }
 
         ${
           obj.valuesArray
@@ -2545,7 +2527,7 @@ function getPropertySignatureWithComment(
   let isReadOnly = false;
   let commentLines: string[] = [];
 
-  if ("fn" in propDef || "builtin" in propDef) {
+  if ("fn" in propDef) {
     const length = propDef.length ?? 0;
     let args = Array(length)
       .fill(0)
@@ -2559,16 +2541,12 @@ function getPropertySignatureWithComment(
 
     signature = `${tsPropName}(${args}): ${returnType};`; // Basic method signature
     isMethod = true;
-    if ("fn" in propDef) {
-      commentLines.push(
-        ` Look for a function like this:
+    commentLines.push(
+      ` Look for a function like this:
       * \`\`\`zig
       * fn ${propDef.fn}(this: *${classDef.name}, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue { ... }
       * \`\`\``,
-      );
-    } else if ("builtin" in propDef) {
-      commentLines.push(`* C++ builtin name: \`${propDef.builtin}\``);
-    }
+    );
   } else if ("getter" in propDef) {
     signature = `${tsPropName}: unknown;`; // Getter, possibly with setter
     isReadOnly = !propDef.writable && !("setter" in propDef); // Mark readonly if only getter or explicitly not writable

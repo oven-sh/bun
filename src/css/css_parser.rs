@@ -36,7 +36,7 @@ pub use crate::error::{
 pub use crate::generics::{self as generic, implement_deep_clone, implement_hash};
 pub use crate::logical::{self, PropertyCategory};
 pub use crate::prefixes;
-pub use crate::printer::{self as css_printer, ImportInfo, Printer, PrinterOptions};
+pub use crate::printer::{ImportInfo, Printer, PrinterOptions};
 pub use crate::small_list::SmallList;
 pub use crate::targets::{self, Features, Targets};
 

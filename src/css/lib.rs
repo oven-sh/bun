@@ -184,19 +184,19 @@ pub use dependencies::Dependency;
 // for css_jsc / bundler.
 pub use css_parser::{
     DefaultAtRule, LocalsResultsMap, MinifyOptions, Parser, ParserFlags, ParserInput,
-    ParserOptions, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult,
+    ParserOptions, StyleAttribute, StyleSheet, StylesheetExtra,
 };
-pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
+pub use printer::{ImportInfo, Printer, PrinterOptions};
 /// Dependent crates name this `ImportRecordHandler`; the surviving type is
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
-pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
+pub use values::color::{CssColor, FloatColor, LabColor, RGBA};
 pub type CssColorParseResult = values::color::ParseResult;
 
 // Cross-crate re-exports.
 pub use error::{
-    BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyError, MinifyErrorKind,
-    ParseError, ParserError, ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
+    BasicParseErrorKind, Err, ErrorLocation, MinifyError, ParseError, ParserError, ParserErrorKind,
+    PrinterError, PrinterErrorKind, SelectorError,
 };
 pub(crate) use logical::PropertyCategory;
 pub use targets::{Browsers, Features, Targets};

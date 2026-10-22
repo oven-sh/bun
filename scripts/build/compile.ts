@@ -13,7 +13,7 @@ import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { linksWithLld } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
-import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
+import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
 import { machoPostlinkCommand } from "./shims.ts";
 import { toolIdentityFile } from "./tools.ts";
@@ -233,8 +233,6 @@ export interface CompileOpts {
    * implicitInputs instead — see above.
    */
   orderOnlyInputs?: string[];
-  /** Job pool override. */
-  pool?: PoolName;
 }
 
 /**
@@ -310,7 +308,6 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
     inputs: [absSrc],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
     implicitInputs,
-    ...(opts.pool !== undefined ? { pool: opts.pool } : {}),
   };
   const flags = opts.flags.join(" ");
   if (lang === "cc") {

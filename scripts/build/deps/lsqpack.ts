@@ -5,7 +5,7 @@
  * Header-only here: lsqpack.c is compiled by the lsquic dep (see lsquic.ts).
  */
 
-import type { Dependency, DirectBuild } from "../source.ts";
+import type { Dependency } from "../source.ts";
 
 const LSQPACK_COMMIT = "91567706c41c0d97ab8dc576873ecd472d7869fa";
 
@@ -30,11 +30,7 @@ export const lsqpack: Dependency = {
   // lsqpack.c is compiled inside the lsquic dep because lsquic feeds it a
   // non-FILE* logger context that only works with LSQPACK_*_LOGGER_HEADER
   // pointing at lsquic-internal headers. This dep just provides lsqpack.h.
-  build: cfg => {
-    void cfg;
-    const spec: DirectBuild = { kind: "direct", sources: [] };
-    return spec;
-  },
+  build: () => ({ kind: "direct", sources: [] }),
 
   provides: cfg => ({
     libs: [],

@@ -296,7 +296,7 @@ declare function $bindgen<File extends keyof $Bindgen.Exports, Name extends keyo
   filename: File,
   name: Name,
 ): $Bindgen.Exports[File][Name];
-// NOTE: $debug, $assert, and $isPromiseFulfilled omitted
+// NOTE: $debug, $assert, and $isPromisePending omitted
 
 declare module "node:stream" {
   interface ReadableOptions {

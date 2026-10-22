@@ -33,7 +33,7 @@ pub use bun_event_loop::Task;
 pub use bun_event_loop::any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask};
 pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
+pub use crate::cpp_task::CppTask;
 pub use crate::garbage_collection_controller::GarbageCollectionController;
 pub use crate::jsc_scheduler as JSCScheduler;
 #[cfg(unix)]

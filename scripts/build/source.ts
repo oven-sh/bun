@@ -211,10 +211,9 @@ export interface DirectBuild {
    */
   lang?: "c" | "cxx";
   /**
-   * Same semantics as NestedCmakeBuild.pic. true → -fPIC; false (default)
-   * → on unix add -fno-pic -fno-pie so the building clang's PIC/PIE default
-   * doesn't decide (Android always gets -fPIC: PIE-only platform). Windows
-   * is a no-op either way.
+   * true → -fPIC; false (default) → on unix add -fno-pic -fno-pie so the
+   * building clang's PIC/PIE default doesn't decide (Android always gets
+   * -fPIC: PIE-only platform). Windows is a no-op either way.
    */
   pic?: boolean;
   /**
@@ -316,36 +315,10 @@ export interface NestedCmakeBuild {
    */
   args: Record<string, string>;
   /**
-   * Extra C flags appended to CMAKE_C_FLAGS for this dep (beyond global
-   * dep flags). APPENDED, not replacing globals.
-   */
-  extraCFlags?: string[];
-  extraCxxFlags?: string[];
-  /**
    * Build type for this dep. Defaults to cfg.buildType. Some deps force
    * Release (lshpack — its debug build exposes asan symbols we can't link).
    */
   buildType?: BuildType;
-  /**
-   * Subdirectory within the build dir where libraries land.
-   * E.g. cares puts them in "lib/", hdrhistogram in "src/". Default: root.
-   */
-  libSubdir?: string;
-  /**
-   * Subdirectory within the SOURCE dir containing CMakeLists.txt.
-   * E.g. zstd's cmake files live at `build/cmake/`, not the repo root.
-   * Becomes the `-S` arg to cmake. Default: source root.
-   */
-  sourceSubdir?: string;
-  /**
-   * If true, add -fPIC to C/CXX flags (non-windows). This also SUPPRESSES
-   * the default unix -fno-pic -fno-pie — you can't have both.
-   *
-   * Most deps don't need this (we link statically into a non-PIE executable),
-   * but some build intermediate tools or have internal shared libs that
-   * require PIC. cares/highway/libarchive set it.
-   */
-  pic?: boolean;
   /**
    * Script to run before cmake configure. Outputs become implicit inputs
    * to configure — if they change (or don't exist), reconfigure.
@@ -412,8 +385,8 @@ export interface CargoBuild {
  */
 export interface Provides {
   /**
-   * Library outputs to link. Paths relative to the dep's BUILD directory
-   * (or its libSubdir if set). May be bare names ("mimalloc" → libmimalloc.a)
+   * Library outputs to link. Paths relative to the dep's BUILD directory.
+   * May be bare names ("mimalloc" → libmimalloc.a)
    * or exact paths ("CMakeFiles/mimalloc-obj.dir/src/static.c.o").
    *
    * Ignored for `direct` builds — emitDirect names the archive
@@ -484,11 +457,8 @@ export interface Dependency {
    * Files ending in `.patch` are applied with `git apply`. Other files are
    * OVERLAYS — copied into the source root as-is. Useful for injecting a
    * CMakeLists.txt into a project that lacks one (tinycc).
-   *
-   * Function form allows conditional patches (e.g. zlib's arm64-windows
-   * machine-type fix is only needed on that target).
    */
-  patches?: string[] | ((cfg: Config) => string[]);
+  patches?: string[];
 
   /**
    * Other deps that must be BUILT before this dep's configure runs.
@@ -831,9 +801,7 @@ export function resolveDep(
         ? source.path
         : depSourceDir(cfg, dep.name);
 
-  // Resolve conditional patches. Same list for the whole configure run —
-  // we don't want patches changing between emitFetch and the hash check.
-  const patches = dep.patches === undefined ? [] : typeof dep.patches === "function" ? dep.patches(cfg) : dep.patches;
+  const patches = dep.patches ?? [];
 
   // Sources bun compiles directly (from Provides.sources). Resolved to
   // absolute paths for (a) the ResolvedDep return and (b) declaring as
@@ -871,7 +839,7 @@ export function resolveDep(
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers reconfigure/rebuild.
-    //   cmake deps → CMakeLists.txt (in sourceSubdir if set, e.g. zstd)
+    //   cmake deps → CMakeLists.txt
     //   cargo deps → Cargo.toml (in manifestDir)
     //   direct/header-only → none: the sources are on disk before ninja
     //     starts, so the compiler depfiles see edits directly. (Stamping the
@@ -879,7 +847,7 @@ export function resolveDep(
     let stampDir: string;
     let stampFile: string;
     if (buildSpec.kind === "nested-cmake") {
-      stampDir = buildSpec.sourceSubdir ? resolve(srcDir, buildSpec.sourceSubdir) : srcDir;
+      stampDir = srcDir;
       stampFile = "CMakeLists.txt";
     } else if (buildSpec.kind === "cargo") {
       stampDir = resolve(srcDir, buildSpec.manifestDir);
@@ -1154,10 +1122,6 @@ function emitNestedCmake(
   // but stays explicit for the pattern.
   const hostWin = cfg.host.os === "windows";
 
-  // cmake source dir (where CMakeLists.txt lives). Usually srcDir, but
-  // some projects nest it (zstd: vendor/zstd/build/cmake/).
-  const cmakeSrcDir = spec.sourceSubdir ? resolve(srcDir, spec.sourceSubdir) : srcDir;
-
   // ─── Assemble cmake configure args ───
   const args: string[] = [];
 
@@ -1236,9 +1200,8 @@ function emitNestedCmake(
   // PIC handling — the same policy bun's own objects get in flags.ts
   // (-fno-pic -fno-pie on unix, -fPIC on Android), stated here so the
   // building clang's default doesn't decide:
-  //   spec.pic=true  → add -fPIC (non-windows), also tell cmake
-  //   android        → add -fPIC regardless (bionic's loader is PIE-only)
-  //   spec.pic=false → on unix, add -fno-pic -fno-pie. Apple clang defaults
+  //   android   → add -fPIC (bionic's loader is PIE-only)
+  //   otherwise → on unix, add -fno-pic -fno-pie. Apple clang defaults
   //     to PIC, and distro clangs (Arch, Fedora, Alpine, Homebrew) default to
   //     PIE, which compiles every dep as PIC: .data.rel.ro grows from 109 KB
   //     to 541 KB and startup touches 4-7% more pages. apt.llvm.org's clang
@@ -1247,20 +1210,15 @@ function emitNestedCmake(
   //
   // Windows has no PIC concept (all code is relocatable), so every branch
   // is guarded — no-op there.
-  if (spec.pic || cfg.abi === "android") {
+  if (cfg.abi === "android") {
     if (!cfg.windows) {
       cflags += " -fPIC";
       cxxflags += " -fPIC";
     }
-    if (spec.pic) args.push(`-DCMAKE_POSITION_INDEPENDENT_CODE=ON`);
   } else if (cfg.unix) {
     cflags += " -fno-pic -fno-pie";
     cxxflags += " -fno-pic -fno-pie";
   }
-
-  // Dep-specific extra flags. Appended to globals, not replacing them.
-  if (spec.extraCFlags) cflags += " " + spec.extraCFlags.join(" ");
-  if (spec.extraCxxFlags) cxxflags += " " + spec.extraCxxFlags.join(" ");
 
   args.push(`-DCMAKE_C_FLAGS=${cflags}`);
   args.push(`-DCMAKE_CXX_FLAGS=${cxxflags}`);
@@ -1307,7 +1265,7 @@ function emitNestedCmake(
     orderOnlyInputs: fetchDepStamps,
     vars: {
       name,
-      srcdir: cmakeSrcDir,
+      srcdir: srcDir,
       builddir: buildDir,
       args: quoteArgs(args, hostWin),
     },
@@ -1317,12 +1275,11 @@ function emitNestedCmake(
   // ─── Resolve library output paths ───
   // Provides.libs can be bare names ("mimalloc" → libmimalloc.a) or paths
   // with a dot ("CMakeFiles/.../static.c.o" → use as-is).
-  const libDir = spec.libSubdir ? resolve(buildDir, spec.libSubdir) : buildDir;
   const libs = provides.libs.map(lib => {
     if (lib.includes(".")) {
-      return resolve(libDir, lib);
+      return resolve(buildDir, lib);
     }
-    return resolve(libDir, `${cfg.libPrefix}${lib}${cfg.libSuffix}`);
+    return resolve(buildDir, `${cfg.libPrefix}${lib}${cfg.libSuffix}`);
   });
 
   // Targets default to lib names — for deps where the cmake target and

@@ -4979,7 +4979,7 @@ pub fn self_process_peak_memory_usage() -> Option<usize> {
 #[path = "PosixStat.rs"]
 pub mod posix_stat;
 pub use posix_stat::PosixStat;
-pub use posix_stat::{stat_atime, stat_birthtime, stat_ctime, stat_mtime};
+pub use posix_stat::{stat_atime, stat_mtime};
 
 /// `std::io::Write` adapter for `Fd` (used by `File::buffered_writer`).
 /// Port of `File.Writer = std.Io.GenericWriter(File, anyerror, stdIoWrite)`.

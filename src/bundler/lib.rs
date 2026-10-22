@@ -89,13 +89,10 @@ pub use bundle_v2::{
     CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
     StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,
 };
-pub use chunk::{
-    CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,
-    cross_chunk_import,
-};
+pub use chunk::{CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer};
 pub use linker_graph::{
-    ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
-    entry_point, js_meta,
+    ExportData, ImportData, RefImportData, ResolvedExports, TopLevelSymbolToParts, entry_point,
+    js_meta,
 };
 
 /// `MultiArrayList` SoA column-accessor traits, gathered so a single
@@ -250,7 +247,7 @@ pub mod linker_context {
 pub use bundle_v2::BundleV2;
 /// See `chunk` module.
 pub use chunk::Chunk;
-pub use defines::{Define, DefineDataExt, DefineExt};
+pub use defines::{Define, DefineDataExt};
 /// See `linker` module.
 pub use linker::Linker;
 /// See `linker_context_mod` module.

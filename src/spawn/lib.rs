@@ -115,7 +115,7 @@ pub mod windows {
 pub mod sync {
     #[cfg(windows)]
     pub use crate::process::WindowsOptions;
-    pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn, spawn_with_argv};
+    pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn};
 }
 
 // ──────────────────────────────────────────────────────────────────────────

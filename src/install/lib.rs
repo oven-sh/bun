@@ -327,7 +327,7 @@ pub use package_manager_real::{
 // migrated these aliases drop.
 // ──────────────────────────────────────────────────────────────────────────
 pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
-pub use package_manager_real::package_manager_options::{Access, AuthType};
+pub use package_manager_real::package_manager_options::Access;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Only the `Shell` enum (variant detection) is consumed here — the embedded

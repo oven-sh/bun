@@ -833,7 +833,7 @@ const traceOrderTargets: { os: Os; arch: Arch; on: Platform }[] = [
  * The profile zip carries the two maps the generator resolves addresses with
  * (packageAndUpload in scripts/build/ci.ts; scripts/orderfile/windows-symbols.ts).
  */
-function getTraceOrderStep(target: Target, tracePlatform: Platform, options: PipelineOptions): CommandStep {
+function getTraceOrderStep(target: Target, tracePlatform: Platform): CommandStep {
   const { os } = target;
   const targetKey = getTargetKey(target);
   const triplet = getTargetTriplet(target);
@@ -871,7 +871,7 @@ interface TestOptions {
   testFiles?: string[] | undefined;
 }
 
-function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
+function getTestBunStep(platform: Platform, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
   const { buildId, testFiles } = testOptions;
 
@@ -1040,7 +1040,7 @@ const windowsSignPlatform: Platform = { os: "windows", arch: "x64", release: "20
  * signed zips with the same names so the release step picks them up
  * transparently.
  */
-function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptions): CommandStep {
+function getWindowsSignStep(windowsPlatforms: Platform[]): CommandStep {
   // Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip
   const artifacts: string[] = [];
   const buildSteps: string[] = [];
@@ -1800,7 +1800,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
             ...placeBinaryCheck(
               target,
               traceOn.on,
-              getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps),
+              getStepWithDependsOn(getTraceOrderStep(target, traceOn.on), ...traceDeps),
             ),
           );
         }
@@ -1842,7 +1842,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     if (!skipTests) {
       steps.push(
         ...relevantTestPlatforms.map(target => {
-          const step = getTestBunStep(target, options, { testFiles, buildId });
+          const step = getTestBunStep(target, { testFiles, buildId });
           testStepKeys.push(step.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
@@ -1875,10 +1875,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
 
   if (signWindows) {
     steps.push(
-      getStepWithDependsOn(
-        getWindowsSignStep(windowsPlatforms, options),
-        ...getImageDependsOn(windowsSignPlatform, baking),
-      ),
+      getStepWithDependsOn(getWindowsSignStep(windowsPlatforms), ...getImageDependsOn(windowsSignPlatform, baking)),
     );
   }
 

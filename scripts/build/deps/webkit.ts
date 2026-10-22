@@ -428,9 +428,8 @@ export const webkit: Dependency = {
     // resolve-against-srcDir would point at vendor/WebKit/ (wrong).
     const buildDir = depBuildDir(cfg, "WebKit");
 
-    // Lib paths: emitNestedCmake resolves these relative to the build dir's
-    // libSubdir — we set none, so it's buildDir root. But WebKit's libs are
-    // in lib/. So include the lib/ prefix.
+    // Lib paths: emitNestedCmake resolves these relative to the build dir
+    // root. But WebKit's libs are in lib/. So include the lib/ prefix.
     //
     // Windows ICU libs are NOT listed here — they're preBuild.outputs,
     // which source.ts appends to the resolved libs automatically. Listing

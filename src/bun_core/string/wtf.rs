@@ -2,7 +2,7 @@ use crate::string::Utf8Bytes;
 use crate::strings;
 
 // The struct layout lives in `bun_alloc` (lowest-tier crate).
-pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
+pub use bun_alloc::{WTFStringImpl, WTFStringImplStruct};
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`. The
 /// [`crate::external_shared::ExternalSharedDescriptor`] impl lives alongside

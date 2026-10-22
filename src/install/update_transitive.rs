@@ -704,6 +704,40 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
+/// `bun update`, once everything is resolved: a dependency whose source could not be read kept the package of bun.lock (`Scratch::refreshing`), which the warning about the failed read does not say. Each such package gets the line that `warn_unchecked` prints for a package whose manifest could not be fetched. A command that has failed by now saves nothing, and gets no such line.
+pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
+    if manager.subcommand != crate::Subcommand::Update
+        || manager.log_mut().has_errors()
+        || manager.update_requests.iter().any(|request| request.failed)
+    {
+        return;
+    }
+    let lockfile = &*manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let mut kept: Vec<(&[u8], Box<[u8]>)> = (lockfile.kept_without_refresh().iter())
+        .map(|&id| {
+            let resolution = &lockfile.packages.items_resolution()[id as usize];
+            (
+                lockfile.packages.items_name()[id as usize].slice(buf),
+                text(resolution.fmt(buf, bun_core::fmt::PathSep::Posix)),
+            )
+        })
+        .collect();
+    index_sort::sort_vec_unstable_by(&mut kept, |a, b| a.cmp(b));
+    let log = manager.log_mut();
+    for (name, resolution) in kept {
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "{}@{} was not checked for updates",
+                bun_core::fmt::for_terminal(BStr::new(name)),
+                bun_core::fmt::for_terminal(BStr::new(&resolution)),
+            ),
+        );
+    }
+}
+
 /// Returns the source of the root package.json and its `patchedDependencies` object.
 fn root_patched_dependencies<'a>(
     cache: &'a mut WorkspacePackageJSONCache,

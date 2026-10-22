@@ -17,7 +17,7 @@ import { pipeline } from "node:stream/promises";
 
 const scenario = process.argv[2];
 const MB = Number(process.env.MB ?? 64), STALL = Number(process.env.STALL ?? 0), C = Number(process.env.CONCURRENCY ?? 1);
-const N = Number(process.env.N ?? 200), BATCH = Number(process.env.BATCH ?? 8);
+const N = Number(process.env.N ?? 200), BATCH = Math.max(1, Math.floor(Number(process.env.BATCH ?? 8)) || 1);
 const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = Math.max(1, Math.round(MB * 16)), TOTAL = CHUNK.length * COUNT;
 const rt = typeof Bun !== "undefined" ? "bun " + Bun.version_with_sha : "node " + process.version;
 

@@ -222,7 +222,6 @@ pub(crate) struct Response {
     js_ref: JsCell<JsRef>,
 
     /// What `estimated_size` answers. GC marker threads read it while the JS thread writes it.
-    /// `Relaxed`: it is advice for the collector, and nothing else is ordered against it.
     reported_estimated_size: AtomicUsize,
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
@@ -415,9 +414,7 @@ impl Response {
         this.reported_estimated_size.load(Ordering::Relaxed)
     }
 
-    /// A producer holds `bytes` more of this Response's body that nothing has read. The caller
-    /// reports the same growth against the wrapper (`JSValue::report_extra_memory_allocated`),
-    /// as its last use of this Response: that report can finalize it.
+    /// The caller then reports `bytes` against the wrapper, as its last use of this Response.
     pub(crate) fn charge_unread_body(&self, bytes: usize) {
         self.reported_estimated_size
             .fetch_add(bytes, Ordering::Relaxed);
@@ -425,11 +422,10 @@ impl Response {
 
     /// `bytes` that were charged have left: a consumer took them, or they were dropped.
     pub(crate) fn uncharge_unread_body(&self, bytes: usize) {
-        let _ =
-            self.reported_estimated_size
-                .try_update(Ordering::Relaxed, Ordering::Relaxed, |size| {
-                    Some(size.saturating_sub(bytes))
-                });
+        let charged = self
+            .reported_estimated_size
+            .fetch_sub(bytes, Ordering::Relaxed);
+        debug_assert!(charged >= bytes);
     }
 
     /// R-2: returns `&mut BodyValue` from `&self` via the `JsCell` escape

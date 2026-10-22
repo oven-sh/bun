@@ -91,9 +91,7 @@ impl FetchTaskletRequestDrain {
     }
 }
 
-/// The head found the transport already held back, so no chunk brings the visit that counts what
-/// waits unread. This hop counts it, behind the task that settles the `fetch()` promise: the
-/// reactions of that promise are where a caller takes the body. Same pointer, its own tag.
+/// Counts a body that the head found held back, after the task that settles the `fetch()` promise.
 #[repr(transparent)]
 pub(crate) struct FetchTaskletUnreadBody(FetchTasklet);
 impl Taskable for FetchTaskletUnreadBody {
@@ -165,8 +163,7 @@ pub struct FetchTasklet {
     pub(crate) native_response: JsCell<Option<RefPtr<Response>>>,
     /// The response body stream while this tasklet is its producer.
     pub(crate) response_stream: crate::webcore::byte_stream::ProducerHold,
-    /// Bytes of the body that wait for a reader that has not come, as far as the Response
-    /// wrapper answers for them. Their length: what the buffers reserve beyond it is not counted.
+    /// The unread body bytes that the Response wrapper answers for.
     unread_body_charged: core::cell::Cell<usize>,
     /// A consumer took the body, or the fetch gave it up. The wrapper is charged no more.
     unread_body_claimed: core::cell::Cell<bool>,
@@ -778,8 +775,7 @@ impl FetchTasklet {
         Ok(())
     }
 
-    /// `unread` is set when this visit learns how much of the body waits for a reader that has
-    /// not come: the transport is held back for it, or the body has ended.
+    /// Sets `unread` when this visit learns how many body bytes wait unread.
     fn on_body_received(&mut self, unread: &mut Option<usize>) -> JsResult<()> {
         let success = self.result.is_success();
         let global_this = self.global_this;
@@ -1873,16 +1869,13 @@ impl FetchTasklet {
         self.unpark_body_stream();
     }
 
-    /// The body bytes in `scheduled_response_buffer` that the transport is held back for: the
-    /// body reached `BODY_HIGH_WATER_MARK` and nothing consumes it. Under `mutex`, for a body
-    /// that is `Locked` and has no stream.
+    /// The bytes in `scheduled_response_buffer` that the transport is held back for. Under `mutex`.
     fn unread_body_held_back(&self) -> Option<usize> {
         (self.signal_store.body_receive_mode() == BodyReceiveMode::Paused)
             .then_some(self.scheduled_response_buffer.list.len())
     }
 
-    /// A stream that nothing reads, after a delivery or when a visit has nothing to deliver:
-    /// pauses or parks it as after a delivery, and returns what waits in it once it is parked.
+    /// Pauses or parks the stream as after a delivery. Returns what waits in it once it is parked.
     fn unread_behind_stream(&self, bytes: &crate::webcore::ByteStream) -> Option<usize> {
         if bytes.has_had_pending_pull() {
             self.claim_unread_body();
@@ -1911,11 +1904,7 @@ impl FetchTasklet {
         FetchTasklet::deref(this);
     }
 
-    /// `unread` bytes of the body wait for a reader that has not come, and nothing frees them
-    /// before a collection finds their holder dead. The collector paces itself by what it is
-    /// told, so the Response wrapper answers for them (`Response::estimated_size`) and their
-    /// growth is reported against it. The bytes behind a stream are charged to the Response as
-    /// well, so a stream that outlives its Response is not counted. JS thread, `mutex` not held.
+    /// Makes the Response wrapper answer for `unread` bytes. JS thread, `mutex` not held.
     fn sync_unread_body_charge(&self, unread: usize) {
         let charged = self.unread_body_charged.get();
         if unread == charged {
@@ -1940,13 +1929,11 @@ impl FetchTasklet {
         };
         self.unread_body_charged.set(unread);
         response.charge_unread_body(unread - charged);
-        // Last, with `response` out of use: the report can finalize this very Response and come
-        // back in through `on_response_finalize`.
+        // Last: the report can finalize this very Response and re-enter `on_response_finalize`.
         wrapper.report_extra_memory_allocated(unread - charged);
     }
 
-    /// A consumer took the body, or the fetch gave it up: the wrapper answers for it no more.
-    /// Touches no JS cell (a GC sweep gets here through `abandon_response_body`).
+    /// A consumer took the body, or the fetch gave it up. Touches no JS cell: a GC sweep gets here.
     fn claim_unread_body(&self) {
         if self.unread_body_claimed.replace(true) {
             return;
@@ -1959,8 +1946,7 @@ impl FetchTasklet {
         }
     }
 
-    /// The other half of this rule is in `callback` (HTTP thread). Returns whether the stream
-    /// is parked: at the mark with nothing that reads it.
+    /// The other half of this rule is in `callback` (HTTP thread). Returns whether it parked.
     fn after_body_chunk_delivered(&self, bytes: &crate::webcore::ByteStream) -> bool {
         use crate::webcore::byte_stream::AfterDelivery;
         bun_output::scoped_log!(

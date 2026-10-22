@@ -2124,14 +2124,25 @@ describe("the Content-Type a body gives does not depend on what is read first", 
   test.each([
     [
       ".body was read",
-      (p: Response) => {
+      (slice: Blob) => {
+        const p = response(slice);
         void p.body;
         return p;
       },
     ],
-    ["new Response(p.body, p)", (p: Response) => new Response(p.body, p)],
+    ["new Response(p.body, p)", copies["new Response(p.body, p)"]],
+    ["new Response(request.body, request)", copies["new Response(request.body, request)"]],
+    [
+      "by way of new Request(url, p)",
+      (slice: Blob) => {
+        const p = response(slice);
+        void p.body;
+        const r = new Request("http://example.com/", p as RequestInit);
+        return new Response(r.body, r);
+      },
+    ],
   ])("Bun.serve still sends a slice of a Bun.file as a 206 (%s)", async (_, use) => {
-    using server = Bun.serve({ port: 0, fetch: () => use(response(file(import.meta.path).slice(2, 6))) });
+    using server = Bun.serve({ port: 0, fetch: () => use(file(import.meta.path).slice(2, 6)) });
     const served = await fetch(server.url);
     expect({
       status: served.status,

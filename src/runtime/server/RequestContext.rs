@@ -3880,7 +3880,6 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
-        let headers_unseen = response.headers_unseen();
         if let Some(mut headers_) = response.swap_init_headers() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
@@ -3889,7 +3888,7 @@ where
             // incoming Range: header (sendfile.total > 0) we always 206.
             // A list the script never saw counts as no list.
             needs_content_range =
-                needs_content_range && (sendfile.total > 0 || has_content_range || headers_unseen);
+                needs_content_range && (sendfile.total > 0 || has_content_range || headers_.unseen);
             if needs_content_range {
                 status = 206;
             }

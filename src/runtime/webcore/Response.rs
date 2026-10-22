@@ -32,8 +32,11 @@ use bun_ptr::weak_ptr::WeakPtrData;
 /// Intentionally not `Clone`: the only "share" operation the surface
 /// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
 /// C++ side. Transferring ownership is by-move.
-#[repr(transparent)]
-pub(crate) struct HeadersRef(NonNull<FetchHeaders>);
+pub(crate) struct HeadersRef {
+    ptr: NonNull<FetchHeaders>,
+    /// A body reader built the list, or it is a copy of such a list: the script neither gave it nor read it.
+    pub(crate) unseen: bool,
+}
 
 impl HeadersRef {
     /// Adopt a freshly-created `FetchHeaders*` (refcount already 1).
@@ -43,12 +46,12 @@ impl HeadersRef {
     /// transfer ownership of one ref.
     #[inline]
     pub(crate) unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
-        Self(ptr)
+        Self { ptr, unseen: false }
     }
 
     #[inline]
     pub(crate) fn as_ptr(&self) -> *mut FetchHeaders {
-        self.0.as_ptr()
+        self.ptr.as_ptr()
     }
 
     /// `FetchHeaders.createEmpty()` — fresh C++ allocation, refcount 1.
@@ -78,10 +81,18 @@ impl HeadersRef {
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
     #[inline]
     pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
-        // SAFETY: C++ returns a +1 ref or null.
-        Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
+        // C++ returns a +1 ref or null.
+        Ok(bun_opaque::opaque_deref_mut(self.ptr.as_ptr())
             .clone_this(global)?
-            .map(|p| unsafe { Self::adopt(p) }))
+            .map(|ptr| Self {
+                ptr,
+                unseen: self.unseen,
+            }))
+    }
+
+    pub(crate) fn to_js(&mut self, global: &JSGlobalObject) -> JSValue {
+        self.unseen = false;
+        bun_opaque::opaque_deref_mut(self.ptr.as_ptr()).to_js(global)
     }
 }
 
@@ -89,28 +100,28 @@ impl core::ops::Deref for HeadersRef {
     type Target = FetchHeaders;
     #[inline]
     fn deref(&self) -> &FetchHeaders {
-        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
+        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.ptr` is live
         // for the lifetime of `self` — safe `*const → &` via `opaque_deref`.
-        bun_opaque::opaque_deref(self.0.as_ptr())
+        bun_opaque::opaque_deref(self.ptr.as_ptr())
     }
 }
 
 impl core::ops::DerefMut for HeadersRef {
     #[inline]
     fn deref_mut(&mut self) -> &mut FetchHeaders {
-        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
+        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.ptr` is live
         // for the lifetime of `self` — safe `*mut → &mut` via `opaque_deref_mut`.
-        bun_opaque::opaque_deref_mut(self.0.as_ptr())
+        bun_opaque::opaque_deref_mut(self.ptr.as_ptr())
     }
 }
 
 impl Drop for HeadersRef {
     #[inline]
     fn drop(&mut self) {
-        // `self.0` is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
+        // `self.ptr` is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
         // Explicit UFCS to avoid `core::ops::Deref::deref` resolution ambiguity.
         // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.0.as_ptr()));
+        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.ptr.as_ptr()));
     }
 }
 
@@ -300,8 +311,7 @@ impl BodyMixin for Response {
     #[inline]
     fn build_fetch_headers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
         if self.init.get().headers.is_none() {
-            self.get_or_create_headers(global_object)?;
-            self.init_mut().headers_unseen = true;
+            self.get_or_create_headers(global_object)?.unseen = true;
         }
         Ok(())
     }
@@ -405,12 +415,6 @@ impl Response {
             Some(headers) => headers.clone_this(global),
             None => Ok(None),
         }
-    }
-
-    /// See [`Init::headers_unseen`].
-    #[inline]
-    pub(crate) fn headers_unseen(&self) -> bool {
-        self.init.get().headers_unseen
     }
 
     #[inline]
@@ -617,7 +621,6 @@ impl Response {
     }
 
     pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        this.init_mut().headers_unseen = false;
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
@@ -1199,8 +1202,6 @@ impl Response {
 // the fields' own drop glue releases `headers` and `status_text`.
 pub(crate) struct Init {
     pub(crate) headers: Option<HeadersRef>,
-    /// A body reader built `headers`: the script neither gave the list nor read it, so `Bun.serve` treats a sliced file as if there were none.
-    pub(crate) headers_unseen: bool,
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
@@ -1210,7 +1211,6 @@ impl Default for Init {
     fn default() -> Self {
         Self {
             headers: None,
-            headers_unseen: false,
             status_code: 0,
             status_text: BunString::EMPTY,
             method: Method::GET,
@@ -1229,7 +1229,6 @@ impl Init {
         };
         Ok(Init {
             headers,
-            headers_unseen: self.headers_unseen,
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,

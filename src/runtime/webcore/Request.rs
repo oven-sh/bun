@@ -182,7 +182,10 @@ impl BodyMixin for Request {
     }
     #[inline]
     fn build_fetch_headers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        self.ensure_fetch_headers(global_object).map(|_| ())
+        if !self.has_fetch_headers() {
+            self.ensure_fetch_headers(global_object)?.unseen = true;
+        }
+        Ok(())
     }
     #[inline]
     fn get_form_data_encoding(
@@ -1164,14 +1167,13 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers_mut() {
+                        if response.get_init_headers().is_some() {
                             // The flag is set unconditionally once `getInitHeaders()` yielded a
                             // value, even if `cloneThis` returns null — so a later arg can't
                             // repopulate headers from a different source.
-                            match headers.clone_this(cx.global()) {
+                            match response.clone_init_headers(cx.global()) {
                                 Ok(h) => {
-                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                                    req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
+                                    req.headers.set(h);
                                     fields.insert(Fields::Headers);
                                 }
                                 Err(e) => bail!(Err(e)),

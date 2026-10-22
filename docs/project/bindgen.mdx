@@ -604,7 +604,7 @@ table of the object that has the class:
 
 A method that can run JavaScript can be re-entered, by a callback that calls
 another method of the same object. A `&mut self` held across that would be
-undefined behaviour, so it gets the wrapper instead and borrows the payload for as
+undefined behavior, so it gets the wrapper instead and borrows the payload for as
 long as nothing else can run:
 
 ```rust

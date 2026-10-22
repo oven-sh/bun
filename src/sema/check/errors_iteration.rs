@@ -91,7 +91,7 @@ impl Checker<'_, '_> {
         let is_object =
             self.flags(right_type) & (tf::NON_PRIMITIVE | tf::INSTANTIABLE_NON_PRIMITIVE) != 0
                 || self.is_assignable(right_type, TypeId::OBJECT);
-        if right_type.is_never() || !is_object {
+        if right_type == TypeId::NEVER || !is_object {
             self.error_at(
                 self.span_of_parenthesized_expr(file, expr),
                 2407,

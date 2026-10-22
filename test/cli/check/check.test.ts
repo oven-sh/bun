@@ -10607,6 +10607,39 @@ export { A1 };
       expect(exitCode).toBe(1);
     });
 
+    test("doesn't report TS2358 or TS2407 for the `never` of a loop that isn't analyzed completely", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const n: never;
+class C {}
+n instanceof C;
+for (const k in n) {}
+export function left(a: C | string) {
+  fail();
+  while (c || c) { a instanceof C; a instanceof C; }
+}
+export function right(b: typeof C) {
+  fail();
+  while (c || c) { n instanceof b; n instanceof b; }
+}
+export function forIn(a: object) {
+  fail();
+  while (c || c) { for (const k in a) {} for (const k in a) {} }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,1): error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+        a.ts(6,17): error TS2407: The right-hand side of a 'for...in' statement must be of type 'any', an object type or a type parameter, but here has type 'never'.
+        a.ts(9,36): error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+        a.ts(13,36): error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+        a.ts(17,58): error TS2407: The right-hand side of a 'for...in' statement must be of type 'any', an object type or a type parameter, but here has type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("the suggestion for a misspelled name breaks ties in program order", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true}, "files": ["a.ts"]}`,

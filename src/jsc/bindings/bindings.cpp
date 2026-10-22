@@ -2226,8 +2226,7 @@ bool Bun__deepMatch(
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
 
-    // A URL pattern keeps its state in the native object, not in own properties.
-    // Two URLs compare by href, as toEqual does (#4089, #6492).
+    // Two URLs compare by href, as in toEqual (#4089, #6492).
     if (auto* subsetURL = dynamicDowncast<JSDOMURL>(subsetObj)) {
         auto* objURL = dynamicDowncast<JSDOMURL>(obj);
         if (objURL && objURL->wrapped().href() != subsetURL->wrapped().href()) {
@@ -2235,9 +2234,7 @@ bool Bun__deepMatch(
         }
     }
 
-    // Like Jest, only the subset's own enumerable properties are compared.
-    // Inherited properties and private symbols (ES #fields and JSC builtin names)
-    // are not part of the pattern. deepEquals made the same choice in #3484.
+    // Like Jest: the subset's own enumerable properties only, no private symbols.
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     subsetObj->methodTable()->getOwnPropertyNames(subsetObj, globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);
@@ -2247,8 +2244,7 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
-    // An array pattern only matches an array, and the two arrays should match exactly.
-    // An object pattern may still be satisfied by an array.
+    // An array pattern only matches an array. An object pattern may still match an array.
     bool subsetIsArray = isArray(globalObject, subsetValue);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {

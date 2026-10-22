@@ -72,8 +72,6 @@ const HEADERS_UNSUPPORTED: u8 = 2;
 const DEFAULT_MAX_HEADER_PAIRS: u64 = 128;
 const DEFAULT_MAX_HEADER_LENGTH: u64 = 16384;
 
-const CONN_STATUS_ERRBUF_LEN: usize = 256;
-
 const TICKET_DELIVERY_DELAY_NS: u64 = 500_000_000;
 
 /// Indices into the session stats buffer — must match
@@ -388,7 +386,6 @@ pub(crate) struct QuicSession {
     pending_graceful: JsCell<Option<(bool, u64, Vec<u8>)>>,
     pub(super) verneg: Cell<Option<(u32, u32)>>,
     peer_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
-    self_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
     datagram_drop_newest: Cell<bool>,
     qlog_enabled: Cell<bool>,
     qlog_fin_sent: Cell<bool>,
@@ -399,7 +396,9 @@ pub(crate) struct QuicSession {
     ticket_delivered: Cell<bool>,
     pending_tickets: JsCell<VecDeque<(u64, Vec<u8>)>>,
     close_after_streams: Cell<bool>,
-    final_conn_status: JsCell<Option<(c_int, Vec<u8>)>>,
+    /// How lsquic ended the conn. `on_conn_closed` copies it, because lsquic
+    /// frees the conn before the queued `Closed` event reports it.
+    conn_close_info: JsCell<Option<lsquic::CloseInfo>>,
     pending_local_bidi: JsCell<VecDeque<super::stream::Key>>,
     pending_local_uni: JsCell<VecDeque<super::stream::Key>>,
     streams: JsCell<Vec<(super::stream::Key, *mut super::stream::QuicStream)>>,
@@ -438,7 +437,6 @@ impl QuicSession {
             pending_graceful: JsCell::new(None),
             verneg: Cell::new(None),
             peer_close: JsCell::new(None),
-            self_close: JsCell::new(None),
             datagram_drop_newest: Cell::new(false),
             qlog_enabled: Cell::new(false),
             qlog_fin_sent: Cell::new(false),
@@ -448,7 +446,7 @@ impl QuicSession {
             ticket_delivered: Cell::new(false),
             pending_tickets: JsCell::new(VecDeque::new()),
             close_after_streams: Cell::new(false),
-            final_conn_status: JsCell::new(None),
+            conn_close_info: JsCell::new(None),
             pending_local_bidi: JsCell::new(VecDeque::new()),
             pending_local_uni: JsCell::new(VecDeque::new()),
             streams: JsCell::new(Vec::new()),
@@ -1661,13 +1659,6 @@ impl QuicSession {
         // Matching Node: the server session exists and then closes with a
         // certificate_required transport error.
         if !cert_ok && !self.destroyed.get() && !self.conn.get().is_null() {
-            self.self_close.with_mut(|s| {
-                *s = Some((
-                    false,
-                    CRYPTO_ERROR_CERTIFICATE_REQUIRED,
-                    b"peer did not provide a certificate".to_vec(),
-                ));
-            });
             if let Some(c) = self.conn() {
                 c.abort_error(
                     false,
@@ -1747,15 +1738,11 @@ impl QuicSession {
         if self.close_reported.replace(true) {
             return;
         }
+        // Every caller runs after `on_conn_closed`, or for a session that
+        // never had a conn: `conn_close_info` is all lsquic has to say.
+        debug_assert!(self.conn.get().is_null());
         self.with_state(|s| s.closing = 1);
         self.write_stat(IDX_STATS_SESSION_DESTROYED_AT, now_ns());
-        // Take the close reason before emit_qlog: that runs onSessionQlog,
-        // which is user JS and drains microtasks, so a destroy() from inside
-        // it would swap the reason this close reports.
-        let taken = self
-            .peer_close
-            .with_mut(Option::take)
-            .or_else(|| self.self_close.with_mut(Option::take));
         if self.qlog_enabled.get() {
             let t = now_ns() / 1_000_000;
             let chunk = format!(
@@ -1763,31 +1750,15 @@ impl QuicSession {
             );
             self.emit_qlog(global, &chunk, true);
         }
-        let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) = match taken {
-            Some((app, code, reason)) => (if app { 1 } else { 0 }, code, Some(reason)),
-            None if self.conn.get().is_null() => {
-                match self.final_conn_status.with_mut(Option::take) {
-                    Some((status, msg)) => {
-                        map_conn_status(status, msg, self.handshake_reported.get())
-                    }
-                    None => (0, 0, None),
-                }
-            }
-            None => {
-                // Map the lsquic conn status to Node's QuicError shape.
-                let mut buf = [0 as c_char; CONN_STATUS_ERRBUF_LEN];
-                // SAFETY: `conn` is non-null (checked above) and live
-                // until lsquic frees it after `on_conn_closed` returns.
-                let status = unsafe {
-                    lsquic::lsquic_conn_status(self.conn.get(), buf.as_mut_ptr(), buf.len())
-                };
-                // SAFETY: `buf` is NUL-terminated by lsquic.
-                let msg = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr()) }
-                    .to_bytes()
-                    .to_vec();
-                map_conn_status(status, msg, self.handshake_reported.get())
-            }
-        };
+        // The peer's CONNECTION_CLOSE, else what lsquic closed the conn with.
+        let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) =
+            if let Some((app, code, reason)) = self.peer_close.with_mut(Option::take) {
+                (i32::from(app), code, Some(reason))
+            } else if let Some(info) = self.conn_close_info.with_mut(Option::take) {
+                map_close_info(info, self.handshake_reported.get())
+            } else {
+                (0, 0, None)
+            };
         // `close_reported` is already latched above, so returning here would
         // mark the close delivered without ever delivering it and `closed`
         // would never settle. Report and carry on with undefined.
@@ -1875,7 +1846,6 @@ impl QuicSession {
         Ok(self.local_addr.get().to_js_socket_address(global))
     }
     fn parse_close_options(
-        &self,
         global: &JSGlobalObject,
         options: JSValue,
     ) -> JsResult<(bool, u64, Vec<u8>)> {
@@ -1898,9 +1868,6 @@ impl QuicSession {
                 .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
                 .transpose()?
                 .unwrap_or_default();
-            self.self_close.with_mut(|s| {
-                *s = Some((app, code, reason.clone()));
-            });
         }
         reason.push(0);
         Ok((app, code, reason))
@@ -1955,7 +1922,7 @@ impl QuicSession {
     }
 
     fn close_with_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
-        let (app, code, reason) = self.parse_close_options(global, options)?;
+        let (app, code, reason) = Self::parse_close_options(global, options)?;
         self.apply_close(app, code, &reason);
         Ok(())
     }
@@ -2002,7 +1969,7 @@ impl QuicSession {
             // untouched, not marked gracefully-closing with no close sent.
             // All three branches below want the same values.
             let (app, code, reason) =
-                self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
+                Self::parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
                 if self.is_server.get() && !self.close_reported.get() {
@@ -2465,13 +2432,6 @@ lsquic_callback! {
         session.note_handshake_ok(conn);
         if session.peer_verification_refused() {
             session.peer_cert_rejected.set(true);
-            session.self_close.with_mut(|s| {
-                *s = Some((
-                    false,
-                    CRYPTO_ERROR_BAD_CERTIFICATE,
-                    b"peer certificate verification failed".to_vec(),
-                ));
-            });
             conn.abort_error(
                 false,
                 CRYPTO_ERROR_BAD_CERTIFICATE as c_uint,
@@ -2481,27 +2441,32 @@ lsquic_callback! {
     }
 }
 
-/// Map an `lsquic_conn_status` to Node's `onSessionClose(type, code,
+/// Map how lsquic ended the conn to Node's `onSessionClose(type, code,
 /// reason)` shape (`type`: 0=transport, 1=application, 2=version-neg,
 /// 3=idle).
-fn map_conn_status(
-    status: c_int,
-    msg: Vec<u8>,
+fn map_close_info(
+    info: lsquic::CloseInfo,
     handshake_reported: bool,
 ) -> (i32, u64, Option<Vec<u8>>) {
-    match status {
+    use lsquic::CloseCause;
+    match info.cause {
+        // The error lsquic selects for its CONNECTION_CLOSE frame. For an
+        // HTTP/3 violation that is an RFC 9114 application code, where node
+        // sends and reports transport INTERNAL_ERROR.
+        CloseCause::Error => (i32::from(info.is_app), info.code, Some(info.reason)),
         // Node rejects `opened` with a transport error.
-        lsquic::LSCONN_ST_TIMED_OUT if !handshake_reported => (
+        CloseCause::TimedOut if !handshake_reported => (
             0,
             CRYPTO_ERROR_HANDSHAKE_FAILURE,
             Some(b"handshake timed out".to_vec()),
         ),
-        lsquic::LSCONN_ST_TIMED_OUT => (3, 0, None),
-        lsquic::LSCONN_ST_VERNEG_FAILURE => (2, 0, None),
-        lsquic::LSCONN_ST_RESET | lsquic::LSCONN_ST_HSK_FAILURE | lsquic::LSCONN_ST_ERROR => {
-            (0, 1, Some(msg))
-        }
-        _ => (0, 0, None),
+        CloseCause::TimedOut => (3, 0, None),
+        // Code 0 is a clean close to JS. Node reports this one through
+        // `onSessionVersionNegotiation`, with the peer's version list.
+        CloseCause::VersionNegotiationFailed => (2, 0, None),
+        // lsquic has no error code for these two.
+        CloseCause::Reset | CloseCause::HandshakeFailed => (0, 1, Some(info.reason)),
+        CloseCause::NotClosing | CloseCause::Closed | CloseCause::UserAborted => (0, 0, None),
     }
 }
 
@@ -2510,19 +2475,9 @@ lsquic_callback! {
         // The conn's streams die with it — pending deferred aborts hold raw
         // lsquic stream pointers that are about to be freed.
         session.deferred_aborts.with_mut(Vec::clear);
-        let conn = session.conn.get();
-        if !conn.is_null() {
-            let mut buf = [0 as c_char; CONN_STATUS_ERRBUF_LEN];
-            // SAFETY: `conn` is live for the duration of this callback.
-            let status = unsafe { lsquic::lsquic_conn_status(conn, buf.as_mut_ptr(), buf.len()) };
-            // SAFETY: `buf` is NUL-terminated by lsquic.
-            let msg = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr()) }
-                .to_bytes()
-                .to_vec();
-            session
-                .final_conn_status
-                .with_mut(|f| *f = Some((status, msg)));
-        }
+        session
+            .conn_close_info
+            .set(session.conn().and_then(|c| c.close_info()));
         session.push_event(SessionEvent::Closed);
         // The lsquic_conn is freed immediately after this callback returns.
         session.conn.set(null_mut());

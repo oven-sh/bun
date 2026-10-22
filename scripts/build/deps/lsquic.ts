@@ -153,6 +153,19 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
+    // immediate_close() and ci_abort_error() read "error code != 0" as "an
+    // error is recorded", so a close with code 0 that came in through
+    // lsquic_conn_abort_error (an application close, the usual graceful
+    // close, or a transport close with a reason) went out as transport
+    // INTERNAL_ERROR. Record the error with a flag of its own.
+    "patches/lsquic/abort-error-app-code-zero.patch",
+    // lsquic_conn_status() has no error code, and it reports every error that
+    // comes with a failed handshake as a version negotiation failure. So
+    // node:quic reported an error the local side found as transport error 1,
+    // or as a clean close. lsquic_conn_close_info() returns the close cause
+    // and the error that immediate_close() selects for CONNECTION_CLOSE. Both
+    // read conn_close_error(). Applies on top of abort-error-app-code-zero.
+    "patches/lsquic/close-cause.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

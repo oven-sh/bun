@@ -1,0 +1,214 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -2576,6 +2576,52 @@ enum LSQUIC_CONN_STATUS
+ enum LSQUIC_CONN_STATUS
+ lsquic_conn_status (lsquic_conn_t *, char *errbuf, size_t bufsz);
+ 
++/* bun: why a connection closed.  lsquic_conn_status() gives no error code,
++ * and it reports every error that comes with a failed handshake as
++ * LSCONN_ST_VERNEG_FAILURE.
++ */
++enum lsquic_close_cause
++{
++    /* The connection is not closing. */
++    LSQ_CLOSE_NONE,
++    /* lsquic_conn_close(), a finished GOAWAY, or the peer's
++     * CONNECTION_CLOSE. */
++    LSQ_CLOSE_CLOSED,
++    /* This side aborted the connection: it found an error, the application
++     * called lsquic_conn_abort_error(), or a server's streams made no
++     * progress for es_noprogress_timeout. */
++    LSQ_CLOSE_ERROR,
++    LSQ_CLOSE_TIMED_OUT,
++    /* lsquic_conn_abort() */
++    LSQ_CLOSE_USER_ABORTED,
++    /* Stateless reset */
++    LSQ_CLOSE_RESET,
++    LSQ_CLOSE_HSK_FAILED,
++    LSQ_CLOSE_VERNEG_FAILED,
++};
++
++struct lsquic_close_info
++{
++    enum lsquic_close_cause cause;
++    /* For LSQ_CLOSE_ERROR: the error this side selects for its
++     * CONNECTION_CLOSE frame.  `is_app' is non-zero for an application
++     * error code (frame type 0x1d) and zero for a transport error code
++     * (frame type 0x1c).  Both are zero for every other cause. */
++    int                     is_app;
++    uint64_t                code;
++    /* The error message, NUL-terminated, or NULL.  It belongs to the
++     * connection: copy it before on_conn_closed() returns. */
++    const char             *reason;
++};
++
++/* bun: how a full IETF connection closed.  Call it from on_conn_closed().
++ *
++ * @retval  0   Success.
++ * @retval -1   This is not a full IETF connection.
++ */
++int
++lsquic_conn_close_info (lsquic_conn_t *, struct lsquic_close_info *info);
++
+ extern const char *const
+ lsquic_ver2str[N_LSQVER];
+ 
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -4180,6 +4180,48 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
+ }
+ 
+ 
++/* bun: the error this side closes the connection with, and the reason text
++ * that goes in the frame with it.  immediate_close() builds CONNECTION_CLOSE
++ * from it and lsquic_conn_close_info() gives it to the application, so the
++ * application is told the error that lsquic selected for the peer.
++ */
++static struct conn_err
++conn_close_error (const struct ietf_full_conn *conn, const char **reason)
++{
++    struct conn_err conn_err;
++    const char *error_reason;
++
++    if (conn->ifc_error.recorded)
++    {
++        conn_err = conn->ifc_error;
++        error_reason = conn->ifc_errmsg;
++    }
++    else if (conn->ifc_flags & IFC_ERROR)
++    {
++        conn_err = CONN_ERR(0, TEC_INTERNAL_ERROR);
++        error_reason = "connection error";
++    }
++    else if (conn->ifc_flags & IFC_ABORTED)
++    {
++        conn_err = CONN_ERR(0, TEC_NO_ERROR);
++        error_reason = "user aborted connection";
++    }
++    else if (conn->ifc_flags & IFC_HSK_FAILED)
++    {
++        conn_err = CONN_ERR(0, TEC_NO_ERROR);
++        error_reason = "handshake failed";
++    }
++    else
++    {
++        conn_err = CONN_ERR(0, TEC_NO_ERROR);
++        error_reason = NULL;
++    }
++
++    *reason = error_reason;
++    return conn_err;
++}
++
++
+ static enum tick_st
+ immediate_close (struct ietf_full_conn *conn)
+ {
+@@ -4233,31 +4275,8 @@ immediate_close (struct ietf_full_conn *conn)
+         conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
+         error_reason = NULL;
+     }
+-    else if (conn->ifc_error.recorded)
+-    {
+-        conn_err = conn->ifc_error;
+-        error_reason = conn->ifc_errmsg;
+-    }
+-    else if (conn->ifc_flags & IFC_ERROR)
+-    {
+-        conn_err = CONN_ERR(0, TEC_INTERNAL_ERROR);
+-        error_reason = "connection error";
+-    }
+-    else if (conn->ifc_flags & IFC_ABORTED)
+-    {
+-        conn_err = CONN_ERR(0, TEC_NO_ERROR);
+-        error_reason = "user aborted connection";
+-    }
+-    else if (conn->ifc_flags & IFC_HSK_FAILED)
+-    {
+-        conn_err = CONN_ERR(0, TEC_NO_ERROR);
+-        error_reason = "handshake failed";
+-    }
+     else
+-    {
+-        conn_err = CONN_ERR(0, TEC_NO_ERROR);
+-        error_reason = NULL;
+-    }
++        conn_err = conn_close_error(conn, &error_reason);
+ 
+     lsquic_send_ctl_scheduled_one(&conn->ifc_send_ctl, packet_out);
+     sz = conn->ifc_conn.cn_pf->pf_gen_connect_close_frame(
+@@ -8905,6 +8924,74 @@ ietf_full_conn_ci_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
+ }
+ 
+ 
++/* bun: see lsquic.h.  The error is the one conn_close_error() selects for
++ * this side's CONNECTION_CLOSE frame.  immediate_close() does not always
++ * send it as selected: an application error in a Handshake packet goes out
++ * as APPLICATION_ERROR with no reason ([RFC 9000] Section 10.2.3), and a
++ * connection that cannot encrypt a packet yet sends no frame.
++ */
++int
++lsquic_conn_close_info (struct lsquic_conn *lconn,
++                                            struct lsquic_close_info *info)
++{
++    const struct ietf_full_conn *conn;
++    struct conn_err conn_err;
++    const char *wire_reason;
++
++    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF)) != LSCONN_IETF)
++        return -1;
++    conn = (const struct ietf_full_conn *) lconn;
++
++    info->is_app = 0;
++    info->code = 0;
++    /* The text this side recorded.  It says more than the text that
++     * conn_close_error() sends when no error code is recorded. */
++    info->reason = conn->ifc_errmsg;
++
++    switch (ietf_full_conn_ci_status(lconn, NULL, 0))
++    {
++    case LSCONN_ST_VERNEG_FAILURE:
++        /* ci_status() returns this whenever IFC_ERROR and IFC_HSK_FAILED are
++         * both set.  Only a handshake that failed before version negotiation
++         * ended is a failed version negotiation.  Every other one is an
++         * error: a TLS alert, bad transport parameters. */
++        if (!(conn->ifc_flags & IFC_SERVER)
++                    && conn->ifc_u.cli.ifcli_ver_neg.vn_state != VN_END)
++        {
++            info->cause = LSQ_CLOSE_VERNEG_FAILED;
++            break;
++        }
++        /* fall through */
++    case LSCONN_ST_ERROR:
++        info->cause = LSQ_CLOSE_ERROR;
++        conn_err = conn_close_error(conn, &wire_reason);
++        info->is_app = conn_err.app_error;
++        info->code = conn_err.u.err;
++        break;
++    case LSCONN_ST_TIMED_OUT:
++        info->cause = LSQ_CLOSE_TIMED_OUT;
++        break;
++    case LSCONN_ST_USER_ABORTED:
++        info->cause = LSQ_CLOSE_USER_ABORTED;
++        break;
++    case LSCONN_ST_RESET:
++        info->cause = LSQ_CLOSE_RESET;
++        break;
++    case LSCONN_ST_HSK_FAILURE:
++        info->cause = LSQ_CLOSE_HSK_FAILED;
++        break;
++    case LSCONN_ST_CLOSED:
++        info->cause = LSQ_CLOSE_CLOSED;
++        break;
++    default:
++        info->cause = LSQ_CLOSE_NONE;
++        break;
++    }
++
++    return 0;
++}
++
++
+ static void
+ ietf_full_conn_ci_stateless_reset (struct lsquic_conn *lconn)
+ {

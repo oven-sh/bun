@@ -3080,8 +3080,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryEvaluatedKeys, 1, functionEsmRegistryEvaluatedKeys },
         { BuiltinName::k_esmRegistryHasEvaluated, 2, functionEsmRegistryHasEvaluated },
         { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
-        { BuiltinName::k_requireCommonJS, 5, Bun::jsFunctionRequireCommonJS },
-        { BuiltinName::k_requireNativeModule, 1, Bun::jsFunctionRequireNativeModule },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
@@ -3115,6 +3113,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // A stack taken while a module loads has the frame of one of these two. putDirectNativeFunction names them "anonymous".
+    putDirectNativeFunction(vm, this, builtinNames.requireCommonJSPrivateName(), 5, Bun::jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectNativeFunction(vm, this, builtinNames.requireNativeModulePrivateName(), 1, Bun::jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectNativeFunction(vm, this,
         builtinNames.createCommonJSModulePrivateName(),

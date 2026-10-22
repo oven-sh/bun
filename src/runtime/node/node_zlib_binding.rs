@@ -422,6 +422,10 @@ pub(crate) trait CompressionStreamImpl:
         in_off: usize,
         in_len: usize,
     ) -> Option<&[u8]> {
+        // Once the input is consumed, each further output chunk is a write with no input.
+        if in_len == 0 {
+            return Some(&[]);
+        }
         self.input_copy().with_mut(|copy| {
             if copy.from != (view.as_ptr(), view.len()) {
                 copy.from = (core::ptr::null(), 0);

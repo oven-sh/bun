@@ -410,8 +410,8 @@ fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: &ZlibCompressionOption
 | `held`      | **`"borrowed"`**, `"handle"`, `"copied"`, `"pinned"` | what the body gets                                                     |
 
 `"string"` is a string or a `String` object. `"buffer"` is a typed array, `DataView`,
-`ArrayBuffer` or `SharedArrayBuffer`. `"blob"` is a `Blob` whose bytes are in memory: a file,
-here or in S3, throws.
+`ArrayBuffer` or `SharedArrayBuffer`. `"blob"` is a `Blob`, or an output of `Bun.build()`, whose
+bytes are in memory: a file, here or in S3, throws.
 
 | `held`       | `string` | Rust                  |
 | ------------ | -------- | --------------------- |

@@ -239,7 +239,7 @@ export const RedisClient = b.class({
             { args: args(names), returns: b.any, capability: "js", throws: true, passThis: true, length, rustName },
           ] as const,
       ),
-      ["bufferedAmount", { getter: b.u32 }] as const,
+      ["bufferedAmount", { getter: b.usize }] as const,
       ["close", { capability: "js", throws: true, rustName: "js_disconnect" }] as const,
       ["connected", { getter: b.bool }] as const,
       ["duplicate", { returns: b.any, capability: "js", throws: true }] as const,

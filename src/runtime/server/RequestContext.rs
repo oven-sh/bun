@@ -366,6 +366,16 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
 }
 
+/// Reports an error that no `error()` handled. The server keeps running, so a
+/// Worker prints it like the main thread does. Its own handler ends the Worker.
+fn report_unhandled_error(vm: &mut jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    if vm.worker.is_some() {
+        jsc::VirtualMachine::default_on_unhandled_rejection(vm, global, value);
+    } else {
+        (vm.on_unhandled_rejection)(vm, global, value);
+    }
+}
+
 /// Release the body's hold on a stream the sink is done with, and mark a
 /// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
 /// monomorphizations share one copy.
@@ -1123,7 +1133,7 @@ where
             unhandled = err;
         }
         let vm = global.bun_vm().as_mut();
-        (vm.on_unhandled_rejection)(vm, global, unhandled);
+        report_unhandled_error(vm, global, unhandled);
     }
 
     pub(crate) fn on_reject(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1433,6 +1443,29 @@ where
             resp.write_header_int(b"Content-Length", 0);
         }
         self.end_without_body(true);
+    }
+
+    /// Answers 413 to a request whose body outgrew `maxRequestBodySize`, after that body has failed.
+    fn end_with_payload_too_large(&self) {
+        let Some(resp) = self.resp.get() else { return };
+        // A dev server bundle that this request waits for must not answer it later.
+        if let Some(abort) = self.additional_on_abort.replace(None) {
+            (abort.cb)(abort.data.as_ptr());
+            abort.deref();
+        }
+        // Failing the body runs JS, which can answer with a file. The file stream
+        // owns the response from then on, and it hears the close as an abort.
+        if self.flags.has_sendfile_ctx() {
+            resp.force_close();
+            return;
+        }
+        if !resp.has_responded() {
+            self.flags.set_has_written_status(true);
+            resp.write_status(b"413 Payload Too Large");
+        }
+        // The normal end path detaches `self.resp` and releases the base ref. uWS
+        // markDone() clears onAborted, so no abort would ever do either.
+        self.end_without_body(!MUX);
     }
 
     pub(crate) fn force_close(&self) {
@@ -2561,6 +2594,10 @@ where
         self.request_body_buf.set(Vec::new());
 
         if let Some(resp) = self.resp.take() {
+            // The sink writes through its own handle to the response.
+            if let Some(wrapper) = self.sink_mut() {
+                wrapper.sink.revoke_response();
+            }
             if self.flags.request_body_paused() {
                 self.flags.set_request_body_paused(false);
                 resp.resume();
@@ -3657,7 +3694,7 @@ where
             let mut exception_list: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
             vm.on_unhandled_rejection_exception_list = Some(NonNull::from(&mut exception_list));
-            (vm.on_unhandled_rejection)(vm, global_this, value);
+            report_unhandled_error(vm, global_this, value);
             vm.on_unhandled_rejection_exception_list = prev_exception_list;
 
             let log = vm.log_mut().unwrap();
@@ -3672,7 +3709,7 @@ where
             return;
         }
         if status != 404 {
-            (vm.on_unhandled_rejection)(vm, global_this, value);
+            report_unhandled_error(vm, global_this, value);
         }
         self.render_production_error(status);
         vm.log_mut().unwrap().reset();
@@ -4159,17 +4196,7 @@ where
                     }
                 }
 
-                // Route through the normal end path so this.resp is detached
-                // and the base ref released (see the buffering branch below).
-                // SAFETY: FFI handle
-                if let Some(resp) = this.resp.get() {
-                    if !resp.has_responded() {
-                        this.flags.set_has_written_status(true);
-                        // SAFETY: FFI handle
-                        resp.write_status(b"413 Payload Too Large");
-                    }
-                }
-                this.end_without_body(!MUX);
+                this.end_with_payload_too_large();
                 return;
             }
 
@@ -4258,22 +4285,7 @@ where
                     global_this,
                 );
 
-                // Route through the normal end path so this.resp is
-                // detached and the base ref released. Writing directly on
-                // the raw uWS response left this.resp pointing at a
-                // completed (and soon freed) response — uWS markDone()
-                // clears onAborted so no abort ever fires to release the
-                // ref, and a later handleResolve()/handleReject() from an
-                // async handler would dereference the stale pointer.
-                // SAFETY: FFI handle
-                if let Some(resp) = this.resp.get() {
-                    if !resp.has_responded() {
-                        this.flags.set_has_written_status(true);
-                        // SAFETY: FFI handle
-                        resp.write_status(b"413 Payload Too Large");
-                    }
-                }
-                this.end_without_body(!MUX);
+                this.end_with_payload_too_large();
                 return;
             }
 

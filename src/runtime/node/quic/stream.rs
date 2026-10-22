@@ -11,7 +11,7 @@ use bun_lsquic_sys as lsquic;
 
 use super::endpoint::alloc_exposed_array_buffer;
 use super::ffi::lsquic_callback;
-use super::session::{QuicSession, SessionEvent};
+use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
@@ -267,6 +267,18 @@ impl QuicStream {
                 } else {
                     want_write = true;
                 }
+            } else {
+                // sendHeaders() returned true when it queued this block, so
+                // `closed` is what reports the failure.
+                s.reset(H3_INTERNAL_ERROR);
+                s.stop_sending(H3_INTERNAL_ERROR);
+                self.mark_reset(H3_INTERNAL_ERROR);
+                self.with_state(|st| st.write_ended = 1);
+                self.outbound.with_mut(|o| {
+                    o.data.clear();
+                    o.end = PendingEnd::None;
+                });
+                break;
             }
         }
         if uni {

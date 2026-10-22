@@ -780,6 +780,19 @@ export const namedPipeInternals = {
    */
   liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
 };
+
+export const duplexTLSInternals = {
+  /**
+   * Live native contexts behind TLS sockets that run over a JS stream
+   * (`tls.connect({ socket: duplex })`, `new tls.TLSSocket(duplex)`): one per
+   * socket, until the task that frees it after the close has run.
+   */
+  liveCount: $newRustFunction(
+    "runtime/socket/socket.rs",
+    "TestingAPIs.jsDuplexUpgradeContextLiveCount",
+    0,
+  ) as () => number,
+};
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,

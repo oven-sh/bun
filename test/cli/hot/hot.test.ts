@@ -1227,3 +1227,108 @@ it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the st
     exitCode: 0,
   });
 });
+
+it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exceptions", async flag => {
+  using dir = tempDir("hot-uncaught", {
+    "main.js": `
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          queueMicrotask(() => {
+            throw new Error("from " + new URL(req.url).pathname);
+          });
+          return new Response("ok");
+        },
+      });
+      (async () => {
+        for (let i = 1; i <= 2; i++) await fetch(new URL("/" + i, server.url));
+        console.log("still running");
+      })();
+      // The timers of a run stop at its first uncaught exception. On Windows, libuv goes on firing them.
+      if (process.platform !== "win32") setTimeout(() => process.exit(1), 1);
+      throw new Error("from the entry point");
+    `,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("still running")).toBe(true);
+  expect(await stderr("error: from /2")).toBe(true);
+
+  writeFileSync(
+    join(String(dir), "main.js"),
+    `setTimeout(() => {\n  console.log("timer fired");\n  process.exit(0);\n}, 1);\n`,
+  );
+  expect(await stdout("timer fired")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+it.each([
+  [
+    "a throw",
+    `setInterval(() => console.log("failed run's interval in run " + globalThis.run), 1);\nthrow new Error("the bug");`,
+  ],
+  ["a syntax error", `const = ;`],
+])("--hot keeps the timers of earlier runs when a save fixes %s", async (_, bug) => {
+  const source = (run: number, tail: string) => `
+    globalThis.run = ${run};
+    globalThis.kept ??= setInterval(() => console.log("kept interval in run " + globalThis.run), 1);
+    require("fs").watchFile("watched", { interval: 1 }, () => {
+      console.log("watchFile listener of run ${run}");
+      if (${run} === 3) process.exit(0);
+    });
+    ${tail}
+  `;
+  using dir = tempDir("hot-kept-timers", { "main.js": source(1, ""), "watched": "" });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("kept interval in run 1")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), source(2, bug));
+  expect(await stderr("error: ")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), source(3, ""));
+  expect(await stdout("kept interval in run 3")).toBe(true);
+  writeFileSync(join(String(dir), "watched"), "changed");
+  expect(await stdout("watchFile listener of run 3")).toBe(true);
+  expect(await stdout("failed run's interval in run 3")).not.toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+it("--hot does not emit beforeExit to the listeners of a failed run", async () => {
+  using dir = tempDir("hot-failed-before-exit", {
+    "main.js": `process.on("beforeExit", () => process.exit(1));\nthrow new Error("the bug");`,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stderr("error: the bug")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), `console.log("fixed");`);
+  expect(await stdout("fixed")).toBe(true);
+  writeFileSync(join(String(dir), "main.js"), `console.log("still running");\nprocess.exit();`);
+  expect(await stdout("still running")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});

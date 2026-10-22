@@ -530,9 +530,18 @@ pub(crate) use wtf_timer::WTFTimer;
 
 // ─── All ─────────────────────────────────────────────────────────────────────
 
+/// Limits [`All::cancel_timeout_objects`] to the timers created since the latest `--hot` reload.
+pub(crate) struct HotRun {
+    /// The current `hot_reload_counter`.
+    pub(crate) counter: u32,
+    pub(crate) only_intervals: bool,
+}
+
 pub(crate) struct All {
     /// Id of the next timer. Allocate ids with [`All::next_id`].
     pub(crate) last_id: u64,
+    /// `last_id` at the latest `--hot` reload.
+    pub(crate) first_id_of_hot_run: u64,
     pub(crate) thread_id: std::thread::ThreadId,
     pub(crate) timers: TimerHeap,
     pub(crate) active_timer_count: i32,
@@ -559,6 +568,7 @@ impl All {
     pub(crate) fn init() -> Self {
         Self {
             last_id: 1,
+            first_id_of_hot_run: 0,
             thread_id: std::thread::current().id(),
             timers: TimerHeap::default(),
             active_timer_count: 0,
@@ -1177,6 +1187,21 @@ impl All {
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
     ) {
+        // SAFETY: same contract.
+        unsafe { Self::cancel_timeout_objects(this, vm, None) };
+    }
+
+    /// [`Self::cancel_all_timeout_objects`], limited to `hot_run` if given.
+    ///
+    /// # Safety
+    /// See [`Self::cancel_all_timeout_objects`].
+    pub(crate) unsafe fn cancel_timeout_objects(
+        this: *mut Self,
+        vm: *mut crate::jsc::virtual_machine::VirtualMachine,
+        hot_run: Option<&HotRun>,
+    ) {
+        // SAFETY: `this` is the live per-thread `All` (JS thread only).
+        let first_id = unsafe { (*this).first_id_of_hot_run };
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
@@ -1229,7 +1254,15 @@ impl All {
             // parent box is still alive (the +1 ref `cancel()` releases is
             // exactly the one keeping it pinned). `cancel()` may free the
             // parent on the final deref — never touched again.
-            unsafe { (*internals).cancel(vm) };
+            unsafe {
+                if hot_run.is_none_or(|run| {
+                    (*internals).id >= first_id
+                        && (!run.only_intervals
+                            || (*internals).flags.get().kind() == Kind::SetInterval)
+                }) {
+                    (*internals).cancel(vm);
+                }
+            }
         }
 
         // `AbortSignal.timeout()` boxes are owned by the C++ `AbortSignal`, so
@@ -1243,7 +1276,13 @@ impl All {
             // box (and therefore its owning signal) is still alive; JS thread;
             // no borrow of `*this` is held across the call (`discard` re-enters
             // `remove` through `timer_remove`). `t` is freed by the call.
-            unsafe { AbortSignalTimeout::discard(t) };
+            unsafe {
+                if hot_run
+                    .is_none_or(|run| (*t).hot_reload_counter == run.counter && !run.only_intervals)
+                {
+                    AbortSignalTimeout::discard(t);
+                }
+            }
         }
     }
 }

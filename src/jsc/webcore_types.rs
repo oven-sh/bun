@@ -189,10 +189,13 @@ const _: () = {
 
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            match Bun__Bindgen__Blob__fromJS(value) {
+            let blob = match Bun__Bindgen__Blob__fromJS(value) {
                 blob if blob.is_null() => __bun_blob_from_build_artifact(value),
                 blob => Some(blob.cast()),
-            }
+            };
+            // C++ `mayHoldBlob` (blob.h) answers for a cell of any other type without this call.
+            debug_assert!(blob.is_none() || value.js_type() == crate::JSType::DOMWrapper);
+            blob
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             let blob = Bun__Bindgen__Blob__fromJSDirect(value);

@@ -72,6 +72,9 @@
 #include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/JSWebAssemblyMemory.h"
+#include "JavaScriptCore/MarkedSpaceInlines.h"
+#include "JavaScriptCore/SubspaceInlines.h"
 #include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
@@ -195,6 +198,7 @@
 #include "AsyncStackTrace.h"
 #include "ErrorStackTrace.h"
 #include "ObjectBindings.h"
+#include "NodeVM.h"
 
 #include <JavaScriptCore/VMInlines.h>
 #include "wtf-bindings.h"
@@ -1923,8 +1927,10 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         return g1->m_globalThis == g2->m_globalThis;
     }
     case GlobalProxyType: {
-        if (c1Type != c2Type) return false;
         auto* gp1 = dynamicDowncast<JSC::JSGlobalProxy>(c1);
+        // The global of a node:vm context is compared by its properties, as in Node.
+        if (gp1->target()->inherits<Bun::NodeVMGlobalObject>()) break;
+        if (c1Type != c2Type) return false;
         auto* gp2 = dynamicDowncast<JSC::JSGlobalProxy>(c2);
         return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
     }
@@ -3580,12 +3586,37 @@ CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
     return buf && !buf->isShared() && (buf->isResizableOrGrowableShared() || buf->isWasmMemory());
 }
 
-// Returns `v`'s current byte range, or null and 0 if it's detached.
+// Returns the WebAssembly.Memory that `v` is a view of and sets `out_offset` to where `v` starts in it.
+// Returns empty if `v` isn't a view of a non-shared memory or that memory was collected.
+// A fixed-length buffer doesn't point to its memory, so this checks every live one.
+CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v, size_t* out_offset)
+{
+    auto value = JSC::JSValue::decode(v);
+    auto* buf = existingArrayBuffer(value);
+    if (!buf || !buf->isWasmMemory() || buf->isShared())
+        return {};
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
+    *out_offset = view ? view->byteOffset() : 0;
+
+    auto* space = value.asCell()->vm().heap.webAssemblyMemorySpace<JSC::SubspaceAccess::OnMainThread>();
+    JSC::JSWebAssemblyMemory* found = nullptr;
+    // HeapIterationScope stops every allocator in the heap, which costs more than a read. Only this subspace's have to stop.
+    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.stopAllocating(); });
+    space->forEachLiveCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
+        auto* memory = static_cast<JSC::JSWebAssemblyMemory*>(static_cast<JSC::JSCell*>(cell));
+        if (memory->basePointer() == buf->data())
+            found = memory;
+    });
+    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
+    return JSC::JSValue::encode(found);
+}
+
+// Returns the current byte range of `v`, a buffer, a view or a WebAssembly.Memory. Returns null and 0 if it's detached or out of bounds.
 CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** out_ptr, size_t* out_len)
 {
     auto value = JSC::JSValue::decode(v);
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        if (!view->isDetached()) {
+        if (!view->isOutOfBounds()) {
             *out_ptr = static_cast<uint8_t*>(view->vector());
             *out_len = view->byteLength();
             return;
@@ -3597,6 +3628,10 @@ CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** o
             *out_len = buf->byteLength();
             return;
         }
+    } else if (auto* memory = dynamicDowncast<JSC::JSWebAssemblyMemory>(value)) {
+        *out_ptr = static_cast<uint8_t*>(memory->basePointer());
+        *out_len = memory->memory().size();
+        return;
     }
     *out_ptr = nullptr;
     *out_len = 0;
@@ -5432,12 +5467,15 @@ restart:
     {
 
         JSObject* iterating = prototypeObject.getObject();
+        // The global of another realm shows what the program put on it, not the realm's builtins.
+        auto* globalProxy = dynamicDowncast<JSGlobalProxy>(object);
+        const bool isOtherGlobal = globalProxy && globalProxy->target() != globalObject;
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating != object && iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
-                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, isOtherGlobal ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
             }
 
             RETURN_IF_EXCEPTION(scope, void());
@@ -5508,9 +5546,6 @@ restart:
                 if (scope.exception()) [[unlikely]] {
                     if (!scope.tryClearException())
                         return;
-                    // A CustomValue getter that throws (e.g. Bun.$) didn't produce a value. Skip it, like a lazy builder that throws above.
-                    if (slot.attributes() & PropertyAttribute::CustomValue)
-                        continue;
                     propertyValue = jsUndefined();
                 }
 
@@ -5534,7 +5569,7 @@ restart:
             properties.data()->propertyNameVector().shrink(0);
             if (iterating->isCallable())
                 break;
-            if (iterating == globalObject)
+            if (iterating == globalObject || isOtherGlobal)
                 break;
             JSValue prototype = iterating->getPrototype(globalObject);
             RETURN_IF_EXCEPTION(scope, );
@@ -6911,6 +6946,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
 // control returns to JS (an in-flight async I/O). The caller must balance
 // every pinned element with `JSC__JSValue__unpinArrayBuffer`. SharedArrayBuffer
 // is never detachable and never moves, so it is left unpinned.
+// `isWasmMemory` marks a pinned element over a non-shared WebAssembly.Memory,
+// whose block `grow()` can free despite the pin.
 //
 // Returns 0 on success, 1 if the value is not a JSArray or an element is not
 // an ArrayBufferView, 2 on allocation failure, -1 if an exception is pending.
@@ -6919,7 +6956,7 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
     JSC::EncodedJSValue encodedValue,
     bool pinBuffers,
     void* ctx,
-    void (*append)(void* ctx, JSC::EncodedJSValue element, void* data, size_t byteLength))
+    void (*append)(void* ctx, JSC::EncodedJSValue element, void* data, size_t byteLength, bool isWasmMemory))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -6946,6 +6983,7 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(values.at(i));
         if (!view)
             return 1;
+        bool isWasmMemory = false;
         if (pinBuffers) {
             // possiblySharedBuffer() converts a FastTypedArray (GC-movable
             // storage, no ArrayBuffer yet) into a malloc-backed one and can
@@ -6953,10 +6991,12 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
             auto* buf = view->possiblySharedBuffer();
             if (!buf) [[unlikely]]
                 return 2;
-            if (!buf->isShared())
+            if (!buf->isShared()) {
                 buf->pin();
+                isWasmMemory = buf->isWasmMemory();
+            }
         }
-        append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength());
+        append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength(), isWasmMemory);
     }
     return 0;
 }

@@ -39,29 +39,8 @@ fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     unsafe { &**s }
 }
 
-/// Mutable view of a [`Blob`]'s backing `Store` through its
-/// `JsCell<Option<RefPtr<Store>>>` field. Centralises the per-site raw
-/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `Store::data_mut` already documents:
-/// shared-mutable interior, single-threaded JS event-loop, no concurrent
-/// `&Store` outstanding for the borrow's duration.
-#[inline]
-#[allow(clippy::mut_from_ref)]
-fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
-    blob.store
-        .get()
-        .as_ref()
-        // SAFETY: `RefPtr<Store>` invariant — pointee is a live heap `Store` while
-        // any `RefPtr<Store>` exists; single-threaded JS event-loop discipline
-        // guarantees no other `&`/`&mut Store` is live for this borrow.
-        .map(|s| unsafe { &mut *s.as_ptr() })
-}
-
 fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
     blob.content_type_was_set.set(true);
-    if let Some(store) = blob_store_mut(blob) {
-        store.mime_type = mime_type.clone();
-    }
     blob.content_type
         .set(blob::BlobContentType::from(mime_type));
 }

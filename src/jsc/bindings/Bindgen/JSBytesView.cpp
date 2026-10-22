@@ -2,7 +2,6 @@
 #include "Bindgen/JSBytesView.h"
 #include "Bindgen/ExternTraits.h"
 #include "ErrorCode.h"
-#include "GeneratedBlob.h"
 #include "blob.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
@@ -12,16 +11,17 @@ using namespace JSC;
 
 bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
 {
-    if (!value.inherits<Bun::Bindgen::Generated::JSBlob>())
+    if (!WebCore::mayHoldBlob(value))
         return false;
     const uint8_t* data = nullptr;
     size_t length = 0;
-    if (!WebCore::Blob__sharedView(JSValue::encode(value), &data, &length)) {
+    auto bytes = WebCore::Blob__sharedView(JSValue::encode(value), &data, &length);
+    if (bytes == WebCore::BlobBytes::NotInMemory) {
         auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
         Bun::throwError(&globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "File blob cannot be used here"_s);
         return false;
     }
-    return true;
+    return bytes == WebCore::BlobBytes::InMemory;
 }
 
 static ALWAYS_INLINE std::span<const uint8_t> bytesAndIsShared(JSValue value, bool& isShared)

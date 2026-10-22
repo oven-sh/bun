@@ -6,7 +6,8 @@
  *       Static scans of the linked executable against the expectations
  *       configure wrote into <spec.json> (see binary-expectations.ts):
  *       exported symbols, dynamic libraries + symbol-version ceilings,
- *       forbidden imports, static initializers, hardening bits, debug info.
+ *       forbidden imports, static initializers, hardening bits, the PE
+ *       header's stack reserve and commit, debug info.
  *
  *   verify-binary.ts duplicates <nm> <rspfile> <report>
  *       Every object and archive on bun's link line, scanned for a symbol
@@ -74,7 +75,14 @@ function versionLeq(a: string, b: string): boolean {
 }
 
 type CheckName =
-  "exports" | "dynamic libraries" | "imports" | "static initializers" | "hardening" | "debug info" | "size";
+  | "exports"
+  | "dynamic libraries"
+  | "imports"
+  | "static initializers"
+  | "hardening"
+  | "thread stacks"
+  | "debug info"
+  | "size";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -114,6 +122,14 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
     "stack, no writable+executable mapping, ASLR flags). Losing one is almost always an",
     "unintended side effect of a linker-flag or toolchain change; find that change.",
+  ],
+  "thread stacks": [
+    "SizeOfStackCommit is not the main thread's alone: Windows charges it against the system",
+    "commit limit when any thread starts without a commit size of its own (WTF, Rust std,",
+    "mimalloc, threads the OS adds), and does not start a thread it cannot charge it for.",
+    "Above one page, every thread of every bun process pays the difference at its start.",
+    "For a deeper stack raise the reserve, or give that one thread a size of its own",
+    "(flags.ts WINDOWS_STACK_RESERVE / WINDOWS_STACK_COMMIT).",
   ],
   size: [
     "This program is written to stay tiny (no CRT, no allocator, no formatting). A jump in size",
@@ -616,6 +632,16 @@ function verifyPE(spec: VerifySpec): void {
       violations.push(`subsystem version ${ver}, expected ${expect.minOSVersion}`);
     const props = [...chars, `subsystem ${ver}`];
     report("hardening", `${props.length} hardening properties`, violations, props);
+
+    // 6. stack sizes every thread of the process inherits
+    const reserve = Number(field(hdr, "SizeOfStackReserve"));
+    const commit = Number(field(hdr, "SizeOfStackCommit"));
+    const stackViolations: string[] = [];
+    if (reserve !== expect.pe.stackReserve)
+      stackViolations.push(`SizeOfStackReserve ${reserve}, expected ${expect.pe.stackReserve}`);
+    if (commit !== expect.pe.stackCommit)
+      stackViolations.push(`SizeOfStackCommit ${commit}, expected ${expect.pe.stackCommit}`);
+    report("thread stacks", `${reserve} bytes of stack reserved, ${commit} committed per thread`, stackViolations);
   }
 }
 

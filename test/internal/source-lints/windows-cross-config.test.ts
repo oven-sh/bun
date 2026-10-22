@@ -172,3 +172,16 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
   });
 });
+
+describe.skipIf(isWindows)("Windows cross-compile link flags (non-windows host)", () => {
+  test("the link reserves 18 MB of stack and commits one page of it", () => {
+    // The second operand of /STACK is not the main thread's alone: Windows charges it against the system commit
+    // limit when any thread starts without a commit size of its own, and does not start a thread it cannot charge
+    // it for. It is written out, so the header does not depend on a linker's default.
+    for (const arch of ["x64", "aarch64"] as const) {
+      for (const buildType of ["Release", "Debug"] as const) {
+        expect(computeFlags(resolveWindowsCross({ arch, buildType })).ldflags).toContain("/STACK:0x1200000,0x1000");
+      }
+    }
+  });
+});

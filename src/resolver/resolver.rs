@@ -686,7 +686,10 @@ impl<'a> Resolver<'a> {
             .abs_path_or_try_fill(|| {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 let parts = [query.entry().dir, query.entry().base()];
-                let joined = self.fs_ref().abs_buf_checked(&parts, &mut buf[..]).ok_or(())?;
+                let joined = self
+                    .fs_ref()
+                    .abs_buf_checked(&parts, &mut buf[..])
+                    .ok_or(())?;
                 Ok::<_, ()>(Interned::from_static(
                     self.fs_ref()
                         .dirname_store

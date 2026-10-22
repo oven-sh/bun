@@ -407,6 +407,21 @@ const messages: Record<string, Message> = {
     printed: value => `warn: Invalid override value for "${value}"\n`,
     exitCode: 0,
   },
+  // The workspace is in packages/two, and bun.lock has it at another path.
+  "the path that bun.lock has for a workspace": {
+    files: value => ({
+      "package.json": JSON.stringify({ ...app, workspaces: ["packages/*"] }),
+      "packages/two/package.json": JSON.stringify({ name: "two" }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app" }, [`vendor/${value}`]: { name: "two" } },
+        packages: { two: [`two@workspace:vendor/${value}`] },
+      }),
+    }),
+    command: ["install", "--frozen-lockfile"],
+    printed: value => `note: 1 workspace only in bun.lock: "two" (vendor/${value})\n`,
+    exitCode: 1,
+  },
 };
 
 const characters = [

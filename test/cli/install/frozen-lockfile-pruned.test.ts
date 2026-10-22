@@ -151,6 +151,14 @@ const catalogNote = (...names: string[]) =>
 const changedSectionNote = (section: "overrides" | "the catalog" | "dependencies") =>
   `note: ${section} in package.json changed since bun.lock was saved`;
 const dependencyNote = (change: string) => `${changedSectionNote("dependencies")}: ${change}`;
+// Each workspace is `[name, path]`.
+const workspaceList = (workspaces: [string, string][]) =>
+  workspaces.map(([name, path]) => `"${name}" (${path})`).join(", ");
+const workspaceCount = (workspaces: unknown[]) => `${workspaces.length} workspace${workspaces.length === 1 ? "" : "s"}`;
+const notInLockfileNote = (...workspaces: [string, string][]) =>
+  `note: ${workspaceCount(workspaces)} not in bun.lock: ${workspaceList(workspaces)}`;
+const onlyInLockfileNote = (...workspaces: [string, string][]) =>
+  `note: ${workspaceCount(workspaces)} only in bun.lock: ${workspaceList(workspaces)}`;
 const savedLockfile = "Saved lockfile";
 const frozenError = "error: lockfile had changes, but lockfile is frozen";
 const frozenHint = "note: try re-running without --frozen-lockfile and commit the updated lockfile";
@@ -1607,12 +1615,15 @@ describe("hoisted", () => {
     });
   });
 
-  // The guards below pass on main too; they pin the boundaries of the pruned-workspace relaxation.
+  // The guards below pin the boundaries of the pruned-workspace relaxation.
   test.concurrent("a pruned workspace does not mask a workspace added on disk", async () => {
     const { packageDir, full } = await verbatimTree(linker);
     await write(join(packageDir, "packages", "extra", "package.json"), JSON.stringify({ name: "extra" }));
 
-    await frozenFails(packageDir, linker, [prunedNote, ...frozenFailure()]);
+    await frozenFails(packageDir, linker, [
+      prunedNote,
+      ...frozenFailure(notInLockfileNote(["extra", "packages/extra"])),
+    ]);
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -1644,7 +1655,7 @@ describe("hoisted", () => {
         JSON.stringify({ ...rootPackageJson, workspaces: [...survivors, "packages/newpkg"] }),
       );
 
-      await frozenFails(packageDir, linker, frozenFailure());
+      await frozenFails(packageDir, linker, frozenFailure(notInLockfileNote(["newpkg", "packages/newpkg"])));
 
       expect(await lockText(packageDir)).toBe(pruned);
       expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -1676,7 +1687,7 @@ describe("hoisted", () => {
       JSON.stringify({ name: "mono", workspaces: ["packages/app", "packages/shared"] }),
     );
 
-    await frozenFails(packageDir, linker, frozenFailure());
+    await frozenFails(packageDir, linker, frozenFailure(onlyInLockfileNote(["other", "packages/other"])));
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
@@ -1702,7 +1713,7 @@ describe("hoisted", () => {
   test.concurrent("a workspace at an absolute path in bun.lock that is on disk is not treated as pruned", async () => {
     const { packageDir, lock } = await relocatedOtherTree(absoluteOtherPath, Object.keys(monorepo.packages));
 
-    await frozenFails(packageDir, linker, frozenFailure());
+    await frozenFails(packageDir, linker, frozenFailure(onlyInLockfileNote(["other", absoluteOtherPath(packageDir)])));
 
     expect(await lockText(packageDir)).toBe(lock);
   });

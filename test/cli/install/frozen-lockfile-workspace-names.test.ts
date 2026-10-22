@@ -61,6 +61,16 @@ async function project(linker: Linker, tree: Record<string, PackageJson>, bunfig
 
 const lockText = (dir: string) => file(join(dir, "bun.lock")).text();
 
+// What a frozen install prints for the workspace in packages/no-deps that bun.lock does not list.
+const notInLockfileNote = 'note: 1 workspace not in bun.lock: "no-deps" (packages/no-deps)';
+// The lines of a frozen failure, one after the other, with the cause `notes` between the error and the hint.
+const frozenFailure = (...notes: string[]) =>
+  [
+    "error: lockfile had changes, but lockfile is frozen",
+    ...notes,
+    "note: try re-running without --frozen-lockfile and commit the updated lockfile\n",
+  ].join("\n");
+
 // `key -> name@resolution` of "packages", and the keys of "workspaces".
 async function resolved(dir: string) {
   const lock = Bun.JSONC.parse(await lockText(dir)) as {
@@ -337,6 +347,27 @@ describe.each(linkers)("%s linker", linker => {
       await expectRoundTrip(dir, () => check(dir));
     });
 
+    // The install that adds a-dep also adds the workspace to bun.lock, so a frozen one names both.
+    test.concurrent("a range, in a bun.lock from Bun 1.4: the frozen error names the workspace too", async () => {
+      const dependencies = { "no-deps": "1.0.0" };
+      const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+      await ok(dir, "install", "--lockfile-only");
+      await Promise.all([
+        write(join(dir, "package.json"), JSON.stringify(root({ dependencies: { ...dependencies, "a-dep": "1.0.2" } }))),
+        write(join(dir, "packages", "no-deps", "package.json"), JSON.stringify(member)),
+      ]);
+
+      const frozen = await bun(dir, "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).toContain(
+        frozenFailure(
+          notInLockfileNote,
+          "note: dependencies in package.json changed since bun.lock was saved: a-dep was added",
+        ),
+      );
+      expect(frozen.exitCode).toBe(1);
+    });
+
     test.concurrent("an alias under its own name, in a bun.lock from Bun 1.4: it isn't changed", async () => {
       const dependencies = { "no-deps": "npm:no-deps@1.0.0" };
       const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
@@ -380,7 +411,7 @@ describe.each(linkers)("%s linker", linker => {
         JSON.stringify({ name: "no-deps", version, dependencies: { "what-bin": "1.0.0" } }),
       );
       const frozen = await bun(dir, "install", "--frozen-lockfile");
-      expect(frozen.stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+      expect(frozen.stderr).toContain(frozenFailure(notInLockfileNote));
       expect(frozen.exitCode).toBe(1);
 
       await ok(dir, "install");
@@ -464,7 +495,7 @@ describe.each(linkers)("%s linker", linker => {
       await write(join(dir, "bun.lock"), JSON.stringify(lock, null, 2));
 
       const frozen = await bun(dir, "install", "--frozen-lockfile");
-      expect(frozen.stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+      expect(frozen.stderr).toContain(frozenFailure(notInLockfileNote));
       expect(frozen.exitCode).toBe(1);
 
       await ok(dir, "install");

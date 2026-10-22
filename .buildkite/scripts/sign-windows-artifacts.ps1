@@ -9,7 +9,7 @@
 # with the same name so downstream steps (release, tests) see signed binaries.
 
 param(
-    # Comma-separated list. powershell.exe -File passes everything as
+    # Comma-separated list. pwsh -File passes everything as
     # literal strings, so [string[]] with "a,b,c" becomes a 1-element array.
     [Parameter(Mandatory=$true)]
     [string]$Artifacts,
@@ -24,10 +24,6 @@ $ProgressPreference = "SilentlyContinue"
 
 $ArtifactList = $Artifacts -split ","
 $BuildStepList = $BuildSteps -split ","
-
-# smctl shells out to signtool.exe which is only in PATH when the VS dev
-# environment is loaded. Dot-source the existing helper to set it up.
-. $PSScriptRoot\..\..\scripts\vs-shell.ps1
 
 function Log-Info {
     param([string]$Message)

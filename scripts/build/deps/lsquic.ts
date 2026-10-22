@@ -116,8 +116,9 @@ export const lsquic: Dependency = {
     "patches/lsquic/disable-gquic.patch",
     "patches/lsquic/requeue-unsent-coalesced.patch",
     // node:quic accessors: lsquic_engine_conn_count, lsquic_conn_get_ssl,
-    // lsquic_conn_transport_params, lsquic_conn_make_uni_stream, and the
-    // server-side CONNECTION_CLOSE / IFC_TIMED_OUT immediate-close fixes.
+    // lsquic_conn_transport_params, lsquic_conn_make_uni_stream,
+    // lsquic_conn_cancel_pending_uni_streams, and the server-side
+    // CONNECTION_CLOSE / IFC_TIMED_OUT immediate-close fixes.
     "patches/lsquic/node-quic-accessors.patch",
     // send_packets_out() leaked every packet already coalesced into the
     // current out_spec when encrypting a later one failed.

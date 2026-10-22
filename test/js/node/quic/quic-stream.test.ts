@@ -1,12 +1,12 @@
 // `destroy()` after the app committed AND ended a response (which, under
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
-import { createPrivateKey } from "node:crypto";
+import { createPrivateKey, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -285,7 +285,7 @@ describe("HTTP/3 header blocks that follow another header block", () => {
   });
 });
 
-describe("verifyClient", () => {
+describe.each(["bidi", "uni"] as const)("verifyClient: a %s stream", direction => {
   test("a server requiring a client certificate never surfaces streams from a client that presented none", async () => {
     let announcedStreams = 0;
     const serverClosed = Promise.withResolvers<any>();
@@ -321,7 +321,10 @@ describe("verifyClient", () => {
       (err: any) => err,
     );
     client.opened.catch(() => {});
-    const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("early body") });
+    const options = { body: new TextEncoder().encode("early body") };
+    const stream = await (direction === "uni"
+      ? client.createUnidirectionalStream(options)
+      : client.createBidirectionalStream(options));
     stream.closed.catch(() => {});
 
     const [serverError, clientError] = await Promise.all([serverClosed.promise, clientClosed]);
@@ -620,3 +623,522 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// A stream that node:quic cannot open yet is a pending stream: its request
+// waits in lsquic until the handshake is done and the peer's stream limit
+// allows it.
+describe("pending streams", () => {
+  const encoder = new TextEncoder();
+  const sni = { "*": { keys: [key], certs: [cert] } };
+  const request = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  const raw = { server: { alpn: ["quic-test"] }, client: { alpn: "quic-test" } };
+  const drain = async (stream: any) => {
+    for await (const _ of stream) {
+    }
+  };
+
+  // The endpoints of this block stay open until its last test ends. An
+  // endpoint answers a late packet for a session that is gone with a
+  // stateless reset. A reset to a closed port makes the next send of that
+  // endpoint fail, and lsquic then sends nothing for a second.
+  const endpoints: QuicEndpoint[] = [];
+  afterAll(() => {
+    for (const endpoint of endpoints) endpoint.destroy();
+  });
+
+  // A server and a client session on loopback. Disposal destroys the sessions
+  // of both sides: after a failed expectation, a graceful close waits for the
+  // idle timeout.
+  async function connected(onsession: (session: any) => void, serverOptions: any = {}, clientOptions: any = {}) {
+    const sessions: any[] = [];
+    const server = await listen(
+      (session: any) => {
+        sessions.push(session);
+        return onsession(session);
+      },
+      {
+        sni,
+        ...serverOptions,
+        transportParams: { maxIdleTimeout: 10, ...serverOptions.transportParams },
+      },
+    );
+    endpoints.push(server);
+    const connectClient = async (options: any = {}) => {
+      const client = await connect(server.address!, {
+        servername: "localhost",
+        verifyPeer: "manual",
+        ...clientOptions,
+        ...options,
+        transportParams: { maxIdleTimeout: 10, ...clientOptions.transportParams },
+      } as SessionOptions);
+      client.closed.catch(() => {});
+      sessions.push(client);
+      return client;
+    };
+    return {
+      client: await connectClient(),
+      connectClient,
+      [Symbol.dispose]() {
+        for (const session of sessions) session.destroy();
+      },
+    };
+  }
+  const opener = (session: any) => async (direction: "uni" | "bidi", body: string) => {
+    const options = { body: encoder.encode(body) };
+    const stream = await (direction === "uni"
+      ? session.createUnidirectionalStream(options)
+      : session.createBidirectionalStream(options));
+    stream.closed.catch(() => {});
+    return stream;
+  };
+  // A unidirectional stream closes when its body is sent. A bidirectional
+  // stream is answered when the peer ends its side.
+  const sent = (stream: any) => (stream.direction === "uni" ? stream.closed : drain(stream));
+  const serve = (onstream: (stream: any) => void) => (session: any) => {
+    session.closed.catch(() => {});
+    session.onstream = onstream;
+  };
+  const ignoreStreams = serve(stream => stream.closed.catch(() => {}));
+  // Records the body of every stream by stream id, then ends this side of a
+  // bidirectional stream.
+  const record = (received: Record<string, string>) =>
+    serve(async stream => {
+      stream.closed.catch(() => {});
+      const id = String(stream.id);
+      const chunks: Buffer[] = [];
+      for await (const batch of stream) for (const chunk of batch) chunks.push(Buffer.from(chunk));
+      received[id] = Buffer.concat(chunks).toString();
+      if (stream.direction === "bidi") stream.writer.endSync();
+    });
+  // Reads a stream, then ends this side of a bidirectional one. A stream with
+  // an id under `heldBelow` waits for `release` first: it keeps its stream
+  // credit until then.
+  const readAndHold = (heldBelow: bigint, release: Promise<void>) => async (stream: any) => {
+    stream.closed.catch(() => {});
+    if (stream.id < heldBelow) await release;
+    await drain(stream);
+    if (stream.direction === "bidi") stream.writer.endSync();
+  };
+  const answers = {
+    onheaders(this: any) {
+      this.sendHeaders({ ":status": "200" }, { terminal: true });
+    },
+  };
+  // A client has read the server's SETTINGS when a request is answered.
+  async function settingsRead(client: any) {
+    const answered = Promise.withResolvers<void>();
+    const stream = await client.createBidirectionalStream({ headers: request, onheaders: () => answered.resolve() });
+    stream.closed.catch(() => {});
+    await answered.promise;
+  }
+  // The session ticket and the token of a first session with this server.
+  async function ticketFrom(sessions: { connectClient: (options?: any) => Promise<any> }) {
+    const sessionTicket = Promise.withResolvers<Buffer>();
+    const token = Promise.withResolvers<Buffer>();
+    const first = await sessions.connectClient({
+      onsessionticket: (ticket: Buffer) => sessionTicket.resolve(ticket),
+      onnewtoken: (newToken: Buffer) => token.resolve(newToken),
+    });
+    await first.opened;
+    const resumption = { sessionTicket: await sessionTicket.promise, token: await token.promise };
+    await first.close();
+    return resumption;
+  }
+  // An HTTP/3 session whose server holds one request. The response stays
+  // open, so a close() of either side is graceful and sends GOAWAY.
+  async function withHeldRequest(serverOptions: any = {}, clientOptions: any = {}) {
+    let serverSession: any;
+    let response: any;
+    let requests = 0;
+    const serverHasRequest = Promise.withResolvers<void>();
+    const sessions = await connected(
+      (session: any) => {
+        serverSession = session;
+        ignoreStreams(session);
+      },
+      {
+        ...serverOptions,
+        onheaders(this: any) {
+          requests++;
+          response = this;
+          this.sendHeaders({ ":status": "200" });
+          serverHasRequest.resolve();
+        },
+      },
+      clientOptions,
+    );
+    try {
+      await sessions.client.opened;
+      const gotResponse = Promise.withResolvers<void>();
+      const held = await sessions.client.createBidirectionalStream({
+        headers: request,
+        onheaders: () => gotResponse.resolve(),
+      });
+      held.closed.catch(() => {});
+      await Promise.all([serverHasRequest.promise, gotResponse.promise]);
+      return { ...sessions, held, serverSession, response, requests: () => requests };
+    } catch (err) {
+      sessions[Symbol.dispose]();
+      throw err;
+    }
+  }
+
+  test("streams requested before the handshake open in order, and a later stream gets its own", async () => {
+    const received: Record<string, string> = {};
+    using sessions = await connected(record(received), raw.server, raw.client);
+    const { client } = sessions;
+    const open = opener(client);
+
+    await open("uni", "uni 1");
+    const answered = await open("bidi", "bidi 1");
+    await open("uni", "uni 2");
+    await client.opened;
+    // The server ends a bidirectional stream after it read it. By then it
+    // has read everything that the client sent with it.
+    await drain(answered);
+    expect(received).toEqual({ "2": "uni 1", "0": "bidi 1", "6": "uni 2" });
+
+    await open("uni", "uni 3");
+    await drain(await open("bidi", "bidi 2"));
+    expect(received).toEqual({ "2": "uni 1", "0": "bidi 1", "6": "uni 2", "10": "uni 3", "4": "bidi 2" });
+  });
+
+  test.each(["uni", "bidi"] as const)("a destroyed pending %s stream does not take a stream id", async direction => {
+    using sessions = await connected(ignoreStreams, raw.server, raw.client);
+    const { client } = sessions;
+    const open = opener(client);
+
+    (await open(direction, "never sent")).destroy();
+    await client.opened;
+    expect((await open(direction, "first")).id).toBe(direction === "uni" ? 2n : 0n);
+  });
+
+  // The peer allows four streams and holds them. Four more wait for stream
+  // credit and are destroyed, as a request timeout does. The credit that
+  // arrives later goes to the streams that still wait for it.
+  test.each(["uni", "bidi"] as const)(
+    "a destroyed %s stream that waited for stream credit does not take the credit",
+    async direction => {
+      const release = Promise.withResolvers<void>();
+      using sessions = await connected(
+        serve(readAndHold(16n, release.promise)),
+        { ...raw.server, transportParams: { initialMaxStreamsBidi: 4, initialMaxStreamsUni: 4 } },
+        raw.client,
+      );
+      const { client } = sessions;
+      const open = opener(client);
+      await client.opened;
+
+      const streams: any[] = [];
+      for (let i = 0; i < 8; i++) streams.push(await open(direction, "held"));
+      expect(streams.map(stream => stream.pending)).toEqual([false, false, false, false, true, true, true, true]);
+      for (const waiting of streams.slice(4)) waiting.destroy();
+
+      // This stream opens with the first credit that the server returns.
+      const next = await open(direction, "next");
+      release.resolve();
+      await sent(next);
+      const later = [await open(direction, "a"), await open(direction, "b"), await open(direction, "c")];
+      await Promise.all(later.map(sent));
+      const first = direction === "uni" ? 18n : 16n;
+      expect([next, ...later].map(stream => stream.id)).toEqual([first, first + 4n, first + 8n, first + 12n]);
+    },
+  );
+
+  // `b` leaves the middle of the queue, and the collector frees its wrapper:
+  // a stream created after that can get the same address.
+  test.each([
+    ["uni", "before the handshake"],
+    ["uni", "for stream credit"],
+    ["bidi", "before the handshake"],
+    ["bidi", "for stream credit"],
+  ] as const)("a destroyed %s stream between two that wait %s does not change their order", async (direction, wait) => {
+    const credit = wait === "for stream credit";
+    const release = Promise.withResolvers<void>();
+    using sessions = await connected(
+      serve(readAndHold(credit ? 8n : 0n, release.promise)),
+      { ...raw.server, transportParams: credit ? { initialMaxStreamsBidi: 2, initialMaxStreamsUni: 2 } : {} },
+      raw.client,
+    );
+    const { client } = sessions;
+    const open = opener(client);
+    let first = direction === "uni" ? 2n : 0n;
+    if (credit) {
+      await client.opened;
+      await open(direction, "held");
+      await open(direction, "held");
+      first += 8n;
+    }
+
+    const a = await open(direction, "a");
+    let b: any = await open(direction, "b");
+    const c = await open(direction, "c");
+    expect([a.pending, b.pending, c.pending]).toEqual([true, true, true]);
+    b.destroy();
+    b = undefined;
+    Bun.gc(true);
+    const d = await open(direction, "d");
+
+    release.resolve();
+    await Promise.all([a, c, d].map(sent));
+    const e = await open(direction, "e");
+    await sent(e);
+    expect([a, c, d, e].map(stream => stream.id)).toEqual([first, first + 4n, first + 8n, first + 12n]);
+  });
+
+  // The roles of the credit test swapped. A Bun client returns stream credit
+  // after 50 of the server's streams closed, hence a limit of 50. The limit is
+  // an option of the client's endpoint, so this client has its own.
+  test("a destroyed stream of a server that waited for stream credit does not take the credit", async () => {
+    const release = Promise.withResolvers<void>();
+    const result = Promise.withResolvers<{ pending: boolean[]; ids: bigint[] }>();
+    const endpoint = new QuicEndpoint();
+    endpoints.push(endpoint);
+    using sessions = await connected(
+      async (serverSession: any) => {
+        ignoreStreams(serverSession);
+        try {
+          await serverSession.opened;
+          const open = opener(serverSession);
+          const streams: any[] = [];
+          for (let i = 0; i < 54; i++) streams.push(await open("bidi", "held"));
+          const pending = streams.slice(49).map(stream => stream.pending);
+          for (const waiting of streams.slice(50)) waiting.destroy();
+          const next = await open("bidi", "next");
+          release.resolve();
+          await sent(next);
+          const later = [await open("bidi", "a"), await open("bidi", "b"), await open("bidi", "c")];
+          await Promise.all(later.map(sent));
+          result.resolve({ pending, ids: [next, ...later].map(stream => stream.id) });
+        } catch (err) {
+          result.reject(err);
+        }
+      },
+      raw.server,
+      {
+        ...raw.client,
+        endpoint,
+        transportParams: { initialMaxStreamsBidi: 50 },
+        // The first 50 streams of the server have the ids 1 to 197.
+        onstream: readAndHold(200n, release.promise),
+      },
+    );
+    await sessions.client.opened;
+    expect(await result.promise).toEqual({
+      pending: [false, true, true, true, true],
+      ids: [201n, 205n, 209n, 213n],
+    });
+  });
+
+  // HTTP/3 takes three unidirectional streams on each side: control, QPACK
+  // encoder and QPACK decoder. The client opens its QPACK encoder stream when
+  // it reads the SETTINGS. A stream that waited for the handshake opens after
+  // that one, so it cannot take its stream credit.
+  test.each([
+    ["ten streams", { initialMaxStreamsUni: 10 }, 14n],
+    ["the three streams of HTTP/3", {}, null],
+  ] as const)(
+    "an HTTP/3 session opens a pending unidirectional stream after its own three (the peer allows %s)",
+    async (_, transportParams, id) => {
+      using sessions = await connected(ignoreStreams, { transportParams, ...answers });
+      const { client } = sessions;
+
+      const stream = await opener(client)("uni", "after the handshake");
+      await client.opened;
+      await settingsRead(client);
+      expect(stream.id).toBe(id);
+    },
+  );
+
+  test("a unidirectional stream on a resumed session is sent as early data", async () => {
+    const early: boolean[] = [];
+    const read = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    let sessionTicket: Buffer | undefined;
+    const gotTicket = Promise.withResolvers<void>();
+    const gotToken = Promise.withResolvers<Buffer>();
+    let accepted = 0;
+    using sessions = await connected(
+      (serverSession: any) => {
+        const session = accepted++;
+        serverSession.closed.catch(() => {});
+        serverSession.onstream = async (stream: any) => {
+          stream.closed.catch(() => {});
+          await drain(stream);
+          early[session] = stream.early;
+          read[session].resolve();
+        };
+      },
+      raw.server,
+      {
+        ...raw.client,
+        onsessionticket(ticket: Buffer) {
+          sessionTicket = ticket;
+          gotTicket.resolve();
+        },
+        onnewtoken: (token: Buffer) => gotToken.resolve(token),
+      },
+    );
+    const first = sessions.client;
+    await first.opened;
+    await opener(first)("uni", "first");
+    const [token] = await Promise.all([gotToken.promise, gotTicket.promise, read[0].promise]);
+    await first.close();
+
+    const second = await sessions.connectClient({ sessionTicket, token });
+    await opener(second)("uni", "early");
+    const info: any = await second.opened;
+    await read[1].promise;
+    expect({ early, attempted: info.earlyDataAttempted, accepted: info.earlyDataAccepted }).toEqual({
+      early: [false, true],
+      attempted: true,
+      accepted: true,
+    });
+  });
+
+  // Nothing waits here: a resumed session opens the stream at once, before
+  // its QPACK encoder stream, also when the peer allows only three streams.
+  test("an HTTP/3 unidirectional stream on a resumed session is sent as early data", async () => {
+    using sessions = await connected(ignoreStreams, answers);
+    const client = await sessions.connectClient(await ticketFrom(sessions));
+    const stream = await opener(client)("uni", "early");
+    const info: any = await client.opened;
+    expect({ accepted: info.earlyDataAccepted, id: stream.id }).toEqual({ accepted: true, id: 10n });
+  });
+
+  // The session ticket is from another server, so this server rejects the
+  // early data, as a server does after a restart. The session then destroys
+  // the streams that were early data, and only those.
+  test("a stream that waited for stream credit when 0-RTT was rejected is sent after the handshake", async () => {
+    const endpoint = { tokenSecret: randomBytes(16) };
+    using first = await connected(
+      ignoreStreams,
+      { ...raw.server, endpoint, transportParams: { initialMaxStreamsUni: 1 } },
+      raw.client,
+    );
+    using second = await connected(
+      ignoreStreams,
+      { ...raw.server, endpoint, enableEarlyData: false, transportParams: { initialMaxStreamsUni: 5 } },
+      raw.client,
+    );
+    const client = await second.connectClient(await ticketFrom(first));
+    const open = opener(client);
+    // The client remembers a limit of one stream from the first server.
+    const early = await open("uni", "early");
+    const waiting = await open("uni", "waiting");
+    expect([early.pending, waiting.pending]).toEqual([false, true]);
+    await client.opened;
+    await waiting.closed;
+    expect(waiting.id).toBe(6n);
+  });
+
+  test("in the turn a GOAWAY arrives, a new unidirectional stream opens and a new request stays pending", async () => {
+    const order: string[] = [];
+    const goaway = Promise.withResolvers<void>();
+    const created = { uni: Promise.withResolvers<string>(), bidi: Promise.withResolvers<string>() };
+    const outcome = (creating: Promise<any>) =>
+      creating.then(
+        stream => {
+          stream.closed.catch(() => {});
+          return stream.pending ? "pending" : "opened";
+        },
+        err => err.code,
+      );
+    const datagrams = { application: { enableDatagrams: true }, transportParams: { maxDatagramFrameSize: 100 } };
+    using sessions = await withHeldRequest(
+      {
+        ...datagrams,
+        // The one bidirectional stream goes to the held request. There is
+        // room for a unidirectional stream.
+        transportParams: { ...datagrams.transportParams, initialMaxStreamsBidi: 1, initialMaxStreamsUni: 10 },
+      },
+      {
+        ...datagrams,
+        ongoaway() {
+          order.push("ongoaway");
+          goaway.resolve();
+        },
+        ondatagram(this: any) {
+          order.push("ondatagram");
+          created.uni.resolve(outcome(this.createUnidirectionalStream({ body: encoder.encode("late") })));
+          created.bidi.resolve(outcome(this.createBidirectionalStream({ headers: request })));
+        },
+      },
+    );
+    const { client, serverSession } = sessions;
+
+    // The server sends a datagram and its GOAWAY in one turn. When the client
+    // reads both in one pass, `ondatagram` runs after lsquic has the GOAWAY
+    // and before `ongoaway`. lsquic still creates the unidirectional stream,
+    // as node does, and refuses the request that has no stream credit.
+    await serverSession.sendDatagram(new Uint8Array([1]));
+    serverSession.close();
+    const [uni, bidi] = await Promise.all([created.uni.promise, created.bidi.promise]);
+    await goaway.promise;
+    expect({ order, uni, bidi }).toEqual({ order: ["ondatagram", "ongoaway"], uni: "opened", bidi: "pending" });
+
+    // After `ongoaway` the session refuses both.
+    const late = [client.createUnidirectionalStream({}), client.createBidirectionalStream({ headers: request })];
+    expect(await Promise.all(late.map(outcome))).toEqual(["ERR_INVALID_STATE", "ERR_INVALID_STATE"]);
+  });
+
+  test("a unidirectional stream that waits for stream credit opens after a GOAWAY", async () => {
+    const goaway = Promise.withResolvers<void>();
+    using sessions = await withHeldRequest(
+      // Three unidirectional streams for HTTP/3 and three for this test.
+      { transportParams: { initialMaxStreamsUni: 6 } },
+      { ongoaway: () => goaway.resolve() },
+    );
+    const { client, serverSession } = sessions;
+
+    // Three open streams hold the credit until they end.
+    const holders: any[] = [];
+    for (let i = 0; i < 3; i++) {
+      const stream = await client.createUnidirectionalStream({});
+      stream.closed.catch(() => {});
+      holders.push(stream);
+    }
+    const waiting = await opener(client)("uni", "after the GOAWAY");
+    serverSession.close();
+    await goaway.promise;
+    expect(waiting.pending).toBe(true);
+
+    // A GOAWAY limits requests, not unidirectional streams. The server
+    // returns the credit when the three streams end.
+    for (const stream of holders) stream.writer.endSync();
+    await waiting.closed;
+    expect(waiting.id).toBe(26n);
+  });
+
+  // lsquic drops a request that waits for stream credit when a GOAWAY is
+  // sent or received. The session drops its queue entry with it: a debug
+  // build asserts that the two agree.
+  test.each(["the peer's GOAWAY arrives", "close() sends a GOAWAY"] as const)(
+    "a request that waits for stream credit stays pending when %s",
+    async when => {
+      const goaway = Promise.withResolvers<void>();
+      using sessions = await withHeldRequest(
+        { transportParams: { initialMaxStreamsBidi: 1 } },
+        { ongoaway: () => goaway.resolve() },
+      );
+      const { client, held, serverSession, response } = sessions;
+      const waiting: any = await client.createBidirectionalStream({ headers: request });
+      waiting.closed.catch(() => {});
+      expect(waiting.pending).toBe(true);
+
+      if (when === "the peer's GOAWAY arrives") {
+        serverSession.close();
+        await goaway.promise;
+      } else {
+        client.close().catch(() => {});
+        // The response ends after the GOAWAY, and its stream credit returns.
+        response.writer.endSync();
+        await drain(held);
+      }
+      expect({ pending: waiting.pending, id: waiting.id, requests: sessions.requests() }).toEqual({
+        pending: true,
+        id: null,
+        requests: 1,
+      });
+    },
+  );
+});

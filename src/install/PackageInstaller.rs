@@ -104,8 +104,8 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
-    /// `hoisted_install::other_tags` of the loaded bun.lock.
-    pub(crate) other_tags: Vec<(PackageNameHash, Box<[u8]>)>,
+    /// The lockfile as it was before `clean`, if this run changes what bun.lock places.
+    pub(crate) before_clean: Option<&'a Lockfile>,
 
     /// uses same ids as lockfile.trees
     pub(crate) trees: Box<[TreeContext]>,
@@ -1544,24 +1544,14 @@ impl<'a> PackageInstaller<'a> {
         self.trees[tree_id as usize].inside_replaced_folder = inside;
     }
 
-    /// Returns true if the folder of a registry package has one of the `other_tags` of its name.
-    #[cold]
-    fn has_other_tag(
-        &self,
-        name_hash: PackageNameHash,
-        package_id: PackageID,
-        installer: &PackageInstall<'_>,
-    ) -> bool {
-        let first = (self.other_tags).partition_point(|other| other.0 < name_hash);
-        let others = &self.other_tags[first..];
-        let others = &others[..others.partition_point(|other| other.0 == name_hash)];
-        // A tarball with the registry's bytes has the registry integrity, and it can stay.
-        let integrity = &self.metas[package_id as usize].integrity;
-        !others.is_empty()
-            && installer.has_bun_tag(&self.root_node_modules_folder, &|tag| {
-                !package_install::is_registry_integrity(tag, integrity)
-                    && others.iter().any(|other| *other.1 == *tag)
-            })
+    /// Returns true if `before_clean` has a tarball or a git package of this name.
+    fn had_other_source(&self, name_hash: PackageNameHash) -> bool {
+        self.before_clean.is_some_and(|before| {
+            let resolutions = before.packages.items_resolution();
+            (before.packages_named(name_hash).iter())
+                .map(|&id| resolutions[id as usize].tag)
+                .any(|tag| tag.is_git() || tag.is_tarball())
+        })
     }
 
     /// Call when you mutate the length of `lockfile.packages`
@@ -2046,8 +2036,8 @@ impl<'a> PackageInstaller<'a> {
             )
             // `verify` passes for a tarball or a git checkout of this name and version.
             || (resolution.tag == resolution::Tag::Npm
-                && !self.other_tags.is_empty()
-                && self.has_other_tag(pkg_name_hash, package_id, &installer));
+                && self.had_other_source(pkg_name_hash)
+                && installer.has_other_bun_tag(&self.root_node_modules_folder));
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
             self.node.complete_one();

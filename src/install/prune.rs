@@ -22,9 +22,8 @@ use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
 use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
-use crate::package_install::{BUN_TAG, StagingLock, StagingPath, is_registry_integrity};
+use crate::package_install::{BUN_TAG, StagingLock, StagingPath, tarball_tag_matches};
 use crate::package_manager::Options::{Enable, LogLevel};
-use crate::package_manager::directories::open_existing_cache_directory;
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::package_manager::{ROOT_PACKAGE_JSON_PATH, WorkspaceFilter};
@@ -914,7 +913,6 @@ struct TreeFolder {
 }
 
 struct HoistedTree<'a> {
-    manager: &'a PackageManager,
     lockfile: &'a Lockfile,
     trees: &'a [tree::Tree],
     folders: Vec<TreeFolder>,
@@ -925,8 +923,6 @@ struct HoistedTree<'a> {
     kept_other_source: Cell<bool>,
     /// What `installed` answered for each place of `expected` that was asked about.
     verdicts: Vec<Cell<Option<Installed>>>,
-    /// Opened for the first `.bun-tag` of a registry package that its integrity does not explain.
-    cache: OnceCell<Option<Dir>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -934,13 +930,13 @@ enum Installed {
     Matches,
     Missing,
     Mismatch,
-    /// The folder of a registry package has a `.bun-tag` that is not the package's own.
+    /// The folder of a registry package has a `.bun-tag`: Bun extracted it from a tarball or git.
     OtherSource,
 }
 
 impl<'a> HoistedTree<'a> {
     /// With `quiet`, `removable` prints no warning when it keeps an entry.
-    fn init(manager: &'a PackageManager, lockfile: &'a Lockfile, quiet: bool) -> HoistedTree<'a> {
+    fn init(lockfile: &'a Lockfile, quiet: bool) -> HoistedTree<'a> {
         let trees = lockfile.buffers.trees.as_slice();
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -983,7 +979,6 @@ impl<'a> HoistedTree<'a> {
         }
 
         HoistedTree {
-            manager,
             lockfile,
             trees,
             folders,
@@ -993,7 +988,6 @@ impl<'a> HoistedTree<'a> {
             kept_other_source: Cell::new(false),
             verdicts: vec![Cell::new(None); expected.len()],
             expected,
-            cache: OnceCell::new(),
         }
     }
 
@@ -1043,9 +1037,7 @@ impl<'a> HoistedTree<'a> {
         if !self.quiet {
             let why = match installed {
                 Installed::Missing => "is missing",
-                Installed::OtherSource => {
-                    "has a .bun-tag that does not match the registry package bun.lock expects"
-                }
+                Installed::OtherSource => "has a .bun-tag but bun.lock expects a registry package",
                 _ => "is not the version bun.lock expects",
             };
             bun_core::warn!(
@@ -1155,11 +1147,9 @@ impl<'a> HoistedTree<'a> {
                 {
                     return Installed::Mismatch;
                 }
-                // Bun writes this file into a tarball folder and a git checkout only.
-                match sys::File::read_from(package.fd(), BUN_TAG) {
-                    Ok(tag) if self.is_own_tag(pkg_id, &tag, &package) => {}
-                    Err(err) if err.get_errno() == E::ENOENT => {}
-                    _ => return Installed::OtherSource,
+                let tag = sys::File::read_from(package.fd(), BUN_TAG);
+                if !tag.is_err_and(|err| err.get_errno() == E::ENOENT) {
+                    return Installed::OtherSource;
                 }
                 true
             }
@@ -1167,7 +1157,14 @@ impl<'a> HoistedTree<'a> {
                 sys::File::read_from(package.fd(), b".bun-tag")
                     .is_ok_and(|tag| tag.as_slice() == res.repository().resolved.slice(buf))
             }
-            ResolutionTag::Folder | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                let integrity = &self.lockfile.packages.items_meta()[pkg_id as usize].integrity;
+                installed_package_json(&package).is_some_and(|(name, _)| name == expected_name)
+                    // An install with `--no-verify` leaves an empty tag.
+                    && sys::File::read_from(package.fd(), BUN_TAG)
+                        .is_ok_and(|tag| tarball_tag_matches(&tag, integrity, true))
+            }
+            ResolutionTag::Folder => {
                 installed_package_json(&package).is_some_and(|(name, _)| name == expected_name)
             }
             _ => false,
@@ -1178,60 +1175,6 @@ impl<'a> HoistedTree<'a> {
             Installed::Mismatch
         }
     }
-
-    /// Returns true if the registry package `pkg_id` can have this `.bun-tag` in its folder.
-    #[cold]
-    fn is_own_tag(&self, pkg_id: PackageID, tag: &[u8], package: &Dir) -> bool {
-        let lockfile = self.lockfile;
-        if is_registry_integrity(
-            tag,
-            &lockfile.packages.items_meta()[pkg_id as usize].integrity,
-        ) {
-            return true;
-        }
-        // The package can ship the file, or a patch can add it. A cache entry then has it too.
-        let cache = (self.cache).get_or_init(|| open_existing_cache_directory(self.manager));
-        let Some(cache) = cache else {
-            return false;
-        };
-        let in_cache_entry = |patch_hash: Option<u64>| {
-            let entry = npm_cache_entry(self.manager, lockfile, pkg_id, patch_hash);
-            sys::File::read_from(cache.fd(), &join(entry.as_bytes(), BUN_TAG))
-                .is_ok_and(|own| own == tag)
-        };
-        in_cache_entry(None)
-            || patch_hashes(package)
-                .into_iter()
-                .any(|hash| in_cache_entry(Some(hash)))
-    }
-}
-
-/// Returns the hashes in the names of the `.bun-tag-<hash>` files that a patched package has.
-fn patch_hashes(package: &Dir) -> Vec<u64> {
-    let mut hashes = Vec::new();
-    let mut entries = sys::iterate_dir(package.fd());
-    while let Ok(Some(entry)) = entries.next() {
-        let hex = entry.name.slice_u8().strip_prefix(crate::bun_hash_tag);
-        hashes.extend(hex.and_then(|hex| bun_core::parse_int::<u64>(hex, 16).ok()));
-    }
-    hashes
-}
-
-/// Returns the name of a registry package's entry in the cache.
-fn npm_cache_entry(
-    manager: &PackageManager,
-    lockfile: &Lockfile,
-    pkg_id: PackageID,
-    patch_hash: Option<u64>,
-) -> &'static ZStr {
-    crate::package_manager::cached_npm_package_folder_name(
-        manager,
-        lockfile.packages.items_name()[pkg_id as usize].slice(&lockfile.buffers.string_bytes),
-        lockfile.packages.items_resolution()[pkg_id as usize]
-            .npm()
-            .version,
-        patch_hash,
-    )
 }
 
 fn installed_package_json(package: &Dir) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
@@ -1279,9 +1222,8 @@ fn plan_hoisted(
     }
 
     let quiet = manager.options.log_level == LogLevel::Silent;
-    let manager: &PackageManager = manager;
     let lockfile: &Lockfile = &manager.lockfile;
-    let hoisted = HoistedTree::init(manager, lockfile, quiet);
+    let hoisted = HoistedTree::init(lockfile, quiet);
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let trees = lockfile.buffers.trees.as_slice();
@@ -1421,7 +1363,7 @@ fn plan_hoisted(
         };
         if visited.is_set(pkg_id)
             || selection.is_some_and(|sel| !sel.selected.is_set(pkg_id))
-            || is_pruned_workspace(manager, pkg_id)
+            || is_pruned_workspace(&*manager, pkg_id)
         {
             continue;
         }
@@ -1505,8 +1447,8 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         return;
     }
     let quiet = manager.options.log_level == LogLevel::Silent;
-    let old = HoistedTree::init(manager, before, true);
-    let new = HoistedTree::init(manager, after, quiet);
+    let old = HoistedTree::init(before, true);
+    let new = HoistedTree::init(after, quiet);
     let targets = manager.filtered_link_targets.as_ref();
     let selected: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(before));
     let importers = selected.as_ref().map(|_| tree_importers(before));
@@ -1845,7 +1787,15 @@ fn tarball_may_contain(
         // Apart from bundled dependencies, Bun doesn't install the `node_modules` folder of a
         // workspace, a `file:` folder or a git checkout.
         ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
-        ResolutionTag::Npm => npm_cache_entry(manager, lockfile, pkg_id, None),
+        ResolutionTag::Npm => {
+            let name = lockfile.packages.items_name()[pkg_id as usize];
+            crate::package_manager::cached_npm_package_folder_name(
+                manager,
+                name.slice(&lockfile.buffers.string_bytes),
+                res.npm().version,
+                None,
+            )
+        }
         ResolutionTag::Github => {
             crate::package_manager::cached_github_folder_name(manager, res.github(), None)
         }
@@ -1892,12 +1842,12 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
         found.ok().map(|i| places[i].1)
     };
     let judge: OnceCell<HoistedTree<'_>> = OnceCell::new();
-    // Returns true if the folder that serves `alias` to tree `id` today has another `.bun-tag`.
+    // Returns true if the folder that serves `alias` to tree `id` today has a `.bun-tag`.
     let other_source_above = |id: usize, alias: &[u8], name_hash: u64| {
         let mut above = trees[id].parent as usize;
         while above < trees.len() {
             if let Some(pkg_id) = today(tree::place_key(folders[above], name_hash)) {
-                let judge = judge.get_or_init(|| HoistedTree::init(manager, lockfile, true));
+                let judge = judge.get_or_init(|| HoistedTree::init(lockfile, true));
                 let installed = judge.installed(above as tree::Id, alias, pkg_id);
                 return installed == Installed::OtherSource;
             }
@@ -3140,7 +3090,7 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
         if lost_bins.is_empty() {
             return;
         }
-        let hoisted = HoistedTree::init(manager, lockfile, true);
+        let hoisted = HoistedTree::init(lockfile, true);
         let direct = handle_oom(LinkOrder::direct_packages(lockfile));
         for tree_id in 0..hoisted.folders.len() {
             let path = hoisted.path(tree_id);

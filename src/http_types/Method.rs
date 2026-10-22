@@ -2,6 +2,7 @@ use bun_core::StringPointer;
 use enumset::EnumSet;
 
 use crate::ETag::Headers;
+use crate::is_token;
 
 #[allow(non_camel_case_types)]
 #[repr(u8)]
@@ -226,14 +227,6 @@ impl Method {
     pub fn which(str: &[u8]) -> Option<Method> {
         METHOD_MAP.get(str).copied()
     }
-}
-
-/// RFC 9110 §5.6.2 `token`.
-fn is_token(bytes: &[u8]) -> bool {
-    !bytes.is_empty()
-        && bytes
-            .iter()
-            .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(c))
 }
 
 /// The method of a `Request`: a verb from the table, or any other token as written.

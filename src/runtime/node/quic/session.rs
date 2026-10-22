@@ -149,9 +149,6 @@ impl StoredAddr {
     pub(super) fn as_ptr(&self) -> *const u8 {
         self.bytes.as_ptr()
     }
-    pub(super) fn is_set(&self) -> bool {
-        self.len > 0
-    }
     pub(super) fn decode(&self) -> Option<(u16, u16, &[u8])> {
         use crate::socket::socket_address::inet;
         if self.len == 0 {
@@ -935,8 +932,10 @@ impl QuicSession {
                 );
             }
         }
-        if !self.pending_tickets.get().is_empty() {
-            self.schedule_process();
+        if let (Some(&(at, _)), Some(endpoint)) =
+            (self.pending_tickets.get().front(), self.endpoint_ref())
+        {
+            endpoint.request_pass_at(at);
         }
     }
 

@@ -6,6 +6,13 @@
 //!     and `to_js()` on top as local extension traits.
 #![allow(non_camel_case_types)]
 
+pub mod fields;
+pub mod flow_control;
+pub mod frame;
+pub mod header_block;
+pub mod settings;
+pub mod stream;
+
 // ─── connection / sizing constants ──────────────
 
 pub const CLIENT_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";

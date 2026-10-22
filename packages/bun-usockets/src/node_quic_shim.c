@@ -35,12 +35,8 @@ struct us_nq_vtable {
                            const struct sockaddr *old_peer);
     void (*on_origin)(void *conn_ctx, const unsigned char *chunk, size_t len,
                       int fin);
-    SSL_CTX *(*get_ssl_ctx)(void *owner, const struct sockaddr *local);
-    SSL_CTX *(*get_client_ssl_ctx)(void *owner, const struct sockaddr *local);
     SSL_CTX *(*lookup_cert)(void *owner, const struct sockaddr *local,
                             const char *sni);
-    int (*packets_out)(void *owner, const struct lsquic_out_spec *specs,
-                       unsigned n);
     void *(*on_new_mini_conn)(void *owner, lsquic_conn_t *c);
     void (*on_mini_conn_failed)(void *conn_ctx, uint64_t error_code);
 };
@@ -379,23 +375,10 @@ static const struct lsquic_stream_if nq_stream_if = {
     .on_origin = nq_on_origin,
 };
 
-static SSL_CTX *nq_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
-    struct us_nq_vtable *vt = *(struct us_nq_vtable **) peer_ctx;
-    return vt->get_ssl_ctx(vt->owner, local);
-}
-static SSL_CTX *nq_get_client_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
-    struct us_nq_vtable *vt = *(struct us_nq_vtable **) peer_ctx;
-    return vt->get_client_ssl_ctx(vt->owner, local);
-}
 static SSL_CTX *nq_lookup_cert(void *cert_ctx, const struct sockaddr *local,
                                const char *sni) {
     struct us_nq_vtable *vt = cert_ctx;
     return vt->lookup_cert(vt->owner, local, sni);
-}
-static int nq_packets_out(void *out_ctx, const struct lsquic_out_spec *specs,
-                          unsigned n) {
-    struct us_nq_vtable *vt = out_ctx;
-    return vt->packets_out(vt->owner, specs, n);
 }
 
 size_t us_nq_vtable_size(void) { return sizeof(struct us_nq_vtable); }
@@ -436,7 +419,6 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     unsigned flags = (is_server ? LSENG_SERVER : 0) | (is_http ? LSENG_HTTP : 0);
     lsquic_engine_init_settings(s, flags);
     s->es_versions = (1u << LSQVER_I001) | (1u << LSQVER_I002);
-    s->es_ecn = 0;
     /* Static-table-only encoding, as quic.c does. The dynamic table also makes
      * the decoder stream carry acks, and lsquic delays a server's MAX_STREAMS
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */
@@ -522,114 +504,18 @@ NQ_GET(datagrams, int)
 NQ_GET(max_datagram_frame_size, unsigned short)
 #undef NQ_SET
 
-/* `vt` must outlive the engine; `settings` is copied by lsquic. */
-lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
+/* `vt` must outlive the engine. */
+lsquic_engine_t *us_nq_engine_new(us_quic_driver_t *driver, int is_server, int is_http,
                                   struct us_nq_vtable *vt,
-                                  const struct lsquic_engine_settings *settings,
-                                  const char *alpn) {
-    if (us_quic_global_init() != 0) return NULL;
-    struct lsquic_engine_api api;
-    memset(&api, 0, sizeof(api));
-    api.ea_settings = settings;
-    api.ea_stream_if = &nq_stream_if;
-    api.ea_stream_if_ctx = vt;
-    api.ea_packets_out = nq_packets_out;
-    api.ea_packets_out_ctx = vt;
-    api.ea_get_ssl_ctx = is_server ? nq_get_ssl_ctx : nq_get_client_ssl_ctx;
-    if (is_server) {
-        api.ea_lookup_cert = nq_lookup_cert;
-        api.ea_cert_lu_ctx = vt;
-    }
-    api.ea_alpn = alpn;
-    unsigned flags = is_server ? LSENG_SERVER : 0;
-    if (is_http) {
-        flags |= LSENG_HTTP;
-        api.ea_hsi_if = &nq_hset_if;
-        api.ea_hsi_ctx = NQ_HSI_CTX_PACK(settings->es_max_h3_header_pairs,
-                                         settings->es_max_h3_header_bytes);
-    }
-    return lsquic_engine_new(flags, &api);
+                                  const struct lsquic_engine_settings *settings) {
+    return us_quic_driver_add_engine(driver,
+        (is_server ? LSENG_SERVER : 0) | (is_http ? LSENG_HTTP : 0), settings,
+        &nq_stream_if, vt, is_http ? &nq_hset_if : NULL,
+        NQ_HSI_CTX_PACK(settings->es_max_h3_header_pairs, settings->es_max_h3_header_bytes),
+        is_server ? nq_lookup_cert : NULL, vt);
 }
-
-const struct sockaddr *us_nq_spec_dest(const struct lsquic_out_spec *s) { return s->dest_sa; }
-const struct sockaddr *us_nq_spec_local(const struct lsquic_out_spec *s) { return s->local_sa; }
-void *us_nq_spec_peer_ctx(const struct lsquic_out_spec *s) { return s->peer_ctx; }
-const struct iovec *us_nq_spec_iov(const struct lsquic_out_spec *s, size_t *n) {
-    *n = s->iovlen;
-    return s->iov;
-}
-size_t us_nq_spec_stride(void) { return sizeof(struct lsquic_out_spec); }
 
 void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
     /* RFC 9000 §3.1 allows RST in Data Sent state. */
     lsquic_stream_force_reset_ext(s, code);
 }
-
-/* ───── node:quic loop driver ─────
- *
- * The corking model quic.c uses for Bun.serve's HTTP/3 listener: JS marks the
- * endpoint pending and one pass runs per loop turn, so a burst of writes is
- * one engine pass and one sendmmsg batch instead of one per call.
- */
-
-struct us_nq_driver_s {
-    struct us_nq_driver_s *next;
-    void *owner;
-    int pending;
-};
-
-/* endpoint.rs: the full process pass (engines + event dispatch). */
-extern void Bun__nodeQuic__processEndpoint(void *owner);
-
-void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d,
-                         void *owner) {
-    d->owner = owner;
-    d->pending = 0;
-    d->next = loop->data.nq_head;
-    loop->data.nq_head = d;
-}
-
-void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d) {
-    struct us_nq_driver_s **pp = &loop->data.nq_head;
-    while (*pp) {
-        /* Leave d->next intact: an in-progress walk holds it as its
-         * successor, and clearing it would end that pass early. Nothing else
-         * reads it, and register() overwrites it. */
-        if (*pp == d) { *pp = d->next; return; }
-        pp = &(*pp)->next;
-    }
-}
-
-/* endpoint.rs: full pass, but session close events are held for the next
- * loop point -- dispatching a close in the middle of a running microtask
- * chain is an interleaving node never produces. */
-extern void Bun__nodeQuic__drainEndpoint(void *owner);
-
-/* Runs from the microtask drain: keeps the chain's packets and non-close
- * events moving without ending sessions mid-chain. */
-void us_nq_loop_drain(struct us_loop_t *loop) {
-    struct us_nq_driver_s *d = loop->data.nq_head;
-    while (d) {
-        struct us_nq_driver_s *next = d->next;
-        if (d->pending) {
-            d->pending = 0;
-            if (d->owner) Bun__nodeQuic__drainEndpoint(d->owner);
-        }
-        d = next;
-    }
-}
-
-void us_nq_loop_flush_if_pending(struct us_loop_t *loop) {
-    struct us_nq_driver_s *d = loop->data.nq_head;
-    while (d) {
-        /* The pass runs JS, which can destroy the endpoint and unlink `d`;
-         * take the successor first. */
-        struct us_nq_driver_s *next = d->next;
-        if (d->pending) {
-            d->pending = 0;
-            if (d->owner) Bun__nodeQuic__processEndpoint(d->owner);
-        }
-        d = next;
-    }
-}
-

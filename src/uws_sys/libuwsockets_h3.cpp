@@ -35,7 +35,7 @@ typedef struct uws_h3_res_s uws_h3_res_t;
 typedef struct uws_h3_req_s uws_h3_req_t;
 
 typedef void (*uws_h3_method_handler)(uws_h3_res_t*, uws_h3_req_t*, void*);
-typedef void (*uws_h3_listen_handler)(us_quic_listen_socket_t*, void*);
+typedef void (*uws_h3_listen_handler)(us_quic_udp_t*, void*);
 
 /* ───── app ───── */
 
@@ -86,17 +86,17 @@ void uws_h3_app_listen_with_config(uws_h3_app_t* app, const char* host, uint16_t
     int32_t options, uws_h3_listen_handler handler, void* user_data)
 {
     std::string h = host && host[0] ? std::string(host) : std::string {};
-    ((H3App*)app)->listen(h, port, options, [handler, user_data](us_quic_listen_socket_t* ls) {
+    ((H3App*)app)->listen(h, port, options, [handler, user_data](us_quic_udp_t* ls) {
         handler(ls, user_data);
     });
 }
 
-int uws_h3_listen_socket_port(us_quic_listen_socket_t* ls) { return us_quic_listen_socket_port(ls); }
-int uws_h3_listen_socket_local_address(us_quic_listen_socket_t* ls, char* buf, int len)
+int uws_h3_listen_socket_port(us_quic_udp_t* ls) { return us_quic_listen_socket_port(ls); }
+int uws_h3_listen_socket_local_address(us_quic_udp_t* ls, char* buf, int len)
 {
     return us_quic_listen_socket_local_address(ls, buf, len);
 }
-void uws_h3_listen_socket_close(us_quic_listen_socket_t* ls) { us_quic_listen_socket_close(ls); }
+void uws_h3_listen_socket_close(us_quic_udp_t* ls) { us_quic_listen_socket_close(ls); }
 
 /* ───── response ───── */
 
@@ -120,7 +120,7 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
 void uws_h3_res_force_close(uws_h3_res_t* res)
 {
     ((Http3Response*)res)->clearOnWritableAndAborted();
-    us_quic_stream_reset_internal_error((us_quic_stream_t*)res);
+    us_quic_stream_reset((us_quic_stream_t*)res, US_QUIC_H3_INTERNAL_ERROR);
 }
 
 bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)

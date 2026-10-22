@@ -266,7 +266,6 @@ impl FileRoute {
         let route = RefPtr::from_this(this);
         if let Some(server) = route.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
         }
         let store = route.blob.store().unwrap().clone();
         let Some(path) = store.get_path() else {
@@ -485,7 +484,7 @@ impl FileRoute {
         resp.clear_on_writable();
         resp.clear_timeout();
         if let Some(server) = self.server.get() {
-            server.on_static_request_complete();
+            server.on_request_complete();
         }
     }
 }

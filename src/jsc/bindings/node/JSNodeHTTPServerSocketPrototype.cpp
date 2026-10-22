@@ -683,7 +683,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesRead, (JSC::JSGlobalOb
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    return JSValue::encode(JSC::jsNumber(thisObject->bytesRead));
+    return JSValue::encode(JSC::jsNumber(thisObject->bytesRead()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))

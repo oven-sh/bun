@@ -159,70 +159,6 @@ static inline unsigned char *hpackEncodeInteger(unsigned char *dst, uint8_t pref
     return dst;
 }
 
-/* RFC 9113 §8.2.1 field validity, beyond what HPACK decoding guarantees: a
- * name is an RFC 9110 token with no uppercase letter, optionally behind the
- * single ':' of a pseudo-header. The token set is the one the HTTP/1 parser
- * (isFieldNameByte) and the HTTP/3 header-set interface accept. */
-static inline bool validFieldName(const char *p, unsigned n) {
-    unsigned i = n && p[0] == ':';
-    if (i == n) return false;
-    for (; i < n; i++) {
-        unsigned char c = (unsigned char) p[i];
-        if (!isTokenByte(c) || (c >= 'A' && c <= 'Z')) return false;
-    }
-    return true;
-}
-
-/* The methods Bun.serve can represent: the HTTP/1 parser's strict set, in
- * their RFC 9110 case-sensitive wire form. */
-static inline bool isKnownMethod(std::string_view method) {
-    for (unsigned char c : method) if (!((c >= 'A' && c <= 'Z') || c == '-')) return false;
-    return Bun__HTTPMethod__from(method.data(), method.size()) != -1;
-}
-
-/* The request fields validation cares about. lshpack reports the HPACK
- * static-table index when the peer used one for the name (nearly always);
- * literal names fall back to a compare. */
-enum class Field : uint8_t { Other, Method, Scheme, Path, Authority, Host, ContentLength, Te, Expect, ConnectionSpecific };
-static inline Field classify(int hpackIndex, std::string_view name) {
-    switch (hpackIndex) {
-    case LSHPACK_HDR_AUTHORITY: return Field::Authority;
-    case LSHPACK_HDR_METHOD_GET: case LSHPACK_HDR_METHOD_POST: return Field::Method;
-    case LSHPACK_HDR_PATH: case LSHPACK_HDR_PATH_INDEX_HTML: return Field::Path;
-    case LSHPACK_HDR_SCHEME_HTTP: case LSHPACK_HDR_SCHEME_HTTPS: return Field::Scheme;
-    case LSHPACK_HDR_HOST: return Field::Host;
-    case LSHPACK_HDR_CONTENT_LENGTH: return Field::ContentLength;
-    case LSHPACK_HDR_EXPECT: return Field::Expect;
-    case LSHPACK_HDR_TRANSFER_ENCODING: return Field::ConnectionSpecific;
-    case LSHPACK_HDR_UNKNOWN: break;
-    default: return Field::Other;
-    }
-    switch (name.size()) {
-    case 2: if (name == "te") return Field::Te; break;
-    case 4: if (name == "host") return Field::Host; break;
-    case 5: if (name == ":path") return Field::Path; break;
-    case 6: if (name == "expect") return Field::Expect; break;
-    case 7: if (name == ":method") return Field::Method; if (name == ":scheme") return Field::Scheme; if (name == "upgrade") return Field::ConnectionSpecific; break;
-    case 10: if (name == ":authority") return Field::Authority; if (name == "connection") return Field::ConnectionSpecific; if (name == "keep-alive") return Field::ConnectionSpecific; break;
-    case 14: if (name == "content-length") return Field::ContentLength; break;
-    case 16: if (name == "proxy-connection") return Field::ConnectionSpecific; break;
-    case 17: if (name == "transfer-encoding") return Field::ConnectionSpecific; break;
-    }
-    return Field::Other;
-}
-
-/* RFC 9113 §8.2.1: field-content (RFC 9110 §5.5) with no leading or trailing
- * whitespace. HTAB is the only control byte allowed; DEL and obs-text pass,
- * as they do through the HTTP/1 parser. */
-static inline bool validFieldValue(const char *p, unsigned n) {
-    if (n && (p[0] == ' ' || p[0] == '\t' || p[n - 1] == ' ' || p[n - 1] == '\t')) return false;
-    for (unsigned i = 0; i < n; i++) {
-        unsigned char c = (unsigned char) p[i];
-        if (c < 0x20 && c != '\t') return false;
-    }
-    return true;
-}
-
 }
 
 struct Http2Connection;
@@ -237,7 +173,7 @@ struct Http2Response {
     uint32_t unackedReceive = 0;
     uint32_t receiveWindow = http2::LOCAL_INITIAL_WINDOW_SIZE;
     bool wide = false;
-    int64_t declaredContentLength = -1;
+    uint64_t declaredContentLength = Http2Request::NO_CONTENT_LENGTH;
     uint64_t receivedBodyBytes = 0;
 
     /* END_STREAM received / sent. A reset (either direction) closes both. */
@@ -637,7 +573,6 @@ struct Http2Connection {
     /* false: the connection was closed (re-entrancy, or the peer ran out of
      * reset tokens — a stream it forced us to reset counts like one it reset). */
     inline bool streamError(uint32_t streamId, Http2Response *stream, http2::ErrorCode code);
-    inline bool dispatchRequest(Http2Response *stream, const us_quic_header_t *headers, unsigned count);
 };
 
 struct Http2Context {
@@ -662,7 +597,7 @@ struct Http2Context {
     void (*detachFromParent)(void *parent, Http2Context *ctx) = nullptr;
     /* Seconds without traffic in either direction before a connection is
      * dropped (streams in flight are aborted); 0 disables. */
-    unsigned idleTimeoutS = 10;
+    unsigned idleTimeoutS = 0;
     /* A graceful stop ran. A connection adopted after it (its TLS handshake or
      * cleartext preface was pending) sends GOAWAY with its first stream. */
     bool stopping = false;
@@ -1031,7 +966,6 @@ private:
         /* on_writable */         &onWritable,
         /* on_close */            &onClose,
         /* on_timeout */          &onTimeout,
-        /* on_long_timeout */     nullptr,
         /* on_end */              &onEnd,
         /* on_connect_error */    nullptr,
         /* on_connecting_error */ nullptr,
@@ -1257,7 +1191,9 @@ inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) 
      * socket event, or from the deferred pass if we're outside one; never
      * under the API call that got us here. */
     if (busy == 0) ctx->scheduleSweep(this);
-    if (stream->timeoutS != 255) recomputeIdleTimeout();
+    /* With no setTimeout() in effect, the streams that are left keep the context's value. */
+    if (stream->timeoutS != 255 || idleTimeoutS != ctx->idleTimeoutS) recomputeIdleTimeout();
+    else touch();
 }
 
 inline void Http2Connection::streamMaybeClosed(Http2Response *stream) {
@@ -1569,9 +1505,9 @@ inline bool Http2Connection::handleData(Http2Response *stream, bool fin, uint32_
     /* §6.9.1: the peer may not send beyond what we advertised for this stream. */
     if (length > stream->receiveWindow - stream->unackedReceive) return streamError(stream->id, stream, http2::ERR_FLOW_CONTROL_ERROR);
     stream->receivedBodyBytes += bodyLength;
-    if (stream->declaredContentLength >= 0 &&
-        (stream->receivedBodyBytes > (uint64_t) stream->declaredContentLength ||
-         (fin && stream->receivedBodyBytes != (uint64_t) stream->declaredContentLength))) {
+    if (stream->declaredContentLength != Http2Request::NO_CONTENT_LENGTH &&
+        (stream->receivedBodyBytes > stream->declaredContentLength ||
+         (fin && stream->receivedBodyBytes != stream->declaredContentLength))) {
         return streamError(stream->id, stream, http2::ERR_PROTOCOL_ERROR);
     }
     if (fin) stream->remoteClosed = true;
@@ -1644,14 +1580,11 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         /* A later HEADERS on an open stream is the trailer section: it must
          * end the stream, and trailers aren't surfaced. */
         if (existing->remoteClosed) return streamError(streamId, existing, http2::ERR_STREAM_CLOSED);
-        bool badTrailer = !endStream || tooLarge;
-        for (size_t i = 0; !badTrailer && i < list.size(); i++) {
-            const us_quic_header_t &h = list[i];
-            badTrailer = h.name[0] == ':' || !http2::validFieldName(h.name, h.name_len) || !http2::validFieldValue(h.value, h.value_len);
+        if (!endStream || tooLarge || !Http2Request::validTrailers(list.data(), list.size())) {
+            return streamError(streamId, existing, http2::ERR_PROTOCOL_ERROR);
         }
-        if (badTrailer) return streamError(streamId, existing, http2::ERR_PROTOCOL_ERROR);
         existing->remoteClosed = true;
-        if (existing->declaredContentLength >= 0 && existing->receivedBodyBytes != (uint64_t) existing->declaredContentLength) {
+        if (existing->declaredContentLength != Http2Request::NO_CONTENT_LENGTH && existing->receivedBodyBytes != existing->declaredContentLength) {
             return streamError(streamId, existing, http2::ERR_PROTOCOL_ERROR);
         }
         if (existing->data.inStream && !existing->finDelivered) {
@@ -1693,54 +1626,9 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         return !closed;
     }
 
-    /* Request validation (§8.3): pseudo-headers first, exactly the request
-     * set, each once; connection-specific fields are malformed. */
-    bool sawRegular = false, malformed = false, isConnect = false;
-    unsigned seen = 0; /* 1 :method, 2 :scheme, 4 :path, 8 :authority */
-    int64_t contentLength = -1;
-    std::string_view authority, host, path, method;
-    for (const us_quic_header_t &h : list) {
-        std::string_view name{h.name, h.name_len}, value{h.value, h.value_len};
-        http2::Field f = http2::classify(h.qpack_index, name);
-        if (f == http2::Field::Other && !http2::validFieldName(h.name, h.name_len)) { malformed = true; break; }
-        if (!http2::validFieldValue(h.value, h.value_len)) { malformed = true; break; }
-        if (name[0] == ':') {
-            if (sawRegular) { malformed = true; break; }
-            unsigned bit;
-            switch (f) {
-            case http2::Field::Method: bit = 1; method = value; isConnect = value == "CONNECT"; break;
-            case http2::Field::Scheme: bit = 2; break;
-            case http2::Field::Path: bit = 4; path = value; break;
-            case http2::Field::Authority: bit = 8; authority = value; break;
-            default: bit = 0; break;
-            }
-            if (!bit || (seen & bit) || value.empty()) { malformed = true; break; }
-            seen |= bit;
-        } else {
-            sawRegular = true;
-            switch (f) {
-            case http2::Field::ConnectionSpecific: malformed = true; break;
-            case http2::Field::Te: malformed = !(value.size() == 8 && asciiIEquals(value, "trailers")); break;
-            case http2::Field::Host: malformed = !host.empty(); host = value; break;
-            case http2::Field::ContentLength: {
-                uint64_t v = 0;
-                auto r = std::from_chars(value.data(), value.data() + value.size(), v);
-                malformed = r.ec != std::errc() || r.ptr != value.data() + value.size() || contentLength >= 0 || v > (uint64_t) INT64_MAX;
-                contentLength = (int64_t) v;
-                break;
-            }
-            default: break;
-            }
-            if (malformed) break;
-        }
-    }
-    if (!malformed) {
-        malformed = isConnect ? seen != (1 | 8) : (seen & 7) != 7;
-    }
-    if (!malformed && endStream && contentLength > 0) malformed = true;
-    if (selfDependent) malformed = true;
-    if (!malformed && !validPseudoHeaderTarget(method, path, authority, host)) malformed = true;
-    if (malformed) {
+    Http2Request req(list.data(), (unsigned) list.size());
+    const uint64_t contentLength = req.getContentLength();
+    if (req.isMalformed() || selfDependent || (endStream && contentLength != 0 && contentLength != Http2Request::NO_CONTENT_LENGTH)) {
         return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
     }
 
@@ -1749,18 +1637,13 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     stream->remoteClosed = endStream;
     streams.push_back(stream);
     progressed = true;
-    if (!http2::isKnownMethod(method)) {
+    if (!isKnownMethod(req.getCaseSensitiveMethod())) {
         /* RFC 9110 §15.6.2. The router would dispatch it to the "any" handler,
          * which cannot represent the method and would report GET. */
         stream->writeStatus("501 Not Implemented")->end();
         return !closed;
     }
-    return dispatchRequest(stream, list.data(), (unsigned) list.size());
-}
-
-inline bool Http2Connection::dispatchRequest(Http2Response *stream, const us_quic_header_t *headers, unsigned count) {
-    Http2Request req(headers, count);
-    if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && isExpect100Continue(req.getHeader("expect"))) {
+    if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && req.getExpectsContinue()) {
         stream->writeContinue();
     }
     ctx->dispatchDepth++;

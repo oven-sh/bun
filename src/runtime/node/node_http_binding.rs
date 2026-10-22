@@ -9,20 +9,12 @@ use bun_uws_sys::response::PerMessageDeflateParams;
 use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams, UpgradeResponse};
 use crate::server::ServerWebSocket;
 
-/// What keeps the server open besides its listener: the connections (counted from accept), WebSockets and requests.
 pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
-    macro_rules! open_count {
-        ($server:expr) => {
-            f64::from($server.pending_requests.get())
-                + f64::from($server.active_sockets_count())
-                + f64::from($server.active_connection_count.get())
-        };
-    }
     match server {
-        BunServer::Http(server) => open_count!(server),
-        BunServer::Https(server) => open_count!(server),
-        BunServer::DebugHttp(server) => open_count!(server),
-        BunServer::DebugHttps(server) => open_count!(server),
+        BunServer::Http(server) => server.open_count(),
+        BunServer::Https(server) => server.open_count(),
+        BunServer::DebugHttp(server) => server.open_count(),
+        BunServer::DebugHttps(server) => server.open_count(),
     }
 }
 

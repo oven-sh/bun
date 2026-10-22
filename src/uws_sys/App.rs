@@ -142,6 +142,11 @@ impl<const SSL: bool> App<SSL> {
         )
     }
 
+    /// Seconds a connection may stay silent before uWS closes it, 0 for never. `Response::timeout` overrides it for one request.
+    pub fn set_idle_timeout(&mut self, seconds: u8) {
+        c::uws_app_set_idle_timeout(Self::SSL_FLAG, self.as_raw(), seconds)
+    }
+
     pub fn set_max_http_header_size(&mut self, max_header_size: u64) {
         c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
     }
@@ -334,24 +339,24 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    /// Listens on a descriptor the caller already bound. On failure the caller keeps `fd` and gets the errno.
+    /// Listens on a descriptor the caller already bound. On failure the caller keeps `fd`.
     pub fn listen_fd(
         &mut self,
         fd: crate::LIBUS_SOCKET_DESCRIPTOR,
         backlog: c_int,
         options: c_int,
-    ) -> Result<*mut ListenSocket<SSL>, c_int> {
-        let mut error: c_int = 0;
+    ) -> Result<*mut ListenSocket<SSL>, ListenError> {
+        let mut failure = ListenError::default();
         let socket = c::uws_app_listen_fd(
             Self::SSL_FLAG,
             self.as_raw(),
             fd,
             backlog,
             options,
-            &mut error,
+            &mut failure.error,
         );
         if socket.is_null() {
-            Err(error)
+            Err(failure)
         } else {
             Ok(socket.cast::<ListenSocket<SSL>>())
         }
@@ -570,6 +575,7 @@ pub mod c {
             lenient_http_flags: u8,
             http_allow_half_open: bool,
         );
+        pub(crate) safe fn uws_app_set_idle_timeout(ssl: i32, app: &mut uws_app_t, seconds: u8);
         pub(crate) safe fn uws_app_set_max_http_header_size(
             ssl: i32,
             app: &mut uws_app_t,

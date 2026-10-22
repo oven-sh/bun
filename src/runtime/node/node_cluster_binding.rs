@@ -423,15 +423,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             JSValue::js_number_from_int32(-bun_core::ffi::errno())
         }
 
-        fn close_fd(fd: c_int) {
-            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-        }
-
-        fn set_cloexec_nonblock(fd: c_int) {
-            let fd = bun_sys::Fd::from_native(fd);
-            let _ = bun_sys::set_close_on_exec(fd);
-            let _ = bun_sys::set_nonblocking(fd);
-        }
+        use bun_uws::udp::raw::{bsd_close_socket, bsd_create_socket};
 
         if atype == -1 {
             if !address.is_string() {
@@ -451,11 +443,11 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
             // SAFETY: socket/bind FFI with a NUL-safe sockaddr built above;
             unsafe {
-                let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+                let mut err: c_int = 0;
+                let fd = bsd_create_socket(libc::AF_UNIX, libc::SOCK_STREAM, 0, &mut err);
                 if fd < 0 {
-                    return Ok(last_neg_errno());
+                    return Ok(JSValue::js_number_from_int32(-err));
                 }
-                set_cloexec_nonblock(fd);
                 // Abstract names (leading NUL) are length-delimited: a padded length binds a different name.
                 let len = if path_bytes.first() == Some(&0) {
                     core::mem::offset_of!(libc::sockaddr_un, sun_path) + path_bytes.len()
@@ -464,7 +456,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 } as libc::socklen_t;
                 if libc::bind(fd, (&raw const sun).cast(), len) != 0 {
                     let e = last_neg_errno();
-                    close_fd(fd);
+                    bsd_close_socket(fd);
                     return Ok(e);
                 }
                 let obj = JSValue::create_empty_object(global, 2);
@@ -520,11 +512,11 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         ) -> Result<c_int, i32> {
             // SAFETY: socket/setsockopt/bind FFI on a freshly created fd with
             unsafe {
-                let fd = libc::socket(family, socktype, 0);
+                let mut err: c_int = 0;
+                let fd = bsd_create_socket(family, socktype, 0, &mut err);
                 if fd < 0 {
-                    return Err(-bun_core::ffi::errno());
+                    return Err(-err);
                 }
-                set_cloexec_nonblock(fd);
 
                 let one: c_int = 1;
                 let one_ptr = (&raw const one).cast::<core::ffi::c_void>();
@@ -577,7 +569,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
 
                 if libc::bind(fd, core::ptr::from_ref(ss).cast(), ss_len) != 0 {
                     let e = -bun_core::ffi::errno();
-                    close_fd(fd);
+                    bsd_close_socket(fd);
                     return Err(e);
                 }
                 Ok(fd)
@@ -716,8 +708,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
     }
 }
 
-/// Returns 0 if `fd` is an unconnected socket of the wanted type, or a negative errno.
-pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
+/// Takes ownership of `fd`, an unconnected socket of the wanted type that nothing in this process owns. Returns 0 or a negative errno.
+pub(crate) fn cluster_adopt_fd(fd: f64, want_dgram: bool) -> i32 {
     #[cfg(not(windows))]
     {
         let number = fd;
@@ -750,6 +742,9 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
         if rc != 0 || ty != wanted {
             return -bun_sys::UV_E::INVAL;
         }
+        if bun_uws::udp::raw::bsd_adopt_socket(fd) != 0 {
+            return -bun_sys::UV_E::EXIST;
+        }
         if ty == libc::SOCK_STREAM {
             // SAFETY: sockaddr_storage is plain data; getpeername only writes within `peer_len`.
             let connected = unsafe {
@@ -759,6 +754,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
                 libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
             };
             if connected {
+                bun_uws::udp::raw::bsd_disown_socket(fd);
                 return -bun_sys::UV_E::INVAL;
             }
         }
@@ -772,19 +768,7 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
 }
 
 pub(crate) fn cluster_close_handle(fd: f64) {
-    #[cfg(windows)]
-    {
-        if fd.is_finite() && fd >= 0.0 {
-            bun_uws::socket_transfer::bsd_close_socket(
-                fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
-            );
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let fd = fd as i32;
-        if fd >= 0 {
-            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
-        }
+    if fd.is_finite() && fd >= 0.0 {
+        bun_uws::socket_transfer::bsd_close_socket(fd as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR);
     }
 }

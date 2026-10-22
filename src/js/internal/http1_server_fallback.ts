@@ -2,16 +2,10 @@
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
 const { STATUS_CODES, kPendingCallbacks, kRequest, http1ServerPipeline } = require("internal/http");
-const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 
-const kHttp1Connections = Symbol("http1Connections");
+const kConnections = Symbol("http.server.connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
-// Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
-const kHttp1MessageOpen = Symbol("http1MessageOpen");
-// When the connection was accepted or its current request began. 0 between requests and after a request timeout was reported.
-const kHttp1MessageStart = Symbol("http1MessageStart");
-const monotonicNowMs = $bindgen("Timer.bind.ts", "monotonicNowMs");
 const reportError = globalThis.reportError;
 
 function rethrowUncaught(err) {
@@ -392,7 +386,7 @@ function connectionListenerHTTP1(server, socket, options) {
     onResponseFinishHandleSocket,
     resetSocketTimeout,
   } = http1ServerPipeline;
-  const { allMethods } = process.binding("http_parser");
+  const { allMethods, ConnectionsList } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
   const IncomingMessageClass: new (socket) => Http1FallbackRequest =
@@ -408,18 +402,12 @@ function connectionListenerHTTP1(server, socket, options) {
   if (timeout && typeof socket.setTimeout === "function") socket.setTimeout(timeout);
   socket.on("timeout", socketOnTimeout);
 
-  const connections = (server[kHttp1Connections] ??= new SafeSet());
-  connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
-  socket[kHttp1MessageOpen] = false;
-  // Like Node, headersTimeout also covers a connection that never sends anything.
-  socket[kHttp1MessageStart] = monotonicNowMs();
   // Like Node's connectionListenerInternal. readStart() skips a socket that still has an earlier connection's read-gate mark.
   socket._paused = false;
   const connectionFrame = AsyncContextFrame.current();
 
   const kOnHeaders = HTTPParser.kOnHeaders | 0;
-  const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
   const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
   const kOnBody = HTTPParser.kOnBody | 0;
   const kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
@@ -428,7 +416,8 @@ function connectionListenerHTTP1(server, socket, options) {
   // into the parser. https://github.com/nodejs/node/blob/main/lib/_http_server.js
   const lenientFlags = calculateLenientFlags(server.httpValidation, server.insecureHTTPParser);
   const parser = new HTTPParser();
-  parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags);
+  const connections = (server[kConnections] ??= new (ConnectionsList as new () => object)());
+  parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags, connections);
   parser.socket = socket;
   socket.parser = parser;
   // Node takes its parser from the node:_http_common freelist, which seeds MAX_HEADER_PAIRS.
@@ -444,11 +433,6 @@ function connectionListenerHTTP1(server, socket, options) {
   // Like node:_http_common: after the parser's first kOnHeaders flush (32 fields, or trailers), kOnHeadersComplete gets no headers and no url.
   let flushedHeaders = [];
   let flushedUrl = "";
-  parser[kOnMessageBegin] = function onHttp1MessageBegin() {
-    socket[kHttp1MessageOpen] = true;
-    socket[kHttp1MessageStart] = monotonicNowMs();
-  };
-
   parser[kOnHeaders] = function onHttp1Headers(headers, url) {
     for (let i = 0; i < headers.length; i++) $arrayPush(flushedHeaders, headers[i]);
     flushedUrl += url;
@@ -629,8 +613,6 @@ function connectionListenerHTTP1(server, socket, options) {
     }
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
-    socket[kHttp1MessageOpen] = false;
-    socket[kHttp1MessageStart] = 0;
     // Fields flushed after the header section are the trailers.
     const rawTrailers = flushedHeaders;
     if (rawTrailers.length !== 0) flushedHeaders = [];
@@ -670,7 +652,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.removeListener("finish", onHttp1SocketFinish);
       socket.removeListener("close", onHttp1SocketCloseFlush);
       socket.removeListener("close", onHttp1SocketClose);
-      connections.delete(socket);
+      parser.remove();
       try {
         parser.close();
       } catch {}
@@ -724,7 +706,7 @@ function connectionListenerHTTP1(server, socket, options) {
     socket._httpMessage?.[kHttp1ResponseHandle]?.flushed?.();
   }
   function onHttp1SocketClose() {
-    connections.delete(socket);
+    parser.remove();
     const inflight = socket._httpMessage;
     // The write callbacks that still wait fail, before the response's 'close', as in Node.
     inflight?.[kHttp1ResponseHandle]?.socketEnded?.(() =>
@@ -759,39 +741,26 @@ function connectionListenerHTTP1(server, socket, options) {
 }
 
 function closeIdleHttp1Connections(server) {
-  const connections = server[kHttp1Connections];
-  if (!connections) return;
-  for (const socket of connections) {
-    if (!socket[kHttp1ActiveRequests] && !socket[kHttp1MessageOpen] && !socket.destroyed) {
-      socket.destroy();
-    }
+  const connections = server[kConnections]?.idle() ?? [];
+  for (let i = 0; i < connections.length; i++) {
+    const { socket } = connections[i];
+    if (!socket[kHttp1ActiveRequests]) socket.destroy();
   }
 }
 
 function closeAllHttp1Connections(server) {
-  const connections = server[kHttp1Connections];
-  if (!connections) return;
-  for (const socket of connections) {
-    if (!socket.destroyed) socket.destroy();
+  const connections = server[kConnections]?.all() ?? [];
+  for (let i = 0; i < connections.length; i++) {
+    connections[i].socket.destroy();
   }
 }
 
 // The headersTimeout / requestTimeout sweep for these connections. The server's checkConnections() calls it.
 function checkHttp1Connections(server, headersTimeout, requestTimeout, onRequestTimeout) {
-  const connections = server[kHttp1Connections];
-  if (!connections || connections.size === 0) return;
-  const now = monotonicNowMs();
-  for (const socket of connections) {
-    const start = socket[kHttp1MessageStart];
-    if (!start || socket.destroyed) continue;
-    const elapsed = now - start;
-    if (
-      (requestTimeout > 0 && elapsed > requestTimeout) ||
-      (headersTimeout > 0 && elapsed > headersTimeout && !socket.parser?.headersCompleted())
-    ) {
-      socket[kHttp1MessageStart] = 0;
-      onRequestTimeout(socket);
-    }
+  const expired = server[kConnections]?.expired(headersTimeout, requestTimeout) ?? [];
+  for (let i = 0; i < expired.length; i++) {
+    const { socket } = expired[i];
+    if (!socket.destroyed) onRequestTimeout(socket);
   }
 }
 http1ServerPipeline.checkHttp1Connections = checkHttp1Connections;
@@ -800,5 +769,4 @@ export default {
   connectionListenerHTTP1,
   closeIdleHttp1Connections,
   closeAllHttp1Connections,
-  kHttp1Connections,
 };

@@ -105,7 +105,9 @@ pub(crate) trait ReadBytesHandler {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, SizeType};
+pub(crate) use bun_jsc::webcore_types::{
+    Blob, BlobContentType, BodyFacts, ClosingState, MAX_SIZE, SizeType,
+};
 
 /// 1: Initial
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
@@ -3019,6 +3021,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    body_facts: Cell::new(blob.body_facts.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -5942,17 +5945,7 @@ impl Any {
     }
 
     pub(crate) fn from_owned_slice(bytes: Vec<u8>) -> Any {
-        Any::InternalBlob(Internal {
-            bytes,
-            was_string: false,
-        })
-    }
-
-    pub(crate) fn from_array_list(list: Vec<u8>) -> Any {
-        Any::InternalBlob(Internal {
-            bytes: list,
-            was_string: false,
-        })
+        Any::InternalBlob(bytes.into())
     }
 
     /// Assumed that AnyBlob itself is covered by the caller.
@@ -6192,7 +6185,7 @@ impl Any {
         let Any::InternalBlob(ib) = self else {
             unreachable!()
         };
-        let blob = Blob::init(core::mem::take(&mut ib.bytes), global);
+        let blob = ib.to_blob(global);
         *self = Any::Blob(Blob::default());
         blob
     }
@@ -6302,9 +6295,20 @@ impl Any {
 
     pub(crate) fn was_string(&self) -> bool {
         match self {
-            Any::Blob(b) => b.charset.get() == strings::AsciiStatus::AllAscii,
+            Any::Blob(b) => {
+                b.body_facts.get().contains(BodyFacts::STRING)
+                    || b.charset.get() == strings::AsciiStatus::AllAscii
+            }
             Any::WTFStringImpl(_) => true,
-            Any::InternalBlob(ib) => ib.was_string,
+            Any::InternalBlob(ib) => ib.facts.contains(BodyFacts::STRING),
+        }
+    }
+
+    pub(crate) fn set_facts(&mut self, facts: BodyFacts) {
+        match self {
+            Any::Blob(blob) => blob.body_facts.set(facts),
+            Any::InternalBlob(internal) => internal.facts = facts,
+            Any::WTFStringImpl(_) => {}
         }
     }
 
@@ -6357,10 +6361,34 @@ impl Any {
 #[derive(Default)]
 pub struct Internal {
     pub(crate) bytes: Vec<u8>,
-    pub(crate) was_string: bool,
+    pub(crate) facts: BodyFacts,
+}
+
+impl From<Vec<u8>> for Internal {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            facts: BodyFacts::empty(),
+        }
+    }
 }
 
 impl Internal {
+    /// The UTF-8 bytes of a JS string.
+    pub(crate) fn from_string_bytes(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            facts: BodyFacts::STRING,
+        }
+    }
+
+    /// Moves the bytes into a `Blob`, which can be shared.
+    pub(crate) fn to_blob(&mut self, global_this: &JSGlobalObject) -> Blob {
+        let blob = Blob::init(self.to_owned_slice(), global_this);
+        blob.body_facts.set(self.facts);
+        blob
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         self.bytes.capacity()
     }
@@ -6408,7 +6436,7 @@ impl Internal {
         // MimeType::{TEXT,OTHER} are `const` (not `static`), so
         // borrowing `.value` would borrow a temporary. Inline the literals
         // (matches `MimeType::init_comptime` values).
-        if self.was_string {
+        if self.facts.contains(BodyFacts::STRING) {
             return b"text/plain;charset=utf-8"; // MimeType::TEXT
         }
         b"application/octet-stream" // MimeType::OTHER

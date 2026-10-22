@@ -257,6 +257,8 @@ JSValue HTTPParser::remove(JSGlobalObject* globalObject, JSCell* thisParser)
         RETURN_IF_EXCEPTION(scope, {});
         connections->popActive(globalObject, thisParser);
         RETURN_IF_EXCEPTION(scope, {});
+        // remove() can run inside execute(), and the callbacks for the rest of the buffer would add the parser again.
+        m_connectionsList.clear();
     }
 
     return jsUndefined();
@@ -271,6 +273,7 @@ JSValue HTTPParser::initialize(JSGlobalObject* globalObject, JSCell* thisParser,
 
     if (connections) {
         m_connectionsList.set(vm, thisParser, connections);
+        m_receivedData = false;
 
         // This protects from a DoS attack where an attacker establishes
         // the connection without sending any data on applications where
@@ -355,6 +358,7 @@ int HTTPParser::onMessageBegin()
     m_numValues = 0;
     m_headersCompleted = false;
     m_chunkExtensionsNread = 0;
+    m_receivedData = true;
     m_lastMessageStart = uv_hrtime();
     m_url.reset();
     m_statusMessage.reset();

@@ -1,7 +1,7 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tmpdirSync } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { closeSync, openSync, readFileSync } from "node:fs";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -341,5 +341,44 @@ describe("Bun.serve() throws the error of the call that failed", () => {
       message: "permission denied 127.0.0.1:80",
     });
     expect(exitCode).toBe(0);
+  });
+
+  const facts = (listen: () => { stop(closeActiveConnections: boolean): unknown }) => {
+    try {
+      listen().stop(true);
+      return "listening";
+    } catch ({ code, errno, syscall, address, port, path }: any) {
+      return { code, errno: getSystemErrorName(errno), syscall, address, port, path };
+    }
+  };
+
+  test.skipIf(isWindows || !hasIPv4)("with the properties Bun.listen() gives the same failure", () => {
+    using dir = tempDir("serve-listen-error", {});
+    using occupant = serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const missing = join(String(dir), "missing", "a.sock");
+    const tooLong = join(String(dir), Buffer.alloc(200, "a").toString() + ".sock");
+    const rows = [
+      [
+        { hostname: "127.0.0.1", port: occupant.port },
+        { code: "EADDRINUSE", address: "127.0.0.1", port: occupant.port },
+      ],
+      [{ unix: missing }, { code: "ENOENT", address: missing, path: missing }],
+      [{ unix: tooLong }, { code: "ENAMETOOLONG", address: tooLong, path: tooLong }],
+    ] as const;
+    for (const [address, { code, ...rest }] of rows) {
+      const expected = { port: undefined, path: undefined, ...rest, code, errno: code, syscall: "listen" };
+      expect(facts(() => serve({ ...address, fetch: () => new Response() }))).toEqual(expected);
+      expect(facts(() => Bun.listen({ ...address, socket: { data() {} } }))).toEqual(expected);
+    }
+  });
+
+  test.skipIf(isWindows)("Bun.listen({ fd }) reports the code listen() failed with", () => {
+    using dir = tempDir("serve-listen-fd", { "file.txt": "" });
+    const fd = openSync(join(String(dir), "file.txt"), "r");
+    const listen = () => Bun.listen({ fd, socket: { data() {} } });
+    const expected = { syscall: "listen", address: undefined, port: undefined, path: undefined };
+    expect(facts(listen)).toEqual({ ...expected, code: "ENOTSOCK", errno: "ENOTSOCK" });
+    closeSync(fd);
+    expect(facts(listen)).toEqual({ ...expected, code: "EBADF", errno: "EBADF" });
   });
 });

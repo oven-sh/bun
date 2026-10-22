@@ -247,6 +247,7 @@ impl Route {
                     };
                     route.pending_responses.with_mut(|v| v.push(pending));
                     resp.on_aborted_this(Self::on_pending_response_aborted, this);
+                    resp.suspend_timeout();
                     req.set_yield(false);
                 }
                 State::Err(_log) => {
@@ -283,7 +284,7 @@ impl Route {
     /// Entering `State::Building` counts as a pending request on the server:
     /// the plugin load and the build finish on later event-loop turns and call
     /// back into it (`on_plugins_resolved`, `on_complete`), so its
-    /// `deinit_if_we_can` must not free it before then. Nothing else holds it
+    /// `apply_phase` must not release it before then. Nothing else holds it
     /// on the route's behalf; the clients waiting in `pending_responses` only
     /// count as connections and can disconnect at any time. `finish_building`
     /// releases the pending request when the route leaves `State::Building`.
@@ -308,7 +309,7 @@ impl Route {
     /// Leaves `State::Building`: answers the requests that arrived while the
     /// route was building, then releases the pending request `schedule_bundle`
     /// took on the server. The release comes last because it runs the server's
-    /// idle pass (`deinit_if_we_can`), which schedules the server's deinit when
+    /// idle pass (`apply_phase`), which schedules the server's deinit when
     /// this build was the only thing still keeping a stopped server alive.
     /// The build task will not deliver (the context that started it stopped, or the VM is going):
     /// what waits for the page is answered as for a failed build, and the server is released.
@@ -598,11 +599,11 @@ impl Route {
                     let static_route = RefPtr::new(static_route);
                     self.assets
                         .with_mut(|assets| assets.push((route_path.into(), static_route.clone())));
-                    bun_core::handle_oom(server.append_static_route(
+                    server.append_static_route(
                         route_path,
                         AnyRoute::Static(static_route),
                         MethodOptional::Any,
-                    ));
+                    );
                 }
 
                 let (mut html_route, html_route_path) =
@@ -612,18 +613,15 @@ impl Route {
                 if !server.config().static_routes.iter().any(|entry| {
                     matches!(entry.route, AnyRoute::Html(_)) && *entry.path == *html_route_path
                 }) {
-                    bun_core::handle_oom(server.append_static_route(
+                    server.append_static_route(
                         &html_route_path,
                         AnyRoute::Static(RefPtr::new(html_route)),
                         MethodOptional::Any,
-                    ));
+                    );
                 }
                 self.state.set(State::Html(html_route_clone));
 
-                if !bun_core::handle_oom(server.reload_static_routes()) {
-                    // Server has shutdown, so it won't receive any new requests
-                    // TODO: handle this case
-                }
+                server.reload_static_routes();
             }
             BundleV2Result::Pending => unreachable!(),
         }

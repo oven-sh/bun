@@ -134,11 +134,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * parser when 'close' is emitted on the socket); any further request data
          * in the buffer is not parsed. */
         HTTP_NODE_PARSING_STOPPED = 1 << 12,
-        /* Socket reads were paused because pipelined responses are (or were)
-         * queued. Reads resume once the queue has drained AND the socket has no
-         * outgoing backpressure left (Node's flood prevention pauses the socket
-         * while responses back up). */
-        HTTP_NODE_READS_PAUSED = 1 << 13,
         /* An accepted Upgrade request with a body. The body is parsed and
          * delivered through the request as usual; once it completes, the
          * connection switches into CONNECT-style tunnel mode (isConnectRequest)
@@ -173,7 +168,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http socket.destroySoon() with outgoing bytes still queued: close when they have flushed, whether or not the response in flight has ended. */
         HTTP_NODE_CLOSE_AFTER_DRAIN = 1 << 21,
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
-         * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
+         * deferred close). NodeHttpSocketHooks::onClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
         /* node:http socket.end() or destroySoon() ended the write side. Until the socket closes, the request in flight still gets its body. */
         HTTP_NODE_HALF_CLOSED = 1 << 23,
@@ -194,13 +189,25 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
-        /* node:http: call Bun__NodeHTTP__onReadParsed once the read being parsed is consumed. */
+        /* node:http: call NodeHttpSocketHooks::onReadParsed once the read being parsed is consumed. */
         HTTP_NODE_NOTIFY_READ_PARSED = 1 << 19,
 
-        HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
+        HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
             | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
             | HTTP_NODE_HALF_CLOSED | HTTP_NODE_RAW_READS | HTTP_NODE_SHUTDOWN_AFTER_DRAIN,
+    };
+
+    /* Why reads are paused. HttpResponse::pauseReads() and resumeReads() keep the socket paused while any reason is set. */
+    enum : uint8_t {
+        /* The request body's reader is full: Bun.serve's high-water mark, node:http's req.pause(). */
+        READ_PAUSE_BODY = 1,
+        /* Bun.serve: a read's worth of pipelined requests is parked behind the pending response. */
+        READ_PAUSE_PARKED = 2,
+        /* node:http: responses are backed up, so no further request is read (Node's flood prevention). */
+        READ_PAUSE_FLOOD = 4,
+        /* node:http: the JS socket stopped reading. */
+        READ_PAUSE_SOCKET = 8,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -249,8 +256,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
     /* Current state (content-length sent, status sent, write called, etc */
     uint32_t state = 0;
-    static constexpr uint8_t DEFAULT_IDLE_TIMEOUT = 10; // seconds
-    uint8_t idleTimeout = DEFAULT_IDLE_TIMEOUT;
+    /* HttpContextData::idleTimeout, until HttpResponse::setTimeout() overrides it. The next request starts from the context's value again. */
+    uint8_t idleTimeout = 0;
+    uint8_t readPauseReasons = 0;
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
@@ -316,6 +324,8 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * Mirrors last_message_start_/headers_completed_ in Node's http parser
      * ConnectionsList, which back server.headersTimeout/requestTimeout. */
     uint64_t lastMessageStartMs = 0;
+    /* socket.bytesRead: bytes read from the connection, after TLS decryption. */
+    uint64_t bytesRead = 0;
     /* Trailer fields set via response.addTrailers(), pre-rendered as
      * "name: value\r\n" lines. Written between the terminating 0 chunk and the
      * final CRLF of a chunked response (RFC 9112 7.1.2); non-empty also forces

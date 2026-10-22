@@ -1,145 +1,139 @@
-//! HTTP/2 stream state machine (RFC 9113 §5.1). Pure. Part of the from-scratch rewrite.
-//!
-//! The integer values of `State` match the contract the JS layer expects (they are passed to JS
-//! as the stream `state`): IDLE=1, OPEN=2, RESERVED_LOCAL=3, RESERVED_REMOTE=4,
-//! HALF_CLOSED_LOCAL=5, HALF_CLOSED_REMOTE=6, CLOSED=7.
+//! One `node:http2` stream, and the table of a session's streams.
 
-#![allow(dead_code)]
+use std::cell::Cell;
+use std::rc::Rc;
 
+use bun_collections::HashMap;
+use bun_http_types::h2::flow_control::{RecvWindow, SendWindow};
+use bun_http_types::h2::frame::ErrorCode;
+use bun_http_types::h2::stream::State;
+use bun_ptr::JsCell;
+
+/// Request methods that change how the response body is framed (nghttp2's METH_HEAD and METH_CONNECT flags).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub(crate) enum State {
-    Idle = 1,
-    Open = 2,
-    ReservedLocal = 3,
-    ReservedRemote = 4,
-    HalfClosedLocal = 5,
-    HalfClosedRemote = 6,
-    Closed = 7,
+pub(crate) enum RequestMethod {
+    Other,
+    Head,
+    Connect,
 }
 
-/// A transition-driving event. `send_*` = we initiated; `recv_*` = peer initiated.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Event {
-    SendHeaders,
-    RecvHeaders,
-    SendHeadersEndStream,
-    RecvHeadersEndStream,
-    SendEndStream, // END_STREAM on DATA/trailers
-    RecvEndStream,
-    SendPushPromise, // reserve a stream (server push)
-    RecvPushPromise, // peer reserves a stream
-    SendRst,
-    RecvRst,
+impl RequestMethod {
+    pub(crate) fn from_method(value: &[u8]) -> Self {
+        match value {
+            b"HEAD" => RequestMethod::Head,
+            b"CONNECT" => RequestMethod::Connect,
+            _ => RequestMethod::Other,
+        }
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum TransitionError {
-    /// §5.1: a frame for a stream where it is not allowed.
-    Protocol,
-    /// §5.1: a frame (other than PRIORITY) on a fully closed stream.
-    StreamClosed,
+/// Runs `f` on a copy of the cell's value and stores the result back.
+#[inline]
+pub(crate) fn update<T: Copy, R>(cell: &Cell<T>, f: impl FnOnce(&mut T) -> R) -> R {
+    let mut value = cell.get();
+    let result = f(&mut value);
+    cell.set(value);
+    result
 }
 
-/// Apply `ev` to `state`, returning the new state per §5.1, or an error the caller raises.
-pub(crate) fn transition(state: State, ev: Event) -> Result<State, TransitionError> {
-    use Event::*;
-    use State::*;
-    Ok(match state {
-        Idle => match ev {
-            SendHeaders | RecvHeaders => Open,
-            SendHeadersEndStream => HalfClosedLocal,
-            RecvHeadersEndStream => HalfClosedRemote,
-            SendPushPromise => ReservedLocal,
-            RecvPushPromise => ReservedRemote,
-            // §5.1: RST_STREAM / DATA / etc. on an idle stream is a connection PROTOCOL_ERROR.
-            _ => return Err(TransitionError::Protocol),
-        },
-        ReservedLocal => match ev {
-            SendHeaders => HalfClosedRemote,
-            // RFC 9113 5.1: reserved -> HEADERS moves to half-closed; END_STREAM on that same
-            // HEADERS closes the stream.
-            SendHeadersEndStream => Closed,
-            SendRst | RecvRst => Closed,
-            _ => return Err(TransitionError::Protocol),
-        },
-        ReservedRemote => match ev {
-            RecvHeaders => HalfClosedLocal,
-            // RFC 9113 5.1: reserved -> HEADERS moves to half-closed; END_STREAM on that same
-            // HEADERS closes the stream.
-            RecvHeadersEndStream => Closed,
-            SendRst | RecvRst => Closed,
-            _ => return Err(TransitionError::Protocol),
-        },
-        Open => match ev {
-            SendEndStream | SendHeadersEndStream => HalfClosedLocal,
-            RecvEndStream | RecvHeadersEndStream => HalfClosedRemote,
-            SendRst | RecvRst => Closed,
-            SendHeaders | RecvHeaders => Open, // trailing / info HEADERS
-            _ => return Err(TransitionError::Protocol),
-        },
-        HalfClosedLocal => match ev {
-            RecvEndStream | RecvHeadersEndStream => Closed,
-            RecvHeaders => HalfClosedLocal,
-            SendRst | RecvRst => Closed,
-            _ => return Err(TransitionError::Protocol),
-        },
-        HalfClosedRemote => match ev {
-            SendEndStream | SendHeadersEndStream => Closed,
-            SendHeaders => HalfClosedRemote,
-            SendRst | RecvRst => Closed,
-            // §5.1: receiving anything but WINDOW_UPDATE/PRIORITY/RST here is STREAM_CLOSED.
-            RecvEndStream | RecvHeaders | RecvHeadersEndStream => {
-                return Err(TransitionError::StreamClosed);
-            }
-            _ => return Err(TransitionError::Protocol),
-        },
-        Closed => match ev {
-            SendRst | RecvRst => Closed,
-            // §5.1: a frame on a closed stream is STREAM_CLOSED (PRIORITY handled before here).
-            _ => return Err(TransitionError::StreamClosed),
-        },
-    })
+pub(crate) struct Stream {
+    pub state: Cell<State>,
+    pub send_window: Cell<SendWindow>,
+    pub recv_window: Cell<RecvWindow>,
+    /// A final header block arrived, so the next inbound HEADERS is a trailer section (RFC 9113 §8.1).
+    pub recv_final_headers: Cell<bool>,
+    /// The request had a `host`, so its trailer section can't have another.
+    pub recv_host: Cell<bool>,
+    /// Declared `content-length` of the inbound message (RFC 9113 §8.1.1).
+    pub content_length: Cell<Option<u64>>,
+    /// DATA octets received so far, without padding.
+    pub recv_body_bytes: Cell<u64>,
+    /// We had already sent GOAWAY when the peer opened this stream.
+    pub opened_after_goaway: Cell<bool>,
+    /// Client only: `:method` of the request this stream answers.
+    pub request_method: Cell<Option<RequestMethod>>,
 }
 
-/// §6.1/§5.1: DATA may only be received in `open` or `half-closed (local)`. In particular a
-/// promised stream still in `reserved (remote)` must not be handed DATA before its response
-/// HEADERS arrive. (Locally-opened streams the engine never saw are shimmed by the
-/// caller before this check.)
-pub(crate) fn can_receive_data(state: State) -> bool {
-    matches!(state, State::Open | State::HalfClosedLocal)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn open_lifecycle() {
-        assert_eq!(transition(State::Idle, Event::RecvHeaders), Ok(State::Open));
-        assert_eq!(
-            transition(State::Open, Event::RecvEndStream),
-            Ok(State::HalfClosedRemote)
-        );
-        assert_eq!(
-            transition(State::HalfClosedRemote, Event::SendEndStream),
-            Ok(State::Closed)
-        );
+impl Stream {
+    pub(crate) fn new(state: State, initial_send: u32, initial_recv: u32) -> Self {
+        Stream {
+            state: Cell::new(state),
+            send_window: Cell::new(SendWindow::new(initial_send)),
+            recv_window: Cell::new(RecvWindow::new(initial_recv)),
+            recv_final_headers: Cell::new(false),
+            recv_host: Cell::new(false),
+            content_length: Cell::new(None),
+            recv_body_bytes: Cell::new(0),
+            opened_after_goaway: Cell::new(false),
+            request_method: Cell::new(None),
+        }
     }
 
-    #[test]
-    fn rst_on_idle_is_protocol_error() {
-        assert_eq!(
-            transition(State::Idle, Event::RecvRst),
-            Err(TransitionError::Protocol)
-        );
+    /// The stream error that answers an inbound DATA frame, if the stream has to refuse it.
+    pub(crate) fn data_refusal(&self, is_server: bool) -> Option<ErrorCode> {
+        if !self.state.get().can_receive() {
+            return Some(ErrorCode::STREAM_CLOSED);
+        }
+        // RFC 9113 §8.1: a response starts with HEADERS. nghttp2 ends the session here, fetch() resets the stream.
+        if !is_server && !self.recv_final_headers.get() {
+            return Some(ErrorCode::PROTOCOL_ERROR);
+        }
+        None
     }
 
-    #[test]
-    fn data_after_peer_end_is_stream_closed() {
-        assert_eq!(
-            transition(State::HalfClosedRemote, Event::RecvEndStream),
-            Err(TransitionError::StreamClosed)
-        );
+    /// Returns true if the DATA received so far differs from the declared `content-length` (RFC 9113 §8.1.1).
+    pub(crate) fn body_contradicts_content_length(&self) -> bool {
+        self.content_length
+            .get()
+            .is_some_and(|declared| declared != self.recv_body_bytes.get())
+    }
+
+    /// Returns true if more DATA arrived than the declared `content-length`.
+    pub(crate) fn body_exceeds_content_length(&self) -> bool {
+        self.content_length
+            .get()
+            .is_some_and(|declared| self.recv_body_bytes.get() > declared)
+    }
+}
+
+/// Entries are shared, so a caller can hold one across JS that removes it from the table.
+#[derive(Default)]
+pub(crate) struct StreamTable {
+    map: JsCell<HashMap<u32, Rc<Stream>>>,
+}
+
+impl StreamTable {
+    #[inline]
+    pub(crate) fn get(&self, id: u32) -> Option<Rc<Stream>> {
+        self.map.get().get(&id).cloned()
+    }
+
+    #[inline]
+    pub(crate) fn contains(&self, id: u32) -> bool {
+        self.map.get().contains_key(&id)
+    }
+
+    pub(crate) fn insert(&self, id: u32, stream: Stream) -> Rc<Stream> {
+        let stream = Rc::new(stream);
+        self.map.with_mut(|map| map.insert(id, Rc::clone(&stream)));
+        stream
+    }
+
+    pub(crate) fn remove(&self, id: u32) {
+        let removed = self.map.with_mut(|map| map.remove(&id));
+        drop(removed);
+    }
+
+    /// Calls `f` for every entry. `f` must not run JS or change the table.
+    pub(crate) fn for_each(&self, mut f: impl FnMut(u32, &Stream)) {
+        for (id, stream) in self.map.get().iter() {
+            f(*id, stream);
+        }
+    }
+
+    /// Drops the entries `keep` returns false for. `keep` must not run JS.
+    pub(crate) fn retain(&self, mut keep: impl FnMut(&Stream) -> bool) {
+        self.map
+            .with_mut(|map| map.retain(|_, stream| keep(stream)));
     }
 }

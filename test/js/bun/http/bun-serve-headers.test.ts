@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { request } from "node:http";
 import * as net from "node:net";
 import { join } from "node:path";
-import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
+import { brotliCompressSync, deflateSync, gunzipSync, gzipSync, zstdCompressSync } from "node:zlib";
 
 // https://github.com/oven-sh/bun/issues/9180
 test("weird headers", async () => {
@@ -543,5 +543,176 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
       fetch: req => fetch(`http://127.0.0.1:${upstream.port}/`, { method: req.method }),
     });
     expect(await readWire(proxy, "HEAD")).toEqual({ encoding: "gzip", length: String(gzipped.length), body: "" });
+  });
+
+  // With `late`, the upstream holds most of the body back until fetch() has resolved.
+  let fetched = Promise.withResolvers<void>();
+  function serveGzip(late: boolean) {
+    const headers = { "content-encoding": "gzip", "content-type": "text/plain", "x-upstream": "1" };
+    if (!late) return Bun.serve({ port: 0, fetch: () => new Response(gzipped, { headers }) });
+    return Bun.serve({
+      port: 0,
+      fetch() {
+        fetched = Promise.withResolvers();
+        return new Response(
+          async function* () {
+            yield gzipped.subarray(0, 10);
+            await fetched.promise;
+            yield gzipped.subarray(10);
+          },
+          { headers },
+        );
+      },
+    });
+  }
+  async function fetchUpstream(upstream: Bun.Server<undefined>, init?: BunFetchRequestInit) {
+    const res = await fetch(`http://127.0.0.1:${upstream.port}/`, init);
+    fetched.resolve();
+    return res;
+  }
+
+  async function proxied(late: boolean, shapes: Record<string, (res: Response) => Response | Promise<Response>>) {
+    using upstream = serveGzip(late);
+    using proxy = Bun.serve({
+      port: 0,
+      fetch: async req =>
+        shapes[decodeURIComponent(new URL(req.url).pathname.slice(1))](
+          await fetchUpstream(upstream, { decompress: !req.url.endsWith("?raw") }),
+        ),
+    });
+    const seen: Record<string, unknown> = {};
+    for (const name of Object.keys(shapes)) {
+      for (const raw of ["", "?raw"]) {
+        const res = await fetch(`http://127.0.0.1:${proxy.port}/${encodeURIComponent(name)}${raw}`, {
+          decompress: false,
+        });
+        const body = Buffer.from(await res.arrayBuffer());
+        seen[name + raw] = {
+          encoding: res.headers.get("content-encoding"),
+          upstream: res.headers.get("x-upstream"),
+          body: body.equals(gzipped) ? "gzip" : body.toString() === payload ? "plain" : body.toString("latin1"),
+        };
+      }
+    }
+    return seen;
+  }
+
+  const expected = (shapes: object, decoded: object) =>
+    Object.fromEntries(
+      Object.keys(shapes).flatMap(name => [
+        [name, decoded],
+        // fetch() left these bytes alone, so the header still describes them.
+        [name + "?raw", { encoding: "gzip", upstream: "1", body: "gzip" }],
+      ]),
+    );
+
+  describe.each([
+    ["the body arrives with the head", false],
+    ["the body arrives after the head", true],
+  ])("%s", (_, late) => {
+    test("is dropped from a Response that wraps the decoded body", async () => {
+      const shapes: Record<string, (res: Response) => Response> = {
+        "new Response(res.body, res)": res => new Response(res.body, res),
+        "{ headers: res.headers }": res => new Response(res.body, { headers: res.headers }),
+        "{ status, statusText, headers }": res =>
+          new Response(res.body, { status: res.status, statusText: res.statusText, headers: res.headers }),
+        "{ headers: new Headers(res.headers) }": res => new Response(res.body, { headers: new Headers(res.headers) }),
+        "{ headers: Object.fromEntries(res.headers) }": res =>
+          new Response(res.body, { headers: Object.fromEntries(res.headers) }),
+        "wrapped twice": res => {
+          const once = new Response(res.body, res);
+          return new Response(once.body, once);
+        },
+        "clone of a wrapper": res => new Response(res.body, res).clone(),
+        "body of a clone": res => new Response(res.clone().body, res),
+        "through a Request": res =>
+          new Response(new Request("http://example.com/", { method: "POST", body: res.body }).body, res),
+      };
+      expect(await proxied(late, shapes)).toEqual(expected(shapes, { encoding: null, upstream: "1", body: "plain" }));
+    });
+
+    test("is dropped from both branches of tee()", async () => {
+      const shapes: Record<string, (res: Response) => Response> = {
+        "first": res => new Response(res.body!.tee()[0], res),
+        "second": res => new Response(res.body!.tee()[1], res),
+        "tee of a branch": res => new Response(res.body!.tee()[0].tee()[1], res),
+      };
+      expect(await proxied(late, shapes)).toEqual(expected(shapes, { encoding: null, upstream: "1", body: "plain" }));
+    });
+
+    test("is dropped from a Response that wraps the decoded Blob", async () => {
+      const shapes: Record<string, (res: Response) => Promise<Response>> = {
+        "blob()": async res => new Response(await res.blob(), res),
+        "blob().stream()": async res => new Response((await res.blob()).stream(), res),
+        "blob().slice()": async res => new Response((await res.blob()).slice(), res),
+      };
+      expect(await proxied(late, shapes)).toEqual(expected(shapes, { encoding: null, upstream: "1", body: "plain" }));
+    });
+
+    // What comes out of a transform is the program's own bytes, and only the program knows their encoding.
+    test("is kept on the output of the program's own transform", async () => {
+      using upstream = serveGzip(late);
+      const shapes: Record<string, (res: Response) => Response> = {
+        "CompressionStream, upstream headers": res =>
+          new Response(res.body!.pipeThrough(new CompressionStream("gzip")), res),
+        "CompressionStream, own header": res =>
+          new Response(res.body!.pipeThrough(new CompressionStream("gzip")), {
+            headers: { "content-encoding": "gzip" },
+          }),
+      };
+      using proxy = Bun.serve({
+        port: 0,
+        fetch: async req =>
+          shapes[decodeURIComponent(new URL(req.url).pathname.slice(1))](await fetchUpstream(upstream)),
+      });
+      for (const name of Object.keys(shapes)) {
+        const res = await fetch(`http://127.0.0.1:${proxy.port}/${encodeURIComponent(name)}`, { decompress: false });
+        expect({
+          name,
+          encoding: res.headers.get("content-encoding"),
+          body: gunzipSync(await res.bytes()).toString(),
+        }).toEqual({ name, encoding: "gzip", body: payload });
+      }
+    });
+  });
+
+  test("is kept on bytes the program compressed itself", async () => {
+    using upstream = serveGzip(false);
+    const own = { headers: { "content-encoding": "gzip" } };
+    const shapes: Record<string, () => Response | Promise<Response>> = {
+      "bytes": () => new Response(gzipped, own),
+      "Blob": () => new Response(new Blob([gzipped]), own),
+      "stream": () => new Response(new Blob([gzipped]).stream(), own),
+      "wrapped": () => {
+        const res = new Response(gzipped, own);
+        return new Response(res.body, res);
+      },
+      "clone": () => new Response(gzipped, own).clone(),
+      "fetched, decoded and compressed again": async () => {
+        const res = await fetch(`http://127.0.0.1:${upstream.port}/`);
+        return new Response(gzipSync(await res.bytes()), res);
+      },
+    };
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => shapes[decodeURIComponent(new URL(req.url).pathname.slice(1))](),
+    });
+    for (const name of Object.keys(shapes)) {
+      const res = await fetch(`http://127.0.0.1:${server.port}/${encodeURIComponent(name)}`, { decompress: false });
+      expect({
+        name,
+        encoding: res.headers.get("content-encoding"),
+        body: gunzipSync(await res.bytes()).toString(),
+      }).toEqual({ name, encoding: "gzip", body: payload });
+    }
+  });
+
+  test("is dropped from a static route that wraps the decoded body", async () => {
+    using upstream = serveGzip(false);
+    const res = await fetch(`http://127.0.0.1:${upstream.port}/`);
+    // A static route only accepts a fully buffered body.
+    await res.clone().arrayBuffer();
+    using proxy = Bun.serve({ port: 0, routes: { "/": new Response(res.body, res) } });
+    expect(await readWire(proxy)).toEqual({ encoding: null, length: String(payload.length), body: payload });
   });
 });

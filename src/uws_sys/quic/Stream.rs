@@ -19,7 +19,7 @@ unsafe extern "C" {
     safe fn us_quic_stream_socket(s: &mut Stream) -> *mut Socket;
     safe fn us_quic_stream_shutdown(s: &mut Stream);
     safe fn us_quic_stream_close(s: &mut Stream);
-    safe fn us_quic_stream_reset(s: &mut Stream);
+    safe fn us_quic_stream_reset(s: &mut Stream, error_code: u64);
     safe fn us_quic_stream_reset_code(s: &mut Stream) -> u64;
     safe fn us_quic_stream_reset_received(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_refused_by_goaway(s: &mut Stream) -> c_int;
@@ -56,8 +56,9 @@ impl Stream {
         us_quic_stream_close(self)
     }
 
+    /// RESET_STREAM with H3_REQUEST_CANCELLED.
     pub fn reset(&mut self) {
-        us_quic_stream_reset(self)
+        us_quic_stream_reset(self, 0x10C)
     }
 
     /// The code of the last RESET_STREAM or STOP_SENDING on the stream, 0 without one.

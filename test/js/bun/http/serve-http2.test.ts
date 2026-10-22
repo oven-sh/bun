@@ -1,7 +1,7 @@
-import { runSocketTimeoutSweepSoon, setSocketOptions } from "bun:internal-for-testing";
+import { setSocketOptions, sweepSocketTimers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { bunEnv, bunExe, isLinux, sweepSocketTimeouts, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -1008,7 +1008,7 @@ describe("Bun.serve http2 in-process", () => {
     test("the idle timeout aborts the open stream", async () => {
       const { server, raw, aborted } = await pendingRequest(1);
       try {
-        runSocketTimeoutSweepSoon();
+        sweepSocketTimers(2);
         await aborted;
       } finally {
         raw.close();
@@ -1028,7 +1028,7 @@ describe("Bun.serve http2 in-process", () => {
       tls: secure ? tlsCert : undefined,
       http2: true,
       // Two sweeps, so each timeout comes a whole read after the timer was armed.
-      idleTimeout: 5,
+      idleTimeout: 1,
       fetch(req) {
         req.signal.addEventListener("abort", onAbort);
         return new Response(new Uint8Array(16 * 1024 * 1024));
@@ -1062,11 +1062,11 @@ describe("Bun.serve http2 in-process", () => {
           await wake.promise;
         }
         raw.socket.pause();
-        await sweepSocketTimeouts();
+        sweepSocketTimers(1);
       }
       expect(onAbort).not.toHaveBeenCalled();
 
-      for (let i = 0; i < 8 && onAbort.mock.calls.length === 0; i++) await sweepSocketTimeouts();
+      for (let i = 0; i < 8 && onAbort.mock.calls.length === 0; i++) sweepSocketTimers(1);
       expect(onAbort).toHaveBeenCalledTimes(1);
     } finally {
       raw.close();

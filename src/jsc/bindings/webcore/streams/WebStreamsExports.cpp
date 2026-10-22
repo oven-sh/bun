@@ -186,6 +186,18 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSV
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
 }
 
+extern "C" uint8_t ReadableStream__bodyFacts(JSC::EncodedJSValue possibleReadableStream)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    return stream ? stream->m_bodyFacts : 0;
+}
+
+extern "C" void ReadableStream__setBodyFacts(JSC::EncodedJSValue possibleReadableStream, uint8_t facts)
+{
+    if (auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream)))
+        stream->m_bodyFacts = facts & 0x3;
+}
+
 // Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.
 extern "C" bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {

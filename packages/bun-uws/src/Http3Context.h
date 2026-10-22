@@ -33,7 +33,13 @@ struct Http3Context {
              * reset()/route() for trailers would wipe the live response's
              * onAborted/userData and dispatch the handler a second time.
              * state is 0 only before the first reset() on this stream. */
-            if (rd->state != 0) return;
+            if (rd->state != 0) {
+                if (!Http3Request::validTrailers(us_quic_stream_header(s, 0), us_quic_stream_header_count(s))) {
+                    rd->inStream = nullptr;
+                    us_quic_stream_reset(s, US_QUIC_H3_MESSAGE_ERROR);
+                }
+                return;
+            }
             rd->reset();
 
             if (us_quic_stream_headers_too_large(s)) {
@@ -42,23 +48,17 @@ struct Http3Context {
             }
 
             Http3Request req(s);
-            /* HttpRouter drops the URL's first byte without looking at it and
-             * the URL parser strips HTAB, so a malformed :path could reach a
-             * route it doesn't name. */
-            if (!isToken(req.getCaseSensitiveMethod()) ||
-                !validPathForMethod(req.getCaseSensitiveMethod(), req.getFullUrl()) ||
-                req.getHeader("host").empty()) {
+            if (req.isMalformed()) {
                 res->writeStatus("400 Bad Request")->end();
                 return;
             }
-            std::string_view method = req.getMethod();
-            if (Bun__HTTPMethod__from(method.data(), method.size()) == -1) {
+            if (!isKnownMethod(req.getCaseSensitiveMethod())) {
                 /* RFC 9110 §15.6.2. The router would dispatch it to the "any"
                  * handler, which cannot represent the method and would report GET. */
                 res->writeStatus("501 Not Implemented")->end();
                 return;
             }
-            if (isExpect100Continue(req.getHeader("expect"))) res->writeContinue();
+            if (req.getExpectsContinue()) res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();
@@ -124,7 +124,7 @@ struct Http3Context {
         }, method == "*" ? cd->router.LOW_PRIORITY : cd->router.MEDIUM_PRIORITY);
     }
 
-    us_quic_listen_socket_t *listen(const char *host, int port, int flags) {
+    us_quic_udp_t *listen(const char *host, int port, int flags) {
         return us_quic_socket_context_listen((us_quic_socket_context_t *) this,
             host, port, flags, sizeof(Http3ResponseData));
     }

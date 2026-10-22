@@ -19,7 +19,6 @@
 //! instead.
 //!
 //!   fn on_timeout(ext, *us_socket_t)
-//!   fn on_long_timeout(ext, *us_socket_t)
 //!   fn on_end(ext, *us_socket_t)
 //!   fn on_fd(ext, *us_socket_t, fd: c_int)
 //!   fn on_connect_error(ext, *us_socket_t, code: i32)
@@ -48,7 +47,6 @@ pub trait Handler: 'static {
     const HAS_ON_WRITABLE: bool = false;
     const HAS_ON_CLOSE: bool = false;
     const HAS_ON_TIMEOUT: bool = false;
-    const HAS_ON_LONG_TIMEOUT: bool = false;
     const HAS_ON_END: bool = false;
     const HAS_ON_CONNECT_ERROR: bool = false;
     const HAS_ON_CONNECTING_ERROR: bool = false;
@@ -75,9 +73,6 @@ pub trait Handler: 'static {
         unreachable!()
     }
     fn on_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
-        unreachable!()
-    }
-    fn on_long_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
         unreachable!()
     }
     fn on_end(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
@@ -117,9 +112,6 @@ pub trait Handler: 'static {
         unreachable!()
     }
     fn on_timeout_no_ext(_s: *mut us_socket_t) {
-        unreachable!()
-    }
-    fn on_long_timeout_no_ext(_s: *mut us_socket_t) {
         unreachable!()
     }
     fn on_end_no_ext(_s: *mut us_socket_t) {
@@ -170,11 +162,6 @@ impl<H: Handler> Make<H> {
         },
         on_timeout: if H::HAS_ON_TIMEOUT {
             Some(Trampolines::<H>::on_timeout)
-        } else {
-            None
-        },
-        on_long_timeout: if H::HAS_ON_LONG_TIMEOUT {
-            Some(Trampolines::<H>::on_long_timeout)
         } else {
             None
         },
@@ -283,15 +270,6 @@ impl<H: Handler> Trampolines<H> {
             H::on_timeout(Self::ext(s), s);
         } else {
             H::on_timeout_no_ext(s);
-        }
-        s
-    }
-
-    extern "C" fn on_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
-        if H::HAS_EXT {
-            H::on_long_timeout(Self::ext(s), s);
-        } else {
-            H::on_long_timeout_no_ext(s);
         }
         s
     }

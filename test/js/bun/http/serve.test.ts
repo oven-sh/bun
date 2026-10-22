@@ -20,7 +20,6 @@ import {
   libcPathForDlopen,
   MAX_PATH_BYTES,
   runFixtureMaxRSS,
-  sweepSocketTimeouts,
   tempDir,
   tls,
   tmpdirSync,
@@ -29,7 +28,7 @@ import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
-import { setSocketOptions } from "bun:internal-for-testing";
+import { setSocketOptions, sweepSocketTimers } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import { on, once } from "node:events";
@@ -2979,17 +2978,21 @@ it.each(["hello", "héllo"])("sends text/plain for the string body %j after .bod
     direct: res => res,
     checked: res => (res.body, res),
     rewrapped: res => new Response(res.body, res),
+    cloned: res => res.clone(),
+    "the original of a clone": res => (res.clone(), res),
+    "checked, then cloned": res => (res.body, res.clone()),
+    "a clone, rewrapped": res => new Response(res.clone().body, res),
   };
   using server = Bun.serve({
     port: 0,
     routes: { "/static": shapes.checked(new Response(body)) },
-    fetch: req => shapes[new URL(req.url).pathname.slice(1)](new Response(body)),
+    fetch: req => shapes[decodeURIComponent(new URL(req.url).pathname.slice(1))](new Response(body)),
   });
 
   const actual: Record<string, unknown> = {};
   const expected: Record<string, unknown> = {};
   for (const shape of [...Object.keys(shapes), "static"]) {
-    const res = await fetch(new URL(shape, server.url));
+    const res = await fetch(new URL(encodeURIComponent(shape), server.url));
     actual[shape] = { type: res.headers.get("content-type"), text: await res.text() };
     expected[shape] = { type: "text/plain;charset=utf-8", text: body };
   }
@@ -3859,6 +3862,96 @@ describe("idle timeout with a forced sweep", () => {
     return client;
   }
 
+  // `idleTimeout` 1 to 4 fires at the second sweep after the timer is armed, 5 to 8 at the third.
+  async function sweep() {
+    // A promise resolved in a request handler continues before uWS has armed that request's timer.
+    await new Promise(setImmediate);
+    sweepSocketTimers(1);
+  }
+
+  it.each([
+    ["http", false],
+    ["https", true],
+  ] as const)("idleTimeout applies before the first request over %s", async (_protocol, secure) => {
+    const serve = (idleTimeout: number) =>
+      Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: secure ? tls : undefined,
+        idleTimeout,
+        fetch: () => new Response("ok"),
+      });
+    using disabled = serve(0);
+    using short = serve(1);
+    const closed: string[] = [];
+    const connect = (name: string, port: number) => {
+      const client = rawClient(port, secure);
+      client.on("close", () => closed.push(name));
+      // An unfinished head, because the kernel only hands a connection to accept() once it has sent something.
+      client.write("GET / HTTP/1.1\r\n");
+      return client;
+    };
+    const clients = [connect("disabled", disabled.port!), connect("short", short.port!)];
+    try {
+      for (let i = 0; i < 20 && closed.length === 0; i++) await sweep();
+      // 20 seconds' worth of sweeps for a connection that both servers have accepted by now.
+      for (let i = 0; i < 5; i++) await sweep();
+      expect(closed).toEqual(["short"]);
+      clients[0].write("Host: localhost\r\n\r\n");
+      const [head] = await once(clients[0], "data");
+      expect(head.toString()).toStartWith("HTTP/1.1 200 OK\r\n");
+    } finally {
+      for (const client of clients) client.destroy();
+    }
+  });
+
+  // Winsock takes a first send of any size whole, so these responses don't block there.
+  it.skipIf(isWindows)("idleTimeout applies to static, file and directory routes", async () => {
+    const size = 32 * 1024 * 1024;
+    using dir = tempDir("serve-timeout-routes", { "big.bin": Buffer.alloc(size) });
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 1,
+      routes: {
+        "/static": new Response(new Uint8Array(size)),
+        "/file": new Response(Bun.file(join(String(dir), "big.bin"))),
+        "/directory/*": { dir: String(dir) },
+      },
+      fetch: () => new Response("fallback"),
+    });
+    // Each client reads the start of the response and then stops, so the body can't finish.
+    const clients = await Promise.all(
+      ["/static", "/file", "/directory/big.bin"].map(async path => {
+        const client = rawClient(server.port!, false);
+        const outcome = Promise.withResolvers<string>();
+        let received = 0;
+        client.on("data", chunk => {
+          received += chunk.length;
+          if (received >= size) outcome.resolve(`${path} completed`);
+        });
+        client.on("close", () => outcome.resolve(`${path} cut off`));
+        client.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+        await once(client, "data");
+        client.pause();
+        return { client, outcome: outcome.promise };
+      }),
+    );
+    try {
+      // The kernel can still be filling a client's receive buffer at the first sweeps, which counts as progress.
+      for (let i = 0; i < 8; i++) await sweep();
+      // A paused client only notices the close once it reads again.
+      for (const { client } of clients) client.resume();
+      expect(await Promise.all(clients.map(({ outcome }) => outcome))).toEqual([
+        "/static cut off",
+        "/file cut off",
+        "/directory/big.bin cut off",
+      ]);
+    } finally {
+      for (const { client } of clients) client.destroy();
+    }
+  });
+
   it("server.timeout() applies on a unix socket", async () => {
     using dir = tempDir("serve-timeout-unix", {});
     const unix = join(String(dir), "serve.sock");
@@ -3882,7 +3975,8 @@ describe("idle timeout with a forced sweep", () => {
         fetch("http://localhost" + path, { unix, signal: controller.signal }).catch(pending.reject);
       }
       await pending.promise;
-      await sweepSocketTimeouts();
+      await sweep();
+      await sweep();
       expect(aborted).toEqual(["/default"]);
     } finally {
       controller.abort();
@@ -3920,7 +4014,7 @@ describe("idle timeout with a forced sweep", () => {
     );
     try {
       // The kernel can still be filling the client's receive buffer at the first sweeps, which counts as progress.
-      for (let i = 0; i < 8 && aborted.length === 0; i++) await sweepSocketTimeouts();
+      for (let i = 0; i < 8 && aborted.length === 0; i++) await sweep();
       expect(aborted).toEqual(["/default"]);
     } finally {
       for (const client of clients) client.destroy();
@@ -3954,7 +4048,7 @@ describe("idle timeout with a forced sweep", () => {
     });
     try {
       await pending.promise;
-      for (let i = 0; i < 8 && aborted.length < 2; i++) await sweepSocketTimeouts();
+      for (let i = 0; i < 8 && aborted.length < 2; i++) await sweep();
       expect(aborted.sort()).toEqual(["/complete", "/paused"]);
     } finally {
       for (const client of clients) client.destroy();
@@ -3992,7 +4086,7 @@ describe("idle timeout with a forced sweep", () => {
         hostname: "127.0.0.1",
         tls: protocol === "https" ? tls : undefined,
         // Two sweeps, so each timeout comes a whole read after the timer was armed.
-        idleTimeout: 5,
+        idleTimeout: 1,
         fetch(req) {
           req.signal.addEventListener("abort", onAbort);
           return new Response(bodies[kind](String(dir)));
@@ -4019,11 +4113,11 @@ describe("idle timeout with a forced sweep", () => {
             await wake.promise;
           }
           client.pause();
-          await sweepSocketTimeouts();
+          await sweep();
         }
         expect(onAbort).not.toHaveBeenCalled();
 
-        for (let i = 0; i < 8 && onAbort.mock.calls.length === 0; i++) await sweepSocketTimeouts();
+        for (let i = 0; i < 8 && onAbort.mock.calls.length === 0; i++) await sweep();
         expect(onAbort).toHaveBeenCalledTimes(1);
       } finally {
         client.destroy();

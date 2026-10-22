@@ -1956,6 +1956,26 @@ describe("per-request tls options over http3", () => {
     expect(await attempt(url, { ca: tls.cert })).not.toBe("mutual");
   });
 
+  test("connections with the same tls options share one SSL_CTX", async () => {
+    const fixture = `
+      import { fetchH3Internals, sslCtxLiveCount } from "bun:internal-for-testing";
+      const tls = ${JSON.stringify(tls)};
+      const servers = Array.from({ length: 4 }, () =>
+        Bun.serve({ port: 0, tls, http3: true, http1: false, fetch: () => new Response("ok") }),
+      );
+      const before = sslCtxLiveCount();
+      for (const server of servers) {
+        await fetch("https://127.0.0.1:" + server.port + "/", { protocol: "http3", tls: { ca: tls.cert } }).then(r => r.text());
+      }
+      console.log(fetchH3Internals.liveCounts().sessions, sslCtxLiveCount() - before);
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "4 1\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test("refuses maxVersion below TLS 1.3", async () => {
     expect(await attempt(`${base}/hello`, { ca: tls.cert, maxVersion: 0x0303 })).toBe("HTTP3Unsupported");
   });

@@ -22,9 +22,12 @@
 
 /* Various common utilities */
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+
+extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS {
 
@@ -39,14 +42,13 @@ static inline bool isExpect100Continue(std::string_view expect) {
     return expect.size() == 12 && asciiIEquals(expect, "100-continue");
 }
 /* RFC 9110 §5.6.2 tchar. */
+inline constexpr std::array<bool, 256> tokenBytes = [] {
+    std::array<bool, 256> table{};
+    for (unsigned char c : std::string_view{"!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"}) table[c] = true;
+    return table;
+}();
 static inline bool isTokenByte(unsigned char c) {
-    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return true;
-    switch (c) {
-    case '!': case '#': case '$': case '%': case '&': case '\'': case '*':
-    case '+': case '-': case '.': case '^': case '_': case '`': case '|': case '~':
-        return true;
-    }
-    return false;
+    return tokenBytes[c];
 }
 
 /* RFC 9110 §9.1: method = token. */
@@ -56,24 +58,21 @@ static inline bool isToken(std::string_view s) {
     return true;
 }
 
-/* RFC 9113 §8.3.1 / RFC 9114 §4.3.1: :path is origin-form (or "*" for OPTIONS)
- * and carries no byte the HTTP/1 request line could not (controls, SP).
- * CONNECT carries no :path. */
-static inline bool validPathForMethod(std::string_view method, std::string_view path) {
-    if (method == "CONNECT") return path.empty();
-    if (!(path.size() && path[0] == '/') && !(path == "*" && method == "OPTIONS")) return false;
-    for (unsigned char c : path) if (c <= 0x20) return false;
-    return true;
+/* Returns true for the methods Bun.serve can represent, in their case-sensitive wire form (RFC 9110 §9.1). The table also has them in lowercase. */
+static inline bool isKnownMethod(std::string_view method) {
+    for (unsigned char c : method) if (!((c >= 'A' && c <= 'Z') || c == '-')) return false;
+    return Bun__HTTPMethod__from(method.data(), method.size()) != -1;
 }
 
-/* HTTP/2 request-target rules: the two above, there is an authority, Host
- * doesn't contradict :authority, and :authority has no userinfo. */
-static inline bool validPseudoHeaderTarget(std::string_view method, std::string_view path, std::string_view authority, std::string_view host) {
-    if (!isToken(method) || !validPathForMethod(method, path)) return false;
-    if (authority.empty() && host.empty()) return false;
-    if (!authority.empty() && !host.empty() && authority != host) return false;
-    if (authority.find('@') != std::string_view::npos) return false;
-    return true;
+/* RFC 9110 §8.6: 1*DIGIT. Returns UINT64_MAX for anything else, and for more than 18 digits. */
+static inline uint64_t parseContentLength(std::string_view value) {
+    if (value.empty() || value.length() > 18) return UINT64_MAX;
+    uint64_t length = 0;
+    for (char c : value) {
+        if (c < '0' || c > '9') return UINT64_MAX;
+        length = length * 10 + (uint64_t) (c - '0');
+    }
+    return length;
 }
 
 static inline bool isConnectionSpecificResponseField(std::string_view name, std::string_view value) {

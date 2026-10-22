@@ -252,6 +252,83 @@ describe("node:http", () => {
       });
     });
 
+    describe.skipIf(isWindows).each([
+      ["http", createServer],
+      ["net", createNetServer],
+    ])("%s: a listen() error has the properties Node gives it", (_, create) => {
+      async function listenError(...args: unknown[]) {
+        const [err] = await once((create() as Server).listen(...(args as [])), "error");
+        return { message: err.message, ...err };
+      }
+
+      it("for a unix socket path in a missing directory", async () => {
+        using dir = tempDir("listen-error", {});
+        const address = path.join(String(dir), "missing", "a.sock");
+        expect(await listenError(address)).toEqual({
+          message: `listen EACCES: permission denied ${address}`,
+          code: "EACCES",
+          errno: -constants.errno.EACCES,
+          syscall: "listen",
+          address,
+          port: -1,
+        });
+      });
+
+      it("for a unix socket path that is too long", async () => {
+        using dir = tempDir("listen-error", {});
+        const address = path.join(String(dir), Buffer.alloc(200, "a").toString() + ".sock");
+        expect(await listenError(address)).toEqual({
+          message: `listen EINVAL: invalid argument ${address}`,
+          code: "EINVAL",
+          errno: -constants.errno.EINVAL,
+          syscall: "listen",
+          address,
+          port: -1,
+        });
+      });
+
+      it("for a unix socket path that is in use", async () => {
+        using dir = tempDir("listen-error", {});
+        const address = path.join(String(dir), "a.sock");
+        await using occupant = createNetServer();
+        await once(occupant.listen(address), "listening");
+        expect(await listenError(address)).toEqual({
+          message: `listen EADDRINUSE: address already in use ${address}`,
+          code: "EADDRINUSE",
+          errno: -constants.errno.EADDRINUSE,
+          syscall: "listen",
+          address,
+          port: -1,
+        });
+      });
+
+      it("for a descriptor that is not a socket", async () => {
+        using dir = tempDir("listen-error", { "file.txt": "" });
+        const fd = nodefs.openSync(path.join(String(dir), "file.txt"), "r");
+        try {
+          expect(await listenError({ fd })).toEqual({
+            message: "listen EINVAL: invalid argument",
+            code: "EINVAL",
+            errno: -constants.errno.EINVAL,
+            syscall: "listen",
+            address: null,
+          });
+        } finally {
+          nodefs.closeSync(fd);
+        }
+      });
+
+      it("for an address of another host, with port 0", async () => {
+        expect(await listenError(0, "192.0.2.1")).toEqual({
+          message: "listen EADDRNOTAVAIL: address not available 192.0.2.1",
+          code: "EADDRNOTAVAIL",
+          errno: -constants.errno.EADDRNOTAVAIL,
+          syscall: "listen",
+          address: "192.0.2.1",
+        });
+      });
+    });
+
     // vite's port auto-increment (#27406): the callback of the failed listen() belongs to the
     // server, not to that attempt, so the retry from the 'error' handler calls it.
     it("calls the listen() callback after a retry from the EADDRINUSE 'error' handler", async () => {
@@ -5312,11 +5389,12 @@ describe.each(["listen()", "emit('connection')"])("a response without a body on 
     const { port } = listener.address() as AddressInfo;
     return {
       port,
-      // After a round trip on a second connection, the first client has read whatever the server sent it.
-      roundTrip: async () =>
-        expect(await (await fetch(`http://127.0.0.1:${port}/other`, { headers: { Connection: "close" } })).text()).toBe(
-          "other",
-        ),
+      // After a round trip on a second connection, the first client has read whatever the server sent it. Not fetch(): its result can arrive before this thread polls the first client's socket.
+      roundTrip: async () => {
+        const second = connect(port, "127.0.0.1");
+        second.end("GET /other HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        expect(await text(second)).toEndWith("\r\n\r\nother");
+      },
       [Symbol.asyncDispose]: () => listener[Symbol.asyncDispose](),
     };
   }
@@ -5368,6 +5446,7 @@ describe.each(["listen()", "emit('connection')"])("a response without a body on 
     ["GET", 304],
   ])("%s %i ends its head at a flushHeaders() that follows write()", async (method, status) => {
     const flushed = Promise.withResolvers<ServerResponse>();
+    const headSeen = Promise.withResolvers<void>();
     await using server = await start((req, res) => {
       res.statusCode = status;
       res.write("a");
@@ -5380,10 +5459,15 @@ describe.each(["listen()", "emit('connection')"])("a response without a body on 
     const client = connect(server.port, "127.0.0.1");
     // Disposed before the server, whose close() waits for this connection.
     using _ = { [Symbol.dispose]: () => void client.destroy() };
-    client.setEncoding("latin1").on("data", chunk => (received += chunk));
+    client.setEncoding("latin1").on("data", chunk => {
+      received += chunk;
+      if (received.includes("\r\n\r\n")) headSeen.resolve();
+    });
     client.write(`${method} / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
 
     const res = await flushed.promise;
+    // end() only runs once the client has the whole head.
+    await headSeen.promise;
     await server.roundTrip();
     const head = `HTTP/1.1 ${status} ${http.STATUS_CODES[status]}\r\nConnection: close\r\n\r\n`;
     expect(received.replace(/^Date: .*\r\n/m, "")).toBe(head);

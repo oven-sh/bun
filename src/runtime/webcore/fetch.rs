@@ -1135,6 +1135,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     .throw());
             }
 
+            BodyMixin::copy_content_type_to_headers(&*req, global_this)?;
+            let body_value = req.get_body_value();
             body_value.to_blob_if_in_memory();
             if matches!(*body_value, BodyValue::Locked(_)) {
                 if let Some(readable) = req.get_body_readable_stream() {
@@ -1176,7 +1178,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            BodyMixin::copy_content_type_to_headers(&*req, global_this)?;
             break 'extract_body Some(HTTPRequestBody::AnyBlob(
                 req.get_body_value().use_as_any_blob(),
             ));
@@ -2137,10 +2138,9 @@ impl<'a> S3StreamWrapper<'a> {
                         status_text: BunString::create_atom_if_possible(err.code),
                         ..Default::default()
                     },
-                    Body::new(BodyValue::InternalBlob(InternalBlob {
-                        bytes: err.message.to_vec(),
-                        was_string: true,
-                    })),
+                    Body::new(BodyValue::InternalBlob(InternalBlob::from_string_bytes(
+                        err.message.to_vec(),
+                    ))),
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
                 ));

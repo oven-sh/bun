@@ -2,7 +2,7 @@
 //! Exports here are referenced via aliases on the original structs so call
 //! sites do not change.
 
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsError};
 use bun_uws::{
     AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
 };
@@ -39,6 +39,113 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
         }
         self.list.extend_from_slice(buffer);
     }
+}
+
+/// What a failed `listen()` was asked to listen on.
+pub(crate) enum ListenTarget<'a> {
+    Tcp {
+        hostname: Option<&'a [u8]>,
+        port: u16,
+    },
+    Unix(&'a [u8]),
+    Fd,
+}
+
+impl<'a> ListenTarget<'a> {
+    fn address(&self) -> Option<&'a [u8]> {
+        match *self {
+            ListenTarget::Tcp { hostname, .. } => hostname,
+            ListenTarget::Unix(path) => Some(path),
+            ListenTarget::Fd => None,
+        }
+    }
+}
+
+/// Each API keeps the message it has always thrown.
+#[derive(Clone, Copy)]
+pub(crate) enum ListenApi {
+    BunServe,
+    BunListen,
+}
+
+/// Throws the error of a failed `Bun.serve()` or `Bun.listen()`. node:http and node:net build theirs from its `code` and `syscall`.
+#[cold]
+pub(crate) fn throw_listen_error(
+    global: &JSGlobalObject,
+    api: ListenApi,
+    target: &ListenTarget<'_>,
+    failure: bun_uws_sys::app::ListenError,
+) -> JsError {
+    use bun_sys::SystemErrno;
+
+    if let Some(err) = crate::dns_jsc::cares_jsc::getaddrinfo_error(
+        failure.dns_error,
+        target.address().unwrap_or(b""),
+    ) {
+        return global.throw_value(err.to_error_instance(global));
+    }
+
+    let errno = bun_uws_sys::SocketGroup::errno(failure.error).unwrap_or(SystemErrno::EUNKNOWN);
+    throw_listen_errno(global, api, target, errno)
+}
+
+/// [`throw_listen_error`] for a `listen()` that isn't uSockets': a Windows named pipe's.
+#[cold]
+pub(crate) fn throw_listen_errno(
+    global: &JSGlobalObject,
+    api: ListenApi,
+    target: &ListenTarget<'_>,
+    errno: bun_sys::SystemErrno,
+) -> JsError {
+    use bun_sys::SystemErrno;
+
+    let address = target.address();
+    // Winsock has no privileged ports: WSAEACCES means the port is held or in an excluded range.
+    #[cfg(windows)]
+    let errno = match (api, target, errno) {
+        (ListenApi::BunServe, ListenTarget::Tcp { .. }, SystemErrno::EACCES) => {
+            SystemErrno::EADDRINUSE
+        }
+        _ => errno,
+    };
+
+    let mut sys_error = bun_sys::Error::new(errno, bun_sys::Tag::listen);
+    if let ListenTarget::Unix(path) = *target {
+        sys_error = sys_error.with_path(path);
+    }
+    let mut err = bun_jsc::SystemError::from(sys_error.to_system_error());
+    match (api, target, errno) {
+        (ListenApi::BunListen, ..) => {
+            err.message = bun_core::String::create_format(format_args!(
+                "Failed to listen at {}",
+                bstr::BStr::new(address.unwrap_or(b""))
+            ));
+        }
+        (ListenApi::BunServe, ListenTarget::Tcp { port, .. }, SystemErrno::EADDRINUSE) => {
+            err.message = bun_core::String::create_format(format_args!(
+                "Failed to start server. Is port {port} in use?"
+            ));
+        }
+        (ListenApi::BunServe, ListenTarget::Tcp { port, .. }, SystemErrno::EACCES) => {
+            err.message = bun_core::String::create_format(format_args!(
+                "permission denied {}:{port}",
+                bstr::BStr::new(address.unwrap_or(b"0.0.0.0"))
+            ));
+        }
+        (ListenApi::BunServe, ..) => {}
+    }
+
+    let error = err.to_error_instance(global);
+    if let Some(address) = address {
+        match bun_jsc::bun_string_jsc::create_utf8_for_js(global, address) {
+            Ok(address) => error.put(global, b"address", address),
+            Err(thrown) => return thrown,
+        }
+    }
+    if let ListenTarget::Tcp { port, .. } = *target {
+        error.put(global, b"port", JSValue::js_number(f64::from(port)));
+    }
+    global.throw_value(error)
 }
 
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────

@@ -185,10 +185,6 @@ impl us_socket_t {
         c::us_socket_timeout(self, seconds);
     }
 
-    pub(crate) fn set_long_timeout(&mut self, minutes: u32) {
-        c::us_socket_long_timeout(self, minutes);
-    }
-
     pub(crate) fn set_nodelay(&mut self, enabled: bool) {
         c::us_socket_nodelay(self, enabled as c_int);
     }
@@ -525,7 +521,6 @@ mod c {
             length: *mut i32,
         );
         pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
-        pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
         pub(super) safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
         pub(super) safe fn us_socket_set_tos(s: &mut us_socket_t, tos: c_int) -> c_int;
         pub(super) safe fn us_socket_get_tos(s: &mut us_socket_t) -> c_int;

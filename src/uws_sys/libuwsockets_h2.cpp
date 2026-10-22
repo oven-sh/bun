@@ -87,7 +87,7 @@ void uws_h2_res_end_stream(uws_h2_res_t* res, bool close_connection)
 
 bool uws_h2_res_is_closed(uws_h2_res_t* res) { return ((Http2Response*)res)->dead; }
 
-/* END_STREAM on the request HEADERS, or content-length: 0 (declaredContentLength is -1 when absent). */
+/* END_STREAM on the request HEADERS, or content-length: 0. */
 bool uws_h2_res_request_body_ended(uws_h2_res_t* res)
 {
     Http2Response* r = (Http2Response*)res;

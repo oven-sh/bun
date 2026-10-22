@@ -69,9 +69,6 @@ pub(crate) trait RawSocketEvents<const SSL: bool>: Sized {
     fn on_timeout(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
         Ok(())
     }
-    fn on_long_timeout(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Ok(())
-    }
     fn on_end(_this: ThisPtr<Self>, _s: NewSocketHandler<SSL>) -> JsResult<()> {
         Ok(())
     }
@@ -105,7 +102,6 @@ where
     const HAS_ON_WRITABLE: bool = true;
     const HAS_ON_CLOSE: bool = true;
     const HAS_ON_TIMEOUT: bool = true;
-    const HAS_ON_LONG_TIMEOUT: bool = true;
     const HAS_ON_END: bool = true;
     const HAS_ON_CONNECT_ERROR: bool = true;
     const HAS_ON_CONNECTING_ERROR: bool = true;
@@ -135,10 +131,6 @@ where
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
         fold(T::on_timeout(this, wrap::<SSL>(s)));
-    }
-    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = *ext else { return };
-        fold(T::on_long_timeout(this, wrap::<SSL>(s)));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = *ext else { return };
@@ -200,10 +192,6 @@ where
         Self::handle_timeout(this, s);
         Ok(())
     }
-    fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_timeout(this, s);
-        Ok(())
-    }
     fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
         Self::handle_end(this, s);
         Ok(())
@@ -251,11 +239,6 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         this.handle_timeout(s);
         Ok(())
     }
-    fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = RefPtr::from_this(this);
-        this.handle_timeout(s);
-        Ok(())
-    }
     fn on_handshake(
         this: ThisPtr<Self>,
         s: NewSocketHandler<SSL>,
@@ -297,9 +280,6 @@ impl LiftJsResult for JsResult<()> {
 /// `SocketHandler<SSL>` namespace type; `lift()` lifts both return shapes (see
 /// [`LiftJsResult`]) so one expansion covers postgres, mysql and valkey, and the dispatcher
 /// (`NsHandler: VHandler`) folds the result at the entry.
-///
-/// `on_long_timeout` is intentionally NOT forwarded — no driver defines it,
-/// so the trait default fires.
 ///
 /// `on_handshake` reads the inherent `ON_HANDSHAKE: Option<fn(..)>` const —
 /// `None` means "leave the slot unbound" so the dispatcher's
@@ -498,9 +478,6 @@ trait NsSocketEvents<Owner, const SSL: bool> {
     fn on_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
-    fn on_long_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
     fn on_end(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
     }
@@ -536,7 +513,6 @@ where
     const HAS_ON_WRITABLE: bool = true;
     const HAS_ON_CLOSE: bool = true;
     const HAS_ON_TIMEOUT: bool = true;
-    const HAS_ON_LONG_TIMEOUT: bool = true;
     const HAS_ON_END: bool = true;
     const HAS_ON_CONNECT_ERROR: bool = true;
     const HAS_ON_CONNECTING_ERROR: bool = true;
@@ -561,10 +537,6 @@ where
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = ext.owner_mut() else { return };
         fold(H::on_timeout(this, wrap::<SSL>(s)));
-    }
-    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
-        fold(H::on_long_timeout(this, wrap::<SSL>(s)));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(this) = ext.owner_mut() else { return };
@@ -621,7 +593,6 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     const HAS_ON_WRITABLE: bool = true;
     const HAS_ON_CLOSE: bool = true;
     const HAS_ON_TIMEOUT: bool = true;
-    const HAS_ON_LONG_TIMEOUT: bool = true;
     const HAS_ON_END: bool = true;
     const HAS_ON_CONNECT_ERROR: bool = true;
     const HAS_ON_CONNECTING_ERROR: bool = true;
@@ -648,10 +619,6 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(owner) = *ext else { return };
         HttpH::<SSL>::on_timeout(owner.as_ptr(), wrap::<SSL>(s));
-    }
-    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(owner) = *ext else { return };
-        HttpH::<SSL>::on_long_timeout(owner.as_ptr(), wrap::<SSL>(s));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
         let Some(owner) = *ext else { return };

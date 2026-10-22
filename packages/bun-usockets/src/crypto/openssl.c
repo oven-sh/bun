@@ -2173,7 +2173,6 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
       s->ssl_pending_close_code = (unsigned char) code;
       /* The owner let go, so its timeouts are over and nobody else bounds this wait. */
       us_socket_timeout(s, US_SSL_CLOSE_AFTER_SPILL_TIMEOUT);
-      us_socket_long_timeout(s, 0);
       return s;
     }
   }
@@ -2222,7 +2221,6 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   us_socket_resume(s);
   /* So nobody else bounds the wait for a peer that does not answer, whatever else it sends (us_internal_ssl_on_timeout). */
   us_socket_timeout(s, US_SSL_CLOSE_AFTER_SPILL_TIMEOUT);
-  us_socket_long_timeout(s, 0);
   return s;
 }
 #define ssl_close us_internal_ssl_close

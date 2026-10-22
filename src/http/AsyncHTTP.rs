@@ -191,8 +191,7 @@ fn make_client<'a>(
         proxy_headers,
         proxy_authorization: None,
         proxy_tunnel: None,
-        h2: None,
-        h3: None,
+        transport: crate::Transport::None,
         pending_h2: None,
         signals,
         async_http_id,
@@ -443,16 +442,7 @@ impl<'a> AsyncHTTP<'a> {
         redirect_type: FetchRedirect,
         options: Options<'a>,
     ) -> AsyncHTTP<'a> {
-        let async_http_id = if options
-            .signals
-            .as_ref()
-            .map(|s| s.aborted.is_some())
-            .unwrap_or(false)
-        {
-            crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed)
-        } else {
-            0
-        };
+        let async_http_id = crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed);
 
         let signals = options.signals.unwrap_or_default();
 
@@ -496,8 +486,7 @@ impl<'a> AsyncHTTP<'a> {
             this.client.flags.disable_timeout = val;
         }
         if let Some(val) = options.idle_timeout_seconds {
-            this.client.idle_timeout_seconds =
-                Some(crate::normalize_idle_timeout_seconds(val.into()));
+            this.client.idle_timeout_seconds = Some(val);
         }
         if let Some(val) = options.verbose {
             this.client.verbose = val;
@@ -718,26 +707,6 @@ impl<'a> AsyncHTTP<'a> {
                 (*this).response = None;
             }
 
-            // Log the tracker count, then shrink
-            // the abort tracker back down once it has drained from a
-            // high-water mark (capacity > 10_000 entries but fewer than 100
-            // live), so long-lived heavy-fetch processes don't pin the peak
-            // allocation forever. HTTP-thread-only access to the global.
-            {
-                let tracker = crate::abort_tracker();
-                let count = tracker.count();
-                if count > 0 {
-                    bun_core::scoped_log!(
-                        AsyncHTTP,
-                        "socket_async_http_abort_tracker count: {}",
-                        count
-                    );
-                }
-                if tracker.capacity() > 10_000 && count < 100 {
-                    tracker.shrink_and_free(count);
-                }
-            }
-
             let has_more = result.has_more;
             if has_more {
                 callback.run(async_http, result);
@@ -791,7 +760,7 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
                     client.close_proxy_tunnel(false);
-                    debug_assert!(client.h2.is_none());
+                    debug_assert!(matches!(client.transport, crate::Transport::None));
                     drop(core::mem::take(&mut client.custom_ssl_ctx));
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
@@ -811,11 +780,10 @@ impl<'a> AsyncHTTP<'a> {
                     bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
                 {
                     let in_flight = &mut crate::http_thread().in_flight;
-                    if let Some(i) = in_flight
-                        .iter()
-                        .position(|n| n.as_ptr() == threadlocal_http)
-                    {
-                        in_flight.swap_remove(i);
+                    in_flight.swap_remove(&(*this).async_http_id);
+                    // Don't pin the allocation of a past peak.
+                    if in_flight.capacity() > 10_000 && in_flight.count() < 100 {
+                        in_flight.shrink_and_free(in_flight.count());
                     }
                 }
                 // Note: reclaiming as `Box<_>` here would drop the

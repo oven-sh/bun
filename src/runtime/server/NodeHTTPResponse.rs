@@ -127,8 +127,6 @@ bitflags! {
         /// The server socket granted the connection to this response. A queued pipelined response waits for it.
         const CURRENT                             = 1 << 4;
         const IS_REQUEST_PENDING                  = 1 << 5;
-        /// Set by `pause_socket`, cleared by `resume_socket`.
-        const READS_PAUSED                        = 1 << 6;
         /// See `update_parked`.
         const PARKED                              = 1 << 7;
         /// node:http handed this connection to a raw 'upgrade'/'connect'
@@ -185,9 +183,6 @@ unsafe extern "C" {
     safe fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
     safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
 
-    // node:http flood prevention (JSNodeHTTPServerSocket.cpp): unsent response bytes and queued responses hold a paused socket.
-    safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
-    safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
     safe fn Bun__NodeHTTP__onRequestParked(ssl: core::ffi::c_int, socket: *mut c_void);
     // False when no read of this socket is being parsed.
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
@@ -503,7 +498,6 @@ impl NodeHTTPResponse {
             return;
         }
         raw.pause();
-        self.update_flags(|f| f.insert(Flags::READS_PAUSED));
         self.update_parked();
     }
 
@@ -521,32 +515,19 @@ impl NodeHTTPResponse {
         {
             return;
         }
-        raw.pause();
-        Bun__NodeHTTP__onReadsPaused(
-            any_response_is_ssl(&raw) as core::ffi::c_int,
-            raw.socket().cast(),
-        );
+        raw.pause_until_drained();
     }
 
     fn resume_socket(&self) {
         scoped_log!(NodeHTTPResponse, "resumeSocket");
-        self.update_flags(|f| f.remove(Flags::READS_PAUSED));
-        self.update_parked();
         let flags = self.flags.get();
-        let Some(raw) = self.reader() else {
-            return;
-        };
-        if flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::UPGRADED)
-            || raw.is_connect_request()
+        if let Some(raw) = self.reader()
+            && !flags.intersects(Flags::SOCKET_CLOSED | Flags::UPGRADED)
+            && !raw.is_connect_request()
         {
-            return;
+            raw.resume();
         }
-        // Not a bare resume: flood prevention can still hold the reads.
-        Bun__NodeHTTP__onReadsResumable(
-            any_response_is_ssl(&raw) as core::ffi::c_int,
-            raw.socket().cast(),
-        );
+        self.update_parked();
     }
 
     /// Whether this response can still be upgraded. Check before writing anything.
@@ -686,8 +667,10 @@ impl NodeHTTPResponse {
         let flags = self.flags.get();
         let pending = self.body_still_arriving();
         let parked = pending
-            && flags.contains(Flags::READS_PAUSED | Flags::REQUEST_HAS_COMPLETED)
-            && self.reader().is_some_and(|raw| raw.has_fully_drained());
+            && flags.contains(Flags::REQUEST_HAS_COMPLETED)
+            && self
+                .reader()
+                .is_some_and(|raw| raw.is_paused() && raw.has_fully_drained());
         if parked == flags.contains(Flags::PARKED) {
             return;
         }
@@ -847,10 +830,6 @@ impl NodeHTTPResponse {
         flags.bits() as i32
     }
 
-    pub(crate) fn get_aborted(&self) -> bool {
-        self.is_socket_closed_or_closing()
-    }
-
     pub(crate) fn get_has_body(&self) -> i32 {
         let mut result: i32 = 0;
         match self.body_read_state.get() {
@@ -876,12 +855,6 @@ impl NodeHTTPResponse {
                 .saturating_add(self.pending_pinned_write.get().remaining.len() as u64);
         }
         0
-    }
-
-    pub(crate) fn js_ref(&self) {
-        if !self.is_done() {
-            self.poll_ref.with_mut(|r| r.r#ref(vm_get()));
-        }
     }
 
     pub(crate) fn js_unref(&self) {
@@ -1059,8 +1032,64 @@ impl NodeHTTPResponse {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
     ) -> JsResult<JSValue> {
-        // Same gate as cork(): the old flow threw ERR_STREAM_ALREADY_FINISHED
-        // from cork() before either phase ran.
+        self.write_head_and::<true>(
+            this_value.to_js(),
+            cx,
+            status_code,
+            status_message,
+            headers,
+            chunk,
+            encoding,
+            JSValue::UNDEFINED,
+            strict_content_length,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+        )
+    }
+
+    /// The first `res.write()`: the head and the chunk in one call, so every argument is converted before a byte is sent.
+    pub(crate) fn write_head_and_write(
+        &self,
+        cx: &mut JsScope<'_>,
+        status_code: i32,
+        status_message: Option<bun_core::String>,
+        headers: JsLocal<'_>,
+        chunk: Option<StringOrJsBytes<'_>>,
+        encoding: JsLocal<'_>,
+        callback: Option<JsLocal<'_, Callable>>,
+        strict_content_length: Option<f64>,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
+    ) -> JsResult<JSValue> {
+        self.write_head_and::<false>(
+            JSValue::ZERO,
+            cx,
+            status_code,
+            status_message,
+            headers,
+            chunk,
+            encoding,
+            callback.map_or(JSValue::UNDEFINED, JsLocal::to_js),
+            strict_content_length,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+        )
+    }
+
+    fn write_head_and<const IS_END: bool>(
+        &self,
+        this_value: JSValue,
+        cx: &mut JsScope<'_>,
+        status_code: i32,
+        status_message: Option<bun_core::String>,
+        headers: JsLocal<'_>,
+        chunk: Option<StringOrJsBytes<'_>>,
+        encoding: JsLocal<'_>,
+        callback: JSValue,
+        strict_content_length: Option<f64>,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
+    ) -> JsResult<JSValue> {
         let flags = self.flags.get();
         if flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
@@ -1073,9 +1102,7 @@ impl NodeHTTPResponse {
             );
         }
 
-        // BACKREF: same keep-alive pattern as cork() — either phase can reach
-        // JS (string coercions, drain callbacks), which could drop the last
-        // reference to this response mid-call.
+        // BACKREF: either phase can reach JS (string coercions, drain callbacks), which could drop the last reference to this response mid-call.
         let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
         let _guard = self.ref_guard();
 
@@ -1091,20 +1118,21 @@ impl NodeHTTPResponse {
                     auto_header_bits,
                     keep_alive_timeout_secs,
                 )?;
-                this.resume_socket();
-                this.write_or_end::<true>(
-                    this_value.to_js(),
+                if IS_END {
+                    this.resume_socket();
+                }
+                this.write_or_end::<IS_END>(
+                    this_value,
                     cx.global(),
                     chunk,
                     encoding.to_js(),
-                    JSValue::UNDEFINED,
+                    callback,
                     strict_content_length,
                 )
             };
             if let Some(raw_response) = raw_response {
                 raw_response.corked(|| {
-                    // Capture `this` so a `self`-derived pointer reaches the
-                    // FFI closure-data slot (see cork()'s R-2 note).
+                    // Capture `this` so a `self`-derived pointer reaches the FFI closure-data slot.
                     let _escape = this;
                     result = run();
                 });

@@ -208,7 +208,6 @@ pub enum Tag {
     EventLoopDelayMonitor,
     CronJob,
     GcRepeating,
-    QuicEndpoint,
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
     UvTimer,
 }

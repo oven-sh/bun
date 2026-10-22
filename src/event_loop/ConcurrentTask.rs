@@ -119,8 +119,6 @@ pub mod task_tag {
         HTTPSServerDeinit,
         DebugHTTPServerDeinit,
         DebugHTTPSServerDeinit,
-        HTTPAppClose,
-        HTTPSAppClose,
         ShellAsync,
         ShellCondExprStatTask,
         ShellCpTask,

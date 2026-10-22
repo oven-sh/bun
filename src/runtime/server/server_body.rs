@@ -13,9 +13,7 @@ use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
 use crate::webcore::response::HeadersRef;
-use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
-};
+use crate::webcore::{AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request};
 use ::bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, strings};
@@ -66,220 +64,8 @@ pub(super) use super::server_config::{self as server_config, ServerConfig};
 pub(super) use super::server_web_socket::ServerWebSocket;
 pub(super) use super::static_route::StaticRoute;
 
-// ─── RequestCtx trait ────────────────────────────────────────────────────────
-// NOTE: Stable Rust has no inherent
-// associated types, so the per-monomorphization request handle type is
-// surfaced via this local trait. Only `IS_MUX` is consumed for control flow;
-// `Req` is erased to `c_void` to match `super::request_context::Req`. The
-// response handle is a separate generic (`R: RespLike`) at each dispatch
-// entry point: the MUX instantiation serves both `h2::Response` and
-// `h3::Response`.
-trait RequestCtx: super::any_request_context::CtxKind {
-    type Req: ReqLike;
-    const IS_MUX: bool;
-}
-impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
-    for NewRequestContext<ThisServer, SSL, DBG, false>
-where
-    NewRequestContext<ThisServer, SSL, DBG, false>: super::any_request_context::CtxKind,
-{
-    type Req = uws_sys::Request;
-    const IS_MUX: bool = false;
-}
-impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
-    for NewRequestContext<ThisServer, SSL, DBG, true>
-where
-    NewRequestContext<ThisServer, SSL, DBG, true>: super::any_request_context::CtxKind,
-{
-    type Req = uws_sys::h3::Request;
-    const IS_MUX: bool = true;
-}
-
-/// Field/method surface needed on the generic `Ctx` so the bodies of
-/// `handle_request_for` / `prepare_js_request_context_for` / `on_saved_request`
-/// can be written without naming the concrete `RequestContext<_, SSL, DBG, MUX>`
-/// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
-trait RequestCtxOps: RequestCtx {
-    type Server;
-    fn create_in(
-        slot: *mut Self,
-        server: *mut Self::Server,
-        req: &mut Self::Req,
-        resp: uws::AnyResponse,
-        should_deinit_context: Option<DeferDeinitFlag>,
-        method: Option<http::Method>,
-    );
-    fn on_response(&self, server: &Self::Server, request_value: JSValue, response_value: JSValue);
-    fn deinit(&self);
-    fn should_render_missing(&self) -> bool;
-    fn render_missing(&self);
-    fn to_async(&self, req: &mut Self::Req, request_object: &mut Request);
-    fn ctx_method(&self) -> http::Method;
-    fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>);
-    fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>);
-    #[allow(
-        clippy::mut_from_ref,
-        reason = "the body slot is a separate pooled allocation, not a field of *self (R-2)"
-    )]
-    fn request_body_mut(&self) -> Option<&mut BodyValue>;
-    fn set_signal(&self, sig: *mut AbortSignal);
-    fn set_request_weakref(&self, req: *mut Request);
-    fn clear_req(&self);
-    fn set_is_web_browser_navigation(&self, v: bool);
-    fn set_request_body_content_len(&self, len: usize);
-    fn set_is_transfer_encoding(&self, v: bool);
-    fn set_is_waiting_for_request_body(&self, v: bool);
-    fn arm_on_data(&self, resp: uws::AnyResponse);
-    // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
-    // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
-    fn on_start_buffering_callback(this: NonNull<c_void>);
-    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult;
-    fn on_request_body_readable_stream_available(
-        this: NonNull<c_void>,
-        global_this: &JSGlobalObject,
-        readable: WebCore::ReadableStream,
-    );
-}
-
-impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> RequestCtxOps
-    for NewRequestContext<ThisServer, SSL, DBG, MUX>
-where
-    Self: RequestCtx,
-    ThisServer: super::ServerLike + 'static,
-{
-    type Server = ThisServer;
-    #[inline]
-    fn create_in(
-        slot: *mut Self,
-        server: *mut ThisServer,
-        req: &mut Self::Req,
-        any_resp: uws::AnyResponse,
-        should_deinit_context: Option<DeferDeinitFlag>,
-        method: Option<http::Method>,
-    ) {
-        // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
-        // MaybeUninit for in-place construction — `&mut` scoped to this call.
-        Self::create(
-            unsafe { &mut *slot.cast::<core::mem::MaybeUninit<Self>>() },
-            server,
-            std::ptr::from_mut(req).cast(),
-            any_resp,
-            should_deinit_context,
-            method,
-        );
-    }
-    #[inline]
-    fn on_response(&self, server: &ThisServer, rq: JSValue, rv: JSValue) {
-        Self::on_response(self, server, rq, rv)
-    }
-    #[inline]
-    fn deinit(&self) {
-        Self::deinit(self)
-    }
-    #[inline]
-    fn should_render_missing(&self) -> bool {
-        Self::should_render_missing(self)
-    }
-    #[inline]
-    fn render_missing(&self) {
-        Self::render_missing(self)
-    }
-    #[inline]
-    fn to_async(&self, req: &mut Self::Req, ro: &mut Request) {
-        Self::to_async(self, std::ptr::from_mut(req).cast(), ro)
-    }
-    #[inline]
-    fn ctx_method(&self) -> http::Method {
-        self.method
-    }
-    #[inline]
-    fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>) {
-        self.defer_deinit_until_callback_completes.set(flag)
-    }
-    #[inline]
-    fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>) {
-        self.request_body.set(body)
-    }
-    #[inline]
-    fn request_body_mut(&self) -> Option<&mut BodyValue> {
-        // SAFETY: R-2 invariant — slot shared with `Request.body`, never
-        // `&mut`-borrowed concurrently (single-threaded event loop).
-        self.request_body
-            .get()
-            .as_ref()
-            .map(|h| unsafe { &mut (*h.as_ptr()).value })
-    }
-    #[inline]
-    fn set_signal(&self, sig: *mut AbortSignal) {
-        // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque;
-        // `RequestContext.signal` stores it as `Option<NonNull<AbortSignal>>`
-        // and pairs the unref in RequestContext cleanup (`shim::signal_release`,
-        // which drops both the pending-activity count and the intrusive ref).
-        self.signal.set(NonNull::new(sig));
-    }
-    #[inline]
-    fn set_request_weakref(&self, req: *mut Request) {
-        // SAFETY: `req` is a freshly-boxed Request (live for the request
-        // duration) still carrying its `heap::into_raw` provenance.
-        self.request_weakref
-            .set(unsafe { bun_ptr::WeakPtr::<Request>::init_ref(req) });
-    }
-    #[inline]
-    fn clear_req(&self) {
-        self.req.set(None)
-    }
-    #[inline]
-    fn set_is_web_browser_navigation(&self, v: bool) {
-        self.flags.set_is_web_browser_navigation(v)
-    }
-    #[inline]
-    fn set_request_body_content_len(&self, len: usize) {
-        self.request_body_content_len.set(len)
-    }
-    #[inline]
-    fn set_is_transfer_encoding(&self, v: bool) {
-        self.flags.set_is_transfer_encoding(v)
-    }
-    #[inline]
-    fn set_is_waiting_for_request_body(&self, v: bool) {
-        self.flags.set_is_waiting_for_request_body(v)
-    }
-    #[inline]
-    fn arm_on_data(&self, resp: uws::AnyResponse) {
-        fn handler<S, const SSL_: bool, const DBG_: bool, const MUX_: bool>(
-            ctx: *mut NewRequestContext<S, SSL_, DBG_, MUX_>,
-            chunk: &[u8],
-            last: bool,
-        ) where
-            S: super::ServerLike + 'static,
-        {
-            NewRequestContext::<S, SSL_, DBG_, MUX_>::on_buffered_body_chunk(ctx, chunk, last);
-        }
-        resp.on_data(handler::<ThisServer, SSL, DBG, MUX>, self.as_ctx_ptr());
-    }
-    #[inline]
-    fn on_start_buffering_callback(this: NonNull<c_void>) {
-        Self::on_start_buffering_callback(this)
-    }
-    #[inline]
-    fn on_start_streaming_request_body_callback(this: NonNull<c_void>) -> WebCore::DrainResult {
-        Self::on_start_streaming_request_body_callback(this)
-    }
-    #[inline]
-    fn on_request_body_readable_stream_available(
-        this: NonNull<c_void>,
-        global_this: &JSGlobalObject,
-        readable: WebCore::ReadableStream,
-    ) {
-        Self::on_request_body_readable_stream_available(this, global_this, readable)
-    }
-}
-
-// NOTE: local request/response traits so generic `Ctx::Req` / `R: RespLike`
-// call sites can dispatch to any uWS HTTP/1, HTTP/2 or HTTP/3 handle type without
-// touching `bun_uws_sys`. Only the surface `prepare_js_request_context_for`
-// actually needs is exposed.
-trait ReqLike {
+/// What `prepare_js_request_context` needs from the request handle of any protocol.
+pub(super) trait ReqLike {
     fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
     /// Whether the transport frames the body with a Transfer-Encoding header.
     /// This is the parser's verdict, not a lookup of the first header field.
@@ -340,9 +126,10 @@ pub(super) trait RespLike {
     const IS_MUX: bool;
     fn write_status(&mut self, status: &[u8]);
     fn end_without_body(&mut self, close_connection: bool);
-    fn timeout(&mut self, seconds: u8);
-    fn on_timeout_warn(&mut self, ud: *mut c_void);
+    fn on_timeout_warn(&mut self);
     fn to_any_response(&mut self) -> uws::AnyResponse;
+    /// HTTP/1 only: earlier responses of this read leave before JavaScript runs, and this one is sent when it completes.
+    fn before_handler(&mut self) {}
     /// HTTP/2 only: END_STREAM on the HEADERS frame, or `content-length: 0`.
     fn request_body_ended(&mut self) -> bool;
 }
@@ -361,18 +148,17 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
         uws_sys::NewAppResponse::<SSL>::end_without_body(self, c)
     }
     #[inline]
-    fn timeout(&mut self, s: u8) {
-        uws_sys::NewAppResponse::<SSL>::timeout(self, s)
-    }
-    #[inline]
-    fn on_timeout_warn(&mut self, ud: *mut c_void) {
-        // The dev-mode idle-timeout warning ignores both args; the user-data
-        // pointer is an opaque sentinel (any non-null value satisfies uWS).
+    fn on_timeout_warn(&mut self) {
         uws_sys::NewAppResponse::<SSL>::on_timeout(
             self,
-            |_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>| on_timeout_for_idle_warn(),
-            ud,
+            |_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>| warn_about_idle_timeout_once(),
+            idle_timeout_warning_user_data(),
         );
+    }
+    #[inline]
+    fn before_handler(&mut self) {
+        uws_sys::NewAppResponse::<SSL>::send_corked(self);
+        uws_sys::NewAppResponse::<SSL>::send_when_complete(self);
     }
     #[inline]
     fn to_any_response(&mut self) -> uws::AnyResponse {
@@ -406,15 +192,11 @@ impl RespLike for uws_sys::h3::Response {
         uws_sys::h3::Response::end_without_body(self, c)
     }
     #[inline]
-    fn timeout(&mut self, s: u8) {
-        uws_sys::h3::Response::timeout(self, s)
-    }
-    #[inline]
-    fn on_timeout_warn(&mut self, ud: *mut c_void) {
+    fn on_timeout_warn(&mut self) {
         uws_sys::h3::Response::on_timeout(
             self,
-            |_: &mut c_void, _: &mut uws_sys::h3::Response| on_timeout_for_idle_warn(),
-            ud,
+            |_: &mut c_void, _: &mut uws_sys::h3::Response| warn_about_idle_timeout_once(),
+            idle_timeout_warning_user_data(),
         );
     }
     #[inline]
@@ -437,15 +219,11 @@ impl RespLike for uws_sys::h2::Response {
         uws_sys::h2::Response::end_without_body(self, c)
     }
     #[inline]
-    fn timeout(&mut self, s: u8) {
-        uws_sys::h2::Response::timeout(self, s)
-    }
-    #[inline]
-    fn on_timeout_warn(&mut self, ud: *mut c_void) {
+    fn on_timeout_warn(&mut self) {
         uws_sys::h2::Response::on_timeout(
             self,
-            |_: &mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
-            ud,
+            |_: &mut c_void, _: &mut uws_sys::h2::Response| warn_about_idle_timeout_once(),
+            idle_timeout_warning_user_data(),
         );
     }
     #[inline]
@@ -480,11 +258,6 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
             .iter()
             .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
 }
-
-type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
-    NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
-type ServerMuxRequestContext<const SSL: bool, const DEBUG: bool> =
-    NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
 
 // ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
 // `generate()` builds the JSON AST by hand: an `E.Object` with
@@ -1274,26 +1047,22 @@ impl UpgradeOptions {
     }
 }
 
-/// Per-process latch for the dev-mode idle-timeout warning. The
-/// warning is gated on `DEBUG && !silent` and only fires once globally, so a
-/// single shared `AtomicBool` matches user-visible behavior.
-#[inline]
-fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
-    static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-    &FLAG
+/// Set once the development-mode idle timeout warning was printed, by any server of the process.
+static IDLE_TIMEOUT_WARNED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// uWS skips a timeout handler whose user data is null. The handler ignores it.
+fn idle_timeout_warning_user_data() -> *mut c_void {
+    IDLE_TIMEOUT_WARNED.as_ptr().cast::<c_void>()
 }
 
-/// Emits the once-only dev-mode
-/// warning. Factored out as a free fn so the `RespLike::on_timeout_warn`
-/// closures (which cannot name `NewServer<SSL,DEBUG>`) can call it.
-fn on_timeout_for_idle_warn() {
-    if !did_send_idletimeout_warning_once().swap(true, core::sync::atomic::Ordering::Relaxed)
-        && !crate::cli::Command::get().debug.silent
+fn warn_about_idle_timeout_once() {
+    if !crate::cli::Command::get().debug.silent
+        && !IDLE_TIMEOUT_WARNED.swap(true, core::sync::atomic::Ordering::Relaxed)
     {
-        bun_core::pretty_errorln!(
-            "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure."
+        bun_core::warn!(
+            "Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure."
         );
-        Output::flush();
     }
 }
 
@@ -1305,20 +1074,9 @@ fn on_timeout_for_idle_warn() {
 // defined once in `super` (mod.rs). This file contributes additional inherent
 // methods on the same type — there is no separate Phase-A struct.
 pub(super) use super::{
-    CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NewServer,
-    ServerFlags, UserRoute,
+    CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, DetachRequestOnDrop, HTTPSServer,
+    HTTPServer, NewServer, PreparedRequest, ServerFlags, ServerRequestContext, UserRoute,
 };
-
-/// Generic over the
-/// per-transport `RequestContext` so the same body serves HTTP/1 and HTTP/3.
-/// `super::PreparedRequest<SSL,DEBUG>` is the HTTP/1-concrete instantiation
-/// used by the bake/saved-request path; the generic form here is only reached
-/// from the `_for<Ctx>` dispatch helpers below.
-pub(crate) struct PreparedRequestFor<Ctx> {
-    pub(crate) js_request: JSValue,
-    pub(crate) request_object: *mut Request,
-    pub ctx: *mut Ctx,
-}
 
 // `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
 // `app.ws(...)` accept `*mut Self` / `*mut UserRoute<..>` as the upgrade ctx.
@@ -1349,7 +1107,7 @@ where
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Construct the cross-module `super::AnyServer` back-reference. Routes
     /// (StaticRoute/FileRoute/HTMLBundle) store this so they can call back
-    /// into `on_pending_request` / `on_static_request_complete`.
+    /// into `on_pending_request` / `on_request_complete`.
     #[inline]
     fn as_any_server(&self) -> super::AnyServer {
         super::AnyServer::from(std::ptr::from_ref::<Self>(self))
@@ -1601,7 +1359,7 @@ where
             return Ok(false);
         }
 
-        // `deinit_if_we_can` only clears `handler.server` once every
+        // `apply_phase` only clears `handler.server` once every
         // connection has closed, so this is defensive for the `Finalized`
         // window between the wrapper's `finalize()` and the next-tick
         // `schedule_deinit`: accepting an upgrade there would create a
@@ -1638,7 +1396,7 @@ where
 
         let Some(upgrader_ptr) = request
             .request_context
-            .get::<ServerRequestContext<SSL, DEBUG>>()
+            .get::<ServerRequestContext<SSL, DEBUG, false>>()
         else {
             return Ok(false);
         };
@@ -1808,7 +1566,7 @@ where
     /// transfers to `self.config`; the caller's `new_config` is left in a
     /// valid-but-emptied state and its `Drop` frees whatever was *not* taken.
     /// Any `Some(ws)` is adopted unconditionally, as on the initial serve.
-    pub(crate) fn on_reload_from_zig(
+    pub(crate) fn apply_reload(
         &self,
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
@@ -1908,11 +1666,11 @@ where
             }
         }
         for (path, route) in adopted_assets {
-            bun_core::handle_oom(new_config.append_static_route(
+            new_config.append_static_route(
                 &path,
                 AnyRoute::Static(route),
                 server_config::MethodOptional::Any,
-            ));
+            );
         }
 
         // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
@@ -1970,15 +1728,13 @@ where
         })
     }
 
-    pub(crate) fn reload_static_routes(&self) -> Result<bool, crate::Error> {
+    pub(crate) fn reload_static_routes(&self) {
         if self.app.get().is_none() {
             // Static routes will get cleaned up when the server is stopped
-            return Ok(false);
+            return;
         }
-        self.config.with_mut(|config| {
-            *config = config.clone_for_reloading_static_routes()?;
-            Ok::<(), crate::Error>(())
-        })?;
+        self.config
+            .with_mut(|config| config.normalize_static_routes_list());
         self.app_mut().clear_routes();
         for_each_mux_app!(self, |mux| {
             mux.clear_routes();
@@ -1989,7 +1745,6 @@ where
                 Self::js_gc_route_list_set(server_js_value, &self.global(), route_list_value);
             }
         }
-        Ok(true)
     }
 
     pub(crate) fn reload<'a>(
@@ -2005,18 +1760,17 @@ where
             options.to_js(),
             server_config::FromJSOptions {
                 allow_bake_config: false,
-                is_fetch_required: true,
                 previous_fetch: !self.config.get().on_request.is_empty_or_undefined_or_null(),
                 previous_routes: !self.user_routes.get().is_empty(),
             },
         )?;
 
-        // `on_reload_from_zig` moves `new_config.websocket` into the unscanned
+        // `apply_reload` moves `new_config.websocket` into the unscanned
         // `self.config` heap box before `write_ws_handler_slots` roots the 7
         // ws shadows, and each `wrap_handler_slot` call allocates via
         // `with_async_context_if_needed`. Same window as `serve()`; same fix.
         let _handler_pins = super::protect_handler_shadows(&new_config);
-        self.on_reload_from_zig(&mut new_config, global)?;
+        self.apply_reload(&mut new_config, global)?;
 
         Ok(this_value)
     }
@@ -2181,17 +1935,12 @@ where
     }
 
     pub(crate) fn close_idle_connections(&self, _: &mut JsScope<'_>) -> usize {
-        if self.app.get().is_none() || self.deinit_running.get() {
+        if self.app.get().is_none() || self.phase_held.get() {
             return 0;
         }
-        // Each close reaches `on_connection_filter(-2)` synchronously; hold
-        // the guard so the nested call skips the idle pass; this call then runs
-        // it. One-shot sweep (Node semantics): busy connections are spared
-        // and are NOT marked to close later.
-        self.deinit_running.set(true);
-        let closed = self.app_mut().close_idle_connections(false);
-        self.deinit_running.set(false);
-        self.deinit_if_we_can();
+        // One sweep, as in Node: busy connections are not marked to close later.
+        let closed = self.while_closing(|| self.app_mut().close_idle_connections(false));
+        self.apply_phase();
         closed
     }
 
@@ -2200,29 +1949,23 @@ where
         cx: &mut JsScope<'_>,
         close_active_connections: JsLocal<'_>,
     ) -> JSValue {
-        let rc = self.get_all_closed_promise(cx.global());
-
-        let close_active_connections = close_active_connections.to_js();
-        let abrupt = close_active_connections.is_boolean() && close_active_connections.to_boolean();
-        // `!deinit_running`: a `server.stop()` reached from a close callback
-        // that an outer `stop()`'s drain fired would re-enter `stop_listening`
-        // under the outer frame.
-        if self.has_listener()
-            || (abrupt
-                && !self.flags.get().contains(ServerFlags::TERMINATED)
-                && !self.deinit_running.get())
-        {
-            self.stop(abrupt);
-        }
-
-        rc
+        let all_closed = self.get_all_closed_promise(cx.global());
+        self.stop_from_js(close_active_connections.to_js() == JSValue::TRUE);
+        all_closed
     }
 
     pub(crate) fn dispose(&self, _: &mut JsScope<'_>) {
+        self.stop_from_js(true);
+    }
+
+    fn stop_from_js(&self, abrupt: bool) {
+        // Under `phase_held`, an outer `stop()` or `closeIdleConnections()` is walking the sockets an abrupt stop would close.
         if self.has_listener()
-            || (!self.flags.get().contains(ServerFlags::TERMINATED) && !self.deinit_running.get())
+            || (abrupt
+                && !self.flags.get().contains(ServerFlags::TERMINATED)
+                && !self.phase_held.get())
         {
-            self.stop(true);
+            self.stop(abrupt);
         }
     }
 
@@ -2258,7 +2001,7 @@ where
     }
 
     pub(crate) fn get_pending_web_sockets(&self) -> i32 {
-        (self.active_sockets_count() as u32 & 0x7FFF_FFFF) as i32
+        (self.active_websocket_count.get() & 0x7FFF_FFFF) as i32
     }
 
     pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -2357,9 +2100,10 @@ where
     pub(crate) fn finalize(&self) {
         httplog!("finalize");
         self.js_value.with_mut(|js_value| js_value.finalize());
-        // A no-op unless something became pending again after the drain dropped the ref.
-        self.hold_open_ref();
-        self.deinit_if_we_can();
+        debug_assert!(
+            self.open_ref.get().is_some() != self.is_drained(),
+            "the server refs itself exactly until it is drained"
+        );
     }
 
     pub(crate) fn get_all_closed_promise(&self, global: &JSGlobalObject) -> JSValue {
@@ -2383,7 +2127,7 @@ where
         if self.config.get().on_request.is_empty() {
             return Self::on_mux_404(self, req, resp);
         }
-        self.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
+        Self::on_request::<true, _, _>(self.as_ctx_ptr(), req, resp, None);
     }
 
     pub(super) fn on_mux_user_route_request<R: RespLike>(
@@ -2391,9 +2135,7 @@ where
         req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
-        Self::on_user_route_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(
-            user_route, req, resp,
-        );
+        Self::on_user_route_request::<true, _, _>(user_route, req, resp, None);
     }
 
     pub(super) fn on_mux_404<R: RespLike>(_this: &Self, _req: &mut uws::H3::Request, resp: &mut R) {
@@ -2453,329 +2195,265 @@ where
         resp.write_header_int(b"Age", 0);
         let buffer = writer.ctx.written();
         resp.end(buffer, false);
-        self.pending_requests.set(self.pending_requests.get() - 1);
+        self.on_request_complete();
     }
 
     // `on_chrome_dev_tools_json_request` is defined once below (next to
     // `on404`); a second copy here was a concurrent-port duplicate and has
     // been removed.
 
-    fn on_user_route_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
+    /// Calls a handler of the `routes` option. `upgrade_ctx`: the request is a WebSocket handshake `server.upgrade()` can accept.
+    pub(super) fn on_user_route_request<const MUX: bool, Q: ReqLike, R: RespLike>(
         user_route: &UserRoute<SSL, DEBUG>,
-        req: &mut Ctx::Req,
+        req: &mut Q,
         resp: &mut R,
+        upgrade_ctx: Option<&mut WebSocketUpgradeContext>,
     ) {
-        debug_assert!(!user_route.server.is_null());
-        // SAFETY: `UserRoute.server` is the owning `*mut NewServer` (write
-        // provenance), a back-pointer to the owning server, which outlives
-        // every route it registered.
-        let server_ref = unsafe { bun_ptr::BackRef::from_raw_mut(user_route.server) };
-        let server_ptr = server_ref.as_ptr();
-        let index = user_route.id;
-
-        let Some(server_js) = server_ref.js_value_for_dispatch() else {
+        let this = user_route.server;
+        debug_assert!(!this.is_null());
+        // SAFETY: the owning server outlives every route it registered.
+        let server = unsafe { &*this };
+        let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
 
         let should_deinit_context = core::cell::Cell::new(false);
-        let Some(mut prepared) = Self::prepare_js_request_context_for::<Ctx, R>(
-            server_ptr,
+        let Some(mut prepared) = Self::prepare_js_request_context::<MUX, Q, R>(
+            this,
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             user_route.route.method.specific(),
+            upgrade_ctx,
         ) else {
             return;
         };
 
-        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
-        let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
-        let call_route = if Ctx::IS_MUX {
+        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
+        // The handler and the render of what it returns continue the script that made the server.
+        let _context = server.vm().enter_context(server.context.get());
+        let global = server.global_this();
+        let route_list =
+            Self::js_route_list_get_cached(server_js).expect("routeList cached value missing");
+        let call_route = if MUX {
             Bun__ServerRouteList__callRouteH3
         } else {
             Bun__ServerRouteList__callRoute
         };
-        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-        let global = bun_opaque::opaque_deref(server_ref.global_this);
-        let response_value = match jsc::from_js_host_call(global, || {
+        let response_value = jsc::from_js_host_call(global, || {
             call_route(
                 global,
-                index,
+                user_route.id,
                 prepared.request_object,
                 server_js,
-                server_request_list,
+                route_list,
                 &mut prepared.js_request,
                 std::ptr::from_mut(req).cast::<c_void>(),
             )
-        }) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
+        })
+        .unwrap_or_else(|err| global.take_exception(err));
 
-        Self::handle_request_for::<Ctx>(
-            server_ptr,
-            &should_deinit_context,
-            &prepared,
-            req,
-            response_value,
-        );
+        Self::handle_request(this, &should_deinit_context, &prepared, req, response_value);
     }
 
-    fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
+    /// Calls the `fetch` handler. `upgrade_ctx` as in [`Self::on_user_route_request`].
+    pub(super) fn on_request<const MUX: bool, Q: ReqLike, R: RespLike>(
         this: *mut Self,
-        should_deinit_context: &core::cell::Cell<bool>,
-        prepared: &PreparedRequestFor<Ctx>,
-        req: &mut Ctx::Req,
-        response_value: JSValue,
-    ) {
-        let request_object_ptr: *mut Request = prepared.request_object;
-        let detach_ptr = request_object_ptr;
-        scopeguard::defer! {
-            // uWS request will not live longer than this function
-            // SAFETY: request_object outlives this stack frame (boxed on the request).
-            unsafe { (*detach_ptr).request_context.detach_request() };
-        }
-
-        // SAFETY: `prepared.ctx` was allocated by `prepare_js_request_context_for`
-        // for this frame and cannot be freed while `defer_deinit_...` is set (set
-        // by the caller until cleared below); `this` is the live server backref.
-        let (ctx, server) = unsafe { (&*prepared.ctx, &*this) };
-        RequestCtxOps::on_response(ctx, server, prepared.js_request, response_value);
-        // Reference in the stack here in case it is not for whatever reason
-        prepared.js_request.ensure_still_alive();
-
-        RequestCtxOps::set_defer_deinit(ctx, None);
-
-        if should_deinit_context.get() {
-            RequestCtxOps::deinit(ctx);
-            return;
-        }
-
-        if RequestCtxOps::should_render_missing(ctx) {
-            RequestCtxOps::render_missing(ctx);
-            return;
-        }
-
-        // The request is asynchronous, and all information from `req` must be copied
-        // since the provided uws.Request will be re-used for future requests (stack allocated).
-        // SAFETY: `request_object_ptr` is the live heap `Request` (see above).
-        RequestCtxOps::to_async(ctx, req, unsafe { &mut *request_object_ptr });
-    }
-
-    fn on_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        &self,
-        req: &mut Ctx::Req,
+        req: &mut Q,
         resp: &mut R,
+        upgrade_ctx: Option<&mut WebSocketUpgradeContext>,
     ) {
-        let Some(js_value) = self.js_value_for_dispatch() else {
+        // SAFETY: `this` is the live server registered as the route's user data.
+        let server = unsafe { &*this };
+        let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
-        let self_ptr: *mut Self = self.as_ctx_ptr();
+
         let should_deinit_context = core::cell::Cell::new(false);
-        let Some(prepared) = Self::prepare_js_request_context_for::<Ctx, R>(
-            self_ptr,
+        let Some(prepared) = Self::prepare_js_request_context::<MUX, Q, R>(
+            this,
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::Yes,
             None,
+            upgrade_ctx,
         ) else {
             return;
         };
 
-        let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
-        let on_request_fn = self.config.get().on_request;
-        debug_assert!(!on_request_fn.is_empty());
-
-        let global = self.global_this();
+        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
+        // As in `on_user_route_request`.
+        let _context = server.vm().enter_context(server.context.get());
+        let on_request = server.config.get().on_request;
+        debug_assert!(!on_request.is_empty());
+        let global = server.global_this();
         let response_value =
-            match on_request_fn.call(global, js_value, &[prepared.js_request, js_value]) {
+            match on_request.call(global, server_js, &[prepared.js_request, server_js]) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
             };
 
-        Self::handle_request_for::<Ctx>(
-            self_ptr,
-            &should_deinit_context,
-            &prepared,
-            req,
-            response_value,
+        Self::handle_request(this, &should_deinit_context, &prepared, req, response_value);
+    }
+
+    /// Hands what the handler returned to the `RequestContext`, then frees it or makes the request asynchronous.
+    fn handle_request<const MUX: bool, Q>(
+        this: *mut Self,
+        should_deinit_context: &core::cell::Cell<bool>,
+        prepared: &PreparedRequest<SSL, DEBUG, MUX>,
+        req: &mut Q,
+        response_value: JSValue,
+    ) {
+        // SAFETY: `ctx.request_weakref` keeps `request_object` alive. The uWS request does not outlive this function.
+        let _detach_guard = unsafe { DetachRequestOnDrop::new(prepared.request_object) };
+
+        // SAFETY: `ctx` can't be freed while `defer_deinit_until_callback_completes` is set, and `this` is the live server.
+        let (ctx, server) = unsafe { (&*prepared.ctx, &*this) };
+        ctx.on_response(server, prepared.js_request, response_value);
+        prepared.js_request.ensure_still_alive();
+
+        ctx.defer_deinit_until_callback_completes.set(None);
+
+        if should_deinit_context.get() {
+            ctx.deinit();
+            return;
+        }
+
+        if ctx.should_render_missing() {
+            ctx.render_missing();
+            return;
+        }
+
+        // uWS reuses `req` for the next request, so an asynchronous one copies what it needs.
+        ctx.to_async(
+            std::ptr::from_mut(req).cast::<c_void>(),
+            // SAFETY: live (see above), and no other borrow of the Request is outstanding.
+            unsafe { &mut *prepared.request_object },
         );
     }
 
-    fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
+    fn should_warn_about_idle_timeout(&self) -> bool {
+        DEBUG
+            && !self.config.get().has_idle_timeout
+            && !IDLE_TIMEOUT_WARNED.load(core::sync::atomic::Ordering::Relaxed)
+            && !crate::cli::Command::get().debug.silent
+    }
+
+    /// Makes the `RequestContext` and the `Request` of a request that JavaScript answers. `None`: it was answered here.
+    pub(super) fn prepare_js_request_context<const MUX: bool, Q: ReqLike, R: RespLike>(
         this: *mut Self,
-        req: &mut Ctx::Req,
+        req: &mut Q,
         resp: &mut R,
         should_deinit_context: Option<DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
         method: Option<http::Method>,
-    ) -> Option<PreparedRequestFor<Ctx>> {
+        upgrade_ctx: Option<&mut WebSocketUpgradeContext>,
+    ) -> Option<PreparedRequest<SSL, DEBUG, MUX>> {
+        const { assert!(R::IS_MUX == MUX) };
         jsc::mark_binding!();
-        // SAFETY: `this` is the live heap server registered as the callback
-        // user-data; everything below only needs `&Self`.
+        // SAFETY: `this` is the live heap server registered as the callback's user data. `create` stores the raw pointer, not this borrow.
         let server = unsafe { &*this };
 
-        // We need to register the handler immediately since uSockets will not buffer.
-        //
-        // We first validate the self-reported request body length so that
-        // we avoid needing to worry as much about what memory to free.
-        // RFC 9114 §4.2: an HTTP/3 message containing transfer-encoding is
-        // malformed (HTTP/2 rejects it with RST_STREAM before dispatch).
-        if Ctx::IS_MUX {
-            if ReqLike::header(req, b"transfer-encoding").is_some() {
-                RespLike::write_status(resp, b"400 Bad Request");
-                RespLike::end_without_body(resp, false);
-                return None;
-            }
-        }
+        let method = method.or_else(|| http::Method::which(req.method()));
 
-        // Resolve once, reuse for both `has_request_body()` and the forward to
-        // `Ctx::create`.
-        let method = method.or_else(|| http::Method::which(ReqLike::method(req)));
-
-        let request_body_length: Option<usize> = 'request_body_length: {
+        let request_body_length: Option<usize> =
             if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
-                let len: usize = 'brk: {
-                    if let Some(content_length) = ReqLike::header(req, b"content-length") {
-                        break 'brk bun_http_types::parse_content_length(content_length);
-                    }
-                    0
-                };
-
-                // Abort the request very early. For H2/H3 a per-request error
-                // is a stream error; close_connection would take down every
-                // sibling stream on the connection.
+                let len = req
+                    .header(b"content-length")
+                    .map_or(0, bun_http_types::parse_content_length);
                 if len > server.config.get().max_request_body_size {
-                    RespLike::write_status(resp, b"413 Request Entity Too Large");
-                    RespLike::end_without_body(resp, !Ctx::IS_MUX);
+                    resp.write_status(b"413 Request Entity Too Large");
+                    // Closing an HTTP/2 or HTTP/3 connection would take down its other streams.
+                    resp.end_without_body(!MUX);
                     return None;
                 }
+                Some(len)
+            } else {
+                None
+            };
 
-                break 'request_body_length Some(len);
-            }
-            None
-        };
+        resp.before_handler();
 
         server.on_pending_request();
+        req.set_yield(false);
 
-        ReqLike::set_yield(req, false);
-        RespLike::timeout(resp, server.config.get().idle_timeout);
-
-        // Since we do timeouts by default, we should tell the user when
-        // this happens - but limit it to only warn once.
-        if server.should_add_timeout_handler_for_warning() {
-            // We need to pass it a pointer, any pointer should do.
-            // SAFETY: the user-data pointer is an opaque sentinel — `on_timeout_for_idle_warn`
-            // ignores it and reads the static directly. `AtomicBool::as_ptr` yields a `*mut`
-            // with interior-mutability provenance, so no `&T as *const _ as *mut _` cast is needed.
-            RespLike::on_timeout_warn(
-                resp,
-                did_send_idletimeout_warning_once()
-                    .as_ptr()
-                    .cast::<c_void>(),
-            );
+        if server.should_warn_about_idle_timeout() {
+            resp.on_timeout_warn();
         }
 
-        let any_resp = RespLike::to_any_response(resp);
-        // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
-        // const-bool MUX parameter only affects associated consts/types, not layout, so
-        // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
-        //
-        // `claim()` reserves the slot as a `HiveSlot`; `create_in` does
-        // `MaybeUninit::write` placement-new through the slot's stable
-        // address, after which `assume_init()` consumes the token.
-        // `RequestContext` carries the heaviest drop glue in the codebase, so
-        // a panic inside `create_in` now releases the slot via
-        // `HiveSlot::drop` without running `RequestContext::drop` on garbage.
-        let ctx_slot: *mut Ctx = unsafe {
-            if Ctx::IS_MUX {
-                debug_assert!(
-                    !server.mux_request_pool.get().is_null(),
-                    "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
-                );
-                let slot = (*server.mux_request_pool.get()).claim();
-                Ctx::create_in(
-                    slot.addr().as_ptr().cast(),
-                    this,
-                    req,
-                    any_resp,
-                    should_deinit_context,
-                    method,
-                );
-                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-                slot.assume_init().as_ptr().cast()
-            } else {
-                let slot = (*server.request_pool).claim();
-                Ctx::create_in(
-                    slot.addr().as_ptr().cast(),
-                    this,
-                    req,
-                    any_resp,
-                    should_deinit_context,
-                    method,
-                );
-                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-                slot.assume_init().as_ptr().cast()
-            }
+        let any_resp = resp.to_any_response();
+        // SAFETY: the pool is the VM's and outlives the server. `create` initializes the claimed
+        // slot, and a panic inside it releases the slot without dropping its contents.
+        let ctx_ptr: *mut ServerRequestContext<SSL, DEBUG, MUX> = unsafe {
+            let slot = (*server.request_pool_for::<MUX>()).claim();
+            ServerRequestContext::<SSL, DEBUG, MUX>::create(
+                &mut *slot
+                    .addr()
+                    .as_ptr()
+                    .cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG, MUX>>>(),
+                this,
+                std::ptr::from_mut(req).cast::<c_void>(),
+                any_resp,
+                should_deinit_context,
+                method,
+            );
+            slot.assume_init().as_ptr()
         };
-        // SAFETY: ctx_slot was just initialized by create_in.
-        let ctx = unsafe { &*ctx_slot };
+        // SAFETY: initialized by `create`.
+        let ctx = unsafe { &*ctx_ptr };
+        if let Some(upgrade_ctx) = upgrade_ctx {
+            ctx.upgrade_context
+                .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
+        }
 
         server
             .vm()
             .jsc_vm()
-            .deprecated_report_extra_memory(core::mem::size_of::<Ctx>());
+            .deprecated_report_extra_memory(core::mem::size_of::<
+                ServerRequestContext<SSL, DEBUG, MUX>,
+            >());
 
-        // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
-        // The ctx and Request each own a +1 on the
-        // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
-        ctx.set_request_body(Some(body_hive.clone()));
+        // SAFETY: the slot stays live: `ctx.request_body` and `Request.body` each hold a ref on it.
+        let body_value: *mut BodyValue =
+            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
+        ctx.request_body.set(Some(body_hive.clone()));
 
+        let global = server.global_this();
         let _context = server.vm().enter_context(server.context.get());
-        let signal = AbortSignal::new(&server.global());
-        ctx.set_signal(signal);
+        let signal = AbortSignal::new(global);
+        ctx.signal.set(NonNull::new(signal));
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
-        // The Request's own ref.
-        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
+        // The JS wrapper frees it, or `ctx.request_weakref` does for `CreateJsRequest::No`.
         let request_object_ptr: *mut Request = Request::new(Request::init(
-            ctx.ctx_method(),
-            AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
+            ctx.method,
+            AnyRequestContext::init(ctx_ptr),
             SSL,
-            Some(signal_for_req),
+            Some(bun_opaque::opaque_deref_mut(signal).ref_()),
             body_hive,
         ));
-        // Leak so the ctx (which outlives this stack frame) can hold the
-        // pointer; Request is freed via ctx.deinit's request_weakref. The weak
-        // handle takes the raw pointer, not a reborrow of `request_object`:
-        // writes through `request_object` below would otherwise invalidate it.
-        ctx.set_request_weakref(request_object_ptr);
-        // SAFETY: freshly leaked; shared view — the headers/url population
-        // below takes `&Request`.
-        let request_object: &Request = unsafe { &*request_object_ptr };
+        // SAFETY: freshly leaked from `heap::into_raw`, so it carries the allocation's provenance.
+        ctx.request_weakref
+            .set(unsafe { bun_ptr::WeakPtr::<Request>::init_ref(request_object_ptr) });
 
-        // The lazy `getRequest()` path that backs Request.url / .headers
-        // is `*uws.Request`-typed; for HTTP/2 and HTTP/3 we populate both
-        // eagerly so the rest of the pipeline never needs to know which
-        // transport delivered the bytes.
-        if Ctx::IS_MUX {
+        // `Request.url` and `.headers` read a `uws::Request` lazily. HTTP/2 and HTTP/3 have none, so both are filled in now.
+        if MUX {
+            // SAFETY: freshly leaked. What follows takes `&Request`.
+            let request_object: &Request = unsafe { &*request_object_ptr };
             // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
             request_object.set_fetch_headers(Some(unsafe {
                 crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
                     std::ptr::from_mut(req).cast::<c_void>(),
                 ))
             }));
-            // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
-            // returned slices alias the same uWS-owned header buffer. Format
-            // the `https://{host}` prefix while `host` is borrowed so the
-            // second `&mut req` borrow for `url` is unconflicted.
-            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host")
+            let prefix: Option<Vec<u8>> = req
+                .header(b"host")
                 .filter(|host| Request::is_valid_host_header(host))
                 .map(|host| {
                     let fmt = bun_fmt::HostFormatter {
@@ -2787,7 +2465,7 @@ where
                     let _ = write!(&mut s, "{}://{}", if SSL { "https" } else { "http" }, fmt);
                     s
                 });
-            let path = ReqLike::url(req);
+            let path = req.url();
             if !path.is_empty() && path[0] == b'/' {
                 if let Some(mut s) = prefix {
                     s.extend_from_slice(path);
@@ -2806,57 +2484,58 @@ where
             } else {
                 request_object.url.set(BunString::clone_utf8(path));
             }
-            ctx.clear_req();
+            ctx.req.set(None);
         }
 
         if DEBUG {
-            ctx.set_is_web_browser_navigation('brk: {
-                if let Some(fetch_dest) = ReqLike::header(req, b"sec-fetch-dest") {
-                    if fetch_dest == b"document" {
-                        break 'brk true;
-                    }
-                }
-                false
-            });
+            ctx.flags.set_is_web_browser_navigation(
+                req.header(b"sec-fetch-dest")
+                    .is_some_and(|fetch_dest| fetch_dest == b"document"),
+            );
         }
 
         if let Some(req_len) = request_body_length {
-            ctx.set_request_body_content_len(req_len);
-            let is_te = ReqLike::has_transfer_encoding(req);
-            ctx.set_is_transfer_encoding(is_te);
+            ctx.request_body_content_len.set(req_len);
+            let is_transfer_encoding = req.has_transfer_encoding();
+            ctx.flags.set_is_transfer_encoding(is_transfer_encoding);
             // HTTP/2 and HTTP/3 frame the body by END_STREAM or QUIC FIN, not Content-Length.
-            if req_len > 0 || is_te || (Ctx::IS_MUX && !RespLike::request_body_ended(resp)) {
-                // we defer pre-allocating the body until we receive the first chunk
-                // that way if the client is lying about how big the body is or the client aborts
-                // we don't waste memory
-                if let Some(body) = ctx.request_body_mut() {
-                    *body = BodyValue::Locked(crate::webcore::body::PendingValue {
-                        task: Some(NonNull::new(ctx_slot).unwrap().cast::<c_void>()),
-                        global: server.global_this,
-                        on_start_buffering: Some(Ctx::on_start_buffering_callback),
-                        on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
+            if req_len > 0 || is_transfer_encoding || (MUX && !resp.request_body_ended()) {
+                // The buffer is allocated at the first chunk, so a client that lies about the length or aborts wastes no memory.
+                // SAFETY: `body_value` is the hive payload initialized above.
+                unsafe {
+                    *body_value = BodyValue::Locked(crate::webcore::body::PendingValue {
+                        task: Some(NonNull::new(ctx_ptr).unwrap().cast::<c_void>()),
+                        global: std::ptr::from_ref(global),
+                        on_start_buffering: Some(
+                            ServerRequestContext::<SSL, DEBUG, MUX>::on_start_buffering_callback,
+                        ),
+                        on_start_streaming: Some(
+                            ServerRequestContext::<SSL, DEBUG, MUX>::on_start_streaming_request_body_callback,
+                        ),
                         on_readable_stream_available: Some(
-                            Ctx::on_request_body_readable_stream_available,
+                            ServerRequestContext::<SSL, DEBUG, MUX>::on_request_body_readable_stream_available,
                         ),
                         producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
-                            AnyRequestContext::init(ctx_slot),
+                            AnyRequestContext::init(ctx_ptr),
                         ),
                         ..Default::default()
                     });
                 }
-                ctx.set_is_waiting_for_request_body(true);
-                ctx.arm_on_data(any_resp);
+                ctx.flags.set_is_waiting_for_request_body(true);
+                // uSockets does not buffer, so the handler is registered before JavaScript runs.
+                any_resp.on_data(
+                    ServerRequestContext::<SSL, DEBUG, MUX>::on_buffered_body_chunk,
+                    ctx_ptr,
+                );
             }
         }
 
-        Some(PreparedRequestFor {
+        Some(PreparedRequest {
             js_request: match create_js_request {
                 // SAFETY: from `Request::new` above; the wrapper adopts its ref.
-                CreateJsRequest::Yes => unsafe {
-                    Request::to_js(request_object_ptr, &server.global())
-                },
+                CreateJsRequest::Yes => unsafe { Request::to_js(request_object_ptr, global) },
                 CreateJsRequest::Bake => {
-                    match Request::to_js_for_bake(request_object_ptr, &server.global()) {
+                    match Request::to_js_for_bake(request_object_ptr, global) {
                         Ok(v) => v,
                         Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(_) => return None,
@@ -2865,87 +2544,12 @@ where
                 CreateJsRequest::No => JSValue::ZERO,
             },
             request_object: request_object_ptr,
-            ctx: ctx_slot,
+            ctx: ctx_ptr,
         })
     }
 
-    fn upgrade_web_socket_user_route(
-        this: &UserRoute<SSL, DEBUG>,
-        resp: &mut uws_sys::NewAppResponse<SSL>,
-        req: &mut uws::Request,
-        upgrade_ctx: &mut WebSocketUpgradeContext,
-        method: Option<http::Method>,
-    ) {
-        // BACKREF: `UserRoute.server` is set at construction from the owning
-        // `NewServer` (which outlives every `UserRoute` in its `user_routes`
-        // vec); non-null by invariant.
-        debug_assert!(!this.server.is_null());
-        // SAFETY: `UserRoute.server` is the owning `*mut NewServer` (write provenance),
-        // set at construction and non-null while the route is registered.
-        let server_ref = unsafe { bun_ptr::BackRef::from_raw_mut(this.server) };
-        let server_ptr = server_ref.as_ptr();
-        let index = this.id;
-
-        let Some(server_js) = server_ref.js_value_for_dispatch() else {
-            respond_stopped_503(resp);
-            return;
-        };
-
-        let should_deinit_context = core::cell::Cell::new(false);
-        // SAFETY: `server_ptr` is the live heap server registered for this route;
-        // `req`/`resp` are the live uWS handles passed to the route handler.
-        let Some(mut prepared) = Self::prepare_js_request_context(
-            server_ptr,
-            req,
-            resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
-            CreateJsRequest::No,
-            method,
-        ) else {
-            return;
-        };
-        // SAFETY: `prepared.ctx` is the freshly-allocated RequestContext slot.
-        unsafe {
-            (*prepared.ctx)
-                .upgrade_context
-                .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)))
-        };
-        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
-        let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
-        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-        let global = bun_opaque::opaque_deref(server_ref.global_this);
-        let response_value = match jsc::from_js_host_call(global, || {
-            Bun__ServerRouteList__callRoute(
-                global,
-                index,
-                prepared.request_object,
-                server_js,
-                server_request_list,
-                &mut prepared.js_request,
-                std::ptr::from_mut(req).cast::<c_void>(),
-            )
-        }) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
-
-        Self::handle_request(
-            server_ptr,
-            &should_deinit_context,
-            &prepared,
-            req,
-            response_value,
-        );
-    }
-
     /// # Safety
-    /// `this` is the raw user-data pointer registered with `app.ws(...)` cast
-    /// to `*mut Self`. Its **actual pointee type depends on `id`**: `id == 1`
-    /// registers a `*mut UserRoute<SSL,DEBUG>` (mod.rs per-route ws), `id == 0`
-    /// registers `*mut Self` (mod.rs `/*` fallback). The receiver is therefore
-    /// kept raw and only dereferenced *after* dispatching on `id`, so no
-    /// wrong-typed `&mut Self` reference is ever materialized (which would be
-    /// instant UB regardless of whether it is read).
+    /// `this` is the user data registered with `app.ws(..)`: a `*mut UserRoute<SSL, DEBUG>` for `id == 1`, a `*mut Self` for `id == 0`.
     pub(crate) unsafe fn on_web_socket_upgrade(
         this: *mut Self,
         resp: &mut uws_sys::NewAppResponse<SSL>,
@@ -2953,131 +2557,21 @@ where
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
-        jsc::mark_binding!();
         if id == 1 {
-            // SAFETY: for `id == 1` the registered user-data IS
-            // `*mut UserRoute<SSL,DEBUG>` (mod.rs `app.ws(path, ud, 1, ..)`);
-            // live for the request's duration. Raw-ptr cast only — no
-            // intermediate `&mut Self` was ever created; shared suffices (the
-            // route entry is only read).
+            // SAFETY: fn contract. No `&Self` was made from the pointer.
             let user_route = unsafe { &*this.cast::<UserRoute<SSL, DEBUG>>() };
-            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
+            Self::on_user_route_request::<false, _, _>(user_route, req, resp, Some(upgrade_ctx));
             return;
         }
-        // Access `this` as *ThisServer only if id is 0
         debug_assert!(id == 0);
-        let self_ptr: *mut Self = this;
-        // SAFETY: for `id == 0` the registered user-data IS `*mut Self`
-        // (mod.rs `app.ws("/*", self_ptr, 0, ..)`); live for the request's
-        // duration. Shared — the `on_request` call below re-enters JS, so no
-        // `&mut` may span it (pending-request accounting is a `Cell`).
-        let this = unsafe { &*self_ptr };
-        let Some(server_js) = this.js_value_for_dispatch() else {
-            respond_stopped_503(resp);
-            return;
-        };
-        if this.config.get().on_request.is_empty() {
-            // require fetch method to be set otherwise we dont know what route to call
-            // this should be the fallback in case no route is provided to upgrade
+        // SAFETY: fn contract.
+        if unsafe { &*this }.config.get().on_request.is_empty() {
+            // Only a handler can call `server.upgrade()`.
             resp.write_status(b"403 Forbidden");
             resp.end_without_body(true);
             return;
         }
-        // Same as `prepare_js_request_context`, which this path does not use.
-        resp.send_corked();
-        resp.send_when_complete();
-        let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
-        this.on_pending_request();
-        req.set_yield(false);
-        // SAFETY: `request_pool` is non-null while the server is alive; `claim()`
-        // reserves a fresh slot whose `Drop` releases it on panic before init.
-        let ctx_slot = unsafe { (*this.request_pool).claim() };
-        let should_deinit_context = core::cell::Cell::new(false);
-        <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
-            ctx_slot.addr().as_ptr(),
-            self_ptr,
-            req,
-            RespLike::to_any_response(resp),
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
-            None,
-        );
-        // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-        let ctx = unsafe { &*ctx_slot.assume_init().as_ptr() };
-
-        // Pooled body slot, ref_count = 1.
-        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
-        // The ctx and Request each own a +1 on the
-        // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
-        ctx.request_body.set(Some(body_hive.clone()));
-
-        let _context = this.vm().enter_context(this.context.get());
-        let signal = AbortSignal::new(&this.global());
-        // The
-        // RequestContext owns one ref so aborts during the WS-upgrade fallback
-        // fetch path propagate.
-        ctx.signal.set(NonNull::new(signal));
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-        // The Request's own ref.
-        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
-        let request_object_ptr: *mut Request = Request::new(Request::init(
-            ctx.method,
-            AnyRequestContext::init(std::ptr::from_ref(ctx)),
-            SSL,
-            Some(signal_for_req),
-            body_hive,
-        ));
-        ctx.upgrade_context
-            .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
-        // Leaked so the ctx (which outlives this stack frame) can hold the
-        // pointer; freed via ctx.deinit's request_weakref. Everything below
-        // goes through this raw pointer rather than a `&mut Request` reborrow:
-        // the weak handle and the deferred `detach_request` both alias it.
-        // SAFETY: freshly leaked, so it carries the allocation's provenance.
-        ctx.request_weakref
-            .set(unsafe { bun_ptr::WeakPtr::<Request>::init_ref(request_object_ptr) });
-
-        // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
-        let global = this.global();
-        // SAFETY: from `Request::new` above; the wrapper adopts its ref.
-        let args = [
-            unsafe { Request::to_js(request_object_ptr, &global) },
-            server_js,
-        ];
-        args[0].ensure_still_alive();
-
-        let response_value = match this.config.get().on_request.call(&global, server_js, &args) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
-        // Its own copy, so the closure's capture does not pin `request_object_ptr`.
-        let detach_ptr = request_object_ptr;
-        scopeguard::defer! {
-            // uWS request will not live longer than this function
-            // SAFETY: see request_object_ptr above.
-            unsafe { (*detach_ptr).request_context.detach_request() };
-        }
-
-        ctx.on_response(this, args[0], response_value);
-
-        ctx.defer_deinit_until_callback_completes.set(None);
-
-        if should_deinit_context.get() {
-            ctx.deinit();
-            return;
-        }
-
-        if ctx.should_render_missing() {
-            ctx.render_missing();
-            return;
-        }
-
-        ctx.to_async(
-            std::ptr::from_mut::<uws::Request>(req).cast::<c_void>(),
-            // SAFETY: `request_object_ptr` is live (the ctx's weakref owns it)
-            // and no other borrow of the Request is outstanding here.
-            unsafe { &mut *request_object_ptr },
-        );
+        Self::on_request::<false, _, _>(this, req, resp, Some(upgrade_ctx));
     }
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -3543,7 +3037,7 @@ unsafe extern "C" {
     // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
     // preconditions; `request_ptr`/`req` are opaque handles that C++ stores or
     // forwards (module-private — sole callers pass live pointers).
-    pub(super) safe fn Bun__ServerRouteList__callRoute(
+    safe fn Bun__ServerRouteList__callRoute(
         global: &JSGlobalObject,
         index: u32,
         request_ptr: *mut Request,

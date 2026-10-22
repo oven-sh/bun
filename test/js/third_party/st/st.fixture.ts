@@ -2,8 +2,14 @@ import { createServer } from "node:http";
 import st from "st";
 
 function listen(server): Promise<URL> {
-  return new Promise(resolve => {
-    server.listen({ port: 0 }, () => resolve(new URL("http://localhost:" + server.address().port)));
+  return new Promise((resolve, reject) => {
+    server.listen({ port: 0 }, (err, hostname, port) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(new URL("http://" + hostname + ":" + port));
+      }
+    });
   });
 }
 await using server = createServer(st(process.cwd()));

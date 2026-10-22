@@ -197,6 +197,10 @@ int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
+/* Takes ownership of a descriptor opened elsewhere. Fails with EEXIST, leaving it untouched, if a socket in this process owns it. */
+int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd);
+/* Gives up ownership without closing. */
+void bsd_disown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket_read(LIBUS_SOCKET_DESCRIPTOR fd);

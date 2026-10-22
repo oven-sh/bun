@@ -387,14 +387,6 @@ pub(crate) fn run_task(
                 )
             };
         }
-        task_tag::HTTPAppClose => {
-            crate::server::AppCloseTask::<false>::run(cast_ptr!(
-                crate::server::AppCloseTask<false>
-            ));
-        }
-        task_tag::HTTPSAppClose => {
-            crate::server::AppCloseTask::<true>::run(cast_ptr!(crate::server::AppCloseTask<true>));
-        }
         task_tag::HTTPServerDeinit => {
             // SAFETY: the unique owning server pointer `schedule_deinit` queued.
             unsafe {
@@ -750,7 +742,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 84,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1310,12 +1302,6 @@ pub(crate) unsafe fn __bun_fire_timer(
             CronJob::on_timer_fire(unsafe { bun_ptr::ThisPtr::new(c) }, VirtualMachine::get());
             Ok(())
         }
-        EventLoopTimerTag::QuicEndpoint => {
-            let c: *mut crate::node::quic::QuicEndpoint =
-                owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
-            crate::node::quic::QuicEndpoint::on_timer_fire(c);
-            Ok(())
-        }
         EventLoopTimerTag::UvTimer => {
             #[cfg(unix)]
             {
@@ -1468,8 +1454,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::GraphContextStopAndFree => {
             release!(bun_jsc::virtual_machine::GraphContextStopAndFree)
         }
-        task_tag::HTTPAppClose => release!(crate::server::AppCloseTask<false>),
-        task_tag::HTTPSAppClose => release!(crate::server::AppCloseTask<true>),
         task_tag::HTTPServerDeinit => release!(crate::server::ServerDeinitTask<false, false>),
         task_tag::HTTPSServerDeinit => release!(crate::server::ServerDeinitTask<true, false>),
         task_tag::DebugHTTPServerDeinit => release!(crate::server::ServerDeinitTask<false, true>),

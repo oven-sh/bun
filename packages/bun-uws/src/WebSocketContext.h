@@ -314,7 +314,7 @@ private:
         /* For whatever reason, if we already have emitted close event, do not emit it again */
         WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(s));
         if (webSocketData->socketData && webSocketData->onSocketClosed) {
-            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s, 0, false);
+            webSocketData->onSocketClosed(webSocketData->socketData, s, 0, false);
         }
         if (!webSocketData->isShuttingDown) {
             /* Emit close event */
@@ -428,12 +428,6 @@ private:
         return s;
     }
 
-    static us_socket_t *onLongTimeout(us_socket_t *s) {
-        ((WebSocket<SSL, isServer, USERDATA> *) s)->end(1000, "please reconnect");
-
-        return s;
-    }
-
     static us_socket_t *onTimeout(us_socket_t *s) {
         auto *webSocketData = (WebSocketData *)(us_socket_ext(s));
         auto *webSocketContextData = getExtS(s);
@@ -459,7 +453,6 @@ private:
         /* on_writable */     &onWritable,
         /* on_close */        &onClose,
         /* on_timeout */      &onTimeout,
-        /* on_long_timeout */ &onLongTimeout,
         /* on_end */          &onEnd,
         /* on_connect_error */nullptr,
         /* on_connecting_error */ nullptr,

@@ -954,10 +954,7 @@ impl ByteStream {
                 p.result = streams::Result::Done;
             });
             self.parent_const().is_closed.set(true);
-            return Some(blob::Any::InternalBlob(blob::Internal {
-                bytes: buffer,
-                was_string: false,
-            }));
+            return Some(blob::Any::from_owned_slice(buffer));
         }
 
         None

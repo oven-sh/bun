@@ -716,6 +716,8 @@ bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::G
 void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: yes
 // NO sentinel guard (reachable on a NativeSink-controlled stream).
 void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
+uint8_t ReadableStream__bodyFacts(JSC::EncodedJSValue possibleReadableStream); // userJS: no
+void ReadableStream__setBodyFacts(JSC::EncodedJSValue possibleReadableStream, uint8_t facts); // userJS: no
 bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no

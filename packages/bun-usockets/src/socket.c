@@ -98,35 +98,11 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
-    if (seconds) {
-        s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
-    } else {
-        s->timeout = 255;
-    }
+    s->timeout = us_internal_timeout_tick(s->group, seconds);
 }
 
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) {
-    if (seconds) {
-        c->timeout = ((unsigned int)c->group->timestamp + ((seconds + 3) >> 2)) % 240;
-    } else {
-        c->timeout = 255;
-    }
-}
-
-__attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
-    if (minutes) {
-        s->long_timeout = ((unsigned int)s->group->long_timestamp + minutes) % 240;
-    } else {
-        s->long_timeout = 255;
-    }
-}
-
-void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigned int minutes) {
-    if (minutes) {
-        c->long_timeout = ((unsigned int)c->group->long_timestamp + minutes) % 240;
-    } else {
-        c->long_timeout = 255;
-    }
+    c->timeout = us_internal_timeout_tick(c->group, seconds);
 }
 
 __attribute__((always_inline)) void us_socket_flush(struct us_socket_t *s) {
@@ -477,33 +453,23 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 }
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
+    if (bsd_adopt_socket(fd)) {
+        return 0;
+    }
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     int open_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
     int rc = us_poll_start_rc(p1, group->loop, (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE);
     if (rc != 0) {
+        bsd_disown_socket(fd);
         us_poll_free(p1, group->loop);
         return 0;
     }
 
     struct us_socket_t *s = (struct us_socket_t *) p1;
-    s->group = group;
-    s->kind = kind;
-    s->ssl = NULL;
-    s->timeout = 255;
-    s->long_timeout = 255;
-    s->flags.low_prio_state = 0;
-    s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN) != 0;
+    us_internal_socket_init(s, group, kind, options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->flags.is_paused = open_paused;
     s->flags.is_ipc = ipc;
-    s->flags.is_closed = 0;
-    s->flags.adopted = 0;
-    s->flags.last_write_failed = 0;
-    s->unclassified_send_failures = 0;
-    s->read_eof = 0;
-    s->hangup_closes_unsent = 0;
-    s->send_rejected = 0;
-    s->connect_state = NULL;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);

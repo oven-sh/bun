@@ -17,7 +17,7 @@ use bun_http_types::Method::Method;
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
 use super::{FetchHeaders, ReadableStream, Request};
 
-use super::blob::Blob;
+use super::blob::{Blob, BodyFacts};
 use bun_ptr::weak_ptr::WeakPtrData;
 
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
@@ -182,6 +182,13 @@ pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
     js::from_js(value).map(|p| p.as_ptr())
 }
 
+pub(crate) fn is_body_decoded(response: &Response) -> bool {
+    response
+        .get_body_value()
+        .facts()
+        .contains(BodyFacts::DECODED)
+}
+
 /// [`from_js`] as a shared borrow; `value` must stay rooted while it is used.
 #[inline]
 pub(crate) fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
@@ -215,8 +222,6 @@ pub(crate) struct Response {
     init: JsCell<Init>,
     url: JsCell<BunString>,
     redirected: Cell<bool>,
-    /// fetch() decoded the body, so Bun.serve must not forward the `Content-Encoding` header.
-    body_decoded: Cell<bool>,
     /// The JS wrapper, fetch (so a discarded JS Response can still resolve
     /// its body) and HTMLRewriter each hold a ref.
     ref_count: Cell<u32>,
@@ -241,7 +246,6 @@ impl Default for Response {
             init: JsCell::new(Init::default()),
             url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
-            body_decoded: Cell::new(false),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
@@ -313,11 +317,7 @@ impl BodyMixin for Response {
     }
     #[inline]
     fn ensure_headers(&self, global_this: &JSGlobalObject) -> bun_jsc::JsResult<()> {
-        if self.init.get().headers.is_none() {
-            self.get_or_create_headers(global_this)?
-                .set_implied_by_body(true);
-        }
-        Ok(())
+        self.get_or_create_headers(global_this).map(|_| ())
     }
 }
 
@@ -420,14 +420,20 @@ impl Response {
         self.init.with_mut(|init| init.headers.take())
     }
 
-    #[inline]
-    pub(crate) fn body_decoded(&self) -> bool {
-        self.body_decoded.get()
-    }
-
-    #[inline]
-    pub(crate) fn set_body_decoded(&self, value: bool) {
-        self.body_decoded.set(value);
+    /// Settles what the body says about the headers. Call it before the body is taken to be sent.
+    pub(crate) fn prepare_headers_for_send(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        if is_body_decoded(self) {
+            if let Some(headers) = self.get_init_headers_mut() {
+                headers.fast_remove(HTTPHeaderName::ContentEncoding);
+            }
+        }
+        let body = self.get_body_value();
+        body.to_blob_if_possible();
+        // Bytes are sent with their own type. A stream's type can only be sent as a header.
+        if matches!(body, BodyValue::Locked(_)) {
+            self.copy_content_type_to_headers(global_this)?;
+        }
+        Ok(())
     }
 
     #[inline]
@@ -607,23 +613,12 @@ impl Response {
         // hold the borrow across calls that re-enter Response host-fns.
         let init = self.init_mut();
         if init.headers.is_none() {
-            init.headers = Some(HeadersRef::create_empty());
-
-            if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
-                    init.headers.as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
-                }
-            }
+            let headers = init.headers.insert(HeadersRef::create_empty());
+            self.get_body_value()
+                .put_content_type_default(headers, global_this)?;
         }
 
-        let headers = init.headers.as_mut().unwrap();
-        headers.set_implied_by_body(false);
-        Ok(headers)
+        Ok(init.headers.as_mut().unwrap())
     }
 
     pub(crate) fn get_headers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -640,14 +635,8 @@ impl Response {
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body.get().value.get() {
-            let content_type = blob.content_type_slice();
-            if !content_type.is_empty() {
-                return Ok(Some(Utf8Bytes::Borrowed(content_type)));
-            }
-        }
-
-        Ok(None)
+        let content_type = self.body.get().value.get().content_type().as_slice();
+        Ok((!content_type.is_empty()).then_some(Utf8Bytes::Borrowed(content_type)))
     }
 }
 
@@ -826,7 +815,6 @@ impl Response {
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
-            body_decoded: Cell::new(self.body_decoded.get()),
             ..Default::default()
         })
     }
@@ -1105,16 +1093,17 @@ impl Response {
                 }
             }
         }
+        let init_value = init;
         let mut init: Init = 'brk: {
-            if init.is_undefined_or_null() {
+            if init_value.is_undefined_or_null() {
                 break 'brk Init {
                     status_code: 200,
                     headers: None,
                     ..Default::default()
                 };
             }
-            if init.is_object() {
-                break 'brk Init::init(global_this, init)?.expect("unreachable");
+            if init_value.is_object() {
+                break 'brk Init::init(global_this, init_value)?.expect("unreachable");
             }
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
@@ -1135,15 +1124,20 @@ impl Response {
         // Perform the only remaining fallible op BEFORE heap-allocating:
         // doing it on stack locals lets `?` trigger the scopeguard and
         // `init`'s drop glue and avoids leaking the heap allocation entirely.
-        if let BodyValue::Blob(blob) = body.value.get() {
-            if let Some(headers) = init.headers.as_deref_mut() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
-                    headers.put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
+        if let Some(headers) = init.headers.as_deref_mut() {
+            body.value
+                .get()
+                .put_content_type_default(headers, global_this)?;
+        } else if let Some(source) = BodyValue::from_request_or_response(init_value) {
+            // SAFETY: `init_value` is an argument of this call, so the Request or Response it wraps is live.
+            let source = unsafe { &*source };
+            // It has no header list either, so the type its body implies is the one header to copy.
+            if body.value.get().content_type().is_empty() && !source.content_type().is_empty() {
+                if let BodyValue::Locked(stream) = body.value_mut() {
+                    stream.content_type.clone_from(source.content_type());
+                } else {
+                    let headers = init.headers.insert(HeadersRef::create_empty());
+                    source.put_content_type_default(headers, global_this)?;
                 }
             }
         }

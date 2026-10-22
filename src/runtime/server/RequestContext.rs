@@ -3390,7 +3390,7 @@ where
                                 && !byte_stream.has_pending_error()
                             {
                                 let mut byte_list = byte_stream.drain();
-                                this.blob.set(AnyBlob::from_array_list(
+                                this.blob.set(AnyBlob::from_owned_slice(
                                     byte_list.move_to_list_managed(),
                                 ));
                                 this.response_body_readable_stream_ref
@@ -3968,17 +3968,12 @@ where
         let mut has_content_disposition = false;
         let mut has_content_range = false;
         if let Some(mut headers_) = response.swap_init_headers() {
-            if response.body_decoded() {
-                headers_.fast_remove(jsc::HTTPHeaderName::ContentEncoding);
-            }
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
             // For .slice()-driven ranges, only promote to 206 if the user
             // also set Content-Range (preserves the old contract). For an
             // incoming Range: header (sendfile.total > 0) we always 206.
-            // A list implied by the body counts as no list.
-            needs_content_range = needs_content_range
-                && (sendfile.total > 0 || has_content_range || headers_.is_implied_by_body());
+            needs_content_range = needs_content_range && (sendfile.total > 0 || has_content_range);
             if needs_content_range {
                 status = 206;
             }
@@ -4159,6 +4154,11 @@ where
         // SAFETY: caller contract — `response` is live and root-provenanced.
         self.response_weakref
             .set(unsafe { response::WeakRef::init_ref(response) });
+        let global_this = self.server().global_this();
+        // SAFETY: caller contract — `response` is live.
+        if let Err(err) = unsafe { (*response).prepare_headers_for_send(global_this) } {
+            let _ = global_this.take_exception(err);
+        }
     }
 
     /// # Safety
@@ -4330,24 +4330,16 @@ where
             if last {
                 let mut bytes = this.request_body_buf.replace(Vec::new());
 
-                let mut old = core::mem::replace(body, Body::Value::Null);
-
                 let total = bytes.len() + chunk.len();
                 // Vec aborts on OOM (repo-wide abort-on-OOM policy).
                 bytes.reserve_exact(total.saturating_sub(bytes.len()));
                 bytes.extend_from_slice(chunk);
                 debug_assert_eq!(bytes.len(), total);
-                *body = Body::Value::InternalBlob(WebCore::InternalBlob {
-                    bytes,
-                    was_string: false,
-                });
 
-                if matches!(old, Body::Value::Locked(_)) {
+                {
                     let _exit = vm.enter_event_loop_scope();
-
                     let context = this.script_context();
-                    let _ =
-                        Body::Value::resolve(&mut old, body, &global_this.js_thread(context), None); // TODO: properly propagate exception upwards
+                    let _ = body.fulfill(bytes, &global_this.js_thread(context), None); // TODO: properly propagate exception upwards
                 }
                 // A complete body belongs to the `Request` alone, so ending the request can't fail it.
                 this.request_body_take_unref();

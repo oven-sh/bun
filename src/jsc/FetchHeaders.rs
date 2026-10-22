@@ -59,8 +59,6 @@ unsafe extern "C" {
         arg3: &JSGlobalObject,
     );
     safe fn WebCore__FetchHeaders__isEmpty(arg0: &FetchHeaders) -> bool;
-    safe fn WebCore__FetchHeaders__setImpliedByBody(arg0: &mut FetchHeaders, implied: bool);
-    safe fn WebCore__FetchHeaders__isImpliedByBody(arg0: &FetchHeaders) -> bool;
     safe fn WebCore__FetchHeaders__toJS(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
     // safe: `FetchHeaders` is an opaque ZST handle (`&mut` ≡ non-null `*mut`);
     // `arg2` is an opaque handle to a C++-owned uWS response (never dereferenced
@@ -134,15 +132,6 @@ impl FetchHeaders {
 
     pub fn is_empty(&mut self) -> bool {
         WebCore__FetchHeaders__isEmpty(self)
-    }
-
-    /// Marks a list created only to hold its body's `Content-Type`. `clone_this` copies the mark.
-    pub fn set_implied_by_body(&mut self, implied: bool) {
-        WebCore__FetchHeaders__setImpliedByBody(self, implied)
-    }
-
-    pub fn is_implied_by_body(&self) -> bool {
-        WebCore__FetchHeaders__isImpliedByBody(self)
     }
 
     pub fn create_from_uws(uws_request: *mut c_void) -> NonNull<FetchHeaders> {

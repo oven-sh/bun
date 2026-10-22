@@ -331,6 +331,7 @@ impl DevServer {
                         },
                         deferred_data_ptr,
                     );
+                    resp.suspend_timeout();
                     break 'brk Handler::BundledHtmlPage(ResponseAndMethod {
                         response: resp,
                         method,

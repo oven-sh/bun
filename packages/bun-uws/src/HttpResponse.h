@@ -475,42 +475,42 @@ public:
             deflateParams ? compressOptionsFor(*deflateParams) : CompressOptions::DISABLED, webSocketContext);
     }
 
-private:
-    /* Moves the socket into webSocketContext. It must be corked, with the 101 already written. */
-    template <typename UserData>
-    us_socket_t *adoptWebSocket(UserData&& userData, bool perMessageDeflate, CompressOptions compressOptions,
-            WebSocketContext<SSL, true, UserData> *webSocketContext) {
+    /* What an HTTP connection leaves to the next owner of its socket. */
+    struct Leftovers {
+        /* Bytes that were accepted for sending and that the kernel hasn't taken. */
+        BackPressure backpressure;
+        /* Bytes that were received behind the last request and not parsed. */
+        WTF::Vector<char> parkedBytes;
+        size_t parkedBytesStart;
+        void *socketData;
+        uint64_t bytesRead;
+        /* us_socket_adopt() keeps the pause, and every reason for it belonged to the HTTP connection. */
+        bool readsPaused;
+    };
 
-        /* If TLS rejected the 101 write, the socket is now closed or shut down. Leave it as an HTTP socket;
-         * the next writable event closes it. */
-        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
-            return nullptr;
-        }
-
-        WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
-
-        /* Not internalEnd(), because the socket leaves HTTP right after: the
-         * connection close gate does not apply (Connection: close, HTTP/1.0
-         * and close-when-idle describe the HTTP connection, not the WebSocket
-         * that takes over the socket), and the cork stays so the handshake
-         * batches with the first frames written from open(). */
+    /* Ends the socket's time as an HTTP connection and destructs its HttpResponseData. The caller gives the ext its next owner at once. */
+    Leftovers leaveHttp() {
+        /* Not internalEnd(): Connection: close, HTTP/1.0 and close-when-idle describe the HTTP connection, not the socket's next owner. */
         auto* responseData = getHttpResponseData();
 
-        /* Bytes parked behind this handshake are frames from a client that didn't wait for the 101 (RFC 6455 4.1).
-         * Take them before markDone() requests a replay and before their owner is destructed. */
-        WTF::Vector<char> earlyFrames = std::exchange(responseData->parkedRequestBytes, {});
-        size_t earlyFramesStart = std::exchange(responseData->parkedRequestBytesStart, 0);
+        /* Take the parked bytes before markDone() requests a replay. */
+        WTF::Vector<char> parkedBytes = std::exchange(responseData->parkedRequestBytes, {});
+        size_t parkedBytesStart = std::exchange(responseData->parkedRequestBytesStart, 0);
+        const bool readsPaused = responseData->readPauseReasons != 0;
 
         responseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
         responseData->markDone(this);
 
-        /* Grab the httpContext from res */
+        Leftovers left = {
+            .backpressure = std::move(((AsyncSocketData<SSL> *) responseData)->buffer),
+            .parkedBytes = std::move(parkedBytes),
+            .parkedBytesStart = parkedBytesStart,
+            .socketData = responseData->socketData,
+            .bytesRead = 0,
+            .readsPaused = readsPaused,
+        };
+
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
-
-        /* Move any backpressure out of HttpResponse */
-        BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
-
-        auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
 
         /* The socket is leaving this context; its onClose (and so filter -1)
@@ -532,10 +532,30 @@ private:
          * compat contexts; upgrade() is not on a templated handler path, so it
          * selects at runtime like socketExtSize()). */
         if (httpContext->isNodeHttp()) {
+            left.bytesRead = ((HttpResponseData<SSL, true> *) responseData)->bytesRead;
             ((HttpResponseData<SSL, true> *) responseData)->~HttpResponseData();
         } else {
             responseData->~HttpResponseData();
         }
+        return left;
+    }
+
+private:
+    /* Moves the socket into webSocketContext. It must be corked, with the 101 already written. */
+    template <typename UserData>
+    us_socket_t *adoptWebSocket(UserData&& userData, bool perMessageDeflate, CompressOptions compressOptions,
+            WebSocketContext<SSL, true, UserData> *webSocketContext) {
+
+        /* If TLS rejected the 101 write, the socket is closed or shut down by now. It stays an HTTP socket, and the next writable event closes it. */
+        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
+            return nullptr;
+        }
+
+        WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
+        HttpContextData<SSL> *httpContextData = HttpContext<SSL>::fromSocket((struct us_socket_t *) this)->getSocketContextData();
+
+        /* The cork stays, so the handshake batches with the first frames written from open(). */
+        Leftovers left = leaveHttp();
 
         /* Before we adopt and potentially change socket, check which cork slot
          * we occupy so we can transfer it to the new WebSocket. */
@@ -563,9 +583,9 @@ private:
         }
 
         /* Initialize websocket with any moved backpressure intact */
-        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData, httpContextData->onSocketClosed);
-        if (httpContextData->onSocketUpgraded) {
-            httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
+        webSocket->init(perMessageDeflate, compressOptions, std::move(left.backpressure), left.socketData, left.socketData ? httpContextData->nodeHttpHooks->onClosed : nullptr);
+        if (left.socketData) {
+            httpContextData->nodeHttpHooks->onUpgraded(left.socketData, usSocket, left.bytesRead);
         }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
@@ -573,9 +593,6 @@ private:
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }
-
-        /* Arm maxLifetime timeout */
-        us_socket_long_timeout((us_socket_t *) webSocket, webSocketContextData->maxLifetime);
 
         /* Arm idleTimeout */
         us_socket_timeout((us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);
@@ -588,16 +605,20 @@ private:
             webSocketContextData->openHandler(webSocket);
         }
 
-        if (!earlyFrames.isEmpty()) [[unlikely]] {
-            /* Parking can pause reads, and us_socket_adopt() keeps the pause. Resuming can close the socket, which is an ordinary WebSocket close by now. */
+        if (left.readsPaused) [[unlikely]] {
+            /* Resuming can close the socket, which is an ordinary WebSocket close by now. */
             us_socket_resume(usSocket);
+        }
+
+        /* Frames from a client that didn't wait for the 101 (RFC 6455 4.1). */
+        if (!left.parkedBytes.isEmpty()) [[unlikely]] {
             if (!us_socket_is_closed(usSocket) && !us_socket_is_shut_down(usSocket)) {
                 /* The frame parser writes on both sides of its input, like it can in the loop's padded receive buffer. */
-                size_t length = earlyFrames.size() - earlyFramesStart;
+                size_t length = left.parkedBytes.size() - left.parkedBytesStart;
                 WTF::Vector<char> padded;
                 padded.grow(LIBUS_RECV_BUFFER_PADDING + length + LIBUS_RECV_BUFFER_PADDING);
                 char *frames = padded.mutableSpan().data() + LIBUS_RECV_BUFFER_PADDING;
-                memcpy(frames, earlyFrames.span().data() + earlyFramesStart, length);
+                memcpy(frames, left.parkedBytes.span().data() + left.parkedBytesStart, length);
                 us_dispatch_data(usSocket, frames, (int) length);
             }
         }
@@ -617,23 +638,39 @@ public:
     using Super::getRemoteAddressAsText;
     using Super::getNativeHandle;
 
-    /* Throttle reads and writes. The idle timeout keeps running, because a blocked response write has nothing else to end it. */
-    HttpResponse *pause() {
-        Super::pause();
-        return this;
+    /* Stops reading for a READ_PAUSE_* reason. The idle timeout keeps running, because a blocked response write has nothing else to end it. */
+    void pauseReads(uint8_t reason) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (!httpResponseData->readPauseReasons) {
+            Super::pause();
+        }
+        httpResponseData->readPauseReasons |= reason;
     }
 
-    HttpResponse *resume() {
-        /* While requests are parked, the replay owns the pause. Reading on would queue more behind them. */
-        if (getHttpResponseData()->parkedRequestBytes.isEmpty()) [[likely]] {
-            Super::resume();
+    /* Reads start again once the last reason is gone. */
+    void resumeReads(uint8_t reason) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (!(httpResponseData->readPauseReasons & reason)) {
+            return;
         }
+        httpResponseData->readPauseReasons &= ~reason;
+        if (httpResponseData->readPauseReasons) {
+            return;
+        }
+        Super::resume();
         this->resetTimeout();
         /* A parked request's connection reads again. A tunnel reports its own state (JSNodeHTTPServerSocket::updateTunnelIdle). */
-        if (!getHttpResponseData()->isConnectRequest) {
+        if (!httpResponseData->isConnectRequest) {
             setNodeHttpTunnelIdle(false);
         }
-        return this;
+    }
+
+    /* node:http: unsent response bytes and queued responses hold the reads. A queued CONNECT doesn't, because no request follows it. */
+    void endFloodPauseIfDrained() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (Super::getBufferedAmount() == 0 && (httpResponseData->nodeHttpQueuedPipelinedCount == 0 || httpResponseData->isConnectRequest)) {
+            resumeReads(HttpResponseData<SSL>::READ_PAUSE_FLOOD);
+        }
     }
 
     /* Note: Headers are not checked in regards to timeout.

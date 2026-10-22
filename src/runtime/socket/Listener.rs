@@ -6,20 +6,20 @@ use core::mem::size_of;
 use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
-use bun_core::{EncodedSlice, String as BunString};
+use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::listener::{ListenerContext, ServerHandle, js_Listener as js};
+use crate::socket::uws_jsc::{ListenApi, ListenTarget, throw_listen_error};
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
@@ -27,6 +27,8 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]
 use crate::socket::WindowsNamedPipeContext;
+#[cfg(windows)]
+use crate::socket::uws_jsc::throw_listen_errno;
 
 #[cfg(windows)]
 use core::ptr::NonNull;
@@ -318,37 +320,18 @@ impl Listener {
                         ));
                     }
                     Err(e) => {
-                        // Surface coded syscall failures the way node:net
-                        // does (EADDRINUSE vs EACCES need different caller
-                        // handling) rather than an invalid-arguments TypeError.
-                        if let ListenPipeError::Sys(sys_err, uv_errno) = &e {
-                            // get_error_code_tag_name does not reject EUNKNOWN /
-                            // UV_EAI_* (>=3000); neither is a node-style code, so
-                            // route those through the generic error below.
-                            if let Some((name, se)) = sys_err.get_error_code_tag_name() {
-                                if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
-                                    let err = jsc::SystemError {
-                                        errno: *uv_errno,
-                                        code: bun_core::String::static_(name).into(),
-                                        message: bun_core::String::clone_utf8(
-                                            format!(
-                                                "listen {}: {}",
-                                                name,
-                                                bstr::BStr::new(&pipe_buf[..pipe_len])
-                                            )
-                                            .as_bytes(),
-                                        )
-                                        .into(),
-                                        syscall: bun_core::String::static_("listen").into(),
-                                        path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len])
-                                            .into(),
-                                        ..Default::default()
-                                    };
-                                    return Err(cx
-                                        .global()
-                                        .throw_value(err.to_error_instance(cx.global())));
-                                }
-                            }
+                        // EUNKNOWN and UV_EAI_* (>= 3000) aren't codes Node reports for a listen().
+                        if let ListenPipeError::Sys(sys_err) = &e
+                            && let Some((_, errno)) = sys_err.get_error_code_tag_name()
+                            && errno != bun_sys::SystemErrno::EUNKNOWN
+                            && (errno as u16) < 3000
+                        {
+                            return Err(throw_listen_errno(
+                                cx.global(),
+                                ListenApi::BunListen,
+                                &ListenTarget::Unix(&pipe_buf[..pipe_len]),
+                                errno,
+                            ));
                         }
                         let detail = match &e {
                             ListenPipeError::Other(err) => err.name(),
@@ -479,8 +462,7 @@ impl Listener {
         let secure_ctx_ptr: Option<*mut uws::SslCtx> =
             this_ref.secure_ctx.get().as_ref().map(|p| p.as_ptr());
 
-        let mut errno: c_int = 0;
-        let mut dns_error: c_int = 0;
+        let mut failure = uws_sys::app::ListenError::default();
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
             UnixOrHost::Host { host, port } => {
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
@@ -493,8 +475,8 @@ impl Listener {
                         *port as c_int,
                         socket_flags,
                         size_of::<*mut c_void>() as c_int,
-                        &mut errno,
-                        &mut dns_error,
+                        &mut failure.error,
+                        &mut failure.dns_error,
                     )
                 });
                 if !ls.is_null() {
@@ -512,7 +494,7 @@ impl Listener {
                     u,
                     socket_flags,
                     size_of::<*mut c_void>() as c_int,
-                    &mut errno,
+                    &mut failure.error,
                 )
             }),
             UnixOrHost::Fd(fd) => {
@@ -525,73 +507,27 @@ impl Listener {
                         511,
                         socket_flags,
                         size_of::<*mut c_void>() as c_int,
-                        &mut errno,
+                        &mut failure.error,
                     )
                 })
             }
         };
         if listen_socket.is_null() {
-            // Note: reshaped for borrowck — extract hostname bytes for error formatting
-            let hostname_bytes: &[u8] = match &connection {
-                UnixOrHost::Host { host, .. } => host,
-                UnixOrHost::Unix(u) => u,
-                UnixOrHost::Fd(_) => b"",
+            log!("Failed to listen {} {}", failure.error, failure.dns_error);
+            let target = match &connection {
+                UnixOrHost::Host { host, port } => ListenTarget::Tcp {
+                    hostname: Some(&host[..]),
+                    port: *port,
+                },
+                UnixOrHost::Unix(path) => ListenTarget::Unix(&path[..]),
+                UnixOrHost::Fd(_) => ListenTarget::Fd,
             };
-            log!("Failed to listen {} {}", errno, dns_error);
-            if let Some(err) =
-                crate::dns_jsc::cares_jsc::getaddrinfo_error(dns_error, hostname_bytes)
-            {
-                return Err(cx.global().throw_value(err.to_error_instance(cx.global())));
-            }
-            let err = cx.global().create_error_instance(format_args!(
-                "Failed to listen at {}",
-                bstr::BStr::new(hostname_bytes)
+            return Err(throw_listen_error(
+                cx.global(),
+                ListenApi::BunListen,
+                &target,
+                failure,
             ));
-            let mapped = uws::SocketGroup::listen_errno(errno);
-            let mapped = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
-                || (matches!(connection, UnixOrHost::Fd(_))
-                    && matches!(
-                        mapped,
-                        Some(bun_sys::SystemErrno::ENOTSOCK)
-                            | Some(bun_sys::SystemErrno::EBADF)
-                            | Some(bun_sys::SystemErrno::EOPNOTSUPP)
-                    )) {
-                Some(bun_sys::SystemErrno::EINVAL)
-            } else {
-                mapped
-            };
-            if errno != 0 {
-                err.put(
-                    cx.global(),
-                    b"syscall",
-                    BunString::static_("listen").to_js(cx.global())?,
-                );
-                let js_errno = match mapped {
-                    Some(code) => {
-                        bun_sys::Error::new(code, bun_sys::Tag::listen)
-                            .to_system_error()
-                            .errno
-                    }
-                    None => errno,
-                };
-                err.put(cx.global(), b"errno", JSValue::js_number(js_errno as f64));
-                err.put(
-                    cx.global(),
-                    b"address",
-                    bun_string_jsc::create_utf8_for_js(cx.global(), hostname_bytes)?,
-                );
-                if let Some(p) = port {
-                    err.put(cx.global(), b"port", JSValue::js_number(p as f64));
-                }
-                if let Some(code) = mapped {
-                    err.put(
-                        cx.global(),
-                        b"code",
-                        BunString::static_(<&'static str>::from(code)).to_js(cx.global())?,
-                    );
-                }
-            }
-            return Err(cx.global().throw_value(err));
         }
 
         // SAFETY: nothing else has the wrapper yet; scoped write through the
@@ -1680,10 +1616,9 @@ pub(crate) struct WindowsNamedPipeListeningContext {
     pub ctx: JsCell<Option<boring_sys::OwnedSslCtx>>,
 }
 
-/// `c_int`: raw libuv return code so JS `err.errno` is the platform-correct UV value.
 #[cfg(windows)]
 enum ListenPipeError {
-    Sys(bun_sys::Error, c_int),
+    Sys(bun_sys::Error),
     Other(crate::Error),
 }
 
@@ -1855,9 +1790,8 @@ impl WindowsNamedPipeListeningContext {
             // EACCES (pipe namespace denied) need different caller
             // handling, and a generic bind failure hides that.
             use bun_sys::ReturnCodeExt as _;
-            let raw = listen_rc.int();
             return Err(match listen_rc.to_error(bun_sys::Tag::listen) {
-                Some(err) => ListenPipeError::Sys(err, raw),
+                Some(err) => ListenPipeError::Sys(err),
                 // Unreachable in practice: the uv→errno mapping is total.
                 None => ListenPipeError::Other(crate::Error::FailedToBindPipe),
             });

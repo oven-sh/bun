@@ -26,7 +26,7 @@ use crate::generated_bindgen::html_rewriter::{
     AttributeIteratorResult, ContentOptions, js_HTMLRewriter, js_HTMLRewriterTransform,
 };
 use crate::generated_bindgen::response::js_Response;
-use crate::webcore::blob::SizeType as BlobSizeType;
+use crate::webcore::blob::{BodyFacts, SizeType as BlobSizeType};
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{
     self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
@@ -1000,6 +1000,8 @@ impl RewriterPipe {
                 pv.on_start_streaming = Some(RewriterPipe::on_start_streaming);
                 pv.on_readable_stream_available = Some(RewriterPipe::on_readable_stream_available);
                 pv.producer = SourceHandle::HTMLRewriter(this);
+                // The output is as decoded as the input. It isn't the string the input may have been.
+                pv.facts = original.get_body_value().facts() & BodyFacts::DECODED;
                 webcore::body::Value::Locked(pv)
             }),
             BunString::EMPTY,
@@ -1041,7 +1043,6 @@ impl RewriterPipe {
         }
 
         result_ref.set_url(original.url().clone());
-        result_ref.set_body_decoded(original.body_decoded());
 
         // ── wire input ──────────────────────────────────────────────────────
         let value = original.get_body_value();
@@ -1654,22 +1655,11 @@ impl RewriterPipe {
         };
         // For a waiting `.blob()`'s content type.
         let headers = response.get_fetch_headers().map(NonNull::from);
-        let body_value = response.get_body_value();
         let bytes = self.output_buffer.replace(Vec::new());
-        let mut prev_value = core::mem::replace(
-            body_value,
-            webcore::body::Value::InternalBlob(webcore::InternalBlob {
-                bytes,
-                was_string: false,
-            }),
-        );
         let context = self.global.bun_vm().context_of(self.script_context);
-        let _ = webcore::body::Value::resolve(
-            &mut prev_value,
-            body_value,
-            &self.global.js_thread(context),
-            headers,
-        );
+        let _ = response
+            .get_body_value()
+            .fulfill(bytes, &self.global.js_thread(context), headers);
     }
 
     /// Feed the accumulated `pending_input` once unblocked, then maybe end,

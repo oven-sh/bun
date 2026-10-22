@@ -312,6 +312,103 @@ impl Drop for HpackHandle {
     }
 }
 
+/// Two RFC 7541 §6.3 size updates (the minimum, then the final size) of up to 6 bytes each.
+pub const MAX_SIZE_UPDATE_BYTES: usize = 12;
+
+/// RFC 9113 §6.5.2: both sides start at this SETTINGS_HEADER_TABLE_SIZE.
+const DEFAULT_HEADER_TABLE_SIZE: u32 = 4096;
+
+/// Node's default `maxDeflateDynamicTableSize`, so a peer can't make us retain more header history.
+const MAX_ENCODER_TABLE_SIZE: u32 = 4096;
+
+/// One connection's HPACK encoder and decoder, kept in step with both sides' SETTINGS_HEADER_TABLE_SIZE.
+pub struct Coder {
+    hpack: HpackHandle,
+    enc_capacity: u32,
+    /// The smallest encoder capacity since the last header block, until a block announces it (RFC 7541 §4.2).
+    unannounced_min: Option<u32>,
+}
+
+impl Default for Coder {
+    fn default() -> Self {
+        Coder {
+            hpack: HpackHandle::new(DEFAULT_HEADER_TABLE_SIZE),
+            enc_capacity: DEFAULT_HEADER_TABLE_SIZE,
+            unannounced_min: None,
+        }
+    }
+}
+
+impl Coder {
+    /// Call for every SETTINGS_HEADER_TABLE_SIZE entry the peer sends, in wire order.
+    pub fn set_peer_header_table_size(&mut self, size: u32) {
+        let capacity = size.min(MAX_ENCODER_TABLE_SIZE);
+        if capacity == self.enc_capacity && self.unannounced_min.is_none() {
+            return;
+        }
+        self.hpack.set_encoder_max_capacity(capacity);
+        self.enc_capacity = capacity;
+        self.unannounced_min = Some(
+            self.unannounced_min
+                .map_or(capacity, |min| min.min(capacity)),
+        );
+    }
+
+    /// Call when the peer ACKs our SETTINGS. Until then its encoder still uses the previous size.
+    pub fn set_acked_header_table_size(&mut self, size: u32) {
+        self.hpack.set_decoder_max_capacity(size);
+    }
+
+    /// Appends the pending §6.3 size updates to `block`, which must be the start of a header block.
+    fn take_pending_size_update(&mut self, block: &mut Vec<u8>) {
+        let Some(min) = self.unannounced_min.take() else {
+            return;
+        };
+        if min < self.enc_capacity {
+            write_table_size_update(block, min);
+        }
+        write_table_size_update(block, self.enc_capacity);
+    }
+
+    /// Appends one whole header block to `dst`. `Err` appends nothing and leaves the encoder unchanged.
+    pub fn encode_block(
+        &mut self,
+        block: &HeaderBlock,
+        dst: &mut Vec<u8>,
+    ) -> Result<(), HpackError> {
+        let start = dst.len();
+        let unannounced_min = self.unannounced_min;
+        self.take_pending_size_update(dst);
+        let result = self.hpack.encode_block(block, dst);
+        if result.is_err() {
+            dst.truncate(start);
+            self.unannounced_min = unannounced_min;
+        }
+        result
+    }
+
+    /// Decodes one field. The result aliases a shared buffer, so copy it before the next call.
+    #[inline]
+    pub fn decode<'a>(&'a mut self, src: &[u8]) -> Result<DecodeResult<'a>, HpackError> {
+        self.hpack.decode(src)
+    }
+}
+
+/// RFC 7541 §5.1 and §6.3: `value` as a 5-bit-prefix integer behind the `001` pattern.
+fn write_table_size_update(block: &mut Vec<u8>, value: u32) {
+    if value < 31 {
+        block.push(0x20 | value as u8);
+        return;
+    }
+    block.push(0x20 | 31);
+    let mut rest = value - 31;
+    while rest >= 128 {
+        block.push((rest as u8) | 0x80);
+        rest >>= 7;
+    }
+    block.push(rest as u8);
+}
+
 // SAFETY: the C wrapper has no thread affinity; lshpack state is not accessed
 // concurrently (callers serialize on the owning `H2FrameParser`).
 unsafe impl Send for HpackHandle {}

@@ -1,7 +1,7 @@
 /*
  * QUIC / HTTP/3 transport for usockets, backed by lsquic.
  *
- * One us_quic_socket_context_t per server (engine + UDP socket + timer + SSL).
+ * One us_quic_socket_context_t per server (driver + SSL).
  * No global state — multiple contexts can coexist on the same loop.
  *
  * The header-set API is per-stream: incoming headers are owned by the stream
@@ -19,15 +19,68 @@
 extern "C" {
 #endif
 
+struct us_quic_driver_s;
+struct us_quic_udp_s;
 struct us_quic_socket_context_s;
-struct us_quic_listen_socket_s;
 struct us_quic_socket_s;
 struct us_quic_stream_s;
 
+typedef struct us_quic_driver_s us_quic_driver_t;
+typedef struct us_quic_udp_s us_quic_udp_t;
 typedef struct us_quic_socket_context_s us_quic_socket_context_t;
-typedef struct us_quic_listen_socket_s us_quic_listen_socket_t;
 typedef struct us_quic_socket_s us_quic_socket_t;
 typedef struct us_quic_stream_s us_quic_stream_t;
+
+struct sockaddr;
+struct lsquic_engine;
+struct lsquic_engine_settings;
+struct lsquic_stream_if;
+struct lsquic_hset_if;
+struct lsquic_conn;
+
+/* ───── Driver: what every lsquic engine in Bun runs on (the HTTP/3 contexts below, and node:quic) ───── */
+
+/* Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver. */
+typedef int (*us_quic_pass_fn)(us_quic_driver_t *d, int in_microtask_drain);
+
+/* `pass` runs before and after each poll of `loop`, and after a microtask drain if the driver is pending. */
+us_quic_driver_t *us_quic_driver_create(struct us_loop_t *loop, us_quic_pass_fn pass, void *owner);
+/* Closes the driver's UDP sockets and destroys its engines. `pass` keeps running. */
+void us_quic_driver_close(us_quic_driver_t *d);
+void us_quic_driver_free(us_quic_driver_t *d);
+void *us_quic_driver_owner(us_quic_driver_t *d);
+/* `flags` are LSENG_*. lsquic copies `settings`. The driver owns the engine. */
+struct lsquic_engine *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned flags,
+    const struct lsquic_engine_settings *settings,
+    const struct lsquic_stream_if *stream_if, void *stream_if_ctx,
+    const struct lsquic_hset_if *hset_if, void *hset_ctx,
+    struct ssl_ctx_st *(*lookup_cert)(void *, const struct sockaddr *, const char *), void *lookup_cert_ctx);
+/* lsquic_engine_process_conns on every engine. Does nothing while an engine is on the stack. */
+void us_quic_driver_process(us_quic_driver_t *d);
+/* The soonest lsquic_engine_earliest_adv_tick in µs from now, or -1. */
+int us_quic_driver_next_tick_us(us_quic_driver_t *d);
+/* The owner queued work in an engine. us_quic_driver_process clears it. */
+void us_quic_driver_set_pending(us_quic_driver_t *d);
+int us_quic_driver_is_pending(us_quic_driver_t *d);
+/* What a server engine starts a handshake with, before SNI. Borrowed. */
+void us_quic_driver_set_ssl_ctx(us_quic_driver_t *d, struct ssl_ctx_st *ssl_ctx);
+
+/* A UDP socket for the driver's engines, and the `peer_ctx` of every lsquic_engine_packet_in call for it. Its user data is the us_quic_udp_t. */
+us_quic_udp_t *us_quic_udp_create(us_quic_driver_t *d, const char *host, int port, int flags, int *err,
+    void (*on_data)(struct us_udp_socket_t *, void *, int),
+    void (*on_recv_error)(struct us_udp_socket_t *, int, int));
+void *us_quic_udp_owner(us_quic_udp_t *qu);
+/* NULL once the fd has closed. */
+struct us_udp_socket_t *us_quic_udp_socket(us_quic_udp_t *qu);
+/* The bound address, which is the `sa_local` of every lsquic_engine_packet_in call for this socket. */
+const struct sockaddr *us_quic_udp_local(us_quic_udp_t *qu);
+/* Adds every datagram this socket sends to the two counters, which must outlive the driver's engines. */
+void us_quic_udp_count_sent(us_quic_udp_t *qu, uint64_t *packets, uint64_t *bytes);
+/* lsquic_engine_connect from this socket. `ssl_ctx` is borrowed. */
+struct lsquic_conn *us_quic_udp_connect(us_quic_udp_t *qu, struct lsquic_engine *engine, const struct sockaddr *peer,
+    struct ssl_ctx_st *ssl_ctx, void *conn_ctx, const char *sni, const unsigned char *session_resume, size_t session_resume_len);
+
+/* ───── HTTP/3 contexts ───── */
 
 /* One name/value pair pointing into stream-owned storage. `qpack_index` is
  * an optional `enum lsqpack_tnv` hint (0..98) the caller may set on outgoing
@@ -40,11 +93,6 @@ struct us_quic_header_t {
     unsigned int value_len;
     int qpack_index;
 };
-
-/* Process-wide lsquic init, run once. Every function that calls
- * lsquic_engine_new() (here and in node_quic_shim.c) calls it first. Returns 0,
- * or -1 if lsquic_global_init() failed. */
-int us_quic_global_init(void);
 
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
@@ -65,13 +113,13 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
 void *us_quic_socket_context_ext(us_quic_socket_context_t *ctx);
 struct us_loop_t *us_quic_socket_context_loop(us_quic_socket_context_t *ctx);
 
-us_quic_listen_socket_t *us_quic_socket_context_listen(
+us_quic_udp_t *us_quic_socket_context_listen(
     us_quic_socket_context_t *ctx, const char *host, int port, int flags,
     unsigned int stream_ext_size);
 
-void us_quic_listen_socket_close(us_quic_listen_socket_t *ls);
-int us_quic_listen_socket_port(us_quic_listen_socket_t *ls);
-int us_quic_listen_socket_local_address(us_quic_listen_socket_t *ls, char *buf, int len);
+void us_quic_listen_socket_close(us_quic_udp_t *ls);
+int us_quic_listen_socket_port(us_quic_udp_t *ls);
+int us_quic_listen_socket_local_address(us_quic_udp_t *ls, char *buf, int len);
 
 /* Client engine: one shared lsquic engine for all outbound connections on
  * `loop`. Per-connection cert verification is decided at connect time. */
@@ -82,17 +130,20 @@ us_quic_socket_context_t *us_create_quic_client_context(
 struct us_quic_pending_connect_s;
 struct addrinfo_request;
 
+/* Limits `ssl_ctx` to TLS 1.3 and installs the verify step that reads each connection's reject_unauthorized. 0 on failure. */
+int us_quic_prepare_client_ssl_ctx(struct ssl_ctx_st *ssl_ctx);
+
 /* Open a QUIC connection to `host:port`. `host` may be an IP literal or
  * hostname; literals and DNS-cache hits connect synchronously (return 1,
  * *out_qs set). Uncached hostnames return 0 with *out_pending set — caller
  * registers a Bun__addrinfo callback and invokes
  * us_quic_pending_connect_resolved() once it fires. -1 on error. `sni` is
  * the TLS ServerNameIndication; `reject_unauthorized` is per-connection.
- * `tls` gives the connection an SSL_CTX of its own (ca, cert, key, ...). NULL
- * uses the default trust store and no client certificate. */
+ * `ssl_ctx` (borrowed) went through us_quic_prepare_client_ssl_ctx. NULL uses
+ * the default trust store and no client certificate. */
 int us_quic_socket_context_connect(
     us_quic_socket_context_t *ctx, const char *host, int port, const char *sni,
-    int reject_unauthorized, const struct us_bun_socket_context_options_t *tls,
+    int reject_unauthorized, struct ssl_ctx_st *ssl_ctx,
     us_quic_socket_t **out_qs,
     struct us_quic_pending_connect_s **out_pending, void *user);
 
@@ -162,11 +213,15 @@ void us_quic_stream_shutdown(us_quic_stream_t *s);
 void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
-void us_quic_stream_reset(us_quic_stream_t *s);
-void us_quic_stream_reset_internal_error(us_quic_stream_t *s);
+void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
+/* RFC 9114 §8.1: a message this endpoint can't send or can't finish. */
+#define US_QUIC_H3_INTERNAL_ERROR 0x102
 /* RFC 9114 §8.1: the server did no application processing. */
 #define US_QUIC_H3_REQUEST_REJECTED 0x10B
+#define US_QUIC_H3_REQUEST_CANCELLED 0x10C
+/* RFC 9114 §4.1.2: a malformed message. */
+#define US_QUIC_H3_MESSAGE_ERROR 0x10E
 /* The code of the last RESET_STREAM or STOP_SENDING on the stream, 0 without one.
  * on_stream_close can still read it. */
 uint64_t us_quic_stream_reset_code(us_quic_stream_t *s);
@@ -181,11 +236,9 @@ void *us_quic_stream_ext(us_quic_stream_t *s);
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s);
 us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s);
 
-/* Drive every QUIC engine on `loop` and re-arm the per-loop fallthrough
- * timer to the soonest earliest_adv_tick. Called from us_internal_loop_post
- * and from drainMicrotasks; cheap when quic_head is NULL. */
+/* Runs every driver on `loop` and stores the soonest next tick. Called from us_internal_loop_pre and us_internal_loop_post. */
 void us_quic_loop_process(struct us_loop_t *loop);
-/* Flush only if a stream wrote since the last process_conns. */
+/* Runs the drivers that are pending. Called after a microtask drain. */
 void us_quic_loop_flush_if_pending(struct us_loop_t *loop);
 
 /* Incoming headers — valid from on_stream_headers until on_stream_close. */

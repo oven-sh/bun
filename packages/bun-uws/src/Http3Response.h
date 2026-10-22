@@ -250,7 +250,7 @@ private:
         Http3ResponseData *d = getHttpResponseData();
         d->backpressure.clear();
         d->endAfterDrain = false;
-        us_quic_stream_reset_internal_error((us_quic_stream_t *) this);
+        us_quic_stream_reset((us_quic_stream_t *) this, US_QUIC_H3_INTERNAL_ERROR);
     }
 
     /* lsquic refuses once it has answered the peer's STOP_SENDING with RESET_STREAM. */

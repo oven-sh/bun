@@ -6,7 +6,7 @@ use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::Loop;
 use crate::quic::{PendingConnect, Socket, Stream};
-use crate::socket_context::BunSocketContextOptions;
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 
 bun_opaque::opaque_ffi! { pub struct Context; }
 
@@ -30,11 +30,13 @@ unsafe extern "C" {
         port: c_int,
         sni: *const c_char,
         reject_unauthorized: c_int,
-        tls: *const BunSocketContextOptions,
+        ssl_ctx: *mut SSL_CTX,
         out_qs: *mut *mut Socket,
         out_pending: *mut *mut PendingConnect,
         user: *mut c_void,
     ) -> c_int;
+
+    fn us_quic_prepare_client_ssl_ctx(ssl_ctx: *mut SSL_CTX) -> c_int;
 
     safe fn us_quic_socket_context_on_hsk_done(
         ctx: &mut Context,
@@ -79,6 +81,12 @@ pub enum ConnectResult {
     Err,
 }
 
+/// Prepares a context for [`Context::connect`]: TLS 1.3 only, and the verify step that reads each connection's `reject_unauthorized`.
+pub fn prepare_client_ssl_ctx(ssl_ctx: &OwnedSslCtx) -> bool {
+    // SAFETY: `ssl_ctx` is a live SSL_CTX.
+    unsafe { us_quic_prepare_client_ssl_ctx(ssl_ctx.as_ptr()) != 0 }
+}
+
 impl Context {
     /// # Safety
     /// `loop_` must point to a live `us_loop_t`. Takes a raw pointer (not `&mut Loop`)
@@ -112,12 +120,12 @@ impl Context {
         port: u16,
         sni: &CStr,
         reject_unauthorized: bool,
-        tls: Option<&BunSocketContextOptions>,
+        ssl_ctx: Option<&OwnedSslCtx>,
         user: *mut c_void,
     ) -> ConnectResult {
         let mut qs: *mut Socket = core::ptr::null_mut();
         let mut pc: *mut PendingConnect = core::ptr::null_mut();
-        // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write; C copies what it needs from `tls` before it returns.
+        // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write; C takes its own reference to `ssl_ctx`.
         let rc = unsafe {
             us_quic_socket_context_connect(
                 self,
@@ -125,7 +133,7 @@ impl Context {
                 c_int::from(port),
                 sni.as_ptr(),
                 reject_unauthorized as c_int,
-                tls.map_or(core::ptr::null(), core::ptr::from_ref),
+                ssl_ctx.map_or(core::ptr::null_mut(), OwnedSslCtx::as_ptr),
                 &raw mut qs,
                 &raw mut pc,
                 user,

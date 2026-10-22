@@ -148,136 +148,6 @@ pub struct FetchDataURL {
     pub body: Vec<u8>,
 }
 
-/// https://fetch.spec.whatwg.org/#http-whitespace
-const HTTP_WHITESPACE: &[u8] = b"\t\n\r ";
-
-/// https://mimesniff.spec.whatwg.org/#http-token-code-point
-fn is_http_token(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&c)
-}
-
-/// https://mimesniff.spec.whatwg.org/#http-quoted-string-token-code-point
-fn is_http_quoted_string_token(c: u8) -> bool {
-    c == b'\t' || (0x20..=0x7E).contains(&c) || c >= 0x80
-}
-
-fn solely_http_tokens(s: &[u8]) -> bool {
-    !s.is_empty() && s.iter().all(|&c| is_http_token(c))
-}
-
-/// https://fetch.spec.whatwg.org/#collect-an-http-quoted-string with extract-value, after the opening `"`.
-fn collect_quoted_string_value(input: &[u8], pos: &mut usize) -> Vec<u8> {
-    let mut value = Vec::new();
-    while *pos < input.len() {
-        let c = input[*pos];
-        *pos += 1;
-        match c {
-            b'"' => return value,
-            b'\\' => {
-                if *pos < input.len() {
-                    value.push(input[*pos]);
-                    *pos += 1;
-                } else {
-                    value.push(b'\\');
-                }
-            }
-            _ => value.push(c),
-        }
-    }
-    value
-}
-
-/// https://mimesniff.spec.whatwg.org/#parse-a-mime-type then serialize; `None` for an invalid `type/subtype`.
-fn serialize_mime_type(input: &[u8]) -> Option<Vec<u8>> {
-    let input = strings::trim(input, HTTP_WHITESPACE);
-    let slash = strings::index_of_char_usize(input, b'/')?;
-    let type_ = &input[..slash];
-    if !solely_http_tokens(type_) {
-        return None;
-    }
-
-    let mut pos = slash + 1;
-    let subtype_start = pos;
-    while pos < input.len() && input[pos] != b';' {
-        pos += 1;
-    }
-    let subtype = strings::trim_right(&input[subtype_start..pos], HTTP_WHITESPACE);
-    if !solely_http_tokens(subtype) {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(input.len());
-    out.extend(type_.iter().map(u8::to_ascii_lowercase));
-    out.push(b'/');
-    out.extend(subtype.iter().map(u8::to_ascii_lowercase));
-
-    let mut seen: Vec<Vec<u8>> = Vec::new();
-    while pos < input.len() {
-        pos += 1; // consume ';'
-        while pos < input.len() && HTTP_WHITESPACE.contains(&input[pos]) {
-            pos += 1;
-        }
-        let name_start = pos;
-        while pos < input.len() && input[pos] != b';' && input[pos] != b'=' {
-            pos += 1;
-        }
-        let name: Vec<u8> = input[name_start..pos]
-            .iter()
-            .map(u8::to_ascii_lowercase)
-            .collect();
-
-        if pos >= input.len() || input[pos] == b';' {
-            continue;
-        }
-        pos += 1; // consume '='
-
-        let value: Vec<u8> = if pos < input.len() && input[pos] == b'"' {
-            pos += 1;
-            let v = collect_quoted_string_value(input, &mut pos);
-            while pos < input.len() && input[pos] != b';' {
-                pos += 1;
-            }
-            v
-        } else {
-            let value_start = pos;
-            while pos < input.len() && input[pos] != b';' {
-                pos += 1;
-            }
-            let v = strings::trim_right(&input[value_start..pos], HTTP_WHITESPACE);
-            if v.is_empty() {
-                continue;
-            }
-            v.to_vec()
-        };
-
-        if !solely_http_tokens(&name)
-            || !value.iter().all(|&c| is_http_quoted_string_token(c))
-            || seen.iter().any(|n| n == &name)
-        {
-            continue;
-        }
-
-        out.push(b';');
-        out.extend_from_slice(&name);
-        out.push(b'=');
-        if solely_http_tokens(&value) {
-            out.extend_from_slice(&value);
-        } else {
-            out.push(b'"');
-            for &c in &value {
-                if c == b'"' || c == b'\\' {
-                    out.push(b'\\');
-                }
-                out.push(c);
-            }
-            out.push(b'"');
-        }
-        seen.push(name);
-    }
-
-    Some(out)
-}
-
 // `mime_type`/`data` are slices into the caller-provided `url` string.
 // Classified as BORROW_PARAM — struct gets a lifetime parameter.
 pub struct DataURL<'a> {
@@ -356,7 +226,7 @@ impl<'a> DataURL<'a> {
         }
 
         Some(FetchDataURL {
-            mime_type: serialize_mime_type(mime_type)
+            mime_type: bun_http_types::MimeType::serialize_mime_type(mime_type)
                 .unwrap_or_else(|| b"text/plain;charset=US-ASCII".to_vec()),
             body,
         })

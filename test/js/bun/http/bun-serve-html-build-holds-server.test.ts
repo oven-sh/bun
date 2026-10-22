@@ -135,3 +135,44 @@ test.concurrent.each(["build", "plugin setup", "plugin setup rejection"])(
   // symbolizes the report against the debug binary before the child exits.
   30_000,
 );
+
+test("a request that waits for its HTML route's build isn't closed at idleTimeout", async () => {
+  using dir = tempDir("serve-html-build-idle-timeout", {
+    ...fixture,
+    "run.ts": /* ts */ `
+      import { sweepSocketTimers } from "bun:internal-for-testing";
+      import html from "./index.html";
+
+      const parked = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      Object.assign(globalThis, { __mode: "build", __parked: parked.resolve, __release: release.promise });
+
+      using server = Bun.serve({
+        port: 0,
+        development: false,
+        idleTimeout: 1,
+        routes: { "/": html },
+        fetch: () => new Response("fallback"),
+      });
+      const request = fetch(server.url).then(
+        response => "status " + response.status,
+        error => error.code,
+      );
+      await parked.promise;
+      await new Promise(setImmediate);
+      sweepSocketTimers(4);
+      release.resolve();
+      console.log(await request);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "status 200", stderr: "" });
+  expect(exitCode).toBe(0);
+}, 30_000);

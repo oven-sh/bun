@@ -133,10 +133,6 @@ public:
     void setGuard(Guard);
     Guard guard() const { return m_guard; }
 
-    // True if the list was created only to hold its body's Content-Type and script hasn't seen it.
-    bool isImpliedByBody() const { return m_impliedByBody; }
-    void setImpliedByBody(bool implied) { m_impliedByBody = implied; }
-
     FetchHeaders(Guard, HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
 
@@ -163,7 +159,6 @@ private:
     };
 
     Guard m_guard;
-    bool m_impliedByBody { false };
     // How often fastRemove() ran. An iterator compares it with the counter to tell that nothing else changed the map.
     uint16_t m_nativeRemovals { 0 };
     CountedHeaderMap m_headers;

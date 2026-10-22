@@ -130,7 +130,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
 
     // Unref the ref added in `start_async_bundle`
     if let Some(server) = dev.server.as_mut() {
-        server.on_static_request_complete();
+        server.on_request_complete();
     }
 }
 

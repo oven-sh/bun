@@ -90,7 +90,7 @@ impl ErrorReportRequest {
                 .server
                 .as_mut()
                 .unwrap()
-                .on_static_request_complete();
+                .on_request_complete();
             drop(bun_core::heap::take(ctx));
         }
     }
@@ -386,7 +386,7 @@ impl ErrorReportRequest {
 
         StaticRoute::send_blob_then_deinit(
             r,
-            crate::webcore::blob::Any::from_array_list(out),
+            crate::webcore::blob::Any::from_owned_slice(out),
             InitFromBytesOptions {
                 mime_type: Some(&bun_http_types::MimeType::OTHER),
                 server: dev.server,

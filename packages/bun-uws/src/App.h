@@ -341,8 +341,6 @@ public:
         bool resetIdleTimeoutOnSend = false;
         /* A good default, esp. for newcomers */
         bool sendPingsAutomatically = true;
-        /* Maximum socket lifetime in minutes before forced closure (defaults to disabled) */
-        unsigned short maxLifetime = 0;
         /* See WebSocketContextData */
         bool wsPackage = false;
         bool autoPong = true;
@@ -543,7 +541,6 @@ private:
         webSocketContext->getExt()->closeOnBackpressureLimit = behavior.closeOnBackpressureLimit;
         webSocketContext->getExt()->resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend;
         webSocketContext->getExt()->sendPingsAutomatically = behavior.sendPingsAutomatically;
-        webSocketContext->getExt()->maxLifetime = behavior.maxLifetime;
         webSocketContext->getExt()->compression = behavior.compression;
         webSocketContext->getExt()->wsPackage = behavior.wsPackage;
         webSocketContext->getExt()->autoPong = behavior.autoPong;
@@ -575,7 +572,6 @@ public:
         behavior.resetIdleTimeoutOnSend = false;
         behavior.maxBackpressure = 0;
         behavior.closeOnBackpressureLimit = false;
-        behavior.maxLifetime = 0;
 
         auto *webSocketContext = createWebSocketContext<UserData>(nullptr, behavior);
         applyWebSocketSettings<UserData>(webSocketContext, behavior);
@@ -597,11 +593,6 @@ public:
 
         /* Maximum idleTimeout is 16 minutes */
         if (behavior.idleTimeout > 240 * 4) {
-            std::terminate();
-        }
-
-        /* Maximum maxLifetime is 4 hours */
-        if (behavior.maxLifetime > 240) {
             std::terminate();
         }
 
@@ -770,27 +761,13 @@ public:
         return httpContext ? trackListenSocket(httpContext->listen_fd(sslCtxOrNull(), fd, backlog, options, error)) : nullptr;
     }
 
-    void setOnSocketClosed(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
-        httpContext->getSocketContextData()->onSocketClosed = onClose;
-    }
-    void setOnSocketDrain(HttpContextData<SSL>::OnSocketDrainCallback onDrain) {
-        httpContext->getSocketContextData()->onSocketDrain = onDrain;
-    }
-    void setOnSocketData(HttpContextData<SSL>::OnSocketDataCallback onData) {
-        httpContext->getSocketContextData()->onSocketData = onData;
-    }
-
     void setOnClientError(HttpContextData<SSL>::OnClientErrorCallback onClientError) {
         httpContext->getSocketContextData()->onClientError = std::move(onClientError);
     }
 
-    void setOnSocketUpgraded(HttpContextData<SSL>::OnSocketUpgradedCallback onUpgraded) {
-        httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
-    }
-
     /* Switch this app into node:http compat mode (see HttpContext::enableNodeHttpCompat). */
-    void enableNodeHttpCompat() {
-        httpContext->enableNodeHttpCompat();
+    void enableNodeHttpCompat(const NodeHttpSocketHooks *hooks) {
+        httpContext->enableNodeHttpCompat(hooks);
     }
 
     TemplatedApp &&run() {
@@ -811,6 +788,11 @@ public:
         httpContext->getSocketContextData()->flags.useInsecureHTTPParser = (lenientHttpFlags & 1) != 0;
         httpContext->getSocketContextData()->flags.useLenientTransferEncoding = (lenientHttpFlags & 2) != 0;
         httpContext->getSocketContextData()->flags.httpAllowHalfOpen = httpAllowHalfOpen;
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setIdleTimeout(uint8_t seconds) {
+        httpContext->getSocketContextData()->idleTimeout = seconds;
         return std::move(*this);
     }
 

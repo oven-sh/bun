@@ -4859,17 +4859,6 @@ pub(crate) mod testing_apis {
         Ok(JSValue::js_number(count as f64))
     }
 
-    /// `runSocketTimeoutSweepSoon` in `bun:internal-for-testing`.
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_run_socket_timeout_sweep_soon(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // SAFETY: `Loop::get()` returns this thread's live loop, and the call only moves its sweep deadline.
-        unsafe { bun_uws_sys::loop_::us_internal_sweep_soon(bun_uws_sys::Loop::get()) };
-        Ok(JSValue::UNDEFINED)
-    }
-
     /// Live `DuplexUpgradeContext`s (one per TLS socket over a JS stream).
     #[bun_jsc::host_fn]
     pub(crate) fn js_duplex_upgrade_context_live_count(
@@ -4878,6 +4867,32 @@ pub(crate) mod testing_apis {
     ) -> JsResult<JSValue> {
         let count = DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed);
         Ok(JSValue::js_number(count as f64))
+    }
+
+    /// `sweepSocketTimers` of `bun:internal-for-testing`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_sweep_socket_timers(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [count] = frame.arguments_as_array::<1>();
+        let count = count.coerce::<i32>(global)?;
+        let loop_ = uws::Loop::get();
+        // SAFETY: `loop_` is this thread's live loop; plain field reads.
+        let sweeping = unsafe {
+            !(*loop_).internal_loop_data.iterator.is_null()
+                || !(*loop_).internal_loop_data.low_prio_iterator.is_null()
+        };
+        if sweeping {
+            return Err(global.throw(format_args!(
+                "sweepSocketTimers() cannot be called from a socket timeout handler"
+            )));
+        }
+        for _ in 0..count {
+            // SAFETY: `loop_` is this thread's live loop and no sweep is running on it.
+            unsafe { bun_uws_sys::loop_::us_internal_timer_sweep(loop_) };
+        }
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]

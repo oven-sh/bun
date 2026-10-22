@@ -37,7 +37,6 @@ const { $data } = require("node:fs/promises");
 const FileHandle = $data.FileHandle;
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
-const kStrictSingleValueFields = Symbol("strictSingleValueFields");
 const kDeferWriteCallback = Symbol("deferWriteCallback");
 const kTransportClosed = Symbol("transportClosed");
 const kProxySocket = Symbol("proxySocket");
@@ -3438,8 +3437,6 @@ class ServerHttp2Stream extends Http2Stream {
     if (this[kTimeout]) this[kTimeout].refresh();
     headers = { ...headers };
     assertNoConnectionHeaders(headers);
-    // Thrown synchronously like node, before a promised stream id is reserved.
-    if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     const sensitives = headers[sensitiveHeaders];
     // Note: the sensitiveHeaders symbol stays on the object — the native header walk skips
     // symbol keys, and deleting it here would flip the object into dictionary mode,
@@ -3458,6 +3455,8 @@ class ServerHttp2Stream extends Http2Stream {
     if (getAuthority(headers) === undefined && parentRequestHeaders) {
       headers[HTTP2_HEADER_AUTHORITY] = getAuthority(parentRequestHeaders);
     }
+    // Throws like node, before a promised stream id is reserved.
+    parser.validateRequest(headers);
     const pushId = parser.getNextStream();
     if (pushId === -1) {
       process.nextTick(callback, $ERR_HTTP2_OUT_OF_STREAMS());
@@ -3682,9 +3681,6 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
     }
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
-    // Pre-validate single-value headers in JS so a throwing additionalHeaders() leaves no partial
-    // state in the shared HPACK table (same rule request() applies).
-    if (this[bunHTTP2Session]?.[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     assertNoConnectionHeaders(headers);
     if (headers[HTTP2_HEADER_STATUS] != null) {
       const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
@@ -3774,9 +3770,6 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
     }
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
-    // Pre-validate single-value headers in JS so a throwing respond() leaves no partial state in
-    // the shared HPACK table (same rule request() applies).
-    if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     assertNoConnectionHeaders(headers);
     // node keeps the never-index list visible on sentHeaders (symbol keys are not iterated by the
     // wire-encoding path, so re-attaching is safe).
@@ -4036,25 +4029,6 @@ function stripInvalidWhitespaceFields(rawheaders: string[]): string[] {
 // Build the never-index name map handed to the native encoder. Mirrors nghttp2's behavior:
 // the user's sensitive-headers list matches case-insensitively, and `authorization` (always)
 // plus short `cookie` values (< 20 chars) are never indexed even when not listed.
-
-// node validates header constraints in JS before anything reaches the native encoder, so a
-// throwing request leaves no partial state in the shared HPACK table. Mirror the single-value
-// rule here: duplicated single-value fields (across case variants) and multi-element arrays for
-// them throw before encoding starts.
-function assertSingleValueHeaders(headers) {
-  let seen: Set<string> | null = null;
-  const keys = Object.keys(headers);
-  for (let i = 0; i < keys.length; i++) {
-    const lower = keys[i].toLowerCase();
-    if (!kSingleValueHeaders.has(lower)) continue;
-    const value = headers[keys[i]];
-    if (($isArray(value) && value.length > 1) || (seen !== null && seen.has(lower))) {
-      throw $ERR_HTTP2_HEADER_SINGLE_VALUE(`Header field "${lower}" must only have a single value`);
-    }
-    if (seen === null) seen = new SafeSet();
-    seen.add(lower);
-  }
-}
 
 // Renders a received value the way node's determineSpecificType does for error messages.
 function receivedValueLabel(value) {
@@ -4657,7 +4631,6 @@ class ServerHttp2Session extends Http2Session {
     if (options?.strictFieldWhitespaceValidation === false) {
       this.#strictFieldWhitespaceValidation = false;
     }
-    this[kStrictSingleValueFields] = options?.strictSingleValueFields !== false;
     if (server) {
       server[kSessions].add(this);
     }
@@ -5845,7 +5818,6 @@ class ClientHttp2Session extends Http2Session {
     if (options.strictFieldWhitespaceValidation === false) {
       this.#strictFieldWhitespaceValidation = false;
     }
-    this[kStrictSingleValueFields] = options.strictSingleValueFields;
 
     const protocol = url.protocol || options?.protocol || "https:";
     this.#defaultScheme = StringPrototypeSlice.$call(protocol, 0, -1);
@@ -6282,29 +6254,6 @@ class ClientHttp2Session extends Http2Session {
         throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       const sensitiveNames = buildSensitiveNames(headers, sensitives);
-      // Validate header names in JS like node's buildNgHeaderString does: request() must throw
-      // synchronously for an invalid name even while the session is still connecting (the native
-      // encoder only sees the headers once a queued request is actually submitted). Empty names
-      // keep going to the native validator, matching its acceptance.
-      {
-        const headerNames = ObjectKeys(headers);
-        for (let i = 0; i < headerNames.length; i++) {
-          const name = headerNames[i];
-          if (name === "" || headers[name] === undefined) continue;
-          if (name.charCodeAt(0) === 0x3a /* ':' */) {
-            // Unknown pseudo-header names throw synchronously (node's mapToHeaders); known ones
-            // are still re-checked by the native encoder at submission time.
-            assertValidPseudoHeader(name);
-            continue;
-          }
-          if (!checkIsHttpToken(name)) {
-            throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
-          }
-        }
-      }
-      // Validate single-value constraints before anything is encoded (a mid-encode throw would
-      // desync the shared HPACK table from the peer).
-      if (this[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
       assertNoConnectionHeaders(headers);
       // node keeps the never-index list visible on the request's sentHeaders (symbol keys are
       // not iterated by the wire-encoding path, so re-attaching is safe).
@@ -6441,6 +6390,9 @@ class ClientHttp2Session extends Http2Session {
         (this.#pendingRequests !== null && this.#pendingRequests.size > 0) ||
         (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams)
       ) {
+        const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
+        // The encoder only sees the headers when the request is submitted, and request() has to throw now.
+        this.#parser!.validateRequest(wireHeaders);
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
@@ -6448,7 +6400,7 @@ class ClientHttp2Session extends Http2Session {
         // object form cannot represent; the object form is what diagnostics channels publish.
         req[kQueuedRequest] = {
           headers,
-          wireHeaders: rawHeadersList !== null ? rawHeadersList : headers,
+          wireHeaders,
           sensitiveNames,
           options,
         };
@@ -6857,7 +6809,6 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (options.allowHTTP1 === true) {
-      this[require("internal/http1_server_fallback").kHttp1Connections] = new SafeSet();
       const http1Options = { ...options, ...options.http1Options };
       this.keepAliveTimeout = http1Options.keepAliveTimeout ?? 5000;
       this.headersTimeout = http1Options.headersTimeout ?? 60000;

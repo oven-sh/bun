@@ -24,6 +24,7 @@
 #include "internal/fault_inject.h"
 
 #include <limits.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -733,6 +734,49 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 #endif
 }
 
+#ifndef _WIN32
+/* One bit per descriptor a socket in this process owns, on any thread's loop. */
+#define BSD_OWNED_PAGE_BITS (1u << 15)
+static _Atomic(_Atomic(uint64_t) *) bsd_owned_pages[(1u << 31) / BSD_OWNED_PAGE_BITS];
+
+static _Atomic(uint64_t) *bsd_owned_word(LIBUS_SOCKET_DESCRIPTOR fd) {
+    _Atomic(_Atomic(uint64_t) *) *slot = &bsd_owned_pages[(unsigned int) fd / BSD_OWNED_PAGE_BITS];
+    _Atomic(uint64_t) *page = atomic_load(slot);
+    if (UNLIKELY(!page)) {
+        _Atomic(uint64_t) *fresh = us_calloc(BSD_OWNED_PAGE_BITS / 64, sizeof(uint64_t));
+        if (atomic_compare_exchange_strong(slot, &page, fresh)) {
+            page = fresh;
+        } else {
+            us_free(fresh);
+        }
+    }
+    return &page[(unsigned int) fd % BSD_OWNED_PAGE_BITS / 64];
+}
+#endif
+
+int bsd_adopt_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+#ifndef _WIN32
+    if (fd < 0) {
+        errno = EBADF;
+        return -1;
+    }
+    uint64_t bit = 1ull << (fd % 64);
+    if (atomic_fetch_or(bsd_owned_word(fd), bit) & bit) {
+        errno = EEXIST;
+        return -1;
+    }
+#endif
+    return 0;
+}
+
+void bsd_disown_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+#ifndef _WIN32
+    if (fd >= 0) {
+        atomic_fetch_and(bsd_owned_word(fd), ~(1ull << (fd % 64)));
+    }
+#endif
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err) {
     bsd_winsock_ensure();
     if (err != NULL) {
@@ -753,6 +797,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
+    bsd_adopt_socket(created_fd);
     return apple_no_sigpipe(created_fd);
 #elif defined(_WIN32)
     /* Plain socket() returns an inheritable handle, so any child spawned with
@@ -781,6 +826,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
+    bsd_adopt_socket(created_fd);
     return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
 #endif
 }
@@ -789,6 +835,8 @@ void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef _WIN32
     closesocket(fd);
 #else
+    /* Before close(): the kernel can hand the number to another thread right after it. */
+    bsd_disown_socket(fd);
     close(fd);
 #endif
 }
@@ -912,6 +960,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 #endif
 
     internal_finalize_bsd_addr(addr);
+    bsd_adopt_socket(accepted_fd);
 
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
 // skip the extra fcntl calls.

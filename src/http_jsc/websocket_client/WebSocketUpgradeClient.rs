@@ -58,16 +58,12 @@ use bun_http::ssl_config::SSLConfig;
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
 bun_core::declare_scope!(alloc, hidden);
 
-/// Opening-handshake timeout in seconds, normalised for uSockets' timer
-/// wheel (short-timeout counter wraps at 240 ticks; `set_timeout` routes
-/// larger values onto the minute-granularity long timer). 0 disables.
+/// Opening-handshake timeout in seconds. 0 disables.
 #[inline]
 fn handshake_timeout_seconds() -> core::ffi::c_uint {
-    bun_http::normalize_idle_timeout_seconds(
-        bun_core::env_var::BUN_CONFIG_WS_HANDSHAKE_TIMEOUT
-            .get()
-            .unwrap_or(120),
-    )
+    bun_core::env_var::BUN_CONFIG_WS_HANDSHAKE_TIMEOUT
+        .get()
+        .map_or(120, |seconds| u32::try_from(seconds).unwrap_or(u32::MAX))
 }
 
 /// Max raw size of a response head. `--max-http-header-size` only counts header names, values and

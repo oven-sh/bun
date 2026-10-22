@@ -15,6 +15,7 @@ pub(crate) use http_method::{Method, Optional as MethodOptional};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
+use crate::generated_bindgen::server::{NodeHTTPServeOptions, ServeSwitches};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
@@ -243,7 +244,8 @@ impl StaticRouteEntry {
 }
 
 impl ServerConfig {
-    fn normalize_static_routes_list(&mut self) -> Result<(), crate::Error> {
+    /// Keeps the last route of each method and path, in a deterministic order.
+    pub(crate) fn normalize_static_routes_list(&mut self) {
         fn hash(route: &StaticRouteEntry) -> u64 {
             let mut hasher = Wyhash::init(0);
             match &route.method {
@@ -285,55 +287,6 @@ impl ServerConfig {
         // sort the cloned static routes by name for determinism
         // (descending by path: `order(b, a)`).
         index_sort::sort_slice_by(list, |a, b| strings::order(&b.path, &a.path));
-
-        Ok(())
-    }
-
-    pub(crate) fn clone_for_reloading_static_routes(
-        &mut self,
-    ) -> Result<ServerConfig, crate::Error> {
-        // The sole caller is
-        // `*config = config.clone_for_reloading_static_routes()?;`.
-        // Move every owning field into `that` and leave the Copy scalars in
-        // place on `self` (idle_timeout, development, reuse_port, http1/http3,
-        // etc. retained; resources gone), ensuring the assignment-drop of the
-        // residual `self` is a no-op.
-        let mut that = ServerConfig {
-            address: core::mem::take(&mut self.address),
-            idle_timeout: self.idle_timeout,
-            has_idle_timeout: self.has_idle_timeout,
-            base_uri: core::mem::take(&mut self.base_uri),
-            ssl_config: self.ssl_config.take(),
-            sni: self.sni.take(),
-            max_request_body_size: self.max_request_body_size,
-            development: self.development,
-            broadcast_console_log_from_browser_to_server_for_bake: self
-                .broadcast_console_log_from_browser_to_server_for_bake,
-            enable_chrome_devtools_automatic_workspace_folders: self
-                .enable_chrome_devtools_automatic_workspace_folders,
-            on_error: self.on_error,
-            on_request: self.on_request,
-            on_node_http_request: self.on_node_http_request,
-            is_node_http_server: self.is_node_http_server,
-            websocket: self.websocket.take(),
-            reuse_port: self.reuse_port,
-            listen_fd: self.listen_fd,
-            id: core::mem::take(&mut self.id),
-            allow_hot: self.allow_hot,
-            ipv6_only: self.ipv6_only,
-            http3: self.http3,
-            http2: self.http2,
-            http1: self.http1,
-            had_routes_object: self.had_routes_object,
-            static_routes: core::mem::take(&mut self.static_routes),
-            negative_routes: core::mem::take(&mut self.negative_routes),
-            user_routes_to_build: core::mem::take(&mut self.user_routes_to_build),
-            bake: self.bake.take(),
-        };
-
-        that.normalize_static_routes_list()?;
-
-        Ok(that)
     }
 
     pub(crate) fn append_static_route(
@@ -341,19 +294,18 @@ impl ServerConfig {
         path: &[u8],
         route: AnyRoute,
         method: MethodOptional,
-    ) -> Result<(), crate::Error> {
+    ) {
         self.static_routes.push(StaticRouteEntry {
             path: Box::<[u8]>::from(path),
             route,
             method,
         });
-        Ok(())
     }
 }
 
-pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
+pub(crate) fn apply_static_route<T: StaticRouteLike, A: StaticRouteApp>(
     server: AnyServer,
-    app: &mut uws::NewApp<SSL>,
+    app: &mut A,
     entry: ThisPtr<T>,
     path: &[u8],
     method: http_method::Optional,
@@ -390,9 +342,8 @@ fn serves_head(method: &http_method::Optional) -> bool {
     }
 }
 
-/// The route-registration surface shared by `uws::h2::App` and
-/// `uws::h3::App`; both hand the handler type-erased `AnyRequest`/`AnyResponse`.
-pub(crate) trait MuxApp {
+/// The route registration the HTTP/1, HTTP/2 and HTTP/3 apps share. Each hands the handler an `AnyRequest` and an `AnyResponse`.
+pub(crate) trait StaticRouteApp {
     fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
     where
         H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
@@ -401,9 +352,9 @@ pub(crate) trait MuxApp {
         H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
 }
 
-macro_rules! impl_mux_app {
-    ($app:ty) => {
-        impl MuxApp for $app {
+macro_rules! impl_static_route_app {
+    ([$($generics:tt)*] $app:ty) => {
+        impl<$($generics)*> StaticRouteApp for $app {
             #[inline]
             fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
             where
@@ -421,34 +372,11 @@ macro_rules! impl_mux_app {
         }
     };
 }
-impl_mux_app!(uws::h2::App);
-impl_mux_app!(uws::h3::App);
+impl_static_route_app!([const SSL: bool] uws::NewApp<SSL>);
+impl_static_route_app!([] uws::h2::App);
+impl_static_route_app!([] uws::h3::App);
 
-pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
-    server: AnyServer,
-    app: &mut A,
-    entry: ThisPtr<T>,
-    path: &[u8],
-    method: http_method::Optional,
-    path_has_user_head_route: bool,
-) {
-    entry.set_server(server);
-
-    if !path_has_user_head_route && serves_head(&method) {
-        app.method_this(Method::HEAD, path, T::on_head_request, entry);
-    }
-    match method {
-        http_method::Optional::Any => app.any_this(path, T::on_request, entry),
-        http_method::Optional::Method(m) => {
-            let mut iter = m.iter();
-            while let Some(method_) = iter.next() {
-                app.method_this(method_, path, T::on_request, entry);
-            }
-        }
-    }
-}
-
-/// Per-route trait that `apply_static_route{,_mux}` monomorphizes over
+/// Per-route trait that `apply_static_route` monomorphizes over
 /// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route
 /// is the uWS route userdata; the route table holds a ref on it for as long as
 /// it is registered.
@@ -1181,25 +1109,12 @@ impl ServerConfig {
             }
         }
 
-        if let Some(dev) = arg.get(global, "reusePort")? {
-            args.reuse_port = dev.to_boolean();
-        }
-
-        if let Some(dev) = arg.get(global, "ipv6Only")? {
-            args.ipv6_only = dev.to_boolean();
-        }
-
-        if let Some(v) = arg.get(global, "http3")? {
-            args.http3 = v.to_boolean();
-        }
-
-        if let Some(v) = arg.get(global, "http2")? {
-            args.http2 = v.to_boolean();
-        }
-
-        if let Some(v) = arg.get(global, "http1")? {
-            args.http1 = v.to_boolean();
-        }
+        let switches = ServeSwitches::from_js(global, arg)?;
+        args.reuse_port = switches.reuse_port.unwrap_or(args.reuse_port);
+        args.ipv6_only = switches.ipv6_only;
+        args.http3 = switches.http3;
+        args.http2 = switches.http2;
+        args.http1 = switches.http1;
 
         if let Some(max_request_body_size) = arg.get_truthy(global, "maxRequestBodySize")? {
             if max_request_body_size.is_number() {
@@ -1215,7 +1130,7 @@ impl ServerConfig {
                 );
             }
             // Raw value — async-context wrapping is deferred to the slot-write
-            // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
+            // site (`serve_with!` / `apply_reload`) so the wrapped fn is
             // rooted by the wrapper's WriteBarrier slot the moment it exists.
             args.on_error = on_error;
         }
@@ -1229,15 +1144,7 @@ impl ServerConfig {
             args.on_node_http_request = on_request_;
             args.is_node_http_server = true;
 
-            if let Some(fd) = arg.get(global, "fd")? {
-                let number = fd.get_number().unwrap_or(-1.0);
-                if number.fract() != 0.0 || !(0.0..=f64::from(i32::MAX)).contains(&number) {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Expected fd to be a non-negative integer"
-                    )));
-                }
-                args.listen_fd = Some(number as i32);
-            }
+            args.listen_fd = NodeHTTPServeOptions::from_js(global, arg)?.fd;
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
@@ -1251,7 +1158,6 @@ impl ServerConfig {
             && (args.static_routes.len() + args.user_routes_to_build.len()) == 0
             && !opts.previous_fetch
             && !(opts.previous_routes && !args.had_routes_object)
-            && opts.is_fetch_required
         {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.serve() needs either:\n\n\
@@ -1508,9 +1414,8 @@ impl ServerConfig {
 #[derive(Clone, Copy)]
 pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
-    pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
-    /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays
+    /// names no handler, as `apply_reload` applies it: `fetch` stays
     /// unless the new config replaces it, and callback routes stay as long as
     /// the new config has no `routes` object at all (`routes: {}` replaces
     /// them). Static routes and the node:http handler are replaced on every

@@ -487,10 +487,7 @@ impl BytesExt for Bytes {
         self.len = 0;
         self.cap = 0;
         self.allocator = bun_alloc::basic::C_ALLOCATOR;
-        super::Internal {
-            bytes,
-            was_string: false,
-        }
+        bytes.into()
     }
 }
 

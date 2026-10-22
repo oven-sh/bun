@@ -96,7 +96,7 @@
 
 /* Small 16KB shared send buffer for UDP packet metadata */
 #define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
-/* A timeout granularity of 4 seconds means give or take 4 seconds from set timeout */
+/* Seconds between two timeout sweeps */
 #define LIBUS_TIMEOUT_GRANULARITY 4
 /* 32 byte padding of receive buffer ends */
 #define LIBUS_RECV_BUFFER_PADDING 32
@@ -305,7 +305,6 @@ struct us_socket_vtable_t {
     struct us_socket_t *(*on_writable)(us_socket_r);
     struct us_socket_t *(*on_close)(us_socket_r, int code, void *reason);
     struct us_socket_t *(*on_timeout)(us_socket_r);
-    struct us_socket_t *(*on_long_timeout)(us_socket_r);
     struct us_socket_t *(*on_end)(us_socket_r);
     struct us_socket_t *(*on_connect_error)(us_socket_r, int code);
     struct us_connecting_socket_t *(*on_connecting_error)(struct us_connecting_socket_t *, int code);
@@ -328,8 +327,6 @@ struct us_socket_group_t {
      * They are NOT in head_sockets while queued, so close_all/deinit must
      * account for them separately. */
     uint16_t low_prio_count;
-    unsigned char timestamp;
-    unsigned char long_timestamp;
     unsigned char linked;
 };
 
@@ -359,7 +356,6 @@ void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) n
  * (see close_all_ex). */
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
 
-unsigned short us_socket_group_timestamp(us_socket_group_r group) nonnull_fn_decl;
 struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));
 void *us_socket_group_ext(us_socket_group_r group) nonnull_fn_decl;
 struct us_socket_group_t *us_socket_group_next(us_socket_group_r group) nonnull_fn_decl;
@@ -476,8 +472,8 @@ struct us_socket_t *us_socket_group_connect_unix(us_socket_group_r group,
 int us_socket_is_established(us_socket_r s) nonnull_fn_decl;
 void us_connecting_socket_free(struct us_connecting_socket_t *c) nonnull_fn_decl;
 void us_connecting_socket_close(struct us_connecting_socket_t *c) nonnull_fn_decl;
+/* us_socket_timeout for every address this connect tries. Nothing fires while the name is still being resolved. */
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) nonnull_fn_decl;
-void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigned int minutes) nonnull_fn_decl;
 void us_connecting_socket_shutdown(struct us_connecting_socket_t *c) nonnull_fn_decl;
 void us_connecting_socket_shutdown_read(struct us_connecting_socket_t *c) nonnull_fn_decl;
 int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) nonnull_fn_decl;
@@ -676,8 +672,8 @@ int us_socket_raw_write(us_socket_r s, const char *data, int length);
  * its ciphertext, or EPROTO for a failed SSL_write, once its handshake was reported. */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 
+/* on_timeout fires once, at the first sweep after `seconds` have passed. Takes any number of seconds, and 0 disarms. */
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;
-void us_socket_long_timeout(us_socket_r s, unsigned int minutes) nonnull_fn_decl;
 
 void *us_socket_ext(us_socket_r s) nonnull_fn_decl;
 void *us_connecting_socket_ext(struct us_connecting_socket_t *c) nonnull_fn_decl;

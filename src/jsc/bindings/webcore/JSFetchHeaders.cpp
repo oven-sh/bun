@@ -784,13 +784,3 @@ extern "C" WebCore::FetchHeaders* WebCore__FetchHeaders__castAsInit(JSC::Encoded
 {
     return WebCore::JSFetchHeaders::toWrappedAsInit(JSC::JSValue::decode(value));
 }
-
-extern "C" void WebCore__FetchHeaders__setImpliedByBody(WebCore::FetchHeaders* headers, bool implied)
-{
-    headers->setImpliedByBody(implied);
-}
-
-extern "C" bool WebCore__FetchHeaders__isImpliedByBody(WebCore::FetchHeaders* headers)
-{
-    return headers->isImpliedByBody();
-}

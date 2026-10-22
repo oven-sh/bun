@@ -41,13 +41,13 @@
 #include "BloomFilter.h"
 #include "QueryParser.h"
 #include "HttpErrors.h"
+#include "Utilities.h"
 
 #if defined(_WIN32)
 #define strncasecmp _strnicmp
 #endif
 
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
-extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS
 {
@@ -769,25 +769,6 @@ struct HttpResponseData;
          * personality so a client cannot stream unbounded extension bytes. */
         static const uint64_t MAX_CHUNK_EXTENSION_SIZE = 16 * 1024;
 
-    public:
-        /* Returns UINT64_MAX on error. Maximum 999999999 is allowed. */
-        static uint64_t toUnsignedInteger(std::string_view str) {
-            /* We assume at least 64-bit integer giving us safely 999999999999999999 (18 number of 9s) */
-            if (str.length() > 18) {
-                return UINT64_MAX;
-            }
-
-            uint64_t unsignedIntegerValue = 0;
-            for (char c : str) {
-                /* As long as the letter is 0-9 we cannot overflow. */
-                if (c < '0' || c > '9') {
-                    return UINT64_MAX;
-                }
-                unsignedIntegerValue = unsignedIntegerValue * 10ull + ((unsigned int) c - (unsigned int) '0');
-            }
-            return unsignedIntegerValue;
-        }
-
     private:
         static inline uint64_t hasLess(uint64_t x, uint64_t n) {
             return (((x)-~0ULL/255*(n))&~(x)&~0ULL/255*128);
@@ -796,31 +777,6 @@ struct HttpResponseData;
         /* Nonzero if any byte of x is 0x7f or above. Adding 1 to a byte carries only out of 0xff, which x itself flags. */
         static inline uint64_t hasDeleteOrAbove(uint64_t x) {
             return ((x + ~0ULL/255) | x) & (~0ULL/255*128);
-        }
-
-        /* RFC 9110 5.6.2. Tokens */
-        /* Hyphen is not checked here as it is very common */
-        static inline bool isUnlikelyFieldNameByte(unsigned char c)
-        {
-            /* Digits and 14 of the 15 non-alphanum characters (lacking hyphen) */
-            return ((c == '~') | (c == '|') | (c == '`') | (c == '_') | (c == '^') | (c == '.') | (c == '+')
-                | (c == '*') | (c == '!')) || ((c >= 48) & (c <= 57)) || ((c <= 39) & (c >= 35));
-        }
-
-        /* Header names keep their original wire casing; lookups go through
-         * the case-insensitive getHeader(). */
-        static inline bool isFieldNameByte(unsigned char in) {
-            /* Most common is lowercase alpha and hyphen */
-            if (((in >= 97) & (in <= 122)) | (in == '-')) [[likely]] {
-                return true;
-            /* Second is upper case alpha */
-            } else if ((in >= 65) & (in <= 90)) [[unlikely]] {
-                return true;
-            /* These are rarely used but still valid */
-            } else if (isUnlikelyFieldNameByte(in)) [[unlikely]] {
-                return true;
-            }
-            return false;
         }
 
         static inline char *consumeFieldName(char *p) {
@@ -844,24 +800,10 @@ struct HttpResponseData;
             }
 
             /* Generic */
-            while (isFieldNameByte(*(unsigned char *)p)) {
+            while (isTokenByte(*(unsigned char *)p)) {
                 p++;
             }
             return p;
-        }
-
-        static bool isValidMethod(std::string_view str, bool useStrictMethodValidation) {
-            if (str.empty()) return false;
-
-            if (useStrictMethodValidation) {
-                return Bun__HTTPMethod__from(str.data(), str.length()) != -1;
-            }
-
-            for (char c : str) {
-                if (!isValidMethodChar(c))
-                    return false;
-            }
-            return true;
         }
 
         static inline bool isValidMethodChar(char c) {
@@ -977,7 +919,7 @@ struct HttpResponseData;
             if (isHTTPMethod || isConnect || isProxyStyleURL) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
-                if(!isValidMethod(header.key, useStrictMethodValidation)) {
+                if (useStrictMethodValidation && !isKnownMethod(header.key)) {
                     return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_METHOD);
                 }
                 /* Scan for less than 33 (catches post padded CR and fails) */
@@ -1504,7 +1446,7 @@ struct HttpResponseData;
 
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {
-                remainingStreamingBytes = toUnsignedInteger(contentLengthString);
+                remainingStreamingBytes = parseContentLength(contentLengthString);
                 /* remainingStreamingBytes is overloaded: for Content-Length it holds the raw byte
                  * count, for Transfer-Encoding: chunked it holds the ChunkedEncoding state word.
                  * isParsingChunkedEncoding() distinguishes the two by testing the flag bits, so a

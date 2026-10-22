@@ -23,6 +23,7 @@ const {
   ConnResetException,
   ErrnoException,
   ExceptionWithHostPort,
+  listenException,
   hasObserver,
   startPerf,
   stopPerf,
@@ -299,29 +300,9 @@ function emitListenErrorNextTick(self, err) {
 }
 
 function emitListenError(server, err, port, host, socketPath, fd) {
-  if (fd !== undefined) {
-    // Not a socket Node can listen on: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2063-L2070
-    if (err.code === "EBADF" || err.code === "ENOTSOCK" || err.code === "EOPNOTSUPP") err.code = "EINVAL";
-    err = formatListenError(err, null, undefined);
-  } else {
-    err = socketPath ? formatListenError(err, socketPath, -1) : formatListenError(err, host ?? "::", port);
-  }
+  if (fd !== undefined) err = listenException(err, null);
+  else err = socketPath ? listenException(err, socketPath, -1) : listenException(err, host ?? "::", port);
   process.nextTick(emitListenErrorNextTick, server, err);
-}
-
-// https://github.com/nodejs/node/blob/v26.5.0/lib/internal/errors.js#L689-L716
-function formatListenError(err, address, port) {
-  // Node emits a failed lookup's error as dns.lookup() made it.
-  if (err?.syscall === "getaddrinfo") return err;
-  const errno = process.binding("uv")[`UV_${err?.code}`];
-  if (errno === undefined) return err;
-  const description = require("node:util").getSystemErrorMessage(errno);
-  err.message = `listen ${err.code}: ${description}${port > 0 ? ` ${address}:${port}` : address ? ` ${address}` : ""}`;
-  err.errno = errno;
-  err.syscall = "listen";
-  err.address = address;
-  if (port) err.port = port;
-  return err;
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1368

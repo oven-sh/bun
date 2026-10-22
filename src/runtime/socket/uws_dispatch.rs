@@ -160,8 +160,6 @@ us_dispatch_shims! {
         = vt.on_close(s, code, reason) or s;
     fn us_dispatch_timeout(s: *mut us_socket_t) -> *mut us_socket_t
         = vt.on_timeout(s) or s;
-    fn us_dispatch_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t
-        = vt.on_long_timeout(s) or s;
     fn us_dispatch_end(s: *mut us_socket_t) -> *mut us_socket_t
         = vt.on_end(s) or s;
     fn us_dispatch_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t

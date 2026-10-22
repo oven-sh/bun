@@ -18,7 +18,7 @@ use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
 use crate::ssl_config::{SSLConfig, SharedPtr};
-use crate::{HTTPClient, HeaderResult, Protocol};
+use crate::{HTTPClient, HeaderResult, Protocol, Transport};
 
 use crate::h3_client::h3_client;
 
@@ -142,13 +142,13 @@ impl ClientSession {
     /// `onStreamOpen` pops it.
     pub(crate) fn enqueue(&mut self, client: &mut HTTPClient) {
         debug_assert!(!self.closed);
-        client.h3 = None;
         client.flags.protocol = Protocol::Http3;
         client.allow_retry = false;
 
         let stream = Stream::new(self, client);
         let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
-        client.h3 = Some(NonNull::new(stream).expect("Stream::new returns a fresh allocation"));
+        client.transport =
+            Transport::H3(NonNull::new(stream).expect("Stream::new returns a fresh allocation"));
         self.pending.push(stream);
         self.ref_();
 
@@ -158,54 +158,48 @@ impl ClientSession {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(
-        &mut self,
-        async_http_id: u32,
-        message: WriteMessageType,
-    ) -> bool {
-        for &stream_ptr in self.pending.iter() {
-            let stream = stream_mut(stream_ptr);
-            let Some(client) = stream.client else {
-                continue;
-            };
-            let client = client_mut(client);
-            if client.async_http_id != async_http_id {
-                continue;
-            }
-            if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
-                if message == WriteMessageType::LengthMismatch {
-                    self.fail(stream_ptr, crate::Error::RequestBodyLengthMismatch);
-                    return true;
-                }
-                s.ended = message == WriteMessageType::End;
-                if let Some(qs) = stream.qstream_mut() {
-                    encode::drain_send_body(stream, qs);
-                }
-            }
-            return true;
-        }
-        false
+    /// The request on `stream` was aborted.
+    pub(crate) fn abort_stream(stream: NonNull<Stream>) {
+        stream_mut(stream.as_ptr())
+            .session_mut()
+            .fail(stream.as_ptr(), crate::Error::Aborted);
     }
 
-    pub(crate) fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
-        for &stream_ptr in self.pending.iter() {
-            let stream = stream_mut(stream_ptr);
-            let Some(client) = stream.client else {
-                continue;
-            };
-            let client = client_mut(client);
-            if client.async_http_id != async_http_id {
-                continue;
-            }
-            // The consumer can be paused again by the time this runs.
-            let paused = client.signals.is_receive_paused();
-            if let Some(qs) = stream.qstream_mut() {
-                qs.hold_window(paused);
-            }
-            client.drain_response_body_h3();
-            return true;
+    /// The producer of the request's stream body has more bytes, or ended it.
+    pub(crate) fn stream_request_body(stream_ptr: NonNull<Stream>, message: WriteMessageType) {
+        let stream = stream_mut(stream_ptr.as_ptr());
+        let Some(client) = stream.client else {
+            return;
+        };
+        let crate::HTTPRequestBody::Stream(body) =
+            &mut client_mut(client).state.original_request_body
+        else {
+            return;
+        };
+        if message == WriteMessageType::LengthMismatch {
+            return stream
+                .session_mut()
+                .fail(stream_ptr.as_ptr(), crate::Error::RequestBodyLengthMismatch);
         }
-        false
+        body.ended = message == WriteMessageType::End;
+        if let Some(qs) = stream.qstream_mut() {
+            encode::drain_send_body(stream, qs);
+        }
+    }
+
+    /// The consumer of the stream's response body takes bytes again.
+    pub(crate) fn resume_receive(stream: NonNull<Stream>) {
+        let stream = stream_mut(stream.as_ptr());
+        let Some(client) = stream.client else {
+            return;
+        };
+        let client = client_mut(client);
+        // The consumer can be paused again by the time this runs.
+        let paused = client.signals.is_receive_paused();
+        if let Some(qs) = stream.qstream_mut() {
+            qs.hold_window(paused);
+        }
+        client.drain_response_body_h3();
     }
 
     /// Unlink and free `stream`, releasing the ref `enqueue` took for it.
@@ -227,7 +221,7 @@ impl ClientSession {
         let session = st.session.as_ptr();
         debug_assert!(core::ptr::eq(session, self));
         if let Some(cl) = st.client {
-            client_mut(cl).h3 = None;
+            client_mut(cl).transport = Transport::None;
         }
         st.client = None;
         let request_body_done = st.request_body_done;
@@ -262,7 +256,7 @@ impl ClientSession {
         let client = stream_mut(stream).client;
         self.detach_with(stream, true);
         if let Some(cl) = client {
-            // detach() nulled cl.h3 but the HTTPClient itself is alive.
+            // detach() cleared cl.transport but the HTTPClient itself is alive.
             client_mut(cl).fail_from_h2(err);
         }
     }
@@ -275,7 +269,7 @@ impl ClientSession {
     /// stream open.
     pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
         // Shaped for Stacked Borrows like `fail` below — `detach()`
-        // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
+        // re-derives `&mut HTTPClient` from the same raw ptr to clear `transport`, which
         // would invalidate any `&mut HTTPClient` held across it. Hold the raw
         // `client_ptr` across `detach` and only form `&mut` afterward.
         let st = stream_mut(stream);
@@ -318,37 +312,12 @@ impl ClientSession {
         );
         self.detach_with(stream, true);
         // Formed only after detach() so its Unique tag is not invalidated by
-        // detach()'s aliasing write to `client.h3`.
+        // detach()'s aliasing write to `client.transport`.
         let client = client_mut(client_ptr);
         if !ClientContext::as_mut(ctx).connect(client, &host, port) {
             client.h3_upgrade_failed(err);
         }
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
-    }
-
-    pub(crate) fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
-        // `fail` mutates `pending`, so it cannot be called while the iterator
-        // holds `&self.pending`, and only one entry can match — so locate
-        // first via raw-ptr reads, then act.
-        let mut found: *mut Stream = core::ptr::null_mut();
-        for &stream_ptr in self.pending.iter() {
-            // pending entries are live until detach(); `stream_ref` reads the
-            // Copy `client` field — no `&mut Stream` materialized.
-            let Some(cl) = stream_ref(stream_ptr).client else {
-                continue;
-            };
-            // `Stream.client` is a live backref while attached; `ParentRef`
-            // reads the Copy `async_http_id` field via shared deref.
-            if bun_ptr::ParentRef::from(cl).async_http_id == async_http_id {
-                found = stream_ptr;
-                break;
-            }
-        }
-        if !found.is_null() {
-            self.fail(found, crate::Error::Aborted);
-            return true;
-        }
-        false
     }
 
     /// The stream closed without a FIN (`deliver` detaches at the FIN), so a body that already started is truncated.
@@ -384,7 +353,7 @@ impl ClientSession {
             }
             return;
         };
-        // NB: `detach()` writes `client.h3 = None` through this same raw
+        // NB: `detach()` clears `client.transport` through this same raw
         // backref, which pops this `&mut`'s Unique tag under Stacked Borrows —
         // so every `self.detach(stream)` below that is followed by further
         // `client` use re-derives a fresh `&mut` from `client_ptr` first.
@@ -499,7 +468,7 @@ impl ClientSession {
 /// `AsyncHTTP`, which strictly outlives the `Stream`. All h3 callbacks run on
 /// the HTTP thread, so the returned `&mut` is the sole live borrow. Per the
 /// Stacked-Borrows notes in `deliver`/`retry_or_fail`, callers re-derive a
-/// fresh `&mut` here after each `detach()` (which writes `client.h3 = None`
+/// fresh `&mut` here after each `detach()` (which clears `client.transport`
 /// through this same raw backref) rather than holding one across it.
 /// Routes through the crate-wide [`HTTPClient::from_erased_backref`] accessor
 /// (also used by `encode.rs` / `PendingConnect.rs` for the same backref).
@@ -578,11 +547,11 @@ pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
 
 /// Fails a request whether or not it's still on a stream.
 pub(crate) fn fail_client(client: &mut HTTPClient, err: crate::Error) {
-    match client.h3 {
-        Some(stream) => stream_mut(stream.as_ptr())
+    match client.transport {
+        Transport::H3(stream) => stream_mut(stream.as_ptr())
             .session_mut()
             .fail(stream.as_ptr(), err),
-        None => client.fail_from_h2(err),
+        _ => client.fail_from_h2(err),
     }
 }
 

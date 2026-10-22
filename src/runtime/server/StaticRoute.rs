@@ -16,6 +16,7 @@ use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{AnyServer, HTTPStatusText, write_status};
+use crate::webcore::blob::BodyFacts;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, Blob, FetchHeaders, InternalBlob, Response};
@@ -183,12 +184,13 @@ impl StaticRoute {
                 )));
             }
 
+            // An unread `.body` stream turns back into the bytes it was made from here.
+            response.prepare_headers_for_send(global_this)?;
+
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
             let body_value = response.get_body_value();
-            // An unread `.body` stream of a string body turns back into one here.
-            body_value.to_blob_if_possible();
-            let was_string = body_value.was_string();
+            let was_string = body_value.facts().contains(BodyFacts::STRING);
 
             let blob: AnyBlob = 'brk: {
                 match body_value {
@@ -199,10 +201,7 @@ impl StaticRoute {
                     }
 
                     BodyValue::Null | BodyValue::Empty => {
-                        break 'brk AnyBlob::InternalBlob(InternalBlob {
-                            bytes: Vec::<u8>::new(),
-                            was_string: false,
-                        });
+                        break 'brk AnyBlob::InternalBlob(InternalBlob::default());
                     }
 
                     BodyValue::Blob(_)
@@ -237,9 +236,6 @@ impl StaticRoute {
             if let Some(h) = response.get_init_headers_mut() {
                 h.fast_remove(HTTPHeaderName::TransferEncoding);
                 h.fast_remove(HTTPHeaderName::ContentLength);
-                if response.body_decoded() {
-                    h.fast_remove(HTTPHeaderName::ContentEncoding);
-                }
             }
 
             // Consuming the body left a plain `Blob` behind, which no longer implies
@@ -300,7 +296,6 @@ impl StaticRoute {
         Self::retain_for_response(this);
         if let Some(server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
         }
         resp.corked(|| this.render_metadata_and_end(resp));
         Self::on_response_complete(this, resp);
@@ -355,7 +350,6 @@ impl StaticRoute {
         Self::retain_for_response(this);
         if let Some(server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
         }
         let mut finished = false;
         this.do_render_blob(resp, &mut finished);
@@ -392,7 +386,7 @@ impl StaticRoute {
         resp.clear_on_writable();
         resp.clear_timeout();
         if let Some(server) = this.server.get() {
-            server.on_static_request_complete();
+            server.on_request_complete();
         }
         let n = this.pending_responses.get() - 1;
         this.pending_responses.set(n);
@@ -434,10 +428,6 @@ impl StaticRoute {
     }
 
     fn on_writable(this: ThisPtr<Self>, write_offset: u64, resp: AnyResponse) -> bool {
-        if let Some(server) = this.server.get() {
-            resp.timeout(server.config().idle_timeout);
-        }
-
         if !this.on_writable_bytes(write_offset, resp) {
             return false;
         }
@@ -588,7 +578,6 @@ impl StaticRoute {
         Self::retain_for_response(this);
         if let Some(server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
         }
         this.do_write_status(status, resp);
         this.do_write_headers(resp);

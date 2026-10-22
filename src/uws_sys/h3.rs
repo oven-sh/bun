@@ -159,7 +159,7 @@ impl Response {
     pub(crate) fn resume(&mut self) {
         c::uws_h3_res_resume(self)
     }
-    pub fn timeout(&mut self, seconds: u8) {
+    pub(crate) fn timeout(&mut self, seconds: u8) {
         c::uws_h3_res_timeout(self, seconds)
     }
     pub(crate) fn reset_timeout(&mut self) {

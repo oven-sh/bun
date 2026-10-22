@@ -12,6 +12,7 @@ use crate::webcore::jsc as bun_jsc;
 use bun_collections::VecExt;
 use bun_sys as syscall;
 
+use crate::webcore::blob::BodyFacts;
 use crate::webcore::streams;
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
 
@@ -141,6 +142,8 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
+    safe fn ReadableStream__bodyFacts(possible_readable_stream: JSValue) -> u8;
+    safe fn ReadableStream__setBodyFacts(possible_readable_stream: JSValue, facts: u8);
     safe fn ReadableStream__isClosedUnread(
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
@@ -205,7 +208,7 @@ impl ReadableStream {
 
         self.reload_tag();
 
-        let blob = match self.ptr {
+        let mut blob = match self.ptr {
             Source::Blob(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &*blobby };
@@ -243,6 +246,7 @@ impl ReadableStream {
             }
             Source::JavaScript | Source::Invalid => return None,
         };
+        blob.set_facts(self.body_facts());
 
         self.done();
         ReadableStream__closeConsumedAsBody(self.value, global_this);
@@ -301,6 +305,17 @@ impl ReadableStream {
         }
         self.done();
         result
+    }
+
+    /// What the body this stream was made from knew about its bytes.
+    pub(crate) fn body_facts(&self) -> BodyFacts {
+        BodyFacts::from_bits_truncate(ReadableStream__bodyFacts(self.value))
+    }
+
+    pub(crate) fn set_body_facts(stream: JSValue, facts: BodyFacts) {
+        if !facts.is_empty() {
+            ReadableStream__setBodyFacts(stream, facts.bits());
+        }
     }
 
     /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
@@ -537,20 +552,10 @@ impl ReadableStream {
         blob: &Blob,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
-        Self::from_body_blob(cx, blob, recommended_chunk_size, false)
-    }
-
-    /// [`Self::from_blob_copy_ref`] for the bytes of a body. `to_any_blob` returns `was_string` with them.
-    pub(crate) fn from_body_blob(
-        cx: &bun_jsc::JsThread<'_>,
-        blob: &Blob,
-        recommended_chunk_size: webcore::blob::SizeType,
-        was_string: bool,
-    ) -> JsResult<JSValue> {
         let Some(store) = blob.store.get() else {
             return ReadableStream::empty(cx.global());
         };
-        match &store.data {
+        let stream = match &store.data {
             webcore::blob::store::Data::Bytes(_) => {
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
                     global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
@@ -558,7 +563,6 @@ impl ReadableStream {
                     ..Default::default()
                 });
                 reader.context.setup(blob, recommended_chunk_size);
-                reader.context.was_string = was_string;
                 reader.to_readable_stream(cx)
             }
             webcore::blob::store::Data::File(_) => {
@@ -597,7 +601,9 @@ impl ReadableStream {
                     cx,
                 )
             }
-        }
+        }?;
+        Self::set_body_facts(stream, blob.body_facts.get());
+        Ok(stream)
     }
 
     pub fn from_pipe<P>(

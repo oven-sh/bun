@@ -102,6 +102,17 @@ impl From<MimeType> for BlobContentType {
     }
 }
 
+bitflags::bitflags! {
+    /// What is known about a body's bytes. It moves with them through every form a body takes.
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub struct BodyFacts: u8 {
+        /// They are a JS string's, which `Bun.serve` sends as `text/plain;charset=utf-8`.
+        const STRING = 1 << 0;
+        /// `fetch()` decoded them, so the response's `Content-Encoding` no longer describes them.
+        const DECODED = 1 << 1;
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Blob
 // ──────────────────────────────────────────────────────────────────────────
@@ -125,6 +136,8 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
+    /// Set while these are, or were, the bytes of a Request or Response body.
+    pub body_facts: Cell<BodyFacts>,
     /// Zero for a by-value `Blob`. On a heap one, the JS wrapper, `BlobRefPtr`s and `ExternalShared`s each hold a ref.
     ///
     /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
@@ -159,6 +172,7 @@ impl Default for Blob {
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
             is_jsdom_file: Cell::new(false),
+            body_facts: Cell::new(BodyFacts::empty()),
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
@@ -351,6 +365,7 @@ impl Blob {
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
             is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
+            body_facts: Cell::new(self.body_facts.get()),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),

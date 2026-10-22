@@ -231,6 +231,14 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_resume(Self::ssl_flag(), self.as_raw())
     }
 
+    pub(crate) fn is_paused(&mut self) -> bool {
+        c::uws_res_is_paused(Self::ssl_flag(), self.as_raw())
+    }
+
+    pub(crate) fn pause_until_drained(&mut self) {
+        c::uws_res_pause_until_drained(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn write_continue(&mut self) {
         c::uws_res_write_continue(Self::ssl_flag(), self.as_raw())
     }
@@ -310,12 +318,16 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_close_if_done_and_marked(Self::ssl_flag(), self.as_raw())
     }
 
-    pub fn timeout(&mut self, seconds: u8) {
+    pub(crate) fn timeout(&mut self, seconds: u8) {
         c::uws_res_timeout(Self::ssl_flag(), self.as_raw(), seconds)
     }
 
     pub(crate) fn reset_timeout(&mut self) {
         c::uws_res_reset_timeout(Self::ssl_flag(), self.as_raw())
+    }
+
+    pub(crate) fn suspend_timeout(&mut self) {
+        us_socket_t::opaque_mut(self.downcast_socket()).set_timeout(0);
     }
 
     pub(crate) fn get_buffered_amount(&mut self) -> u64 {
@@ -1012,12 +1024,31 @@ impl AnyResponse {
             bun_opaque::opaque_deref_mut(r).grow_request_window();
         }
     }
+    /// Stops reading the request body. uWS keeps the socket paused until everyone who paused it has resumed it.
     pub fn pause(self) {
         any_dispatch!(self, |r| r.pause())
     }
 
     pub fn resume(self) {
         any_dispatch!(self, |r| r.resume())
+    }
+
+    /// Returns true between `pause()` and `resume()`. node:http only, so HTTP/1 only.
+    pub fn is_paused(self) -> bool {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).is_paused(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).is_paused(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
+        }
+    }
+
+    /// node:http's flood prevention: reads no further request until the queued responses are sent. uWS resumes by itself.
+    pub fn pause_until_drained(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).pause_until_drained(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).pause_until_drained(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
     }
 
     pub fn write_header_int(self, key: &[u8], value: u64) {
@@ -1170,6 +1201,15 @@ impl AnyResponse {
 
     pub fn reset_timeout(self) {
         any_dispatch!(self, |r| r.reset_timeout())
+    }
+
+    /// Disarms an HTTP/1 connection's idle timer until the next write, for a response that waits on the server's own work (a bundle build).
+    pub fn suspend_timeout(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).suspend_timeout(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).suspend_timeout(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
     }
 
     pub fn clear_on_data(self) {
@@ -1410,6 +1450,8 @@ pub mod c {
         pub(crate) safe fn uws_res_is_corked(ssl: i32, res: &mut uws_res) -> bool;
         pub(crate) safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_is_paused(ssl: i32, res: &mut uws_res) -> bool;
+        pub(crate) safe fn uws_res_pause_until_drained(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
         pub(crate) fn uws_res_write_informational(
             ssl: i32,

@@ -118,7 +118,6 @@ impl DirectoryRoute {
         };
         if let Some(server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -354,7 +353,7 @@ impl DirectoryRoute {
         resp.clear_on_writable();
         resp.clear_timeout();
         if let Some(server) = self.server.get() {
-            server.on_static_request_complete();
+            server.on_request_complete();
         }
     }
 }

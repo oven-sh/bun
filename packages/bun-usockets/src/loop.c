@@ -118,12 +118,6 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     us_internal_timer_sweep(loop);
 }
 
-void us_internal_sweep_soon(struct us_loop_t *loop) {
-    if (loop->data.sweep_next_tick_ns >= 0) {
-        loop->data.sweep_next_tick_ns = 0;
-    }
-}
-
 #endif
 
 
@@ -253,10 +247,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
         struct us_socket_group_t *group = loop_data->iterator;
 
-        /* Update this group's timestamps (this could be moved to loop and done once) */
-        group->global_tick++;
-        unsigned char short_ticks = group->timestamp = group->global_tick % 240;
-        unsigned char long_ticks = group->long_timestamp = (group->global_tick / 15) % 240;
+        uint32_t tick = ++group->global_tick;
 
         /* Begin at head */
         struct us_socket_t *s = group->head_sockets;
@@ -264,7 +255,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             /* Seek until end or timeout found (tightest loop) */
             while (1) {
                 /* We only read from 1 random cache line here */
-                if (short_ticks == s->timeout || long_ticks == s->long_timeout) {
+                if (tick >= s->timeout) {
                     break;
                 }
 
@@ -277,21 +268,13 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             /* Here we have a timeout to emit (slow path) */
             group->iterator = s;
 
-            if (short_ticks == s->timeout) {
-                s->timeout = 255;
-                s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
-            }
+            s->timeout = LIBUS_NO_TIMEOUT;
+            s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             /* An owner must not deinit the embedding group from a timeout handler
              * (see us_socket_group_deinit). Survive one that closed every socket
              * and did it anyway: loop_data->iterator would have been advanced past
              * `group` by unlink_group(); if so, `group` is freed storage and we
              * must not touch it again. */
-            if (loop_data->iterator != group) goto outer_continue;
-
-            if (group->iterator == s && long_ticks == s->long_timeout) {
-                s->long_timeout = 255;
-                us_dispatch_long_timeout(s);
-            }
             if (loop_data->iterator != group) goto outer_continue;
 
             /* Check for unlink / link (if the event handler did not modify the chain, we step 1) */
@@ -309,27 +292,12 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         outer_continue:;
     }
 
-    /* Sockets parked in the low-priority queue are unlinked from head_sockets
-     * (the queue reuses prev/next), so the walk above never visits them. On an
-     * idle loop the queue drains only as fast as loop iterations occur, so a
-     * burst of pre-handshake TLS accepts can still be parked when the single
-     * tick their s->timeout stamp matches passes, after which the exact-match
-     * test above can never fire again. Sweep the parked set here against each
-     * socket's own group's freshly-advanced timestamps. low_prio_iterator lets
-     * close_raw/detach advance iteration past a socket they unlink, same as
-     * group->iterator does for head_sockets. */
+    /* The walk above doesn't visit sockets parked in the low-priority queue. low_prio_iterator lets close_raw step past one it unlinks. */
     for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
         struct us_socket_t *s = loop_data->low_prio_iterator;
-        unsigned char stamp = s->group->timestamp;
-        unsigned char long_stamp = s->group->long_timestamp;
-        if (stamp == s->timeout) {
-            s->timeout = 255;
+        if (s->group->global_tick >= s->timeout) {
+            s->timeout = LIBUS_NO_TIMEOUT;
             s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
-            if (loop_data->low_prio_iterator != s) continue;
-        }
-        if (long_stamp == s->long_timeout) {
-            s->long_timeout = 255;
-            us_dispatch_long_timeout(s);
             if (loop_data->low_prio_iterator != s) continue;
         }
         loop_data->low_prio_iterator = s->next;
@@ -491,8 +459,6 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
      * before epoll blocks. loop_post handles what this iteration receives. */
     if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
-    /* Same corking as the QUIC block above, for node:quic's engines. */
-    if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
@@ -500,7 +466,6 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_QUIC
     if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
-    if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
     /* Runs at every tick depth because a nested tick may be waiting for this close. */
     us_internal_close_unresumable_sockets(loop);
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
@@ -585,23 +550,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                         struct us_socket_t *s = (struct us_socket_t *) accepted_p;
 
-                        s->group = accept_group;
-                        s->kind = listen_socket->accept_kind;
-                        s->ssl = NULL;
-                        s->connect_state = NULL;
-                        s->timeout = 255;
-                        s->long_timeout = 255;
-                        s->flags.low_prio_state = 0;
-                        s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
+                        us_internal_socket_init(s, accept_group, listen_socket->accept_kind, listen_socket->s.flags.allow_half_open);
                         s->flags.is_paused = listen_socket->accept_paused;
-                        s->flags.is_ipc = 0;
-                        s->flags.is_closed = 0;
-                        s->flags.adopted = 0;
-                        s->flags.last_write_failed = 0;
-                        s->unclassified_send_failures = 0;
-                        s->read_eof = 0;
-                        s->hangup_closes_unsent = 0;
-                        s->send_rejected = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);

@@ -141,7 +141,6 @@ extern struct us_socket_t *us_dispatch_fd(us_socket_r s, int fd);
 extern struct us_socket_t *us_dispatch_writable(us_socket_r s);
 extern struct us_socket_t *us_dispatch_close(us_socket_r s, int code, void *reason);
 extern struct us_socket_t *us_dispatch_timeout(us_socket_r s);
-extern struct us_socket_t *us_dispatch_long_timeout(us_socket_r s);
 extern struct us_socket_t *us_dispatch_end(us_socket_r s);
 extern struct us_socket_t *us_dispatch_connect_error(us_socket_r s, int code);
 extern struct us_connecting_socket_t *us_dispatch_connecting_error(struct us_connecting_socket_t *c, int code);
@@ -182,8 +181,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
-/* Tests only: run the sweep on the next loop iteration instead of waiting out LIBUS_TIMEOUT_GRANULARITY. */
-void us_internal_sweep_soon(struct us_loop_t *loop);
 #ifndef LIBUS_USE_LIBUV
 /* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
  * against, so anything comparing against one must read it and not another. */
@@ -214,12 +211,6 @@ void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
 
-/* node:quic loop driver (node_quic_shim.c): per-turn engine pass. */
-struct us_nq_driver_s;
-void us_nq_loop_flush_if_pending(struct us_loop_t *loop);
-void us_nq_loop_drain(struct us_loop_t *loop);
-void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d, void *owner);
-void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d);
 
 /* Asyncs (old) */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
@@ -296,6 +287,16 @@ void us_internal_rearm_writable(us_socket_r s);
 
 int us_internal_handle_dns_results(us_loop_r loop);
 
+#define LIBUS_NO_TIMEOUT UINT32_MAX
+
+/* The tick in progress may be about to end, so it doesn't count: a timeout never fires early. */
+static inline uint32_t us_internal_timeout_tick(struct us_socket_group_t *group, unsigned int seconds) {
+    if (!seconds) {
+        return LIBUS_NO_TIMEOUT;
+    }
+    return group->global_tick + (uint32_t) (((uint64_t) seconds + LIBUS_TIMEOUT_GRANULARITY - 1) / LIBUS_TIMEOUT_GRANULARITY) + 1;
+}
+
 /* Sockets are polls */
 
 struct us_socket_flags {
@@ -318,8 +319,8 @@ struct us_socket_flags {
 
 struct us_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
-  unsigned char timeout;
-  unsigned char long_timeout;
+  /* The tick of `group` at which on_timeout is due, or LIBUS_NO_TIMEOUT. */
+  uint32_t timeout;
   struct us_socket_flags flags;
   /* enum SocketKind. Selects the static dispatch arm in us_dispatch_*. */
   unsigned char kind;
@@ -411,6 +412,9 @@ struct us_socket_t {
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
 
+/* The state every socket starts in. `s->p` belongs to us_poll_init. */
+void us_internal_socket_init(struct us_socket_t *s, struct us_socket_group_t *group, unsigned char kind, int allow_half_open);
+
 /* Whether a raw write can send: the fd is open and no FIN went out. */
 static inline int us_internal_socket_can_raw_write(struct us_socket_t *s) {
   return !s->flags.is_closed && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN;
@@ -450,8 +454,8 @@ struct us_connecting_socket_t {
      * different namespaces that overlap numerically, so consumers of `error`
      * must check this bit first. */
     unsigned int closed : 1, shutdown : 1, shutdown_read : 1, pending_resolve_callback : 1, error_is_dns : 1;
-    unsigned char timeout;
-    unsigned char long_timeout;
+    /* Every candidate socket starts with this us_socket_t.timeout. */
+    uint32_t timeout;
     unsigned char kind;
     uint16_t port;
     int error;

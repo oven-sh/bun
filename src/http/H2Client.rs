@@ -24,7 +24,7 @@ pub(crate) const LOCAL_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
 
 /// CONTINUATION frames allowed per header block. Matches nghttp2's
 /// `NGHTTP2_DEFAULT_MAX_CONTINUATIONS` (CVE-2024-28182).
-pub(crate) const LOCAL_MAX_CONTINUATIONS: u8 = 8;
+pub(crate) const LOCAL_MAX_CONTINUATIONS: u32 = 8;
 
 /// `write_buffer` high-water mark. `writeDataWindowed` stops queueing once the
 /// userland send buffer crosses this even if flow-control window remains, so a
@@ -68,7 +68,7 @@ pub use stream::Stream;
 // ═══════════════════════════════════════════════════════════════════════
 // Thin `h2_*` forwarders on HTTPClient / HTTPContext that the h2_client
 // modules call. The real bodies live in lib.rs
-// (`register_abort_tracker` … `progress_update`) and HTTPContext.rs
+// (`retry_after_h2_coalesce` … `progress_update`) and HTTPContext.rs
 // (`register_h2` / `unregister_h2`); these now monomorphize the const-generic
 // `<IS_SSL>` callees to `<true>` (HTTP/2 is TLS-only). Kept as inherent methods so the
 // many call sites in `h2_client/*.rs` need no churn.
@@ -78,10 +78,6 @@ mod bridge {
     use crate::{HTTPClient, NewHTTPContext};
 
     impl HTTPClient<'_> {
-        #[inline]
-        pub(crate) fn h2_register_abort_tracker(&mut self, socket: HTTPSocket<true>) {
-            self.register_abort_tracker::<true>(socket);
-        }
         #[inline]
         pub(crate) fn h2_retry_after_coalesce(&mut self) {
             self.retry_after_h2_coalesce();

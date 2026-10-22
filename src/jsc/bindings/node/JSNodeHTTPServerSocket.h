@@ -68,8 +68,8 @@ public:
     int closeReadError = 0;
     /* Whether the connection closed before the kernel had taken everything, also after an upgrade to a WebSocket. */
     std::optional<bool> closedWithUnsentData;
-    /* socket.bytesRead: bytes read from the connection, after TLS decryption. */
-    uint64_t bytesRead = 0;
+    /* socket.bytesRead once uWS no longer counts: the connection closed, or a WebSocket adopted it. */
+    uint64_t m_bytesReadAtHandover = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;
@@ -155,6 +155,9 @@ public:
     /* Outside tunnel mode: ondata gets the bytes of every read before the HTTP parser does (Node's parser.unconsume()). A tunnel turns it off. */
     void setRawReads(bool enabled);
     void onRawRead(const char* data, int length);
+    void onReadParsed();
+    void halfCloseAfterDrain();
+    uint64_t bytesRead() const;
     /* Tells uWS whether this tunnel is idle: not reading (readStop() or read EOF) with nothing left to send. Also un-parks a request when a raw write leaves bytes to send. See HttpResponse::setNodeHttpTunnelIdle. */
     void updateTunnelIdle();
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
@@ -163,8 +166,6 @@ public:
     void flushResponseBytesAhead();
     /* Only a tunnel gets the drain call that flushes streamBuffer. On any other socket the uWS buffer takes what the kernel does not. */
     bool flushesStreamBufferOnDrain() const { return !!functionToCallOnDrain; }
-    /* The WebSocket that adopted the connection reads from here on. */
-    void releaseTunnelReadsForUpgrade();
 
     /* Trailer fields received after the current request's chunked body, as a
      * flat [name, value, ...] JS array preserving wire casing; jsUndefined()
@@ -209,7 +210,7 @@ public:
     void syncPeerCertificateVerification();
     void onClose(int readError, bool peerEnded);
     /* A WebSocket adopted the connection. `adopted` is its socket: the adoption can move it. */
-    void onUpgraded(us_socket_t* adopted);
+    void onUpgraded(us_socket_t* adopted, uint64_t bytesRead);
     void onDrain();
     void onData(const char* data, int length, bool last);
     void applyTunnelReads();

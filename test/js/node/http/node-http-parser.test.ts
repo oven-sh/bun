@@ -436,7 +436,7 @@ describe("ConnectionsList", () => {
     p4.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
 
     expect(list.all()).toEqual([p1, p2, p3, p4]);
-    expect(list.idle()).toEqual([]);
+    expect(list.idle()).toEqual([p1, p2, p3, p4]);
     expect(list.active()).toEqual([p1, p2, p3, p4]);
     expect(list.expired()).toEqual([]);
     p2.remove();
@@ -450,6 +450,25 @@ describe("ConnectionsList", () => {
     // frees the implementation causing remove to not be able
     // to remove it.
     expect(list.all()).toEqual([p1, p4, p3]);
+  });
+
+  test("idle() lists a parser until its first byte arrives", () => {
+    const list = new ConnectionsList();
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    expect(list.idle()).toEqual([parser]);
+    parser.execute(Buffer.from("G"));
+    expect(list.idle()).toEqual([]);
+  });
+
+  test("a parser removed during execute() stays out of the list", () => {
+    const list = new ConnectionsList();
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    parser[HTTPParser.kOnHeadersComplete] = () => parser.remove();
+    parser.execute(Buffer.from("GET / HTTP/1.1\r\n\r\nGET / HTTP/1.1\r\n\r\n"));
+    expect(list.all()).toEqual([]);
+    expect(list.active()).toEqual([]);
   });
 
   // 4,227,858,433 ms in nanoseconds wraps to exactly 1 ms in 32 bits.

@@ -29,7 +29,6 @@ export const NodeHTTPResponse = b.class({
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },
-    aborted: { getter: b.bool },
     bufferedAmount: { getter: b.u64 },
     cork: { ...method, args: { callback: b.callable } },
     end: { ...method, ...body, passThis: true, length: 2 },
@@ -45,7 +44,6 @@ export const NodeHTTPResponse = b.class({
     onwritable: eventHandler,
     pause: { returns: b.bool },
     pauseReads: {},
-    ref: { rustName: "js_ref" },
     resume: { returns: b.bool },
     takeRawHeaders: { ...method, args: { headers: b.any } },
     takeRequestTrailers: { ...method, args: { useInsecureHTTPParser: b.bool.default(false) }, length: 0 },
@@ -60,6 +58,12 @@ export const NodeHTTPResponse = b.class({
       expected,
       passThis: true,
       length: 8,
+    },
+    writeHeadAndWrite: {
+      ...method,
+      args: { ...head, ...chunk, callback: b.callable.optional, strictContentLength, ...autoHeaders },
+      expected: body.expected,
+      length: 9,
     },
     writeInformational: {
       args: chunk,

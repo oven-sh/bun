@@ -182,25 +182,10 @@ pub struct EVP_MD_CTX {
 // All-zero is exactly the state `EVP_MD_CTX_init` writes (S021).
 unsafe impl bun_core::ffi::Zeroable for EVP_MD_CTX {}
 
-/// `struct ssl_early_callback_ctx`, valid only inside a `select_certificate_cb`.
+/// The first field of `struct ssl_early_callback_ctx`, valid only inside a `select_certificate_cb`.
 #[repr(C)]
 pub struct SSL_CLIENT_HELLO {
     pub ssl: *mut SSL,
-    pub client_hello: *const u8,
-    pub client_hello_len: usize,
-    pub version: u16,
-    pub random: *const u8,
-    pub random_len: usize,
-    pub session_id: *const u8,
-    pub session_id_len: usize,
-    pub dtls_cookie: *const u8,
-    pub dtls_cookie_len: usize,
-    pub cipher_suites: *const u8,
-    pub cipher_suites_len: usize,
-    pub compression_methods: *const u8,
-    pub compression_methods_len: usize,
-    pub extensions: *const u8,
-    pub extensions_len: usize,
 }
 
 /// `struct hmac_ctx_st`.

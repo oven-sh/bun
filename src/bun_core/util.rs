@@ -5062,14 +5062,6 @@ pub enum TimespecMockMode {
     ForceRealTime,
 }
 
-/// `bun_core::timespec_mode::Mode` namespace shim —
-/// Rust can't do inherent associated types stably, so expose a module
-/// instead. Callers write `bun_core::timespec_mode::AllowMockedTime` or use
-/// the `Timespec::now_allow_mocked_time()` helper.
-pub mod timespec_mode {
-    pub use super::TimespecMockMode::*;
-}
-
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
 /// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`
 /// from `bun_runtime::test_runner::timers::FakeTimers`. Thread-local, like

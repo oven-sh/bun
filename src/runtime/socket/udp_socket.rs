@@ -1955,6 +1955,8 @@ pub(crate) fn dgram_new_socket_fd(is_ipv6: bool, is_stream: bool) -> bun_sys::Re
         if fd < 0 {
             return Err(bun_sys::Error::from_code_int(err, bun_sys::Tag::open));
         }
+        // No socket owns a raw descriptor, so one can adopt it later.
+        uws::udp::raw::bsd_disown_socket(fd);
 
         dgram_register_created_fd(fd);
         Ok(fd)

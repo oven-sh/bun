@@ -9,6 +9,7 @@ const kEmptyObject = ObjectCreate(null);
 const noop = () => {};
 
 const nativeFetch = Bun.fetch;
+const isBodyDecoded = $bindgen("response.bind.ts", "isBodyDecoded");
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response = bindings[0];
 const Request = bindings[1];
@@ -217,10 +218,10 @@ function callFunction(fn) {
   fn();
 }
 
-// fetch() already decoded the body, so Content-Encoding and the encoded Content-Length no longer describe it.
-function responseHeaders(response, method) {
+// If fetch() decoded the body, Content-Encoding and the encoded Content-Length no longer describe it.
+function responseHeaders(response) {
   const headers = response.headers.toJSON();
-  if (method !== "HEAD" && headers["content-encoding"]) {
+  if (isBodyDecoded(response)) {
     delete headers["content-encoding"];
     delete headers["content-length"];
   }
@@ -331,7 +332,7 @@ async function request(url, options = kEmptyObject) {
 
     const body = new BodyReadable(resp, removeAbortListener);
     if (signal) (droppedBodies ??= new FinalizationRegistry(callFunction)).register(body, removeAbortListener);
-    return { statusCode, headers: responseHeaders(resp, method), body, trailers: {}, opaque, context: kEmptyObject };
+    return { statusCode, headers: responseHeaders(resp), body, trailers: {}, opaque, context: kEmptyObject };
   } catch (err) {
     removeAbortListener();
     throw err;
@@ -494,7 +495,7 @@ async function dispatchWithFetch(dispatcher, url, method, opts, handler, control
 
   const response = await send(dispatcher, url, method, opts, signal);
 
-  const headers = responseHeaders(response, method);
+  const headers = responseHeaders(response);
   const rawHeaders = [];
   for (const name of Object.keys(headers)) {
     const value = headers[name];

@@ -29,6 +29,7 @@ let dns: typeof import("./dns").default;
 const normalizedArgsSymbol = Symbol("normalizedArgs");
 const {
   ExceptionWithHostPort,
+  listenException,
   ConnResetException,
   NodeAggregateError,
   ErrnoException,
@@ -4103,12 +4104,8 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       onListen,
     );
   } catch (err) {
-    const isUnix = path != null;
-    process.nextTick(
-      emitErrorNextTick,
-      this,
-      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
-    );
+    const address = path ?? (fd === undefined ? hostname : null);
+    process.nextTick(emitErrorNextTick, this, listenException(err, address, path != null ? -1 : port));
   }
   return this;
 };
@@ -4541,38 +4538,6 @@ function emitCloseAndDetachHandle(self, isException, handle) {
     self._handle = null;
     self._sockname = null;
   }
-}
-
-// Reformat a native listen error to Node's "listen <CODE>: <description> <addr>"
-// (Node uses exceptionWithHostPort). Only rewrites known uv codes; the code is
-// already set natively.
-// https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1899
-function uvListenErrorDescription(code) {
-  switch (code) {
-    case "EADDRINUSE":
-      return "address already in use";
-    case "EACCES":
-      return "permission denied";
-    case "EADDRNOTAVAIL":
-      return "address not available";
-    case "EINVAL":
-      return "invalid argument";
-    default:
-      return undefined;
-  }
-}
-function formatListenError(err, address, port) {
-  const desc = err && typeof err.code === "string" ? uvListenErrorDescription(err.code) : undefined;
-  if (desc) {
-    err.syscall = "listen";
-    // Node's exceptionWithHostPort also exposes the failing address/port as
-    // own properties; user code commonly reads them off listen errors.
-    err.address = address;
-    if (port) err.port = port;
-    const where = port ? `${address}:${port}` : address;
-    err.message = `listen ${err.code}: ${desc}${where ? ` ${where}` : ""}`;
-  }
-  return err;
 }
 
 function checkBindError(err, port, handle) {

@@ -94,3 +94,10 @@ export const Response = b.class({
     redirect: { ...method, args: { args: b.any.variadic } },
   },
 });
+
+/** For `undici`. `fetch()` decoded the body, so `Content-Encoding` and `Content-Length` describe other bytes. */
+export const isBodyDecoded = b.fn({
+  args: { response: Response },
+  returns: b.bool,
+  rustPath: "crate::webcore::response::is_body_decoded",
+});

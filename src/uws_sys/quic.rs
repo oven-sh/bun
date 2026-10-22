@@ -10,6 +10,8 @@
 
 #[path = "quic/Context.rs"]
 pub mod context;
+#[path = "quic/Driver.rs"]
+pub mod driver;
 #[path = "quic/Header.rs"]
 pub mod header;
 #[path = "quic/PendingConnect.rs"]
@@ -20,6 +22,7 @@ pub mod socket;
 pub mod stream;
 
 pub use self::context::Context;
+pub use self::driver::{Driver, Udp};
 pub use self::pending_connect::PendingConnect;
 pub use self::socket::Socket;
 pub use self::stream::Stream;

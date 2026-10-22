@@ -150,7 +150,7 @@ pub(crate) fn write_request(
 
 /// Push as much of the request body onto `qs` as flow control allows. Called
 /// from `write_request`, `callbacks.on_stream_writable`, and
-/// `ClientSession.stream_body_by_http_id` (when the JS sink delivers more bytes).
+/// `ClientSession::stream_request_body` (when the JS sink delivers more bytes).
 pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
     if stream.request_body_done {
         return;

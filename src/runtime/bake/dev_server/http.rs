@@ -307,7 +307,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
                 Err(e) => bun_core::handle_oom(Err(e)),
             };
         let response = StaticRoute::init_from_any_blob(
-            crate::webcore::blob::Any::from_array_list(json_bytes),
+            crate::webcore::blob::Any::from_owned_slice(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
                 server: dev.server,
                 mime_type: Some(&MimeType::JSON),
@@ -463,13 +463,7 @@ impl UnrefSourceMapRequest {
         // live borrow of *ctx exists.
         let ctx = unsafe { bun_core::heap::take(ctx) };
         // SAFETY: dev outlives the request
-        unsafe {
-            (*ctx.dev)
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete()
-        };
+        unsafe { (*ctx.dev).server.as_mut().unwrap().on_request_complete() };
         drop(ctx);
     }
 

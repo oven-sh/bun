@@ -54,7 +54,6 @@ static auto makeBehavior(const uws_socket_behavior_t &behavior, void *upgradeCon
       .closeOnBackpressureLimit = behavior.closeOnBackpressureLimit,
       .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
       .sendPingsAutomatically = behavior.sendPingsAutomatically,
-      .maxLifetime = behavior.maxLifetime,
       .autoPong = behavior.autoPong,
       .skipUTF8Validation = behavior.skipUTF8Validation,
   };
@@ -539,6 +538,13 @@ extern "C"
     return ((uWS::App *)app)->listen_fd(fd, backlog, options, error);
   }
 
+  void uws_app_set_idle_timeout(int ssl, uws_app_t *app, uint8_t seconds) {
+    if (ssl) {
+      ((uWS::SSLApp *)app)->setIdleTimeout(seconds);
+    } else {
+      ((uWS::App *)app)->setIdleTimeout(seconds);
+    }
+  }
   void uws_app_set_max_http_header_size(int ssl, uws_app_t *app, uint64_t max_header_size) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
@@ -820,36 +826,47 @@ extern "C"
     {
       return;
     }
-    if (ssl)
-    {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->pause();
-    }
-    else
-    {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->pause();
-    }
+    withSSL(ssl, [&](auto isSSL) {
+      constexpr bool SSL = decltype(isSSL)::value;
+      ((uWS::HttpResponse<SSL> *)res)->pauseReads(uWS::HttpResponseData<SSL>::READ_PAUSE_BODY);
+    });
   }
 
-  void uws_res_resume(int ssl, uws_res_r res)
+  bool uws_res_is_paused(int ssl, uws_res_r res)
   {
-    /* No-op on a closed socket (resume's resetTimeout reads the destructed
-     * ext); see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
+    {
+      return false;
+    }
+    return withSSL(ssl, [&](auto isSSL) {
+      constexpr bool SSL = decltype(isSSL)::value;
+      return (((uWS::HttpResponse<SSL> *)res)->getHttpResponseData()->readPauseReasons & uWS::HttpResponseData<SSL>::READ_PAUSE_BODY) != 0;
+    });
+  }
+
+  void uws_res_pause_until_drained(int ssl, uws_res_r res)
+  {
     if (us_socket_is_closed((struct us_socket_t *)res))
     {
       return;
     }
-    if (ssl)
+    withSSL(ssl, [&](auto isSSL) {
+      constexpr bool SSL = decltype(isSSL)::value;
+      ((uWS::HttpResponse<SSL> *)res)->pauseReads(uWS::HttpResponseData<SSL>::READ_PAUSE_FLOOD);
+    });
+  }
+
+  void uws_res_resume(int ssl, uws_res_r res)
+  {
+    /* No-op on a closed socket; see uws_res_on_aborted. */
+    if (us_socket_is_closed((struct us_socket_t *)res))
     {
-      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->resume();
+      return;
     }
-    else
-    {
-      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->resume();
-    }
+    withSSL(ssl, [&](auto isSSL) {
+      constexpr bool SSL = decltype(isSSL)::value;
+      ((uWS::HttpResponse<SSL> *)res)->resumeReads(uWS::HttpResponseData<SSL>::READ_PAUSE_BODY);
+    });
   }
 
   void uws_res_write_continue(int ssl, uws_res_r res)

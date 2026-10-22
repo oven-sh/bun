@@ -75,6 +75,7 @@ export const H2FrameParser = b.class({
     setStreamContext: { ...js, args: { streamId: b.any, context: b.any } },
     setStreamReading: { args: { streamId: b.any, reading: b.any }, capability: "js" },
     settings: { ...js, args: { settings: b.any }, returns: b.bool },
+    validateRequest: { ...js, args: { headers: b.any } },
     writeStream: {
       ...method,
       args: { streamId: b.any, data: b.any, encoding: b.any, close: b.any, callback: b.any, deferCallback: b.any },

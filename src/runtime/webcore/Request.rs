@@ -176,11 +176,7 @@ impl BodyMixin for Request {
     }
     #[inline]
     fn ensure_headers(&self, global_this: &JSGlobalObject) -> bun_jsc::JsResult<()> {
-        if self.headers.get().is_none() {
-            self.ensure_fetch_headers(global_this)?
-                .set_implied_by_body(true);
-        }
-        Ok(())
+        self.ensure_fetch_headers(global_this).map(|_| ())
     }
 }
 
@@ -241,7 +237,6 @@ impl Request {
     ) -> JsResult<&mut HeadersRef> {
         if let Some(headers) = self.headers_mut() {
             // headers is already set
-            headers.set_implied_by_body(false);
             return Ok(headers);
         }
 
@@ -252,40 +247,9 @@ impl Request {
             )));
         } else {
             // we don't have a request context, so we need to create an empty headers object
-            self.headers.set(Some(HeadersRef::create_empty()));
-            // Snapshot the pointer first; it stays valid across the field borrow.
-            let content_type: Option<*const [u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => {
-                    Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
-                }
-                BodyValue::Locked(locked) => match locked.readable.get() {
-                    Some(readable) => match readable.ptr {
-                        crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
-                            // for as long as the readable stream exists; we only read
-                            // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.get().as_slice() };
-                            Some(std::ptr::from_ref::<[u8]>(ct))
-                        }
-                        _ => None,
-                    },
-                    None => None,
-                },
-                _ => None,
-            };
-
-            if let Some(content_type_) = content_type {
-                // SAFETY: the sources above are live for the duration of this
-                // call; the bytes are copied into the header map below.
-                let content_type_ = unsafe { &*content_type_ };
-                if !content_type_.is_empty() {
-                    self.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type_),
-                        global_this,
-                    )?;
-                }
-            }
+            let headers = self.headers_mut().insert(HeadersRef::create_empty());
+            self.body_value()
+                .put_content_type_default(headers, global_this)?;
         }
 
         Ok(self.headers_mut().as_mut().unwrap())
@@ -352,14 +316,8 @@ impl Request {
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body_value() {
-            let ct = blob.content_type_slice();
-            if !ct.is_empty() {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
-            }
-        }
-
-        Ok(None)
+        let content_type = self.body_value().content_type().as_slice();
+        Ok((!content_type.is_empty()).then_some(bun_core::Utf8Bytes::Borrowed(content_type)))
     }
 }
 
@@ -1393,28 +1351,12 @@ impl Request {
 
         req.url.set(href);
 
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
-            if let BodyValue::Blob(blob) = req.body_value() {
-                let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
-                {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
-                    match req.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &BunString::ascii(unsafe { &*ct_ptr }),
-                        cx.global(),
-                    ) {
-                        Ok(()) => {}
-                        Err(e) => bail!(Err(e)),
-                    }
-                }
+        if let Some(headers) = req.headers_mut() {
+            if let Err(e) = req
+                .body_value()
+                .put_content_type_default(headers, cx.global())
+            {
+                bail!(Err(e));
             }
         }
 

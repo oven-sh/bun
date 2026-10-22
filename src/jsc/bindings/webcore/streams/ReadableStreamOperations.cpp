@@ -1577,9 +1577,13 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSGlobalObject
     std::pair<JSReadableStream*, JSReadableStream*> failure { nullptr, nullptr };
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, failure);
-    if (stream->m_controllerKind == ControllerKind::Byte)
-        RELEASE_AND_RETURN(scope, readableByteStreamTee(globalObject, stream));
-    RELEASE_AND_RETURN(scope, readableStreamDefaultTee(globalObject, stream, cloneForBranch2));
+    auto branches = stream->m_controllerKind == ControllerKind::Byte
+        ? readableByteStreamTee(globalObject, stream)
+        : readableStreamDefaultTee(globalObject, stream, cloneForBranch2);
+    RETURN_IF_EXCEPTION(scope, failure);
+    branches.first->m_bodyFacts = stream->m_bodyFacts;
+    branches.second->m_bodyFacts = stream->m_bodyFacts;
+    return branches;
 }
 
 // ReadableStreamPipeTo(source, dest, preventClose, preventAbort, preventCancel[, signal]).

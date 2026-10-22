@@ -25,6 +25,7 @@ use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
 
 use crate::api::bun_x509 as X509;
+use crate::webcore::blob::BodyFacts;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
@@ -887,46 +888,23 @@ impl FetchTasklet {
             if !self.result.has_more {
                 let scheduled_response_buffer =
                     core::mem::take(&mut self.scheduled_response_buffer.list);
-                // done resolve body
-                let old = core::mem::replace(
-                    // SAFETY: just obtained from live `response`; uniquely accessed here.
-                    unsafe { &mut *body },
-                    BodyValue::InternalBlob(InternalBlob {
-                        bytes: scheduled_response_buffer,
-                        was_string: false,
-                    }),
-                );
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived body_value length={}",
-                    // SAFETY: see above.
-                    match unsafe { &*body } {
-                        BodyValue::InternalBlob(b) => b.bytes.len(),
-                        _ => 0,
-                    }
+                    scheduled_response_buffer.len()
                 );
-
                 self.scheduled_response_buffer = MutableString::default();
 
-                if matches!(old, BodyValue::Locked(_)) {
-                    bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
-                    let mut old = old;
-                    // BodyValue::resolve takes `Option<NonNull<FetchHeaders>>` (opaque C++ handle
-                    // mutated via FFI); the inherent `get_fetch_headers` returns `Option<&_>`, so
-                    // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
-                    // response.body) and outlives this block.
-                    let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                    // SAFETY: `body` points into `response.body`, disjoint from `headers`
-                    // (response.init); both live for this block.
-                    let body = unsafe { &mut *body };
-                    let context = self.global_this.bun_vm().context_of(self.context);
-                    BodyValue::resolve(
-                        &mut old,
-                        body,
-                        &self.global_this.js_thread(context),
-                        headers,
-                    )?;
-                }
+                let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
+                // SAFETY: `body` points into `response.body`, disjoint from `headers`
+                // (response.init); both live for this block.
+                let body = unsafe { &mut *body };
+                let context = self.global_this.bun_vm().context_of(self.context);
+                body.fulfill(
+                    scheduled_response_buffer,
+                    &self.global_this.js_thread(context),
+                    headers,
+                )?;
             }
         }
         Ok(())
@@ -1905,8 +1883,14 @@ impl FetchTasklet {
             // the body so this matches the split-read `on_body_received` path.
             return BodyValue::Error(self.on_reject());
         }
+        let facts = if self.result.did_decompress {
+            BodyFacts::DECODED
+        } else {
+            BodyFacts::empty()
+        };
         if self.is_waiting_body {
             let mut pending = body::PendingValue::new(&self.global_this);
+            pending.facts = facts;
             pending.size_hint = self.get_size_hint();
             pending.task = Some(NonNull::from(&mut *self).cast::<c_void>());
             pending.on_start_streaming =
@@ -1920,7 +1904,7 @@ impl FetchTasklet {
         let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer);
         let response = BodyValue::InternalBlob(InternalBlob {
             bytes: scheduled_response_buffer.list,
-            was_string: false,
+            facts,
         });
         self.scheduled_response_buffer = MutableString::default();
 
@@ -1968,15 +1952,13 @@ impl FetchTasklet {
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
-        let mut body_decoded = self.result.did_decompress;
         let body = if self.response_body_is_null(status_code) {
-            body_decoded = false;
             self.null_body_value()
         } else {
             self.is_waiting_body = self.result.has_more;
             self.to_body_value()
         };
-        let response = Response::init(
+        Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
@@ -1987,9 +1969,7 @@ impl FetchTasklet {
             Body::new(body),
             url,
             redirected,
-        );
-        response.set_body_decoded(body_decoded);
-        response
+        )
     }
 
     /// Nothing will read the rest of the body: abort the transport, let go of the loop and of the

@@ -21,8 +21,6 @@ pub struct ByteBlobLoader {
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
     pub(crate) content_type: JsCell<blob::BlobContentType>,
-    /// Set for the bytes of a string body, which `Bun.serve` sends as text/plain.
-    pub(crate) was_string: bool,
 }
 
 impl Default for ByteBlobLoader {
@@ -34,7 +32,6 @@ impl Default for ByteBlobLoader {
             remain: Cell::new(1024 * 1024 * 2),
             done: Cell::new(false),
             content_type: JsCell::new(blob::BlobContentType::default()),
-            was_string: false,
         }
     }
 }
@@ -165,7 +162,6 @@ impl ByteBlobLoader {
             remain: Cell::new(size),
             done: Cell::new(false),
             content_type: JsCell::new(content_type),
-            was_string: false,
         };
     }
 
@@ -188,11 +184,8 @@ impl ByteBlobLoader {
         {
             // SAFETY: `RefPtr<Store>` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
             // We hold the only outstanding ref (just detached) so exclusive access is sound.
-            if let Some(mut blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
+            if let Some(blob) = unsafe { (*store.as_ptr()).to_any_blob() } {
                 drop(store);
-                if let blob::Any::InternalBlob(internal) = &mut blob {
-                    internal.was_string = self.was_string;
-                }
                 return Some(blob);
             }
         }

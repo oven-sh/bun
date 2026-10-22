@@ -2,6 +2,21 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export const ServerProtocol = b.enumeration(["http", "https"]);
 
+/** The options of `Bun.serve` that are `ToBoolean` of a property. `ServerConfig::from_js` reads them between `app` and `maxRequestBodySize`. */
+export const ServeSwitches = b.dictionary(
+  {
+    reusePort: b.bool.loose.optional,
+    ipv6Only: b.bool.loose.default(false),
+    http3: b.bool.loose.default(false),
+    http2: b.bool.loose.default(false),
+    http1: b.bool.loose.default(true),
+  },
+  { fromJS: true, allowArray: true },
+);
+
+/** What only `node:http` passes, next to `onNodeHTTPRequest`. */
+export const NodeHTTPServeOptions = b.dictionary({ fd: b.i32.optional }, { fromJS: true, allowArray: true });
+
 /** What `Bun.serve` returns. There is one class for each `NewServer<SSL, DEBUG>`. */
 function server(name: string) {
   return b.class({

@@ -20,16 +20,7 @@ pub struct lsquic_stream {
 pub struct lsquic_engine_settings {
     _opaque: [u8; 0],
 }
-#[repr(C)]
-pub struct lsquic_out_spec {
-    _opaque: [u8; 0],
-}
 pub type sockaddr = c_void;
-#[repr(C)]
-pub struct iovec {
-    pub iov_base: *mut c_void,
-    pub iov_len: usize,
-}
 #[repr(C)]
 pub struct SSL_CTX {
     _opaque: [u8; 0],
@@ -48,8 +39,6 @@ pub const LSCONN_ST_VERNEG_FAILURE: c_int = 10;
 pub const LSQ_DG_ACKED: c_int = 0;
 pub const LSQ_DG_LOST: c_int = 1;
 pub const LSQ_DG_UNSENT: c_int = 2;
-
-pub const N_LSQVER: c_int = 8;
 
 /// **Layout must match `struct us_nq_vtable` in node_quic_shim.c exactly.**
 /// The first field of every conn-ctx and stream-ctx the Rust side returns
@@ -96,24 +85,17 @@ pub struct NqVtable {
     ),
     pub on_origin:
         unsafe extern "C" fn(conn_ctx: *mut c_void, chunk: *const u8, len: usize, fin: c_int),
-    pub get_ssl_ctx:
-        unsafe extern "C" fn(owner: *mut c_void, local: *const sockaddr) -> *mut SSL_CTX,
-    pub get_client_ssl_ctx:
-        unsafe extern "C" fn(owner: *mut c_void, local: *const sockaddr) -> *mut SSL_CTX,
     pub lookup_cert: unsafe extern "C" fn(
         owner: *mut c_void,
         local: *const sockaddr,
         sni: *const c_char,
     ) -> *mut SSL_CTX,
-    pub packets_out:
-        unsafe extern "C" fn(owner: *mut c_void, specs: *const lsquic_out_spec, n: c_uint) -> c_int,
     pub on_new_mini_conn:
         unsafe extern "C" fn(owner: *mut c_void, c: *mut lsquic_conn) -> *mut c_void,
     pub on_mini_conn_failed: unsafe extern "C" fn(conn_ctx: *mut c_void, error_code: u64),
 }
 
 unsafe extern "C" {
-    pub fn lsquic_engine_destroy(engine: *mut lsquic_engine);
     pub fn lsquic_engine_conn_count(engine: *const lsquic_engine) -> c_uint;
     pub fn lsquic_engine_cid_in_use(
         engine: *mut lsquic_engine,
@@ -129,25 +111,7 @@ unsafe extern "C" {
         peer_ctx: *mut c_void,
         ecn: c_int,
     ) -> c_int;
-    pub fn lsquic_engine_process_conns(engine: *mut lsquic_engine);
     pub fn lsquic_engine_set_idle_timeout_ms(engine: *mut lsquic_engine, ms: c_uint);
-    pub fn lsquic_engine_earliest_adv_tick(engine: *mut lsquic_engine, diff: *mut c_int) -> c_int;
-    pub fn lsquic_engine_has_unsent_packets(engine: *mut lsquic_engine) -> c_int;
-    pub fn lsquic_engine_send_unsent_packets(engine: *mut lsquic_engine);
-    pub fn lsquic_engine_connect(
-        engine: *mut lsquic_engine,
-        version: c_int,
-        local_sa: *const sockaddr,
-        peer_sa: *const sockaddr,
-        peer_ctx: *mut c_void,
-        conn_ctx: *mut c_void,
-        hostname: *const c_char,
-        base_plpmtu: u16,
-        sess_resume: *const u8,
-        sess_resume_len: usize,
-        token: *const u8,
-        token_sz: usize,
-    ) -> *mut lsquic_conn;
 
     pub fn lsquic_conn_get_ctx(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
@@ -196,18 +160,14 @@ unsafe extern "C" {
     pub fn us_nq_vtable_size() -> usize;
     pub fn us_nq_settings_size() -> usize;
     pub fn us_nq_settings_init(s: *mut lsquic_engine_settings, is_server: c_int, is_http: c_int);
+    /// `driver` is the `us_quic_driver_t` that owns the new engine.
     pub fn us_nq_engine_new(
+        driver: *mut c_void,
         is_server: c_int,
         is_http: c_int,
         vt: *mut NqVtable,
         settings: *const lsquic_engine_settings,
-        alpn: *const c_char,
     ) -> *mut lsquic_engine;
-    pub fn us_nq_spec_dest(s: *const lsquic_out_spec) -> *const sockaddr;
-    pub fn us_nq_spec_local(s: *const lsquic_out_spec) -> *const sockaddr;
-    pub fn us_nq_spec_peer_ctx(s: *const lsquic_out_spec) -> *mut c_void;
-    pub fn us_nq_spec_iov(s: *const lsquic_out_spec, n: *mut usize) -> *const iovec;
-    pub fn us_nq_spec_stride() -> usize;
     pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);
     pub fn us_nq_hset_pairs(hset: *mut c_void, len: *mut usize) -> *const c_char;
     pub fn us_nq_hset_free(hset: *mut c_void);

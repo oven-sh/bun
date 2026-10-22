@@ -714,13 +714,6 @@ export function setSocketOptions(socket: any, option: 1 | 2, size: number): void
   );
 }
 
-// Runs this thread's usockets timeout sweep (normally every 4 s) on the next loop iteration. Every socket on the thread moves one tick closer to its timeout.
-export const runSocketTimeoutSweepSoon: () => void = $newRustFunction(
-  "runtime/socket/socket.rs",
-  "TestingAPIs.jsRunSocketTimeoutSweepSoon",
-  0,
-);
-
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
@@ -783,6 +776,13 @@ export const socketFaultInjection = {
   /** Disarm all fault rules. */
   clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
 };
+
+/** Runs the uSockets timeout sweep of this thread's loop `count` times. The loop runs one every 4 seconds. */
+export const sweepSocketTimers: (count: number) => void = $newRustFunction(
+  "runtime/socket/socket.rs",
+  "TestingAPIs.jsSweepSocketTimers",
+  1,
+);
 
 export const namedPipeInternals = {
   /**

@@ -1196,7 +1196,6 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         callframe.argument(0),
         crate::server::server_config::FromJSOptions {
             allow_bake_config: bun_core::FeatureFlags::bake(),
-            is_fetch_required: true,
             previous_fetch: false,
             previous_routes: false,
         },
@@ -1238,7 +1237,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
                         let server: &$T = unsafe { &*entry.ptr.cast::<$T>() };
-                        server.on_reload_from_zig(&mut config, global_object)?;
+                        server.apply_reload(&mut config, global_object)?;
                         // Its handlers are the calling script's now, and so is the server: it goes
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();

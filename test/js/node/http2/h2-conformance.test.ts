@@ -2553,4 +2553,42 @@ describe("received field values (RFC 9113 §8.2.1, §8.3)", () => {
     expect(answer.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
     expect(events).toEqual([]);
   });
+
+  test("a response with a request pseudo-header is a stream PROTOCOL_ERROR", async () => {
+    for (const field of [...Object.entries(request), [":protocol", "websocket"]] as Fields) {
+      for (const fields of [[[":status", "200"], field], [field, [":status", "200"]], [field]] as Fields[]) {
+        const { events, answer } = await answerRequest(
+          raw => raw.sendFrame(FrameType.HEADERS, 0x5, 1, fieldBlock(fields)),
+          f => f.type === FrameType.RST_STREAM && f.streamId === 1,
+        );
+        expect([fields, answer.payload.readUInt32BE(0), events]).toEqual([fields, ErrorCode.PROTOCOL_ERROR, []]);
+      }
+    }
+  });
+
+  test("a pushed response with a request pseudo-header and a promised request with :status are refused", async () => {
+    const response = fieldBlock([[":status", "200"]]);
+    for (const [promised, pushed, expected] of [
+      [
+        Object.entries(request),
+        [
+          [":status", "200"],
+          [":path", "/"],
+        ],
+        ["stream", "response"],
+      ],
+      [Object.entries({ ...request, ":status": "200" }), [[":status", "200"]], ["response"]],
+    ] as [Fields, Fields, string[]][]) {
+      const { events, answer } = await answerRequest(
+        raw => {
+          raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, promise(promised));
+          raw.sendFrame(FrameType.HEADERS, 0x5, 2, fieldBlock(pushed));
+          raw.sendFrame(FrameType.HEADERS, 0x5, 1, response);
+        },
+        f => f.type === FrameType.RST_STREAM && f.streamId === 2,
+      );
+      expect(answer.payload.readUInt32BE(0)).toBe(ErrorCode.PROTOCOL_ERROR);
+      expect(events.map(([event]) => event)).toEqual(expected);
+    }
+  });
 });

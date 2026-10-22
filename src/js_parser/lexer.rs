@@ -150,6 +150,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) has_newline_before: bool,
     pub(crate) has_pure_comment_before: bool,
     pub(crate) has_react_hooks_suppression_before: bool,
+    pub(crate) react_hooks_suppression_taken_at: i32,
     pub(crate) has_react_hooks_block_suppression: bool,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
@@ -339,6 +340,7 @@ impl<'a> Lexer<'a> {
             has_newline_before: self.has_newline_before,
             has_pure_comment_before: self.has_pure_comment_before,
             has_react_hooks_suppression_before: self.has_react_hooks_suppression_before,
+            react_hooks_suppression_taken_at: self.react_hooks_suppression_taken_at,
             has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
             preserve_all_comments_before: self.preserve_all_comments_before,
             is_legacy_octal_literal: self.is_legacy_octal_literal,
@@ -377,6 +379,7 @@ impl<'a> Lexer<'a> {
         self.has_newline_before = original.has_newline_before;
         self.has_pure_comment_before = original.has_pure_comment_before;
         self.has_react_hooks_suppression_before = original.has_react_hooks_suppression_before;
+        self.react_hooks_suppression_taken_at = original.react_hooks_suppression_taken_at;
         self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
         self.is_legacy_octal_literal = original.is_legacy_octal_literal;

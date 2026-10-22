@@ -3949,6 +3949,36 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // TypeScript parses `(a) : b` behind a `?` as the start of an arrow and then
+  // goes back. The suppression that the function in parentheses left behind
+  // still covers only a function that starts before the close of that function.
+  itBundled("react-compiler/SuppressionAheadOfATypeScriptBacktrack", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { render } from "react/compiler-runtime";
+
+        const inParentheses = (function () {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          return 1;
+        })();
+        const picked = inParentheses ? (inParentheses) : 0;
+        function AfterABacktrack({ label, onClick = () => {} }: { label: string; onClick?: () => void }) {
+          const style = { color: label + picked };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        }
+
+        console.log("AfterABacktrack: " + render(AfterABacktrack, { label: "a" }).cacheHooks + " cache hooks in a render");
+      `,
+      ...stubReactThatCountsCacheHooks,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    run: {
+      stdout: "AfterABacktrack: 1 cache hooks in a render",
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

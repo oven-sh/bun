@@ -930,8 +930,8 @@ describe.concurrent("--env-file that is not a regular file", () => {
     expect(script.exitCode).toBe(0);
   });
 
-  // A compiled executable applies the standalone graph's flags to the worker's
-  // env options after the worker copied them from the parent. The worker must
+  // A compiled executable replaces the worker's env options with the standalone
+  // graph's flags after the worker copied them from the parent. The worker must
   // still leave `.env` alone when `--env-file` came from BUN_OPTIONS.
   test("a worker in a compiled executable", async () => {
     const buntestVars = `Object.entries(process.env).flatMap(([k, v]) => k.startsWith("BUNTEST_") ? [k + "=" + v] : []).sort().join(",")`;

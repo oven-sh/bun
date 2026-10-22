@@ -220,6 +220,9 @@ pub mod Runtime {
         /// This comment must never be used manually.
         pub dont_bundle_twice: bool,
 
+        /// Only hashed: `js_printer::Options::code_coverage` changes the source map that is cached.
+        pub code_coverage: bool,
+
         /// This is a list of packages which even when require() is used, we will
         /// instead convert to ESM import statements.
         ///
@@ -297,6 +300,7 @@ pub mod Runtime {
                 auto_polyfill_require: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,
+                code_coverage: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
                 unwrap_commonjs_to_esm: false,
@@ -358,7 +362,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -371,6 +375,7 @@ pub mod Runtime {
                 self.set_breakpoint_on_first_line,
                 self.trim_unused_imports,
                 self.dont_bundle_twice,
+                self.code_coverage,
                 self.commonjs_at_runtime,
                 self.emit_decorator_metadata,
                 self.standard_decorators,

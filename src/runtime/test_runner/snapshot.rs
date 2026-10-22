@@ -349,6 +349,7 @@ impl Snapshots {
         if let Some(file) = self._current_file.take() {
             file.file
                 .write_all(&self.file_buf)
+                .and_then(|()| bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64))
                 .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             let _ = file.file.close();
             self.file_buf.clear();
@@ -880,10 +881,8 @@ impl Snapshots {
                 .map_err(|_| crate::Error::FailedToOpenSnapshotFile)?,
             );
 
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
+            // Not O_TRUNC: a run that exits before `write_snapshot_file` must leave the old contents.
+            let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
                 bun_sys::Result::Ok(fd) => fd,
                 bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),

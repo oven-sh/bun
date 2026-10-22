@@ -491,6 +491,60 @@ fn dependencies_named<'a>(
     }
 }
 
+/// A peer to record on `start` and on the ancestors of `start`.
+struct PeerMark {
+    start: store::node::Id,
+    peer: store::node::TransitivePeer,
+}
+
+/// Records each queued peer on its start node and on every ancestor below the first one whose
+/// dependencies provide the peer's name, as the walk up from the peer's declarer does.
+///
+/// A node that another node links to instead of a child of its own (an ancestor at the end of a
+/// dependency cycle, or the node an early dedupe found) stands in for the whole subtree there too.
+/// A peer that newly passes through it therefore also passes up through each of those link
+/// parents, so it is queued again from each one. A peer that is already on the node was queued
+/// from them when it arrived, or was copied to them when the link was made.
+fn mark_transitive_peers(
+    queue: &mut Vec<PeerMark>,
+    node_pkg_ids: &[PackageID],
+    node_parent_ids: &[store::node::Id],
+    node_dependencies: &[Vec<store::node::DependencyIds>],
+    node_peers: &mut [store::node::Peers],
+    link_parents: &[Vec<store::node::Id>],
+    first_named: &FirstNamed,
+    dependencies: &[install::Dependency],
+    contained: &DynamicBitSet,
+    peer_ctx: &store::node::TransitivePeerOrderedArraySetCtx<'_>,
+) -> Result<(), AllocError> {
+    while let Some(PeerMark { start, peer }) = queue.pop() {
+        let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
+        let mut curr_id = start;
+        'walk: while curr_id != store::node::Id::INVALID {
+            for ids in dependencies_named(first_named, node_dependencies, curr_id, peer_name_hash) {
+                if dependencies[ids.dep_id as usize].name_hash == peer_name_hash
+                    && !contained.is_set(ids.dep_id as usize)
+                {
+                    break 'walk;
+                }
+            }
+            // A package is never its own peer.
+            if node_pkg_ids[curr_id.get() as usize] != peer.pkg_id
+                && node_peers[curr_id.get() as usize].insert(peer, peer_ctx)?
+            {
+                for &link_parent in &link_parents[curr_id.get() as usize] {
+                    queue.push(PeerMark {
+                        start: link_parent,
+                        peer,
+                    });
+                }
+            }
+            curr_id = node_parent_ids[curr_id.get() as usize];
+        }
+    }
+    Ok(())
+}
+
 /// The store of an install that selects everything.
 pub(crate) fn build_whole_store(
     manager: &PackageManager,
@@ -725,19 +779,19 @@ fn build_store(
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
+    // For each node, the nodes that link to it in place of a child of their own: the parent of a
+    // dependency that closed a cycle, and the parent of a dependency an early dedupe resolved to it.
+    let mut link_parents: Vec<Vec<store::node::Id>> = Vec::new();
+    let mut peer_marks: Vec<PeerMark> = Vec::new();
+
     // First pass: create full dependency tree with resolved peers
     'next_node: while let Some(entry) = node_queue.pop() {
-        'check_cycle: {
-            // check for cycles
-            let mut nodes_slice = nodes.slice();
-            // `split_mut()` yields disjoint `&mut [_]` per column.
-            let store::node::NodeColumnsMut {
-                pkg_id: node_pkg_ids,
-                dep_id: node_dep_ids,
-                parent_id: node_parent_ids,
-                nodes: node_nodes,
-                ..
-            } = nodes_slice.split_mut();
+        // check for cycles
+        let cycle_node_id: Option<store::node::Id> = 'check_cycle: {
+            let nodes_slice = nodes.slice();
+            let node_pkg_ids = nodes_slice.items_pkg_id();
+            let node_dep_ids = nodes_slice.items_dep_id();
+            let node_parent_ids = nodes_slice.items_parent_id();
 
             let mut curr_id = entry.parent_id;
             while curr_id != store::node::Id::INVALID {
@@ -747,14 +801,13 @@ fn build_store(
                     // 'node_modules/.bun/parent@version/node_modules'.
                     let dep_id = node_dep_ids[curr_id.get() as usize];
                     if dep_id == invalid_dependency_id && entry.dep_id == invalid_dependency_id {
-                        node_nodes[entry.parent_id.get() as usize].push(curr_id);
-                        continue 'next_node;
+                        break 'check_cycle Some(curr_id);
                     }
 
                     if dep_id == invalid_dependency_id || entry.dep_id == invalid_dependency_id {
                         // one is the root package, one is a dependency on the root package (it has a valid dep_id)
                         // create a new node for it.
-                        break 'check_cycle;
+                        break 'check_cycle None;
                     }
 
                     let curr_dep = &dependencies[dep_id as usize];
@@ -767,12 +820,50 @@ fn build_store(
                         // implicit workspace dep != explicit workspace dep
                         curr_dep.behavior.is_workspace() == entry_dep.behavior.is_workspace()
                     {
-                        node_nodes[entry.parent_id.get() as usize].push(curr_id);
-                        continue 'next_node;
+                        break 'check_cycle Some(curr_id);
                     }
                 }
                 curr_id = node_parent_ids[curr_id.get() as usize];
             }
+            None
+        };
+
+        if let Some(cycle_node_id) = cycle_node_id {
+            let mut nodes_slice = nodes.slice();
+            // `split_mut()` yields disjoint `&mut [_]` per column.
+            let store::node::NodeColumnsMut {
+                pkg_id: node_pkg_ids,
+                parent_id: node_parent_ids,
+                nodes: node_nodes,
+                dependencies: node_dependencies,
+                peers: node_peers,
+                ..
+            } = nodes_slice.split_mut();
+
+            node_nodes[entry.parent_id.get() as usize].push(cycle_node_id);
+            link_parents[cycle_node_id.get() as usize].push(entry.parent_id);
+
+            // The ancestor's subtree is not finished, so the peers that pass through it later
+            // reach this chain through the link parent. The ones it has now are copied here.
+            for &peer in node_peers[cycle_node_id.get() as usize].slice() {
+                peer_marks.push(PeerMark {
+                    start: entry.parent_id,
+                    peer,
+                });
+            }
+            mark_transitive_peers(
+                &mut peer_marks,
+                node_pkg_ids,
+                node_parent_ids,
+                node_dependencies,
+                node_peers,
+                &link_parents,
+                &first_named,
+                dependencies,
+                &contained,
+                &peer_ctx,
+            )?;
+            continue 'next_node;
         }
 
         let node_id: store::node::Id =
@@ -900,36 +991,28 @@ fn build_store(
                     // The skipped subtree would have walked up through this
                     // ancestor chain marking each node with its leaking peers.
                     // DFS guarantees `dedupe_node`'s subtree is fully processed,
-                    // so its `peers` is exactly that set; propagate it here.
-                    // Reshaped for borrowck — clone the dedupe peers slice
-                    // before mutating node_peers.
-                    let dedupe_peers: Vec<_> =
-                        node_peers[dedupe_node_id.get() as usize].list.clone();
-                    for peer in dedupe_peers {
-                        let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
-                        let mut curr_id = entry.parent_id;
-                        'walk: while curr_id != store::node::Id::INVALID {
-                            for ids in dependencies_named(
-                                &first_named,
-                                node_dependencies,
-                                curr_id,
-                                peer_name_hash,
-                            ) {
-                                if dependencies[ids.dep_id as usize].name_hash == peer_name_hash
-                                    && !is_contained_folder(ids.dep_id)
-                                {
-                                    break 'walk;
-                                }
-                            }
-                            // A package is never its own peer.
-                            if node_pkg_ids[curr_id.get() as usize] != peer.pkg_id {
-                                node_peers[curr_id.get() as usize].insert(peer, &peer_ctx)?;
-                            }
-                            curr_id = node_parent_ids[curr_id.get() as usize];
-                        }
-                    }
-
+                    // so its `peers` is that set unless a cycle inside it adds
+                    // more later; propagate it here and record the link for then.
                     node_nodes[entry.parent_id.get() as usize].push(dedupe_node_id);
+                    link_parents[dedupe_node_id.get() as usize].push(entry.parent_id);
+                    for &peer in node_peers[dedupe_node_id.get() as usize].slice() {
+                        peer_marks.push(PeerMark {
+                            start: entry.parent_id,
+                            peer,
+                        });
+                    }
+                    mark_transitive_peers(
+                        &mut peer_marks,
+                        node_pkg_ids,
+                        node_parent_ids,
+                        node_dependencies,
+                        node_peers,
+                        &link_parents,
+                        &first_named,
+                        dependencies,
+                        &contained,
+                        &peer_ctx,
+                    )?;
                     continue 'next_node;
                 }
 
@@ -953,6 +1036,7 @@ fn build_store(
             },
             ..Default::default()
         })?;
+        link_parents.push(Vec::new());
 
         let mut nodes_slice = nodes.slice();
         // disjoint-column views via `split_mut`.
@@ -1205,8 +1289,27 @@ fn build_store(
                     pkg_id: resolved_pkg_id,
                     auto_installed,
                 };
-                node_peers[visited_parent_id.get() as usize].insert(peer, &peer_ctx)?;
+                if node_peers[visited_parent_id.get() as usize].insert(peer, &peer_ctx)? {
+                    for &link_parent in &link_parents[visited_parent_id.get() as usize] {
+                        peer_marks.push(PeerMark {
+                            start: link_parent,
+                            peer,
+                        });
+                    }
+                }
             }
+            mark_transitive_peers(
+                &mut peer_marks,
+                node_pkg_ids,
+                node_parent_ids,
+                node_dependencies,
+                node_peers,
+                &link_parents,
+                &first_named,
+                dependencies,
+                &contained,
+                &peer_ctx,
+            )?;
 
             if !visited_parent_node_ids.is_empty() {
                 // visited parents length == 0 means the node satisfied it's own

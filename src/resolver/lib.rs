@@ -923,9 +923,12 @@ pub mod fs {
         Denied(crate::Error),
         /// The open or the read failed, and the error says nothing about the
         /// path: an I/O error, no free descriptor, a mount that went away.
-        /// The cache keeps nothing, so the next lookup tries again. An error
-        /// that cannot clear (ENOSYS, ENOTSUP, one that has no errno) is
-        /// here too: every lookup then fails with its name.
+        /// The cache keeps no listing, so the next lookup tries again. An
+        /// error that cannot clear (ENOSYS, ENOTSUP, one that has no errno)
+        /// is here too: every lookup in that directory then fails with its
+        /// name. A directory that opened and whose read failed does not stop
+        /// the walk to a directory below it (`RealFS::probe_walk_names`).
+        /// One that did not open does.
         Failed(DirReadFailure),
     }
 
@@ -944,9 +947,11 @@ pub mod fs {
         }
     }
 
-    /// The listing of an earlier generation, which a read replaces in place.
-    /// It is the `DirEntry` of an `EntriesOption::Entries` slot, so it lives as
-    /// long as the process. `RealFS::entries_mutex` guards what it points at.
+    /// The listing of an earlier generation, or the place of a listing that
+    /// was never read (`RealFS::never_read_listing`). A read replaces it in
+    /// place. It is the `DirEntry` of an `EntriesOption::Entries` slot, so it
+    /// lives as long as the process. `RealFS::entries_mutex` guards what it
+    /// points at.
     #[derive(Clone, Copy)]
     pub(crate) struct StaleListing(core::ptr::NonNull<DirEntry>);
 
@@ -957,7 +962,7 @@ pub mod fs {
             generation: Generation,
         ) -> Option<StaleListing> {
             match slot {
-                EntriesOption::Entries(entries) if entries.generation < generation => {
+                EntriesOption::Entries(entries) if entries.is_older_than(generation) => {
                     Some(StaleListing(core::ptr::NonNull::from(&mut **entries)))
                 }
                 _ => None,
@@ -976,11 +981,55 @@ pub mod fs {
         }
     }
 
-    /// A directory that was read to the end, or the empty listing of one that
-    /// may not be listed. Only `RealFS::read_listing` and
-    /// `RealFS::opaque_listing` make one, and `RealFS::commit_listing` takes
-    /// nothing else, so the cache cannot hold a read that stopped early.
+    /// A directory that was read to the end, the empty listing of one that
+    /// may not be listed, or the place of a listing that was never read.
+    /// Only `RealFS::read_listing`, `RealFS::opaque_listing` and
+    /// `RealFS::never_read_listing` make one, and `RealFS::commit_listing`
+    /// takes nothing else, so the cache cannot hold a read that stopped early.
     pub(crate) struct Listing(DirEntry);
+
+    /// A name that the directory walk looks up in each directory
+    /// (`Resolver::dir_info_uncached`). It looks up no other name, so the
+    /// file system can answer in place of a listing.
+    #[derive(Clone, Copy)]
+    pub(crate) enum WalkName {
+        NodeModules,
+        Bin,
+        PackageJson,
+        TsconfigJson,
+        JsconfigJson,
+    }
+
+    impl WalkName {
+        const ALL: [WalkName; 5] = [
+            WalkName::NodeModules,
+            WalkName::Bin,
+            WalkName::PackageJson,
+            WalkName::TsconfigJson,
+            WalkName::JsconfigJson,
+        ];
+
+        pub(crate) const fn name(self) -> &'static [u8] {
+            match self {
+                WalkName::NodeModules => b"node_modules",
+                WalkName::Bin => b".bin",
+                WalkName::PackageJson => b"package.json",
+                WalkName::TsconfigJson => b"tsconfig.json",
+                WalkName::JsconfigJson => b"jsconfig.json",
+            }
+        }
+    }
+
+    /// What the file system says about each `WalkName` in a directory that
+    /// has no listing: `RealFS::probe_walk_names`.
+    #[derive(Clone, Copy)]
+    pub(crate) struct ProbedNames([Option<EntryKind>; WalkName::ALL.len()]);
+
+    impl ProbedNames {
+        pub(crate) fn kind(self, name: WalkName) -> Option<EntryKind> {
+            self.0[name as usize]
+        }
+    }
 
     /// One read of a directory for the cache: what `RealFS::read_listing`
     /// reads.
@@ -1357,6 +1406,59 @@ pub mod fs {
         ) -> crate::CrateResult<Listing> {
             let (dir, _) = self.listing_dir(in_place, dir_path, dir_needs_sep)?;
             Ok(Listing(DirEntry::init(dir, generation)))
+        }
+
+        /// The place of the listing of a directory that opened and could not
+        /// be read. It has no entries and no generation, so each lookup in
+        /// the directory reads it first (`StaleListing`). The walk gives it
+        /// to a directory above the one it was asked for, so that the
+        /// `DirInfo` of that directory has a slot. What the failed read
+        /// interned stays in `failed_listings` for the next read.
+        pub(crate) fn never_read_listing(
+            &mut self,
+            dir_path: &[u8],
+            dir_needs_sep: bool,
+        ) -> crate::CrateResult<Listing> {
+            let failed = self
+                .failed_listings
+                .get(strings::paths::without_trailing_slash_windows_path(
+                    dir_path,
+                ))
+                .map(|failed| failed.dir);
+            let dir = match failed {
+                Some(dir) => dir,
+                None if dir_needs_sep => DirnameStore::instance()
+                    .append_parts(&[dir_path, bun_paths::SEP_STR.as_bytes()])?,
+                None => DirnameStore::instance().append_slice(dir_path)?,
+            };
+            Ok(Listing(DirEntry::never_read(dir)))
+        }
+
+        /// Ask the file system for `name` in `dir`, a directory that has no
+        /// listing. `None` when the name is not there or may not be seen.
+        /// `Err` when the answer is not known: `Unlisted::Failed`.
+        pub(crate) fn probe(
+            &mut self,
+            dir: &[u8],
+            name: &[u8],
+        ) -> crate::CrateResult<Option<EntryCache>> {
+            match self.kind(dir, name, Fd::INVALID, false) {
+                Ok(cache) => Ok(Some(cache)),
+                Err(err) => match Unlisted::of(err, b"") {
+                    Unlisted::Gone(_) | Unlisted::Denied(_) => Ok(None),
+                    Unlisted::Failed(_) => Err(err),
+                },
+            }
+        }
+
+        /// `probe` for each `WalkName`.
+        #[cold]
+        pub(crate) fn probe_walk_names(&mut self, dir: &[u8]) -> crate::CrateResult<ProbedNames> {
+            let mut kinds = [None; WalkName::ALL.len()];
+            for name in WalkName::ALL {
+                kinds[name as usize] = self.probe(dir, name.name())?.map(|cache| cache.kind);
+            }
+            Ok(ProbedNames(kinds))
         }
 
         /// Cache that `dir` does not exist.

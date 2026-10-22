@@ -201,6 +201,21 @@ impl DirInfo {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
+    /// Did the walk build this from what the file system said about each
+    /// name, because the read of the directory failed? The directory then
+    /// got no listing, and it has one only after a later read.
+    #[inline]
+    pub(crate) fn was_probed(&self) -> bool {
+        self.flags.contains(Flags::Probed)
+    }
+
+    /// Read the listing now if this generation does not have it. `Err` is
+    /// that of [`get_entries_ref_locked`](Self::get_entries_ref_locked).
+    pub(crate) fn list(&self, generation: Generation) -> crate::CrateResult<()> {
+        let _lock = fs::FileSystem::instance().fs.entries_mutex.lock_guard();
+        self.get_entries_ref_locked(generation).map(|_| ())
+    }
+
     /// Read-only view of `package_json`. The field stores `NonNull` to preserve
     /// mut-provenance; callers that only read go through here.
     #[inline]
@@ -240,9 +255,9 @@ impl DirInfo {
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
     /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
     ///
-    /// `Err` when the listing is from an earlier generation and the directory
-    /// could not be listed again: `Unlisted::Failed`. The cache keeps the
-    /// earlier listing, and the next call tries again.
+    /// `Err` when the listing is from an earlier generation, or was never
+    /// read, and the directory could not be listed now: `Unlisted::Failed`.
+    /// The cache keeps what it has, and the next call tries again.
     #[inline]
     pub fn get_entries_ref_locked(
         &self,
@@ -397,6 +412,8 @@ bitflags::bitflags! {
         /// This directory has a node_modules subdirectory
         const HasNodeModules    = 1 << 1;
         const InsideNodeModules = 1 << 2;
+        /// `RealFS::probe_walk_names` answered for the listing.
+        const Probed            = 1 << 3;
     }
 }
 impl Flags {

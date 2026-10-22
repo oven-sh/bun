@@ -394,18 +394,44 @@ pub struct DirEntry {
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
-    pub(crate) generation: Generation,
+    /// The generation that read this listing, or `NEVER_READ`.
+    generation: i32,
     pub data: dir_entry::EntryMap,
 }
 
 impl DirEntry {
+    /// The generation of a directory that has no listing. It is older than
+    /// every generation, so each reader reads the directory first.
+    const NEVER_READ: i32 = -1;
+
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
-            generation,
+            generation: i32::from(generation),
             fd: Fd::INVALID,
         }
+    }
+
+    /// The place of a listing that no read has filled.
+    pub(crate) fn never_read(dir: &'static [u8]) -> DirEntry {
+        DirEntry {
+            dir,
+            data: dir_entry::EntryMap::default(),
+            generation: Self::NEVER_READ,
+            fd: Fd::INVALID,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_older_than(&self, generation: Generation) -> bool {
+        self.generation < i32::from(generation)
+    }
+
+    /// Is this the place of a listing that no read has filled
+    /// ([`never_read`](Self::never_read))?
+    pub fn is_never_read(&self) -> bool {
+        self.generation == Self::NEVER_READ
     }
 
     // Compatibility wrapper for callers outside the `readdir` hot loop —

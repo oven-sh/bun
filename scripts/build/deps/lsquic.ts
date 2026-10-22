@@ -137,6 +137,13 @@ export const lsquic: Dependency = {
     // lsquic_prq_destroy() only frees the free list. A stateless reset whose
     // send failed is on the returned list, so destroying the engine leaks it.
     "patches/lsquic/prq-free-returned-conns.patch",
+    // A client that resumes a session builds application packets before its
+    // handshake is done and seals them with the 0-RTT keys. lsquic typed them
+    // Handshake and corrected that only where it first wrote a STREAM frame,
+    // so a packet with only RESET_STREAM, STOP_SENDING or a BLOCKED frame, and
+    // each packet made when lsquic resized one, could not be opened by the
+    // server and was resent that way for the life of the connection.
+    "patches/lsquic/zero-rtt-header-type.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

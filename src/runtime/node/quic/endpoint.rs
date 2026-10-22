@@ -2021,6 +2021,7 @@ impl QuicEndpoint {
         let mut settings = lsquic::Settings::new(is_server, is_http);
         // Node always advertises datagram support.
         settings.datagrams(1);
+        // Delayed ACKs send ACK_FREQUENCY, and an lsquic server closes on one in a 0-RTT packet.
         settings.delayed_acks(0);
         // Node's `closed` promise on the peer resolves on receipt of CONNECTION_CLOSE.
         settings.silent_close(0);

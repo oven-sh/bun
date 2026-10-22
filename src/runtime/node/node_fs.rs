@@ -213,6 +213,7 @@ pub(crate) use super::node_fs_binding::Binding;
 use bun_jsc::JSPromiseStrong;
 
 use super::dir_iterator as DirIterator;
+use super::node_fs_dir::{DirStream, Stream as DirStreamState};
 
 // On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are absent:
 // `UVFSRequest` aliases `AsyncFSTask` and every `uv::*` reference is gated
@@ -581,6 +582,12 @@ mod _async_tasks {
             AsyncFSTask<ret::Mkdtemp, args::MkdirTemp<'static>, { NodeFSFunctionEnum::Mkdtemp }>;
         pub(crate) type Open =
             UVFSRequest<ret::Open, args::Open<'static>, { NodeFSFunctionEnum::Open }>;
+        pub(crate) type Opendir =
+            AsyncFSTask<ret::Opendir, args::Opendir<'static>, { NodeFSFunctionEnum::Opendir }>;
+        pub(crate) type DirRead =
+            AsyncFSTask<ret::DirRead, args::DirRead, { NodeFSFunctionEnum::DirRead }>;
+        pub(crate) type DirClose =
+            AsyncFSTask<ret::DirClose, args::DirClose, { NodeFSFunctionEnum::DirClose }>;
         pub(crate) type Read = UVFSRequest<ret::Read, args::Read, { NodeFSFunctionEnum::Read }>;
         pub(crate) type Readdir =
             AsyncFSTask<ret::Readdir, args::Readdir<'static>, { NodeFSFunctionEnum::Readdir }>;
@@ -1102,6 +1109,7 @@ mod _async_tasks {
         args::Mkdir<'static>,
         args::MkdirTemp<'static>,
         args::Readdir<'static>,
+        args::Opendir<'static>,
         args::Open<'static>,
         args::Exists<'static>,
         args::Access<'static>,
@@ -1119,6 +1127,8 @@ mod _async_tasks {
         args::FdataSync,
         args::Fsync,
         args::Close,
+        args::DirRead,
+        args::DirClose,
     );
     // SAFETY: same as `impl_fs_argument!`.
     unsafe impl ThreadIsolatedArg for args::Read {}
@@ -1292,6 +1302,19 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js_newly_created(global)
+        }
+    }
+    /// A stream nobody takes is dropped: that closes the directory.
+    impl FsReturn for ret::Opendir {
+        #[inline]
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            Ok(DirStream::create(self.0, global))
+        }
+    }
+    impl FsReturn for ret::DirRead {
+        #[inline]
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            self.into_js(global)
         }
     }
 
@@ -3665,6 +3688,73 @@ pub(crate) mod args {
         }
     }
 
+    /// `fs.opendir(path, encoding, recursive)`. A `Dir` lists what `readdir` lists with `withFileTypes`.
+    pub(crate) struct Opendir<'a>(pub(crate) Readdir<'a>);
+    impl Opendir<'static> {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
+            let path = PathLike::from_js_required(ctx, arguments, "path")?;
+            let encoding = match arguments.next_eat() {
+                Some(value) => Encoding::assert(value, ctx, Encoding::Utf8)?,
+                None => Encoding::Utf8,
+            };
+            let recursive = arguments.next_eat().is_some_and(JSValue::to_boolean);
+            Ok(Opendir(Readdir {
+                path,
+                encoding,
+                with_file_types: true,
+                recursive,
+            }))
+        }
+    }
+
+    /// The stream of the `DirStream` wrapper that `fs.Dir` passes.
+    fn dir_stream_from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<std::sync::Arc<DirStreamState>> {
+        let value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
+        DirStream::stream_from_js(value)
+            .ok_or_else(|| ctx.throw_invalid_argument_type_value("handle", "DirStream", value))
+    }
+
+    pub(crate) struct DirRead {
+        pub(crate) stream: std::sync::Arc<DirStreamState>,
+        /// The most entries to give: the `bufferSize` of the `fs.Dir`.
+        pub(crate) limit: u32,
+    }
+    impl DirRead {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<DirRead> {
+            let stream = dir_stream_from_js(ctx, arguments)?;
+            let limit = match arguments.next_eat().and_then(JSValue::get_number) {
+                Some(limit) if limit >= u32::MAX as f64 => u32::MAX,
+                Some(limit) if limit >= 1.0 => limit as u32,
+                _ => 1,
+            };
+            Ok(DirRead { stream, limit })
+        }
+    }
+
+    pub(crate) struct DirClose {
+        pub(crate) stream: std::sync::Arc<DirStreamState>,
+    }
+    impl DirClose {
+        pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<DirClose> {
+            let stream = dir_stream_from_js(ctx, arguments)?;
+            // The wrapper can be collected before the work pool runs the close.
+            stream.close_requested();
+            Ok(DirClose { stream })
+        }
+    }
+
     pub(crate) struct Close {
         pub(crate) fd: FD,
     }
@@ -4615,6 +4705,9 @@ pub(crate) mod ret {
     pub(crate) type Mkdir = StringOrUndefined;
     pub(crate) type Mkdtemp = StringOrBuffer<'static>;
     pub(crate) type Open = FD;
+    pub(crate) struct Opendir(pub(crate) std::sync::Arc<DirStreamState>);
+    pub(crate) type DirRead = super::super::node_fs_dir::DirBatch;
+    pub(crate) type DirClose = ();
     pub(crate) type WriteFile = ();
     pub(crate) type Readv = Read;
     pub(crate) type StatFS = node::StatFS;
@@ -6379,6 +6472,28 @@ impl NodeFS {
         })
     }
 
+    pub(crate) fn opendir(&mut self, args: &args::Opendir, _: Flavor) -> Maybe<ret::Opendir> {
+        let args = &args.0;
+        let path = args.path.slice_z(&mut self.sync_error_buf);
+        DirStreamState::open(
+            args.path.slice(),
+            path,
+            args.tag(),
+            args.encoding,
+            args.recursive,
+        )
+        .map(ret::Opendir)
+    }
+
+    pub(crate) fn dir_read(&mut self, args: &args::DirRead, _: Flavor) -> Maybe<ret::DirRead> {
+        args.stream.read(args.limit)
+    }
+
+    pub(crate) fn dir_close(&mut self, args: &args::DirClose, _: Flavor) -> Maybe<ret::DirClose> {
+        args.stream.close();
+        Ok(())
+    }
+
     pub(crate) fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
         if flavor != Flavor::Sync && args.recursive {
             debug_assert!(
@@ -6435,13 +6550,7 @@ impl NodeFS {
         let mut dirent_path = BunString::DEAD;
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
-        loop {
-            let current = match iterator.next() {
-                Err(err) => return Err(err.with_path(args.path.slice())),
-                Ok(None) => break,
-                Ok(Some(ent)) => ent,
-            };
-
+        Self::list_entries(&mut iterator, fd, T::IS_DIRENT, |name, kind| {
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
                     without_nt_prefix::<u8>(basename.as_bytes()),
@@ -6449,10 +6558,28 @@ impl NodeFS {
                 );
             }
 
-            let utf8_name = current.name.slice();
+            T::append_entry(entries, name.as_bytes(), &dirent_path, kind, args.encoding);
+            true
+        })
+        .map(drop)
+        .map_err(|err| err.with_path(args.path.slice()))
+    }
+
+    /// The listing loop of `readdir` and `fs.Dir`: gives `entry` each entry of an open directory, until it returns `false`. `Ok(true)`: the directory has no more entries.
+    pub(super) fn list_entries(
+        iterator: &mut DirIterator::WrappedIterator,
+        fd: FD,
+        resolve_kind: bool,
+        mut entry: impl FnMut(&ZStr, sys::FileKind) -> bool,
+    ) -> Maybe<bool> {
+        loop {
+            let Some(current) = iterator.next()? else {
+                return Ok(true);
+            };
+
             // On filesystems that return DT_UNKNOWN (e.g. FUSE, bind mounts),
             // fall back to lstat to determine the real file kind.
-            let kind = if T::IS_DIRENT && current.kind == sys::FileKind::Unknown {
+            let kind = if resolve_kind && current.kind == sys::FileKind::Unknown {
                 match sys::lstatat(fd, current.name_assume_z()) {
                     Ok(st) => sys::kind_from_mode(st.st_mode as Mode),
                     Err(_) => current.kind,
@@ -6460,10 +6587,10 @@ impl NodeFS {
             } else {
                 current.kind
             };
-            T::append_entry(entries, utf8_name, &dirent_path, kind, args.encoding);
+            if !entry(current.name_assume_z(), kind) {
+                return Ok(false);
+            }
         }
-
-        Ok(())
     }
 
     /// Windows UTF-16 arm of `readdir_with_entries`.
@@ -6488,13 +6615,7 @@ impl NodeFS {
             None
         };
 
-        loop {
-            let current = match iterator.next() {
-                Err(err) => return Err(err.with_path(args.path.slice())),
-                Ok(None) => break,
-                Ok(Some(ent)) => ent,
-            };
-
+        Self::list_entries_u16(&mut iterator, |utf16_name, kind| {
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
                     without_nt_prefix::<u8>(basename.as_bytes()),
@@ -6502,20 +6623,36 @@ impl NodeFS {
                 );
             }
 
-            let utf16_name = current.name.slice();
-            // The u16 Dirent arm uses `current.kind`
+            // The u16 Dirent arm uses the iterator's kind
             // directly — no lstatat fallback (NTFS never returns DT_UNKNOWN).
             T::append_entry_w(
                 entries,
                 utf16_name,
                 &dirent_path,
-                current.kind,
+                kind,
                 args.encoding,
                 re_encoding_buffer.as_deref_mut(),
             );
-        }
+            true
+        })
+        .map(drop)
+        .map_err(|err| err.with_path(args.path.slice()))
+    }
 
-        Ok(())
+    /// Windows UTF-16 arm of `list_entries`.
+    #[cfg(windows)]
+    pub(super) fn list_entries_u16(
+        iterator: &mut DirIterator::WrappedIteratorW,
+        mut entry: impl FnMut(&[u16], sys::FileKind) -> bool,
+    ) -> Maybe<bool> {
+        loop {
+            let Some(current) = iterator.next()? else {
+                return Ok(true);
+            };
+            if !entry(current.name.slice(), current.kind) {
+                return Ok(false);
+            }
+        }
     }
 
     /// Gone or not enterable since the parent listed it. Reading a gone directory gives ENOENT too.
@@ -6979,7 +7116,26 @@ impl NodeFS {
         };
 
         let mut entries: Vec<T> = Vec::with_capacity(list.len());
-        let input_path = args.path.slice();
+        Self::append_standalone_entries::<T>(
+            list.into_iter(),
+            args.path.slice(),
+            recursive,
+            args.encoding,
+            flavor == Flavor::Sync,
+            &mut entries,
+        );
+        Ok(T::into_readdir(entries))
+    }
+
+    /// Appends `list`, entries that `Graph::readdir` gave for `input_path`. `readdir` and `fs.Dir` share it.
+    pub(super) fn append_standalone_entries<T: ReaddirEntry>(
+        list: impl Iterator<Item = (Box<[u8]>, bool)>,
+        input_path: &[u8],
+        recursive: bool,
+        encoding: Encoding,
+        apply_encoding: bool,
+        entries: &mut Vec<T>,
+    ) {
         let root_path = if T::IS_DIRENT {
             BunString::clone_utf8(input_path)
         } else {
@@ -7018,19 +7174,18 @@ impl NodeFS {
                     &root_path
                 };
                 T::append_entry_recursive(
-                    &mut entries,
+                    entries,
                     base,
                     &name,
                     dirent_path,
                     kind,
-                    args.encoding,
-                    flavor == Flavor::Sync,
+                    encoding,
+                    apply_encoding,
                 );
             } else {
-                T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
+                T::append_entry(entries, &name, &root_path, kind, encoding);
             }
         }
-        Ok(T::into_readdir(entries))
     }
 
     pub(crate) fn read_file(
@@ -9302,6 +9457,9 @@ node_fs_ops! {
     Mkdir => mkdir, args::Mkdir<'static>, ret::Mkdir;
     Mkdtemp => mkdtemp, args::MkdirTemp<'static>, ret::Mkdtemp;
     Open => open, args::Open<'static>, ret::Open, uv = uv_open;
+    Opendir => opendir, args::Opendir<'static>, ret::Opendir;
+    DirRead => dir_read, args::DirRead, ret::DirRead;
+    DirClose => dir_close, args::DirClose, ret::DirClose;
     Read => read, args::Read, ret::Read, uv = uv_read;
     Readdir => readdir, args::Readdir<'static>, ret::Readdir;
     ReadFile => read_file, args::ReadFile<'static>, ret::ReadFile;
@@ -10164,6 +10322,9 @@ pub(crate) enum NodeFSFunctionEnum {
     Mkdir,
     Mkdtemp,
     Open,
+    Opendir,
+    DirRead,
+    DirClose,
     Read,
     Readdir,
     ReadFile,

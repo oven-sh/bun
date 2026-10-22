@@ -430,6 +430,58 @@ impl Binding {
     // pub const statfsSync = callSync(.statfs);
 }
 
+// The operations of `fs.Dir` on its native stream, in the arms `fs.Dir` uses.
+impl Binding {
+    pub(crate) const opendir_sync: NodeFSFunction =
+        call_sync::<ret::Opendir, args::Opendir<'static>, { NodeFSFunctionEnum::Opendir }>();
+    pub(crate) const dir_read_sync: NodeFSFunction =
+        call_sync::<ret::DirRead, args::DirRead, { NodeFSFunctionEnum::DirRead }>();
+    pub(crate) const dir_close_sync: NodeFSFunction =
+        call_sync::<ret::DirClose, args::DirClose, { NodeFSFunctionEnum::DirClose }>();
+
+    pub(crate) fn opendir_cb(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        run_async::<args::Opendir<'static>>(
+            this,
+            global,
+            frame,
+            AsyncArm::Callback,
+            async_::Opendir::create,
+        )
+    }
+
+    pub(crate) fn dir_read(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        run_async::<args::DirRead>(
+            this,
+            global,
+            frame,
+            AsyncArm::Promise,
+            async_::DirRead::create,
+        )
+    }
+
+    pub(crate) fn dir_close(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        run_async::<args::DirClose>(
+            this,
+            global,
+            frame,
+            AsyncArm::Promise,
+            async_::DirClose::create,
+        )
+    }
+}
+
 pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     let module = Binding::new(Binding::default());
 

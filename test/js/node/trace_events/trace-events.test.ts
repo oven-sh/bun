@@ -42,3 +42,66 @@ test("http.client.request span is closed when the proxy CONNECT tunnel fails", a
   const phases = events.filter(e => e.name === "http.client.request").map(e => e.ph);
   expect({ phases: phases.sort(), exitCode }).toEqual({ phases: ["b", "e"], exitCode: 0 });
 });
+
+// fs.Dir's operations reach the binding, so they are traced under node's
+// fs_dir categories with the names of the libuv requests.
+test("fs.Dir operations are traced under node.fs_dir", async () => {
+  using dir = tempDir("trace-events-fs-dir", {
+    "entry.txt": "",
+    "main.cjs": `
+      const fs = require("node:fs");
+      const dir = fs.opendirSync(".");
+      dir.readSync();
+      dir.closeSync();
+      fs.opendir(".", (err, dir) => {
+        if (err) throw err;
+        dir.read(err => {
+          if (err) throw err;
+          dir.close(err => {
+            if (err) throw err;
+          });
+        });
+      });
+    `,
+  });
+  const traceFile = join(String(dir), "node_trace.log");
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--trace-event-categories",
+      "node.fs_dir.sync,node.fs_dir.async",
+      "--trace-event-file-pattern",
+      traceFile,
+      "main.cjs",
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  const events = JSON.parse(readFileSync(traceFile, "utf8")).traceEvents;
+  const spans = events.filter(e => e.cat.includes("node.fs_dir")).map(e => `${e.ph} ${e.cat} ${e.name}`);
+  const sync = "node,node.fs_dir,node.fs_dir.sync";
+  const async = "node,node.fs_dir,node.fs_dir.async";
+  expect({ spans, exitCode }).toEqual({
+    spans: [
+      `B ${sync} fs_dir.sync.opendir`,
+      `E ${sync} fs_dir.sync.opendir`,
+      `B ${sync} fs_dir.sync.readdir`,
+      `E ${sync} fs_dir.sync.readdir`,
+      `B ${sync} fs_dir.sync.closedir`,
+      `E ${sync} fs_dir.sync.closedir`,
+      `b ${async} opendir`,
+      `e ${async} opendir`,
+      `b ${async} readdir`,
+      `e ${async} readdir`,
+      `b ${async} closedir`,
+      `e ${async} closedir`,
+    ],
+    exitCode: 0,
+  });
+});

@@ -75,6 +75,7 @@ pub mod task_tag {
         CopyFileWindowsMkdirp,
         WriteFileWindowsMkdirp,
         DnsErrorDeferred,
+        DirStreamCollected,       // node:fs Dir (its stream was collected while open)
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Close,
         CppTask,

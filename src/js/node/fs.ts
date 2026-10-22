@@ -3,7 +3,7 @@ import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
 const types = require("node:util/types");
 const {
   validateFunction,
-  validateInteger,
+  validateUint32,
   validateEncoding,
   getValidatedPath,
   throwIfNullBytesInFileName,
@@ -618,25 +618,18 @@ var access = function access(path, mode, callback?) {
     return require("internal/fs/watch").watch(path, options, listener);
   },
   opendir = function opendir(path, options, callback?) {
-    // TODO: validatePath
-    // validateString(path, "path");
     if (typeof options === "function") {
       callback = options;
       options = undefined;
     }
     validateFunction(callback, "callback");
-    // Argument validation errors throw synchronously (node does the same);
-    // the eager path check runs on an async stat so the JS thread isn't
-    // blocked and the callback never fires synchronously.
-    const result = new Dir(1, path, options, kAlreadyValidated);
+    path = toPathIfFileURL(path);
+    // Validation errors throw synchronously. node throws an invalid bufferSize from the completion, where nothing can catch it.
+    options = getDirOptions(options);
+    const bufferSize = options?.bufferSize;
+    if (bufferSize !== undefined) validateUint32(bufferSize, "options.bufferSize", true);
     callback = wrapFsCallback(callback);
-    // Invoke the callback from process.nextTick so an exception thrown by it
-    // surfaces as an uncaught exception instead of rejecting this internal
-    // promise chain (same convention as glob() below).
-    fs.stat(path).then(
-      onOpendirStatFulfilled.bind(null, callback, path, result),
-      onOpendirStatRejected.bind(null, callback, path),
-    );
+    fs.opendirCb(onOpendir.bind(null, callback, path, options), path, options?.encoding, options?.recursive);
   };
 
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
@@ -1020,89 +1013,62 @@ function _toUnixTimestamp(time: any, name = "time") {
   throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
 }
 
-function onOpendirStatFulfilled(callback, path, result, stats) {
-  if (!stats.isDirectory()) {
-    nextTick(callback, opendirNotDirError(path));
-    return;
-  }
-  nextTick(callback, null, result);
-}
-function onOpendirStatRejected(callback, path, err) {
-  nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
+function onOpendir(callback, path, options, err, stream) {
+  if (err) callback(err);
+  else callback(null, new Dir(stream, path, options));
 }
 
 function opendirSync(path, options) {
-  // TODO: validatePath
-  // validateString(path, "path");
-  return new Dir(1, path, options);
+  path = toPathIfFileURL(path);
+  options = getDirOptions(options);
+  return new Dir(fs.opendirSync(path, options?.encoding, options?.recursive), path, options);
 }
 
-// Reshape a stat error as node's eager opendir error. Stat errors arrive as
-// "ECODE: <description>, stat '<path>'"; pull out just the description before
-// re-prefixing (avoids "EACCES: EACCES: ...").
-function opendirStatError(err, path) {
-  err.syscall = "opendir";
-  const description = err.message.replace(/^[A-Z]+: /, "").replace(/, l?stat '.*'$/, "");
-  err.message = `${err.code}: ${description}, opendir '${path}'`;
-  return err;
+// node's getValidatedPath gives `Dir.path` and the errors the path that a file: URL names.
+function toPathIfFileURL(path) {
+  return path instanceof URL ? Bun.fileURLToPath(path) : path;
 }
 
-function opendirNotDirError(path) {
-  const err: NodeJS.ErrnoException = new Error(`ENOTDIR: not a directory, opendir '${path}'`);
-  err.code = "ENOTDIR";
-  // libuv's UV_ENOTDIR: -ENOTDIR on POSIX, -4052 on Windows
-  err.errno = process.platform === "win32" ? -4052 : -20;
-  err.syscall = "opendir";
-  err.path = path;
-  return err;
+// node's getOptions: a string is encoding shorthand, a function means no options, an empty encoding is the default.
+function getDirOptions(options) {
+  if (options == null || typeof options === "function") return undefined;
+  if (typeof options === "string") options = { encoding: options };
+  else if (typeof options !== "object") throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], options);
+  const encoding = options.encoding;
+  if (encoding && encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
+    throw $ERR_INVALID_ARG_VALUE("encoding", encoding, "is invalid encoding");
+  }
+  return options;
 }
 
-// Passed as the Dir constructor's 4th argument by the async opendir paths,
-// which run the eager path check with an async stat instead.
-const kAlreadyValidated = Symbol("kAlreadyValidated");
+const kNoEntries = [];
 
 class Dir {
-  /**
-   * `-1` when closed. stdio handles (0, 1, 2) don't actually get closed by
-   * {@link close} or {@link closeSync}.
-   */
-  #handle: number;
+  /** The native directory stream that `fs.opendir` opened. `null` once closed. */
+  #stream;
   #path: PathLike;
-  #options;
-  #entries: DirentType[] | null = null;
-  #entriesIdx = 0;
+  #bufferSize = 32;
+  /** One native read: at most `bufferSize` entries. A trailing `null` says that the directory has no more. */
+  #batch: (DirentType | null)[] = kNoEntries;
+  #batchIndex = 0;
 
-  constructor(handle, path: PathLike, options, validated?) {
+  constructor(handle, path: PathLike, options) {
     if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
-    validateInteger(handle, "handle", 0);
-    if (options != null && typeof options !== "object" && typeof options !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-    }
-    // node's getOptions: a string is encoding shorthand
-    if (typeof options === "string") options = { encoding: options };
-    const encoding = options?.encoding;
-    if (encoding != null && encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
-      throw $ERR_INVALID_ARG_VALUE("encoding", encoding, "is invalid encoding");
-    }
-    if (options?.bufferSize !== undefined) {
-      validateInteger(options.bufferSize, "options.bufferSize", 1);
-    }
-    if (handle === 1 && validated !== kAlreadyValidated) {
-      // node's opendir opens the directory eagerly and reports ENOTDIR/ENOENT
-      let stats;
+    const bufferSize = getDirOptions(options)?.bufferSize;
+    if (bufferSize !== undefined) {
       try {
-        stats = fs.statSync(path);
-      } catch (err: any) {
-        if (typeof err?.errno !== "number") throw err; // argument validation errors throw as-is
-        throw opendirStatError(err, path);
+        validateUint32(bufferSize, "options.bufferSize", true);
+      } catch (err) {
+        // Userland cannot close the handle when this throws, so close it first (node does the same).
+        try {
+          fs.dirCloseSync(handle);
+        } catch {}
+        throw err;
       }
-      if (!stats.isDirectory()) {
-        throw opendirNotDirError(path);
-      }
+      this.#bufferSize = bufferSize;
     }
-    this.#handle = $toLength(handle);
+    this.#stream = handle;
     this.#path = path;
-    this.#options = options;
   }
 
   // Number of in-flight async operations; sync ops are forbidden while > 0,
@@ -1136,16 +1102,27 @@ class Dir {
     return p;
   }
 
+  // The next entry of the batch. `null`: the directory ended (the marker stays). `undefined`: the batch is used up.
+  #next() {
+    const batch = this.#batch;
+    const i = this.#batchIndex;
+    if (i >= batch.length) return undefined;
+    const entry = batch[i];
+    if (entry !== null) this.#batchIndex = i + 1;
+    return entry;
+  }
+
   readSync() {
-    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
+    const stream = this.#stream;
+    if (stream === null) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
 
-    let entries = (this.#entries ??= fs.readdirSync(this.#path, {
-      withFileTypes: true,
-      encoding: this.#options?.encoding,
-      recursive: this.#options?.recursive,
-    }));
-    return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
+    for (;;) {
+      const entry = this.#next();
+      if (entry !== undefined) return entry;
+      this.#batch = fs.dirReadSync(stream, this.#bufferSize);
+      this.#batchIndex = 0;
+    }
   }
 
   read(cb?: (err: Error | null, entry: DirentType) => void): any {
@@ -1165,29 +1142,26 @@ class Dir {
   }
 
   #readOp() {
-    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
-    const entries = this.#entries;
-    if (entries) return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
-    return fs
-      .readdir(this.#path, {
-        withFileTypes: true,
-        encoding: this.#options?.encoding,
-        recursive: this.#options?.recursive,
-      })
-      .then(this.#onReaddir.bind(this));
+    const stream = this.#stream;
+    if (stream === null) throw $ERR_DIR_CLOSED();
+    const entry = this.#next();
+    if (entry !== undefined) return entry;
+    return fs.dirRead(stream, this.#bufferSize).$then(this.#onBatch.bind(this));
   }
 
-  #onReaddir(entries) {
-    this.#entries = entries;
-    this.#entriesIdx = 0;
-    return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
+  #onBatch(batch) {
+    this.#batch = batch;
+    this.#batchIndex = 0;
+    const entry = this.#next();
+    return entry !== undefined ? entry : this.#readOp();
   }
 
   #closeOp() {
-    const handle = this.#handle;
-    if (handle < 0) throw $ERR_DIR_CLOSED();
-    if (handle > 2) fs.closeSync(handle);
-    this.#handle = -1;
+    const stream = this.#stream;
+    if (stream === null) throw $ERR_DIR_CLOSED();
+    this.#stream = null;
+    this.#batch = kNoEntries;
+    return fs.dirClose(stream);
   }
 
   close(cb?: (err?: Error) => void) {
@@ -1201,22 +1175,23 @@ class Dir {
   }
 
   closeSync() {
-    const handle = this.#handle;
-    if (handle < 0) throw $ERR_DIR_CLOSED();
+    const stream = this.#stream;
+    if (stream === null) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
-    if (handle > 2) fs.closeSync(handle);
-    this.#handle = -1;
+    this.#stream = null;
+    this.#batch = kNoEntries;
+    fs.dirCloseSync(stream);
   }
 
   // Like node, disposing an already-closed Dir is a no-op rather than
   // ERR_DIR_CLOSED so `using`/`await using` compose with an explicit close().
   [Symbol.dispose]() {
-    if (this.#handle < 0) return;
+    if (this.#stream === null) return;
     this.closeSync();
   }
 
   async [Symbol.asyncDispose]() {
-    if (this.#handle < 0) return;
+    if (this.#stream === null) return;
     await this.close();
   }
 
@@ -1225,7 +1200,7 @@ class Dir {
     return this.#path;
   }
 
-  async *[Symbol.asyncIterator]() {
+  async *entries() {
     try {
       let entry;
       while ((entry = await this.read()) !== null) {
@@ -1235,10 +1210,18 @@ class Dir {
       // node closes the directory when iteration ends or exits early. Use the
       // queued async close() so a concurrent in-flight operation doesn't make
       // teardown throw ERR_DIR_CONCURRENT_OPERATION.
-      if (this.#handle >= 0) await this.close();
+      if (this.#stream !== null) await this.close();
     }
   }
 }
+
+// As in node, the async iterator is `entries`.
+Object.$defineProperty(Dir.prototype, Symbol.asyncIterator, {
+  value: Dir.prototype.entries,
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 
 function glob(pattern: string | string[], options, callback) {
   if (typeof options === "function") {

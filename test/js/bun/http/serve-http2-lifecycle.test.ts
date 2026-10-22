@@ -105,7 +105,7 @@ describe("Bun.serve http2 lifecycle", () => {
     session.once("close", () => (closed = true));
     // Back to back for more than one sweep period, so at least one request straddles a sweep.
     const bodies: string[] = [];
-    for (const until = Date.now() + 5000; Date.now() < until && !closed; ) {
+    for (const until = Date.now() + 5000; Date.now() < until && !closed;) {
       bodies.push(
         await request(session, { ":path": "/slow?ms=100" }).then(
           r => r.body.toString(),

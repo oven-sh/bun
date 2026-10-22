@@ -3528,70 +3528,58 @@ describe.concurrent("idleTimeout never fires before its seconds of inactivity", 
     };
   }
 
-  it(
-    "a response that streams every 100 ms is never cut with idleTimeout: 1",
-    async () => {
-      let cancelled = false;
-      await using anchored = serveWithAnchor(1, () => {
-        let sent = 0;
-        let timer: Timer;
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              timer = setInterval(() => {
-                controller.enqueue("x\n");
-                // 5 s is past the first sweep after the connection arms its timer.
-                if (++sent === 50) {
-                  clearInterval(timer);
-                  controller.close();
-                }
-              }, 100);
-            },
-            cancel() {
-              clearInterval(timer);
-              cancelled = true;
-            },
-          }),
-        );
-      });
-      const res = await fetch(anchored.server.url);
-      expect(await res.text()).toBe("x\n".repeat(50));
-      expect(cancelled).toBe(false);
-    },
-    15_000,
-  );
+  it("a response that streams every 100 ms is never cut with idleTimeout: 1", async () => {
+    let cancelled = false;
+    await using anchored = serveWithAnchor(1, () => {
+      let sent = 0;
+      let timer: Timer;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            timer = setInterval(() => {
+              controller.enqueue("x\n");
+              // 5 s is past the first sweep after the connection arms its timer.
+              if (++sent === 50) {
+                clearInterval(timer);
+                controller.close();
+              }
+            }, 100);
+          },
+          cancel() {
+            clearInterval(timer);
+            cancelled = true;
+          },
+        }),
+      );
+    });
+    const res = await fetch(anchored.server.url);
+    expect(await res.text()).toBe("x\n".repeat(50));
+    expect(cancelled).toBe(false);
+  }, 15_000);
 
-  it(
-    "a request whose handler takes 600 ms is answered with idleTimeout: 4",
-    async () => {
-      await using anchored = serveWithAnchor(4, async () => {
-        await Bun.sleep(600);
-        return new Response("ok");
-      });
-      // Back to back for more than one sweep period, so at least one request straddles a sweep.
-      const results: Awaited<ReturnType<typeof rawGet>>[] = [];
-      const until = performance.now() + 5_000;
-      while (performance.now() < until) results.push(await rawGet(anchored.server.port, "/"));
-      expect(results).toEqual(results.map(() => ({ head: "HTTP/1.1 200 OK" })));
-    },
-    15_000,
-  );
+  it("a request whose handler takes 600 ms is answered with idleTimeout: 4", async () => {
+    await using anchored = serveWithAnchor(4, async () => {
+      await Bun.sleep(600);
+      return new Response("ok");
+    });
+    // Back to back for more than one sweep period, so at least one request straddles a sweep.
+    const results: Awaited<ReturnType<typeof rawGet>>[] = [];
+    const until = performance.now() + 5_000;
+    while (performance.now() < until) results.push(await rawGet(anchored.server.port, "/"));
+    expect(results).toEqual(results.map(() => ({ head: "HTTP/1.1 200 OK" })));
+  }, 15_000);
 
-  it(
-    "a silent request is cut no earlier than idleTimeout: 4 seconds",
-    async () => {
-      const never = Promise.withResolvers<Response>();
-      await using anchored = serveWithAnchor(4, () => never.promise);
-      // Land between two sweeps, so an early fire lands well before 4 s.
-      await Bun.sleep(2_000);
-      const result = await rawGet(anchored.server.port, "/");
-      if (!("cut" in result)) throw new Error(`answered: ${result.head}`);
-      // Two sweeps after arming: at least 4 s, at most 8 s plus scheduling.
-      expect(result.afterMs).toBeGreaterThanOrEqual(4_000);
-      expect(result.afterMs).toBeLessThan(9_000);
-    },
-    20_000,
-  );
+  it("a silent request is cut no earlier than idleTimeout: 4 seconds", async () => {
+    const never = Promise.withResolvers<Response>();
+    await using anchored = serveWithAnchor(4, () => never.promise);
+    // Land between two sweeps, so an early fire lands well before 4 s.
+    await Bun.sleep(2_000);
+    const result = await rawGet(anchored.server.port, "/");
+    if (!("cut" in result)) throw new Error(`answered: ${result.head}`);
+    // Two sweeps after arming: at least 4 s, at most 8 s plus scheduling.
+    expect(result.afterMs).toBeGreaterThanOrEqual(4_000);
+    expect(result.afterMs).toBeLessThan(9_000);
+  }, 20_000);
 });
 
 it.concurrent(

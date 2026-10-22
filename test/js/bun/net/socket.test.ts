@@ -386,13 +386,15 @@ describe.concurrent("socket", () => {
       sweep(1);
       return { early, fired: fired.splice(0) };
     };
-    expect({ 1: firedAt(1, 2), 4: firedAt(4, 2), 5: firedAt(5, 3), 10: firedAt(10, 4), 240: firedAt(240, 61) }).toEqual({
-      1: { early: 0, fired: [2] },
-      4: { early: 0, fired: [2] },
-      5: { early: 0, fired: [3] },
-      10: { early: 0, fired: [4] },
-      240: { early: 0, fired: [61] },
-    });
+    expect({ 1: firedAt(1, 2), 4: firedAt(4, 2), 5: firedAt(5, 3), 10: firedAt(10, 4), 240: firedAt(240, 61) }).toEqual(
+      {
+        1: { early: 0, fired: [2] },
+        4: { early: 0, fired: [2] },
+        5: { early: 0, fired: [3] },
+        10: { early: 0, fired: [4] },
+        240: { early: 0, fired: [61] },
+      },
+    );
   });
 
   it("should allow large amounts of data to be sent and received", async () => {

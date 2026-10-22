@@ -1,7 +1,7 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { sweepSocketTimers } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isASAN, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";

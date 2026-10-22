@@ -170,8 +170,8 @@ describe.concurrent("native binlink optimization", () => {
       }).toEqual({ postinstall: ranPlatformBin, exitCode: 0 });
 
       const stub = join(packageDir, "node_modules", "test-native-binlink", "bin", "main.js");
-      // The second is the mode of the file in the tarball of esbuild.
-      for (const mode of [statSync(stub).mode & 0o777, 0o755]) {
+      // The file has the first mode in the tarball of this package, and the second in the tarball of esbuild.
+      for (const mode of [0o644, 0o755]) {
         chmodSync(stub, mode);
         for (const args of [["test-native-binlink"], ["-p", "test-native-binlink", "test-binlink-cmd"]]) {
           await using proc = spawn({

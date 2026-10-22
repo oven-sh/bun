@@ -18,7 +18,7 @@ const stripAnsi = Bun.stripANSI;
 async function runRepl(
   input: string | string[],
   options: {
-    env?: Record<string, string>;
+    env?: Record<string, string | undefined>;
     cwd?: string;
     /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
     home?: string;
@@ -214,6 +214,8 @@ async function withTerminalRepl(
     /** Changes the width of the pty, and of the screen that `waitForScreen` renders. */
     resize: (cols: number) => void;
     allOutput: () => string;
+    /** `allOutput` with its escape sequences. */
+    rawOutput: () => string;
   }) => Promise<void>,
   options: { env?: Record<string, string | undefined>; cols?: number } = {},
 ) {
@@ -316,11 +318,12 @@ async function withTerminalRepl(
     model.resize(newCols);
   };
 
-  const allOutput = () => stripAnsi(received.join(""));
+  const rawOutput = () => received.join("");
+  const allOutput = () => stripAnsi(rawOutput());
 
   await waitFor(/\u276f|> /); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, waitForScreen, resize, allOutput });
+  await fn({ terminal, proc, send, waitFor, waitForScreen, resize, allOutput, rawOutput });
 
   // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
   // the line, wherever the cursor is, so `.exit` is not appended to it (which
@@ -372,7 +375,7 @@ describe.concurrent("Bun REPL", () => {
   describe("REPL commands", () => {
     test(".exit exits the REPL after the welcome message", async () => {
       const { stdout, stderr, exitCode } = await runRepl([".exit"]);
-      expect(normalizeBunSnapshot(stripAnsi(stdout))).toMatchInlineSnapshot(`
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
         "Welcome to Bun v<bun-version>
         Type .copy [code] to copy to clipboard. .help for more info.
 
@@ -485,6 +488,33 @@ describe.concurrent("Bun REPL", () => {
     test(".history shows command history", async () => {
       const { outputs, stderr, exitCode } = await runRepl(["1 + 1", "2 + 2", ".history", ".exit"]);
       expect(outputs).toEqual(["2", "4", "Command History:\n     1  1 + 1\n     2  2 + 2"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("prints its own messages without escape sequences on a pipe", async () => {
+      using dir = tempDir("repl-plain-messages", { "empty.js": "" });
+      const empty = path.join(String(dir), "empty.js");
+      const saved = path.join(String(dir), "saved.js");
+      const { stdout, outputs, stderr, exitCode } = await runRepl(
+        // At the start of a line, 0x04 (Ctrl+D) runs the lines of .editor and 0x03 (Ctrl+C) cancels it.
+        `.help\n.nope\n.load ${empty}\n1 + 1\n.save ${saved}\n.history\n.editor\n2 + 2\n\x04.editor\n\x03.exit\n`,
+        // Without the NO_COLOR that runRepl sets: a pipe alone turns the colors off.
+        { env: { NO_COLOR: undefined } },
+      );
+      expect(stdout).toBe(stripAnsi(stdout));
+      expect(outputs).toEqual([
+        expect.stringMatching(/^REPL Commands:\n  \.help        Print this help message\n/),
+        "Unknown command: .nope\nType .help for available commands",
+        `Loading ${empty}...\nundefined`,
+        "2",
+        `Session saved to ${saved}`,
+        "Command History:\n     1  1 + 1",
+        expect.stringMatching(/^\/\/ Entering editor mode \(Ctrl\+D to finish, Ctrl\+C to cancel\)\n+4$/),
+        expect.stringMatching(
+          /^\/\/ Entering editor mode \(Ctrl\+D to finish, Ctrl\+C to cancel\)\n+\/\/ Editor mode cancelled$/,
+        ),
+      ]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -1148,6 +1178,108 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await waitFor(".he");
       send("\t"); // Tab — should complete to .help (only match)
       await waitFor(".help");
+    });
+  });
+
+  describe("its own messages", () => {
+    // What the session below prints, apart from the prompt and the echo of the input.
+    // "^[" stands for ESC and "^G" for BEL.
+    const colored = [
+      "Welcome to Bun v<bun-version>",
+      "Type ^[[36m.copy [code]^[[0m to copy to clipboard. ^[[36m.help^[[0m for more info.",
+      "",
+      "",
+      "^[[1mREPL Commands:^[[0m",
+      "  ^[[36m.help       ^[[0m Print this help message",
+      "  ^[[36m.exit       ^[[0m Exit the REPL",
+      "  ^[[36m.clear      ^[[0m Clear the screen",
+      "  ^[[36m.copy       ^[[0m Copy result to clipboard (.copy [expr])",
+      "  ^[[36m.load       ^[[0m Load a file into the REPL session",
+      "  ^[[36m.save       ^[[0m Save REPL history to a file",
+      "  ^[[36m.editor     ^[[0m Enter multi-line editor mode",
+      "  ^[[36m.break      ^[[0m Cancel current input",
+      "  ^[[36m.history    ^[[0m Show command history",
+      "",
+      "^[[1mKeybindings:^[[0m",
+      "  ^[[36mCtrl+A^[[0m       Move to start of line",
+      "  ^[[36mCtrl+E^[[0m       Move to end of line",
+      "  ^[[36mCtrl+B/F^[[0m     Move backward/forward one character",
+      "  ^[[36mAlt+B/F^[[0m      Move backward/forward one word",
+      "  ^[[36mCtrl+U^[[0m       Delete to start of line",
+      "  ^[[36mCtrl+K^[[0m       Delete to end of line",
+      "  ^[[36mCtrl+W^[[0m       Delete word backward",
+      "  ^[[36mCtrl+D^[[0m       Delete character / Exit if line empty",
+      "  ^[[36mCtrl+L^[[0m       Clear screen",
+      "  ^[[36mCtrl+T^[[0m       Swap characters",
+      "  ^[[36mUp/Down^[[0m      Navigate history",
+      "  ^[[36mTab^[[0m          Auto-complete / accept suggestion",
+      "  ^[[36mRight/End^[[0m    Accept inline suggestion",
+      "",
+      "^[[1mSpecial Variables:^[[0m",
+      "  ^[[36m_^[[0m            Last expression result",
+      "  ^[[36m_error^[[0m       Last error",
+      "",
+      "^[[31mUnknown command: .nope",
+      "^[[0mType ^[[36m.help^[[0m for available commands",
+      "^[[2m// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)^[[0m",
+      "^[[2mundefined^[[0m",
+      "^[[2mLoading /dev/null...^[[0m",
+      "^[[2mundefined^[[0m",
+      "^[[0m^[[33m1^[[0m",
+      "",
+      "^[[1mCommand History:^[[0m",
+      "  ^[[2m   1^[[0m  1",
+      "",
+      "^[[2m(press Ctrl+C again to exit, or Ctrl+D)^[[0m",
+      "  ^[[36m.clear^[[0m",
+      "  ^[[36m.copy^[[0m",
+      "^[[2m// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)^[[0m",
+      "  ^[[36ma1^[[0m",
+      "  ^[[36ma2^[[0m",
+      "^[[2m51 completions^[[0m",
+      "^[[2m// Editor mode cancelled^[[0m",
+      "^[]52;c;MQ==^G^[[2mCopied 1 characters to clipboard^[[0m",
+      "^[[32mSession saved to /dev/null^[[0m",
+    ].join("\n");
+
+    async function session(env: Record<string, string | undefined>) {
+      let raw = "";
+      await withTerminalRepl(
+        async ({ send, waitFor, rawOutput }) => {
+          send(".help\r.nope\r");
+          // Ctrl+D (0x04) runs the lines of editor mode. The `1` gives `.history` an entry.
+          send('.editor\rvar o = { a1: 1, a2: 2 }; for (let i = 0; i < 51; i++) o["b" + i] = i;\r\x04');
+          send(".load /dev/null\r1\r.history\r");
+          // Ctrl+C (0x03) on an empty line, then Tab after `.c`. Ctrl+U (0x15) clears the line.
+          send("\x03.c\t\x15");
+          // Editor mode draws no inline suggestion for Tab to accept, so Tab lists the 2 names and counts the 51.
+          send(".editor\ro.a\t\x15o.b\t\x15\x03");
+          send(".copy 1\r.save /dev/null\r");
+          await waitFor(/Session saved to [^\r\n]*\r\n/);
+          raw = rawOutput();
+        },
+        { env },
+      );
+      // A line that redraws the input holds a "\r".
+      const lines = raw
+        .split("\r\n")
+        .slice(0, -1)
+        .filter(line => !line.includes("\r"));
+      const messages = normalizeBunSnapshot(lines.join("\n")).replaceAll("\x1b", "^[").replaceAll("\x07", "^G");
+      return { raw, messages };
+    }
+
+    test("carry their colors when colors are on", async () => {
+      const { messages } = await session({ NO_COLOR: undefined, FORCE_COLOR: "1" });
+      expect(messages).toBe(colored);
+    });
+
+    test("are the same text without its color codes under NO_COLOR", async () => {
+      const { raw, messages } = await session({ NO_COLOR: "1" });
+      // The prompt and the echo of the input have no color code either. Cursor movement and the
+      // OSC 52 of `.copy` are not colors, so they stay.
+      expect(raw).not.toMatch(/\x1b\[[\d;]*m/);
+      expect(messages).toBe(colored.replace(/\^\[\[\d+m/g, ""));
     });
   });
 

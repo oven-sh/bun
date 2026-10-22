@@ -75,6 +75,14 @@ const CSI: &str = concat!("\x1b", "[");
 // Colors — Color::RESET, Color::CYAN, … resolve unchanged
 use bun_core::output::ansi as Color;
 
+/// `bun_core::pretty!` on the unbuffered writer that the other REPL prints use.
+macro_rules! pretty {
+    ($($arg:tt)*) => {{
+        let colors = Output::enable_ansi_colors_stdout();
+        let _ = bun_core::write_pretty!(Output::writer(), colors, $($arg)*);
+    }};
+}
+
 // Cursor control
 struct Cursor;
 impl Cursor {
@@ -591,105 +599,27 @@ enum ReplResult {
 }
 
 fn cmd_help(repl: &mut Repl, _: &[u8]) -> ReplResult {
-    repl.print(format_args!(
-        "\n{}REPL Commands:{}\n",
-        Color::BOLD,
-        Color::RESET
-    ));
+    pretty!("\n<b>REPL Commands:<r>\n");
     for cmd in &ReplCommand::ALL {
-        repl.print(format_args!(
-            "  {}{:<12}{} {}\n",
-            Color::CYAN,
-            BStr::new(cmd.name),
-            Color::RESET,
-            cmd.help
-        ));
+        pretty!("  <cyan>{:<12}<r> {}\n", BStr::new(cmd.name), cmd.help);
     }
-    repl.print(format_args!(
-        "\n{}Keybindings:{}\n",
-        Color::BOLD,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Ctrl+A{}       Move to start of line\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Ctrl+E{}       Move to end of line\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Ctrl+B/F{}     Move backward/forward one character\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Alt+B/F{}      Move backward/forward one word\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Ctrl+U{}       Delete to start of line\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Ctrl+K{}       Delete to end of line\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Ctrl+W{}       Delete word backward\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Ctrl+D{}       Delete character / Exit if line empty\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Ctrl+L{}       Clear screen\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Ctrl+T{}       Swap characters\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Up/Down{}      Navigate history\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Tab{}          Auto-complete / accept suggestion\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}Right/End{}    Accept inline suggestion\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "\n{}Special Variables:{}\n",
-        Color::BOLD,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}_{}            Last expression result\n",
-        Color::CYAN,
-        Color::RESET
-    ));
-    repl.print(format_args!(
-        "  {}_error{}       Last error\n",
-        Color::CYAN,
-        Color::RESET
-    ));
+    pretty!("\n<b>Keybindings:<r>\n");
+    pretty!("  <cyan>Ctrl+A<r>       Move to start of line\n");
+    pretty!("  <cyan>Ctrl+E<r>       Move to end of line\n");
+    pretty!("  <cyan>Ctrl+B/F<r>     Move backward/forward one character\n");
+    pretty!("  <cyan>Alt+B/F<r>      Move backward/forward one word\n");
+    pretty!("  <cyan>Ctrl+U<r>       Delete to start of line\n");
+    pretty!("  <cyan>Ctrl+K<r>       Delete to end of line\n");
+    pretty!("  <cyan>Ctrl+W<r>       Delete word backward\n");
+    pretty!("  <cyan>Ctrl+D<r>       Delete character / Exit if line empty\n");
+    pretty!("  <cyan>Ctrl+L<r>       Clear screen\n");
+    pretty!("  <cyan>Ctrl+T<r>       Swap characters\n");
+    pretty!("  <cyan>Up/Down<r>      Navigate history\n");
+    pretty!("  <cyan>Tab<r>          Auto-complete / accept suggestion\n");
+    pretty!("  <cyan>Right/End<r>    Accept inline suggestion\n");
+    pretty!("\n<b>Special Variables:<r>\n");
+    pretty!("  <cyan>_<r>            Last expression result\n");
+    pretty!("  <cyan>_error<r>       Last error\n");
     repl.print(format_args!("\n"));
     ReplResult::SkipEval
 }
@@ -741,12 +671,7 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
         }
     };
 
-    repl.print(format_args!(
-        "{}Loading {}...{}\n",
-        Color::DIM,
-        BStr::new(filename),
-        Color::RESET
-    ));
+    pretty!("<d>Loading {}...<r>\n", BStr::new(filename));
     repl.evaluate_and_print(&content);
     ReplResult::SkipEval
 }
@@ -784,12 +709,7 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
         }
     }
 
-    repl.print(format_args!(
-        "{}Session saved to {}{}\n",
-        Color::GREEN,
-        BStr::new(filename),
-        Color::RESET
-    ));
+    pretty!("<green>Session saved to {}<r>\n", BStr::new(filename));
     ReplResult::SkipEval
 }
 
@@ -797,11 +717,7 @@ fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
     if repl.input_mode == InputMode::Multiline {
         return ReplResult::SkipEval;
     }
-    repl.print(format_args!(
-        "{}// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel){}\n",
-        Color::DIM,
-        Color::RESET
-    ));
+    pretty!("<d>// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)<r>\n");
     repl.input_mode = InputMode::Editor;
     repl.editor_buffer.clear();
     ReplResult::SkipEval
@@ -816,11 +732,7 @@ fn cmd_break(repl: &mut Repl, _: &[u8]) -> ReplResult {
 }
 
 fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
-    repl.print(format_args!(
-        "\n{}Command History:{}\n",
-        Color::BOLD,
-        Color::RESET
-    ));
+    pretty!("\n<b>Command History:<r>\n");
     let start = if repl.history.entries.len() > 20 {
         repl.history.entries.len() - 20
     } else {
@@ -828,13 +740,7 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
     };
     for (i, entry) in repl.history.entries[start..].iter().enumerate() {
         let i = i + start;
-        repl.print(format_args!(
-            "  {}{:>4}{}  {}\n",
-            Color::DIM,
-            i + 1,
-            Color::RESET,
-            BStr::new(entry)
-        ));
+        pretty!("  <d>{:>4}<r>  {}\n", i + 1, BStr::new(entry));
     }
     repl.print(format_args!("\n"));
     ReplResult::SkipEval
@@ -2332,13 +2238,9 @@ impl<'a> Repl<'a> {
 
         // Print welcome message
         self.print(format_args!("Welcome to Bun v{}\n", VERSION));
-        self.print(format_args!(
-            "Type {}.copy [code]{} to copy to clipboard. {}.help{} for more info.\n\n",
-            Color::CYAN,
-            Color::RESET,
-            Color::CYAN,
-            Color::RESET
-        ));
+        pretty!(
+            "Type <cyan>.copy [code]<r> to copy to clipboard. <cyan>.help<r> for more info.\n\n"
+        );
 
         self.running = true;
         self.refresh_line();
@@ -2561,11 +2463,7 @@ impl<'a> Repl<'a> {
                 }
             } else {
                 self.print_error(format_args!("Unknown command: {}\n", BStr::new(cmd_name)));
-                self.print(format_args!(
-                    "Type {}.help{} for available commands\n",
-                    Color::CYAN,
-                    Color::RESET
-                ));
+                pretty!("Type <cyan>.help<r> for available commands\n");
                 self.line_editor.clear();
                 self.refresh_line();
                 return Ok(());
@@ -2624,11 +2522,7 @@ impl<'a> Repl<'a> {
         self.leave_input(if cancels_line { b"^C" } else { b"" });
         match self.input_mode {
             InputMode::Editor => {
-                self.print(format_args!(
-                    "{}// Editor mode cancelled{}\n",
-                    Color::DIM,
-                    Color::RESET
-                ));
+                pretty!("<d>// Editor mode cancelled<r>\n");
                 self.input_mode = InputMode::Normal;
                 self.editor_buffer.clear();
             }
@@ -2646,11 +2540,7 @@ impl<'a> Repl<'a> {
             }
             InputMode::Normal => {
                 self.ctrl_c_pressed = true;
-                self.print(format_args!(
-                    "{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
-                    Color::DIM,
-                    Color::RESET
-                ));
+                pretty!("<d>(press Ctrl+C again to exit, or Ctrl+D)<r>\n");
             }
         }
         self.history.reset_position();
@@ -2691,12 +2581,7 @@ impl<'a> Repl<'a> {
             } else if matches.len() > 1 {
                 self.leave_input(b"");
                 for m in &matches {
-                    self.print(format_args!(
-                        "  {}{}{}\n",
-                        Color::CYAN,
-                        BStr::new(m),
-                        Color::RESET
-                    ));
+                    pretty!("  <cyan>{}<r>\n", BStr::new(m));
                 }
                 self.refresh_line();
             }
@@ -2807,12 +2692,7 @@ impl<'a> Repl<'a> {
                 if item.is_string() {
                     match item.to_utf8(global) {
                         Ok(slice) => {
-                            self.print(format_args!(
-                                "  {}{}{}\n",
-                                Color::CYAN,
-                                BStr::new(slice.slice()),
-                                Color::RESET
-                            ));
+                            pretty!("  <cyan>{}<r>\n", BStr::new(slice.slice()));
                         }
                         Err(_) => {
                             global.clear_exception();
@@ -2826,12 +2706,7 @@ impl<'a> Repl<'a> {
             self.refresh_line();
         } else {
             self.leave_input(b"");
-            self.print(format_args!(
-                "{}{} completions{}\n",
-                Color::DIM,
-                len,
-                Color::RESET
-            ));
+            pretty!("<d>{} completions<r>\n", len);
             self.refresh_line();
         }
     }

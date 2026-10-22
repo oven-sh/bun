@@ -446,6 +446,14 @@ private:
          * parsed as HTTP and keep flowing below. */
         if constexpr (IsNodeHttp) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) && !httpResponseData->isConnectRequest) {
+                /* Like llhttp, a failed parser reports its error again for every read a 'clientError' listener lets through. */
+                HttpParserError parseError = ((HttpResponseData<SSL, true> *) httpResponseData)->parseError;
+                if (parseError != HTTP_PARSER_ERROR_NONE && httpContextData->onClientError) {
+                    httpContextData->onClientError(SSL, s, parseError, data, length);
+                    if (us_socket_is_closed(s)) {
+                        return s;
+                    }
+                }
                 us_socket_unref(s);
                 return s;
             }
@@ -671,11 +679,6 @@ private:
                 ((HttpResponse<SSL> *) s)->resetTimeout();
             }
 
-            /* Derived here too, because a Content-Length: 0 head completed from the fallback buffer gets no data callback. */
-            if constexpr (!IsNodeHttp) {
-                httpResponseData->parkAtNextBoundary = (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) != 0;
-            }
-
             /* Continue parsing */
             return s;
 
@@ -786,7 +789,7 @@ private:
                     return nullptr;
                 }
             }
-            /* The handler can complete the response from this body callback. */
+            /* Every request gets a fin, with or without a body. The handler can complete the response from this callback. */
             if constexpr (!IsNodeHttp) {
                 if (fin) {
                     httpResponseData->parkAtNextBoundary = (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) != 0;
@@ -809,6 +812,7 @@ private:
              * parsing further requests on this connection. */
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+                ((HttpResponseData<SSL, true> *) httpResponseData)->parseError = result.parserError;
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
@@ -837,10 +841,7 @@ private:
              * them first. */
             ((AsyncSocket<SSL> *) s)->uncork();
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
-            /* RFC 9112 9.6: nothing follows a complete response that closes the connection. */
-            if (!httpResponseData->isDrainingBeforeClose()) {
-                us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
-            }
+            us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
             us_socket_shutdown(s);
             /* Close any socket on HTTP errors */
             us_socket_close(s, 0, nullptr);
@@ -900,11 +901,15 @@ private:
                 ((HttpResponse<SSL> *) s)->resetTimeout();
             }
 
-            /* Reads stay paused while requests are parked, so a connection parks at most one read. markDone() requests
-             * the replay, unless the response completed before the park. */
+            /* markDone() requests the replay, unless the response completed before the park. */
             if constexpr (!IsNodeHttp) {
                 if (!httpResponseData->parkedRequestBytes.isEmpty()) [[unlikely]] {
-                    ((AsyncSocket<SSL> *) s)->pause();
+                    /* Keep reading until a read's worth is parked, so the peer's FIN still reaches onEnd and aborts the pending response. */
+                    if (httpResponseData->parkedRequestBytes.size() >= LIBUS_RECV_BUFFER_LENGTH) {
+                        /* This pause lifts when the response ahead has drained, and after a hangup it never does. */
+                        s->hangup_closes_unsent = 1;
+                        ((AsyncSocket<SSL> *) s)->pause();
+                    }
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                         us_socket_request_writable(s);
                     }

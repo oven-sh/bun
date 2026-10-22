@@ -1,9 +1,12 @@
 #[cfg(target_os = "freebsd")]
 use core::ptr;
 
-use bun_core::feature_flags;
+use bun_core::{RacyCell, feature_flags};
 use bun_sys::{self, Fd};
 use bun_url::URL;
+
+// Zero-initialized so it lands in .bss.
+static COPY_BUFFER: RacyCell<[u8; 256 * 1024]> = RacyCell::new([0; 256 * 1024]);
 
 #[derive(Copy, Clone)]
 pub struct SendFile {
@@ -33,7 +36,8 @@ impl SendFile {
         &mut self,
         mut send: impl FnMut(&[u8]) -> crate::Result<usize>,
     ) -> Status {
-        let buf = crate::file_body_copy_buffer();
+        // SAFETY: only the HTTP thread sends requests, and every pass refills the buffer before `send` reads it.
+        let buf = unsafe { &mut *COPY_BUFFER.get() };
         // Start small and double. A writable event can mean very little room.
         let mut chunk: usize = 16 * 1024;
         loop {

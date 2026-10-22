@@ -423,30 +423,6 @@ describe.concurrent("sends Connection: close in the last response on a connectio
     expect(result).toEqual({ status: "HTTP/1.1 200 OK", connection: ["connection: close"], dates: 1 });
   });
 
-  test.each([
-    ["the handler's Connection: close", "GET /close HTTP/1.1\r\nHost: x\r\n\r\n", "HTTP/1.1 200"],
-    ["a 413", "POST /string HTTP/1.1\r\nHost: x\r\nContent-Length: 11\r\n\r\nhello world", "HTTP/1.1 413"],
-    ["a 501", "FOO /string HTTP/1.1\r\nHost: x\r\n\r\n", "HTTP/1.1 501"],
-  ])("sends no 400 for a malformed request behind %s", async (_name, request, status) => {
-    using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      maxRequestBodySize: 10,
-      fetch: req => handlers[new URL(req.url).pathname](),
-    });
-    const socket = net.connect(server.port, "127.0.0.1");
-    try {
-      let raw = "";
-      socket.on("data", chunk => (raw += chunk.toString("latin1")));
-      const closed = once(socket, "close");
-      socket.write(request + "not a request\r\n\r\n");
-      await closed;
-      expect(raw.match(/HTTP\/1\.1 \d+/g)).toEqual([status]);
-    } finally {
-      socket.destroy();
-    }
-  });
-
   // https://github.com/oven-sh/bun/issues/43853
   test("node:http's default agent doesn't reuse the closed socket", async () => {
     using server = Bun.serve({

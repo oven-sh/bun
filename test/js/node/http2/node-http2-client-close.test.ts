@@ -7,7 +7,8 @@
  * After close() or destroy(), a client stream ignores header blocks from the same socket read.
  *
  * When the readable side ends on a stream that stays open:
- *   END_STREAM on a HEADERS frame -> the readable gets its EOF, and 'end' waits for a consumer
+ *   END_STREAM on a HEADERS frame -> the readable gets its EOF, and 'end' waits for a consumer. On Bun an
+ *                                    'end' listener that's already attached counts as one.
  *   END_STREAM on a DATA frame    -> the same, and an empty readable emits 'end' at once
  *   both halves closed            -> a server stream nobody read is dumped, any other stream is read
  *
@@ -615,10 +616,12 @@ const seen = (stream: http2.Http2Stream): Seen => ({
 });
 const untouched: Seen = { readableFlowing: null, readableEnded: false };
 
-const record = (stream: http2.Http2Stream, events: string[]) => {
-  for (const name of ["aborted", "end", "finish", "close"]) stream.on(name, () => events.push(name));
+const record = (stream: http2.Http2Stream, events: string[], names = ["aborted", "end", "finish", "close"]) => {
+  for (const name of names) stream.on(name, () => events.push(name));
   stream.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
 };
+// For streams that have to keep their EOF unread. On Bun an early 'end' listener reads it.
+const withoutEnd = ["aborted", "finish", "close"];
 
 // Sends one request. Its 'stream' listener awaits `wait`, reads the request with `consume` and
 // answers with the body. Returns the stream's state after the wait, and the answer.
@@ -649,11 +652,12 @@ async function serverStreamEvents(
   transport: Transport,
   frames: readonly Buffer[],
   scenario: (stream: http2.ServerHttp2Stream, peer: RawPeer, events: string[]) => unknown,
+  names?: string[],
 ) {
   const events: string[] = [];
   const closed = Promise.withResolvers<void>();
   const { peer, until, close } = await rawConnection(transport, (stream, peer) => {
-    record(stream, events);
+    record(stream, events, names);
     stream.on("close", closed.resolve);
     scenario(stream, peer, events);
   });
@@ -719,8 +723,12 @@ for (const transport of transports) {
       });
     }
 
-    test("emits no 'end' while nothing reads the stream", async () => {
-      assert.deepStrictEqual(await afterFrames(transport, requestThatEndsOn["HEADERS"]), { events: [], ...untouched });
+    // Node holds 'end' back here too, so a handler that only waits for 'end' before it answers hangs there.
+    test("emits 'end' for a listener the 'stream' event attached, even if nothing reads the stream", async () => {
+      const expected = process.versions.bun
+        ? { events: ["end"], readableFlowing: true, readableEnded: true }
+        : { events: [], ...untouched };
+      assert.deepStrictEqual(await afterFrames(transport, requestThatEndsOn["HEADERS"]), expected);
     });
 
     test("ends and closes once it's answered, even if nothing read it", async () => {
@@ -754,11 +762,16 @@ for (const transport of transports) {
     test("ends for a late reader that calls close(code)", async () => {
       const actual: Record<string, string[]> = {};
       for (const code of [NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR]) {
-        actual[code] = await serverStreamEvents(transport, requestThatEndsOn["HEADERS"], async stream => {
-          await waits["setImmediate"]();
-          stream.resume();
-          stream.close(code);
-        });
+        actual[code] = await serverStreamEvents(
+          transport,
+          requestThatEndsOn["HEADERS"],
+          async (stream, _peer, events) => {
+            await waits["setImmediate"]();
+            stream.on("end", () => events.push("end")).resume();
+            stream.close(code);
+          },
+          withoutEnd,
+        );
       }
       assert.deepStrictEqual(actual, {
         [NGHTTP2_NO_ERROR]: ["aborted", "finish", "end", "close"],
@@ -905,46 +918,23 @@ for (const transport of transports) {
 }
 
 describe("a stream that errors after both halves have closed", () => {
-  // write() after the response ended errors the stream, so it never emits 'end'.
-  const answers: Record<string, (stream: http2.ServerHttp2Stream) => void> = {
-    "respond({ endStream: true })": stream => stream.respond({ ":status": 200 }, { endStream: true }),
-    "respond(), end()": stream => {
-      stream.respond({ ":status": 200 });
-      stream.end();
-    },
-  };
-  for (const [answerName, respond] of Object.entries(answers)) {
-    for (const [waitName, wait] of Object.entries(waits)) {
-      test(`server: ${answerName} after ${waitName}, then write()`, async () => {
-        const events = await serverStreamEvents("TCP", requestThatEndsOn["HEADERS"], async stream => {
+  // write() after end() errors the stream, so it never emits 'end'.
+  for (const [waitName, wait] of Object.entries(waits)) {
+    test(`server: respond(), end() after ${waitName}, then write()`, async () => {
+      const events = await serverStreamEvents(
+        "TCP",
+        requestThatEndsOn["HEADERS"],
+        async stream => {
           await wait();
-          respond(stream);
+          stream.respond({ ":status": 200 });
+          stream.end();
           stream.write("late");
-        });
-        assert.deepStrictEqual(events, ["finish", "error:ERR_STREAM_WRITE_AFTER_END", "close"]);
-      });
-    }
-  }
-
-  // respond() ends the response to a HEAD request itself. Node doesn't emit 'finish' for it.
-  test("server: respond() to a HEAD request after setImmediate, then write()", async () => {
-    const head = hp([
-      [":method", "HEAD"],
-      [":scheme", "http"],
-      [":path", "/"],
-      [":authority", "localhost"],
-    ]);
-    const request = [frame(F.HEADERS, END_HEADERS | END_STREAM, 1, head)];
-    const events = await serverStreamEvents("TCP", request, async stream => {
-      await waits["setImmediate"]();
-      stream.respond({ ":status": 200 });
-      stream.write("late");
+        },
+        withoutEnd,
+      );
+      assert.deepStrictEqual(events, ["finish", "error:ERR_STREAM_WRITE_AFTER_END", "close"]);
     });
-    assert.deepStrictEqual(
-      events.filter(name => name !== "finish"),
-      ["error:ERR_STREAM_WRITE_AFTER_END", "close"],
-    );
-  });
+  }
 
   test("client: end(), then write(), after a response that ended on HEADERS", async () => {
     const server = rawH2Server(sid => [frame(F.HEADERS, END_HEADERS | END_STREAM, sid, hp([[":status", "204"]]))]);
@@ -953,7 +943,7 @@ describe("a stream that errors after both halves have closed", () => {
       const req = client.request({ ":method": "POST", ":path": "/" });
       const events: string[] = [];
       const closed = Promise.withResolvers<void>();
-      record(req, events);
+      record(req, events, withoutEnd);
       req.on("close", closed.resolve);
       await EventEmitter.once(req, "response");
       await waits["setImmediate"]();
@@ -967,6 +957,44 @@ describe("a stream that errors after both halves have closed", () => {
     }
   });
 });
+
+// respond() ends the response to a HEAD request itself. Node emits 'error' for the write(), which is uncaught here.
+test(
+  "a handler that awaits and then answers HEAD like GET doesn't crash the server",
+  { skip: !process.versions.bun },
+  async () => {
+    const script = `
+    const http2 = require("node:http2");
+    const server = http2.createServer();
+    server.on("stream", async stream => {
+      await new Promise(setImmediate);
+      stream.respond({ ":status": 200 });
+      stream.write("body");
+      stream.end();
+    });
+    server.listen(0, "127.0.0.1", async () => {
+      const client = http2.connect("http://127.0.0.1:" + server.address().port);
+      const results = [];
+      for (const method of ["HEAD", "GET"]) {
+        const req = client.request({ ":method": method, ":path": "/" });
+        const result = { method, body: "" };
+        req.on("response", headers => (result.status = headers[":status"]));
+        req.on("data", chunk => (result.body += chunk));
+        await new Promise(resolve => req.on("close", resolve));
+        results.push({ ...result, rstCode: req.rstCode });
+      }
+      console.log(JSON.stringify(results));
+      client.close();
+      server.close();
+    });
+  `;
+    const { stdout } = await promisify(execFile)(process.execPath, ["-e", script]);
+    assert.deepStrictEqual(JSON.parse(stdout), [
+      { method: "HEAD", body: "", status: 200, rstCode: 0 },
+      { method: "GET", body: "body", status: 200, rstCode: 0 },
+    ]);
+  },
+);
 
 describe("a client stream whose response ends on a HEADERS frame", () => {
   const NO_CONTENT = hp([[":status", "204"]]);

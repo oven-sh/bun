@@ -2551,6 +2551,19 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(mockHandler).not.toHaveBeenCalled();
     });
 
+    test("emits 'clientError' again for each read after a parse error when the listener keeps the socket", async () => {
+      const packets: string[] = [];
+      const client = connect(port, "127.0.0.1");
+      server.on("clientError", (err: any, socket) => {
+        packets.push(`${err.code} ${err.rawPacket}`);
+        if (packets.length === 3) socket.destroy();
+        else client.write(`*${packets.length}`);
+      });
+      client.write("*0");
+      await once(client, "close");
+      expect(packets).toEqual(["HPE_INVALID_METHOD *0", "HPE_INVALID_METHOD *1", "HPE_INVALID_METHOD *2"]);
+    });
+
     test("rejects DEL in a header or trailer value unless the parser is lenient", async () => {
       const seen: string[] = [];
       const onRequest = (req, res) => {
@@ -4016,6 +4029,30 @@ it("standalone ServerResponse flushes the header block before a non-chunked Buff
   // Node emits 'prefinish' when the assigned socket's _httpMessage is the
   // response (OutgoingMessage.end -> _finish()).
   expect(sawPrefinish).toBe(true);
+});
+
+it("assignSocket() accepts serverless-http's socket stand-in, which has on() but no once()", async () => {
+  let out = "";
+  const noop = () => {};
+  const res = new ServerResponse(http11Req());
+  res.assignSocket({
+    _writableState: {},
+    writable: true,
+    on: noop,
+    removeListener: noop,
+    destroy: noop,
+    cork: noop,
+    uncork: noop,
+    write(data, encoding, cb) {
+      out += data;
+      (typeof encoding === "function" ? encoding : cb)?.();
+      return true;
+    },
+  } as any);
+  const finished = once(res, "finish");
+  res.end("hello");
+  await finished;
+  expect(out).toEndWith("\r\n\r\nhello");
 });
 
 it("standalone ServerResponse buffers writes made before assignSocket and flushes them on assignment", async () => {

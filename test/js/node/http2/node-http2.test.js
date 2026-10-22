@@ -7142,6 +7142,47 @@ describe("session teardown", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("delivers a response with trailers over a duplexPair() before the process exits", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        // An in-process pair owns no handle, so only queued ticks and frames keep the exchange going.
+        `const http2 = require("node:http2");
+        const { duplexPair } = require("node:stream");
+        const events = [];
+        process.on("exit", () => console.log(JSON.stringify(events)));
+        const server = http2.createServer();
+        server.on("stream", stream => {
+          process.nextTick(() => {
+            stream.respond({ ":status": 200 }, { waitForTrailers: true });
+            stream.on("wantTrailers", () => process.nextTick(() => stream.sendTrailers({ "x-trailer": "1" })));
+            stream.end("hello");
+          });
+        });
+        const [clientSide, serverSide] = duplexPair();
+        server.emit("connection", serverSide);
+        const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+        const req = client.request({ ":path": "/" });
+        req.setEncoding("utf8");
+        let body = "";
+        req.on("response", headers => events.push("response:" + headers[":status"]));
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => events.push("end:" + body));
+        req.on("close", () => events.push("close"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ events: JSON.parse(stdout), stderr }).toEqual({
+      events: ["response:200", "end:hello", "close"],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("client session destroys a transport that emits 'error' without closing", async () => {
     const [transport, peer] = duplexPair();
     peer.resume();
@@ -8321,9 +8362,12 @@ for (const secure of [true, false]) {
       const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();
       server.on("stream", stream => {
         stream.on("error", err => streamErrors.push(err.code));
+        // Wait for 'close'. Otherwise server.close() below can run between the last session's two HEADERS frames.
+        stream.on("close", () => {
+          if (++streams === 10) allStreams.resolve();
+        });
         stream.respond({ ":status": 200 });
         stream.end("ok");
-        if (++streams === 10) allStreams.resolve();
       });
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
       // In a process of its own: each client is gone by the time this loop answers it.

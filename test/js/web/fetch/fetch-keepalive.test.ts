@@ -578,6 +578,14 @@ test.concurrent.each([
   ["POST -> 307", "/307", '{ method: "POST", body: "payload" }', "POST:7", 5],
   ["POST -> 307, then the server closes", "/307-end", '{ method: "POST", body: "payload" }', "POST:7", 5],
   ["PUT -> 307, then the server closes (hop is retried)", "/307-end", '{ method: "PUT", body: "payload" }', "PUT:7", 5],
+  // Neither can a hop that uploads straight from a file. Windows reads the file into memory first.
+  [
+    "PUT of a Bun.file() -> 307",
+    "/307",
+    '{ method: "PUT", body: Bun.file(process.execPath).slice(0, 40000) }',
+    "PUT:40000",
+    isWindows ? 1 : 5,
+  ],
 ])("redirect keep-alive: %s", async (_, path, init, hopBody, connections) => {
   await using proc = Bun.spawn({
     cmd: [

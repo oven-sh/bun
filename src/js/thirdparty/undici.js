@@ -182,7 +182,8 @@ function toHeaders(input) {
     if ($isJSArray(value)) for (let i = 0; i < value.length; i++) headers.append(name, value[i]);
     else if (value !== undefined) headers.append(name, value === null ? "" : value);
   };
-  if ($isJSArray(input)) {
+  // An array of [name, value] pairs, which fetch() takes, is read by the iterable branch.
+  if ($isJSArray(input) && !$isJSArray(input[0])) {
     if (input.length % 2 !== 0) throw new InvalidArgumentError("headers array must be even");
     for (let i = 0; i < input.length; i += 2) append(input[i], input[i + 1]);
   } else if (input[Symbol.iterator]) {
@@ -399,7 +400,10 @@ class Dispatcher extends EventEmitter {
 }
 
 // Maps a dispatcher's `connect` options, which undici passes to tls.connect(), to native fetch() options.
-function connectToFetchOptions(connect, socketPath = connect?.socketPath) {
+function connectToFetchOptions(connect, socketPath) {
+  // A connector function has no options. Its own properties must not relax TLS while the function itself is ignored.
+  if ($isCallable(connect)) connect = undefined;
+  socketPath ??= connect?.socketPath;
   const tls = connect && require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...connect });
   if (!tls && !socketPath) return undefined;
   return { __proto__: null, tls, unix: socketPath };
@@ -686,7 +690,9 @@ class ProxyAgent extends DispatcherBase {
     } else if (token) {
       headers["proxy-authorization"] = token;
     }
-    this[kFetchOptions] = { __proto__: null, ...connectToFetchOptions(opts.requestTls), proxy: { url, headers } };
+    // fetch()'s `tls` also covers the connection to an https: proxy, which requestTls must not relax.
+    const requestTls = url.startsWith("https:") ? undefined : connectToFetchOptions(opts.requestTls);
+    this[kFetchOptions] = { __proto__: null, ...requestTls, proxy: { url, headers } };
   }
 }
 
@@ -987,7 +993,10 @@ const redirectStatus = [301, 302, 303, 307, 308];
 
 // Returns true if `dispatcher` has its own dispatch(), which requests then have to go through.
 function hasOwnDispatch(dispatcher) {
-  return dispatcher != null && !dispatcher[kUsesFetch] && $isCallable(dispatcher.dispatch);
+  if (dispatcher == null || dispatcher[kUsesFetch]) return false;
+  const { dispatch } = dispatcher;
+  // BalancedPool only inherits the abstract dispatch(), which throws.
+  return $isCallable(dispatch) && dispatch !== Dispatcher.prototype.dispatch;
 }
 
 // Calls dispatcher.dispatch() and builds the Response from the handler callbacks.

@@ -242,6 +242,12 @@ export const lsquic: Dependency = {
     // alert, as a version negotiation failure. Applies on top of
     // abort-error-code-zero.
     "patches/lsquic/local-transport-error.patch",
+    // lsquic_stream_force_reset_ext() resets the send side only, but it dropped a
+    // MAX_STREAM_DATA that was queued for the read side. The receive limit had
+    // already moved, so no later read queued the frame again and the peer stayed
+    // blocked. It takes a reset between lsquic_stream_hold_window(s, 0) and the
+    // next tick. Applies on top of node-quic-accessors.
+    "patches/lsquic/reset-keeps-window-update.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

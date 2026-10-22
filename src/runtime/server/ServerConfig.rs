@@ -686,10 +686,6 @@ impl ServerConfig {
         self.bake.is_some()
     }
 
-    pub(crate) fn drop_dev_server_options(&mut self) {
-        self.bake = None;
-    }
-
     pub(crate) fn from_js(
         global: &JSGlobalObject,
         arguments: &mut bun_jsc::call_frame::ArgumentsSlice,

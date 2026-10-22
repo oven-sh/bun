@@ -2039,7 +2039,7 @@ where
             return Ok(());
         }
         self.init_dev_server()
-            .inspect_err(|_| self.config.drop_dev_server_options())
+            .inspect_err(|_| self.config.bake = None)
     }
 
     pub(crate) fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
@@ -2219,12 +2219,7 @@ where
             // SAFETY: JsClass::from_js returns a live *mut Request.
             // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
             // sentinel and calls `clone_into(.., preserve_url=false)`.
-            match unsafe { (*request_).clone(&ctx.js_thread_of_caller(callframe)) } {
-                Ok(cloned) => cloned,
-                Err(err) => {
-                    return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
-                }
-            }
+            unsafe { (*request_).clone(&ctx.js_thread_of_caller(callframe))? }
         } else {
             let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));

@@ -254,7 +254,8 @@ pub(crate) fn report_unreachable(host: &[u8], port: u16) {
     let until = timestamp() + BROKEN_SECS;
     for (origin, rec) in cache().iter_mut() {
         // Alternatives are same-host, so the origin's key is `host:<origin port>`.
-        let origin_host = origin.rsplitn(2, |&b| b == b':').nth(1).unwrap_or_default();
+        let colon = strings::last_index_of_char(origin, b':').unwrap_or(0);
+        let origin_host = &origin[..colon];
         if rec.h3_port == port && bun_url::strip_ipv6_brackets(origin_host) == host {
             rec.broken_until = until;
         }

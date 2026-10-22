@@ -535,6 +535,16 @@ impl ReadableStream {
         blob: &Blob,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
+        Self::from_body_blob(cx, blob, recommended_chunk_size, false)
+    }
+
+    /// [`Self::from_blob_copy_ref`] for the bytes of a body. `to_any_blob` returns `was_string` with them.
+    pub(crate) fn from_body_blob(
+        cx: &bun_jsc::JsThread<'_>,
+        blob: &Blob,
+        recommended_chunk_size: webcore::blob::SizeType,
+        was_string: bool,
+    ) -> JsResult<JSValue> {
         let Some(store) = blob.store.get() else {
             return ReadableStream::empty(cx.global());
         };
@@ -546,6 +556,7 @@ impl ReadableStream {
                     ..Default::default()
                 });
                 reader.context.setup(blob, recommended_chunk_size);
+                reader.context.was_string = was_string;
                 reader.to_readable_stream(cx)
             }
             webcore::blob::store::Data::File(_) => {

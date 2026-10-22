@@ -202,6 +202,7 @@ impl ClientSession {
             if let Some(qs) = stream.qstream_mut() {
                 qs.hold_window(paused);
             }
+            client.drain_response_body_h3();
             return true;
         }
         false
@@ -463,13 +464,14 @@ impl ClientSession {
                 let client = client_mut(client_ptr);
                 return finish(client);
             }
+            // Also without a report: a paused consumer's body arrived whole and waits undecoded, and the update that ends it frees `client`.
+            if client.state.is_done() {
+                self.detach(stream);
+                // SAFETY: re-derive — detach() invalidated the prior Unique tag.
+                let client = client_mut(client_ptr);
+                return client.progress_update_h3();
+            }
             if report {
-                if client.state.is_done() {
-                    self.detach(stream);
-                    // SAFETY: re-derive — detach() invalidated the prior Unique tag.
-                    let client = client_mut(client_ptr);
-                    return client.progress_update_h3();
-                }
                 client.progress_update_h3();
             }
             return;
@@ -479,7 +481,10 @@ impl ClientSession {
             self.detach(stream);
             // SAFETY: re-derive — detach() invalidated the prior Unique tag.
             let client = client_mut(client_ptr);
-            if let Err(err) = client.state.finalize_body_on_eof() {
+            if client.state.has_pending_compressed() {
+                // `finalize_body_on_eof` would decode all of it at once. The consumer's last pass makes the same check.
+                client.state.flags.received_last_chunk = true;
+            } else if let Err(err) = client.state.finalize_body_on_eof() {
                 return client.fail_from_h2(err);
             }
             return finish(client);
@@ -569,6 +574,16 @@ pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
 pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     // SAFETY: see INVARIANT above.
     unsafe { &mut *p }
+}
+
+/// Fails a request whether or not it's still on a stream.
+pub(crate) fn fail_client(client: &mut HTTPClient, err: crate::Error) {
+    match client.h3 {
+        Some(stream) => stream_mut(stream.as_ptr())
+            .session_mut()
+            .fail(stream.as_ptr(), err),
+        None => client.fail_from_h2(err),
+    }
 }
 
 fn finish(client: &mut HTTPClient) {

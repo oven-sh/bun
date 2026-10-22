@@ -26,6 +26,14 @@ test.each(["BASE64", "Base64", " base64", "base64 "])("should treat %j as the ba
   expect(mod.default).toBe(marker);
 });
 
+test("should import base64 in the URL-safe alphabet", async () => {
+  const base64 = btoa('export default ">?>~~?>";');
+  expect(base64).toContain("+");
+  expect(base64).toContain("/");
+  const mod = await import("data:text/javascript;base64," + base64.replaceAll("+", "-").replaceAll("/", "_"));
+  expect(mod.default).toBe(">?>~~?>");
+});
+
 // data: URLs carry the module source inline and never touch the filesystem,
 // so no path-length limit applies. 200000 exceeds the largest platform cap
 // (Windows, ~147 KB); the smallest (macOS) is ~1.5 KB.

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
   Agent,
+  BalancedPool,
   Client,
   Dispatcher,
   // @ts-ignore undici 5's types don't declare EnvHttpProxyAgent
@@ -524,6 +525,15 @@ describe("undici dispatchers", () => {
 
     it.each([
       ["a flat array", ["x-a", "1", "x-b", "2"], { "x-a": "1", "x-b": "2" }],
+      ["an array of one pair", [["x-a", "1"]], { "x-a": "1" }],
+      [
+        "an array of pairs",
+        [
+          ["x-a", "1"],
+          ["x-b", "2"],
+        ],
+        { "x-a": "1", "x-b": "2" },
+      ],
       ["array values", { "x-a": ["1", "2"], "x-b": undefined }, { "x-a": "1, 2" }],
       ["an iterable of pairs", new Map([["x-a", "1"]]), { "x-a": "1" }],
       ["a Headers object", new Headers({ "x-a": "1" }), { "x-a": "1" }],
@@ -814,6 +824,18 @@ describe("undici dispatchers", () => {
       }
     });
 
+    it("ignores the own properties of a connect function", async () => {
+      using secure = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("secure") });
+      const connect = Object.assign(() => {}, { rejectUnauthorized: false });
+      const dispatcher = new Agent({ connect });
+      expect(
+        await undiciFetch(`https://127.0.0.1:${secure.port}/`, { dispatcher }).then(
+          response => response.text(),
+          e => e.code,
+        ),
+      ).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    });
+
     it("rejects requests through a dispatcher with a connect function, which can't run", async () => {
       const pool = new Pool(origin, { connect: (_options, callback) => callback(new Error("unreached"), null) });
       expect(await pool.request({ path: "/echo", method: "GET" }).catch(e => e)).toMatchObject({
@@ -1027,6 +1049,20 @@ describe("undici dispatchers", () => {
         "DEPTH_ZERO_SELF_SIGNED_CERT",
       );
       expect(takeProxied()).toEqual(Array(2).fill({ target: `127.0.0.1:${secure.port}` }));
+    });
+
+    it("still verifies an https: proxy when requestTls has rejectUnauthorized: false", async () => {
+      using secureProxy = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("reached") });
+      const dispatcher = new ProxyAgent({
+        uri: `https://127.0.0.1:${secureProxy.port}`,
+        requestTls: { rejectUnauthorized: false },
+      });
+      expect(
+        await undiciFetch(`${origin}/echo`, { dispatcher }).then(
+          response => response.text(),
+          e => e.code,
+        ),
+      ).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
     });
 
     it.each([
@@ -1488,6 +1524,21 @@ describe("undici dispatchers", () => {
       expect((await native.request({ path: "/echo", method: "GET" })).statusCode).toBe(200);
       await dispatcher.close();
       expect(inner.pool.closed).toBe(true);
+    });
+
+    it.each([
+      ["BalancedPool", () => new BalancedPool(origin)],
+      ["Dispatcher", () => new Dispatcher()],
+    ])("sends the request natively when the dispatcher is a %s without its own dispatch()", async (_, create) => {
+      expect((await undiciFetch(`${origin}/echo`, { dispatcher: create() })).status).toBe(200);
+      expect((await request(`${origin}/echo`, { dispatcher: create() })).statusCode).toBe(200);
+      const previous = getGlobalDispatcher();
+      setGlobalDispatcher(create());
+      try {
+        expect((await undiciFetch(`${origin}/echo`)).status).toBe(200);
+      } finally {
+        setGlobalDispatcher(previous);
+      }
     });
   });
 });

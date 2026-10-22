@@ -437,8 +437,7 @@ describe("HTTP/3 header blocks with no field lines", () => {
       await client.opened;
       const exchange = async () => {
         const events: string[] = [];
-        const log = (name: string) => (headers: Record<string, string>) =>
-          void events.push(`${name} ${JSON.stringify(headers)}`);
+        const log = (name: string) => (headers: object) => void events.push(`${name} ${JSON.stringify(headers)}`);
         const stream = await client.createBidirectionalStream({
           headers: get,
           oninfo: log("info"),
@@ -705,7 +704,7 @@ describe("STOP_SENDING on a stream whose send side is finished", () => {
       await serverSession.sendDatagram(new Uint8Array(1));
       await acknowledged.server.promise;
 
-      const stats = client.endpoint.stats;
+      const stats = client.endpoint!.stats;
       const sentBefore = stats.packetsSent;
       abort(stream);
       expect(stats.packetsSent).toBeGreaterThan(sentBefore);
@@ -993,6 +992,66 @@ describe("stream flow control", () => {
     }
   });
 
+  test("resetStream() in the callback whose reads unblock the sender doesn't leave the sender blocked", async () => {
+    const body = pattern(2 * 1024 * 1024, 11);
+    const received = Promise.withResolvers<Uint8Array>();
+    let receiver: any;
+    let stalledAt = -1n;
+    let stalled = false;
+    // Packets go out when a native callback returns, so the reads and the reset share one flush.
+    async function readThenReset() {
+      const chunks: Uint8Array[] = [];
+      let got = 0n;
+      for await (const batch of receiver) {
+        chunks.push(...batch);
+        for (const chunk of batch) got += BigInt(chunk.byteLength);
+        if (got === stalledAt) receiver.resetStream(1n);
+      }
+      return Buffer.concat(chunks);
+    }
+    await using server = await listen(
+      session => {
+        session.onerror = () => {};
+        session.closed.catch(() => {});
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          if (!receiver) return void (receiver = stream);
+          stream.writer.endSync();
+          if (stalled) readThenReset().then(received.resolve, received.reject);
+        };
+      },
+      { sni, alpn: ["quic-test"], transportParams: { initialMaxStreamDataBidiRemote: 64 * 1024 } },
+    );
+    const client = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    try {
+      await client.opened;
+      const sender = await client.createBidirectionalStream({ body });
+      sender.closed.catch(() => {});
+      const roundTrip = async () => {
+        const stream = await client.createBidirectionalStream({ body: new Uint8Array(1) });
+        await stream.closed;
+      };
+      while (stalledAt !== sender.stats.bytesSent) {
+        stalledAt = sender.stats.bytesSent;
+        await roundTrip();
+        await roundTrip();
+      }
+      expect(Number(stalledAt)).toBeLessThan(body.length);
+      stalled = true;
+      await roundTrip();
+
+      expect(summary(await received.promise)).toEqual(summary(body));
+    } finally {
+      client.close();
+    }
+  });
+
   // Without an idle timeout, a FIN that's never sent can't pass for the clean end of an idle session.
   describe("a FIN on a stream that has no credit", () => {
     const empty = new Uint8Array(0);
@@ -1096,7 +1155,7 @@ describe("a client's limit for the streams its server opens", () => {
         advertised: kind === "bidi" ? initialMaxStreamsBidi : initialMaxStreamsUni,
         outcome: await Promise.race([openAll(), closed]),
         received,
-      }).toEqual({ advertised: 2n, outcome: "opened all", received: ids });
+      }).toEqual({ advertised: 2n, outcome: "opened all", received: [...ids] });
     } finally {
       client.close();
     }

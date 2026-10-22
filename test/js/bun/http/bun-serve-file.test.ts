@@ -2286,7 +2286,8 @@ test.concurrent.each([true, false])(
       ...(isWindows ? [] : [`${name} /sub 404 Not Found 0 `]),
       ...(canDeny ? [`${name} /noperm.txt 403 Forbidden 0 `] : []),
     ];
-    const codes = ["ENOENT", "ENOTDIR", ...(isWindows ? [] : ["EISDIR"]), ...(canDeny ? ["EACCES"] : [])];
+    // Windows reports a path below a regular file as ENOENT.
+    const codes = ["ENOENT", ...(isWindows ? ["ENOENT"] : ["ENOTDIR", "EISDIR"]), ...(canDeny ? ["EACCES"] : [])];
     expect({ stdout: stdout.split("\n"), stderr }).toEqual({
       stdout: [
         ...defaults("none"),

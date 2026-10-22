@@ -1222,7 +1222,7 @@ class Http2ServerResponse extends Stream {
     const linkHeaderValue = validateLinkHeaderValue(hints.link);
     for (const key of ObjectKeys(hints)) {
       if (key !== "link") {
-        const name = key.trim().toLowerCase();
+        const name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(key));
         assertValidHeader(name, hints[key]);
         if (!checkIsHttpToken(name)) {
           throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
@@ -2087,9 +2087,15 @@ function endInboundHalf(stream: Http2Stream) {
   pushToStream(stream, null);
 }
 
-// Like node, only END_STREAM on a DATA frame reads the EOF. streamHeaders already pushed a HEADERS frame's, and it waits for a reader.
 function endReadableAtHalfClose(stream: Http2Stream) {
-  if (!stream.readable || stream.closed || stream._readableState.ended) return;
+  if (!stream.readable || stream.closed) return;
+  if (stream._readableState.ended) {
+    // streamHeaders already pushed this EOF. It waits for a late reader, unless an 'end' listener with no reader is already waiting for it.
+    if (stream.readableFlowing === null && stream.readableLength === 0 && stream.listenerCount("end") > 0) {
+      stream.resume();
+    }
+    return;
+  }
   endInboundHalf(stream);
   stream.read(0);
 }
@@ -2131,6 +2137,8 @@ enum StreamState {
   HoldsRequestSlot = 1 << 11, // 100000000000 = 2048
   // The request HEADERS that opened this server stream carried END_STREAM.
   EndAfterHeaders = 1 << 12, // 1000000000000 = 4096
+  // respond() ended the writable side itself (HEAD, 204, 205, 304 or endStream).
+  EndedByRespond = 1 << 13, // 10000000000000 = 8192
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -3349,6 +3357,16 @@ class ServerHttp2Stream extends Http2Stream {
     if (!this._readableState.ended) this.once("finish", serverStreamOnFinish);
     super._final(callback);
   }
+  write(chunk, encoding?, callback?) {
+    // Drop a body written after respond() closed the stream, so a handler that answers HEAD like GET doesn't raise an uncaught 'error'.
+    const dropped = StreamState.NativeClosed | StreamState.EndedByRespond;
+    if ((this[bunHTTP2StreamStatus] & dropped) === dropped) {
+      if (typeof encoding === "function") callback = encoding;
+      if (typeof callback === "function") process.nextTick(callback, $ERR_STREAM_WRITE_AFTER_END());
+      return false;
+    }
+    return super.write(chunk, encoding, callback);
+  }
   // Node sends the implicit response headers (:status 200) when the stream is written to before
   // respond() was called; without this the DATA frames would go out with no preceding HEADERS.
   _write(chunk, encoding, callback) {
@@ -3766,6 +3784,8 @@ class ServerHttp2Stream extends Http2Stream {
     ) {
       endStream = true;
     }
+    // Read before the native call, which can close the stream and end the writable side.
+    const endedByRespond = endStream && !this._writableState.ending;
     const waitForTrailers = !endStream && !!options?.waitForTrailers;
     const sendDate = options?.sendDate;
     if (rawHeadersList === null && (sendDate == null || sendDate)) {
@@ -3794,6 +3814,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     this[bunHTTP2Headers] = headers;
     if (endStream) {
+      if (endedByRespond) this[bunHTTP2StreamStatus] |= StreamState.EndedByRespond;
       this.end();
     }
 

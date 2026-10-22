@@ -623,6 +623,7 @@ struct HttpResponseData;
          * and no trailer is surfaced, where Node's llhttp rejects the message.
          * Consumes the section: it is post-padded in place and the returned
          * string_views point into it, so it must outlive their use.
+         * Fields past outCapacity are validated but not written.
          * KEEP IN LOCKSTEP with getHeaders' field-line loop below (same
          * consumeFieldName → tryConsumeFieldValue → CRLF/OWS sequence). */
         static unsigned parseTrailerFields(std::string &section, std::pair<std::string_view, std::string_view> *out, bool useInsecureHTTPParser = false, unsigned outCapacity = MAX_TRAILER_FIELDS) {
@@ -637,7 +638,7 @@ struct HttpResponseData;
             char *p = section.data();
             char *end = p + length;
             unsigned count = 0;
-            while (count < outCapacity) {
+            while (true) {
                 /* Empty line (the section's terminating CRLF) - done. */
                 if (p[0] == '\r') {
                     return (p + 1 < end && p[1] == '\n') ? count : 0;
@@ -669,14 +670,15 @@ struct HttpResponseData;
                 while (value.length() && isHTTPHeaderValueWhitespace(value.front())) {
                     value.remove_prefix(1);
                 }
-                out[count] = { key, value };
-                count++;
+                if (count < outCapacity) {
+                    out[count] = { key, value };
+                    count++;
+                }
             }
-            return count;
         }
 
-        /* node:http compat: validate a captured, complete trailer section before the
-         * message is completed. Node's llhttp fails the message on a malformed trailer
+        /* Validate a captured, complete trailer section before the message is
+         * completed. Node's llhttp fails the message on a malformed trailer
          * field line (clientError HPE_INVALID_HEADER_TOKEN) instead of completing it
          * with req.trailers silently dropped; a CTL byte in a value is only accepted
          * under insecureHTTPParser, exactly like a header value. A Content-Length or
@@ -685,20 +687,19 @@ struct HttpResponseData;
          * the already-set F_CHUNKED collides), unless insecureHTTPParser is set
          * (llhttp's LENIENT_CHUNKED_LENGTH / LENIENT_TRANSFER_ENCODING, which "relaxed" does not set). An empty
          * section (bare CRLF, no trailers) is valid. Node counts trailer fields from
-         * zero against server.maxHeadersCount (maxHeadersCount here, 0 = not set).
-         *
-         * Known bound: parseTrailerFields stops at MAX_TRAILER_FIELDS, so a section with
-         * more valid fields than that followed by a malformed line is accepted where node
-         * still errors; reaching it requires a deliberately padded (but size-capped)
-         * section, and rejecting it would need a second scanning mode. */
-        static HttpParserError validateNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser, bool useLenientTransferEncoding, uint32_t maxHeadersCount) {
-            if (!section || section->size() <= 2) {
+         * zero against server.maxHeadersCount (maxHeadersCount here, 0 = not set). */
+        template <bool IsNodeHttp>
+        static HttpParserError validateTrailerSection(std::string *section, bool useInsecureHTTPParser, bool useLenientTransferEncoding, uint32_t maxHeadersCount) {
+            if (section->size() <= 2) {
                 return HTTP_PARSER_ERROR_NONE;
             }
-            /* parseTrailerFields consumes (post-pads) its input, so validate a copy. */
-            std::string copy(*section);
+            /* parseTrailerFields consumes (post-pads) its input. node:http reads the section again for req.trailers, so it validates a copy. */
+            std::string copy;
+            if constexpr (IsNodeHttp) {
+                copy = *section;
+            }
             std::pair<std::string_view, std::string_view> scratch[MAX_TRAILER_FIELDS];
-            unsigned count = parseTrailerFields(copy, scratch, useInsecureHTTPParser);
+            unsigned count = parseTrailerFields(IsNodeHttp ? copy : *section, scratch, useInsecureHTTPParser);
             if (count == 0) {
                 return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
             }
@@ -1284,6 +1285,8 @@ struct HttpResponseData;
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
 
+        std::string *trailerSection = IsNodeHttp ? nodeHttpRequestTrailers : &fallback;
+
         /* maxHeadersCount (node:http server.maxHeadersCount, 0 = not set) can only lower the field limit. */
         const unsigned int maxHeaderFields = maxHeadersCount && maxHeadersCount < MAX_HEADER_FIELDS ? maxHeadersCount : MAX_HEADER_FIELDS;
 
@@ -1331,7 +1334,7 @@ struct HttpResponseData;
                 }
                 return HttpParserResult::success(consumedTotal + length, user);
             }
-            /* Stays below the sawConnectionClose check, because parking pauses reads and closing over unread bytes
+            /* Stays below the sawConnectionClose check, because parking can pause reads and closing over unread bytes
              * resets the connection. Bytes that arrive while others are parked queue behind them. */
             if constexpr (!IsNodeHttp) {
                 if (parkAtNextBoundary || !parkedRequestBytes.isEmpty()) [[unlikely]] {
@@ -1596,7 +1599,7 @@ struct HttpResponseData;
                 if constexpr (!ConsumeMinimally) {
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
                     std::string_view dataToConsume(data, length);
-                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxBufferedHeaderSize)) {
+                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, trailerSection, maxBufferedHeaderSize)) {
                         /* llhttp errors at the offending extension byte, before any body bytes from
                          * that chunk reach the application; check before every dispatch. */
                         if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1604,9 +1607,12 @@ struct HttpResponseData;
                         }
                         /* The fin dispatch completes the message: a malformed or
                          * framing-field trailer must fail it first (node: HPE_*). */
-                        if (IsNodeHttp && chunk.length() == 0) {
-                            if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
+                        if (chunk.length() == 0) {
+                            if (HttpParserError trailerError = validateTrailerSection<IsNodeHttp>(trailerSection, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
+                            }
+                            if constexpr (!IsNodeHttp) {
+                                fallback.clear();
                             }
                         }
                         const bool fin = chunk.length() == 0;
@@ -1681,6 +1687,8 @@ public:
     template <bool IsNodeHttp>
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         char *const readStart = data;
+        /* Bun.serve drops the trailer section once it's validated. No head is buffered during a body, so fallback is free to capture it. */
+        std::string *trailerSection = IsNodeHttp ? nodeHttpRequestTrailers : &fallback;
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
         const size_t maxFallbackSize = maxHeaderSize ? (size_t) maxRawHeaderSize(maxHeaderSize) : MAX_FALLBACK_SIZE;
@@ -1697,15 +1705,18 @@ public:
             } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                  /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
-                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
+                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, trailerSection, maxFallbackSize)) {
                     if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
                     /* The fin dispatch completes the message: a malformed or
                      * framing-field trailer must fail it first (node: HPE_*). */
-                    if (IsNodeHttp && chunk.length() == 0) {
-                        if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
+                    if (chunk.length() == 0) {
+                        if (HttpParserError trailerError = validateTrailerSection<IsNodeHttp>(trailerSection, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
+                        }
+                        if constexpr (!IsNodeHttp) {
+                            fallback.clear();
                         }
                     }
                     const bool fin = chunk.length() == 0;
@@ -1813,15 +1824,18 @@ public:
                     } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                         /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
-                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
+                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, trailerSection, maxFallbackSize)) {
                             if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                             }
                             /* The fin dispatch completes the message: a malformed or
                              * framing-field trailer must fail it first (node: HPE_*). */
-                            if (IsNodeHttp && chunk.length() == 0) {
-                                if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
+                            if (chunk.length() == 0) {
+                                if (HttpParserError trailerError = validateTrailerSection<IsNodeHttp>(trailerSection, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
                                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
+                                }
+                                if constexpr (!IsNodeHttp) {
+                                    fallback.clear();
                                 }
                             }
                             const bool fin = chunk.length() == 0;

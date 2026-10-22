@@ -11,7 +11,7 @@ use bun_uws::quic;
 use bun_uws::quic::context::ConnectResult;
 
 use super::callbacks;
-use super::client_session::{ClientSession, quic_socket_mut, session_mut};
+use super::client_session::{ClientSession, client_mut, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::HTTPClient;
@@ -25,6 +25,8 @@ pub(crate) struct ClientContext {
     // FFI handle owned for process lifetime (never freed).
     qctx: NonNull<quic::Context>,
     sessions: Vec<*mut ClientSession>,
+    /// Requests whose stream ended while a paused consumer left body bytes undecoded. They're on no session.
+    held: Vec<NonNull<HTTPClient<'static>>>,
 }
 
 /// One instance per HTTP-thread loop. Stored as a process global only
@@ -93,6 +95,7 @@ impl ClientContext {
         let self_ = bun_core::heap::alloc_nn(ClientContext {
             qctx,
             sessions: Vec::new(),
+            held: Vec::new(),
         });
         // Route through the existing [`qctx_mut`] / [`as_mut`] accessors (one
         // centralised unsafe each) instead of an open-coded `qctx.as_mut()`.
@@ -243,7 +246,26 @@ impl ClientContext {
                 return true;
             }
         }
+        if let Some(client) = Self::take_held(async_http_id) {
+            client.fail_from_h2(crate::Error::Aborted);
+            return true;
+        }
         false
+    }
+
+    /// Keeps `client` reachable by its id until `take_held`.
+    pub(crate) fn hold(client: &mut HTTPClient) {
+        if let Some(this) = Self::get() {
+            Self::as_mut(this).held.push(client.as_erased_ptr());
+        }
+    }
+
+    fn take_held<'a>(async_http_id: u32) -> Option<&'a mut HTTPClient<'static>> {
+        let held = &mut Self::as_mut(Self::get()?).held;
+        let i = held
+            .iter()
+            .position(|&client| bun_ptr::ParentRef::from(client).async_http_id == async_http_id)?;
+        Some(client_mut(held.swap_remove(i)))
     }
 
     /// Close the connections of fetch session `pool_id` that carry no request.
@@ -281,6 +303,9 @@ impl ClientContext {
             if session_mut(s).resume_receive_by_http_id(async_http_id) {
                 return;
             }
+        }
+        if let Some(client) = Self::take_held(async_http_id) {
+            client.drain_response_body_h3();
         }
     }
 }

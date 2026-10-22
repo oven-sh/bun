@@ -2974,6 +2974,30 @@ it("does propagate type for Blob", async () => {
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
 });
 
+it.each(["hello", "héllo"])("sends text/plain for the string body %j after .body was read", async body => {
+  const shapes: Record<string, (res: Response) => Response> = {
+    direct: res => res,
+    checked: res => (res.body, res),
+    rewrapped: res => new Response(res.body, res),
+  };
+  using server = Bun.serve({
+    port: 0,
+    routes: { "/static": shapes.checked(new Response(body)) },
+    fetch: req => shapes[new URL(req.url).pathname.slice(1)](new Response(body)),
+  });
+
+  const actual: Record<string, unknown> = {};
+  const expected: Record<string, unknown> = {};
+  for (const shape of [...Object.keys(shapes), "static"]) {
+    const res = await fetch(new URL(shape, server.url));
+    actual[shape] = { type: res.headers.get("content-type"), text: await res.text() };
+    expected[shape] = { type: "text/plain;charset=utf-8", text: body };
+  }
+  expect(actual).toEqual(expected);
+  expect(shapes.checked(new Response(body)).headers.get("content-type")).toBeNull();
+  expect(shapes.rewrapped(new Response(body)).headers.get("content-type")).toBeNull();
+});
+
 it("unix socket connection in Bun.serve", async () => {
   const unix = join(tmpdir(), "bun." + Date.now() + ((Math.random() * 32) | 0).toString(16) + ".sock");
   using server = Bun.serve({
@@ -6073,6 +6097,52 @@ describe("requests pipelined behind a pending response", () => {
     await client.untilClosed();
     await stopped;
     expect(parseResponses(client.reply)).toEqual([ok("/hold"), ok("/after")]);
+  });
+
+  it("closes a connection the client reset before the response ahead was sent", async () => {
+    let socket!: net.Socket;
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      async fetch() {
+        // "/after" is held by now. The reset lands before the loop polls again, so the response's send() is what fails.
+        await new Promise(resolve => setImmediate(resolve));
+        socket.resetAndDestroy();
+        return new Response("late");
+      },
+    });
+    socket = net.connect(server.port!, "127.0.0.1");
+    await once(socket, "connect");
+    socket.write(get("/first") + get("/after"));
+    await once(socket, "close");
+    // A graceful stop() waits for every connection to close.
+    await server.stop();
+  });
+
+  it("aborts the pending request when the client leaves with a request held behind it", async () => {
+    const hits: string[] = [];
+    const entered = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      async fetch(req) {
+        hits.push(new URL(req.url).pathname);
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        entered.resolve();
+        await aborted.promise;
+        return new Response("late");
+      },
+    });
+    const socket = net.connect(server.port!, "127.0.0.1");
+    await once(socket, "connect");
+    socket.write(get("/first") + get("/after"));
+    await entered.promise;
+    socket.end();
+    await Promise.all([aborted.promise, once(socket, "close")]);
+    expect(hits).toEqual(["/first"]);
   });
 
   it("upgrades a held WebSocket request and gives it the frame behind the handshake", async () => {

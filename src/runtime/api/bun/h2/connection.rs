@@ -203,11 +203,18 @@ enum BlockDisposition {
     Refused,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FeedEnd {
+    /// Every complete frame of the input was handled.
+    Drained,
+    /// `Sink::should_stop()` ended the call between frames, before any window was replenished.
+    Yielded,
+    Fatal,
+}
+
 pub(crate) struct Feed {
     pub consumed: usize,
-    pub fatal: bool,
-    /// `Sink::should_stop()` ended the call between frames, before any window was replenished.
-    pub yielded: bool,
+    pub end: FeedEnd,
 }
 
 /// nghttp2's NGHTTP2_DEFAULT_MAX_OBQ_FLOOD_ITEM: outbound PING/SETTINGS ACKs that may pile up
@@ -287,7 +294,7 @@ pub(crate) trait Sink {
         SendCredit::NotOwned
     }
 
-    /// The embedder wants control back before the next frame. `receive` returns with `yielded` set.
+    /// The embedder wants control back before the next frame. `receive` returns `FeedEnd::Yielded`.
     fn should_stop(&self) -> bool {
         false
     }
@@ -596,8 +603,7 @@ impl Connection {
         if self.terminated {
             return Feed {
                 consumed: bytes.len(),
-                fatal: true,
-                yielded: false,
+                end: FeedEnd::Fatal,
             };
         }
 
@@ -618,8 +624,7 @@ impl Connection {
                 );
                 return Feed {
                     consumed: avail,
-                    fatal: true,
-                    yielded: false,
+                    end: FeedEnd::Fatal,
                 };
             }
             self.preface_received += avail;
@@ -627,8 +632,7 @@ impl Connection {
             if self.preface_received < wire::CONNECTION_PREFACE.len() {
                 return Feed {
                     consumed: offset,
-                    fatal: false,
-                    yielded: false,
+                    end: FeedEnd::Drained,
                 };
             }
         }
@@ -649,15 +653,13 @@ impl Connection {
                 if sink.should_stop() {
                     return Feed {
                         consumed: offset,
-                        fatal: false,
-                        yielded: true,
+                        end: FeedEnd::Yielded,
                     };
                 }
                 self.replenish_windows(sink);
                 return Feed {
                     consumed: offset,
-                    fatal: false,
-                    yielded: false,
+                    end: FeedEnd::Drained,
                 };
             }
         }
@@ -667,8 +669,7 @@ impl Connection {
             if sink.should_stop() {
                 return Feed {
                     consumed: offset,
-                    fatal: false,
-                    yielded: true,
+                    end: FeedEnd::Yielded,
                 };
             }
             let remaining = &bytes[offset..];
@@ -687,8 +688,7 @@ impl Connection {
                 );
                 return Feed {
                     consumed: offset,
-                    fatal: true,
-                    yielded: false,
+                    end: FeedEnd::Fatal,
                 };
             }
             let total = wire::FRAME_HEADER_SIZE + hdr.length as usize;
@@ -708,8 +708,7 @@ impl Connection {
                             StreamedDataStart::Fatal => {
                                 return Feed {
                                     consumed: offset,
-                                    fatal: true,
-                                    yielded: false,
+                                    end: FeedEnd::Fatal,
                                 };
                             }
                             StreamedDataStart::Consumed(n) => {
@@ -724,31 +723,27 @@ impl Connection {
             if self.dispatch(sink, &hdr, payload) {
                 return Feed {
                     consumed: offset + total,
-                    fatal: true,
-                    yielded: false,
+                    end: FeedEnd::Fatal,
                 };
             }
             offset += total;
             if self.check_reset_flood(sink) {
                 return Feed {
                     consumed: offset,
-                    fatal: true,
-                    yielded: false,
+                    end: FeedEnd::Fatal,
                 };
             }
         }
         if self.check_reset_flood(sink) {
             return Feed {
                 consumed: offset,
-                fatal: true,
-                yielded: false,
+                end: FeedEnd::Fatal,
             };
         }
         if sink.should_stop() {
             return Feed {
                 consumed: offset,
-                fatal: false,
-                yielded: true,
+                end: FeedEnd::Yielded,
             };
         }
         // Re-open consumed receive windows once per batch (RFC 9113 §6.9; mirrors how the
@@ -757,8 +752,7 @@ impl Connection {
         self.replenish_windows(sink);
         Feed {
             consumed: offset,
-            fatal: false,
-            yielded: false,
+            end: FeedEnd::Drained,
         }
     }
 
@@ -2518,7 +2512,7 @@ mod tests {
         c.preface_received = wire::CONNECTION_PREFACE.len();
         let f = frame(FrameType::WindowUpdate, 0, 0, &[0, 0, 0, 0]);
         let fed = c.receive(&sink, &f);
-        assert!(fed.fatal);
+        assert!(fed.end == FeedEnd::Fatal);
         assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
     }
 
@@ -2531,7 +2525,7 @@ mod tests {
         let payload = [0u8, 0x02, 0, 0, 0, 2];
         let f = frame(FrameType::Settings, 0, 0, &payload);
         let fed = c.receive(&sink, &f);
-        assert!(fed.fatal);
+        assert!(fed.end == FeedEnd::Fatal);
         assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
     }
 
@@ -2549,7 +2543,7 @@ mod tests {
         let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
         let f = frame(FrameType::Headers, flags, 1, &block);
         let fed = c.receive(&sink, &f);
-        assert!(!fed.fatal);
+        assert!(fed.end != FeedEnd::Fatal);
         assert_eq!(fed.consumed, f.len());
         assert_eq!(*sink.opens.borrow(), vec![1]);
         assert!(
@@ -2590,7 +2584,7 @@ mod tests {
 
         let d = frame(FrameType::Data, wire::flags::END_STREAM, 1, b"hello");
         let fed = c.receive(&sink, &d);
-        assert!(!fed.fatal);
+        assert!(fed.end != FeedEnd::Fatal);
         assert_eq!(*sink.data.borrow(), vec![(1, b"hello".to_vec())]);
         assert_eq!(*sink.ended.borrow(), vec![1]);
         assert_eq!(
@@ -2611,7 +2605,7 @@ mod tests {
             &ErrorCode::Cancel.as_u32().to_be_bytes(),
         );
         let fed = c.receive(&sink, &f);
-        assert!(fed.fatal);
+        assert!(fed.end == FeedEnd::Fatal);
         assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
     }
 
@@ -2637,7 +2631,7 @@ mod tests {
         let mut server = Connection::new(true, Settings::default());
         server.preface_received = wire::CONNECTION_PREFACE.len();
         let fed = server.receive(&ssink, &wire_bytes);
-        assert!(!fed.fatal);
+        assert!(fed.end != FeedEnd::Fatal);
         assert_eq!(fed.consumed, wire_bytes.len());
         assert!(
             ssink
@@ -2678,7 +2672,7 @@ mod tests {
         let mut client = Connection::new(false, Settings::default());
         client.preface_received = wire::CONNECTION_PREFACE.len();
         let fed = client.receive(&csink, &bytes);
-        assert!(!fed.fatal);
+        assert!(fed.end != FeedEnd::Fatal);
         assert_eq!(fed.consumed, bytes.len());
         assert_eq!(*csink.pushes.borrow(), vec![(1, 2)]);
         assert!(
@@ -2707,7 +2701,7 @@ mod tests {
             &[0, 0, 0, 2],
         );
         let fed = c.receive(&sink, &f);
-        assert!(fed.fatal);
+        assert!(fed.end == FeedEnd::Fatal);
         assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
     }
 

@@ -11,7 +11,7 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
-use crate::api::h2::connection::RequestMethod;
+use crate::api::h2::connection::{FeedEnd, RequestMethod};
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
@@ -3780,17 +3780,17 @@ impl H2FrameParser {
                 }
                 owned.extend_from_slice(&pushed);
             }
-            if feed.fatal {
+            if feed.end == FeedEnd::Fatal {
                 // GOAWAY is on the wire and on_error tears the session down, so the rest is never parsed.
                 self.run_deferred();
                 break;
             }
-            if !feed.yielded && !pushed.is_empty() {
+            if feed.end == FeedEnd::Drained && !pushed.is_empty() {
                 // The pushed bytes may complete a frame.
                 continue;
             }
             let stopped = self.left_exception.get() || self.draining.get() != Draining::No;
-            if !feed.yielded || stopped {
+            if feed.end == FeedEnd::Drained || stopped {
                 // The engine parsed every complete frame or has to stop. Keep the rest for the next read.
                 if direct {
                     owned.extend_from_slice(&bytes[pos..]);

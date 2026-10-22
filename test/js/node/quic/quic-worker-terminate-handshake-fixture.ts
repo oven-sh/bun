@@ -2,7 +2,7 @@
 import { createSocket } from "node:dgram";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { connect } from "node:quic";
+import { connect, type SessionOptions } from "node:quic";
 import { Worker } from "node:worker_threads";
 
 const [keyPath, certPath] = process.argv.slice(2);
@@ -55,7 +55,7 @@ for (const spareEndpoints of [0, 8]) {
       alpn: "wq",
       servername: "localhost",
       verifyPeer: "manual",
-    });
+    } as SessionOptions);
     client.opened.catch(() => {});
     client.closed.catch(() => {});
     clients.push(client);

@@ -1123,7 +1123,7 @@ impl RedirectHop {
 }
 
 // ── shared per-thread buffers ───────────────────────────────────────────
-// All of these are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
+// All four are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
 // is the alias-safe static cell per docs/PORTING.md §Global mutable state.
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
@@ -1145,10 +1145,6 @@ static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_RE
 // so we can avoid allocating a temporary buffer to copy the data in
 static SINGLE_PACKET_SMALL_BUFFER: bun_core::RacyCell<[u8; 16 * 1024]> =
     bun_core::RacyCell::new([0; 16 * 1024]);
-
-// Zero-initialized so it lands in .bss.
-static FILE_BODY_COPY_BUFFER: bun_core::RacyCell<[u8; 256 * 1024]> =
-    bun_core::RacyCell::new([0; 256 * 1024]);
 
 /// Accessors for the HTTP-thread-only `RacyCell` scratch buffers.
 ///
@@ -1179,13 +1175,8 @@ mod scratch {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *TEMP_HOSTNAME.get() }
     }
-    #[inline]
-    pub(crate) fn file_body_copy_buffer() -> &'static mut [u8; 256 * 1024] {
-        // SAFETY: see module-level INVARIANT.
-        unsafe { &mut *FILE_BODY_COPY_BUFFER.get() }
-    }
 }
-pub(crate) use scratch::{file_body_copy_buffer, temp_hostname};
+pub(crate) use scratch::temp_hostname;
 
 // ── ALPN offer enum ─────────────────────────────────────────────────────
 // bun_boringssl doesn't expose an ALPN-offer enum, so
@@ -2843,8 +2834,9 @@ impl<'a> HTTPClient<'a> {
         } else if self.is_keep_alive_possible()
             && self.is_request_fully_sent()
             && !socket.is_closed_or_has_error()
-            // The hop reuses this socket before a FIN behind the 3xx is read, and `on_close` only retries idempotent methods.
+            // The hop reuses this socket before a FIN behind the 3xx is read, and `on_close` only retries an idempotent method with a `Bytes` body.
             && self.method.is_idempotent()
+            && matches!(request_body, HTTPRequestBody::Bytes(_))
         {
             bun_core::scoped_log!(fetch, "Keep-Alive release in redirect");
             debug_assert!(!self.connected_url.hostname.is_empty());
@@ -4339,10 +4331,10 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(self.effective_idle_timeout_seconds());
     }
 
-    /// Output budget of one decode pass. h1 only: h2/h3 detach before held input could drain.
+    /// Output budget of one decode pass. Not for h2, which detaches before held input could drain.
     #[inline]
     fn decompress_output_cap(&self) -> usize {
-        if self.flags.protocol == Protocol::Http1_1 && self.signals.is_demand_driven() {
+        if self.flags.protocol != Protocol::Http2 && self.signals.is_demand_driven() {
             signals::BODY_HIGH_WATER_MARK
         } else {
             usize::MAX
@@ -4414,39 +4406,43 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// Decodes the next piece of a held body. Returns whether there is an update to send.
     fn pump_held_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) -> bool {
+        self.decode_held_body().unwrap_or_else(|err| {
+            self.close_and_fail::<IS_SSL>(err, socket);
+            false
+        })
+    }
+
+    /// Decodes the next piece of a held body. Returns whether there is an update to send.
+    fn decode_held_body(&mut self) -> crate::Result<bool> {
         // Find out if we should not send any update.
         match self.state.stage {
-            Stage::Done | Stage::Fail => return false,
+            Stage::Done | Stage::Fail => return Ok(false),
             _ => {}
         }
 
         if self.state.fail.is_some() {
             // If there's any error at all, do not drain.
-            return false;
+            return Ok(false);
         }
 
         // If there's a pending redirect, then don't bother to send a response body
         // as that wouldn't make sense and I want to defensively avoid edgecases
         // from that.
         if self.state.flags.is_redirect_pending {
-            return false;
+            return Ok(false);
         }
 
         // A consumer that paused again gets another resume when it unpauses.
         let pumped = self.state.has_pending_compressed() && !self.signals.is_receive_paused();
         if pumped {
             let is_final = self.state.is_done();
-            if let Err(err) = self.process_received_body(is_final) {
-                self.close_and_fail::<IS_SSL>(err, socket);
-                return false;
-            }
+            self.process_received_body(is_final)?;
         }
 
         // A pump that ends the body has to say so even with no bytes (a stream trailer alone).
         let ended = pumped && self.state.is_done() && !self.state.has_pending_compressed();
-        !self.state.decoded_body.list.is_empty() || ended
+        Ok(!self.state.decoded_body.list.is_empty() || ended)
     }
 
     fn send_progress_update_without_stage_check<const IS_SSL: bool>(
@@ -4455,7 +4451,8 @@ impl<'a> HTTPClient<'a> {
         socket: HttpSocket<IS_SSL>,
     ) {
         if self.flags.protocol != Protocol::Http1_1 {
-            return self.send_progress_update_multiplexed();
+            self.send_progress_update_multiplexed();
+            return;
         }
         // A loop, not a call back into `drain_response_body`: a consumer that never pauses
         // (`BufferAll`, or an S3 error body that is collected whole) takes one pass per turn.
@@ -4597,7 +4594,8 @@ impl<'a> HTTPClient<'a> {
     /// `send_progress_update_without_stage_check` minus the per-request TCP socket
     /// release/close. Used by HTTP/2 and HTTP/3, whose session owns the
     /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
-    fn send_progress_update_multiplexed(&mut self) {
+    /// Returns true after the terminal update, which frees `self`.
+    fn send_progress_update_multiplexed(&mut self) -> bool {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
         let callback = self.result_callback;
 
@@ -4619,7 +4617,7 @@ impl<'a> HTTPClient<'a> {
         if is_done {
             result.body_owned = decoded_body.list;
             callback.run(parent, result);
-            return;
+            return true;
         }
         result.body = decoded_body.list.as_slice();
         callback.run(parent, result);
@@ -4627,6 +4625,7 @@ impl<'a> HTTPClient<'a> {
             decoded_body.list.clear();
             self.state.decoded_body = decoded_body;
         }
+        false
     }
 
     /// `do_redirect` minus the per-request socket release/close. The session
@@ -4670,7 +4669,28 @@ impl<'a> HTTPClient<'a> {
             }
             return;
         }
-        self.send_progress_update_multiplexed();
+        if !self.send_progress_update_multiplexed() {
+            self.drain_response_body_h3();
+        }
+    }
+
+    /// `drain_response_body` for HTTP/3: decodes a held body until its consumer pauses again or the body ends.
+    pub(crate) fn drain_response_body_h3(&mut self) {
+        loop {
+            match self.decode_held_body() {
+                Ok(false) => break,
+                Ok(true) => {
+                    if self.send_progress_update_multiplexed() {
+                        return;
+                    }
+                }
+                Err(err) => return h3::client_session::fail_client(self, err),
+            }
+        }
+        // The stream has ended, so only the context can route the consumer's resume or abort to this request.
+        if self.h3.is_none() && self.state.has_pending_compressed() {
+            h3::ClientContext::hold(self);
+        }
     }
 
     pub(crate) fn do_redirect_h3(&mut self) {

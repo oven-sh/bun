@@ -755,6 +755,31 @@ test("bare-LF in trailer section fires clientError instead of hanging", async ()
   expect(err.code).toMatch(/^HPE_/);
 });
 
+test.each([
+  ["a CR without LF, before the section ends", "\rX"],
+  ["a malformed line behind 200 fields", "X-T: 1\r\n".repeat(200) + "justtext\r\n\r\n"],
+])("%s in the trailer section fires clientError", async (_name, trailers) => {
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  await using server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => reject(new Error("request completed despite a malformed trailer")));
+  });
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    resolve(err);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n" + trailers);
+  });
+  socket.on("error", () => {});
+  const err = await promise;
+  socket.destroy();
+  expect(err.code).toMatch(/^HPE_/);
+});
+
 test("bare-LF between trailer fields is rejected, not silently accepted", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<{ trailers: any } | { err: any }>();
   await using server = createServer((req, res) => {

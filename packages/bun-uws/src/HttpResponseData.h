@@ -330,6 +330,8 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
+    /* The parse error that set HTTP_NODE_PARSING_STOPPED, if one did. */
+    HttpParserError parseError = HTTP_PARSER_ERROR_NONE;
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

@@ -94,10 +94,7 @@ const kClusterHandle = Symbol("http.server.clusterHandle");
 // listen() and close() bump it, so a reply from the cluster primary to an earlier listen() is dropped.
 const kClusterListeningId = Symbol("http.server.clusterListeningId");
 // Under `bun --hot`, maps a reused native server to the http.Server it dispatches to, or to null once another http.Server stopped it.
-let nativeServerOwners: WeakMap<object, Server | null> | undefined;
-const SafeWeakMap = WeakMap;
-const WeakMapPrototypeGet = WeakMap.prototype.get;
-const WeakMapPrototypeSet = WeakMap.prototype.set;
+let nativeServerOwners: WeakMap<WeakKey, Server | null> | undefined;
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
 function closeHandle(handle) {
@@ -656,8 +653,8 @@ Server.prototype.close = function (optionalCallback?) {
   if (generation) generation.drainedAtClose = open === swept;
   if (nativeServerOwners !== undefined) {
     // Under `bun --hot`, stopping a shared native server also takes the listener away from its current http.Server.
-    const owner = WeakMapPrototypeGet.$call(nativeServerOwners, server);
-    if (owner != null && owner !== this) WeakMapPrototypeSet.$call(nativeServerOwners, server, null);
+    const owner = nativeServerOwners.get(server);
+    if (owner != null && owner !== this) nativeServerOwners.set(server, null);
   }
   // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   queueCloseNTServer(this, server.stop(), generation);
@@ -1322,9 +1319,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     applyServerCustomOptions(this);
     // Only `bun --hot` sets an id. The next listen() on this address reuses this native server.
     if (handle.id !== "") {
-      const owners = (nativeServerOwners ??= new SafeWeakMap());
-      const previous = WeakMapPrototypeGet.$call(owners, handle);
-      WeakMapPrototypeSet.$call(owners, handle, this);
+      const owners = (nativeServerOwners ??= new (require("internal/primordials").SafeWeakMap)());
+      const previous = owners.get(handle);
+      owners.set(handle, this);
       if (previous != null) releaseListener(previous);
     }
 
@@ -1358,7 +1355,7 @@ function applyServerCustomOptions(server: Server) {
 // Returns true if, under `bun --hot`, the native server now dispatches to another http.Server or was stopped by one.
 function lostListener(server: Server) {
   if (nativeServerOwners === undefined) return false;
-  const owner = WeakMapPrototypeGet.$call(nativeServerOwners, server[serverSymbol]);
+  const owner = nativeServerOwners.get(server[serverSymbol]);
   return owner !== undefined && owner !== server;
 }
 
@@ -4349,7 +4346,7 @@ ServerResponse.prototype.assignSocket = function (socket) {
     throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = this;
-  socket.once("close", onServerResponseClose);
+  socket.on("close", onServerResponseClose);
   this.socket = socket;
   this.emit("socket", socket);
   // Like Node.js: drain anything written before the socket was assigned.

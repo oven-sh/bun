@@ -271,6 +271,11 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
       seen: [{ path: "/", error: BODY_REJECTED }],
     },
     {
+      name: "a trailer line without a colon, split across reads",
+      segments: [chunkedRequest() + "5\r\nhello\r\n0\r\nX-T: 9\r\njust", "text\r", "\n\r", "\n"],
+      seen: [{ path: "/", error: BODY_REJECTED }],
+    },
+    {
       // remainingStreamingBytes is shared between Content-Length and chunked state. 2^59 would set
       // STATE_HAS_HEXDIG and route a fixed-length body into the chunked decoder, so the parser has to
       // reject it before fetch() runs.

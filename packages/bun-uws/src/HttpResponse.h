@@ -589,7 +589,7 @@ private:
         }
 
         if (!earlyFrames.isEmpty()) [[unlikely]] {
-            /* Parking paused reads, and us_socket_adopt() keeps the pause. Resuming can close the socket, which is an ordinary WebSocket close by now. */
+            /* Parking can pause reads, and us_socket_adopt() keeps the pause. Resuming can close the socket, which is an ordinary WebSocket close by now. */
             us_socket_resume(usSocket);
             if (!us_socket_is_closed(usSocket) && !us_socket_is_shut_down(usSocket)) {
                 /* The frame parser writes on both sides of its input, like it can in the loop's padded receive buffer. */

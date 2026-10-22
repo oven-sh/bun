@@ -672,6 +672,20 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
   });
 
+  // The whole body fits the stream's flow-control window, so it and its FIN arrive while the reader is paused.
+  test.skipIf(isWindows)("gzip over HTTP/3: a reader that takes a little holds a little", async () => {
+    const headers = { "content-encoding": "gzip" };
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () => new Response(bombFor("gzip"), { headers }),
+    });
+    const opts = { protocol: "http3", tls: { rejectUnauthorized: false } };
+    expectBounded(await runClient(`https://127.0.0.1:${server.port}/`, opts, READ_A_LITTLE));
+  });
+
   // A live stream: two flushed messages in one packet, then the origin goes quiet with the frame
   // open. The budget ends a pass inside the second message's last block, after zstd has taken
   // every input byte and while it still holds decoded output. No further packet will come to

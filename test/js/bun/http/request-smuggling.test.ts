@@ -1035,6 +1035,51 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
   });
 
+  test.each([
+    ["a line without a colon", "justtext\r\n"],
+    ["a request line", "GET /admin HTTP/1.1\r\nHost: localhost\r\n"],
+    ["a space in a field name", "X T: 1\r\n"],
+    ["a space before the colon", "X-T : 1\r\n"],
+    ["an empty field name", ": v\r\n"],
+    ["a control byte in a value", "X-T: a\x01b\r\n"],
+    ["a NUL in a value", "X-T: a\0b\r\n"],
+    ["a DEL in a value", "X-T: a\x7fb\r\n"],
+    ["a folded line", "X-T: 1\r\n folded\r\n"],
+    ["Transfer-Encoding", "Transfer-Encoding: chunked\r\n"],
+    ["Content-Length", "Content-Length: 5\r\n"],
+    ["a malformed line behind 200 fields", "X-T: 1\r\n".repeat(200) + "justtext\r\n"],
+  ])("rejects a trailer section with %s", async (_name, trailers) => {
+    const urls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        urls.push(new URL(req.url).pathname);
+        await req.text();
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port!, "127.0.0.1");
+    const responseData = await new Promise<string>((resolve, reject) => {
+      let data = "";
+      client.on("error", reject);
+      client.on("data", chunk => {
+        data += chunk.toString();
+      });
+      client.on("close", () => resolve(data));
+      client.write(
+        "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n" +
+          trailers +
+          "\r\nGET /after HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      );
+    });
+
+    expect({ statuses: responseData.match(/HTTP\/1\.1 \d+/g), urls }).toEqual({
+      statuses: ["HTTP/1.1 400"],
+      urls: ["/"],
+    });
+  });
+
   test("rejects zero-chunk terminator split across TCP segments with invalid byte", async () => {
     // The terminator validation must persist across TCP boundaries. Send the
     // first (valid) '\r', yield to the event loop so the server's recv() runs

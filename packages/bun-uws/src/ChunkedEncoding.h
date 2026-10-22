@@ -185,7 +185,7 @@ namespace uWS {
                state == STATE_IS_CHUNK_TERMINATOR_ERROR;
     }
 
-    /* node:http compat: parser state for "consuming the trailer section after the
+    /* Parser state for "consuming the trailer section after the
      * final 0-size chunk" (RFC 9112 7.1.2). The flag combinations cannot occur in
      * any other state: STATE_WAITING_FOR_LF is only ever set while the chunk-size
      * line is incomplete, i.e. before STATE_HAS_SIZE is set. _DONE means the
@@ -195,13 +195,6 @@ namespace uWS {
      * delivery can synchronously run JS that consumes (and clears) the capture. */
     constexpr uint64_t STATE_IS_TRAILERS = STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_WAITING_FOR_LF;
     constexpr uint64_t STATE_IS_TRAILERS_DONE = STATE_HAS_SIZE | STATE_WAITING_FOR_LF;
-
-    /* Bun.serve passes no trailerSection buffer, so it scans the trailer section for
-     * its end and discards it. The size field counts the scanned bytes. The flags
-     * reuse bits that mean nothing once STATE_HAS_SIZE is set. */
-    constexpr uint64_t STATE_TRAILER_SCAN       = STATE_HAS_SIZE | STATE_WAITING_FOR_LF | STATE_IS_CHUNKED_EXTENSION;
-    constexpr uint64_t STATE_TRAILER_LINE_START = STATE_HAS_HEXDIG;
-    constexpr uint64_t STATE_TRAILER_AFTER_CR   = STATE_IS_CHUNKED;
 
     /* Default cap on the raw size of a captured trailer section. Node counts
      * trailer bytes against the same max-header-size budget as request headers
@@ -221,7 +214,7 @@ namespace uWS {
     }
 
     /* Returns next chunk (empty or not), or if all data was consumed, nullopt is returned. */
-    static std::optional<std::string_view> getNextChunk(std::string_view &data, uint64_t &state, uint64_t *chunkExtensionsConsumed = nullptr, std::string *trailerSection = nullptr, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) {
+    static std::optional<std::string_view> getNextChunk(std::string_view &data, uint64_t &state, uint64_t *chunkExtensionsConsumed, std::string *trailerSection, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) {
         /* The previous call emitted the fin chunk for a message whose trailer
          * section completed; this call only resets the state and leaves the
          * remaining bytes (the next request, or tunnel data) untouched. */
@@ -231,73 +224,42 @@ namespace uWS {
         }
         while (data.length()) {
 
-            /* The trailer section (RFC 9112 7.1.2) follows the last chunk. The fin
-             * chunk is emitted once its terminating empty line is consumed. Only
-             * STATE_IS_TRAILERS and STATE_TRAILER_SCAN set both of these bits. */
-            if ((state & (STATE_HAS_SIZE | STATE_WAITING_FOR_LF)) == (STATE_HAS_SIZE | STATE_WAITING_FOR_LF)) [[unlikely]] {
-                /* node:http captures the raw bytes for req.trailers. */
-                if (trailerSection) {
-                    while (data.length()) {
-                        char c = data[0];
-                        trailerSection->push_back(c);
-                        data.remove_prefix(1);
-                        if (trailerSection->size() > maxTrailerSectionSize) [[unlikely]] {
-                            state = STATE_IS_TRAILER_OVERFLOW;
-                            return std::nullopt;
-                        }
-                        if (c == '\n') {
-                            /* Bare LF (no preceding CR captured) is a fatal parse error like
-                             * llhttp's HPE_CR_EXPECTED / HPE_INVALID_HEADER_TOKEN — otherwise
-                             * "0\r\n\n" waits for bytes forever. Strict CRLF matches
-                             * consumeHexNumber's own bare-LF rejection above. */
-                            size_t n = trailerSection->size();
-                            if (n < 2 || (*trailerSection)[n - 2] != '\r') {
-                                state = STATE_IS_ERROR;
-                                return std::nullopt;
-                            }
-                            if (isCompleteTrailerSection(*trailerSection)) {
-                                /* Message complete: emit the fin chunk. The next call sees
-                                 * STATE_IS_TRAILERS_DONE and resets to 0. */
-                                state = STATE_IS_TRAILERS_DONE;
-                                return std::string_view(nullptr, 0);
-                            }
-                        }
-                    }
-                    return std::nullopt;
-                }
-
-                /* Reject a bare LF and a CR without LF, so a proxy in front can't
-                 * disagree about where the section ends. */
+            /* Consume the trailer section (RFC 9112 7.1.2) that follows the final
+             * 0-size chunk, capturing its raw bytes so the caller can validate them
+             * (and node:http can populate req.trailers). The terminating empty chunk
+             * (fin) is only emitted once the whole section (including its final CRLF)
+             * has been consumed. */
+            if (state == STATE_IS_TRAILERS) [[unlikely]] {
                 while (data.length()) {
-                    unsigned char c = (unsigned char) data[0];
+                    char c = data[0];
+                    trailerSection->push_back(c);
                     data.remove_prefix(1);
-                    uint64_t count = chunkSize(state) + 1;
-                    if (count > maxTrailerSectionSize) [[unlikely]] {
+                    size_t n = trailerSection->size();
+                    if (n > maxTrailerSectionSize) [[unlikely]] {
                         state = STATE_IS_TRAILER_OVERFLOW;
                         return std::nullopt;
                     }
-                    if (state & STATE_TRAILER_AFTER_CR) {
-                        if (c != '\n') {
+                    const bool afterCR = n >= 2 && (*trailerSection)[n - 2] == '\r';
+                    if (c == '\n') {
+                        /* Bare LF (no preceding CR captured) is a fatal parse error like
+                         * llhttp's HPE_CR_EXPECTED / HPE_INVALID_HEADER_TOKEN — otherwise
+                         * "0\r\n\n" waits for bytes forever. Strict CRLF matches
+                         * consumeHexNumber's own bare-LF rejection above. */
+                        if (!afterCR) {
                             state = STATE_IS_ERROR;
                             return std::nullopt;
                         }
-                        if (state & STATE_TRAILER_LINE_START) {
-                            /* The empty line ends the message. */
+                        if (isCompleteTrailerSection(*trailerSection)) {
+                            /* Message complete: emit the fin chunk. The next call sees
+                             * STATE_IS_TRAILERS_DONE and resets to 0. */
                             state = STATE_IS_TRAILERS_DONE;
                             return std::string_view(nullptr, 0);
                         }
-                        state = STATE_TRAILER_SCAN | STATE_TRAILER_LINE_START | count;
-                        continue;
-                    }
-                    if (c == '\r') {
-                        state = (state & ~STATE_SIZE_MASK) | STATE_TRAILER_AFTER_CR | count;
-                        continue;
-                    }
-                    if (c == '\n') {
-                        state = STATE_IS_ERROR;
+                    } else if (afterCR) {
+                        /* A CR without LF fails here too, or "0\r\n\rX" waits for bytes forever. */
+                        state = STATE_IS_CHUNK_TERMINATOR_ERROR;
                         return std::nullopt;
                     }
-                    state = STATE_TRAILER_SCAN | count;
                 }
                 return std::nullopt;
             }
@@ -309,7 +271,7 @@ namespace uWS {
                 }
                 if (hasChunkSize(state) && chunkSize(state) == 2) {
                     /* That was the last chunk. The branch above consumes the trailer section and emits the fin chunk. */
-                    state = trailerSection ? STATE_IS_TRAILERS : (STATE_TRAILER_SCAN | STATE_TRAILER_LINE_START);
+                    state = STATE_IS_TRAILERS;
                     continue;
                 }
                 if (!hasChunkSize(state)) [[unlikely]] {
@@ -420,7 +382,7 @@ namespace uWS {
         std::string *trailerSection;
         uint64_t maxTrailerSectionSize;
 
-        ChunkIterator(std::string_view *data, uint64_t *state, uint64_t *chunkExtensionsConsumed = nullptr, std::string *trailerSection = nullptr, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) : data(data), state(state), chunkExtensionsConsumed(chunkExtensionsConsumed), trailerSection(trailerSection), maxTrailerSectionSize(maxTrailerSectionSize) {
+        ChunkIterator(std::string_view *data, uint64_t *state, uint64_t *chunkExtensionsConsumed, std::string *trailerSection, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) : data(data), state(state), chunkExtensionsConsumed(chunkExtensionsConsumed), trailerSection(trailerSection), maxTrailerSectionSize(maxTrailerSectionSize) {
             chunk = uWS::getNextChunk(*data, *state, chunkExtensionsConsumed, trailerSection, maxTrailerSectionSize);
         }
 

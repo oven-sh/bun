@@ -320,12 +320,22 @@ impl<'a> DataURL<'a> {
 
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
+        // `import` and the bundler also take the URL-safe alphabet.
+        self.decode_data_with(|base64| {
+            let decoded = bun_base64::decode_alloc(base64).ok()?;
+            (decoded.len() == bun_base64::decode_len(base64)).then_some(decoded)
+        })
+    }
+
+    fn decode_data_with(
+        &self,
+        decode_base64: impl FnOnce(&[u8]) -> Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
         if self.is_base64 {
-            return bun_base64::decode_forgiving_alloc(percent_decoded)
-                .map_err(|_| DecodeDataError::Base64DecodeError);
+            return decode_base64(percent_decoded).ok_or(DecodeDataError::Base64DecodeError);
         }
 
         Ok(percent_decoded.to_vec())
@@ -334,7 +344,9 @@ impl<'a> DataURL<'a> {
     /// https://fetch.spec.whatwg.org/#data-url-processor; `input` is the serialized URL without its fragment.
     pub fn process_for_fetch(input: &[u8]) -> Option<FetchDataURL> {
         let parsed = DataURL::parse(input).ok()??;
-        let body = parsed.decode_data().ok()?;
+        let body = parsed
+            .decode_data_with(|base64| bun_base64::decode_forgiving_alloc(base64).ok())
+            .ok()?;
 
         let mut mime_type = parsed.mime_type;
         let mime_type_buf;

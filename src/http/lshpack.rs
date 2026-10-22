@@ -99,9 +99,9 @@ impl HeaderBlock {
     /// Value of the first field named `name`.
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
         let mut rest = self.bytes.as_slice();
-        for field in self.fields.chunks_exact(2) {
-            let (field_name, after_name) = rest.split_at((field[0] & !Self::NEVER_INDEX) as usize);
-            let (value, after_value) = after_name.split_at(field[1] as usize);
+        for &[name_len, value_len] in self.fields.as_chunks::<2>().0 {
+            let (field_name, after_name) = rest.split_at((name_len & !Self::NEVER_INDEX) as usize);
+            let (value, after_value) = after_name.split_at(value_len as usize);
             if field_name == name {
                 return Some(value);
             }

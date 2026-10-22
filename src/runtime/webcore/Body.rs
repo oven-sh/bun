@@ -791,11 +791,12 @@ impl Value {
             }
             Value::Empty => ReadableStream::empty(cx.global())?,
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
+                let was_string = self.was_string();
                 // `deinit` must run on every exit incl. `?` paths.
                 let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
-                ReadableStream::from_blob_copy_ref(cx, &blob, blob_size)?
+                ReadableStream::from_body_blob(cx, &blob, blob_size, was_string)?
             }
             Value::Error(err) => {
                 let reason = err.to_js(cx.global());

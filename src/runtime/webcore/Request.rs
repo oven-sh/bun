@@ -388,9 +388,10 @@ impl Request {
             .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }
 
-    /// `BunRequest.prototype.clone` (`JSBunRequest::clone`) calls this, not [`Self::do_clone`].
+    /// `BunRequest.prototype.clone` (`JSBunRequest::clone`) calls this, not [`Self::do_clone`], so it needs the same check.
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
+        self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
         let cx = global_this.js_thread_of_caller_no_frame();
         self.clone(&cx).ok()
@@ -1157,11 +1158,8 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null => {}
+                            BodyValue::Null | BodyValue::Used => {}
                             _ => {
-                                if let Err(e) = request.throw_if_body_unusable(cx.global()) {
-                                    bail!(Err(e));
-                                }
                                 match request.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1210,11 +1208,8 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match response.get_body_value() {
-                            BodyValue::Null => {}
+                            BodyValue::Null | BodyValue::Used => {}
                             _ => {
-                                if let Err(e) = response.throw_if_body_unusable(cx.global()) {
-                                    bail!(Err(e));
-                                }
                                 match response.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1469,6 +1464,7 @@ impl Request {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        self.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
         let cloned = self.clone(&global_this.js_thread_of_caller(callframe))?;
 
@@ -1485,8 +1481,6 @@ impl Request {
         cx: &bun_jsc::JsThread<'_>,
         preserve_url: bool,
     ) -> JsResult<()> {
-        // `clone()`, `new Request(request)` and `server.fetch(request)` all copy through here.
-        self.throw_if_body_unusable(cx.global())?;
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
         let body_ = self.clone_body_value_via_cached_stream(cx)?;

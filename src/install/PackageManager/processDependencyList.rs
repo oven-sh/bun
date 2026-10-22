@@ -7,7 +7,7 @@ use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
-use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
+use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
@@ -195,6 +195,12 @@ impl PackageManager {
                     ),
                 );
             }
+            Diff::keep_while_refreshing(
+                self,
+                existing_id,
+                existing.dependencies,
+                package.dependencies,
+            );
             existing.dependencies = package.dependencies;
             existing.resolutions = package.resolutions;
             existing.bin = package.bin;

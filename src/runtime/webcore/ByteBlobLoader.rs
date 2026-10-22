@@ -43,11 +43,6 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BlobInternalReadableStreamSource);
 
-    // A pull on a blob never parks.
-    fn roots_waiting_read(&self) -> bool {
-        false
-    }
-
     fn on_start(&mut self) -> streams::Start {
         Self::on_start(self)
     }

@@ -38,6 +38,12 @@ pub struct ByteStream {
     pub(crate) sink_paused: Cell<bool>,
     pub(crate) size_hint: Cell<blob::SizeType>,
     pub(crate) buffer_action: JsCell<Option<BufferAction>>,
+    /// Written by the producer that owns this stream (a [`ProducerHold`], a `RewriterPipe`), for
+    /// as long as its work settles a read that waits on the stream whatever script drops: the
+    /// wrapper is then a GC root while a read waits.
+    roots_waiting_read: Cell<bool>,
+    /// The wrapper as that root. Allocated on first use, then set and cleared in place.
+    wrapper_root: JsCell<StrongOptional>,
 }
 
 impl Default for ByteStream {
@@ -57,6 +63,8 @@ impl Default for ByteStream {
             sink_paused: Cell::new(false),
             size_hint: Cell::new(0),
             buffer_action: JsCell::new(None),
+            roots_waiting_read: Cell::new(false),
+            wrapper_root: JsCell::new(StrongOptional::empty()),
         }
     }
 }
@@ -147,7 +155,8 @@ pub(crate) type Source = readable_stream::NewSource<ByteStream>;
 /// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
 /// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
 /// JS wrapper (which the VM's last sweep destroys in no particular order), plus the parked bit of
-/// the receive backpressure. It roots the wrapper only for a native sink or a whole-body read.
+/// the receive backpressure. It roots the wrapper only while something waits for what the producer
+/// delivers: a native sink, a whole-body read, or a parked pull ([`ByteStream::set_wrapper_root`]).
 #[derive(Default)]
 pub(crate) struct ProducerHold {
     source: Cell<Option<core::ptr::NonNull<Source>>>,
@@ -176,7 +185,9 @@ impl ProducerHold {
         unsafe {
             let source = Source::from_context_ptr(bytes);
             self.source.set(core::ptr::NonNull::new(source));
-            // Before the ref, so `increment_count` only roots a wrapper that stays rooted.
+            // Before the ref: `increment_count` would root the wrapper for as long as the ref is held.
+            Source::unroot_wrapper(source);
+            (*bytes).roots_waiting_read.set(true);
             self.sync_wrapper_root();
             (*source).increment_count();
         }
@@ -192,11 +203,7 @@ impl ProducerHold {
         // separate field written through the raw pointer.
         unsafe {
             let bytes = &(*source).context;
-            if bytes.sink.get().is_some() || bytes.buffer_action.get().is_some() {
-                Source::root_wrapper(source);
-            } else {
-                Source::unroot_wrapper(source);
-            }
+            bytes.set_wrapper_root(bytes.sink.get().is_some() || bytes.has_waiting_read());
         }
     }
 
@@ -210,11 +217,15 @@ impl ProducerHold {
         let source = self.source.get()?;
         // SAFETY: live through our ref; no borrow of the source exists yet.
         unsafe { (*source.as_ptr()).increment_count() };
-        Some(PinnedBytes(source))
+        Some(PinnedBytes {
+            source,
+            last: false,
+        })
     }
 
     /// Stop being the producer. The source stays pinned by the returned guard, so the caller can
-    /// still deliver a terminal chunk. Touches no JS cell.
+    /// still deliver a terminal chunk: the wrapper stays the root it is until the guard is dropped.
+    /// Touches no JS cell.
     pub(crate) fn take(&self) -> Option<PinnedBytes> {
         let source = self.source.take()?;
         self.parked.set(false);
@@ -222,8 +233,9 @@ impl ProducerHold {
         unsafe {
             (*source.as_ptr()).producer.set(streams::SourceHandle::None);
             (*source.as_ptr()).wrapper_unrooted.set(false);
+            (*source.as_ptr()).context.roots_waiting_read.set(false);
         }
-        Some(PinnedBytes(source))
+        Some(PinnedBytes { source, last: true })
     }
 
     /// `take` and drop. Touches no JS cell (safe inside a GC sweep).
@@ -263,20 +275,29 @@ impl Drop for ProducerHold {
 }
 
 /// A counted ref on a stream's `Source` for the guard's life; derefs to its ByteStream.
-pub(crate) struct PinnedBytes(core::ptr::NonNull<Source>);
+pub(crate) struct PinnedBytes {
+    source: core::ptr::NonNull<Source>,
+    /// From [`ProducerHold::take`]: nothing is delivered after this guard.
+    last: bool,
+}
 
 impl core::ops::Deref for PinnedBytes {
     type Target = ByteStream;
     fn deref(&self) -> &ByteStream {
         // SAFETY: pinned by this guard's ref; ByteStream is `&self`-only.
-        unsafe { &(*self.0.as_ptr()).context }
+        unsafe { &(*self.source.as_ptr()).context }
     }
 }
 
 impl Drop for PinnedBytes {
     fn drop(&mut self) {
+        if self.last {
+            // Clears the handle in place, which touches no JS cell (`ProducerHold::release`).
+            self.wrapper_root
+                .with_mut(|root| root.clear_without_deallocation());
+        }
         // SAFETY: balances the ref this guard owns. Can free the source.
-        unsafe { Source::decrement_count(self.0.as_ptr()) };
+        unsafe { Source::decrement_count(self.source.as_ptr()) };
     }
 }
 
@@ -285,10 +306,6 @@ impl readable_stream::SourceContext for ByteStream {
     // setRefUnrefFn = null
     const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
-
-    fn roots_waiting_read(&self) -> bool {
-        self.parent_const().producer.get().roots_waiting_read()
-    }
 
     // R-2: trait sigs are fixed at `&mut self` (shared with the other
     // `SourceContext` impls); `&mut T` auto-derefs to `&T` so each body
@@ -391,6 +408,41 @@ impl ByteStream {
             pv.clear_without_deallocation();
             result
         })
+    }
+
+    /// Whether a read waits on this stream: a parked pull, or a whole-body read.
+    fn has_waiting_read(&self) -> bool {
+        self.pending.get().state == streams::PendingState::Pending
+            || self.buffer_action.get().is_some()
+    }
+
+    /// For the producer that owns this stream: makes the wrapper a GC root, or stops that.
+    fn set_wrapper_root(&self, rooted: bool) {
+        if rooted == self.wrapper_root.get().has() {
+            return;
+        }
+        let source = self.parent_const();
+        let wrapper = source.this_jsvalue.try_get().filter(|_| rooted);
+        self.wrapper_root.with_mut(|root| match wrapper {
+            Some(wrapper) => root.set(source.global_this(), wrapper),
+            None => root.clear_without_deallocation(),
+        });
+    }
+
+    /// For a producer that only the collector keeps alive (a rewrite): whether its work settles
+    /// a read that waits on this stream whatever script drops. While it does, the wrapper is a
+    /// GC root for that read.
+    pub(crate) fn root_waiting_reads(&self, rooted: bool) {
+        self.roots_waiting_read.set(rooted);
+        self.set_wrapper_root(rooted && self.has_waiting_read());
+    }
+
+    /// The pull that waits, to settle it. The wrapper stops being a root for it.
+    fn take_parked_pull(&self) -> Option<readable_stream::WaitingRead> {
+        let read = self.parent_const().take_parked_pull(&self.pending)?;
+        self.wrapper_root
+            .with_mut(|root| root.clear_without_deallocation());
+        Some(read)
     }
 
     /// The buffer of the pull that `read` parked: the one in `pending_value`, or the one that the
@@ -592,7 +644,9 @@ impl ByteStream {
                 // and `reject`; both can re-enter and consume the slot.
                 let action = self.buffer_action.replace(None).unwrap();
                 self.signal_drained();
-                self.settle_buffered(action, |action, global| action.reject(global, err));
+                self.settle_buffered(action, |action, read, global| {
+                    action.reject(read, global, err)
+                });
 
                 self.buffered.clear();
                 self.pending.with_mut(|p| {
@@ -622,7 +676,9 @@ impl ByteStream {
                     );
 
                     let mut blob = self.to_any_blob().unwrap();
-                    self.settle_buffered(action, |action, global| action.fulfill(global, &mut blob));
+                    self.settle_buffered(action, |action, read, global| {
+                        action.fulfill(read, global, &mut blob)
+                    });
                     return;
                 }
                 if self.buffered.capacity() == 0 {
@@ -637,8 +693,8 @@ impl ByteStream {
                         // `stream`).
                         self.buffered.adopt(owned.move_to_list_managed(), 0);
                         let mut blob = self.to_any_blob().unwrap();
-                        self.settle_buffered(action, |action, global| {
-                            action.fulfill(global, &mut blob)
+                        self.settle_buffered(action, |action, read, global| {
+                            action.fulfill(read, global, &mut blob)
                         });
                         return;
                     }
@@ -655,7 +711,9 @@ impl ByteStream {
                 // (Temporary* variants are non-owning `RawSlice` and so are left alone).
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
-                self.settle_buffered(action, |action, global| action.fulfill(global, &mut blob));
+                self.settle_buffered(action, |action, read, global| {
+                    action.fulfill(read, global, &mut blob)
+                });
                 return;
             } else {
                 self.buffered.extend(stream.slice());
@@ -670,9 +728,9 @@ impl ByteStream {
         let chunk = stream.slice();
 
         // Taken before the settle: that can run script, which can park the next pull.
-        if let Some(read) = self.parent_const().take_parked_pull(&self.pending) {
+        if let Some(read) = self.take_parked_pull() {
             debug_assert!(self.buffered.is_empty());
-            // Re-derive the destination from the view that the wrapper held instead of trusting
+            // Re-derive the destination from the view that was kept instead of trusting
             // the raw pointer captured at pull time: JS can detach or transfer the backing
             // ArrayBuffer between the pull and the data arriving, leaving
             // `pending_buffer` dangling. A detached view re-derives to an empty slice.
@@ -741,7 +799,7 @@ impl ByteStream {
             // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is
             // suppressed on `&self`, which is the load-bearing fix vs the old
             // `&mut self` form.
-            self.pending.with_mut(|p| p.run());
+            self.pending.with_mut(|p| p.run(&read));
 
             return;
         }
@@ -802,15 +860,14 @@ impl ByteStream {
         Ok(())
     }
 
-    /// Keeps the buffer of the pull that parks. A producer that I/O drives has it in a Strong:
-    /// the wrapper is a root for that pull anyway. For any other producer a root on the buffer
-    /// would keep the buffer's realm for a pull that nothing can settle, so the wrapper holds it
-    /// in a visited slot.
+    /// Keeps the buffer of the pull that parks. For a rewrite, which only the collector keeps
+    /// alive, a root on it would keep the buffer's realm for a pull that nothing can settle: the
+    /// wrapper holds it in a visited slot.
     fn set_value(&self, view: JSValue) {
         bun_jsc::mark_binding!();
         let source = self.parent_const();
         let global = source.global_this();
-        if source.producer.get().is_driven_by_io() {
+        if !matches!(source.producer.get(), streams::SourceHandle::HTMLRewriter(_)) {
             self.pending_value.with_mut(|pv| pv.set(global, view));
         } else if let Some(wrapper) = source.this_jsvalue.try_get() {
             BytesSourceJs::pending_view_set_cached(wrapper, global, view);
@@ -852,6 +909,9 @@ impl ByteStream {
         // Raw borrow of a JS-owned buffer; kept alive by `set_value`.
         self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
         self.set_value(view);
+        if self.roots_waiting_read.get() {
+            self.set_wrapper_root(true);
+        }
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
         // returned `streams::Result::Pending` raw-backref needs.
@@ -874,10 +934,11 @@ impl ByteStream {
 
     pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
-        let parked = self.parent_const().take_parked_pull(&self.pending);
-        if let Some(read) = &parked {
-            self.parked_view(read);
-        }
+        // A pull whose buffer is still kept waits for data. `on_data` took the buffer of the one
+        // that it settles.
+        let parked = self
+            .take_parked_pull()
+            .filter(|read| self.parked_view(read).is_some());
         self.buffered.clear();
         self.done.set(true);
         self.pending_value.with_mut(|pv| pv.deinit());
@@ -891,18 +952,19 @@ impl ByteStream {
             )));
         }
 
-        if parked.is_some() {
+        if let Some(read) = &parked {
             self.pending_buffer.set(Self::empty_pending_buffer());
             self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;
             });
-            self.pending.with_mut(|p| p.run());
+            self.pending.with_mut(|p| p.run(read));
         }
 
         if let Some(action) = self.buffer_action.replace(None) {
-            self.settle_buffered(action, |action, global| {
+            self.settle_buffered(action, |action, read, global| {
                 action.reject(
+                    read,
                     global,
                     &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
                 )
@@ -911,26 +973,22 @@ impl ByteStream {
         }
     }
 
-    /// The producer's answer to `SourceHandle::roots_waiting_read` changed.
-    pub(crate) fn sync_waiting_read_root(&self) {
-        let waits = self.pending.get().state == streams::PendingState::Pending
-            || self.buffer_action.get().is_some();
-        self.parent_const().sync_waiting_read_root(waits);
-    }
-
-    /// Settles the whole-body read with `settle`, and lets go of it.
+    /// Settles the whole-body read with `settle`, and lets go of it. The wrapper stops being a
+    /// root for it.
     fn settle_buffered(
         &self,
         action: BufferAction,
-        settle: impl FnOnce(BufferAction, &JSGlobalObject),
+        settle: impl FnOnce(BufferAction, &readable_stream::WaitingRead, &JSGlobalObject),
     ) {
         let source = self.parent_const();
         // `None`: the wrapper that held the read's promise was collected, and the promise with it.
         let Some(read) = source.take_waiting_read() else {
             return;
         };
+        self.wrapper_root
+            .with_mut(|root| root.clear_without_deallocation());
         let global = source.global_this();
-        settle(action, global);
+        settle(action, &read, global);
         Source::forget_settled_read(read, global);
     }
 
@@ -952,6 +1010,7 @@ impl ByteStream {
         self.buffered.clear();
 
         self.pending_value.with_mut(|pv| pv.deinit());
+        self.wrapper_root.with_mut(|root| root.deinit());
         if !self.done.get() {
             self.done.set(true);
 
@@ -1055,9 +1114,12 @@ impl ByteStream {
         let action = BufferAction::new(action, cx);
         let promise = action.value();
         self.buffer_action.set(Some(action));
-        let source = self.parent_const();
-        if let Some(wrapper) = source.this_jsvalue.try_get() {
-            source.hold_waiting_read(cx.global(), wrapper, promise);
+        // The wrapper holds the promise, which is no GC root (`NewSource::take_waiting_read`).
+        if let Some(wrapper) = self.parent_const().this_jsvalue.try_get() {
+            BytesSourceJs::pending_promise_set_cached(wrapper, cx.global(), promise);
+        }
+        if self.roots_waiting_read.get() {
+            self.set_wrapper_root(true);
         }
         // Signal after the action is installed so a backpressure-gated
         // producer observes it; a synchronous producer may fulfil it inline.

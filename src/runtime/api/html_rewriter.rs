@@ -937,6 +937,7 @@ impl RewriterPipe {
         if let Some(out) = self.output.take() {
             out.parent_const().set_owner(JSValue::UNDEFINED);
             out.parent_const().producer.set(SourceHandle::None);
+            out.root_waiting_reads(false);
         }
     }
 
@@ -973,12 +974,11 @@ impl RewriterPipe {
             .is_some_and(|stream| webcore::readable_stream::is_locked_value(stream, &self.global))
     }
 
-    /// For [`SourceHandle::roots_waiting_read`]: whether a read that waits on the output stream
-    /// is a GC root. Only while a handler is parked, on this rewrite or on one that feeds it: the
-    /// abandonment of that handler rejects the read, and has to find it. At any other time what
-    /// feeds the rewrite reaches the read through the cell, and when nothing does, nothing can
-    /// settle the read.
-    pub(crate) fn roots_output_read(&self) -> bool {
+    /// Whether a read that waits on the output stream is a GC root. Only while a handler is
+    /// parked, on this rewrite or on one that feeds it: the abandonment of that handler rejects
+    /// the read, and has to find it. At any other time what feeds the rewrite reaches the read
+    /// through the cell, and when nothing does, nothing can settle the read.
+    fn roots_output_read(&self) -> bool {
         self.is_suspended() || self.upstream().is_some_and(|rewrite| rewrite.roots_output_read())
     }
 
@@ -993,15 +993,15 @@ impl RewriterPipe {
         }
     }
 
-    /// A handler parked or resumed: [`Self::roots_output_read`] has a new answer for a read that
-    /// waits on the output stream, or on the output of the rewrite that this one feeds.
+    /// Tells the output stream what [`Self::roots_output_read`] answers now (a handler parked or
+    /// resumed, or the stream was just made), or the output of the rewrite that this one feeds.
     fn sync_output_read_root(&self) {
         let Some(out) = self.output.get() else {
             return;
         };
         match *out.sink.get() {
             SinkHandle::HTMLRewriter(downstream) => downstream.sync_output_read_root(),
-            _ => out.sync_waiting_read_root(),
+            _ => out.root_waiting_reads(self.roots_output_read()),
         }
     }
 
@@ -1416,6 +1416,8 @@ impl RewriterPipe {
             // in `detach_output`.
             bytes.parent_const().set_owner(cell);
             this.output.set(Some(bytes));
+            // A handler can be parked already: a read that begins now has to be found too.
+            this.sync_output_read_root();
         }
         js_HTMLRewriterTransform::output_stream_set_cached(cell, global_this, readable.value);
         // If the rewrite already completed before a reader attached, deliver

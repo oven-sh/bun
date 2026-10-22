@@ -597,10 +597,10 @@ impl FileReader {
         if sink.is_some() {
             self.detach_sink(Some(&err));
             sink.end(Some(err));
-        } else if let Some(_read) = self.parent_const().take_parked_pull(&self.pending) {
+        } else if let Some(read) = self.parent_const().take_parked_pull(&self.pending) {
             self.pending
                 .with_mut(|p| p.result = streams::Result::Err(err));
-            self.pending.with_mut(|p| p.run());
+            self.pending.with_mut(|p| p.run(&read));
         }
     }
 
@@ -727,8 +727,7 @@ impl FileReader {
     fn resolve_pending_read(&self, chunk: Chunk<'_>, has_more: bool) -> bool {
         let was_done = self.reader().is_done();
         let global = self.parent_global();
-        // Taken before the settle: that can run script, which can park the next pull.
-        let Some(_read) = self.parent_const().take_parked_pull(&self.pending) else {
+        let Some(read) = self.parent_const().take_parked_pull(&self.pending) else {
             return false;
         };
         let mut pending_array_buffer = self
@@ -784,7 +783,7 @@ impl FileReader {
         // A re-entrant cancel() inside `run()` reaches on_reader_done, which drops the across-read ref and lets a GC free this box while the io caller still holds `&mut` into it.
         // SAFETY: see `parent()`.
         let _pin = unsafe { SourcePin::new(self.parent()) };
-        self.pending.with_mut(|p| p.run());
+        self.pending.with_mut(|p| p.run(&read));
         // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
         ret && !self.done.get() && !self.reader().is_done()
     }
@@ -926,7 +925,7 @@ impl FileReader {
             }
         } else {
             self.consume_reader_buffer();
-            if let Some(_read) = self.parent_const().take_parked_pull(&self.pending) {
+            if let Some(read) = self.parent_const().take_parked_pull(&self.pending) {
                 if !self.buffered.get().is_empty() {
                     let buffered = self.buffered.replace(Vec::new());
                     self.pending.with_mut(|p| {
@@ -937,7 +936,7 @@ impl FileReader {
                     self.pending.with_mut(|p| p.result = streams::Result::Done);
                 }
                 self.buffered.set(Vec::new());
-                self.pending.with_mut(|p| p.run());
+                self.pending.with_mut(|p| p.run(&read));
             }
             // Don't handle buffered data here - it will be returned on the next onPull
             // This ensures proper ordering of chunks
@@ -972,11 +971,11 @@ impl FileReader {
             let err = streams::StreamError::Error(err);
             self.detach_sink(Some(&err));
             sink.end(Some(err));
-        } else if let Some(_read) = self.parent_const().take_parked_pull(&self.pending) {
+        } else if let Some(read) = self.parent_const().take_parked_pull(&self.pending) {
             self.pending.with_mut(|p| {
                 p.result = streams::Result::Err(streams::StreamError::Error(err));
             });
-            self.pending.with_mut(|p| p.run());
+            self.pending.with_mut(|p| p.run(&read));
         } else {
             // `p.run()` would no-op and the pull promise would never settle.
             self.read_error.set(Some(err));
@@ -1095,11 +1094,6 @@ impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
     const SUPPORTS_REF: bool = true;
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
-
-    // The reader's own I/O settles a parked pull.
-    fn roots_waiting_read(&self) -> bool {
-        true
-    }
     // R-2: trait sigs are still `&mut self` (shared with ByteBlobLoader/
     // ByteStream — separate migration); the inherent impls take `&self`, so
     // these forward via auto-deref. The `&mut` here is what the codegen shim

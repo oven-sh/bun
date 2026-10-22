@@ -13,6 +13,7 @@ use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
 use crate::webcore::blob::Any as AnyBlob;
+use crate::webcore::readable_stream::WaitingRead;
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // scope statics renamed with `Log` suffix so they don't collide with
@@ -541,8 +542,8 @@ impl Pending {
 pub(crate) enum PendingFuture {
     Promise {
         // JSC_BORROW: not a GC root. The `pendingPromise` slot of the wrapper of the source that
-        // parked the pull holds it (`NewSource::hold_waiting_read`), so it is valid for as long
-        // as that wrapper is alive: settle it through `NewSource::take_parked_pull`.
+        // parked the pull holds it, so it is valid for as long as that wrapper is alive
+        // (`NewSource::take_parked_pull`).
         promise: *mut JSPromise,
         // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
         global_this: BackRef<JSGlobalObject>,
@@ -581,7 +582,10 @@ impl Pending {
     /// termination (or the settle throwing), and it is folded here
     /// (`dispatch::fold`) rather than handed to callers that have nowhere to
     /// put it. The pending itself is consumed either way.
-    pub(crate) fn run(&mut self) {
+    ///
+    /// `_read` is the parked read, taken from the source's wrapper: the wrapper holds the
+    /// promise, so there is no promise to settle without it.
+    pub(crate) fn run(&mut self, _read: &WaitingRead) {
         if self.state != PendingState::Pending {
             return;
         }
@@ -1066,35 +1070,6 @@ impl SourceHandle {
             | SourceHandle::ShellWritable(_)
             | SourceHandle::HTMLRewriter(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
-        }
-    }
-
-    /// Whether I/O that the collector does not own (a socket) keeps this producer alive and
-    /// delivers its data, whatever script drops.
-    pub fn is_driven_by_io(self) -> bool {
-        match self {
-            SourceHandle::FetchResponseBody(_)
-            | SourceHandle::S3DownloadBody(_)
-            | SourceHandle::ServerRequestBody(_) => true,
-            SourceHandle::None
-            | SourceHandle::JSController(_)
-            | SourceHandle::ByteStream(_)
-            | SourceHandle::FileReader(_)
-            | SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
-            | SourceHandle::HTMLRewriter(_)
-            | SourceHandle::TestingCancelOnDrain(_) => false,
-        }
-    }
-
-    /// Whether the wrapper of this producer's stream is a GC root while a read waits on it
-    /// (`NewSource::hold_waiting_read`). Only the collector keeps any other producer alive, so
-    /// what feeds it reaches the stream, and a root would keep both for a read that nothing can
-    /// settle.
-    pub fn roots_waiting_read(self) -> bool {
-        match self {
-            SourceHandle::HTMLRewriter(p) => p.roots_output_read(),
-            _ => self.is_driven_by_io(),
         }
     }
 
@@ -2695,7 +2670,7 @@ pub(crate) type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 pub(crate) struct BufferAction {
     tag: BufferActionTag,
     // JSC_BORROW: not a GC root, as `PendingFuture::Promise`: the `pendingPromise` slot of the
-    // stream's source wrapper holds it until the read is settled.
+    // stream's source wrapper holds it until the read is settled (`NewSource::take_waiting_read`).
     promise: *mut JSPromise,
     /// The context whose script asked (as `PendingFuture::Promise`).
     context: bun_jsc::ContextId,
@@ -2725,8 +2700,8 @@ impl BufferAction {
     }
 
     /// Settle the buffered `text()`/`json()`/`bytes()`/`blob()` promise.
-    /// Terminal like the other settle primitives (`Pending::run`).
-    pub(crate) fn fulfill(self, global: &JSGlobalObject, blob: &mut AnyBlob) {
+    /// Terminal like the other settle primitives (`Pending::run`), and like it for `_read`.
+    pub(crate) fn fulfill(self, _read: &WaitingRead, global: &JSGlobalObject, blob: &mut AnyBlob) {
         let entered = global.bun_vm().enter_context(self.context);
         let settled = blob.wrap(
             jsc::AnyPromise::Normal(self.promise),
@@ -2737,7 +2712,7 @@ impl BufferAction {
     }
 
     /// Terminal like [`fulfill`](Self::fulfill).
-    pub(crate) fn reject(self, global: &JSGlobalObject, err: &StreamError) {
+    pub(crate) fn reject(self, _read: &WaitingRead, global: &JSGlobalObject, err: &StreamError) {
         let _context = global.bun_vm().enter_context(self.context);
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         let settled = JSPromise::opaque_mut(self.promise).reject(global, Ok(err.to_js(global)));

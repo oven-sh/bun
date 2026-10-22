@@ -53,6 +53,8 @@ struct H3App {
     void clearRoutes() {
         http3Context->getContextData()->router = decltype(http3Context->getContextData()->router){};
     }
+    /* While on, a route is registered with its pattern as a literal path. See HttpRouter::setLiteral. */
+    void literalRoutes(bool on) { http3Context->getContextData()->router.setLiteral(on); }
     /* GOAWAY + drain. The engine itself is torn down in the destructor. */
     void close() { http3Context->shutdown(); }
     bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {

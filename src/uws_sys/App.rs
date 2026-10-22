@@ -154,6 +154,13 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
 
+    /// Runs `register` with literal route keys: `:` and `*` do not start a parameter or a wildcard.
+    pub fn literal_routes(&mut self, register: impl FnOnce(&mut Self)) {
+        c::uws_app_literal_routes(Self::SSL_FLAG, self.as_raw(), true);
+        register(self);
+        c::uws_app_literal_routes(Self::SSL_FLAG, self.as_raw(), false);
+    }
+
     pub(crate) fn publish_with_options(
         &mut self,
         topic: &[u8],
@@ -672,6 +679,7 @@ pub mod c {
         );
 
         pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
+        pub(crate) safe fn uws_app_literal_routes(ssl_flag: c_int, app: &mut uws_app_t, on: bool);
     }
 
     #[repr(C)]

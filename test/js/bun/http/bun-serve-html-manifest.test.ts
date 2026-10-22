@@ -389,6 +389,192 @@ describe("Bun.serve HTML manifest", () => {
     `);
   });
 
+  // The built server registers each file of the manifest as a route under the
+  // file's output path. That path is a file name, not a route pattern: a
+  // segment that starts with ":" is not a parameter and one that starts with
+  // "*" is not a wildcard. Windows cannot have these files on disk.
+  describe.skipIf(isWindows)("file whose output path reads as a route pattern", () => {
+    /** Builds `server.ts` with `--target bun` and runs the built server to its end. */
+    async function buildAndRun(dir: string, ...buildOptions: string[]) {
+      await using buildProc = Bun.spawn({
+        cmd: [bunExe(), "build", "server.ts", "--outdir", "dist", "--target", "bun", ...buildOptions],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [, buildStderr, buildExitCode] = await Promise.all([
+        buildProc.stdout.text(),
+        buildProc.stderr.text(),
+        buildProc.exited,
+      ]);
+      expect({ buildStderr, buildExitCode }).toEqual({ buildStderr: "", buildExitCode: 0 });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "server.js"],
+        cwd: join(dir, "dist"),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout === "" ? stderr : JSON.parse(stdout), exitCode };
+    }
+
+    // The server asks for each image of the page and then for `others`, and
+    // prints [method, path, status, body] for each request.
+    const server = (others: string) => `
+      import { unlinkSync } from "node:fs";
+      import { join } from "node:path";
+      import index from "./index.html";
+
+      using server = Bun.serve({
+        port: 0,
+        routes: {
+          "/": index,
+        },
+        fetch: () => new Response("no route", { status: 404 }),
+      });
+
+      const html = await (await fetch(server.url)).text();
+      const images = [...html.matchAll(/<img src="([^"]+)"/g)].map(match => match[1]);
+      const seen = [];
+      async function request(method, path) {
+        const res = await fetch(new URL(path, server.url), { method });
+        seen.push([method, path.replace(/-[a-z0-9]+\\.png$/, ".png"), res.status, await res.text()]);
+      }
+      for (const image of images) await request("GET", image);
+      ${others}
+      console.log(JSON.stringify(seen));
+    `;
+
+    it.concurrent("serves a file named like a parameter or a wildcard only at its own path", async () => {
+      using dir = tempDir("serve-html-pattern-names", {
+        "server.ts": server(`
+          for (const path of ["/about", "/favicon.ico", "/a/b"]) await request("GET", path);
+          await request("HEAD", images[0]);
+          await request("HEAD", "/about");
+          // A file that is gone from disk gives its path to the next route.
+          unlinkSync(join(import.meta.dir, images[0]));
+          await request("GET", images[0]);
+          await request("GET", images[1]);
+        `),
+        "index.html": `<!DOCTYPE html><html><body><img src="./:smile:.png"><img src="./*.png"><img src="./plain.png"></body></html>`,
+        ":smile:.png": "colon",
+        "*.png": "star",
+        "plain.png": "plain",
+      });
+
+      expect(await buildAndRun(String(dir))).toEqual({
+        stdout: [
+          ["GET", "./:smile:.png", 200, "colon"],
+          ["GET", "./*.png", 200, "star"],
+          ["GET", "./plain.png", 200, "plain"],
+          ["GET", "/about", 404, "no route"],
+          ["GET", "/favicon.ico", 404, "no route"],
+          ["GET", "/a/b", 404, "no route"],
+          ["HEAD", "./:smile:.png", 200, ""],
+          ["HEAD", "/about", 404, ""],
+          ["GET", "./:smile:.png", 404, "no route"],
+          ["GET", "./*.png", 200, "star"],
+        ],
+        exitCode: 0,
+      });
+    });
+
+    // `[dir]` in the asset name keeps the directory of the source file. The
+    // router reads 100 segments of a pattern and of a URL, so a path of 100
+    // segments or more also answered for every longer path that starts with it.
+    it.concurrent("serves a file under a directory named like a parameter or a wildcard", async () => {
+      // 101 directories, and 99 of them: a path of 102 segments and one of 100.
+      const deep = Buffer.alloc(202, "d/").toString();
+      const hundred = deep.slice(0, 198) + "f.png";
+      using dir = tempDir("serve-html-pattern-directories", {
+        "server.ts": server(`
+          const deep = ${JSON.stringify("/" + deep)};
+          for (const path of [
+            "/other/b.png",
+            "/:v",
+            "/:v/",
+            "/:v/other.png",
+            "/:v/b.png/",
+            "/other/a.png",
+            "/*dir/",
+            "/*dir/other.png",
+            "/sub/other/c.png",
+          ]) {
+            await request("GET", path);
+          }
+          await request("HEAD", "/other/b.png");
+          seen.push((await fetch(new URL(deep + "e.png", server.url))).status);
+          seen.push((await fetch(new URL(deep + "other/e.png", server.url))).status);
+          seen.push((await fetch(new URL(deep.slice(2) + "e.png", server.url))).status);
+          seen.push((await fetch(new URL(${JSON.stringify("/" + hundred)} + "/below", server.url))).status);
+        `),
+        "index.html": `<!DOCTYPE html><html><body><img src="./:v/b.png"><img src="./*dir/a.png"><img src="./sub/:x/c.png"><img src="./${deep}e.png"><img src="./${hundred}"></body></html>`,
+        ":v/b.png": "in colon directory",
+        "*dir/a.png": "in star directory",
+        "sub/:x/c.png": "below a directory",
+        [deep + "e.png"]: "deep",
+        [hundred]: "hundred segments",
+      });
+
+      expect(await buildAndRun(String(dir), "--asset-naming", "[dir]/[name].[ext]")).toEqual({
+        stdout: [
+          ["GET", "./:v/b.png", 200, "in colon directory"],
+          ["GET", "./*dir/a.png", 200, "in star directory"],
+          ["GET", "./sub/:x/c.png", 200, "below a directory"],
+          ["GET", `./${deep}e.png`, 200, "deep"],
+          ["GET", `./${hundred}`, 200, "hundred segments"],
+          ["GET", "/other/b.png", 404, "no route"],
+          ["GET", "/:v", 404, "no route"],
+          ["GET", "/:v/", 404, "no route"],
+          ["GET", "/:v/other.png", 404, "no route"],
+          ["GET", "/:v/b.png/", 404, "no route"],
+          ["GET", "/other/a.png", 404, "no route"],
+          ["GET", "/*dir/", 404, "no route"],
+          ["GET", "/*dir/other.png", 404, "no route"],
+          ["GET", "/sub/other/c.png", 404, "no route"],
+          ["HEAD", "/other/b.png", 404, ""],
+          // The deep file, a path one directory longer, a path one directory shorter,
+          // and a path below the file of 100 segments.
+          200,
+          404,
+          404,
+          404,
+        ],
+        exitCode: 0,
+      });
+    });
+
+    // A file named "*" has the output path "/*". That is the pattern of the
+    // `fetch` handler, and the file took its place for GET.
+    it.concurrent("serves a file named * only at its own path", async () => {
+      using dir = tempDir("serve-html-star-file", {
+        "server.ts": server(`
+          for (const path of ["/about", "/a/b", "/*x", "/*/"]) await request("GET", path);
+          await request("POST", "/about");
+        `),
+        "index.html": `<!DOCTYPE html><html><body><img src="./*"></body></html>`,
+        "*": "star file",
+      });
+
+      expect(await buildAndRun(String(dir), "--asset-naming", "[name]")).toEqual({
+        stdout: [
+          ["GET", "./*", 200, "star file"],
+          ["GET", "/about", 404, "no route"],
+          ["GET", "/a/b", 404, "no route"],
+          ["GET", "/*x", 404, "no route"],
+          ["GET", "/*/", 404, "no route"],
+          ["POST", "/about", 404, "no route"],
+        ],
+        exitCode: 0,
+      });
+    });
+  });
+
   // With --splitting, a module that is only dynamically imported becomes its
   // own chunk. The assets that only it imports still have to end up in the
   // manifest, otherwise the page's lazy code requests files the server never

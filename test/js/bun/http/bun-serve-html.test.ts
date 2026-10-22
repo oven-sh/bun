@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tempDirWithFiles, tls } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -1559,6 +1559,392 @@ test("wildcard static routes", async () => {
       expect(text).toContain("<title>Error Page</title>");
     }
   }
+});
+
+// A production build registers every file it wrote as a route under the
+// file's output path. That path is a file name, not a route pattern: a segment
+// that starts with ":" is not a parameter and one that starts with "*" is not
+// a wildcard. Read as a pattern, such a file answered paths that are not its
+// own, one file answered for another, and it replaced a user route of the same
+// shape.
+describe("bundled file whose name reads as a route pattern", () => {
+  // `get` answers [status, body]. The `fetch` handler answers a path that has no route.
+  const helpers = /*ts*/ `
+    const noRoute = () => new Response("no route", { status: 404 });
+    async function get(server, path, init) {
+      const response = await fetch(new URL(path, server.url), init);
+      return [response.status, await response.text()];
+    }
+    async function head(server, path, init) {
+      const response = await fetch(new URL(path, server.url), { ...init, method: "HEAD" });
+      return [response.status, response.headers.get("content-type"), response.headers.get("content-length")];
+    }
+    // The first request for the page builds it and registers its files.
+    async function imageSources(server, init) {
+      const html = await (await fetch(server.url, init)).text();
+      return [...html.matchAll(/<img src="([^"]+)"/g)].map(match => match[1]);
+    }
+    const withoutHash = path => path.replace(/-[a-z0-9]+\\.png$/, ".png");
+  `;
+
+  // A plugin gives the page its images, so that no file with ":" or "*" in its
+  // name has to be on disk. Windows does not allow such a file.
+  const virtualImages = (images: Record<string, string>) => ({
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": /*ts*/ `
+      const images = ${JSON.stringify(images)};
+      export default {
+        name: "virtual-images",
+        setup(build) {
+          build.onResolve({ filter: /^virtual\\// }, args => ({
+            path: args.path.slice("virtual/".length),
+            namespace: "virtual-image",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "virtual-image" }, args => ({
+            contents: images[args.path],
+            loader: "file",
+          }));
+        },
+      };
+    `,
+    "index.html": `<!DOCTYPE html><html><body>${Object.keys(images)
+      .map(name => `<img src="virtual/${name}">`)
+      .join("")}</body></html>`,
+  });
+
+  // The same page, with the images as files next to it.
+  const diskImages = (images: Record<string, string>) => ({
+    ...images,
+    "index.html": `<!DOCTYPE html><html><body>${Object.keys(images)
+      .map(name => `<img src="./${name}">`)
+      .join("")}</body></html>`,
+  });
+
+  // The output names. On Windows the bundler does not have to keep the ":" or "*".
+  const names = (...expected: string[]) => (isWindows ? expect.any(Array) : expected);
+
+  async function resultOf(dir: { toString(): string }) {
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    return { result: stdout === "" ? stderr : JSON.parse(stdout), exitCode };
+  }
+
+  test.concurrent("an asset named like a parameter or a wildcard answers only its own path", async () => {
+    using dir = tempDir("bun-serve-html-pattern-assets", {
+      // Only a ":" or "*" that starts the name makes it read as a pattern.
+      ...virtualImages({
+        ":smile:.png": "colon",
+        "*.png": "star",
+        "plain.png": "plain",
+        "@:x.png": "colon second",
+        "a*b.png": "star inside",
+      }),
+      "serve.ts": /*ts*/ `
+        import page from "./index.html";
+        ${helpers}
+        using server = Bun.serve({ port: 0, development: false, routes: { "/": page }, fetch: noRoute });
+        const sources = await imageSources(server);
+        const [colon, star] = sources;
+        console.log(JSON.stringify({
+          names: sources.map(withoutHash),
+          images: await Promise.all(sources.map(source => get(server, source))),
+          headOfImage: await head(server, colon),
+          imageWithQuery: await get(server, colon + "?v=1"),
+          about: await get(server, "/about"),
+          favicon: await get(server, "/favicon.ico"),
+          nested: await get(server, "/a/b/c"),
+          aboutWithQuery: await get(server, "/about?v=1"),
+          postAbout: await get(server, "/about", { method: "POST" }),
+          headOfAbout: (await head(server, "/about"))[0],
+          longerThanImage: [
+            await get(server, colon + "/"),
+            await get(server, colon + "x"),
+            await get(server, colon + "/extra"),
+            await get(server, star + "/a"),
+          ],
+        }));
+      `,
+    });
+    const noRoute = [404, "no route"];
+    expect(await resultOf(dir)).toEqual({
+      result: {
+        names: names("/:smile:.png", "/*.png", "/plain.png", "/@:x.png", "/a*b.png"),
+        images: [
+          [200, "colon"],
+          [200, "star"],
+          [200, "plain"],
+          [200, "colon second"],
+          [200, "star inside"],
+        ],
+        headOfImage: [200, "image/png", "5"],
+        imageWithQuery: [200, "colon"],
+        about: noRoute,
+        favicon: noRoute,
+        nested: noRoute,
+        aboutWithQuery: noRoute,
+        postAbout: noRoute,
+        headOfAbout: 404,
+        longerThanImage: [noRoute, noRoute, noRoute, noRoute],
+      },
+      exitCode: 0,
+    });
+  });
+
+  // Windows cannot have a file with ":" or "*" in its name.
+  describe.skipIf(isWindows)("with the files on disk", () => {
+    test.concurrent.each([
+      [
+        "static",
+        "{ hmr: false }",
+        `"/:id": new Response("user static route")`,
+        "user static route",
+        "user static route",
+      ],
+      [
+        "handler",
+        "false",
+        `"/:slug": request => new Response("user handler " + request.params.slug)`,
+        "user handler about",
+        "user handler :a.pngx",
+      ],
+    ])(
+      "two such assets serve their own bytes and leave a user %s route of that shape alone (development: %s)",
+      async (_, development, userRoute, atAbout, atLongerThanA) => {
+        using dir = tempDir("bun-serve-html-two-colon-assets", {
+          ...diskImages({ ":a.png": "first", ":b.png": "the second" }),
+          "serve.ts": /*ts*/ `
+          import page from "./index.html";
+          ${helpers}
+          using server = Bun.serve({
+            port: 0,
+            development: ${development},
+            routes: { "/": page, ${userRoute} },
+            fetch: noRoute,
+          });
+          const beforeBuild = await get(server, "/about");
+          const [a, b] = await imageSources(server);
+          console.log(JSON.stringify({
+            beforeBuild,
+            a: await get(server, a),
+            b: await get(server, b),
+            headOfB: await head(server, b),
+            afterBuild: await get(server, "/about"),
+            headAfterBuild: (await head(server, "/about"))[0],
+            // One more byte than the name of the image: the route of the user.
+            longerThanA: (await get(server, a + "x"))[1].replace(/-[a-z0-9]+\\.pngx$/, ".pngx"),
+            belowA: await get(server, a + "/"),
+          }));
+        `,
+        });
+        expect(await resultOf(dir)).toEqual({
+          result: {
+            beforeBuild: [200, atAbout],
+            a: [200, "first"],
+            b: [200, "the second"],
+            headOfB: [200, "image/png", "10"],
+            afterBuild: [200, atAbout],
+            headAfterBuild: 200,
+            longerThanA: atLongerThanA,
+            belowA: [404, "no route"],
+          },
+          exitCode: 0,
+        });
+      },
+    );
+
+    // A server has a router for each of HTTP/1.1, HTTP/1.1 over TLS, HTTP/2 and HTTP/3.
+    test.concurrent("over HTTPS/1.1, HTTP/2 and HTTP/3", async () => {
+      using dir = tempDir("bun-serve-html-colon-asset-tls", {
+        ...diskImages({ ":smile:.png": "colon" }),
+        "serve.ts": /*ts*/ `
+        import page from "./index.html";
+        ${helpers}
+        using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: ${JSON.stringify(tls)},
+          http2: true,
+          http3: true,
+          development: false,
+          routes: { "/": page },
+          fetch: noRoute,
+        });
+        const results = {};
+        for (const protocol of ["http1.1", "http2", "http3"]) {
+          const init = { protocol, tls: { rejectUnauthorized: false } };
+          const [colon] = await imageSources(server, init);
+          results[protocol] = {
+            colon: await get(server, colon, init),
+            headOfColon: await head(server, colon, init),
+            about: await get(server, "/about", init),
+            headOfAbout: (await head(server, "/about", init))[0],
+            belowColon: await get(server, colon + "/", init),
+          };
+        }
+        console.log(JSON.stringify(results));
+      `,
+      });
+      const served = {
+        colon: [200, "colon"],
+        headOfColon: [200, "image/png", "5"],
+        about: [404, "no route"],
+        headOfAbout: 404,
+        belowColon: [404, "no route"],
+      };
+      expect(await resultOf(dir)).toEqual({
+        result: { "http1.1": served, http2: served, http3: served },
+        exitCode: 0,
+      });
+    });
+
+    // The router tries a WebSocket upgrade ahead of every other route. The route
+    // of a bundled file does not change that.
+    test.concurrent("a WebSocket upgrade at the path of such an asset still reaches the server", async () => {
+      using dir = tempDir("bun-serve-html-colon-asset-websocket", {
+        ...diskImages({ ":smile:.png": "colon" }),
+        "serve.ts": /*ts*/ `
+        import page from "./index.html";
+        ${helpers}
+        using server = Bun.serve({
+          port: 0,
+          development: false,
+          routes: { "/": page },
+          fetch(request, server) {
+            if (server.upgrade(request, { data: new URL(request.url).pathname })) return;
+            return noRoute();
+          },
+          websocket: {
+            open(socket) {
+              socket.send("upgraded at " + socket.data);
+            },
+            message() {},
+          },
+        });
+        const [colon] = await imageSources(server);
+        function firstMessage(path) {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const socket = new WebSocket(new URL(path, server.url).href.replace("http", "ws"));
+          socket.onmessage = event => {
+            resolve(event.data.replace(colon, "the image"));
+            socket.close();
+          };
+          socket.onerror = () => reject(new Error("no upgrade at " + path));
+          return promise;
+        }
+        console.log(JSON.stringify({
+          upgradeAtImage: await firstMessage(colon),
+          upgradeAtAbout: await firstMessage("/about"),
+          image: await get(server, colon),
+          about: await get(server, "/about"),
+        }));
+      `,
+      });
+      expect(await resultOf(dir)).toEqual({
+        result: {
+          upgradeAtImage: "upgraded at the image",
+          upgradeAtAbout: "upgraded at /about",
+          image: [200, "colon"],
+          about: [404, "no route"],
+        },
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("a page named like a parameter answers only its own path", async () => {
+      using dir = tempDir("bun-serve-html-colon-page", {
+        ":page.html": `<!DOCTYPE html><html><body><h1>colon page</h1></body></html>`,
+        "a:b/index.html": `<!DOCTYPE html><html><body><h1>page in a directory</h1></body></html>`,
+        "serve.ts": /*ts*/ `
+        import colonPage from "./:page.html";
+        import directoryPage from "./a:b/index.html";
+        ${helpers}
+        using server = Bun.serve({
+          port: 0,
+          development: false,
+          routes: {
+            "/colon": colonPage,
+            "/directory": directoryPage,
+            // The same bytes as the output path of the first page. This one is a pattern.
+            "/:page.html": new Response("user static route"),
+          },
+          fetch: noRoute,
+        });
+        async function heading(path) {
+          const [status, body] = await get(server, path);
+          return [status, body.match(/<h1>(.*?)<\\/h1>/)?.[1] ?? body];
+        }
+        const beforeBuild = await heading("/about");
+        console.log(JSON.stringify({
+          beforeBuild,
+          colonRoute: await heading("/colon"),
+          directoryRoute: await heading("/directory"),
+          colonOutputPath: await heading("/:page.html"),
+          about: await heading("/about"),
+          otherDirectory: await heading("/other/index.html"),
+        }));
+      `,
+      });
+      expect(await resultOf(dir)).toEqual({
+        result: {
+          beforeBuild: [200, "user static route"],
+          colonRoute: [200, "colon page"],
+          directoryRoute: [200, "page in a directory"],
+          colonOutputPath: [200, "colon page"],
+          about: [200, "user static route"],
+          otherDirectory: [404, "no route"],
+        },
+        exitCode: 0,
+      });
+    });
+
+    // `bun ./index.html` serves its one page as the "/*" route. Read as a
+    // pattern, an image answered the paths of the page after the first request.
+    // The name can come from a dependency: a stylesheet of a package refers to
+    // an image that is large enough to be a file of its own.
+    test.concurrent("a page that is the /* route keeps its paths", async () => {
+      using dir = tempDir("bun-serve-html-star-page-pattern-assets", {
+        "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="fancy-ui/style.css"></head><body><h1>home</h1><img src="./:smile:.png"></body></html>`,
+        ":smile:.png": "colon",
+        "node_modules/fancy-ui/package.json": JSON.stringify({ name: "fancy-ui", version: "1.0.0" }),
+        "node_modules/fancy-ui/style.css": `.fancy { background: url("./*.png"); }`,
+        "node_modules/fancy-ui/*.png": Buffer.alloc(200_000, "D").toString(),
+        "serve.ts": /*ts*/ `
+        import page from "./index.html";
+        ${helpers}
+        using server = Bun.serve({ port: 0, development: false, routes: { "/*": page } });
+        // The content type, and the heading of a page or the length of a file.
+        async function summary(path) {
+          const response = await fetch(new URL(path, server.url));
+          const body = await response.text();
+          return [response.headers.get("content-type"), body.match(/<h1>(.*?)<\\/h1>/)?.[1] ?? body.length];
+        }
+        const html = await (await fetch(server.url)).text();
+        const colon = html.match(/<img src="([^"]+)"/)[1];
+        const css = await (await fetch(new URL(html.match(/<link[^>]* href="([^"]+)"/)[1], server.url))).text();
+        const star = css.match(/url\\("?([^")]+)"?\\)/)[1];
+        console.log(JSON.stringify({
+          names: [withoutHash(colon), withoutHash(star)],
+          colon: await get(server, colon),
+          star: await summary(star),
+          home: await summary("/"),
+          about: await summary("/about"),
+          nested: await summary("/a/b"),
+        }));
+      `,
+      });
+      const page = ["text/html;charset=utf-8", "home"];
+      expect(await resultOf(dir)).toEqual({
+        result: {
+          names: ["/:smile:.png", "/*.png"],
+          colon: [200, "colon"],
+          star: ["image/png", 200_000],
+          home: page,
+          about: page,
+          nested: page,
+        },
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 test("serve html with JSX runtime in development mode", async () => {

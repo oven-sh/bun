@@ -421,6 +421,12 @@ impl App {
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
     }
+    /// See [`crate::app::App::literal_routes`].
+    pub fn literal_routes(&mut self, register: impl FnOnce(&mut Self)) {
+        c::uws_h3_app_literal_routes(self, true);
+        register(self);
+        c::uws_h3_app_literal_routes(self, false);
+    }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
@@ -596,6 +602,7 @@ mod c {
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
+        pub(super) safe fn uws_h3_app_literal_routes(app: &mut App, on: bool);
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,

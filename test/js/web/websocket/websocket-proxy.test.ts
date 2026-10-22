@@ -19,12 +19,15 @@ import {
   echoSession,
   failed,
   failingSession,
+  forwardRecordsTogether,
   openOrFailure,
   startEchoServer,
+  startOriginWithCorruptRecord,
   startProxy,
   startRawWssServer,
   startRecordingProxy,
   startRenegotiatingWssServer,
+  TLS_RECORD,
 } from "./proxy-test-utils";
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
@@ -719,54 +722,24 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       await once(origin, "listening");
       const originPort = (origin.address() as AddressInfo).port;
 
-      // The complete TLS records in `bytes`, and the bytes left over behind them.
-      const tlsRecords = (bytes: Buffer) => {
-        let complete = 0;
-        let offset = 0;
-        while (offset + 5 <= bytes.length) {
-          const next = offset + 5 + bytes.readUInt16BE(offset + 3);
-          if (next > bytes.length) break;
-          offset = next;
-          complete++;
-        }
-        return { complete, trailing: bytes.length - offset };
-      };
-      // Armed once the client is open. From then on the server sends exactly
-      // two TLS records: the frames, then the close_notify alert. Hold them
-      // until both are complete and forward them in one write, so the client
-      // decrypts them in one read.
-      let armed = false;
-      let held: Buffer | null = null;
-      const forwardedOnceArmed: ReturnType<typeof tlsRecords>[] = [];
-      using recorded = await startRecordingProxy({
-        tls: scheme === "https",
-        onTargetData(chunk, forward) {
-          let bytes = chunk;
-          if (held !== null) {
-            held = Buffer.concat([held, chunk]);
-            if (tlsRecords(held).complete < 2) return;
-            bytes = held;
-            held = null;
-          }
-          if (armed) forwardedOnceArmed.push(tlsRecords(bytes));
-          forward(bytes);
-        },
-      });
+      // Once the client is open, the server sends exactly two TLS records: the frames, then the close_notify alert,
+      // which TLS 1.3 encrypts as application data.
+      const records = forwardRecordsTogether(2);
+      using recorded = await startRecordingProxy({ tls: scheme === "https", onTargetData: records.onTargetData });
 
       const ws = new WebSocket(`wss://127.0.0.1:${originPort}`, {
         proxy: `${scheme}://127.0.0.1:${recorded.port}`,
         tls: { rejectUnauthorized: false },
       });
       ws.addEventListener("open", () => {
-        armed = true;
-        held = Buffer.alloc(0);
+        records.hold();
         ws.send("go");
       });
-      expect({ events: await clientEvents(ws), requests: recorded.requests, forwardedOnceArmed }).toEqual({
+      expect({ events: await clientEvents(ws), requests: recorded.requests, forwarded: records.forwarded }).toEqual({
         events: serverClose,
         requests: [connectRequest(originPort)],
         // One write to the client carried the record with the frames and the alert.
-        forwardedOnceArmed: [{ complete: 2, trailing: 0 }],
+        forwarded: [{ types: [TLS_RECORD.applicationData, TLS_RECORD.applicationData], trailing: 0 }],
       });
     });
   });
@@ -863,6 +836,74 @@ describe.concurrent.skipIf(!harness.nodeExe())("wss:// origin that renegotiates"
     expect({ events: await clientEvents(ws), calls }).toEqual({
       events: ["after renegotiation", { code: 1000, reason: "", wasClean: true }],
       calls: ["127.0.0.1"],
+    });
+  });
+
+  // The tunnel's TLS engine takes no writes until the renegotiation ends.
+  test.each(["http", "https"])("a message sent during the renegotiation arrives after it (%s proxy)", async scheme => {
+    await using origin = await startRenegotiatingWssServer("behind a message");
+    // "renegotiating" and the request to renegotiate. The listener runs once the client has answered the request.
+    const records = forwardRecordsTogether(2);
+    using recorded = await startRecordingProxy({ tls: scheme === "https", onTargetData: records.onTargetData });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, {
+      proxy: `${scheme}://127.0.0.1:${recorded.port}`,
+      tls: { ca: tlsCerts.cert },
+    });
+    ws.addEventListener("open", () => {
+      records.hold();
+      ws.send("ready");
+    });
+    let queued = false;
+    ws.addEventListener("message", event => {
+      if (event.data === "renegotiating") {
+        ws.send("sent during the renegotiation");
+        queued = ws.bufferedAmount > 0;
+      }
+      if (event.data === "sent during the renegotiation") ws.close(1000);
+    });
+    expect({ events: await clientEvents(ws), together: records.forwarded[0], queued }).toEqual({
+      events: [
+        "renegotiating",
+        "after renegotiation",
+        "sent during the renegotiation",
+        { code: 1000, reason: "", wasClean: true },
+      ],
+      together: { types: [TLS_RECORD.applicationData, TLS_RECORD.handshake], trailing: 0 },
+      queued: true,
+    });
+  });
+});
+
+// What was decrypted before a read failed is delivered, whatever a listener does meanwhile. The tunnel's TLS engine
+// refuses writes as soon as the read fails, so these listeners run while it refuses. "direct" is the reference.
+describe.concurrent("wss://: a corrupt TLS record right behind the messages", () => {
+  const messages = ["m0", "m1", "m2"];
+  const connect = (origin: { url: string; proxy?: string }) =>
+    new WebSocket(origin.url, { proxy: origin.proxy, tls: { ca: tlsCerts.cert } });
+
+  describe.each(["direct", "http", "https"] as const)("%s", route => {
+    // Only a direct connection reports the failed read.
+    const failure: ClientEvent[] =
+      route === "direct" ? [{ error: expect.stringMatching(/ failed: TLS handshake failed$/) }] : [];
+
+    test.each([
+      ["open", "send"],
+      ["open", "pause"],
+      ["message", "send"],
+    ] as const)("the '%s' listener calls %s(): every message is still delivered", async (listener, method) => {
+      await using origin = await startOriginWithCorruptRecord(route, messages);
+      const ws = connect(origin);
+      ws.addEventListener(listener, () => ws[method]("never sent"), { once: true });
+      expect(await clientEvents(ws)).toEqual([...messages, ...failure, { code: 1006, reason: "", wasClean: false }]);
+    });
+
+    test("what send() could not write stays in bufferedAmount", async () => {
+      await using origin = await startOriginWithCorruptRecord(route, messages);
+      const ws = connect(origin);
+      ws.addEventListener("open", () => ws.send("never sent"));
+      await clientEvents(ws);
+      // The whole frame: a 2-byte header, the mask and the payload.
+      expect(ws.bufferedAmount).toBe(2 + 4 + "never sent".length);
     });
   });
 });

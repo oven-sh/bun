@@ -405,8 +405,8 @@ describe.concurrent("package.json names and versions", () => {
     expect(tarballEntries(join(dir, tarball))).toEqual(["package/package.json", "package/index.js"]);
   });
 
-  // As for `JSON.parse`, which is how everybody else reads the package.json in the tarball.
-  test("of two equal keys the last one counts", async () => {
+  // Same as `JSON.parse`, which is how every other tool reads the package.json in the tarball.
+  test("the last of two equal keys wins", async () => {
     using dir = tempDir("pack-equal-keys", {
       "package.json": `{
   "name": "first-name",
@@ -1200,7 +1200,7 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
   });
 });
 
-describe.concurrent("what is at the tarball's destination already", () => {
+describe.concurrent("something already exists at the tarball's destination", () => {
   const files = {
     "pkg/package.json": JSON.stringify({ name: "pack-over", version: "1.0.0", files: ["index.js"] }),
     "pkg/index.js": indexJs,
@@ -1229,7 +1229,7 @@ describe.concurrent("what is at the tarball's destination already", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a symlink that --filename names stays one", async () => {
+  test("a symlink that --filename points to stays a symlink", async () => {
     using dir = tempDir("pack-over-typed-link", { ...files, "pkg/artifacts/earlier.tgz": "an earlier tarball" });
     const link = join(dir, "pkg", "latest.tgz");
     await symlink(join("artifacts", "earlier.tgz"), link, "file");
@@ -1242,7 +1242,7 @@ describe.concurrent("what is at the tarball's destination already", () => {
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  test.serial.skipIf(isWindows)("a file that may be written, in a folder that may not", async () => {
+  test.serial.skipIf(isWindows)("a writable file in a read-only folder", async () => {
     using dir = tempDir("pack-over-locked", { ...files, "pkg/out/pack-over-1.0.0.tgz": "an earlier tarball" });
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     await chmod(join(dir, "pkg", "out"), 0o555);
@@ -1279,7 +1279,7 @@ describe.concurrent("what is at the tarball's destination already", () => {
 });
 
 // A pack that is killed cannot tidy up.
-test.concurrent.each([{}, { files: ["*"] }])("what a killed pack leaves behind is not packed (%j)", async fields => {
+test.concurrent.each([{}, { files: ["*"] }])("leftovers of a killed pack aren't packed (%j)", async fields => {
   using dir = tempDir("pack-killed", {
     "package.json": JSON.stringify({ name: "pack-killed", version: "1.0.0", ...fields }),
     "index.js": indexJs,
@@ -1311,7 +1311,7 @@ test.concurrent.each([{}, { files: ["*"] }])("what a killed pack leaves behind i
   expect(exitCode).toBe(0);
 });
 
-// What a watcher does to its output: truncate it, then write it again. /proc tells how far pack has read.
+// This is what a watcher does to its output: truncate it, then write it again. /proc shows how far pack has read.
 test.concurrent.skipIf(!isLinux)("a file that gets shorter while it is read fails the pack", async () => {
   using dir = tempDir("pack-shorter", {
     "package.json": JSON.stringify({ name: "pack-shorter", version: "1.0.0" }),
@@ -2782,8 +2782,8 @@ describe.concurrent("bundledDependencies", () => {
     expect(tarballEntries(join(dir, "pack-bundled-dep-not-dir-4.5.6.tgz"))).toEqual(["package/package.json"]);
   });
 
-  // No key is `name` or `@scope/name`. Without the check, each of the first eight opens a directory
-  // that is there. `\` is a separator on Windows only, and a NUL ends the path that the OS gets.
+  // No key is `name` or `@scope/name`. Without the check, each of the first eight opens a directory that exists. `\` is
+  // only a separator on Windows, and a NUL ends the path that the OS gets.
   test.each([
     "../../outside",
     "other/lib",
@@ -2890,7 +2890,7 @@ describe.concurrent("bundledDependencies", () => {
     },
   );
 
-  // The tarball's package.json keeps the field, so whoever installs the tarball does not install the package.
+  // The tarball's package.json keeps the field, so whoever installs the tarball doesn't install the package.
   test.each([{ args: [] }, { args: ["--dry-run"] }])(
     "a bundled dependency that is not installed is an error (args: $args)",
     async ({ args }) => {
@@ -2912,7 +2912,7 @@ describe.concurrent("bundledDependencies", () => {
     },
   );
 
-  // What an install may leave out, such as an optional dependency for another platform. npm and pnpm do the same.
+  // Packages that an install may skip, such as an optional dependency for another platform. npm and pnpm do the same.
   test.each([
     ["an optional dependency", { optionalDependencies: { absent: "1.0.0" } }],
     [
@@ -2945,7 +2945,7 @@ describe.concurrent("bundledDependencies", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a workspace bundles what is in the node_modules of the workspace root", async () => {
+  test("a workspace bundles packages from the node_modules of the workspace root", async () => {
     using dir = tempDir("pack-bundled-hoisted-workspace", {
       "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
       "packages/lib/package.json": JSON.stringify({
@@ -2981,8 +2981,8 @@ describe.concurrent("bundledDependencies", () => {
     ]);
   });
 
-  // What the isolated linker lays: node_modules holds links into a store, where the dependencies of a package are
-  // links next to it. `y` goes next to `x`, unless the packed package has a `y` of its own that it does not bundle.
+  // The isolated linker's layout: node_modules has links into a store, where a package's dependencies are links next to
+  // it. `y` goes next to `x`, unless the packed package has its own `y` that it doesn't bundle.
   test.skipIf(isWindows).each([
     { name: "x", own: {}, y: "node_modules/y" },
     { name: "@s/x", own: {}, y: "node_modules/y" },
@@ -3126,7 +3126,7 @@ describe.concurrent("bundledDependencies", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("for what a bundled dependency depends on", async () => {
+    test("for the dependencies of a bundled dependency", async () => {
       using dir = tempDir("pack-bundled-above-nested", {
         ...above,
         "project/package.json": JSON.stringify({
@@ -3152,7 +3152,7 @@ describe.concurrent("bundledDependencies", () => {
     });
   });
 
-  // The layout of pnpm and of the isolated linker: each package beside links to what it depends on.
+  // The layout of pnpm and of the isolated linker: each package is next to links to its dependencies.
   describe.skipIf(isWindows)("two versions of two packages that depend on each other", () => {
     async function packLinked(graph: Record<string, Record<string, string>>) {
       const tree: Record<string, string> = {
@@ -3201,14 +3201,14 @@ describe.concurrent("bundledDependencies", () => {
       expect(await packLinked({ ...chain, "b@2.0.0": {} })).toEqual({ bundled: 4, err: "", exitCode: 0 });
     });
 
-    test("in a ring, which no node_modules can hold", async () => {
+    test("in a cycle, which no node_modules layout can represent", async () => {
       const { err, exitCode } = await packLinked({ ...chain, "b@2.0.0": { a: "1.0.0" } });
       expect(err).toStartWith("error: bundled dependencies form a cycle: ");
       expect(exitCode).toBe(1);
     });
   });
 
-  test("a dependency of a bundled dependency that is not there is left out", async () => {
+  test("a missing dependency of a bundled dependency is skipped", async () => {
     using dir = tempDir("pack-bundled-dep-absent", {
       "package.json": JSON.stringify({
         name: "pack-bundled-dep-absent",
@@ -3273,7 +3273,7 @@ describe.concurrent("bundledDependencies", () => {
     ]);
   });
 
-  // What `bun install` makes of a workspace that is a dependency.
+  // This is what `bun install` creates for a workspace that's a dependency.
   test.skipIf(isWindows)("a scoped bundled dependency that is a link is followed", async () => {
     using dir = tempDir("pack-bundled-dep-scoped-link", {
       "package.json": JSON.stringify({
@@ -4111,7 +4111,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
     // The directory is excluded by a rule that does not match its files. npm forgets that rule once a negation makes
     // it walk the directory, and packs every token.txt below. git never looks below an excluded directory, so
     // negations like these sit in real .gitignore files without effect. Only what a negation names is packed.
-    describe.each([".npmignore", ".gitignore"])("the rest of the directory stays excluded (%s)", ignoreFile => {
+    describe.each([".npmignore", ".gitignore"])("the rest of the directory is still excluded (%s)", ignoreFile => {
       test.each([
         ["secrets/\n!secrets/keep.js\n", ["secrets/keep.js"]],
         ["secrets\n!secrets/keep.js\n", ["secrets/keep.js"]],
@@ -4166,7 +4166,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
       expect(exitCode).toBe(0);
     });
 
-    test(".git and .npmrc stay out", async () => {
+    test(".git and .npmrc are never packed", async () => {
       expect(
         await packed(".npmignore", "conf/\n!conf/**\n", {
           "index.js": indexJs,
@@ -4179,7 +4179,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
   });
 
   // The usual monorepo: one .gitignore, at the root, that names the folder its packages build into.
-  test.each([".gitignore", ".npmignore"])("the %s of the workspace root does not count for a workspace", async name => {
+  test.each([".gitignore", ".npmignore"])("the %s of the workspace root doesn't apply to a workspace", async name => {
     using dir = tempDir("pack-ignore-root", {
       "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
       [name]: "node_modules\ndist\n",
@@ -4564,7 +4564,7 @@ describe.concurrent("bins", () => {
       ),
       write(join(pkgDir, "index.js"), "console.log('index')"),
     ]);
-    // A junction on Windows, where "junction" is ignored elsewhere and makes a plain symlink.
+    // A junction on Windows. Elsewhere, "junction" is ignored and a plain symlink is created.
     await symlink(join(outside, "bins"), join(pkgDir, "bins"), "junction");
 
     await pack(pkgDir, bunEnv);
@@ -4785,7 +4785,7 @@ describe.concurrent("bins", () => {
     expect(tarball.entries.filter(entry => (entry.perm & 0o111) !== 0).map(entry => entry.pathname)).toEqual(bins);
   });
 
-  // Nothing re-includes `.git` and `.npmrc`: not "files", and not a bin either.
+  // Nothing can re-include `.git` and `.npmrc`: not "files", and not a bin either.
   test.each([
     { bin: ".npmrc" },
     { bin: { a: "./conf/.npmrc" } },
@@ -4866,7 +4866,7 @@ describe.concurrent("bins", () => {
 
 // `chmod 000` keeps the user that packs out of one entry that the scan looks for. The entry is
 // there, so the scan must not continue as if it was not.
-describe.concurrent.skipIf(isWindows)("an entry that is there and does not open", () => {
+describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened", () => {
   // Runs `bun ...cmd` in `cwd` while `locked` has no permission bits. Restores them so that the tree can be removed.
   async function runWithout(dir: string, locked: string, cmd: string[], cwd: string = dir) {
     using unprivileged = unprivilegedSpawnOptions(dir);

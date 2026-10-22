@@ -31,7 +31,6 @@ pub(crate) mod text_encoder_stream_encoder;
 // ─── flat re-exports ─────────────────────────────────────────────────────────
 pub(crate) use cookie_map::{CookieMap, CookieMapRef};
 pub(crate) use s3_client::S3Client;
-pub(crate) use s3_stat::S3Stat;
 
 #[path = "webcore/ObjectURLRegistry.rs"]
 pub(crate) mod object_url_registry;

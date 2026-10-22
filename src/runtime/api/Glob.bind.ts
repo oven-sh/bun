@@ -37,14 +37,14 @@ export const Glob = b.class({
       length: 1,
     },
     __scan: {
-      privateSymbol: "pull",
+      privateSymbol: "globScan",
       args: { options: GlobScanArgument.nullable },
       returns: b.any,
       capability: "js",
       throws: true,
     },
     __scanSync: {
-      privateSymbol: "resolveSync",
+      privateSymbol: "globScanSync",
       args: { options: GlobScanArgument.nullable },
       returns: b.any,
       capability: "heap",

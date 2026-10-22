@@ -600,7 +600,8 @@ pub enum Wildcard {
 }
 
 impl Token {
-    /// `floor` is the tag of a lower bound that is derived, not written: empty, or `-0` under `includePrerelease`.
+    /// `floor` is the tag of a lower bound that's derived instead of written. It's empty, or `-0`
+    /// with `includePrerelease`.
     pub(crate) fn to_range(self, parsed: &version::ParseResult<u64>, floor: Tag) -> Range {
         let version = &parsed.version;
         // Only read for `Wildcard::Major`, which is valid only when it is a written `x`, `X` or `*`.
@@ -767,7 +768,8 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     parse_with(input, sliced, Tag::default())
 }
 
-/// `parse` with node-semver's `includePrerelease`, for `satisfies_including_prerelease`: `1.x` starts at `1.0.0-0` and `>1` at `2.0.0-0`.
+/// Like `parse`, but with node-semver's `includePrerelease`, for `satisfies_including_prerelease`.
+/// `1.x` starts at `1.0.0-0`, and `>1` at `2.0.0-0`.
 pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     parse_with(input, sliced, Tag::ZERO_PRE)
 }

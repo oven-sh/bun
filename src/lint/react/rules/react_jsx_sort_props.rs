@@ -18,7 +18,7 @@ pub struct JsxSortProps {
     multiline: Multiline,
     no_sort_alphabetically: bool,
     reserved_first: ReservedFirst,
-    /// `locale` is not `"auto"`.
+    /// True if `locale` isn't `"auto"`.
     has_locale: bool,
 }
 
@@ -32,11 +32,12 @@ enum Multiline {
 enum ReservedFirst {
     No,
     List(ReservedList),
-    /// What `validateReservedFirstConfig` finds. `None`: the list is empty. Else `unreservedWords`.
+    /// The error that `validateReservedFirstConfig` finds. `None` means the list is empty, otherwise it's
+    /// `unreservedWords`.
     Error(Option<Vec<u8>>),
 }
 
-/// Which of `RESERVED_PROPS_LIST`.
+/// Which entries of `RESERVED_PROPS_LIST` are enabled.
 #[derive(Copy, Clone)]
 struct ReservedList([bool; 4]);
 
@@ -61,17 +62,17 @@ const LIST_MULTILINE_LAST: Message =
     Message::new("listMultilineLast", "Multiline props must be listed after all other props");
 const SORT_PROPS_BY_ALPHA: Message = Message::new("sortPropsByAlpha", "Props should be sorted alphabetically");
 
-/// `memo` or `decl` of the walk over the attributes.
+/// The `memo` or `decl` in upstream's `reduce` over the attributes.
 struct Attribute<'a> {
     decl: Prop<'a>,
-    /// In lower case with `ignoreCase`.
+    /// Lowercased if `ignoreCase` is set.
     name: Cow<'a, [u8]>,
     is_callback: bool,
-    /// `reportedNodeAttributes`: the ids of what is reported at it.
+    /// `reportedNodeAttributes`: the ids of the messages already reported at it.
     reported: SmallVec<[&'static str; 3]>,
 }
 
-/// What the walk makes of `memo` and `decl`.
+/// The result of comparing `memo` and `decl`.
 enum Found {
     /// `return decl`
     InOrder,
@@ -81,7 +82,7 @@ enum Found {
     Previous(Message),
 }
 
-/// What all reports in one element have in common.
+/// State shared by all the reports in one element.
 struct Element<'a, 'r> {
     rule: &'r JsxSortProps,
     opening: Span,
@@ -92,12 +93,13 @@ struct Element<'a, 'r> {
 
 /// An attribute in a group of `getGroupsOfSortableAttributes`.
 struct Sortable<'a> {
-    /// From its start to `attributeMap.get(attribute).end`: a comment, and the attribute after that, can move with it.
+    /// From its start to `attributeMap.get(attribute).end`. A comment, and the attribute after it, can move along with
+    /// it.
     span: Span,
     group: u32,
-    /// What `contextCompare` looks at before the names, in that order: `false` comes first.
+    /// What `contextCompare` compares before the names, in that order. `false` sorts first.
     rank: [bool; 5],
-    /// In lower case with `ignoreCase`.
+    /// Lowercased if `ignoreCase` is set.
     name: Cow<'a, [u8]>,
 }
 
@@ -154,7 +156,7 @@ impl Rule for JsxSortProps {
             Element { rule: self, opening: jsx.opening_span(), attributes, reserved_list, fix: OnceCell::new() };
         let mut memo: Option<Attribute<'a>> = None;
         for decl in attributes {
-            // After a spread the next one is compared with itself.
+            // After a spread, upstream compares the next attribute with itself.
             let Some(current) = Attribute::new(decl, self) else {
                 memo = None;
                 continue;
@@ -182,7 +184,7 @@ impl Rule for JsxSortProps {
 }
 
 impl JsxSortProps {
-    /// Of two names, which are in lower case with `ignoreCase`.
+    /// Compares two names, which are already lowercased if `ignoreCase` is set.
     fn order_of_names(&self, a: &[u8], b: &[u8]) -> Ordering {
         match self.ignore_case || self.has_locale {
             true => strings::locale_compare(a, b),
@@ -219,7 +221,7 @@ impl ReservedFirst {
     }
 }
 
-/// What `Array.prototype.toString` makes of an element.
+/// Converts an element the way `Array.prototype.toString` does.
 fn string_in_array(value: &Json) -> Vec<u8> {
     match value {
         Json::Null => Vec::new(),
@@ -302,7 +304,7 @@ impl<'a> Element<'a, '_> {
         report.fix(|fixer| self.fix.get_or_init(|| self.generate_fix(fixer)).clone());
     }
 
-    /// `generateFixerFunction`: the same for all reports in the element.
+    /// `generateFixerFunction`. The fix is the same for every report in the element.
     #[cold]
     #[inline(never)]
     fn generate_fix(&self, fixer: Fixer<'a>) -> Fix {
@@ -326,7 +328,7 @@ impl<'a> Element<'a, '_> {
         fixer.replace(first.span.to(last.span), source)
     }
 
-    /// `getGroupsOfSortableAttributes`: the groups one after the other.
+    /// `getGroupsOfSortableAttributes`, with the groups flattened into one list.
     fn get_groups_of_sortable_attributes(&self, file: &'a File<'a>) -> Vec<Sortable<'a>> {
         let (attributes, rule) = (self.attributes, self.rule);
         let is_spread = |it: Prop<'a>| it.kind() == PropKind::Spread;
@@ -345,8 +347,8 @@ impl<'a> Element<'a, '_> {
             };
             let (whole, mut comment) = (attribute.span(), file.comments_after(attribute));
             let attribute_line = line_of(whole);
-            // Where it ends, `hasComment`, and whether the next attribute goes with it.
-            let (end, has_comment, takes_next) = match (comment.next(), comment.next(), next_attribute) {
+            // (its end, `hasComment`, whether the next attribute moves with it)
+            let (end, has_comment, includes_next) = match (comment.next(), comment.next(), next_attribute) {
                 (None, ..) => (whole.end, false, false),
                 (Some(first), None, Some(next)) if attribute_line + 1 == line_of(first.span()) => {
                     (next.end, true, true)
@@ -364,10 +366,10 @@ impl<'a> Element<'a, '_> {
                         _ => (next.end, true, true),
                     }
                 }
-                // It stays where it is.
+                // It isn't sortable and stays where it is.
                 _ => continue,
             };
-            i += usize::from(takes_next);
+            i += usize::from(includes_next);
             let has_value = attribute.value().is_some();
             let rank = [
                 has_comment,

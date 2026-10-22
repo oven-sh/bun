@@ -8,7 +8,7 @@ use core::mem::size_of;
 
 use bun_alloc::{AllocError, Arena};
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
-use bun_jsc::{JSGlobalObject, JSValue, StringJsc, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
 use bun_paths as paths;
 use bun_resolver::{DirInfo, Resolver};
 
@@ -32,7 +32,7 @@ pub(crate) type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
 pub(crate) type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
 pub(crate) struct FrameworkRouter {
-    /// Absolute path to root directory of the router.
+    /// Absolute project root. Only used to shorten file paths in errors. A `Type::abs_root` can be outside it.
     pub(crate) root: Box<[u8]>,
     pub(crate) types: Box<[Type]>,
     pub(crate) routes: Vec<Route>,
@@ -140,6 +140,8 @@ pub(crate) struct Type {
     pub(crate) extensions: Box<[Box<[u8]>]>,
     pub(crate) style: Style,
     pub(crate) allow_layouts: bool,
+    /// `FrameworkRouter` itself does not use this value. See `FileSystemRouterType::client_pages`.
+    pub(crate) client_pages: bool,
     /// `FrameworkRouter` itself does not use this value.
     pub(crate) client_file: OpaqueFileIdOptional,
     /// `FrameworkRouter` itself does not use this value.
@@ -160,6 +162,7 @@ impl Default for Type {
             extensions: Box::default(),
             style: Style::NextjsPages,
             allow_layouts: false,
+            client_pages: false,
             client_file: None,
             server_file: OpaqueFileId::init(0),
             server_file_string: StrongOptional::empty(),
@@ -188,7 +191,7 @@ impl FrameworkRouter {
 
         for (type_index, ty) in types.iter_mut().enumerate() {
             ty.abs_root = strings::paths::without_trailing_slash_windows_path(&ty.abs_root).into();
-            debug_assert!(strings::has_prefix(&ty.abs_root, root));
+            debug_assert!(paths::is_absolute(&ty.abs_root));
 
             routes.push(Route {
                 part: Part::Text(b""),
@@ -372,7 +375,9 @@ impl FrameworkRouter {
         *new_route.file_ptr(file_kind) = Some(file_id);
 
         if file_kind == FileKind::Page {
-            match pattern {
+            // Another page with a different file path but the same URL pattern: `(a)/about.tsx`
+            // and `(b)/about.tsx`, or `[a].tsx` and `[b].tsx`.
+            let aliased = match pattern {
                 InsertPattern::Static(p) => {
                     let key: &[u8] = if p.route_path().is_empty() {
                         b"/"
@@ -381,17 +386,28 @@ impl FrameworkRouter {
                     };
                     let gop = self.static_routes.get_or_put(key)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
                 InsertPattern::Dynamic(p) => {
                     let gop = self.dynamic_routes.get_or_put(p)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
+            };
+            if let Some(existing_route) = aliased {
+                self.route_ptr_mut(new_route_index).file_page = None;
+                if let Some(existing) = self.route_ptr(existing_route).file_page {
+                    *out_colliding_file_id = existing;
+                }
+                return Err(InsertError::RouteCollision);
             }
         }
         Ok(())
@@ -417,11 +433,11 @@ impl MatchedParams {
 
     /// Convert the matched params to a JavaScript object
     /// Returns null if there are no params
-    pub(crate) fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let params_array = self.params.const_slice();
 
         if params_array.is_empty() {
-            return JSValue::NULL;
+            return Ok(JSValue::NULL);
         }
 
         // Create a JavaScript object with params
@@ -430,14 +446,9 @@ impl MatchedParams {
             let key_str = bun_core::String::clone_utf8(param.key.slice());
             let value_str = bun_core::String::clone_utf8(param.value.slice());
 
-            obj.put_bun_string_one_or_array(
-                global,
-                &key_str,
-                value_str.into_js(global).expect("unreachable"),
-            )
-            .expect("unreachable");
+            obj.put_bun_string_one_or_array(global, &key_str, value_str.into_js(global)?)?;
         }
-        obj
+        Ok(obj)
     }
 }
 
@@ -448,7 +459,10 @@ impl FrameworkRouter {
     pub(crate) fn match_slow(&self, path: &[u8], params: &mut MatchedParams) -> Option<RouteIndex> {
         params.params = BoundedArray::default();
 
-        debug_assert!(path[0] == b'/');
+        // Every route pattern starts with '/', but a request target or a path from JS might not.
+        if path.first() != Some(&b'/') {
+            return None;
+        }
         if let Some(static_route) = self.static_routes.get(path) {
             return Some(*static_route);
         }
@@ -636,31 +650,46 @@ impl FrameworkRouter {
                             }
                         }
 
+                        let t = &self.types[t_index.get() as usize];
+                        let abs_path = fs_ref.abs(&[file.dir, file.base()]);
+
+                        // Parse the pattern from the path relative to this type's root, which can be outside `self.root`.
                         let mut rel_path_buf = bun_paths::path_buffer_pool::get();
-                        let full_rel_path_len = {
-                            let full_rel_path = paths::resolve_path::relative_normalized_buf::<
+                        let rel_path_len = 1 + paths::resolve_path::relative_normalized_buf::<
+                            paths::platform::Auto,
+                            true,
+                        >(
+                            &mut rel_path_buf[1..], &t.abs_root, abs_path
+                        )
+                        .len();
+                        rel_path_buf[0] = b'/';
+                        paths::resolve_path::platform_to_posix_in_place(
+                            &mut rel_path_buf[0..rel_path_len],
+                        );
+                        let rel_path: &[u8] = &rel_path_buf[0..rel_path_len];
+
+                        // For a path outside `self.root`, each root segment becomes "../".
+                        // `DevServer::relative_path` uses the same bound.
+                        let in_root = abs_path.len() > self.root.len()
+                            && abs_path.starts_with(&self.root)
+                            && paths::is_sep_native(abs_path[self.root.len()]);
+                        let label_fits =
+                            in_root || abs_path.len() + self.root.len() * 2 < paths::MAX_PATH_BYTES;
+                        let mut full_rel_path_buf = bun_paths::path_buffer_pool::get();
+                        let full_rel_path: &[u8] = if label_fits {
+                            let len = paths::resolve_path::relative_normalized_buf::<
                                 paths::platform::Auto,
                                 true,
                             >(
-                                &mut rel_path_buf[1..],
-                                &self.root,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                &mut full_rel_path_buf[..], &self.root, abs_path
+                            )
+                            .len();
+                            paths::resolve_path::platform_to_posix_in_place(
+                                &mut full_rel_path_buf[0..len],
                             );
-                            full_rel_path.len()
-                        };
-                        rel_path_buf[0] = b'/';
-                        paths::resolve_path::platform_to_posix_in_place(
-                            &mut rel_path_buf[0..full_rel_path_len],
-                        );
-
-                        let t = &self.types[t_index.get() as usize];
-                        let abs_root_len = t.abs_root.len();
-                        let root_len = self.root.len();
-                        let full_rel_path = &rel_path_buf[1..1 + full_rel_path_len];
-                        let rel_path: &[u8] = if abs_root_len == root_len {
-                            &rel_path_buf[0..full_rel_path_len + 1]
+                            &full_rel_path_buf[0..len]
                         } else {
-                            &full_rel_path[abs_root_len - root_len - 1..]
+                            rel_path
                         };
 
                         let mut log = TinyLog::empty();
@@ -673,9 +702,24 @@ impl FrameworkRouter {
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
-                                log.cursor_at +=
-                                    u32::try_from(abs_root_len - root_len).expect("int cast");
-                                ctx.on_router_syntax_error(full_rel_path, log)?;
+                                // `cursor_at` is an index into `rel_path`. It only maps to
+                                // `full_rel_path` inside their common suffix.
+                                let common_suffix_len = rel_path
+                                    .iter()
+                                    .rev()
+                                    .zip(full_rel_path.iter().rev())
+                                    .take_while(|(a, b)| a == b)
+                                    .count();
+                                let from_end =
+                                    rel_path.len().saturating_sub(log.cursor_at as usize);
+                                let label = if from_end <= common_suffix_len {
+                                    log.cursor_at = u32::try_from(full_rel_path.len() - from_end)
+                                        .expect("int cast");
+                                    full_rel_path
+                                } else {
+                                    rel_path
+                                };
+                                ctx.on_router_syntax_error(label, log)?;
                                 arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;
                             }
@@ -721,7 +765,18 @@ impl FrameworkRouter {
                             ParsedPatternKind::Page => FileKind::Page,
                             ParsedPatternKind::Layout => FileKind::Layout,
                             ParsedPatternKind::Extra => {
-                                panic!("TODO: associate extra files with route")
+                                let file_name = paths::basename(full_rel_path);
+                                log.fail(
+                                    format_args!(
+                                        "Bun Bake currently does not support \"{}\" files",
+                                        bstr::BStr::new(paths::stem(full_rel_path))
+                                    ),
+                                    full_rel_path.len() - file_name.len(),
+                                    file_name.len(),
+                                );
+                                ctx.on_router_syntax_error(full_rel_path, log)?;
+                                arena_state.reset_retain_with_limit(8 * 1024 * 1024);
+                                continue 'outer;
                             }
                         };
 

@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
+use std::sync::OnceLock;
 
 use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
@@ -105,7 +106,8 @@ pub trait EntryKindResolver {
 pub enum EntryKind {
     Dir,
     File,
-    /// A symlink to nothing; treated like a missing entry, as `stat()` would report it.
+    /// A symlink whose target doesn't exist. It's treated like a missing entry, which is how
+    /// `stat()` reports it.
     Dangling,
 }
 
@@ -139,7 +141,7 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
 
-    pub abs_path: Interned,
+    abs_path: OnceLock<Interned>,
 }
 
 impl Entry {
@@ -183,15 +185,32 @@ impl Entry {
         self.dir
     }
 
-    /// `Interned` is `Copy`.
+    /// Returns `Interned::EMPTY` until a fill has been published. Lock-free.
     #[inline]
     pub fn abs_path(&self) -> Interned {
-        self.abs_path
+        self.abs_path.get().copied().unwrap_or(Interned::EMPTY)
     }
 
-    #[inline]
-    pub fn set_abs_path(&mut self, p: Interned) {
-        self.abs_path = p;
+    /// Returns `abs_path`, calling `fill` under `mutex` to compute it the first time.
+    /// Nothing else writes `abs_path`, and a failed `fill` doesn't publish anything.
+    pub fn abs_path_or_try_fill<E>(
+        &self,
+        fill: impl FnOnce() -> Result<Interned, E>,
+    ) -> Result<Interned, E> {
+        if let Some(p) = self.abs_path.get() {
+            return Ok(*p);
+        }
+        let _guard = self.mutex.lock_guard();
+        if let Some(p) = self.abs_path.get() {
+            return Ok(*p);
+        }
+        let p = fill()?;
+        Ok(*self.abs_path.get_or_init(|| p))
+    }
+
+    pub fn abs_path_or_fill(&self, fill: impl FnOnce() -> Interned) -> Interned {
+        let Ok(p) = self.abs_path_or_try_fill(|| Ok::<_, core::convert::Infallible>(fill()));
+        p
     }
 
     /// Stat-on-first-use.
@@ -274,8 +293,7 @@ impl Entry {
 
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
-// aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
-// at each write site under the per-entry `Entry.mutex`.
+// aliased `&mut Entry` (PORTING.md §Forbidden).
 pub struct EntryLookup<'a> {
     pub(crate) entry: *mut Entry,
     // tie the lookup's nominal lifetime to the DirEntry it came from
@@ -287,9 +305,9 @@ impl<'a> EntryLookup<'a> {
     ///
     /// # Safety (encapsulated)
     /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSMap
-    /// singleton (see `dir_entry::EntryStore`); never freed. `Entry`'s
-    /// only mutable state (`cache`) is behind `Cell`, so interior
-    /// writes via `set_cache*()` do not alias this `&Entry`. The
+    /// singleton (see `dir_entry::EntryStore`); never freed. `cache` is
+    /// behind `Cell` and `abs_path` behind `OnceLock`, so the interior writes through
+    /// `set_cache*()` / `abs_path_or_fill()` do not alias this `&Entry`. The
     /// `PhantomData<&'a Entry>` ties the borrow to the `DirEntry` it was
     /// looked up from.
     #[inline(always)]
@@ -297,13 +315,6 @@ impl<'a> EntryLookup<'a> {
         // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
         unsafe { &*self.entry }
     }
-
-    // former `entry_mut() -> &'a mut Entry` accessor removed
-    // (zero callers). `Entry`'s only mutable state (`cache`) is `Cell`-backed,
-    // so all mutation goes through `entry().set_cache*()` on a shared borrow;
-    // no `&mut Entry` escape hatch is needed. Write sites that bypass the
-    // accessor go through the raw `self.entry` field directly under the
-    // per-entry `Entry.mutex` (see struct doc above).
 }
 
 /// `DirEntry` companion items: the entry map, the global entry store, and the
@@ -540,7 +551,7 @@ impl DirEntry {
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
+                addr_of_mut!((*p).abs_path).write(OnceLock::new());
                 p
             }
         };
@@ -680,9 +691,8 @@ impl ModKey {
     }
 }
 
-// SAFETY: ARENA — `Entry` lives in the `BSSList` singleton; `*mut Entry` raw
-// pointers are the only !Send/!Sync field. All access is serialized through
-// `RealFS.entries_mutex`.
+// SAFETY: `cache` is the only `!Sync` field. It is shared under the per-entry
+// `mutex` discipline described on `Entry`.
 unsafe impl Sync for Entry {}
 // SAFETY: same invariant as the `Sync` impl above.
 unsafe impl Send for Entry {}

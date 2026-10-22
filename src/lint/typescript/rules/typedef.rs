@@ -48,7 +48,8 @@ fn is_for_of_statement_context(node: Node) -> bool {
                     _ => false,
                 };
             }
-            // One with a default is in an `AssignmentPattern`, a rest in a `RestElement`.
+            // An element with a default is in an `AssignmentPattern`, and a rest element is in a
+            // `RestElement`.
             Node::PatElem(element) if element.default().is_none() && !element.is_rest() => element.parent(),
             Node::PatProp(property) if property.default().is_none() && !property.is_rest() => property.parent(),
             Node::Expr(parent) if parent.tag() == ExprTag::Array => Node::Expr(parent),
@@ -95,7 +96,7 @@ impl Typedef {
         if !node.is_assignment_target() {
             return;
         }
-        // An assignment that is itself part of a pattern is an `AssignmentPattern`.
+        // An assignment that's itself part of a pattern is an `AssignmentPattern`.
         if node.tag() == ExprTag::Array
             && matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Assign && !parent.is_assignment_target())
         {
@@ -165,7 +166,7 @@ impl Typedef {
         {
             return;
         }
-        // The parameter of a `catch` is not a `VariableDeclarator`.
+        // A `catch` parameter isn't a `VariableDeclarator`.
         let Node::Stmt(declaration) = node.parent() else {
             return;
         };

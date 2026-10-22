@@ -44,8 +44,6 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
-    /// The path of the first bunfig.toml or .npmrc that exists but could not be read.
-    pub unreadable_config: Option<Box<[u8]>>,
 }
 
 impl Default for ContextData {
@@ -86,7 +84,6 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
-            unreadable_config: None,
         }
     }
 }
@@ -359,6 +356,13 @@ pub struct DebugOptions {
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
     /// reload (node delivers this signal to its watched child; default SIGTERM).
     pub watch_kill_signal: bun_core::SignalCode,
+    /// `--watch-kill-signal` and `--no-clear-screen` as given. `cli::apply_watch_mode_flags`
+    /// applies them once the watch mode is final, which `bun bake` decides after the arguments
+    /// of `bun` are parsed.
+    pub watch_kill_signal_arg: Option<Box<[u8]>>,
+    pub no_clear_screen: bool,
+    /// `--watch` was given. `hot_reload` alone does not tell: `--hot` with `--check` is `Watch` too.
+    pub watch_flag: bool,
     pub global_cache: GlobalCache,
     pub offline_mode_setting: Option<OfflineMode>,
     pub run_in_bun: bool,
@@ -383,6 +387,9 @@ impl Default for DebugOptions {
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
+            watch_kill_signal_arg: None,
+            no_clear_screen: false,
+            watch_flag: false,
             global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,

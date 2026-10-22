@@ -11,7 +11,7 @@ const PREFER_ARRAY_INDEX_OF: Message =
 
 const METHODS: [&str; 2] = ["findIndex", "findLastIndex"];
 
-/// `x => x === a`, `function (x) { return a === x }`, where that is the only `x`.
+/// `x => x === a` or `function (x) { return a === x }`, where that's the only use of `x`.
 fn is_simple_compare_callback_function<'a>(e: Expr<'a>) -> bool {
     let Some(func) = get_inner_expression(e).as_fn().filter(|it| !it.is_async() && !it.is_generator()) else {
         return false;
@@ -38,7 +38,7 @@ fn is_simple_compare_callback_function<'a>(e: Expr<'a>) -> bool {
         return false;
     };
     let is_param = |it: Expr<'a>| get_inner_expression(it).symbol() == Some(symbol);
-    // Not what the default value of the parameter is written to.
+    // Excludes the write reference that the parameter's default value creates.
     (is_param(left) || is_param(right))
         && symbol.references().filter(|it| !matches!(it.node(), Node::Pat(_))).take(2).count() == 1
 }

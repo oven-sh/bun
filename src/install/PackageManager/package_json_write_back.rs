@@ -19,7 +19,6 @@ use super::add_remove_with_filter::{
 };
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, Declared, EditOptions};
-use super::update_package_json_and_install::print_package_json_into_cache_entry;
 use super::workspace_manifests::same_row;
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, WorkspacePackageJSONCache};
 use super::{PackageManager, Subcommand, UpdateRequest};
@@ -52,7 +51,7 @@ pub(crate) fn record(
     push(&mut manager.edited_package_jsons, target, received_requests);
 }
 
-/// A package.json whose cache entry a migration edited, and what is reported once it is written.
+/// A package.json whose cache entry a migration edited, and what to report once it's written.
 pub(crate) struct MigratedPackageJson {
     target: WorkspaceTarget,
     edits: Vec<&'static str>,
@@ -102,7 +101,8 @@ pub fn write_migrated(manager: &mut PackageManager) {
     }
 }
 
-/// Phase 0, before the clean: `bun add ./folder` has a name now, and only one row may carry it.
+/// Phase 0, before the lockfile is cleaned. `bun add ./folder` knows the package's name now, and
+/// only one dependency can have that name.
 pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
     if manager.subcommand != Subcommand::Add
         || manager.options.add_catalog.is_some()
@@ -144,7 +144,8 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
                 continue;
             };
             let name = rows[positional].name.slice(buf);
-            // Not resolved, or a package.json without a name, which two unrelated packages share.
+            // It isn't resolved, or its package.json has no name, which two unrelated packages can
+            // have in common.
             if name.is_empty() || name == request.get_name() {
                 continue;
             }
@@ -208,7 +209,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
         }
     }
 
-    // Highest row first: a removal moves only the rows after it.
+    // Highest index first, because a removal only shifts the dependencies after it.
     index_sort::sort_slice_unstable_by(&mut dropped, |a, b| b.1.cmp(&a.1));
     let lockfile: &mut Lockfile = &mut manager.lockfile;
     for (workspace_id, row) in dropped {
@@ -480,7 +481,8 @@ fn sync_lockfile(
             sbuf,
         )
     };
-    // Why a rule is gone: the members no longer agree on the literal its `$name` names.
+    // Explains why an override is gone: the workspaces no longer agree on the literal that its
+    // `$name` refers to.
     if overrides_changed && !manager.options.log_level.is_silent() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     }
@@ -609,10 +611,11 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
     if *on_disk.source.contents == *printed {
         return true;
     }
-    // Printed as it is, the file can differ from itself: that alone is nothing to write.
-    let root = on_disk.root;
-    print_package_json_into_cache_entry(on_disk, root);
-    *on_disk.source.contents == *printed
+    // Printing the file unchanged can already give different bytes. That alone isn't a reason to
+    // write it.
+    on_disk
+        .print(on_disk.root)
+        .is_ok_and(|reprinted| *reprinted == *printed)
 }
 
 /// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry whose bytes differ from disk.

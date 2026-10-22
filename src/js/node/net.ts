@@ -512,15 +512,19 @@ function onUpgradedConnect(self, connection) {
 function onUpgradedEnd(connection, eof) {
   if (!connection.destroyed) eof();
 }
+// On the handle of a TLS engine that runs over a stream: there, one write is one SSL_write of at most 2^31 - 1 bytes.
+const kTLSOverStream = Symbol("kTLSOverStream");
+const kMaxTLSWrite = 0x7fffffff;
+const kMaxTLSWriteUnits = (kMaxTLSWrite / 3) | 0; // A string is at most 3 bytes for each UTF-16 unit.
 function attachTLSEngine(self, connection, options) {
   const [handle, events] = upgradeDuplexToTLS(connection, options);
   connection.on("data", events[0]);
   connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
-  connection.on("drain", events[2]);
-  connection.on("close", events[3]);
+  connection.on("close", events[2]);
   connection.once(kReadError, onUpgradedReadError.bind(null, self));
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L120
   connection.resume();
+  handle[kTLSOverStream] = true;
   self._handle = handle;
 }
 function adoptTLSPair(self, connection, pair) {
@@ -3068,6 +3072,16 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   }
   this._unrefTimer();
   if (this.secureConnecting) this[kPreHandshakeWrite] = true;
+  // The marker is read first: a handle without it pays nothing for the rest.
+  if (
+    socket[kTLSOverStream] &&
+    chunk.length > kMaxTLSWriteUnits &&
+    (typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length) > kMaxTLSWrite
+  ) {
+    // Node fails that write: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1105-L1126
+    callback(new ErrnoException(uv().UV_EPROTO, "write"));
+    return false;
+  }
   if (socket.readyState < 0) {
     // The handle's native socket was already closed (e.g. handle.close() was
     // called directly): fail the write the way a write(2) on a closed fd does

@@ -161,7 +161,9 @@ void us_quic_loop_flush_if_pending(struct us_loop_t *loop);
 /* Incoming headers — valid from on_stream_headers until on_stream_close. */
 unsigned int us_quic_stream_header_count(us_quic_stream_t *s);
 const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsigned int i);
-/* The header set exceeds the size this endpoint accepts and is incomplete. */
+/* Fields a request may have, pseudo-headers included. */
+#define US_QUIC_MAX_REQUEST_FIELDS 200
+/* The header set exceeds the size or the field count this endpoint accepts and is incomplete. */
 int us_quic_stream_headers_too_large(us_quic_stream_t *s);
 
 /* Connection accessors */

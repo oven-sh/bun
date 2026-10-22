@@ -1940,6 +1940,35 @@ describe("Bun.serve HTTP/3 request validation", () => {
     });
   });
 
+  test("accepts as many request fields as HTTP/1 and HTTP/2 do", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return new Response(String([...req.headers].length));
+      },
+    });
+    const request = async (fields: number) => {
+      const headers: Record<string, string> = {};
+      for (let i = 0; i < fields; i++) headers[`x-${i}`] = "";
+      const res = await fetchH3(server.port!, "/", { headers });
+      return `${res.status} ${await res.text()}`;
+    };
+    // What fetch() sends by itself. :authority is the Host header, and :method, :scheme and :path count too.
+    const own = Number((await request(0)).slice("200 ".length)) + 3;
+
+    expect({
+      atTheLimit: await request(200 - own),
+      overTheLimit: await request(200 - own + 1),
+      after: await request(0),
+    }).toEqual({
+      atTheLimit: `200 ${200 - 3}`,
+      overTheLimit: "431 ",
+      after: `200 ${own - 3}`,
+    });
+  });
+
   test("a response whose headers can't be sent fails its request and no other on the connection", async () => {
     const held = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();

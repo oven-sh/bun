@@ -3067,14 +3067,15 @@ impl H2FrameParser {
         }
     }
 
-    /// The kernel rejected a send of the session's TLS socket. The TLS layer closes the socket
-    /// once it has read what the peer sent before.
+    /// The kernel rejected a send of the session's socket. The TLS layer closes its socket once it
+    /// has read what the peer sent before, and the deferred tick closes a plain one.
     fn transport_send_rejected(&self) -> bool {
         match self.native_socket.get() {
             BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
                 socket.get().socket.get().ssl_send_rejected()
             }
-            _ => false,
+            // Only a plain socket sets the latch, and it stays set once that socket is closed.
+            _ => self.transport_write_fatal.get(),
         }
     }
 

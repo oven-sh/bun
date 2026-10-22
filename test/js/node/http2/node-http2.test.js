@@ -6643,53 +6643,64 @@ it("res.end() calls its callback once when the client leaves before the response
   }
 });
 
-it.skipIf(!isLinux)("a session whose client is gone ends without an error on its streams", async () => {
-  // :method GET, :scheme https and :path / from the static table, then a literal :authority.
-  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x87, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
-  const bytes = Buffer.concat([
-    http2utils.kClientMagic,
-    new http2utils.SettingsFrame().data,
-    new http2utils.HeadersFrame(1, requestBlock, 0, true, true).data,
-    new http2utils.HeadersFrame(1, Buffer.from([0, 1, 97, 1, 98]), 0, true, true).data,
-  ]);
-  const streamErrors = [];
-  let streams = 0;
-  const server = http2.createSecureServer(TLS_CERT);
-  server.on("stream", stream => {
-    streams++;
-    stream.on("error", err => streamErrors.push(err.code));
-    stream.respond({ ":status": 200 });
-    stream.end("ok");
-  });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  // In a process of its own: each client is gone by the time this loop answers it.
-  await using clients = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const bytes = Buffer.from("${bytes.toString("hex")}", "hex");
-      for (let i = 0; i < 10; i++) {
-        await new Promise(done => {
-          const socket = require("node:tls").connect(
-            { port: ${server.address().port}, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false },
-            () => {
-              socket.write(bytes);
-              socket.destroy();
-            },
-          );
-          socket.on("error", () => {}).on("close", done);
-        });
-      }`,
-    ],
-    env: bunEnv,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const exitCode = await clients.exited;
-  // Calls back only once every session is closed.
-  await new Promise(resolve => server.close(resolve));
-  expect({ exitCode, streams, streamErrors }).toEqual({ exitCode: 0, streams: 10, streamErrors: [] });
-});
+for (const secure of [true, false]) {
+  it.skipIf(!isLinux)(
+    `a session whose client is gone ends without an error on its streams${secure ? "" : ", without TLS"}`,
+    async () => {
+      // :method GET, :scheme and :path / from the static table, then a literal :authority.
+      const requestBlock = Buffer.concat([
+        Buffer.from([0x82, secure ? 0x87 : 0x86, 0x84, 0x01, 0x09]),
+        Buffer.from("localhost"),
+      ]);
+      const bytes = Buffer.concat([
+        http2utils.kClientMagic,
+        new http2utils.SettingsFrame().data,
+        new http2utils.HeadersFrame(1, requestBlock, 0, true, true).data,
+        new http2utils.HeadersFrame(1, Buffer.from([0, 1, 97, 1, 98]), 0, true, true).data,
+      ]);
+      const streamErrors = [];
+      let streams = 0;
+      const allStreams = Promise.withResolvers();
+      const server = secure ? http2.createSecureServer(TLS_CERT) : http2.createServer();
+      server.on("stream", stream => {
+        stream.on("error", err => streamErrors.push(err.code));
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+        if (++streams === 10) allStreams.resolve();
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      // In a process of its own: each client is gone by the time this loop answers it.
+      await using clients = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const bytes = Buffer.from("${bytes.toString("hex")}", "hex");
+          for (let i = 0; i < 10; i++) {
+            await new Promise(done => {
+              const socket = require("node:${secure ? "tls" : "net"}").connect(
+                { port: ${server.address().port}, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false },
+                () => {
+                  socket.write(bytes);
+                  socket.destroy();
+                },
+              );
+              socket.on("error", () => {}).on("close", done);
+            });
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const exitCode = await clients.exited;
+      // The clients can be done before this loop has accepted them, and close() drops the rest.
+      await allStreams.promise;
+      // Calls back only once every session is closed.
+      await new Promise(resolve => server.close(resolve));
+      expect({ exitCode, streams, streamErrors }).toEqual({ exitCode: 0, streams: 10, streamErrors: [] });
+    },
+  );
+}
 
 it.skipIf(!isLinux)("a session reports ECONNRESET when its read finds the connection reset", async () => {
   for (const secure of [false, true]) {

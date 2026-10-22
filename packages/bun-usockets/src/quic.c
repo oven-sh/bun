@@ -35,8 +35,8 @@ extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl
 extern size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
 #define US_QUIC_READ_BUF (16 * 1024)
-/* A header set over max_size fails its stream. One over this multiple of
- * max_size closes the connection, as in Http2Context.h. */
+/* A header set over max_size or max_fields fails its stream. One over this
+ * multiple of either closes the connection, as in Http2Context.h. */
 #define US_QUIC_HSET_HARD_CAP_FACTOR 2
 
 /* Incoming header set: contiguous storage + index. Created before the
@@ -51,6 +51,8 @@ struct us_quic_hset {
     int is_server;
     /* Size as RFC 9114 §4.2.2 counts it, and the context's max_header_set_size. */
     size_t size, max_size;
+    /* Fields decoded so far, pseudo-headers and dropped ones included. */
+    size_t fields, max_fields;
     int too_large;
 };
 
@@ -484,6 +486,8 @@ static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) 
     if (!h) return NULL;
     h->is_server = !((us_quic_socket_context_t *) hsi_ctx)->is_client;
     h->max_size = ((us_quic_socket_context_t *) hsi_ctx)->max_header_set_size;
+    /* Only max_size bounds the fields of a response, as in the HTTP/2 client. */
+    h->max_fields = h->is_server ? US_QUIC_MAX_REQUEST_FIELDS : h->max_size;
     return h;
 }
 
@@ -540,11 +544,13 @@ static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
     if (hdr == NULL) return 0; /* end of headers */
     h->size += (size_t) hdr->name_len + hdr->val_len + 32;
-    if (h->size > h->max_size) {
+    h->fields++;
+    if (h->size > h->max_size || h->fields > h->max_fields) {
         /* Drop the field but let lsqpack finish the block, so that it still
          * acknowledges the block and the connection stays usable. */
         h->too_large = 1;
-        return h->size > US_QUIC_HSET_HARD_CAP_FACTOR * h->max_size ? -1 : 0;
+        return h->size > US_QUIC_HSET_HARD_CAP_FACTOR * h->max_size ||
+            h->fields > US_QUIC_HSET_HARD_CAP_FACTOR * h->max_fields ? -1 : 0;
     }
     if (h->is_server && us_quic_field_is_malformed(hdr)) return 1;
     if (h->count == h->hcap) {

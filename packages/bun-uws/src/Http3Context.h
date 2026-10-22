@@ -10,6 +10,8 @@
 
 namespace uWS {
 
+static_assert(US_QUIC_MAX_REQUEST_FIELDS == UWS_HTTP_MAX_HEADERS_COUNT, "HTTP/3 has the field limit of HTTP/1 and HTTP/2");
+
 struct Http3Context {
 
     static Http3Context *create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs = 0) {

@@ -1,7 +1,7 @@
 import { Socket } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { createReadStream, readFileSync } from "fs";
-import { bunEnv, bunExe, gcTick, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDirWithFilesAnon } from "harness";
 import http from "http";
 import type { AddressInfo } from "net";
 import path, { join } from "path";
@@ -1369,7 +1369,10 @@ describe.concurrent("fetch() with streaming", () => {
     });
   }
 
-  it("should drain response body from HTTP thread when server sends chunk then stops (chunked encoding)", async () => {
+  it.skipIf(
+    // The C program is POSIX only
+    isWindows,
+  )("should drain response body from HTTP thread when server sends chunk then stops (chunked encoding)", async () => {
     // This test reproduces a bug where the HTTP client wasn't asking the HTTP thread
     // to drain pending response body bytes. If the server sent headers + first chunk,
     // then stopped sending data (but kept connection open), the read would hang forever.

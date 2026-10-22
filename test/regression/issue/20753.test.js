@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-describe("stdout should always be a string", () => {
+describe.skipIf(isWindows /* accessing posix-specific paths */)("stdout should always be a string", () => {
   test("execFile returns string stdout/stderr even when process fails to spawn", done => {
     // Test case that would cause the issue: non-existent command
     execFile("/does/not/exist", [], (err, stdout, stderr) => {

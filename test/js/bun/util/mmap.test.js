@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync } from "harness";
 import { statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
 // TODO: We do not support mmap() on Windows. Maybe we can add it later.
-describe("Bun.mmap", async () => {
+describe.skipIf(isWindows)("Bun.mmap", async () => {
   await gcTick();
   const path = join(tmpdirSync(), "bun-mmap-test.txt");
   await gcTick();

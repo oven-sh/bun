@@ -384,8 +384,9 @@ describe("apply", () => {
     const tree = (await fs.readdir(afolder, { recursive: true })).map(path => path.replaceAll("\\", "/")).sort();
     expect(tree).toEqual(["plan", "plan b", "plan b/empty.js", "plan b/run.sh", "plan b/todo.js"]);
     expect(await fs.readFile(join(afolder, "plan b", "todo.js"), "utf8")).toBe("new file\n");
-
-    expect((await fs.stat(join(afolder, "plan b", "run.sh"))).mode & 0o777).toBe(0o755);
+    if (process.platform !== "win32") {
+      expect((await fs.stat(join(afolder, "plan b", "run.sh"))).mode & 0o777).toBe(0o755);
+    }
   });
 
   describe("patch", () => {

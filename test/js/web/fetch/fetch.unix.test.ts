@@ -371,7 +371,7 @@ it("keep-alive pool is keyed by socket path", async () => {
   }
 });
 
-it("a relative socket path is resolved against the cwd at fetch() time", async () => {
+it.skipIf(isWindows)("a relative socket path is resolved against the cwd at fetch() time", async () => {
   // Two servers listen on `x.sock` in different directories. The child starts
   // in `a`. The first fetch is still in flight when the cwd moves to `b`, so
   // its answer shows which cwd the connect used. The later fetches show the

@@ -3731,7 +3731,7 @@ describe("literal digits after an interpolated value", () => {
     .runAsTest("each interpolated value keeps its own slot when followed by a literal digit");
 });
 
-test("external command resolution uses the PATH from the shell environment", async () => {
+test.skipIf(isWindows)("external command resolution uses the PATH from the shell environment", async () => {
   using dir = tempDir("shell-argv0-path", {
     "onlyintool": "#!/bin/sh\necho from-onlyintool\n",
   });

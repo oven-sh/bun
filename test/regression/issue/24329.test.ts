@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, tempDir } from "harness";
+import { bunEnv, isWindows, tempDir } from "harness";
 
 // This test verifies that the placeholder scripts created during npm package build
 // print an error message and exit with code 1, rather than silently succeeding.
@@ -63,6 +63,9 @@ exit 1
 
 test("empty shell script exits with code 0 (demonstrating why the fix is needed)", async () => {
   // Skip on Windows
+  if (isWindows) {
+    return;
+  }
 
   // This simulates the OLD behavior: an empty shell script (with shebang)
   // Note: A completely empty file can't be executed by Bun.spawn (ENOEXEC),

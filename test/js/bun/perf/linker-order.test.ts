@@ -756,7 +756,7 @@ describe("workload groups", () => {
   // Says who it and its descendant are, which holds the output pipes open and would run for a minute.
   const lingering = (pids: string) => ["/bin/sh", "-c", `sleep 60 & echo $$,$! > "$1"; wait`, "sh", pids];
 
-  it("stops a command, and what it started, when its signal aborts", async () => {
+  it.skipIf(isWindows)("stops a command, and what it started, when its signal aborts", async () => {
     using dir = tempDir("orderfile-stop", {});
     const controller = new AbortController();
     const command = runCommandAsync(lingering(join(String(dir), "pids")), {
@@ -770,19 +770,19 @@ describe("workload groups", () => {
     await expectGone(pids);
   });
 
-  it("stops a command whose signal had aborted before it started", async () => {
+  it.skipIf(isWindows)("stops a command whose signal had aborted before it started", async () => {
     using dir = tempDir("orderfile-stop", {});
     const command = runCommandAsync(lingering(join(String(dir), "pids")), { env: bunEnv, signal: AbortSignal.abort() });
     await expect(command).rejects.toThrow("stopped with the rest of its group");
   });
 
-  it("stops a command that runs out of time, and says that is why", async () => {
+  it.skipIf(isWindows)("stops a command that runs out of time, and says that is why", async () => {
     using dir = tempDir("orderfile-stop", {});
     const command = runCommandAsync(lingering(join(String(dir), "pids")), { env: bunEnv, timeout: 1 });
     await expect(command).rejects.toThrow("timed out after 0.001 s");
   });
 
-  it("goes by how a command ended, not by whether it was being stopped", async () => {
+  it.skipIf(isWindows)("goes by how a command ended, not by whether it was being stopped", async () => {
     using dir = tempDir("orderfile-stop", {});
     const pids = join(String(dir), "pids");
     const controller = new AbortController();
@@ -859,15 +859,18 @@ describe("workload groups", () => {
     return running;
   }
 
-  it("a signal stops what is running, removes the scratch directory, and then ends the generator", async () => {
-    // The command never finishes by itself: the signal has to stop it.
-    const running = await interruptGenerator(
-      `sleep 60 & echo $$,$! > "$1"; wait`,
-      `await runCommandAsync(command, { signal: interrupted })`,
-      () => {},
-    );
-    await expectGone(running);
-  });
+  it.skipIf(isWindows)(
+    "a signal stops what is running, removes the scratch directory, and then ends the generator",
+    async () => {
+      // The command never finishes by itself: the signal has to stop it.
+      const running = await interruptGenerator(
+        `sleep 60 & echo $$,$! > "$1"; wait`,
+        `await runCommandAsync(command, { signal: interrupted })`,
+        () => {},
+      );
+      await expectGone(running);
+    },
+  );
 
   // Which signals it was started ignoring, a process asks sigaction() about itself through bun:ffi, and
   // where it cannot (musl, node) linux reads /proc. With glibc both answer, and they have to agree.
@@ -896,7 +899,7 @@ describe("workload groups", () => {
     });
   });
 
-  it("a signal the generator was started ignoring, as under nohup, stays ignored", async () => {
+  it.skipIf(isWindows)("a signal the generator was started ignoring, as under nohup, stays ignored", async () => {
     using dir = tempDir("orderfile-nohup", {});
     const [pids, go, out] = ["pids", "go", "out"].map(name => join(String(dir), name));
     const generate = join(import.meta.dir, "../../../../scripts/orderfile/generate.ts");
@@ -927,25 +930,31 @@ describe("workload groups", () => {
     });
   });
 
-  it("a signal inside a nested scratch directory removes both before the generator ends", async () => {
-    const nested = `await withScratch("orderfile-interrupt-inner-", async (inner, innerInterrupted) => {
+  it.skipIf(isWindows)(
+    "a signal inside a nested scratch directory removes both before the generator ends",
+    async () => {
+      const nested = `await withScratch("orderfile-interrupt-inner-", async (inner, innerInterrupted) => {
       record(inner);
       await runCommandAsync(command, { signal: innerInterrupted });
     })`;
-    const running = await interruptGenerator(`sleep 60 & echo $$,$! > "$1"; wait`, nested, () => {});
-    await expectGone(running);
-  });
+      const running = await interruptGenerator(`sleep 60 & echo $$,$! > "$1"; wait`, nested, () => {});
+      await expectGone(running);
+    },
+  );
 
-  it("a signal that arrives during a synchronous command ends the generator after it, with nothing written", async () => {
-    // The signal cannot be handled while spawnSync has the thread; the command is let finish afterwards.
-    await interruptGenerator(
-      `echo $$,$$ > "$1"; until [ -e "$2" ]; do sleep 0.01; done`,
-      `spawnSync(command[0], command.slice(1))`,
-      go => writeFileSync(go, ""),
-    );
-  });
+  it.skipIf(isWindows)(
+    "a signal that arrives during a synchronous command ends the generator after it, with nothing written",
+    async () => {
+      // The signal cannot be handled while spawnSync has the thread; the command is let finish afterwards.
+      await interruptGenerator(
+        `echo $$,$$ > "$1"; until [ -e "$2" ]; do sleep 0.01; done`,
+        `spawnSync(command[0], command.slice(1))`,
+        go => writeFileSync(go, ""),
+      );
+    },
+  );
 
-  it("a signal that arrives during a synchronous command that then fails still ends it", async () => {
+  it.skipIf(isWindows)("a signal that arrives during a synchronous command that then fails still ends it", async () => {
     // No checkpoint is reached: withScratch itself has to give the signal its turn before letting go of it.
     await interruptGenerator(
       `echo $$,$$ > "$1"; until [ -e "$2" ]; do sleep 0.01; done`,

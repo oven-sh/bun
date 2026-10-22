@@ -57,34 +57,37 @@ describe.concurrent("socket", () => {
     data.mockClear();
   });
 
-  it("should not crash when a socket from a file descriptor is already closed after opening", async () => {
-    const [server, client] = createSocketPair();
-    const open = jest.fn();
-    const close = jest.fn();
-    const data = jest.fn();
-    closeSync(client);
-    {
-      const socket = await Bun.connect({
-        fd: server,
-        socket: {
-          open,
-          close,
-          data,
-        },
-      } as any);
-      Bun.gc(true);
+  it.skipIf(isWindows)(
+    "should not crash when a socket from a file descriptor is already closed after opening",
+    async () => {
+      const [server, client] = createSocketPair();
+      const open = jest.fn();
+      const close = jest.fn();
+      const data = jest.fn();
+      closeSync(client);
+      {
+        const socket = await Bun.connect({
+          fd: server,
+          socket: {
+            open,
+            close,
+            data,
+          },
+        } as any);
+        Bun.gc(true);
+        await Bun.sleep(10);
+        Bun.gc(true);
+      }
       await Bun.sleep(10);
-      Bun.gc(true);
-    }
-    await Bun.sleep(10);
 
-    expect(open).toHaveBeenCalledTimes(1);
-    expect(close).toHaveBeenCalledTimes(1);
-    expect(data).toHaveBeenCalledTimes(0);
-    open.mockClear();
-    close.mockClear();
-    data.mockClear();
-  });
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(data).toHaveBeenCalledTimes(0);
+      open.mockClear();
+      close.mockClear();
+      data.mockClear();
+    },
+  );
 
   it("should coerce '0' to 0", async () => {
     const listener = Bun.listen({
@@ -359,7 +362,7 @@ describe.concurrent("socket", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 
-  it("kqueue should not dispatch spurious drain events on readable", async () => {
+  it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 
@@ -982,7 +985,7 @@ console.log("completed", done, "cycles without crashing");
   }, 30_000); // subprocess + debug/ASAN startup is slow
 });
 
-it("should not crash when a socket from a file descriptor is closed after opening", async () => {
+it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {
   const [server, client] = createSocketPair();
   const open = jest.fn();
   const close = jest.fn();
@@ -2704,7 +2707,7 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
 
 // initialDelay is ms; TCP_KEEPIDLE is seconds. 0 = enable SO_KEEPALIVE and
 // leave the kernel-default idle. Verified via getsockopt(2) on the live fd.
-it.concurrent("setKeepAlive converts ms to seconds and treats 0 as success", async () => {
+it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 0 as success", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -5033,7 +5036,7 @@ describe("shutdown(true)", () => {
       for (const allowHalfOpen of [false, true]) {
         const socket = `${role === "accepted" ? "an accepted" : "a connected"}${secure ? " TLS" : ""} socket`;
 
-        it(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
+        it.skipIf(secure && isWindows)(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
           expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: true })).toEqual(
             isWindows
               ? { calls: ["write 2", "write 2", "close"], peerGot: "W1W2" }
@@ -5044,12 +5047,15 @@ describe("shutdown(true)", () => {
         });
 
         if (!secure) continue;
-        it(`${socket} with allowHalfOpen: ${allowHalfOpen}, before its handshake completes`, async () => {
-          expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: false })).toEqual({
-            calls: ["write 0", "handshake false ECONNRESET", "close"],
-            peerGot: "",
-          });
-        });
+        it.skipIf(isWindows)(
+          `${socket} with allowHalfOpen: ${allowHalfOpen}, before its handshake completes`,
+          async () => {
+            expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: false })).toEqual({
+              calls: ["write 0", "handshake false ECONNRESET", "close"],
+              peerGot: "",
+            });
+          },
+        );
       }
     }
   }
@@ -5669,8 +5675,9 @@ const sendBuffer = 1024 * 1024;
 
 // setSocketOptions does nothing on Windows, where a readable event is at most two reads anyway.
 it.skipIf(
-  isLinux &&
-    (linuxSocketBufferLimit("rmem_max") < receiveBuffer / 2 || linuxSocketBufferLimit("wmem_max") < sendBuffer),
+  isWindows ||
+    (isLinux &&
+      (linuxSocketBufferLimit("rmem_max") < receiveBuffer / 2 || linuxSocketBufferLimit("wmem_max") < sendBuffer)),
 )("a socket with more full reads queued than one readable event takes lets the loop turn", async () => {
   const fullRead = 512 * 1024;
   const payload = Buffer.alloc(14 * fullRead);

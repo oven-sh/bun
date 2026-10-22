@@ -638,7 +638,7 @@ const earlyReplyCases: [
   ],
 ];
 for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
-  test.concurrent(`a connection answered early (${label}) is not pooled`, async () => {
+  test.concurrent.skipIf(isWindows && !onWindows)(`a connection answered early (${label}) is not pooled`, async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

@@ -2851,8 +2851,10 @@ test.concurrent("microtasks left on an afterEvaluate context by a timed-out scri
 });
 
 // POSIX-only: a real SIGINT, sent from a worker while the main thread is stuck in a breakOnSigint run.
-test("breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED and nothing lingers", async () => {
-  const code = `
+test.skipIf(isWindows)(
+  "breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED and nothing lingers",
+  async () => {
+    const code = `
     const vm = require("node:vm");
     const { Worker } = require("node:worker_threads");
     new Worker('setTimeout(() => process.kill(process.pid, "SIGINT"), 100)', { eval: true });
@@ -2864,15 +2866,17 @@ test("breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED
     process.kill(process.pid, "SIGINT");
     setTimeout(() => { console.log("no second SIGINT"); process.exit(1); }, 5000);
   `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_INTERRUPTED second SIGINT observed\n");
-  expect(exitCode).toBe(0);
-}, 30_000);
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ERR_SCRIPT_EXECUTION_INTERRUPTED second SIGINT observed\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 // POSIX-only for the same reason. As in Node, one SIGINT interrupts only the innermost breakOnSigint run.
-test("a SIGINT interrupts only the innermost of nested breakOnSigint runs", async () => {
+test.skipIf(isWindows)("a SIGINT interrupts only the innermost of nested breakOnSigint runs", async () => {
   const code = `
     const vm = require("node:vm");
     const { Worker } = require("node:worker_threads");

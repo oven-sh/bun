@@ -11,8 +11,9 @@
 // handler pointer and flags round-trip. That property holds iff the Zig
 // struct agrees with libc's on this platform.
 import { expect, test } from "bun:test";
+import { isPosix } from "harness";
 
-test("bun.sys.Sigaction matches the host libc's struct sigaction", () => {
+test.skipIf(!isPosix)("bun.sys.Sigaction matches the host libc's struct sigaction", () => {
   // Resolve lazily so a build without the binding fails this test rather
   // than erroring at module load (which the junit reporter counts as 0
   // failures).

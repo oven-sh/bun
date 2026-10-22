@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import "harness";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 
 // TODO: on Windows, these tests fail.
 // This feature is mostly meant for serverless JS environments, so we can no-op it on Windows.
-describe.concurrent("fetch.preconnect", () => {
+describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
   it("fetch.preconnect works", async () => {
     const { promise, resolve } = Promise.withResolvers<Bun.Socket>();
     using listener = Bun.listen({

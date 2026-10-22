@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunExe, bunEnv as env, isLinux, nodeModulesPackages, tempDir } from "harness";
+import { bunExe, bunEnv as env, isLinux, isWindows, nodeModulesPackages, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 
@@ -311,7 +311,7 @@ snapshots:
 
   // The link resolves to `${dir}/packages/a/${link}`. A path of the buffer size leaves no room
   // for the NUL that ends it, so that is the first length that does not fit.
-  test.each([
+  test.skipIf(isWindows).each([
     ["one byte below", -1, "migrated lockfile from pnpm-lock.yaml", 0],
     ["exactly", 0, linkTooLong, 1],
     ["one byte above", 1, linkTooLong, 1],

@@ -5300,7 +5300,7 @@ describe("requests pipelined in one read", () => {
 
   // On Windows the exit resets the connection (the client reads ECONNRESET), and
   // the reset can discard what the client has not read yet.
-  it("delivers the completed responses when a later handler ends the process", async () => {
+  it.skipIf(isWindows)("delivers the completed responses when a later handler ends the process", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -5436,7 +5436,7 @@ describe("requests pipelined in one read", () => {
   });
 
   // Skipped on Windows for the same reason as the test above that ends the process.
-  it("delivers a response when the JavaScript that runs after it ends the process", async () => {
+  it.skipIf(isWindows)("delivers a response when the JavaScript that runs after it ends the process", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `${trailingWork("process.exit(0);")} console.log(server.port);`],
       env: bunEnv,

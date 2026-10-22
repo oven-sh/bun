@@ -2399,7 +2399,7 @@ it("bun pm cache prune removes packages that bun install cached and doesn't touc
 // does not fit is unusable in the same way as a directory the OS refuses to create, and bun falls
 // back to node_modules/.cache of the project like it does for those. On Windows the buffer holds
 // more than an environment variable or argument can carry.
-describe.concurrent("cache directory setting longer than the path buffer", () => {
+describe.concurrent.skipIf(isWindows)("cache directory setting longer than the path buffer", () => {
   // Longer than the buffer on every POSIX platform (the Linux one is the largest).
   const tooLong = "/" + Buffer.alloc(2 * 4096, "a").toString();
 
@@ -2694,7 +2694,7 @@ test.concurrent.each([
 // The file: target becomes the resolution, so a dependent can put control characters in it (an
 // alias containing them is rejected before anything is installed). Windows does not allow them in
 // file names, so the package cannot be installed there in the first place.
-test("bun pm untrusted escapes control characters in the package path and resolution", async () => {
+test.skipIf(isWindows)("bun pm untrusted escapes control characters in the package path and resolution", async () => {
   using dir = tempDir("pm-untrusted-control-chars-path", {
     "package.json": JSON.stringify({
       name: "foo",
@@ -2729,7 +2729,7 @@ test("bun pm untrusted escapes control characters in the package path and resolu
 // $XDG_CACHE_HOME or $HOME) and the global bin directory (`$BUN_INSTALL/bin`, otherwise `.bun/bin`
 // under the same two) are each joined in a path buffer of MAX_PATH_BYTES: 4096 bytes on Linux, 1024
 // on macOS. On Windows the buffer holds more than an environment variable can, so this is POSIX only.
-describe.concurrent("global directories longer than the path buffer", () => {
+describe.concurrent.skipIf(isWindows)("global directories longer than the path buffer", () => {
   const PATH_BUFFER_BYTES = isLinux ? 4096 : 1024;
   const LONG_VALUE = "/" + Buffer.alloc(8192, "a").toString();
 
@@ -2890,7 +2890,7 @@ describe.concurrent("the global bin directory and $PATH", () => {
 
 // A package.json that is readable but not writable (a read-only checkout, a file owned by
 // another user) must only stop the commands that actually rewrite it.
-describe("read-only package.json", () => {
+describe.skipIf(isWindows)("read-only package.json", () => {
   // Nothing here may reach a registry.
   const offlineEnv = { ...env, npm_config_registry: "http://127.0.0.1:1/" };
 

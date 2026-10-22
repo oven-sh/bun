@@ -1438,7 +1438,7 @@ describe("Socket fd adoption", () => {
     }
   }
 
-  it("writes synchronously to an adopted pipe fd and closes it (> 2) on destroy", async () => {
+  it.skipIf(isWindows)("writes synchronously to an adopted pipe fd and closes it (> 2) on destroy", async () => {
     const { rfd, wfd } = openFifo("adopted.fifo");
     try {
       const socket = new Socket({ fd: wfd, readable: false, writable: true });
@@ -1484,7 +1484,7 @@ describe("Socket fd adoption", () => {
   // false, writable: true })). The readable side must start out finished without
   // an 'end' event; emitting one let allowHalfOpen=false end the writable side,
   // destroy the socket and close the fd one tick after construction.
-  it("readable: false leaves the writable side and the adopted fd open", async () => {
+  it.skipIf(isWindows)("readable: false leaves the writable side and the adopted fd open", async () => {
     const { rfd, wfd } = openFifo("write-only.fifo");
     try {
       const socket = new Socket({ fd: wfd, readable: false, writable: true });
@@ -1567,7 +1567,7 @@ describe("Socket fd adoption", () => {
 
   // node's _writeGeneric restarts the idle timer before every write; the
   // synchronous fd write path has no handle doing that for it.
-  it("writes to an adopted fd restart the setTimeout() idle timer", async () => {
+  it.skipIf(isWindows)("writes to an adopted fd restart the setTimeout() idle timer", async () => {
     const { rfd, wfd } = openFifo("timeout.fifo");
     const socket = new Socket({ fd: wfd, readable: false, writable: true });
     try {
@@ -3009,7 +3009,7 @@ describe("a write that fails at once", () => {
   // The peer dies and the client writes in the same tick, so the event loop
   // gets no chance to report the dead peer as a read error first.
   // Windows: a path listens on a named pipe, which has its own write path.
-  it("returns false from write() on a unix socket whose peer closed", async () => {
+  it.skipIf(isWindows)("returns false from write() on a unix socket whose peer closed", async () => {
     using pair = await connectedPair({ path: join(socket_domain, "write-epipe.sock") });
     // A unix socket learns that its peer is gone inside the peer's close(2).
     pair.peer.destroy();
@@ -3489,7 +3489,7 @@ describe.concurrent("uncaughtException from socket listeners", () => {
 
 // There is nothing to half-close yet. shutdown() used to mark the native socket as one that had
 // opened, so closing it raised a connection's events ('end') and the attempt never failed.
-it.skipIf(isMusl)("closing a handle that was shut down while connecting fails its attempt", async () => {
+it.skipIf(isWindows || isMusl)("closing a handle that was shut down while connecting fails its attempt", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -3532,7 +3532,7 @@ it.skipIf(isMusl)("closing a handle that was shut down while connecting fails it
 
 // Closing the connecting handle completes its request with ECANCELED. That belongs to the connect
 // that was given up, not to the one that follows.
-it.skipIf(isMusl).each([
+it.skipIf(isWindows || isMusl).each([
   ["an address", `{ host: "127.0.0.1" }`, "connect,data"],
   [
     "several addresses",

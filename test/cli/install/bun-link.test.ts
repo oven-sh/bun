@@ -848,13 +848,13 @@ it("a link: dependency whose link is in place is not linked again", async () => 
   expect(exitCode).toBe(0);
   // A hard link of the symlink keeps its inode number from being used for a new one. On macOS
   // link() follows the symlink, and APFS gives no number out twice.
-  if (!isMacOS) await fsLink(link, join(String(dir), "pin"));
+  if (!isWindows && !isMacOS) await fsLink(link, join(String(dir), "pin"));
   const before = (await lstat(link)).ino;
 
   ({ stdout, exitCode } = await bun(app, "install", "--linker=hoisted"));
   expect(stdout).toContain("(no changes)");
   expect(exitCode).toBe(0);
-  expect((await lstat(link)).ino).toBe(before);
+  if (!isWindows) expect((await lstat(link)).ino).toBe(before);
 
   // The same name and version registered from another directory: the link has to move.
   expect((await bun(join(String(dir), "other"), "link")).exitCode).toBe(0);
@@ -1063,7 +1063,7 @@ describe("global bin dir", () => {
     // The name is no longer the first package's to remove.
     result = await run("unlink", String(first), String(bunInstall));
     expect(result.out).toContain('success: unlinked package "first-owner"');
-    expect(bin).toBeValidBin(linkTarget("second-owner", "cli.js"));
+    if (!isWindows) expect(bin).toBeValidBin(linkTarget("second-owner", "cli.js"));
     expect(result.exitCode).toBe(0);
   });
 

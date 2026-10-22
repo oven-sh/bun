@@ -76,7 +76,7 @@ it("should write plaintext lockfiles", async () => {
 });
 
 // won't work on windows, " is not a valid character in a filename
-it("should escape names", async () => {
+it.skipIf(isWindows)("should escape names", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await Promise.all([
     write(
@@ -1401,7 +1401,7 @@ describe.concurrent.each([
   ["022", "644"],
   ["077", "600"],
 ])("umask %s", (umask, expectedMode) => {
-  it("bun.lock and yarn.lock honor umask", async () => {
+  it.skipIf(isWindows)("bun.lock and yarn.lock honor umask", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {
         "package.json": JSON.stringify({ name: "umask", workspaces: ["pkg1"], dependencies: { pkg1: "workspace:*" } }),

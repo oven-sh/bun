@@ -1830,7 +1830,7 @@ describe.concurrent("tarball path", () => {
   // command line, and a path that fills the buffer exactly is refused by the open rather than the
   // join, which on Windows currently reports it as ENOSYS (it takes ENAMETOOLONG's number from the
   // C runtime, where it is a different one than in bun's errno table).
-  test.each([
+  test.skipIf(isWindows).each([
     ["longer than the path buffer", () => nameOfBytes(5000)],
     // Leaves no room for the terminating NUL.
     ["as long as the path buffer once resolved", (dir: string) => nameResolvingTo(PATH_BUFFER_BYTES, dir)],
@@ -4191,7 +4191,7 @@ describe.concurrent.each(unprintable)("%s is printed escaped", (_, raw, spelled)
   const dryRunEnv = { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" };
   const anyUnprintable = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
 
-  test("in a file name of the directory", async () => {
+  test.skipIf(isWindows)("in a file name of the directory", async () => {
     using dir = tempDir("publish-file-name", {
       "package.json": JSON.stringify({ name: "publish-file-name", version: "1.0.0" }),
       [`a${raw}b.js`]: "x",

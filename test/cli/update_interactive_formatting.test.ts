@@ -1,7 +1,7 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { closeSync, createReadStream } from "fs";
-import { bunEnv, bunExe, isMusl, tempDir } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 
@@ -353,7 +353,7 @@ describe.concurrent("bun update --interactive", () => {
   // Needs a real terminal: colors, and a width at which a 25 character version
   // is not truncated (truncated versions are printed without the diff). Skipped
   // on Windows because ConPTY rewrites the escape sequences this asserts on.
-  it("should keep the build tag of the latest version when rendering with colors", async () => {
+  it.skipIf(isWindows)("should keep the build tag of the latest version when rendering with colors", async () => {
     await using dir = tempDir("update-interactive-build-tag", {
       "bunfig.toml": bunfig(),
       "package.json": JSON.stringify({
@@ -408,7 +408,7 @@ describe.concurrent("bun update --interactive", () => {
   // The header's help-text budget is `terminal_width - 30`; on a tty narrower
   // than 30 columns that usize subtraction overflows (panics on overflow-checks
   // builds). Exercise the render path through a 20-column pty.
-  it("should render on a terminal narrower than the header prefix", async () => {
+  it.skipIf(isWindows)("should render on a terminal narrower than the header prefix", async () => {
     const openptyDecl = {
       args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
       returns: FFIType.i32,
@@ -576,7 +576,7 @@ describe.concurrent("bun update --interactive", () => {
   // a workspace name to 15 columns. The first wide name takes 14 columns and 21 bytes, so it fits.
   // Not on Windows: ConPTY redraws the screen with its own escape sequences, so the bytes that
   // the pty delivers are not the bytes that bun wrote.
-  it("should size and truncate the Workspace column in terminal columns", async () => {
+  it.skipIf(isWindows)("should size and truncate the Workspace column in terminal columns", async () => {
     await using server = manifestRegistry();
     await using dir = tempDir("update-interactive-wide-workspace", {
       "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
@@ -619,7 +619,7 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("should escape control characters in a cell and size it by the escaped text", async () => {
+  it.skipIf(isWindows)("should escape control characters in a cell and size it by the escaped text", async () => {
     await using server = manifestRegistry();
     await using dir = tempDir("update-interactive-escape", {
       "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
@@ -651,7 +651,7 @@ describe.concurrent("bun update --interactive", () => {
   });
 
   // 9 rows leave 4 for packages: help line, blank + header, bottom indicator, the cursor's own row.
-  it("should scroll two catalog rows of a wide name on a short terminal", async () => {
+  it.skipIf(isWindows)("should scroll two catalog rows of a wide name on a short terminal", async () => {
     await using server = manifestRegistry();
     await using dir = tempDir("update-interactive-short-terminal", {
       "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,

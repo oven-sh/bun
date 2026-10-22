@@ -146,7 +146,7 @@ function createTarball(
 // Skip on Windows - symlink extraction is POSIX-only
 const isWindows = process.platform === "win32";
 
-describe.concurrent("symlink path traversal protection", () => {
+describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () => {
   setDefaultTimeout(60000);
 
   it("rejects symlink targets that climb above the package root before re-entering a 'packages' directory (streaming extraction)", async () => {
@@ -869,189 +869,205 @@ it("rejects symlink targets that climb through other symlinks from the same arch
   }
 }, 60000);
 
-it("does not change permissions of a file reached through a symlinked bin target", async () => {
-  // After creating `node_modules/.bin/<name>`, the installer chmods the bin
-  // target to make it executable. If the bin target inside the package is
-  // itself a symlink (git/file/workspace dependencies can ship one — the npm
-  // tarball extractor never materializes one), chmod follows it and changes
-  // the mode of whatever file it points at, including files outside
-  // node_modules. The chmod must be skipped when the bin target is a symlink.
-  using dir = tempDir("bin-target-symlink-test", {
-    // Pin the hoisted linker so the bin link lands at node_modules/.bin and
-    // the chmod runs against the package's own bin target.
-    "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "bin-target-symlink-app",
-      version: "1.0.0",
-      workspaces: ["packages/*"],
-    }),
-    "packages/dep/package.json": JSON.stringify({
-      name: "dep-with-symlinked-bin",
-      version: "1.0.0",
-      bin: { "dep-with-symlinked-bin": "./payload" },
-    }),
-    "victim.txt": "do not make me executable",
-  });
-  const installDir = String(dir);
+it.skipIf(isWindows)(
+  "does not change permissions of a file reached through a symlinked bin target",
+  async () => {
+    // After creating `node_modules/.bin/<name>`, the installer chmods the bin
+    // target to make it executable. If the bin target inside the package is
+    // itself a symlink (git/file/workspace dependencies can ship one — the npm
+    // tarball extractor never materializes one), chmod follows it and changes
+    // the mode of whatever file it points at, including files outside
+    // node_modules. The chmod must be skipped when the bin target is a symlink.
+    using dir = tempDir("bin-target-symlink-test", {
+      // Pin the hoisted linker so the bin link lands at node_modules/.bin and
+      // the chmod runs against the package's own bin target.
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-target-symlink-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep-with-symlinked-bin",
+        version: "1.0.0",
+        bin: { "dep-with-symlinked-bin": "./payload" },
+      }),
+      "victim.txt": "do not make me executable",
+    });
+    const installDir = String(dir);
 
-  const victimPath = join(installDir, "victim.txt");
-  await chmod(victimPath, 0o600);
-  // The bin target is a symlink whose destination is outside the package
-  // directory.
-  await symlink(join("..", "..", "victim.txt"), join(installDir, "packages", "dep", "payload"));
+    const victimPath = join(installDir, "victim.txt");
+    await chmod(victimPath, 0o600);
+    // The bin target is a symlink whose destination is outside the package
+    // directory.
+    await symlink(join("..", "..", "victim.txt"), join(installDir, "packages", "dep", "payload"));
 
-  const proc = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: installDir,
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-  });
+    const proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // The file the symlink points at keeps its original permissions; the
-  // installer must not chmod through a symlinked bin target.
-  expect((await stat(victimPath)).mode & 0o777).toBe(0o600);
+    // The file the symlink points at keeps its original permissions; the
+    // installer must not chmod through a symlinked bin target.
+    expect((await stat(victimPath)).mode & 0o777).toBe(0o600);
 
-  // The bin link itself is still created.
-  const binLink = join(installDir, "node_modules", ".bin", "dep-with-symlinked-bin");
-  expect((await lstat(binLink)).isSymbolicLink()).toBe(true);
+    // The bin link itself is still created.
+    const binLink = join(installDir, "node_modules", ".bin", "dep-with-symlinked-bin");
+    expect((await lstat(binLink)).isSymbolicLink()).toBe(true);
 
-  if (exitCode !== 0) {
-    console.error("Install failed with exit code:", exitCode);
-    console.error("stdout:", stdout);
-    console.error("stderr:", stderr);
-  }
-  expect(exitCode).toBe(0);
-}, 60000);
+    if (exitCode !== 0) {
+      console.error("Install failed with exit code:", exitCode);
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
 
-it("does not change permissions of a directory reached through a symlinked bin target with a trailing slash", async () => {
-  // Same as above, but the bin target is written as "payload/". The kernel
-  // follows a symlink named with a trailing slash even when chmod is told not
-  // to follow symlinks, so the installer has to drop the slash before it
-  // stats, links and chmods the target.
-  using dir = tempDir("bin-target-symlink-trailing-slash-test", {
-    "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "bin-target-symlink-slash-app",
-      version: "1.0.0",
-      workspaces: ["packages/*"],
-    }),
-    "packages/dep/package.json": JSON.stringify({
-      name: "dep-with-symlinked-dir-bin",
-      version: "1.0.0",
-      bin: { "dep-with-symlinked-dir-bin": "./payload/" },
-    }),
-    "victim-dir/keep": "",
-  });
-  const installDir = String(dir);
+it.skipIf(isWindows)(
+  "does not change permissions of a directory reached through a symlinked bin target with a trailing slash",
+  async () => {
+    // Same as above, but the bin target is written as "payload/". The kernel
+    // follows a symlink named with a trailing slash even when chmod is told not
+    // to follow symlinks, so the installer has to drop the slash before it
+    // stats, links and chmods the target.
+    using dir = tempDir("bin-target-symlink-trailing-slash-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-target-symlink-slash-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep-with-symlinked-dir-bin",
+        version: "1.0.0",
+        bin: { "dep-with-symlinked-dir-bin": "./payload/" },
+      }),
+      "victim-dir/keep": "",
+    });
+    const installDir = String(dir);
 
-  const victimDir = join(installDir, "victim-dir");
-  await chmod(victimDir, 0o700);
-  await symlink(join("..", "..", "victim-dir"), join(installDir, "packages", "dep", "payload"));
+    const victimDir = join(installDir, "victim-dir");
+    await chmod(victimDir, 0o700);
+    await symlink(join("..", "..", "victim-dir"), join(installDir, "packages", "dep", "payload"));
 
-  await using proc = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: installDir,
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect((await stat(victimDir)).mode & 0o777).toBe(0o700);
+    expect((await stat(victimDir)).mode & 0o777).toBe(0o700);
 
-  // Without the slash this target links (see above), so with it the result is the same.
-  const binLink = join(installDir, "node_modules", ".bin", "dep-with-symlinked-dir-bin");
-  expect(await readlink(binLink)).toBe(join("..", "dep-with-symlinked-dir-bin", "payload"));
+    // Without the slash this target links (see above), so with it the result is the same.
+    const binLink = join(installDir, "node_modules", ".bin", "dep-with-symlinked-dir-bin");
+    expect(await readlink(binLink)).toBe(join("..", "dep-with-symlinked-dir-bin", "payload"));
 
-  if (exitCode !== 0) {
-    console.error("Install failed with exit code:", exitCode);
-    console.error("stdout:", stdout);
-    console.error("stderr:", stderr);
-  }
-  expect(exitCode).toBe(0);
-}, 60000);
+    if (exitCode !== 0) {
+      console.error("Install failed with exit code:", exitCode);
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
 
-it("skips a package bin entry whose name contains a NUL byte and links the remaining entries", async () => {
-  using dir = tempDir("bin-name-nul-test", {
-    "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "bin-name-nul-app",
-      version: "1.0.0",
-      workspaces: ["packages/*"],
-    }),
-    "packages/dep/package.json": JSON.stringify({
-      name: "dep-with-nul-bin",
-      version: "1.0.0",
-      bin: { ["extra" + String.fromCharCode(0) + "ignoredtail"]: "./cli.js", "good-bin": "./cli.js" },
-    }),
-    "packages/dep/cli.js": `#!/usr/bin/env node\nconsole.log("ok");\n`,
-  });
-  const installDir = String(dir);
+it.skipIf(isWindows)(
+  "skips a package bin entry whose name contains a NUL byte and links the remaining entries",
+  async () => {
+    using dir = tempDir("bin-name-nul-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-name-nul-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep-with-nul-bin",
+        version: "1.0.0",
+        bin: { ["extra" + String.fromCharCode(0) + "ignoredtail"]: "./cli.js", "good-bin": "./cli.js" },
+      }),
+      "packages/dep/cli.js": `#!/usr/bin/env node\nconsole.log("ok");\n`,
+    });
+    const installDir = String(dir);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: installDir,
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect((await readdir(join(installDir, "node_modules", ".bin"))).sort()).toEqual(["good-bin"]);
+    expect((await readdir(join(installDir, "node_modules", ".bin"))).sort()).toEqual(["good-bin"]);
 
-  if (exitCode !== 0) {
-    console.error("Install failed with exit code:", exitCode);
-    console.error("stdout:", stdout);
-    console.error("stderr:", stderr);
-  }
-  expect(exitCode).toBe(0);
-}, 60000);
+    if (exitCode !== 0) {
+      console.error("Install failed with exit code:", exitCode);
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
 
-it("does not link a bin target that resolves outside the package through a symlinked directory", async () => {
-  using dir = tempDir("bin-target-symlinked-dir-test", {
-    "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
-    "package.json": JSON.stringify({
-      name: "bin-target-dir-app",
-      version: "1.0.0",
-      workspaces: ["packages/*"],
-    }),
-    "packages/dep/package.json": JSON.stringify({
-      name: "dep-with-linked-dir-bin",
-      version: "1.0.0",
-      bin: { "linked-dir-tool": "lnk/tool.js" },
-    }),
-  });
-  const installDir = await realpath(String(dir));
+it.skipIf(isWindows)(
+  "does not link a bin target that resolves outside the package through a symlinked directory",
+  async () => {
+    using dir = tempDir("bin-target-symlinked-dir-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-target-dir-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep-with-linked-dir-bin",
+        version: "1.0.0",
+        bin: { "linked-dir-tool": "lnk/tool.js" },
+      }),
+    });
+    const installDir = await realpath(String(dir));
 
-  const outsideDir = `${installDir}/abcdefghijkl${installDir}/packages/dep/y`;
-  await mkdir(outsideDir, { recursive: true });
-  const toolPath = join(outsideDir, "tool.js");
-  await writeFile(toolPath, `#!/usr/bin/env node\nconsole.log("ok");\n`);
-  await chmod(toolPath, 0o600);
-  await symlink(outsideDir, join(installDir, "packages", "dep", "lnk"));
+    const outsideDir = `${installDir}/abcdefghijkl${installDir}/packages/dep/y`;
+    await mkdir(outsideDir, { recursive: true });
+    const toolPath = join(outsideDir, "tool.js");
+    await writeFile(toolPath, `#!/usr/bin/env node\nconsole.log("ok");\n`);
+    await chmod(toolPath, 0o600);
+    await symlink(outsideDir, join(installDir, "packages", "dep", "lnk"));
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: installDir,
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect((await stat(toolPath)).mode & 0o777).toBe(0o600);
-  expect(await readdir(join(installDir, "node_modules", ".bin")).catch(() => [])).toEqual([]);
+    expect((await stat(toolPath)).mode & 0o777).toBe(0o600);
+    expect(await readdir(join(installDir, "node_modules", ".bin")).catch(() => [])).toEqual([]);
 
-  if (exitCode !== 0) {
-    console.error("Install failed with exit code:", exitCode);
-    console.error("stdout:", stdout);
-    console.error("stderr:", stderr);
-  }
-  expect(exitCode).toBe(0);
-}, 60000);
+    if (exitCode !== 0) {
+      console.error("Install failed with exit code:", exitCode);
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
 
 // The cache folder and the bun.lock entry of a `github:` package are named after the root
 // directory of its tarball: the first component of the first entry's path, whatever that
@@ -1454,7 +1470,7 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
 
   // A `bin` key is a free-form file name. Through a link at `.bin`, a regular file of that
   // name was unlinked and replaced by a link that dangles there.
-  it("does not replace files in the target of node_modules/.bin", async () => {
+  it.skipIf(isWindows)("does not replace files in the target of node_modules/.bin", async () => {
     using dir = tempDir("nm-bin-files", {
       "package.json": JSON.stringify({
         name: "bin-dir-symlink-app",
@@ -1639,7 +1655,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
   });
 
   // The victim has every file an installed package is known by. Linking a bin sets the mode of its file.
-  it.each([
+  it.skipIf(isWindows).each([
     ["node_modules", ["@x", "dep"]],
     ["node_modules/@scope", ["dep"]],
     ["node_modules/@scope/<package>", []],
@@ -1686,7 +1702,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
 
   // People link every `node_modules` of a monorepo to a volume or a cache disk, not only the root's.
   // A first install resets the `node_modules` of the members, but not with `--filter`.
-  it.each([
+  it.skipIf(isWindows).each([
     ["", []],
     [" with --filter", ["--filter", "evil"]],
   ] as const)("still installs through a link at a workspace member's node_modules%s", async (_, args) => {
@@ -1956,7 +1972,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
 
 // A link at the `node_modules` of the project or of a workspace is followed: people keep theirs on a
 // volume or a cache disk. Not all that is behind such a link need be bun's.
-describe.concurrent("the target of a link at node_modules", () => {
+describe.concurrent.skipIf(isWindows)("the target of a link at node_modules", () => {
   const MINE: Record<string, string> = {
     "notes.txt": KEEP,
     ".hidden": KEEP,

@@ -293,11 +293,13 @@ test("recursive rm does not follow a directory entry replaced by a symlink durin
 // directories take different joins, so one tree of each. Runs in a child
 // process so the abort shows up as a failed assertion. Windows has a
 // different path limit, and its shell rm is bounded differently.
-test("recursive rm reports an entry deeper than PATH_MAX instead of crashing", async () => {
-  // Linux PATH_MAX is 4096, every other POSIX platform Bun runs on has 1024.
-  const PATH_MAX = process.platform === "linux" ? 4096 : 1024;
-  using base = tempDir("rm-deep-walk", {});
-  const fixture = /* ts */ `
+test.skipIf(process.platform === "win32")(
+  "recursive rm reports an entry deeper than PATH_MAX instead of crashing",
+  async () => {
+    // Linux PATH_MAX is 4096, every other POSIX platform Bun runs on has 1024.
+    const PATH_MAX = process.platform === "linux" ? 4096 : 1024;
+    using base = tempDir("rm-deep-walk", {});
+    const fixture = /* ts */ `
       import { $ } from "bun";
       import { existsSync, mkdirSync, writeFileSync } from "node:fs";
       import { join } from "node:path";
@@ -345,37 +347,38 @@ test("recursive rm reports an entry deeper than PATH_MAX instead of crashing", a
         }),
       );
     `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: { ...bunEnv, BASE: String(base), PATH_MAX: String(PATH_MAX) },
-    cwd: String(base),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const results = JSON.parse(stdout);
-  // The entries are what rm could not remove, and this is why: a path of
-  // PATH_MAX bytes has no room left for its NUL.
-  expect(Buffer.byteLength(results.file.entry)).toBeGreaterThanOrEqual(PATH_MAX);
-  expect(Buffer.byteLength(results.dir.entry)).toBeGreaterThanOrEqual(PATH_MAX);
-  expect(results).toEqual({
-    file: {
-      exitCode: 1,
-      stderr: `rm: ${results.file.entry}: File name too long\n`,
-      entry: expect.stringMatching(/\/f{100}$/),
-      dirKept: true,
-    },
-    dir: {
-      exitCode: 1,
-      stderr: `rm: ${results.dir.entry}: File name too long\n`,
-      entry: expect.stringMatching(/\/s{100}$/),
-      dirKept: true,
-    },
-    plain: { exitCode: 0, stderr: "", removed: true },
-  });
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BASE: String(base), PATH_MAX: String(PATH_MAX) },
+      cwd: String(base),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const results = JSON.parse(stdout);
+    // The entries are what rm could not remove, and this is why: a path of
+    // PATH_MAX bytes has no room left for its NUL.
+    expect(Buffer.byteLength(results.file.entry)).toBeGreaterThanOrEqual(PATH_MAX);
+    expect(Buffer.byteLength(results.dir.entry)).toBeGreaterThanOrEqual(PATH_MAX);
+    expect(results).toEqual({
+      file: {
+        exitCode: 1,
+        stderr: `rm: ${results.file.entry}: File name too long\n`,
+        entry: expect.stringMatching(/\/f{100}$/),
+        dirKept: true,
+      },
+      dir: {
+        exitCode: 1,
+        stderr: `rm: ${results.dir.entry}: File name too long\n`,
+        entry: expect.stringMatching(/\/s{100}$/),
+        dirKept: true,
+      },
+      plain: { exitCode: 0, stderr: "", removed: true },
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test("relative operands are resolved against the shell cwd, not the process cwd", async () => {
   using dir = tempDir("rm-shell-cwd", {

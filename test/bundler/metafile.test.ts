@@ -862,7 +862,7 @@ describe("Bun.build metafile option variants", () => {
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {
@@ -1418,7 +1418,7 @@ describe("bun build --metafile-md", () => {
 describe("bun build --metafile", () => {
   // Bun.spawn replaces a lone surrogate in a JS string with U+FFFD before it reaches argv,
   // so the raw bytes have to come from the shell. Windows argv is UTF-16 and cannot carry them.
-  test("escapes a lone surrogate and an invalid byte in an output path", async () => {
+  test.skipIf(isWindows)("escapes a lone surrogate and an invalid byte in an output path", async () => {
     using dir = tempDir("metafile-wtf8", {
       "index.js": `console.log(1);`,
     });

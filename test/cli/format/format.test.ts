@@ -6116,7 +6116,7 @@ exports.format = async text => "by Prettier";
   );
 
   // Same as Prettier 3.9.9 and oxfmt 0.72, which load a configuration in Node. On Windows it still runs.
-  test.each(["prettier.config.mjs", "oxfmt.config.ts"])(
+  test.skipIf(isWindows).each(["prettier.config.mjs", "oxfmt.config.ts"])(
     "a `preload` in bunfig.toml doesn't run before %s",
     async name => {
       const files = {
@@ -6162,7 +6162,9 @@ exports.format = async text => "by Prettier";
   });
 
   // Opening a pipe like this blocks until a writer opens it.
-  test.each([".gitignore", ".git/info/exclude", ".prettierignore", ".editorconfig", ".prettierrc", "package.json"])(
+  test
+    .skipIf(isWindows)
+    .each([".gitignore", ".git/info/exclude", ".prettierignore", ".editorconfig", ".prettierrc", "package.json"])(
     "doesn't hang when %s is a link to a named pipe without a writer",
     async name => {
       const before = (dir: string) => {
@@ -6174,7 +6176,7 @@ exports.format = async text => "by Prettier";
     },
   );
 
-  test.each([
+  test.skipIf(isWindows).each([
     ["writes to it is read", "echo a.js", "b.js\n"],
     ["closes it without writing is read as an empty file", ":", "a.js\nb.js\n"],
   ])("a pipe whose writer %s", async (_, writer, expected) => {
@@ -10127,7 +10129,7 @@ describe.concurrent("other things named fmt in the project", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("a package's executable wins over the formatter, and nothing is rewritten", async () => {
+  test.skipIf(isWindows)("a package's executable wins over the formatter, and nothing is rewritten", async () => {
     const files = { "node_modules/.bin/fmt": "#!/bin/sh\necho the executable\n", "a.js": ugly };
     const result = await format(files, [], {
       reads: ["a.js"],

@@ -301,42 +301,45 @@ describe.concurrent.each(commands)("bun %s", command => {
   });
 
   // On macOS /tmp is such a link, and so is $PWD in a shell that got to the repository through one.
-  test("files that are named through a link to the repository are selected, written and staged", async () => {
-    using repo = await repository({ "src/a.js": tidy, "src/partly.js": tidy, "b.js": tidy });
-    const { root } = repo;
-    using outside = tempDir("bun-lint-git-link", {});
-    // The link is above the repository. `bun fmt` doesn't take an argument that is itself a link, like Prettier.
-    symlinkSync(join(root, ".."), join(String(outside), "link"));
-    const link = join(realpathSync(String(outside)), "link", basename(root));
-    for (const name of ["src/a.js", "src/partly.js"]) write(root, name, before);
-    await git(root, "add", "-A");
-    write(root, "src/partly.js", before + "\n");
-    write(root, "b.js", before);
+  test.skipIf(isWindows)(
+    "files that are named through a link to the repository are selected, written and staged",
+    async () => {
+      using repo = await repository({ "src/a.js": tidy, "src/partly.js": tidy, "b.js": tidy });
+      const { root } = repo;
+      using outside = tempDir("bun-lint-git-link", {});
+      // The link is above the repository. `bun fmt` doesn't take an argument that is itself a link, like Prettier.
+      symlinkSync(join(root, ".."), join(String(outside), "link"));
+      const link = join(realpathSync(String(outside)), "link", basename(root));
+      for (const name of ["src/a.js", "src/partly.js"]) write(root, name, before);
+      await git(root, "add", "-A");
+      write(root, "src/partly.js", before + "\n");
+      write(root, "b.js", before);
 
-    // The names are printed relative to the real working directory, and go through the link.
-    const found = async (cwd: string, args: string[]) => {
-      const { stdout, stderr, exitCode } = await bun(cwd, [command, ...args, "--list-files"]);
-      expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
-      const names = stdout.split("\n").filter(it => it !== "");
-      return names.map(it => relative(root, realpathSync(resolve(root, it)))).sort();
-    };
-    for (const cwd of [root, link]) {
-      for (const flag of ["--staged", "--changed"]) {
-        const also = flag === "--changed" ? ["b.js"] : [];
-        expect(await found(cwd, [flag, link])).toEqual([...also, "src/a.js", "src/partly.js"]);
-        expect(await found(cwd, [flag, join(link, "src")])).toEqual(["src/a.js", "src/partly.js"]);
-        expect(await found(cwd, [flag, join(link, "src/a.js")])).toEqual(["src/a.js"]);
+      // The names are printed relative to the real working directory, and go through the link.
+      const found = async (cwd: string, args: string[]) => {
+        const { stdout, stderr, exitCode } = await bun(cwd, [command, ...args, "--list-files"]);
+        expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+        const names = stdout.split("\n").filter(it => it !== "");
+        return names.map(it => relative(root, realpathSync(resolve(root, it)))).sort();
+      };
+      for (const cwd of [root, link]) {
+        for (const flag of ["--staged", "--changed"]) {
+          const also = flag === "--changed" ? ["b.js"] : [];
+          expect(await found(cwd, [flag, link])).toEqual([...also, "src/a.js", "src/partly.js"]);
+          expect(await found(cwd, [flag, join(link, "src")])).toEqual(["src/a.js", "src/partly.js"]);
+          expect(await found(cwd, [flag, join(link, "src/a.js")])).toEqual(["src/a.js"]);
+        }
       }
-    }
 
-    const { stderr, exitCode } = await bun(root, [...writing[command], "--staged", join(link, "src")]);
-    expect(stderr).toContain("src/partly.js has both staged and unstaged changes");
-    expect(exitCode).toBe(2);
-    expect(read(root, "src/a.js")).toBe(after[command]);
-    expect(read(root, "src/partly.js")).toBe(before + "\n");
-    // a.js was staged again, so only what was unstaged before still is.
-    expect(await git(root, "diff", "--name-only")).toBe("b.js\nsrc/partly.js\n");
-  });
+      const { stderr, exitCode } = await bun(root, [...writing[command], "--staged", join(link, "src")]);
+      expect(stderr).toContain("src/partly.js has both staged and unstaged changes");
+      expect(exitCode).toBe(2);
+      expect(read(root, "src/a.js")).toBe(after[command]);
+      expect(read(root, "src/partly.js")).toBe(before + "\n");
+      // a.js was staged again, so only what was unstaged before still is.
+      expect(await git(root, "diff", "--name-only")).toBe("b.js\nsrc/partly.js\n");
+    },
+  );
 
   test("a fully staged file is staged again after it's rewritten", async () => {
     using repo = await repository({ "a.js": tidy, "sub/b.js": tidy, "c.js": tidy });

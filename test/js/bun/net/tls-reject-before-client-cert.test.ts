@@ -756,7 +756,7 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)(
     });
 
     // A TLS unix socket has no host name, and the client matches none.
-    test("Bun.RedisClient over a TLS unix socket still completes the handshake", async () => {
+    test.skipIf(isWindows)("Bun.RedisClient over a TLS unix socket still completes the handshake", async () => {
       using dir = tempDir("tls-reject-redis-unix", {});
       const path = join(String(dir), "redis.sock");
       await using srv = await mtlsServer({
@@ -1096,7 +1096,7 @@ describe("a rejecting client takes a host in IP shorthand for a name", () => {
   // the certificate never gets that far, so the server sees no peer.
   // RedisClient matches the host that it dials, and the Windows resolver does
   // not read this one.
-  test("Bun.RedisClient", async () => {
+  test.skipIf(isWindows)("Bun.RedisClient", async () => {
     await using srv = await mtlsServer({ onSecure: dropAfterHandshake });
     const client = new RedisClient(`rediss://0x7f000001:${srv.port}`, { tls: pinned, maxRetries: 0 } as any);
     const [, commandErr] = await Promise.all([settle(client.connect()), settle(client.send("PING", []))]);

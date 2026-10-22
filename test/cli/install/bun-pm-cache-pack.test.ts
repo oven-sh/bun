@@ -652,37 +652,40 @@ describe("bun pm cache unpack", () => {
     await expectAllRefused(box, packs);
   });
 
-  test.concurrent("keeps every symlink inside its package, whatever the file system folds", async () => {
-    // Refused where `A/UP` is `a/up`, harmless where it is not.
-    const packs = {
-      ascii: [dir("a"), link("a/up", ".."), link("A/UP/A/UP/out", "../../../..")],
-      unicode: [dir("ä"), link("ä/up", ".."), link("Ä/UP/Ä/UP/out", "../../../..")],
-      target: [dir("ä"), link("ä/up", ".."), link("x", "Ä/up/Ä/up/victim")],
-    };
-    for (const [name, records] of Object.entries(packs)) {
-      using box = sandbox();
-      writeFileSync(box.at("fold.pack"), packOf(pkg(evil, [packageJson, ...records])));
-      const { err, code } = await bun(box, ["pm", "cache", "unpack", box.at("fold.pack")]);
-      if (code === 0) {
-        const root = realpathSync(join(box.cache, evil));
-        for (const line of snapshot(root, false)) {
-          const [path, target] = line.split(" -> ");
-          if (target === undefined || !existsSync(join(root, path))) continue;
-          expect({ name, path, inside: (realpathSync(join(root, path)) + sep).startsWith(root + sep) }).toEqual({
-            name,
-            path,
-            inside: true,
-          });
+  test.concurrent.skipIf(isWindows)(
+    "keeps every symlink inside its package, whatever the file system folds",
+    async () => {
+      // Refused where `A/UP` is `a/up`, harmless where it is not.
+      const packs = {
+        ascii: [dir("a"), link("a/up", ".."), link("A/UP/A/UP/out", "../../../..")],
+        unicode: [dir("ä"), link("ä/up", ".."), link("Ä/UP/Ä/UP/out", "../../../..")],
+        target: [dir("ä"), link("ä/up", ".."), link("x", "Ä/up/Ä/up/victim")],
+      };
+      for (const [name, records] of Object.entries(packs)) {
+        using box = sandbox();
+        writeFileSync(box.at("fold.pack"), packOf(pkg(evil, [packageJson, ...records])));
+        const { err, code } = await bun(box, ["pm", "cache", "unpack", box.at("fold.pack")]);
+        if (code === 0) {
+          const root = realpathSync(join(box.cache, evil));
+          for (const line of snapshot(root, false)) {
+            const [path, target] = line.split(" -> ");
+            if (target === undefined || !existsSync(join(root, path))) continue;
+            expect({ name, path, inside: (realpathSync(join(root, path)) + sep).startsWith(root + sep) }).toEqual({
+              name,
+              path,
+              inside: true,
+            });
+          }
+        } else {
+          expect(err).toContain("symlink collides");
+          expect(readdirSync(box.cache)).toEqual([]);
         }
-      } else {
-        expect(err).toContain("symlink collides");
-        expect(readdirSync(box.cache)).toEqual([]);
+        expect(readdirSync(box.tmp)).toEqual([]);
       }
-      expect(readdirSync(box.tmp)).toEqual([]);
-    }
-  });
+    },
+  );
 
-  test.concurrent(
+  test.concurrent.skipIf(isWindows)(
     "restores symlinks that stay inside, modes without setuid, and names only Windows minds",
     async () => {
       using box = sandbox();
@@ -1034,41 +1037,44 @@ describe("bun pm cache pack", () => {
     },
   );
 
-  test.concurrent("refuses an entry that unpack would refuse, and leaves no file behind", async () => {
-    using box = sandbox();
-    await installedProject(box);
-    const entry = join(
-      box.cache,
-      entryNames(box.cache).find(name => name.startsWith("no-deps@"))!,
-    );
-    writeFileSync(join(box.project, "cache.pack"), "the previous pack");
+  test.concurrent.skipIf(isWindows)(
+    "refuses an entry that unpack would refuse, and leaves no file behind",
+    async () => {
+      using box = sandbox();
+      await installedProject(box);
+      const entry = join(
+        box.cache,
+        entryNames(box.cache).find(name => name.startsWith("no-deps@"))!,
+      );
+      writeFileSync(join(box.project, "cache.pack"), "the previous pack");
 
-    for (const [path, target] of [
-      ["out", "../../victim"],
-      ["absolute", box.victim],
-      ["back", "lib/../../../victim"],
-    ]) {
-      symlinkSync(target, join(entry, path));
+      for (const [path, target] of [
+        ["out", "../../victim"],
+        ["absolute", box.victim],
+        ["back", "lib/../../../victim"],
+      ]) {
+        symlinkSync(target, join(entry, path));
+        const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
+        expect(r.err).toContain("error: bun pm cache pack failed: cache entry has symlink that may point outside it: ");
+        expect(r.err).toContain(`/${path}"`);
+        expect(r.out).toBe("");
+        expect(r.code).toBe(1);
+        rmSync(join(entry, path));
+      }
+
+      writeFileSync(join(entry, "back\\slash"), "");
       const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-      expect(r.err).toContain("error: bun pm cache pack failed: cache entry has symlink that may point outside it: ");
-      expect(r.err).toContain(`/${path}"`);
-      expect(r.out).toBe("");
+      expect(r.err).toContain("cache entry path cannot be packed");
       expect(r.code).toBe(1);
-      rmSync(join(entry, path));
-    }
 
-    writeFileSync(join(entry, "back\\slash"), "");
-    const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-    expect(r.err).toContain("cache entry path cannot be packed");
-    expect(r.code).toBe(1);
-
-    expect(readFileSync(join(box.project, "cache.pack"), "utf8")).toBe("the previous pack");
-    expect(
-      readdirSync(box.project)
-        .filter(name => name.includes("pack"))
-        .sort(),
-    ).toEqual(["cache.pack", "package.json"]);
-  });
+      expect(readFileSync(join(box.project, "cache.pack"), "utf8")).toBe("the previous pack");
+      expect(
+        readdirSync(box.project)
+          .filter(name => name.includes("pack"))
+          .sort(),
+      ).toEqual(["cache.pack", "package.json"]);
+    },
+  );
 
   test.concurrent(
     "replaces the previous pack, makes the directory, and takes <file> relative to where it was typed",

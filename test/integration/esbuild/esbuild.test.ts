@@ -1,11 +1,11 @@
 import { spawn } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { cp, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tempDir } from "harness";
+import { bunExe, bunEnv as env, isArm64, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // esbuild@0.19.8 does not support win32-arm64 at runtime
-const isWindowsArm64 = false;
+const isWindowsArm64 = isWindows && isArm64;
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);

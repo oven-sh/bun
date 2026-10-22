@@ -3523,7 +3523,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     // The data queued ahead of the reset was read off the socket before it closed
     // (kept in the paused stream's buffer), not discarded with the fd. Windows
     // discards the receive queue on a reset.
-    expect(t.socket.bytesRead).toBe(64 * 1024);
+    if (!isWindows) expect(t.socket.bytesRead).toBe(64 * 1024);
   });
 
   it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {
@@ -3537,7 +3537,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
     // Windows discards the receive queue on a reset. Linux and macOS keep it, and
     // like node, the data is delivered before the error.
-    expect(t.bytesRead()).toBeGreaterThan(0);
+    if (!isWindows) expect(t.bytesRead()).toBeGreaterThan(0);
   });
 });
 

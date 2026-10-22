@@ -1456,7 +1456,7 @@ describe.concurrent("sparse tar members", () => {
 // whose first bytes were those of the refused block, and that package
 // stayed in the cache for every later install.
 // -------------------------------------------------------------------
-test("streaming extract fails the install when the file system refuses a write", async () => {
+test.skipIf(isWindows)("streaming extract fails the install when the file system refuses a write", async () => {
   // 6,000,000 bytes where no file can grow past 4 MiB. Random bytes keep the
   // tarball above the size from which a registry tarball is streamed.
   const big = randomBytes(6_000_000);

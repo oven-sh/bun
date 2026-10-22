@@ -529,4 +529,4 @@ it("Bun.resolve() rejection survives a GC stack-trace finalizer", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok rejections=20000", exitCode: 0 });
   void stderr;
-}, 120_000); // take well over the default 5s. // 20000 awaited rejections under collectContinuously on a debug+ASAN build
+}, 120_000); // 20000 awaited rejections under collectContinuously on a debug+ASAN build take well over the default 5s.

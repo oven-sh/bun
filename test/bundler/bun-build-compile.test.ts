@@ -1,6 +1,18 @@
 import { bytecodeOrderNames } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isASAN, isDebug, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isPosix,
+  isWindows,
+  tempDir,
+} from "harness";
 import {
   chmodSync,
   closeSync,
@@ -2749,40 +2761,44 @@ if (process.platform === "android") {
 // removed AFTER the process starts, which `Bun.spawn`'s `cwd` can't do, so a
 // shell wrapper `cd`s in, `rmdir`s, then execs the binary (how a user hits it).
 describe("compiled binary in a deleted cwd", () => {
-  test("exits cleanly instead of crashing", async () => {
-    using dir = tempDir("build-compile-deleted-cwd", {
-      "app.js": `console.log("should-not-run");`,
-    });
-    const outfile = join(String(dir), "app");
+  test.if(isPosix)(
+    "exits cleanly instead of crashing",
+    async () => {
+      using dir = tempDir("build-compile-deleted-cwd", {
+        "app.js": `console.log("should-not-run");`,
+      });
+      const outfile = join(String(dir), "app");
 
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect(buildStderr).not.toContain("error:");
-    expect(buildExit).toBe(0);
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error:");
+      expect(buildExit).toBe(0);
 
-    // A fresh directory to stand in and delete — NOT `dir`, which holds the
-    // compiled binary we still need to exec.
-    using cwdDir = tempDir("build-compile-gone-cwd", {});
-    const gone = String(cwdDir);
+      // A fresh directory to stand in and delete — NOT `dir`, which holds the
+      // compiled binary we still need to exec.
+      using cwdDir = tempDir("build-compile-gone-cwd", {});
+      const gone = String(cwdDir);
 
-    await using proc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${outfile}"`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${outfile}"`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("");
-    expect(stderr).toContain("The current working directory was deleted");
-    expect(exitCode).toBe(1);
-  }, 60_000);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("The current working directory was deleted");
+      expect(exitCode).toBe(1);
+    },
+    60_000,
+  );
 });
 
 // Every region of the embedded module graph (file contents, names, bytecode, the

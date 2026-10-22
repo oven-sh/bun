@@ -186,7 +186,7 @@ describe("Bun.Terminal platform behaviour", () => {
   });
 
   // System conhost's ConPTY does not translate \x03 input to CTRL_C_EVENT.
-  test("SAME: Ctrl+C input interrupts the child", async () => {
+  test.todoIf(isWindows)("SAME: Ctrl+C input interrupts the child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGINT', () => { process.stdout.write('SIGINT'); process.exit(0); });
        setInterval(() => {}, 1000);
@@ -238,8 +238,9 @@ describe("Bun.Terminal platform behaviour", () => {
     // describe the diff), so the byte sequence is not identical.
     expect(output).toContain("RED");
     expect(output).toMatch(/\x1b\[(?:\d+;)*31m/);
-
-    expect(output).toContain("\x1b[31mRED\x1b[0m");
+    if (!isWindows) {
+      expect(output).toContain("\x1b[31mRED\x1b[0m");
+    }
   });
 
   // The inbox conhost on Windows 10 and Server 2019 predates
@@ -276,7 +277,7 @@ describe("Bun.Terminal platform behaviour", () => {
   // ──────────────────────────────────────────────────────────────────────────
 
   // libuv's SIGWINCH detection on Windows requires a conhost window; ConPTY has none.
-  test("SAME: resize while child is running fires SIGWINCH in child", async () => {
+  test.todoIf(isWindows)("SAME: resize while child is running fires SIGWINCH in child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGWINCH', () => setImmediate(() => {
          process.stdout.write('WINCH cols=' + process.stdout.columns + ' rows=' + process.stdout.rows);

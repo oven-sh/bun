@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe.concurrent("run-extensionless", () => {
@@ -18,7 +18,7 @@ describe.concurrent("run-extensionless", () => {
     expect(stdout).toEqual("hello world\n");
   });
 
-  test("running shebang typescript file works", async () => {
+  test.skipIf(isWindows)("running shebang typescript file works", async () => {
     const dir = tmpdirSync();
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "cool"), `#!${bunExe()}\nconst x: Test = 2; console.log('hello world');`, { mode: 0o777 });

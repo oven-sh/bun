@@ -1086,7 +1086,7 @@ it.todoIf(!isWindows)("reloads when a deleted import is recreated", async () => 
 });
 
 // The Windows watcher never reads the cached listing.
-it("survives a directory event for a folder whose cached listing failed to read", async () => {
+it.skipIf(isWindows)("survives a directory event for a folder whose cached listing failed to read", async () => {
   using dir = tempDir("hot-dir-read-error", {
     "trace.log": "",
     "src/lib/a.ts": `export {};`,

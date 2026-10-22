@@ -3396,7 +3396,7 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
 
   // Opening a FIFO for reading blocks until a writer shows up, which never
   // happens. The timeout only turns that hang into a failure.
-  cell("no .npmrc is opened when node_modules has the package", async () => {
+  cell.skipIf(isWindows)("no .npmrc is opened when node_modules has the package", async () => {
     const result = await autoInstall({
       args: ["x.mjs"],
       files: () => ({ ...inNodeModules, "app/x.mjs": importIt }),

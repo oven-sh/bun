@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
 
 const node = nodeExe();
 
-describe("process.send(message, handle)", () => {
+describe.skipIf(isWindows)("process.send(message, handle)", () => {
   test.concurrent("bun parent -> bun child: net.Server handle and message both arrive", async () => {
     using dir = tempDir("ipc-handle-bun-bun", {
       "parent.js": `

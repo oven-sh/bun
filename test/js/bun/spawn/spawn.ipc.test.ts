@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -195,7 +195,7 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 });
 
 describe("ipc mode json", () => {
-  it("closes the channel on a line that holds only the internal tag byte", async () => {
+  it.skipIf(isWindows)("closes the channel on a line that holds only the internal tag byte", async () => {
     // An internal JSON message is "\\x02" + json + "\\n". A line of just the tag
     // byte strips to an empty payload. The receiver must treat it like an empty
     // line (invalid, close the channel) instead of building an external string
@@ -230,7 +230,7 @@ describe("ipc mode json", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent("closes the channel when an unterminated line exceeds the length limit", async () => {
+  it.concurrent.skipIf(isWindows)("closes the channel when an unterminated line exceeds the length limit", async () => {
     // The complete lines are delivered. The bytes after them are never terminated by a newline.
     expect(await runReceiver("json", `write(Buffer.from('{"n":1}\\n{"n":2}\\n'));` + flood)).toEqual({
       stdout: ['MESSAGE {"n":1}', 'MESSAGE {"n":2}', "SENDER_EXIT 42"],
@@ -330,7 +330,7 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("rejects a Buffer envelope whose buffer list holds a non-Uint8Array view", async () => {
+  it.skipIf(isWindows)("rejects a Buffer envelope whose buffer list holds a non-Uint8Array view", async () => {
     // Frame type 4 carries a [message, buffers] envelope and the receiver puts
     // Buffer.prototype on every entry of `buffers`. Only Uint8Arrays may be
     // there: a Float64Array with that prototype reads as a Buffer whose
@@ -382,8 +382,10 @@ describe("ipc mode advanced", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("closes the channel when a frame declares a length that cannot be framed with its header", async () => {
-    const parent = `
+  it.skipIf(isWindows)(
+    "closes the channel when a frame declares a length that cannot be framed with its header",
+    async () => {
+      const parent = `
       const child = Bun.spawn({
         cmd: [
           process.execPath, "-e",
@@ -396,19 +398,20 @@ describe("ipc mode advanced", () => {
       console.log("CHILD_EXIT", await child.exited);
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", parent],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", parent],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("CHILD_EXIT 42");
-    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
-    expect(exitCode).toBe(0);
-  });
+      expect(stdout.trim()).toBe("CHILD_EXIT 42");
+      expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it.concurrent(
     "closes the channel as soon as a frame header declares a length that's too long to deserialize",
@@ -454,7 +457,7 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
   expect(exitCode).toBe(0);
 });
 
-it("advanced serialization advertises wire format version 2", async () => {
+it.skipIf(isWindows)("advanced serialization advertises wire format version 2", async () => {
   // The version packet is the first frame on the channel:
   // [type=Version(1), u32 LE version]. Read it raw off fd 3 before the
   // child's own channel machinery starts consuming the socket.

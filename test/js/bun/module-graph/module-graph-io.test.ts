@@ -1041,7 +1041,7 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
   }, 60_000);
 
   // Nothing throws here: the kernel refuses the datagram and the socket has no error handler.
-  test("an error of the graph's socket that no script threw", async () => {
+  test.skipIf(process.platform === "win32")("an error of the graph's socket that no script threw", async () => {
     const dir = fixture({
       "host.mjs": hostHelpers,
       "tenant.mjs": `

@@ -295,7 +295,7 @@ int inotify_init1(int flags) {
   });
 });
 
-it("--watch reports an error when its executable was deleted", async () => {
+it.skipIf(isWindows)("--watch reports an error when its executable was deleted", async () => {
   using dir = tempDir("watch-exe-removed", {
     "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
   });
@@ -533,34 +533,38 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
 // NODE_CHANNEL_FD survives in environ across execve; the fd it names must
 // survive too, so the reloaded image re-attaches to a live socket instead
 // of a closed one and the parent keeps receiving 'message' events.
-it("IPC to the parent survives a --watch reload", async () => {
-  using dir = tempDir("watch-ipc-reload", {
-    "app.js": `process.send?.("iter first"); setInterval(() => {}, 1000);`,
-  });
+it.skipIf(isWindows)(
+  "IPC to the parent survives a --watch reload",
+  async () => {
+    using dir = tempDir("watch-ipc-reload", {
+      "app.js": `process.send?.("iter first"); setInterval(() => {}, 1000);`,
+    });
 
-  const messages: string[] = [];
-  watchee = spawn({
-    cmd: [bunExe(), "--watch", "app.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "inherit",
-    stderr: "inherit",
-    ipc(message) {
-      messages.push(String(message));
-    },
-  });
+    const messages: string[] = [];
+    watchee = spawn({
+      cmd: [bunExe(), "--watch", "app.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+      ipc(message) {
+        messages.push(String(message));
+      },
+    });
 
-  const deadline = Date.now() + 20000;
-  while (!messages.includes("iter first") && Date.now() < deadline) await Bun.sleep(10);
-  expect(messages).toContain("iter first");
+    const deadline = Date.now() + 20000;
+    while (!messages.includes("iter first") && Date.now() < deadline) await Bun.sleep(10);
+    expect(messages).toContain("iter first");
 
-  await Bun.write(join(String(dir), "app.js"), `process.send?.("iter second");`);
-  while (!messages.includes("iter second") && Date.now() < deadline) await Bun.sleep(10);
-  expect(messages).toContain("iter second");
+    await Bun.write(join(String(dir), "app.js"), `process.send?.("iter second");`);
+    while (!messages.includes("iter second") && Date.now() < deadline) await Bun.sleep(10);
+    expect(messages).toContain("iter second");
 
-  watchee.kill("SIGKILL");
-  await watchee.exited;
-}, 30000);
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+  },
+  30000,
+);
 
 // The files and directories a process holds open, as (fd, path) pairs. Linux
 // reads /proc, macOS asks lsof (the kernel has no per-process fd listing
@@ -603,7 +607,7 @@ for (const [mode, args] of [
   ["--hot", ["--hot", "--no-clear-screen", "main.ts"]],
   ["test --watch", ["test", "--watch", "main.test.ts"]],
 ] as const) {
-  it.skipIf(isMacOS && !Bun.which("lsof"))(
+  it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
     `${mode} holds no file descriptors for paths under node_modules`,
     async () => {
       using dir = tempDir("watch-node-modules-fds", {
@@ -686,31 +690,34 @@ async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[
 
 // The leak as the issue reports it: the count of fds on the project directory
 // after two reloads must equal the count after the first start.
-it.skipIf(isMacOS && !Bun.which("lsof"))("--watch reload does not leak the watched directory fd", async () => {
-  using dir = tempDir("watch-cloexec-reload", watchCloexecFiles);
-  const cwd = realpathSync(String(dir));
-  watchee = spawn({
-    cwd,
-    cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
-  });
-  const out = stdoutWaiter(watchee);
-  await out.waitFor("started 1");
-  const before = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
+it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+  "--watch reload does not leak the watched directory fd",
+  async () => {
+    using dir = tempDir("watch-cloexec-reload", watchCloexecFiles);
+    const cwd = realpathSync(String(dir));
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const out = stdoutWaiter(watchee);
+    await out.waitFor("started 1");
+    const before = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
 
-  for (let i = 2; i <= 3; i++) {
-    await Bun.write(join(cwd, "dep.ts"), `export const x = ${i};`);
-    await out.waitFor(`started ${i}`);
-  }
-  const after = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
-  out.release();
+    for (let i = 2; i <= 3; i++) {
+      await Bun.write(join(cwd, "dep.ts"), `export const x = ${i};`);
+      await out.waitFor(`started ${i}`);
+    }
+    const after = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
+    out.release();
 
-  expect(before).toBe(1);
-  expect(after).toBe(before);
-});
+    expect(before).toBe(1);
+    expect(after).toBe(before);
+  },
+);
 
 // The flag itself. Linux hides the leak behind its close_range() sweep, so
 // this reads O_CLOEXEC from /proc for every fd the watcher holds instead of

@@ -512,7 +512,7 @@ const otherPackageDirs = {
 
 // The script is POSIX sh; on Windows lifecycle scripts run in bun's own shell.
 for (const [linker, otherPackageDir] of Object.entries(otherPackageDirs)) {
-  test.concurrent(
+  test.concurrent.skipIf(isWindows)(
     `${linker} linker: a lifecycle script can run bun install in the project being installed`,
     async () => {
       const scripts = { install: installsInTheSameProject };
@@ -714,7 +714,7 @@ const keepsItsDirectory = [
 ].join("; ");
 
 // The script is POSIX sh; on Windows lifecycle scripts run in bun's own shell.
-test.concurrent(
+test.concurrent.skipIf(isWindows)(
   "hoisted linker: the second install of a doubly aliased package leaves a running lifecycle script its directory",
   async () => {
     const depTarball = await new Bun.Archive(
@@ -874,7 +874,7 @@ function createTreeDeeperThanPathMax(parent: string, scratch: string) {
 }
 
 // On Windows no tree that exists is longer than the buffers its paths are built in.
-test.concurrent(
+test.concurrent.skipIf(isWindows)(
   "hoisted linker: a link that fails with ENAMETOOLONG leaves nothing at the package's path",
   async () => {
     const tgz = await new Bun.Archive(
@@ -1005,7 +1005,7 @@ describe("hoisted linker: packages linked by the thread pool", () => {
   }
 
   // On Windows no tree that exists is longer than the buffers its paths are built in.
-  test.concurrent("packages that can't be linked only fail themselves, in order", async () => {
+  test.concurrent.skipIf(isWindows)("packages that can't be linked only fail themselves, in order", async () => {
     const names = ["a-first", "b-deep", "c-deep", "d-last"];
     using registry = serveRegistry(await packAll(names));
     using dir = project("pool-enametoolong", registry, {
@@ -1342,7 +1342,7 @@ describe("hoisted linker: packages linked by the thread pool", () => {
   // Each host has a tree with three packages that have a script. One script runs at a time, and each
   // waits for the bin of the last tree: it is linked when that tree is done, after which no script
   // joins the ones that wait, and bun sees no script end before it has gone through them.
-  test.concurrent("scripts start in the order in which the main thread starts them", async () => {
+  test.concurrent.skipIf(isWindows)("scripts start in the order in which the main thread starts them", async () => {
     const hosts = Array.from({ length: 7 }, (_, i) => `host-${i}`);
     const scripted = ["scripted-1", "scripted-2", "scripted-3"];
     const nested = [...scripted, "plain-1", "plain-2", "tool"];

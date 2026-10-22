@@ -1100,7 +1100,7 @@ describe.concurrent("Bun.file", () => {
   });
 
   // this test uses libc.so or dylib so we skip on windows
-  it("size is Infinity on a fifo", () => {
+  it.skipIf(isWindows)("size is Infinity on a fifo", () => {
     const path = join(tmp_dir, "test-fifo");
     mkfifo(path);
     const { size } = Bun.file(path);
@@ -4149,7 +4149,7 @@ it("a numeric `timeout` does not abort in-flight requests on the 4s sweep tick",
   expect(errors).toEqual([]);
 }, 20_000);
 
-it("sends the exact Content-Length for a file body of 100 GB", async () => {
+it.skipIf(isWindows)("sends the exact Content-Length for a file body of 100 GB", async () => {
   using dir = tempDir("fetch-large-file-body", { "large.bin": "" });
   const path = join(String(dir), "large.bin");
   const size = 100_000_000_000;

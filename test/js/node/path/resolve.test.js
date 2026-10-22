@@ -205,7 +205,7 @@ describe("path.resolve", () => {
     assert.ok(result.endsWith(expectedEnding));
   });
 
-  test("a backslash at the end of the cwd is part of its name", async () => {
+  test.skipIf(isWindows)("a backslash at the end of the cwd is part of its name", async () => {
     using dir = tempDir("resolve-backslash-cwd", { "e\\/z": "" });
 
     await using proc = Bun.spawn({

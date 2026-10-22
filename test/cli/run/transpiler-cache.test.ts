@@ -261,7 +261,7 @@ describe("transpiler cache", () => {
       chmodSync(join(cache_dir), "777");
     }
   });
-  test("a fifo in place of an entry is removed instead of opened", async () => {
+  test.skipIf(isWindows)("a fifo in place of an entry is removed instead of opened", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "fifo", "intact"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("intact");
     expect(newCacheCount()).toBe(1);

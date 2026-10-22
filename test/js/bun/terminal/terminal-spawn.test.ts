@@ -29,7 +29,7 @@ describe("Bun.Terminal subprocess integration", () => {
   // the synchronously-flushed count (~12-14KB on a PTY), and a caller that
   // re-sent the "unwritten" tail duplicated stdin on the child. ConPTY injects
   // escape sequences into the byte stream so exact counting is POSIX-only.
-  test("write returns the full input length when the PTY buffer fills", async () => {
+  test.skipIf(isWindows)("write returns the full input length when the PTY buffer fills", async () => {
     const N = 128 * 1024;
     const childSrc = `
       let buf = Buffer.alloc(0);
@@ -309,7 +309,7 @@ describe("Bun.Terminal subprocess integration", () => {
   //          on LP64), so c_lflag sits at offset 24 instead of 12. The flag
   //          bits all fit in the low u32 on both platforms, so reading a
   //          u32 at the right offset round-trips cleanly.
-  test("pipeline producer exit does not clobber raw mode on shared tty device", async () => {
+  test.skipIf(isWindows)("pipeline producer exit does not clobber raw mode on shared tty device", async () => {
     const LFLAG_OFFSET = process.platform === "darwin" ? 24 : 12;
 
     const openptyDecl = {
@@ -415,7 +415,7 @@ describe("Bun.Terminal subprocess integration", () => {
   // unconditional restore. That's the `bun_restore_stdio` branch the
   // pipeline-producer gate does not apply to: after the child exits, the
   // parent's startup snapshot is written back so the shell comes back cooked.
-  test("interactive wrapper (stdout tty) restores cooked termios on child exit", async () => {
+  test.skipIf(isWindows)("interactive wrapper (stdout tty) restores cooked termios on child exit", async () => {
     const ready = Promise.withResolvers<void>();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -476,7 +476,7 @@ describe("Bun.Terminal subprocess integration", () => {
   //   1. child wrote raw → assert cooked before, raw while live, cooked after
   //   2. setRawMode became a no-op → "raw while live" assertion fails
   //   3. our bookkeeping skipped the restore → "cooked after" assertion fails
-  test("child that called setRawMode restores termios on exit", async () => {
+  test.skipIf(isWindows)("child that called setRawMode restores termios on exit", async () => {
     const raw = Promise.withResolvers<void>();
     const decoder = new TextDecoder();
     let buffer = "";

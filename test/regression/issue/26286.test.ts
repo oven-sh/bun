@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 // https://github.com/oven-sh/bun/issues/26286
 // Bun.Terminal callbacks not invoked inside AsyncLocalStorage.run()
 
 // Bun.Terminal uses PTY which is not supported on Windows
-test("Bun.Terminal data callback works inside AsyncLocalStorage.run()", async () => {
+test.skipIf(isWindows)("Bun.Terminal data callback works inside AsyncLocalStorage.run()", async () => {
   const storage = new AsyncLocalStorage();
 
   async function terminalTest() {

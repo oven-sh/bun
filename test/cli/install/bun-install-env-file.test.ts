@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/12011
@@ -464,7 +464,7 @@ describe("bun install .env loading and the security scanner", () => {
   });
 
   // A pipe can be read once. Install reads it, so the scanner must not be sent to the path.
-  test("--env-file from a pipe", async () => {
+  test.skipIf(isWindows)("--env-file from a pipe", async () => {
     const { seen, exitCode } = await scannerEnv({
       sh: `printf 'SCAN_CUSTOM=from-pipe\\n' | "$0" install --env-file=/dev/stdin`,
     });

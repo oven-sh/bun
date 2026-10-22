@@ -201,7 +201,7 @@ test.concurrent.skipIf(!isSupported)(
 // Linux this is covered by Bun setting linux_pdeathsig on every spawn when
 // no-orphans mode is enabled (prctl in the vfork child before exec). On macOS
 // it's covered by the libproc descendant walk in the exit handler.
-test.concurrent(
+test.concurrent.skipIf(!isPosix)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: non-Bun grandchildren are reaped when bun dies with its parent",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun.js");
@@ -331,7 +331,7 @@ describe.concurrent.each([
     },
   },
 ])("bun run --no-orphans $label: supervisor SIGKILLed", ({ runArgs, files }) => {
-  test.concurrent("bun run and the script exit", async () => {
+  test.concurrent.skipIf(!isPosix)("bun run and the script exit", async () => {
     using dir = tempDir("no-orphans-run", files as DirectoryTree);
     const env: NodeJS.Dict<string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
@@ -582,7 +582,7 @@ test.concurrent.skipIf(!isLinux || !hasPerl)(
 // the grandchild on its own clean exit. Uses a non-Bun grandchild so the test
 // doesn't depend on env-var inheritance — proves the descendant walk runs from
 // the `bun run` process itself.
-test.concurrent("bun run --no-orphans <script>: clean exit reaps descendants", async () => {
+test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reaps descendants", async () => {
   using dir = tempDir("no-orphans-run", {
     "package.json": JSON.stringify({
       name: "no-orphans-run",

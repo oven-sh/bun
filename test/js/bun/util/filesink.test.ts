@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -212,7 +212,7 @@ it("write result is not cumulative", async () => {
 // A backpressured write buffers everything `write(2)` would not take, so the
 // Promise it returns has to resolve with the chunk's own byte count. It used to
 // resolve with the partial `write(2)` return instead.
-it("a backpressured write() resolves to the chunk's byte count", async () => {
+it.skipIf(!isPosix)("a backpressured write() resolves to the chunk's byte count", async () => {
   const [readFd, writeFd] = createSocketPair();
   const sink = Bun.file(writeFd).writer();
   const size = 4 * 1024 * 1024;
@@ -247,7 +247,7 @@ it("a backpressured write() resolves to the chunk's byte count", async () => {
 
 // Strings are buffered as UTF-8, so the count the Promise reports is the
 // encoded byte count, which is what a non-pending write() returns too.
-it("a backpressured string write() resolves to its encoded byte count", async () => {
+it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte count", async () => {
   const [readFd, writeFd] = createSocketPair();
   const sink = Bun.file(writeFd).writer();
   // Latin-1 in JSC, two bytes per character once encoded.
@@ -282,48 +282,53 @@ it("a backpressured string write() resolves to its encoded byte count", async ()
 // rejection). Instead end() latches the error into that pending promise and
 // returns it, so write()'s promise and end()'s return are the same object and
 // the failure is reported exactly once.
-it("end() after a backpressured write() with the reader gone returns the write's promise, rejecting with EPIPE", async () => {
-  const [readFd, writeFd] = createSocketPair();
-  let readFdOpen = true;
-  const sink = Bun.file(writeFd).writer();
-  try {
-    const writePromise = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
-    expect(writePromise).toBeInstanceOf(Promise);
-
-    fs.closeSync(readFd);
-    readFdOpen = false;
-
-    // end()'s flush() hits EPIPE synchronously. It must not throw and strand
-    // writePromise; it hands back the same promise with the error latched.
-    const endResult = sink.end();
-    expect(endResult).toBe(writePromise);
-
-    let caught: any;
+it.skipIf(!isPosix)(
+  "end() after a backpressured write() with the reader gone returns the write's promise, rejecting with EPIPE",
+  async () => {
+    const [readFd, writeFd] = createSocketPair();
+    let readFdOpen = true;
+    const sink = Bun.file(writeFd).writer();
     try {
-      await endResult;
-    } catch (e) {
-      caught = e;
+      const writePromise = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+      expect(writePromise).toBeInstanceOf(Promise);
+
+      fs.closeSync(readFd);
+      readFdOpen = false;
+
+      // end()'s flush() hits EPIPE synchronously. It must not throw and strand
+      // writePromise; it hands back the same promise with the error latched.
+      const endResult = sink.end();
+      expect(endResult).toBe(writePromise);
+
+      let caught: any;
+      try {
+        await endResult;
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("EPIPE");
+
+      // The pending slot is now settled; a follow-up end() short-circuits to
+      // the written byte count, not another promise.
+      expect(typeof sink.end()).toBe("number");
+    } finally {
+      try {
+        fs.closeSync(writeFd);
+      } catch {}
+      if (readFdOpen) fs.closeSync(readFd);
     }
-    expect(caught?.code).toBe("EPIPE");
-
-    // The pending slot is now settled; a follow-up end() short-circuits to
-    // the written byte count, not another promise.
-    expect(typeof sink.end()).toBe("number");
-  } finally {
-    try {
-      fs.closeSync(writeFd);
-    } catch {}
-    if (readFdOpen) fs.closeSync(readFd);
-  }
-});
+  },
+);
 
 // Sibling of the end() test above for sink.close() (js_close -> FileSink::end()).
 // end()'s Err arm set done=true and tore down the writer without scheduling
 // run_pending, so a backpressured write()'s promise was left pending forever
 // while close() threw. Now close() routes the error to that promise and
 // returns undefined.
-it("close() after a backpressured write() with the reader gone rejects the write's promise with EPIPE", async () => {
-  const src = `
+it.skipIf(!isPosix)(
+  "close() after a backpressured write() with the reader gone rejects the write's promise with EPIPE",
+  async () => {
+    const src = `
       const { createSocketPair } = require("bun:internal-for-testing");
       const fs = require("node:fs");
       const [readFd, writeFd] = createSocketPair();
@@ -337,16 +342,17 @@ it("close() after a backpressured write() with the reader gone rejects the write
       try { await p; console.log("resolved"); }
       catch (e) { console.log(e?.code ?? "unknown"); }
     `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("EPIPE");
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("EPIPE");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // end()'s and end_from_js()'s Done/Wrote arms had the same orphan: when the
 // reader drains between write() and end(), flush() pushes the whole remaining
@@ -401,48 +407,51 @@ it.skipIf(!isLinux)(
 // with the `Owned(consumed)` result `to_result` had seeded, so `await write()`
 // + `await end()` both succeeded even though the reader was already gone and
 // nearly the whole chunk was still sitting in the sink's buffer.
-it("a backpressured write() rejects with EPIPE when the reader closes before the deferred flush", async () => {
-  const [readFd, writeFd] = createSocketPair();
-  let readFdOpen = true;
-  const sink = Bun.file(writeFd).writer();
-  const size = 4 * 1024 * 1024;
+it.skipIf(!isPosix)(
+  "a backpressured write() rejects with EPIPE when the reader closes before the deferred flush",
+  async () => {
+    const [readFd, writeFd] = createSocketPair();
+    let readFdOpen = true;
+    const sink = Bun.file(writeFd).writer();
+    const size = 4 * 1024 * 1024;
 
-  try {
-    const writePromise = sink.write(Buffer.alloc(size, 0x61));
-    expect(writePromise).toBeInstanceOf(Promise);
-
-    // Close the reader before the first await: the deferred auto-flush fires
-    // as part of that await's microtask drain, and its flush() now sees EPIPE.
-    fs.closeSync(readFd);
-    readFdOpen = false;
-
-    let caught: any;
     try {
-      await writePromise;
-    } catch (e) {
-      caught = e;
+      const writePromise = sink.write(Buffer.alloc(size, 0x61));
+      expect(writePromise).toBeInstanceOf(Promise);
+
+      // Close the reader before the first await: the deferred auto-flush fires
+      // as part of that await's microtask drain, and its flush() now sees EPIPE.
+      fs.closeSync(readFd);
+      readFdOpen = false;
+
+      let caught: any;
+      try {
+        await writePromise;
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("EPIPE");
+
+      // The Err arm also moves the sink to its terminal state: further writes
+      // short-circuit to Writable::Done (=> true).
+      expect(sink.write("x")).toBe<unknown>(true);
+
+      // end() after the error reports the bytes that actually reached the fd;
+      // the point is it doesn't claim the full chunk was delivered.
+      const endRes = await sink.end();
+      expect(typeof endRes).toBe("number");
+      expect(endRes).toBeLessThan(size);
+    } finally {
+      try {
+        await sink.end();
+      } catch {}
+      try {
+        fs.closeSync(writeFd);
+      } catch {}
+      if (readFdOpen) fs.closeSync(readFd);
     }
-    expect(caught?.code).toBe("EPIPE");
-
-    // The Err arm also moves the sink to its terminal state: further writes
-    // short-circuit to Writable::Done (=> true).
-    expect(sink.write("x")).toBe<unknown>(true);
-
-    // end() after the error reports the bytes that actually reached the fd;
-    // the point is it doesn't claim the full chunk was delivered.
-    const endRes = await sink.end();
-    expect(typeof endRes).toBe("number");
-    expect(endRes).toBeLessThan(size);
-  } finally {
-    try {
-      await sink.end();
-    } catch {}
-    try {
-      fs.closeSync(writeFd);
-    } catch {}
-    if (readFdOpen) fs.closeSync(readFd);
-  }
-});
+  },
+);
 
 if (isWindows) {
   it("ENOENT, Windows", () => {
@@ -463,7 +472,7 @@ if (isWindows) {
 // native FileSink (and its buffers) leaked for the rest of the process even
 // after the JS wrapper was garbage-collected. `heapStats()` only counts JS
 // wrappers, so we check the native live counter directly.
-it("does not leak native FileSink when a pending write fails (EPIPE)", async () => {
+it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (EPIPE)", async () => {
   async function once() {
     const [readFd, writeFd] = createSocketPair();
     const sink = Bun.file(writeFd).writer();
@@ -529,7 +538,7 @@ it("close() does not leak the native FileSink", async () => {
 // Now that __doClose runs finalize(), finalize() must not tear down state an
 // in-flight write still needs: clearing `pending` here would drop the
 // backpressure promise's Strong before on_write can settle it.
-it("close() while a write() promise is pending still settles it", async () => {
+it.skipIf(isWindows)("close() while a write() promise is pending still settles it", async () => {
   await using child = Bun.spawn({
     cmd: [bunExe(), "-e", "for await (const _ of process.stdin) {}"],
     env: bunEnv,
@@ -755,7 +764,7 @@ it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the d
 // on_exit drain this suite exercises is a no-op there and every process.exit()
 // variant is a threadpool-vs-ExitProcess race rather than the POSIX buffered
 // flush being tested here.
-describe("FileSink buffered data is flushed on process exit", () => {
+describe.skipIf(isWindows)("FileSink buffered data is flushed on process exit", () => {
   const line = "LAST-LOG-LINE:fatal error, exiting\n";
   async function check(tail: string, expected: string) {
     const dir = tmpdirSync();
@@ -858,7 +867,7 @@ describe("FileSink flush() from a 'beforeExit' listener", () => {
   // flush() throws. Nothing is pending after that either, so this path must not
   // leave the loop marked alive any more than the success path does. The
   // child's stdout is a socket whose peer is already closed.
-  it.concurrent("a flush() that fails with EPIPE emits 'beforeExit' once", async () => {
+  it.concurrent.skipIf(!isPosix)("a flush() that fails with EPIPE emits 'beforeExit' once", async () => {
     const [readFd, writeFd] = createSocketPair();
     fs.closeSync(readFd);
     try {
@@ -879,7 +888,7 @@ describe("FileSink flush() from a 'beforeExit' listener", () => {
   // hold the process open by itself, it only gets to run because the pending
   // bytes do, so releasing the loop on this path would exit the child before
   // the timer fires and before flush()'s promise settles.
-  it.concurrent("a flush() that could not drain keeps the process alive until it does", async () => {
+  it.concurrent.skipIf(!isPosix)("a flush() that could not drain keeps the process alive until it does", async () => {
     const [readFd, writeFd] = createSocketPair();
     try {
       // createSocketPair() hands out non-blocking fds: write until the kernel
@@ -1210,7 +1219,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   });
 
   // The test holds the read end from before the child opens the FIFO to write.
-  it.concurrent("the same into a FIFO the sink opened itself", async () => {
+  it.concurrent.skipIf(!isPosix)("the same into a FIFO the sink opened itself", async () => {
     using dir = tempDir("filesink-piped-fifo", {});
     const path = join(String(dir), "piped.fifo");
     mkfifo(path, 0o666);
@@ -1270,7 +1279,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   // The child's stdout is a socket whose send buffer is already full, so the end() that
   // follows the stream's close cannot flush. The sink closes from the callback that
   // drains it, which resumes no source and has only the close to run.
-  it.concurrent("a sink that is closed with no source parked settles the promise", async () => {
+  it.concurrent.skipIf(!isPosix)("a sink that is closed with no source parked settles the promise", async () => {
     const tail = "the only chunk\n";
     const [readFd, writeFd] = createSocketPair();
     let writeFdOpen = true;
@@ -1384,7 +1393,7 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
-it("throws on invalid writer options instead of crashing", async () => {
+it.skipIf(isWindows)("throws on invalid writer options instead of crashing", async () => {
   const stderr = Bun.stderr;
   const baseline = fileSinkInternals.liveCount();
   const iterations = 8;
@@ -1446,7 +1455,7 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
 //
 // The hang-up and the second write() share one tick, so no event-loop turn can tell the sink about the hang-up
 // first: the second write() is the one that finds out, with the first still pending.
-it("a write() that fails while another is pending rejects the pending promise once", async () => {
+it.skipIf(!isPosix)("a write() that fails while another is pending rejects the pending promise once", async () => {
   const [readFd, writeFd] = createSocketPair();
   let readFdOpen = true;
   const sink = Bun.file(writeFd).writer();

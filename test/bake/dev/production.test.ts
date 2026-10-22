@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
@@ -832,7 +832,7 @@ export default function IndexPage() {
 
   // A debug build with BUN_JSC_validateExceptionChecks=1 aborts on the first JSC call with an unchecked exception.
   // Windows resolves the import()'s absolute path as a relative path.
-  test("the module loader hooks check for exceptions", async () => {
+  test.skipIf(isWindows)("the module loader hooks check for exceptions", async () => {
     using dir = tempDir("bake-production-exception-checks", {
       "server.ts": `
         export async function prerender(meta) {

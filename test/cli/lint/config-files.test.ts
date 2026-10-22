@@ -1280,7 +1280,7 @@ test.concurrent.each([
 });
 
 // Same as ESLint 10.12.0 and oxlint 1.87.0, which load a config in Node. On Windows the preload still runs.
-test.each([
+test.skipIf(isWindows).each([
   ["eslint.config.mjs", (rules: string) => `export default [{ rules: ${rules} }];`],
   ["oxlint.config.ts", (rules: string) => `export default { categories: { correctness: "off" }, rules: ${rules} };`],
 ])("a `preload` in bunfig.toml doesn't run before %s", async (name, config) => {
@@ -1360,7 +1360,7 @@ describe.concurrent("`process.argv` in a config file is bun lint's command line"
   });
 
   // It isn't passed on the child process's command line or in its environment, because there's no room for it twice.
-  test("works with a one-megabyte command line", async () => {
+  test.skipIf(isWindows)("works with a one-megabyte command line", async () => {
     const names = Array.from({ length: 15_000 }, (_, index) => `a${index}`.padEnd(40, "b"));
     const args = [...names.flatMap(it => ["--global", it]), "a.js"];
     const rules = `{ eqeqeq: process.argv.length === ${1 + before.length + args.length} ? "error" : "off" }`;
@@ -5819,7 +5819,7 @@ describe.concurrent("a config that asks for something unsupported", () => {
   });
 
   // Windows doesn't allow these file names.
-  test("escapes control characters in printed file names", async () => {
+  test.skipIf(isWindows)("escapes control characters in printed file names", async () => {
     const files = {
       "eslint.config.mjs": `export default [
         { files: ["**/*.one"], plugins: { p: { languages: { l: {} } } }, language: "p/l" },
@@ -7092,7 +7092,7 @@ describe.concurrent("a repository's info/exclude, without an oxlint config", () 
 });
 
 // Uses a file with mode 000, which root could still open.
-describe.skipIf(process.getuid?.() === 0).concurrent("a file that can't be opened", () => {
+describe.skipIf(isWindows || process.getuid?.() === 0).concurrent("a file that can't be opened", () => {
   const files = { "a.js": code, "locked.js": code, "sub/b.js": code };
   const before = (dir: string) => chmodSync(join(dir, "locked.js"), 0);
 

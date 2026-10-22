@@ -486,7 +486,7 @@ describe.concurrent("bun check", () => {
   });
 
   // A dedicated thread draws the progress line, and only when a person is at a terminal.
-  test.skipIf(!hasTerminal)("shows progress in a terminal", async () => {
+  test.skipIf(isWindows || !hasTerminal)("shows progress in a terminal", async () => {
     using dir = project({ "index.ts": `const wrong: string = 1;\n` });
     let output = "";
     await using proc = spawn({
@@ -22829,7 +22829,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
     });
 
     // Root can read every file.
-    const canReadEverything = isRoot;
+    const canReadEverything = isWindows || isRoot;
     test.skipIf(canReadEverything)("reports TS5083 for a source file that can't be read", async () => {
       using dir = project({ "a.ts": `import "./secret";\n`, "secret.ts": `export {};\n` });
       chmodSync(join(String(dir), "secret.ts"), 0o000);

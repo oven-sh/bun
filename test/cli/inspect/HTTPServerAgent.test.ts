@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, tmpdirSync } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -78,7 +78,7 @@ class HTTPServerInspectorSession extends InspectorSession {
   }
 }
 
-describe("HTTPServer inspector protocol", () => {
+describe.if(isPosix)("HTTPServer inspector protocol", () => {
   let serverProcess: Subprocess;
   let serverUrl: URL;
   let session: HTTPServerInspectorSession;

@@ -1,6 +1,17 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isGlibc, isLinux, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isGlibc,
+  isLinux,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -91,7 +102,7 @@ test("panic terminates the process even when JS registered trap-signal listeners
 // instruction (ud2 → SIGILL on x86_64, brk → SIGTRAP on aarch64) so shells
 // reported "illegal hardware instruction" for every crash and parent
 // processes could not distinguish a panic from a CPU/codegen fault.
-describe("terminal signal reflects the crash cause", () => {
+describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   test.each([
     ["panic", "SIGABRT"],
     ["outOfMemory", "SIGABRT"],
@@ -182,7 +193,7 @@ test("the crash report lists the CPU features", async () => {
 });
 
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.
-describe("cwd deleted before startup", () => {
+describe.if(isPosix)("cwd deleted before startup", () => {
   test.concurrent.each(["install", "test"])("bun %s prints the cwd-deleted hint", async cmd => {
     using dir = tempDir("cwd-unlinked", {});
     const gone = String(dir);
@@ -449,7 +460,7 @@ const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@
 // must route through the crash handler so they are not silently lost. Outside
 // ASAN builds the abort/trap hooks raise the real signal, so these also prove
 // the sigaction registration itself.
-describe("SIGABRT/SIGTRAP are caught by the crash handler", () => {
+describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
   test.concurrent.each([
     ["abort", "SIGABRT", "abort() called"],
     ["trap", "SIGTRAP", "Trap instruction"],
@@ -535,7 +546,7 @@ describe("SIGABRT/SIGTRAP are caught by the crash handler", () => {
 // signal. The kernel delivers it inside the kill(2) call, so process._kill has
 // to give the signal its default disposition beforehand; otherwise the crash
 // handler reports the user's own signal as a Bun crash (and uploads it).
-describe("process.kill() aimed at the process itself is not reported as a crash", () => {
+describe.if(isPosix)("process.kill() aimed at the process itself is not reported as a crash", () => {
   const crashHandlerSignals = ["SIGSEGV", "SIGILL", "SIGBUS", "SIGFPE", "SIGABRT", "SIGTRAP"] as const;
 
   // The value `exited` resolves to for a death by signal: 128 + the platform's

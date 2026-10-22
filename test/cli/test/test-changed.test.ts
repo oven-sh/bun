@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -419,7 +419,7 @@ test("hot", () => {
 // makes this test's stderr-stream sync points racy there. The 15 cases
 // above fully cover the --changed filtering logic on Windows; this case
 // only verifies composition with --watch.
-describe("bun test --changed --watch", () => {
+describe.skipIf(isWindows)("bun test --changed --watch", () => {
   test("restarts and reruns only affected tests when a dependency changes", async () => {
     using dir = tempDir("test-changed-watch", {
       "package.json": JSON.stringify({ name: "watch", type: "module" }),

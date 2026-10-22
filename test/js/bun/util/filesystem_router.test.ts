@@ -2,7 +2,7 @@ import { FileSystemRouter } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -665,7 +665,7 @@ it("assetPrefix and origin are what the router was given, or null", () => {
 // POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.
 // The route sorter's lookup table must cover the full u8 range.
 // Windows and macOS (APFS/HFS+) require filenames to be valid Unicode, so skip there.
-it.skipIf(isMacOS)("handles filenames containing byte 0xFF", () => {
+it.skipIf(isWindows || isMacOS)("handles filenames containing byte 0xFF", () => {
   using dir = tempDir("fsr-byte-ff", {});
   // Static routes sharing a prefix so the sorter must compare the 0xFF byte.
   // tempDir's string-keyed map can't express raw 0xFF, so write via Buffer paths.
@@ -703,7 +703,7 @@ it("src is relative to dir when no origin is given", () => {
 });
 
 // The 0xFF byte is not valid UTF-8, so the JS string gets U+FFFD in its place.
-it.skipIf(isMacOS)("src replaces invalid UTF-8 in the route path with U+FFFD", () => {
+it.skipIf(isWindows || isMacOS)("src replaces invalid UTF-8 in the route path with U+FFFD", () => {
   using dir = tempDir("fsr-src-byte-ff", {});
   fs.writeFileSync(
     Buffer.concat([Buffer.from(String(dir) + "/a"), Buffer.from([0xff]), Buffer.from(".tsx")]),
@@ -1186,12 +1186,14 @@ it("match() returns null when the URL has fewer segments than a dynamic route re
   }
 });
 
-it.skipIf(isMacOS)("src is computed for a route whose path is longer than the fast-path buffer", async () => {
-  using dir = tempDir("fsr-long-route-src", {
-    "pages/keep.tsx": "export default 1;\n",
-  });
+it.skipIf(isWindows || isMacOS)(
+  "src is computed for a route whose path is longer than the fast-path buffer",
+  async () => {
+    using dir = tempDir("fsr-long-route-src", {
+      "pages/keep.tsx": "export default 1;\n",
+    });
 
-  const code = /* ts */ `
+    const code = /* ts */ `
     const fs = require("fs");
     const path = require("path");
     const pagesDir = ${JSON.stringify(path.join(String(dir), "pages"))};
@@ -1213,17 +1215,18 @@ it.skipIf(isMacOS)("src is computed for a route whose path is longer than the fa
     console.log("ok " + m.src.length);
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", code],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("ok 2264");
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok 2264");
+    expect(exitCode).toBe(0);
+  },
+);
 
 it("an absolute dir with '..' in it names routes like its normalized spelling", async () => {
   const { dir } = make([

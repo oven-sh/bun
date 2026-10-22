@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // FilePoll::unregister builds its error from the kevent changelist: with
 // KEVENT_FLAG_ERROR_EVENTS, a failed EV_DELETE comes back as an eventlist
@@ -22,7 +22,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // epoll_ctl return code, which is the convention `errno_sys` expects), so the
 // test can only fail on an unfixed build there; it still runs on Linux, where
 // it exercises the EPOLL_CTL_DEL-on-stale-fd teardown.
-test("FilePoll teardown tolerates an fd closed while still registered", async () => {
+test.skipIf(isWindows)("FilePoll teardown tolerates an fd closed while still registered", async () => {
   using dir = tempDir("spawn-pipe-stale-fd", {
     "fixture.js": `
 import { closeSync, constants, fstatSync, openSync, readdirSync } from "node:fs";

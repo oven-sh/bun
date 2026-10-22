@@ -11,7 +11,7 @@
 
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isPosix, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -26,7 +26,7 @@ function countOpenFds(): number {
 
 // Windows has no /proc/self/fd equivalent; the observable leak is
 // POSIX-specific anyway (libuv pipe close on Windows is async regardless).
-test("stdin: 'pipe' fd is closed on child exit without reading .stdin", async () => {
+test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading .stdin", async () => {
   const N = 100;
 
   // Warm up: spawn once so any lazily-opened runtime fds (signalfd, etc.)

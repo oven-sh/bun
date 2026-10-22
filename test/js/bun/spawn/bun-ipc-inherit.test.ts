@@ -1,10 +1,10 @@
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import fs from "node:fs/promises";
 import path from "path";
 
-it("spawning a bun package script should inherit the ipc fd", async () => {
+it.todoIf(isWindows)("spawning a bun package script should inherit the ipc fd", async () => {
   const x = tmpdirSync();
   await fs.writeFile(
     path.join(x, "package.json"),

@@ -66,7 +66,7 @@ describe("BackPressure buffer", () => {
   // >16KB sends take the direct write2 path and append() the unwritten tail;
   // drain exercises erase() as a head-cursor bump. Skipped on Windows: Winsock
   // loopback accepts the full payload so BackPressure is never reached there.
-  it("delivers a large direct send byte-for-byte while draining", async () => {
+  it.skipIf(isWindows)("delivers a large direct send byte-for-byte while draining", async () => {
     const SIZE = 1024 * 1024;
     const payload = patternBuffer(SIZE, 0xabcd);
     const expectedHash = crypto.createHash("sha1").update(payload).digest("hex");

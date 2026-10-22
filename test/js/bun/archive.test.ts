@@ -2073,7 +2073,7 @@ describe("Bun.Archive", () => {
   // a file. The write loop then went on with `write()` at the start of the
   // file: the file was cut, its first bytes were those of the refused block,
   // and extract() resolved.
-  test("extract() rejects when the file system refuses a write in the middle of a file", async () => {
+  test.skipIf(isWindows)("extract() rejects when the file system refuses a write in the middle of a file", async () => {
     // 6,000,000 bytes where no file can grow past 4 MiB. Gzip, so that the
     // member arrives in many blocks: the first ones fit.
     const data = randomBytes(6_000_000);

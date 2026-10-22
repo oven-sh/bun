@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 import { stat } from "node:fs/promises";
 
 // Tests for issue #25903: Bun.write() mode option when copying files using Bun.file()
 // The mode option is respected when copying files via Bun.file() as the source.
 // These tests are skipped on Windows where Unix-style file permissions don't apply.
 
-describe("Bun.write() mode option", () => {
+describe.skipIf(isWindows)("Bun.write() mode option", () => {
   test("Bun.write() respects mode option when copying files via Bun.file()", async () => {
     using dir = tempDir("issue-25903", {});
     const sourcePath = `${dir}/source.txt`;
@@ -139,7 +139,7 @@ describe("Bun.write() mode option", () => {
     const destStat = await stat(destPath);
     expect(destStat.mode & 0o777).toBe(0o000);
   });
-});
+}); // end describe.skipIf(isWindows)
 
 // Note: The mode option is fully respected for Bun.file() copy operations (the fix for #25903).
 // For direct string/buffer writes, mode support depends on the write path used internally.

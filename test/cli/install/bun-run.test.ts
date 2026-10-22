@@ -1265,7 +1265,7 @@ describe.concurrent("bun run", () => {
   // `<BUN_NODE_DIR>/bun` — exactly the shim it was about to rewrite. The symlink
   // becomes self-referencing and `/usr/bin/env node` fails with ELOOP
   // ("Too many levels of symbolic links").
-  it("nested --bun does not create a self-referencing node/bun shim", async () => {
+  it.skipIf(isWindows)("nested --bun does not create a self-referencing node/bun shim", async () => {
     // Reproduce the reporter's exact invocation: `bun run --bun bun run --bun <binScript>`
     // where:
     // - the literal "bun" must be resolved via PATH so the inner process's
@@ -1556,7 +1556,7 @@ describe.concurrent("bun run", () => {
   // https://github.com/oven-sh/bun/issues/7504: `/tmp/bun-node-<sha>` was one directory for
   // all users. The first user to run `--bun` owned it (mode 0700), and every other user's
   // `--bun` silently got the real `node`.
-  it("--bun creates a per-user node shim directory", async () => {
+  it.skipIf(isWindows)("--bun creates a per-user node shim directory", async () => {
     using dir = tempDir("bun-run-node-shim-uid", {
       "package.json": JSON.stringify({
         name: "shim-uid",

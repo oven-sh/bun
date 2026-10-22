@@ -11857,20 +11857,23 @@ describe.concurrent("a script, file or executable named lint", () => {
   });
 
   // `bun run` adds that directory to PATH.
-  test("a lint executable next to package.json wins over the linter, even from a subdirectory", async () => {
-    using dir = tempDir("bun-lint-name", {
-      ...files,
-      "package.json": "{}",
-      "lint": `#!/bin/sh\necho the executable\n`,
-      "sub/b.js": "debugger;\n",
-    });
-    chmodSync(join(String(dir), "lint"), 0o755);
-    const cwd = join(String(dir), "sub");
-    await using proc = spawn({ cmd: [bunExe(), "lint"], env, cwd, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("the executable");
-    expect(exitCode).toBe(0);
-  });
+  test.skipIf(isWindows)(
+    "a lint executable next to package.json wins over the linter, even from a subdirectory",
+    async () => {
+      using dir = tempDir("bun-lint-name", {
+        ...files,
+        "package.json": "{}",
+        "lint": `#!/bin/sh\necho the executable\n`,
+        "sub/b.js": "debugger;\n",
+      });
+      chmodSync(join(String(dir), "lint"), 0o755);
+      const cwd = join(String(dir), "sub");
+      await using proc = spawn({ cmd: [bunExe(), "lint"], env, cwd, stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("the executable");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // git stores a symlink to `/dev/zero` unchanged. `bun run` stops at such a file and finds no script in it.
   test("a package.json that's a symlink to a device has no script, and the parent directory's package.json isn't used", async () => {

@@ -4553,7 +4553,7 @@ describe("a workspace outside the project", () => {
     });
   });
 
-  test.concurrent("a folder with a colon in its name is inside", async () => {
+  test.concurrent.skipIf(isWindows)("a folder with a colon in its name is inside", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     const project = await setup(packageDir, { workspaces: ["a:b/pkg"] });

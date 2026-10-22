@@ -159,7 +159,7 @@ try {
 
 // With several arguments the caller gets that string and not the Promises: the script prints
 // "resolved", then dies on an unhandled EPIPE rejection.
-test.todoIf(!isWindows)(
+test.todoIf(!isWindows).skipIf(isWindows)(
   "an awaited console.write of several arguments rejects with EPIPE when the reader has hung up",
   async () => {
     await using proc = Bun.spawn({

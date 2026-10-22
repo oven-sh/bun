@@ -1152,7 +1152,7 @@ const bundledAndNested = { dependencies: { "bundled-transitive": "1.0.0", "one-d
 describe.concurrent("a step that fails leaves node_modules as it was", () => {
   // RLIMIT_FSIZE makes the copy of a file larger than the limit fail with EFBIG. pkg-to-patch needs
   // no-deps@1.0.0 and the root no-deps@2.0.0, so the hoisted linker nests the former under it.
-  test.each([
+  test.skipIf(isWindows).each([
     ["hoisted", false],
     ["isolated", false],
     ["isolated", true],
@@ -1264,7 +1264,7 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
 
   // The git that fails is a shell script. One that cannot read a folder exits 1, as it does for
   // differences, and prints no patch. One that is killed prints nothing at all.
-  test.each([
+  test.skipIf(isWindows).each([
     ["fails", "echo 'fatal: not today' >&2\nexit 128\n", "fatal: not today"],
     [
       "cannot read a folder",
@@ -1811,7 +1811,7 @@ describe.concurrent("--dry-run prints what it would do and doesn't change the pr
 // entry that `bun patch` copies and that `bun patch --commit` compares with still has the mode from the tarball. So the
 // commands stopped working, and a manual chmod ended up in the patch.
 describe.concurrent("the commands of a package that is being patched", () => {
-  test.each(["hoisted", "isolated"] as const)(
+  test.skipIf(isWindows).each(["hoisted", "isolated"] as const)(
     "still run, and their mode isn't included in the patch (%s linker, copyfile backend)",
     async linker => {
       const name = "dep-with-directory-bins";
@@ -1892,7 +1892,7 @@ describe.concurrent("a package with install scripts", () => {
 
 // It used to be joined into a buffer of PATH_MAX bytes, which is a panic. A Windows path can be longer.
 describe.concurrent("an argument that is longer than any path", () => {
-  test.each([
+  test.skipIf(isWindows).each([
     ["bun patch <path>", ".", ["node_modules/LONG"]],
     ["bun patch <absolute path>", ".", ["/LONG/node_modules/no-deps"]],
     ["bun patch --commit <path>", ".", ["--commit", "node_modules/LONG"]],
@@ -3548,7 +3548,7 @@ describe.concurrent("the patch that bun patch --commit writes", () => {
   // A `color.ui = always` or a `diff.noprefix` in /etc/gitconfig used to end up in the patch, because the variables
   // that turn the config files off were passed as bare names, without `=value`. The git that prints its environment is
   // a shell script.
-  test("git runs without the config of the machine and of the user", async () => {
+  test.skipIf(isWindows)("git runs without the config of the machine and of the user", async () => {
     await using project = await createProject("hoisted");
     const { dir, env } = project;
     await bunOk(dir, env, "patch", "basic-1");
@@ -3569,7 +3569,7 @@ describe.concurrent("the patch that bun patch --commit writes", () => {
 
   // With more than 1000 files deleted and 1000 added, git stops looking for renames. It prints the whole patch and a
   // warning on stderr. The git that prints the warning is a shell script.
-  test("a warning from git does not fail the commit", async () => {
+  test.skipIf(isWindows)("a warning from git does not fail the commit", async () => {
     await using project = await createProject("hoisted");
     const { dir, env } = project;
     using stub = tempDir("bun-patch-stub-git", {

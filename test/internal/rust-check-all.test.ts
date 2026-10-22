@@ -12,7 +12,7 @@
  * few runs as possible.
  */
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
 
@@ -80,7 +80,7 @@ const checkLine = (triple: string) => `[check] ${triple}${rustTargetIsTier3(trip
 const cargoLine = (triple: string) =>
   `cargo check --workspace --keep-going --target ${triple} --message-format=short${rustTargetIsTier3(triple) ? ` ${cargoBuildStdArg}` : ""}`;
 
-describe("rust:check-all", () => {
+describe.skipIf(isWindows)("rust:check-all", () => {
   test.concurrent(
     "checks the targets whose std is installed, says how to install the rest, and fails if any check failed",
     async () => {

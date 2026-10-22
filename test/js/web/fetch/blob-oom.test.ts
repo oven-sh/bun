@@ -1,7 +1,7 @@
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync, truncateSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
 import os from "node:os";
 import path from "path";
 
@@ -224,7 +224,7 @@ describe.concurrent.skipIf(!fitsOneChild)("byte sources at the 2 GiB string limi
 // files of 2^32 bytes or more with ENOMEM (read_file.rs, ReadFileUV), so
 // neither case reaches the ArrayBuffer hand-off there.
 const describeFourGiB = fitsAllChildren ? describe.concurrent : describe;
-describeFourGiB.skipIf(!fitsOneChild)("Bun.file().arrayBuffer() at the 4 GiB ArrayBuffer limit", () => {
+describeFourGiB.skipIf(isWindows || !fitsOneChild)("Bun.file().arrayBuffer() at the 4 GiB ArrayBuffer limit", () => {
   async function readSparseFileAsArrayBuffer(size: number): Promise<ChildResult> {
     using dir = tempDir("blob-4gib", {});
     const file = path.join(String(dir), "big.bin");

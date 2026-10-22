@@ -10,13 +10,13 @@ import {
   symlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
 // It can't find includes. It can on machines with that enabled.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-it.todoIf(isASAN)("can run a .c file", () => {
+it.todoIf(isWindows || isASAN)("can run a .c file", () => {
   const result = Bun.spawnSync({
     cmd: [bunExe(), path.join(__dirname, "cc-fixture.js")],
     cwd: __dirname,
@@ -766,7 +766,7 @@ describe.concurrent("close()", () => {
   });
 
   // cc()-compiled C resolves napi_* from the host process, which is only tested on POSIX (see cc-fixture.c).
-  it("callbacks that the C code registered with Node-API still work after close()", async () => {
+  it.skipIf(isWindows)("callbacks that the C code registered with Node-API still work after close()", async () => {
     const c = `
       typedef struct napi_env_fake* napi_env_t;
       typedef struct napi_value_fake* napi_value_t;
@@ -1364,7 +1364,7 @@ describe("double <-> JSValue conversions", () => {
   // verbatim, so they are the same boundary. cc()-compiled C resolves napi_*
   // from the host process; that lookup is only exercised on POSIX today (see
   // cc-fixture.c).
-  it("impure NaNs through napi_create_double and napi_create_date are purified", async () => {
+  it.skipIf(isWindows)("impure NaNs through napi_create_double and napi_create_date are purified", async () => {
     using dir = tempDir("bun-ffi-impure-nan-napi", {
       "impure_napi.c": /* c */ `
         typedef struct napi_env_fake* napi_env_t;
@@ -1464,7 +1464,7 @@ it("a compiled symbol isn't a constructor", async () => {
 });
 
 // cc()-compiled C resolves napi_* from the host process, which is only tested on POSIX (see cc-fixture.c).
-it("returns undefined for a NULL napi_value and throws a pending napi exception", async () => {
+it.skipIf(isWindows)("returns undefined for a NULL napi_value and throws a pending napi exception", async () => {
   using dir = tempDir("bun-ffi-napi-null-return", {
     "napi_null.c": /* c */ `
       typedef struct napi_env_fake* napi_env_t;
@@ -1547,7 +1547,7 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
     return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   }
 
-  it("compiles a source that includes a compiler runtime header", async () => {
+  it.skipIf(isWindows)("compiles a source that includes a compiler runtime header", async () => {
     using dir = tempDir("bun-ffi-cc-rt-dir", files);
 
     const [stdout, stderr, exitCode] = await runFixture(String(dir));
@@ -1559,7 +1559,7 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
     expect(exitCode).toBe(0);
   });
 
-  it("does not write compiler runtime headers through a symlinked entry", async () => {
+  it.skipIf(isWindows)("does not write compiler runtime headers through a symlinked entry", async () => {
     using dir = tempDir("bun-ffi-cc-rt-dir-symlink", files);
     for (const name of ["bun-cc", `bun-cc-${process.getuid!()}`]) {
       const headerDir = path.join(String(dir), name);
@@ -1575,24 +1575,27 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
     expect(exitCode).toBe(0);
   });
 
-  it("does not place compiler runtime headers in a pre-existing group- and world-writable directory", async () => {
-    using dir = tempDir("bun-ffi-cc-rt-dir-mode", files);
-    const sharedName = `bun-cc-${process.getuid!()}`;
-    for (const name of ["bun-cc", sharedName]) {
-      const headerDir = path.join(String(dir), name);
-      mkdirSync(headerDir, { recursive: true });
-      writeFileSync(path.join(headerDir, "stdbool.h"), plantedHeader);
-    }
-    chmodSync(path.join(String(dir), "bun-cc"), 0o755);
-    chmodSync(path.join(String(dir), sharedName), 0o777);
+  it.skipIf(isWindows)(
+    "does not place compiler runtime headers in a pre-existing group- and world-writable directory",
+    async () => {
+      using dir = tempDir("bun-ffi-cc-rt-dir-mode", files);
+      const sharedName = `bun-cc-${process.getuid!()}`;
+      for (const name of ["bun-cc", sharedName]) {
+        const headerDir = path.join(String(dir), name);
+        mkdirSync(headerDir, { recursive: true });
+        writeFileSync(path.join(headerDir, "stdbool.h"), plantedHeader);
+      }
+      chmodSync(path.join(String(dir), "bun-cc"), 0o755);
+      chmodSync(path.join(String(dir), sharedName), 0o777);
 
-    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+      const [stdout, stderr, exitCode] = await runFixture(String(dir));
 
-    expect(readFileSync(path.join(String(dir), "bun-cc", "stdbool.h"), "utf8")).toBe(plantedHeader);
-    expect(readFileSync(path.join(String(dir), sharedName, "stdbool.h"), "utf8")).toBe(plantedHeader);
-    expect(stdout).toBe("3\n");
-    expect(exitCode).toBe(0);
-  });
+      expect(readFileSync(path.join(String(dir), "bun-cc", "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(readFileSync(path.join(String(dir), sharedName, "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it("does not reuse a pre-existing fixed-name bun-cc directory for compiler runtime headers", async () => {
     using dir = tempDir("bun-ffi-cc-rt-dir-fixed-name", files);

@@ -2274,48 +2274,51 @@ test.concurrent("isolated + publicHoistPattern: hoisted links follow their store
   expect(await file(join(nm, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
 });
 
-test.concurrent.skipIf(isRoot)("a failed deletion is reported, the rest is removed, exit code 1", async () => {
-  const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
-  const nm = join(dir, "node_modules");
-  const junkA = plant(dir, "node_modules/junk-a");
-  const inner = plant(dir, "node_modules/junk-b/inner");
-  const junkB = join(nm, "junk-b");
-  chmodSync(junkB, 0o555);
-  const failure = /^error: failed to remove node_modules\/junk-b: E[A-Z]+ \(.+\)$/;
-  try {
-    // The failure is explained before the verdict, and the verdict counts it.
-    const { lines: merged, exitCode } = await pruneMerged(dir);
-    expect(merged).toStrictEqual([
-      BANNER,
-      "",
-      "- junk-a",
-      expect.stringMatching(failure),
-      "1 package removed, 1 failed (checked 3 installed packages)",
-    ]);
-    expect(exitCode).toBe(1);
-    expect(existsSync(junkA)).toBeFalse();
-    expect(existsSync(inner)).toBeTrue();
+test.concurrent.skipIf(isWindows || isRoot)(
+  "a failed deletion is reported, the rest is removed, exit code 1",
+  async () => {
+    const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
+    const nm = join(dir, "node_modules");
+    const junkA = plant(dir, "node_modules/junk-a");
+    const inner = plant(dir, "node_modules/junk-b/inner");
+    const junkB = join(nm, "junk-b");
+    chmodSync(junkB, 0o555);
+    const failure = /^error: failed to remove node_modules\/junk-b: E[A-Z]+ \(.+\)$/;
+    try {
+      // The failure is explained before the verdict, and the verdict counts it.
+      const { lines: merged, exitCode } = await pruneMerged(dir);
+      expect(merged).toStrictEqual([
+        BANNER,
+        "",
+        "- junk-a",
+        expect.stringMatching(failure),
+        "1 package removed, 1 failed (checked 3 installed packages)",
+      ]);
+      expect(exitCode).toBe(1);
+      expect(existsSync(junkA)).toBeFalse();
+      expect(existsSync(inner)).toBeTrue();
 
-    // --silent still reports what could not be removed; the exit code alone would hide which entry it was.
-    const silent = await prune(dir, "--silent");
-    expect(silent.stdout).toBe("");
-    expect(normalizeBunSnapshot(silent.stderr)).toMatch(failure);
-    expect(silent.exitCode).toBe(1);
-    expect(existsSync(inner)).toBeTrue();
-  } finally {
-    chmodSync(junkB, 0o755);
-  }
+      // --silent still reports what could not be removed; the exit code alone would hide which entry it was.
+      const silent = await prune(dir, "--silent");
+      expect(silent.stdout).toBe("");
+      expect(normalizeBunSnapshot(silent.stderr)).toMatch(failure);
+      expect(silent.exitCode).toBe(1);
+      expect(existsSync(inner)).toBeTrue();
+    } finally {
+      chmodSync(junkB, 0o755);
+    }
 
-  const { stdout, exitCode } = await prune(dir);
-  expect(out(stdout)).toMatchInlineSnapshot(`
+    const { stdout, exitCode } = await prune(dir);
+    expect(out(stdout)).toMatchInlineSnapshot(`
     "bun prune <version> (<revision>)
 
     - junk-b
     1 package removed (checked 2 installed packages)"
   `);
-  expect(exitCode).toBe(0);
-  expect(existsSync(junkB)).toBeFalse();
-});
+    expect(exitCode).toBe(0);
+    expect(existsSync(junkB)).toBeFalse();
+  },
+);
 
 // pnpm#4770 / #5092 / #10275: `prepare` must not run after --production removed the tools it needs.
 test.concurrent("never runs the project's lifecycle scripts", async () => {
@@ -3680,12 +3683,12 @@ test.concurrent.each(linkers)("%s: the bin of a removed package is relinked to t
   });
   const nm = join(dir, "node_modules");
   const target = () => readlinkSync(join(nm, ".bin", "what-bin")).replaceAll("\\", "/");
-  expect(target()).toBe("../a-what-bin/what-bin.js");
+  if (!isWindows) expect(target()).toBe("../a-what-bin/what-bin.js");
 
   const { exitCode } = await prune(dir, "--production", "--linker", linker);
   expect(existsSync(join(nm, "a-what-bin"))).toBeFalse();
   expectBinInstalled(nm, "what-bin");
-  expect(target()).toBe("../what-bin/what-bin.js");
+  if (!isWindows) expect(target()).toBe("../what-bin/what-bin.js");
   expect(exitCode).toBe(0);
 });
 
@@ -3819,7 +3822,7 @@ test.concurrent(
       expectBinInstalled(join(store, entry, "node_modules"), "skip-test-cmd");
     }
     const installed = nodeModulesTree(dir, { storeBins: true });
-    {
+    if (!isWindows) {
       const ownBin = `node_modules/.bun/test-postinstall-skip@1.0.0/node_modules/.bin/skip-test-cmd`;
       expect(installed[ownBin]).toBe(
         `-> node_modules/.bun/${native}/node_modules/test-postinstall-skip-native/bin/cmd.js`,

@@ -267,7 +267,7 @@ it("process.env.TZ writes inside a worker do not change the main thread's timezo
   });
 });
 
-it("process.env keeps Node's EnvSetter semantics inside a snapshot-env worker", async () => {
+it.skipIf(isWindows)("process.env keeps Node's EnvSetter semantics inside a snapshot-env worker", async () => {
   // new Worker(file, { env: {...} }) seeds process.env from a snapshot dict;
   // writes inside the worker must still coerce to string, reject symbol keys,
   // and reject accessor descriptors like Node's EnvSetter/EnvDefiner (Node
@@ -1611,7 +1611,7 @@ describe.concurrent(() => {
 
   describe("signal", () => {
     const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
-    it("simple case works", async () => {
+    it.skipIf(isWindows)("simple case works", async () => {
       await using child = Bun.spawn({
         cmd: [bunExe(), fixture, "SIGUSR1"],
         env: bunEnv,
@@ -1621,7 +1621,7 @@ describe.concurrent(() => {
       expect(await child.exited).toBe(0);
       expect(await new Response(child.stdout).text()).toBe("PASS\n");
     });
-    it("process.emit will call signal events", async () => {
+    it.skipIf(isWindows)("process.emit will call signal events", async () => {
       await using child = Bun.spawn({
         cmd: [bunExe(), fixture, "SIGUSR2"],
         env: bunEnv,
@@ -3386,7 +3386,7 @@ it("_rawDebug never throws when fd 2 is closed", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isRoot)("process.initgroups passes an unknown string user straight to initgroups(3)", () => {
+it.skipIf(isWindows || isRoot)("process.initgroups passes an unknown string user straight to initgroups(3)", () => {
   // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
   // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
   let err;
@@ -3399,7 +3399,7 @@ it.skipIf(isRoot)("process.initgroups passes an unknown string user straight to 
   expect(err?.syscall).toBe("initgroups");
 });
 
-it("process.initgroups pre-resolves a numeric uid through passwd", () => {
+it.skipIf(isWindows)("process.initgroups pre-resolves a numeric uid through passwd", () => {
   // Numeric users go through getpwuid_r first, so an unknown uid surfaces
   // ERR_UNKNOWN_CREDENTIAL before the privileged initgroups(3) call — runs
   // fine as non-root.

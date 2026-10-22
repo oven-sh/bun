@@ -92,7 +92,7 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   ).toEqual([hashed, hashed]);
 });
 
-it("bun.lockb honors umask", async () => {
+it.skipIf(isWindows)("bun.lockb honors umask", async () => {
   const { packageDir } = await registry.createTestDir({
     bunfigOpts: { saveTextLockfile: false },
     files: {

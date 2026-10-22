@@ -18,7 +18,7 @@
 
 import { SQL, type Socket } from "bun";
 import { expect, mock, test } from "bun:test";
-import { blackholePortSource, bunEnv, bunExe, isMusl, tls as tlsCert } from "harness";
+import { blackholePortSource, bunEnv, bunExe, isMusl, isWindows, tls as tlsCert } from "harness";
 import net from "node:net";
 import tls from "node:tls";
 import {
@@ -166,7 +166,7 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
 
   // The timeout closes a socket whose TCP connect is still in flight. The event loop ref the
   // connection holds is released by the socket event that close raises.
-  test.skipIf(isMusl)(
+  test.skipIf(isWindows || isMusl)(
     `${name}: the process exits after the connection timeout of a dial that never completes`,
     async () => {
       await using proc = Bun.spawn({

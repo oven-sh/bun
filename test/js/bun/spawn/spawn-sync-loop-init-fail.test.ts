@@ -11,7 +11,7 @@
 // test exercises the POSIX half where the failure is reproducible with a file
 // descriptor limit.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isPosix } from "harness";
 
 // Absolute argv[0] so PATH lookup (which_for_spawn) is skipped; on musl that
 // lookup fails under EMFILE before the event loop is created and turns the
@@ -45,7 +45,7 @@ const fixture = /* js */ `
   console.error("SURVIVED");
 `;
 
-describe("Bun.spawnSync event-loop creation under EMFILE", () => {
+describe.skipIf(!isPosix)("Bun.spawnSync event-loop creation under EMFILE", () => {
   test("throws instead of aborting the process", async () => {
     await using proc = Bun.spawn({
       cmd: ["/bin/sh", "-c", `ulimit -n 512 && exec "$1" --no-install -e "$2"`, "sh", bunExe(), fixture],

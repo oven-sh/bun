@@ -724,13 +724,13 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
     expect(await whatRan(files, args, "apps/web", { from: "." })).toBe("the command");
   });
 
-  test.skipIf(command === "check")("in `a\\b`, --cwd=missing doesn't resolve to a/b/missing", async () => {
+  test.skipIf(isWindows || command === "check")("in `a\\b`, --cwd=missing doesn't resolve to a/b/missing", async () => {
     const result = await bun({ "a/b/missing/a.ts": source }, ["--cwd=missing", command, ...flags, "a.ts"], "a\\b");
     expect(result.stderr).toContain('Could not change directory to "missing"');
     expect(result.exitCode).toBe(1);
   });
 
-  test("an absolute --cwd works when the working directory was deleted", async () => {
+  test.skipIf(isWindows)("an absolute --cwd works when the working directory was deleted", async () => {
     using dir = tempDir("bun-no-script", { "project/a.ts": source, "deleted/a.ts": "" });
     const args = [`--cwd=${join(String(dir), "project")}`, command, ...flags, "a.ts"];
     await using proc = Bun.spawn({
@@ -744,7 +744,7 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
     expect(exitCode).toBe(1);
   });
 
-  test("an absolute --cwd can contain `//`, `.` and `..`", async () => {
+  test.skipIf(isWindows)("an absolute --cwd can contain `//`, `.` and `..`", async () => {
     using dir = tempDir("bun-no-script", { "project/a.ts": source });
     const cwd = `/..//${String(dir).slice(1)}/./missing/../project//`;
     await using proc = Bun.spawn({

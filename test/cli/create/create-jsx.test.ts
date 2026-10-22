@@ -2,7 +2,7 @@ import type { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync, statSync } from "fs";
 import { cp, readdir } from "fs/promises";
-import { bunEnv, bunExe, isCI, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text: "" }) {
@@ -326,7 +326,7 @@ for (const development of [true, false]) {
 
 // Windows: `bun create` never prints the "--only-missing install" line this
 // asserts on, so the dependency detection cannot be observed there.
-test("auto-install passes detected dependencies as positionals", async () => {
+test.todoIf(isWindows)("auto-install passes detected dependencies as positionals", async () => {
   using dir = tempDir("create-arg-separator", {
     "Component.tsx": `import "--trust";
 
@@ -469,7 +469,7 @@ function identity(file: string) {
 }
 
 // Windows: `bun create <component>` does not reach its install step there (see create-jsx.test.ts).
-describe.concurrent("bun create <component> and files that are already there", () => {
+describe.concurrent.todoIf(isWindows)("bun create <component> and files that are already there", () => {
   const userCss = "/* my own stylesheet */\n.card { color: red; }\n";
   const packageJson = JSON.stringify({ name: "my-app", private: true });
 

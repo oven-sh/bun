@@ -1506,7 +1506,7 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   // later poll tick. POSIX-only assertions: on Windows EOF arrives
   // asynchronously once conhost self-exits, so the exit callback may not have
   // fired by the time child.exited resolves.
-  test("process exits after subprocess with inline terminal (no terminal.close)", async () => {
+  test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

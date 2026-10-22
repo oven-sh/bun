@@ -3977,7 +3977,7 @@ describe.concurrent("binaries", () => {
   }
 
   // https://github.com/oven-sh/bun/issues/14736
-  test("reinstall keeps an already-correct .bin link untouched on a read-only tree", async () => {
+  test.skipIf(isWindows)("reinstall keeps an already-correct .bin link untouched on a read-only tree", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "what-bin": "1.0.0" } }));
 
@@ -13886,7 +13886,7 @@ describe("global bin links when the package dir is inside the bin dir", () => {
     expect(await exited).toBe(0);
   });
 
-  test("the bins are symlinks relative to the bin dir", async () => {
+  test.skipIf(isWindows)("the bins are symlinks relative to the bin dir", async () => {
     expect(await readlink(join(binDir, "bin-bun"))).toBe(join("global", "node_modules", "bunx-bins", "bin-bun.ts"));
     expect(await exists(join(binDir, "bin-bun"))).toBe(true);
   });

@@ -1149,7 +1149,7 @@ describe("dangling symlinks in node_modules", () => {
     }
   })();
   const canUseRunuser = isLinux && isRoot && !!Bun.which("runuser") && nobody !== null;
-  const canTriggerEACCES = !isRoot || canUseRunuser;
+  const canTriggerEACCES = !isWindows && (!isRoot || canUseRunuser);
 
   it.skipIf(!canTriggerEACCES)("resolving a directory whose entries cache holds .err does not crash", async () => {
     const fixture = `
@@ -1983,7 +1983,7 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
   });
 });
 
-it("runs a script from a working directory nested 256 directories deep", async () => {
+it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {
   using dir = tempDir("resolver-deep-cwd", { ".keep": "" });
   const base = realpathSync(String(dir));
   const depth = 256 - base.split("/").filter(part => part.length > 0).length;
@@ -2029,7 +2029,7 @@ it("reports a resolution error for an absolute specifier of the maximum path len
   expect(exitCode).toBe(0);
 });
 
-it("does not find a file whose folder fits a path buffer and whose own path does not", async () => {
+it.skipIf(isWindows)("does not find a file whose folder fits a path buffer and whose own path does not", async () => {
   using dir = tempDir("resolver-deep-folder", {});
   await using proc = Bun.spawn({
     cmd: [

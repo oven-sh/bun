@@ -663,7 +663,7 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
   // A peer can send unlimited Pings, so a ping flood must not exhaust the client's memory. RFC 6455 5.5.3 allows
   // answering only the latest Ping. npm ws queues a Pong for each one.
   // Skipped on Windows because Winsock accepts everything on loopback, so nothing is ever buffered.
-  test.skipIf(!builtin)("skips auto-pong while more than 16 MiB is buffered", async () => {
+  test.skipIf(!builtin || isWindows)("skips auto-pong while more than 16 MiB is buffered", async () => {
     await using client = await openClient(implementation, { perMessageDeflate: false });
     const { ws, conn } = client;
     conn.socket.pause();

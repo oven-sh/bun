@@ -312,7 +312,7 @@ test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a
 // A `Bun.file()` / `Bun.stdin` read of a pipe or tty that has no data yet
 // parks on the io loop instead of blocking a pool thread, so terminate() can
 // and does cancel it: the worker goes away promptly and the read never settles.
-describe("terminate() cancels a read parked on the io loop", () => {
+describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", () => {
   test.concurrent.each([
     ["Bun.stdin.text()", [`Bun.stdin.text()`]],
     ["Bun.file(fifo).text()", [`Bun.file(workerData).text()`]],

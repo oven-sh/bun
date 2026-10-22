@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isIPv6, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -529,7 +529,7 @@ describe("proxy policy", () => {
   });
 
   // fetch.preconnect() is a no-op on Windows.
-  test.concurrent("fetch.preconnect does not dial an origin the environment proxies", async () => {
+  test.concurrent.todoIf(isWindows)("fetch.preconnect does not dial an origin the environment proxies", async () => {
     using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
     // The origin lives in the subprocess, which has to see its connections.
     const result = await run(

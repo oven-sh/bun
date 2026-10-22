@@ -13730,7 +13730,7 @@ it.concurrent("does not install transitive file: dependencies with overlong fold
 // against the buffer when package.json is parsed, but the appended bytes were not, so a
 // folder path within 13 bytes of the buffer size aborted the install. Windows' buffer is
 // larger than any path the OS accepts, so the boundary cannot be reached there.
-describe.concurrent("file: dependency whose package.json path is around the path buffer size", () => {
+describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path is around the path buffer size", () => {
   const PATH_BUFFER_BYTES = isLinux ? 4096 : 1024;
 
   // A relative path of exactly `bytes` bytes made of one letter directory names, so that a
@@ -16650,7 +16650,7 @@ describe.concurrent("progress bar with a long name", () => {
 // `--cwd` is staged in a PATH_MAX-sized buffer (4096 bytes on Linux and Android, 1024 on macOS and
 // the BSDs) before chdir. Values that did not leave room for the NUL terminator used to abort the
 // process; the buffer on Windows (~96 KiB) is larger than any command line, so only POSIX is affected.
-describe.concurrent("--cwd that does not fit the path buffer", () => {
+describe.concurrent.skipIf(isWindows)("--cwd that does not fit the path buffer", () => {
   const PATH_MAX = isLinux || isAndroid ? 4096 : 1024;
   const name = (length: number) => Buffer.alloc(length, "a").toString();
 

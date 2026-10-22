@@ -5,7 +5,7 @@
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isWindows, tls } from "harness";
 import { RawClient } from "../../web/websocket/raw-peer";
 
 function serve(secure: boolean, websocket: WebSocketHandler<undefined>, asyncUpgrade = false) {
@@ -221,7 +221,7 @@ describe.concurrent.each([
   { from: "a timer", exit: "process.exit(0)" },
   { from: "the message handler", exit: "process.exit(0)" },
 ])("$exit from $from after send() and publish()", ({ from, exit }) => {
-  test("flushes the messages before the process exits", async () => {
+  test.skipIf(isWindows)("flushes the messages before the process exits", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

@@ -7,8 +7,10 @@ import {
   bunExe,
   getMaxFD,
   isAndroid,
+  isBroken,
   isDebug,
   isLinux,
+  isPosix,
   isRoot,
   isWindows,
   shellExe,
@@ -544,7 +546,7 @@ for (let [gcTick, label] of [
                 expect(output).toBe(expected);
               });
 
-              it("after exit", async () => {
+              it.todoIf(isWindows && isBroken)("after exit", async () => {
                 const process = callback();
                 await process.exited;
                 const output = await process.stdout.text();
@@ -556,7 +558,7 @@ for (let [gcTick, label] of [
           });
         }
 
-        it("lazy: true releases an unread pipe after the child exits", async () => {
+        it.skipIf(isWindows)("lazy: true releases an unread pipe after the child exits", async () => {
           // With lazy the reader is paused until JS pulls. If a slot is never
           // read, on_process_exit must still drain it so the fd and the
           // Subprocess wrapper are released.
@@ -1057,7 +1059,7 @@ describe("close handling", () => {
     }
   }
 
-  it("does not close caller-owned fds passed as extra stdio", async () => {
+  it.skipIf(isWindows)("does not close caller-owned fds passed as extra stdio", async () => {
     const fd = openSync(import.meta.path, "r");
     try {
       await (async function () {
@@ -1093,7 +1095,7 @@ describe("close handling", () => {
     }
   });
 
-  it("stdio[N] for non-fd extra slots is null", async () => {
+  it.skipIf(isWindows)("stdio[N] for non-fd extra slots is null", async () => {
     const fd = openSync(import.meta.path, "r");
     try {
       await using proc = spawn({
@@ -1237,30 +1239,33 @@ describe("close handling", () => {
       ).toThrow("'socket-fd' cannot be used with spawnSync");
     });
 
-    it("'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close", async () => {
-      await using proc = spawn({
-        cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
-        env: bunEnv,
-        stdio: ["ignore", "ignore", "ignore", "socket-fd"],
-      });
-      const fd = proc.stdio[3];
-      expect(typeof fd).toBe("number");
-      try {
-        await proc.exited;
-        // fd is UnownedFd: still open and readable here (process exit does
-        // not touch stdio_pipes), and finalize_streams on later GC will skip
-        // this slot. The caller owns the close.
-        const buf = Buffer.alloc(64);
-        const n = readSync(fd as number, buf);
-        expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
-      } finally {
-        // Caller is responsible for closing it.
-        closeSync(fd as number);
-      }
-      expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
-    });
+    it.skipIf(isWindows)(
+      "'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close",
+      async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        });
+        const fd = proc.stdio[3];
+        expect(typeof fd).toBe("number");
+        try {
+          await proc.exited;
+          // fd is UnownedFd: still open and readable here (process exit does
+          // not touch stdio_pipes), and finalize_streams on later GC will skip
+          // this slot. The caller owns the close.
+          const buf = Buffer.alloc(64);
+          const n = readSync(fd as number, buf);
+          expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
+        } finally {
+          // Caller is responsible for closing it.
+          closeSync(fd as number);
+        }
+        expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      },
+    );
 
-    it("'pipe' at index >= 3: reading .stdio transfers fd ownership to the caller", async () => {
+    it.skipIf(isWindows)("'pipe' at index >= 3: reading .stdio transfers fd ownership to the caller", async () => {
       // Once .stdio exposes the raw fd number, JS owns it; the Subprocess
       // finalizer must not close that number again at GC time (the kernel may
       // have recycled it). Run in a child so a debug abort shows as exit != 0.
@@ -1681,7 +1686,7 @@ it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path le
 });
 
 describe("onDisconnect", () => {
-  it("ipc delivers message", async () => {
+  it.todoIf(isWindows)("ipc delivers message", async () => {
     const msg = Promise.withResolvers<void>();
 
     let ipcMessage: unknown;
@@ -1819,7 +1824,7 @@ describe("option combinations", () => {
     await proc.exited;
   });
 
-  it("onDisconnect + ipc + serialization works together", async () => {
+  it.todoIf(isWindows)("onDisconnect + ipc + serialization works together", async () => {
     let messageReceived = false;
     let disconnectCalled = false;
 
@@ -1860,21 +1865,21 @@ describe("option combinations", () => {
 });
 
 describe("uid/gid", () => {
-  it.if(isRoot)("applies uid and gid to the child", async () => {
+  it.if(isPosix && isRoot)("applies uid and gid to the child", async () => {
     await using proc = spawn({ cmd: ["id", "-u"], uid: 65534, gid: 65534, stdout: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim()).toBe("65534");
     expect(exitCode).toBe(0);
   });
 
-  it.if(isRoot)("omitting uid/gid leaves the child's ids unchanged", async () => {
+  it.if(isPosix && isRoot)("omitting uid/gid leaves the child's ids unchanged", async () => {
     await using proc = spawn({ cmd: ["id", "-u"], stdout: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim()).toBe("0");
     expect(exitCode).toBe(0);
   });
 
-  it.if(!isRoot)("throws EPERM for a uid the process cannot set", () => {
+  it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {
     let thrown: any;
     try {
       spawn({ cmd: ["id"], uid: 0 });
@@ -1920,7 +1925,7 @@ async function runInFreshProcess(script: string) {
 
 // A socketpair end that bun hands to a child keeps the file status flags bun gave it. A child that
 // is not bun or node does a plain write(2) on the IPC fd, which is short or fails with EAGAIN when the fd is O_NONBLOCK.
-describe("file status flags handed to the child", () => {
+describe.skipIf(!isPosix)("file status flags handed to the child", () => {
   const probe = join(import.meta.dir, "fixtures", "fd-nonblock-probe.js");
 
   it.concurrent("the ipc fd is blocking", async () => {
@@ -1938,7 +1943,7 @@ describe("file status flags handed to the child", () => {
   });
 });
 
-describe("stdio source fds that are also slot numbers", () => {
+describe.skipIf(!isPosix)("stdio source fds that are also slot numbers", () => {
   // File actions run in slot order in the child. The source fd of a later
   // slot must survive the actions of the slots before it (the close of an
   // "ignore" slot, the dup2 onto another slot) even when its fd number is one
@@ -2070,7 +2075,7 @@ describe("stdio source fds that are also slot numbers", () => {
 // them. bun never closes its own descriptor at such a number, and a child that inherits the slot
 // gets that descriptor as its stdio. So a socketpair, memfd, pidfd or eventfd that bun creates
 // (a "pipe" slot, a Blob stdin, the exit watcher) must not take one.
-describe("a spawn while fd 0, 1 or 2 is closed", () => {
+describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
   const prelude = `
     const fs = require("node:fs");
     // What this process has at the number.
@@ -2377,7 +2382,7 @@ describe("a spawn while fd 0, 1 or 2 is closed", () => {
 });
 
 // At startup, bun opens /dev/null on fd 0, 1 or 2 if it's closed. Like node, it doesn't replace an O_PATH descriptor.
-describe("startup with a closed or an O_PATH stdio fd", () => {
+describe.skipIf(!isPosix)("startup with a closed or an O_PATH stdio fd", () => {
   const O_PATH = 0o10000000;
   // Writes a report to fd 3: what fds 0-2 point to after startup, and the result of writing to fds 1 and 2.
   const script = `

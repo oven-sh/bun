@@ -559,7 +559,7 @@ describe.concurrent("flags", () => {
   // The destination directory ends `headroom` bytes short of the path buffer, so it still fits,
   // but the longer "/<name>-<version>.tgz" appended to it does not. Windows command lines cannot
   // carry an argument anywhere near its path buffer size.
-  test("--destination with no room left for the tarball name", async () => {
+  test.skipIf(isWindows)("--destination with no room left for the tarball name", async () => {
     const pathMax = isLinux ? 4096 : 1024;
     const headroom = 100;
     const name = `pack-dest-too-long-${Buffer.alloc(2 * headroom, "n").toString()}`;
@@ -624,7 +624,7 @@ describe.concurrent("flags", () => {
   // The destination used to be opened a second time to hash it, which on a FIFO waits for another writer forever.
   // This end is open before pack starts and the tarball fits the pipe's buffer, so nothing here can block;
   // a pack that does is killed by `timeout`.
-  test("--filename can be a FIFO", async () => {
+  test.skipIf(isWindows)("--filename can be a FIFO", async () => {
     using dir = tempDir("pack-fifo", {
       "package.json": JSON.stringify({ name: "pack-fifo", version: "1.1.1" }),
       "index.js": indexJs,
@@ -1061,7 +1061,7 @@ describe.concurrent("flags", () => {
 // ./*.tgz` to pick up. `ulimit -f 0` (RLIMIT_FSIZE) makes every write to the tarball fail with
 // EFBIG, which unlike a permission based setup also works when the tests run as root; setting it
 // needs a POSIX shell.
-describe("a failed pack leaves no tarball behind", () => {
+describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
   const packageJson = JSON.stringify({ name: "pack-failed", version: "1.0.0" });
 
   async function packExpectingFailure(cwd: string, { fileSizeLimit }: { fileSizeLimit: boolean }, ...args: string[]) {
@@ -1266,7 +1266,7 @@ describe.concurrent("something already exists at the tarball's destination", () 
     }
   });
 
-  test("a file keeps its mode", async () => {
+  test.skipIf(isWindows)("a file keeps its mode", async () => {
     using dir = tempDir("pack-over-mode", { ...files, "pkg/pack-over-1.0.0.tgz": "an earlier tarball" });
     const tarball = join(dir, "pkg", "pack-over-1.0.0.tgz");
     await chmod(tarball, 0o600);
@@ -5196,7 +5196,7 @@ describe.concurrent("bins", () => {
 
 // `chmod 000` keeps the user that packs out of one entry that the scan looks for. The entry is
 // there, so the scan must not continue as if it was not.
-describe.concurrent("an entry that exists but can't be opened", () => {
+describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened", () => {
   // Runs `bun ...cmd` in `cwd` while `locked` has no permission bits. Restores them so that the tree can be removed.
   async function runWithout(dir: string, locked: string, cmd: string[], cwd: string = dir) {
     using unprivileged = unprivilegedSpawnOptions(dir);
@@ -5925,7 +5925,7 @@ describe.concurrent.each([
 ])("%s is printed spelled out", (_, raw, spelled) => {
   const unprintable = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
 
-  test("in a file name", async () => {
+  test.skipIf(isWindows)("in a file name", async () => {
     using dir = tempDir("pack-file-name", {
       "package.json": JSON.stringify({ name: "pack-file-name", version: "1.0.0" }),
       [`a${raw}b.js`]: "x",

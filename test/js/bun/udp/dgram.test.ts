@@ -239,7 +239,7 @@ describe("unref()", () => {
 });
 
 // Cluster-shared dgram descriptors are POSIX-only (Windows reports ENOTSUP).
-describe("cluster", () => {
+describe.skipIf(isWindows)("cluster", () => {
   // The shared wrap's close(cb) must invoke cb (Node's HandleWrap contract) or
   // cluster's disconnect refcount never reaches zero and the worker hangs.
   test("worker.disconnect() with a shared socket lets the worker exit", async () => {
@@ -374,7 +374,7 @@ test("_createSocketHandle() without an address or port returns an unbound handle
   handle.close();
 });
 
-test("_createSocketHandle() binds and reports the descriptor", () => {
+test.skipIf(isWindows)("_createSocketHandle() binds and reports the descriptor", () => {
   const { _createSocketHandle, UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   const handle = _createSocketHandle("127.0.0.1", 0, "udp4");
 
@@ -383,7 +383,7 @@ test("_createSocketHandle() binds and reports the descriptor", () => {
   handle.close();
 });
 
-test("_createSocketHandle() returns a negative errno when the bind fails", () => {
+test.skipIf(isWindows)("_createSocketHandle() returns a negative errno when the bind fails", () => {
   const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   // Not a numeric literal: the wrap binds through inet_pton, so this is EINVAL.
   const err = _createSocketHandle("localhost", 0, "udp4");
@@ -393,7 +393,7 @@ test("_createSocketHandle() returns a negative errno when the bind fails", () =>
 
 // The duplicate-adoption guard must trip synchronously: libuv reports EEXIST
 // from the second uv_udp_open() of the same descriptor even in the same tick.
-test("bind({ fd }) rejects a same-tick duplicate adoption", async () => {
+test.skipIf(isWindows)("bind({ fd }) rejects a same-tick duplicate adoption", async () => {
   const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
   expect(typeof wrap).not.toBe("number");
@@ -412,7 +412,7 @@ test("bind({ fd }) rejects a same-tick duplicate adoption", async () => {
 
 // The same guard lives in the native layer so `Bun.udpSocket({ fd })` cannot
 // adopt (and later double-close) a descriptor a live socket already owns.
-test("Bun.udpSocket({ fd }) rejects a descriptor a live socket already adopted", async () => {
+test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket already adopted", async () => {
   const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
   const socket = createSocket("udp4");
@@ -617,7 +617,7 @@ test.skipIf(!hasIPv6Loopback())("rinfo.family follows the packet's sockaddr, not
 
 // Adopting an unbound descriptor: the kernel auto-binds on the first sendto(),
 // and address() must return that ephemeral port (Node calls getsockname fresh).
-test("bind({ fd }) with an unbound descriptor reports the auto-bound port after send()", async () => {
+test.skipIf(isWindows)("bind({ fd }) with an unbound descriptor reports the auto-bound port after send()", async () => {
   const { newRawSocketFd, closeRawFd } = require("bun:internal-for-testing").dgramInternals;
   const fd = newRawSocketFd(false, false);
   expect(fd).toBeGreaterThan(0);
@@ -677,7 +677,7 @@ test("addMembership() with a non-IP address carries .errno", () => {
 
 // Adopting a bound fd sets SO_REUSEADDR (like libuv's uv_udp_open), so a
 // second reuseAddr socket can bind the same port.
-test("adopting a bound fd sets SO_REUSEADDR like uv_udp_open", async () => {
+test.skipIf(isWindows)("adopting a bound fd sets SO_REUSEADDR like uv_udp_open", async () => {
   const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   const wrap = new UDP();
   expect(wrap.bind("127.0.0.1", 0, 0)).toBe(0);
@@ -871,7 +871,7 @@ const icmpBindModes = {
   },
 };
 for (const [kind, bind] of Object.entries(icmpBindModes)) {
-  test(`${kind} socket emits the ICMP error instead of silently dying`, async () => {
+  test.skipIf(isWindows)(`${kind} socket emits the ICMP error instead of silently dying`, async () => {
     const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
     const deadPort = await getDeadPort();
 

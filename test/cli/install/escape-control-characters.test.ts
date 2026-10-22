@@ -434,7 +434,7 @@ describe.concurrent.each(Object.entries(messages))(
 );
 
 // Windows has no such file names.
-test.concurrent.each(characters)("--verbose, a file of a package: %s", async (_, raw, spelled) => {
+test.concurrent.skipIf(isWindows).each(characters)("--verbose, a file of a package: %s", async (_, raw, spelled) => {
   using dir = tempDir("escape-controls-file-name", {
     "package.json": JSON.stringify({ ...app, dependencies: { dep: "./dep.tgz" } }),
   });

@@ -4,7 +4,7 @@ import { mkdir, readFile, stat, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, runBunInstall, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
-test("bin linking normalizes CRLF in shebang", async () => {
+test.skipIf(isWindows)("bin linking normalizes CRLF in shebang", async () => {
   const testDir = tmpdirSync();
   const pkgDir = join(testDir, "pkg");
   const consumerDir = join(testDir, "consumer");

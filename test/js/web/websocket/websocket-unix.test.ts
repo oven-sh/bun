@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +7,7 @@ import tls from "node:tls";
 
 // Unix domain sockets are not supported on Windows via ws+unix://
 // (uSockets uses AF_UNIX which has limited support there).
-describe("WebSocket over unix domain socket", () => {
+describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
   function sockPath(name: string) {
     // Keep it short to stay under sun_path limits on macOS/Linux.
     return join(tmpdir(), `bun.ws.${name}.${process.pid}.${Date.now().toString(36)}.sock`);

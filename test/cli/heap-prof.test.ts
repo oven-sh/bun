@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const testScript = `const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
@@ -71,27 +71,30 @@ test("--heap-prof writes the profile when the script calls process.exit", async 
   expectV8HeapSnapshotShape(profile);
 });
 
-test("--heap-prof writes the profile on a self-directed SIGINT with no JS handler", async () => {
-  using dir = tempDir("heap-prof-sigint-test", {});
+test.skipIf(process.platform === "win32")(
+  "--heap-prof writes the profile on a self-directed SIGINT with no JS handler",
+  async () => {
+    using dir = tempDir("heap-prof-sigint-test", {});
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof", "-e", `process.kill(process.pid, "SIGINT");`],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--heap-prof", "-e", `process.kill(process.pid, "SIGINT");`],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(proc.signalCode).toBe("SIGINT");
-  expect(exitCode).not.toBe(0);
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBe("SIGINT");
+    expect(exitCode).not.toBe(0);
 
-  const glob = new Bun.Glob("*.heapprofile");
-  const files = Array.from(glob.scanSync({ cwd: String(dir) }));
-  expect(files.length).toBe(1);
-  const profile = await readProfile(String(dir), files[0]);
-  expectV8HeapSnapshotShape(profile);
-});
+    const glob = new Bun.Glob("*.heapprofile");
+    const files = Array.from(glob.scanSync({ cwd: String(dir) }));
+    expect(files.length).toBe(1);
+    const profile = await readProfile(String(dir), files[0]);
+    expectV8HeapSnapshotShape(profile);
+  },
+);
 
 test("--heap-prof-md generates markdown heap profile on exit", async () => {
   using dir = tempDir("heap-prof-md-test", {});
@@ -292,7 +295,7 @@ for (const [flag, value] of [
 // POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024);
 // 2500 + 2500 exercises the combined bound with components that fit
 // individually on Linux.
-test.each([
+test.skipIf(isWindows).each([
   ["--heap-prof-dir", ["--heap-prof-dir", Buffer.alloc(5000, "d").toString()]],
   ["--heap-prof-name", ["--heap-prof-name", Buffer.alloc(5000, "n").toString()]],
   [

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
 
 test("native ReadableStream reuses the pull buffer across small reads", async () => {
   // #getInternalBuffer used to rotate to a fresh autoAllocateChunkSize
@@ -74,7 +74,7 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
 // took a Strong on its own JS wrapper for every lazy-opened file and only
 // released it at EOF/error, so an abandoned reader's wrapper was a GC root
 // forever and its finalizer (which closes the fd) never ran.
-test("abandoned Bun.file().stream() reader does not leak its fd after GC", async () => {
+test.skipIf(isWindows)("abandoned Bun.file().stream() reader does not leak its fd after GC", async () => {
   using dir = tempDir("file-stream-fd-leak", {
     "big.bin": Buffer.alloc(1 << 20, 7),
   });

@@ -3577,7 +3577,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
     expect(control.exitCode).toBe(0);
   });
-  test("the stdio pipes of the children node:child_process spawned for it are closed", async () => {
+  test.skipIf(isWindows)("the stdio pipes of the children node:child_process spawned for it are closed", async () => {
     expect(await runsFixture("pipes-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"opened":true,"leftOpen":0}`,
       exitCode: 0,
@@ -3745,7 +3745,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "collected", exitCode: 0 });
   });
-  test("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
+  test.skipIf(isWindows)("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
     expect(await runsFixture("disposed-with-things-half-done.mjs")).toEqual({
       stdout: `{"fileSinks":0,"childHeard":[],"tls":{"writes":[],"heard":[]}}`,
       exitCode: 0,
@@ -3810,12 +3810,15 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   // A descriptor script holds (in a FileHandle, in a node:fs stream) is its script's to manage: dispose() does not
   // close it. A tenant closes what it opened when the host asks it to, and is disposed of after.
-  test("FileHandles and node:fs streams it closed before it was disposed leave nothing open", async () => {
-    expect(await runsFixture("closes-its-files-before-it-is-disposed.mjs")).toEqual({
-      stdout: `{"open":26,"leftOpen":0,"theHostsReferences":[true,true]}`,
-      exitCode: 0,
-    });
-  });
+  test.skipIf(isWindows)(
+    "FileHandles and node:fs streams it closed before it was disposed leave nothing open",
+    async () => {
+      expect(await runsFixture("closes-its-files-before-it-is-disposed.mjs")).toEqual({
+        stdout: `{"open":26,"leftOpen":0,"theHostsReferences":[true,true]}`,
+        exitCode: 0,
+      });
+    },
+  );
   // An in-process Bun.cron() job re-arms itself after every tick and keeps the loop alive, like a setInterval().
   test("a Bun.cron() job it scheduled is stopped: the process ends by itself", async () => {
     expect(await runsFixture("cron-job-of-a-disposed-graph.mjs")).toEqual({

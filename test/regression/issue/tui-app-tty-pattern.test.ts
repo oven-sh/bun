@@ -5,6 +5,9 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 // where they read piped stdin first, then reopen /dev/tty for interactive input
 test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
   // Skip on Windows - no /dev/tty
+  if (process.platform === "win32") {
+    return;
+  }
 
   // Check if 'script' command is available for TTY simulation
   const scriptPath = Bun.which("script");

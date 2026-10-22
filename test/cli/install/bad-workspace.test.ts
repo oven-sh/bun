@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, isRoot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
 let cwd: string;
@@ -58,7 +58,7 @@ test.concurrent("glob entry under a missing directory reports the errno name and
 
 // npm, pnpm and yarn 1 fail here too. Root ignores the mode bits, and chmod on Windows
 // cannot make a directory unreadable or unsearchable.
-test.concurrent.skipIf(isRoot).each([
+test.concurrent.skipIf(isWindows || isRoot).each([
   ["unreadable", 0o000, "open", "secret"],
   ["unsearchable", 0o444, "fstatat", join("secret", "package.json")],
 ])("glob entry that reaches an %s directory names what it failed on", async (_, mode, syscall, failedOn) => {
@@ -329,7 +329,7 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
 
   // The entry is read from `${dir}/${entry}/package.json`. One byte below the buffer size
   // that path still reaches the OS; from the buffer size on it is rejected before that.
-  test.each([
+  test.skipIf(isWindows).each([
     ["one byte below", -1, "Workspace not found"],
     ["exactly", 0, "ENAMETOOLONG reading package.json for workspace package"],
     ["one byte above", 1, "ENAMETOOLONG reading package.json for workspace package"],
@@ -392,36 +392,39 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
   // Globs are walked relative to the project directory, so a match can lie deeper than the
   // buffer holds once the project directory is put in front of it. Windows has no such
   // depth: the buffer there holds more than the longest path the OS accepts.
-  test("glob match whose absolute package.json path does not fit fails with ENAMETOOLONG", async () => {
-    using dir = tempDir("bad-workspace-deep-glob-match", { "package.json": rootPackageJson(["deep/**"]) });
-    // The directory itself fits PATH_MAX (so it can be created), `<dir>/package.json`
-    // does not fit the buffer.
-    const absoluteDirBytes = POSIX_PATH_BUFFER_BYTES - 6;
-    const names = deepDirectoryNames(absoluteDirBytes - Buffer.byteLength(String(dir)) - "/".length);
-    const workspaceDir = join(String(dir), ...names);
-    expect(Buffer.byteLength(workspaceDir)).toBe(absoluteDirBytes);
-    mkdirSync(workspaceDir, { recursive: true });
-    // Too long to be written by its absolute path: write it relative to the parent directory.
-    await using writer = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `require("fs").writeFileSync(process.argv.at(-1) + "/package.json", JSON.stringify({ name: "deep" }))`,
-        names.at(-1)!,
-      ],
-      cwd: dirname(workspaceDir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await writer.stderr.text()).toBe("");
-    expect(await writer.exited).toBe(0);
+  test.skipIf(isWindows)(
+    "glob match whose absolute package.json path does not fit fails with ENAMETOOLONG",
+    async () => {
+      using dir = tempDir("bad-workspace-deep-glob-match", { "package.json": rootPackageJson(["deep/**"]) });
+      // The directory itself fits PATH_MAX (so it can be created), `<dir>/package.json`
+      // does not fit the buffer.
+      const absoluteDirBytes = POSIX_PATH_BUFFER_BYTES - 6;
+      const names = deepDirectoryNames(absoluteDirBytes - Buffer.byteLength(String(dir)) - "/".length);
+      const workspaceDir = join(String(dir), ...names);
+      expect(Buffer.byteLength(workspaceDir)).toBe(absoluteDirBytes);
+      mkdirSync(workspaceDir, { recursive: true });
+      // Too long to be written by its absolute path: write it relative to the parent directory.
+      await using writer = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("fs").writeFileSync(process.argv.at(-1) + "/package.json", JSON.stringify({ name: "deep" }))`,
+          names.at(-1)!,
+        ],
+        cwd: dirname(workspaceDir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await writer.stderr.text()).toBe("");
+      expect(await writer.exited).toBe(0);
 
-    const { stderr, exitCode } = await runInstall(String(dir));
+      const { stderr, exitCode } = await runInstall(String(dir));
 
-    expect(stderr).toContain(`error: ENAMETOOLONG reading package.json for workspace package "${names.join("/")}"`);
-    expect(exitCode).toBe(1);
-  });
+      expect(stderr).toContain(`error: ENAMETOOLONG reading package.json for workspace package "${names.join("/")}"`);
+      expect(exitCode).toBe(1);
+    },
+  );
 });
 
 async function runBun(args: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
@@ -568,7 +571,7 @@ describe.concurrent.each([
 // The package.json that `bun install` finds above the directory it runs in becomes the root of
 // the install: it says which lifecycle scripts are trusted, and its .npmrc and bunfig.toml apply.
 // In a directory with the mode of /tmp any local user can put one above somebody else's project.
-describe.concurrent("package.json in a sticky, shared directory above the cwd", () => {
+describe.concurrent.skipIf(isWindows)("package.json in a sticky, shared directory above the cwd", () => {
   // Its postinstall runs only if the root of the install trusts it.
   const dep = JSON.stringify({
     name: "dep",
@@ -707,7 +710,7 @@ describe.concurrent("package.json in a sticky, shared directory above the cwd", 
 
 // A working directory can be PATH_MAX - 1 bytes long, and `<cwd>/package.json` is 13 bytes longer.
 // On Windows the path buffer is longer than any path the OS accepts.
-describe.concurrent("working directory close to PATH_MAX", () => {
+describe.concurrent.skipIf(isWindows)("working directory close to PATH_MAX", () => {
   /** A project in a directory whose absolute path is exactly `cwdBytes` bytes long. */
   function deepProject(cwdBytes: number) {
     const dir = tempDir("root-discovery-deep-cwd", {

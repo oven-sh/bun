@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, DirectoryTree, isDebug, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, DirectoryTree, isDebug, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function test1000000(arg1: any, arg218718132: any) {}
@@ -961,7 +961,7 @@ test("write snapshot from filter", async () => {
 });
 
 // Windows cannot create directories as deep as its path buffer is long.
-test("snapshot file path longer than PATH_MAX fails the test instead of crashing", async () => {
+test.skipIf(isWindows)("snapshot file path longer than PATH_MAX fails the test instead of crashing", async () => {
   using dir = tempDir("snapshot-long-path", {});
   let deep = String(dir);
   const component = Buffer.alloc(100, "a").toString();

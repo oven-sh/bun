@@ -281,7 +281,7 @@ for (const [name, copy] of impls) {
       expect(fs.readFileSync(copiedLink, "utf8")).toBe("a");
     });
 
-    test("recursive - file and directory modes are preserved into a fresh destination", async () => {
+    test.skipIf(isWindows)("recursive - file and directory modes are preserved into a fresh destination", async () => {
       await using basename = tempDir("cp", {
         "from/d/f.txt": "x",
       });
@@ -301,7 +301,7 @@ for (const [name, copy] of impls) {
       });
     });
 
-    test("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
+    test.skipIf(isWindows)("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",
       });
@@ -522,7 +522,7 @@ test.skipIf(!isWindows)("cpSync recursive copies a directory symlink to a UNC ta
 // On Windows the OS path buffer is 32768 wide chars, which is impractical to exceed
 // with on-disk directories, so this test targets POSIX where MAX_PATH_BYTES is small
 // enough to reach via relative mkdir + chdir.
-describe.each(["cp", "cpSync"] as const)(
+describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
   "fs.%s recursive returns ENAMETOOLONG instead of overflowing path buffer",
   which => {
     test(which, async () => {

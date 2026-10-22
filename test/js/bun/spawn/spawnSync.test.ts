@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isRoot, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -58,7 +58,7 @@ describe("spawnSync", () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-memfd-fixture.ts"))).toSpawn();
   });
 
-  it("should use spawnSync optimizations when possible", async () => {
+  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", async () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-counters-fixture.ts"))).toSpawn();
   });
 
@@ -265,7 +265,7 @@ describe("uid/gid", () => {
     });
   });
 
-  it.if(!isRoot)("throws EPERM for a uid the process cannot set", () => {
+  it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {
     let thrown: any;
     try {
       Bun.spawnSync({ cmd: ["id"], uid: 0 });

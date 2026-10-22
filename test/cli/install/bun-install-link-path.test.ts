@@ -498,7 +498,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     expect(exitCode).not.toBe(0);
   });
 
-  test.concurrent("links the target's bin and doesn't change the file's mode", async () => {
+  test.skipIf(isWindows).concurrent("links the target's bin and doesn't change the file's mode", async () => {
     using dir = tempDir("link-path-bin", {
       ...bunfig,
       "project/package.json": JSON.stringify({ name: "root", dependencies: { dep: "link:./vendor/dep" } }),

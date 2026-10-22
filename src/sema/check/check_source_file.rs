@@ -1272,6 +1272,9 @@ impl<'s> Checker<'_, 's> {
                 self.check_attributes_of_import_type(file, node);
                 self.check_type_reference_or_import(file, node);
                 self.check_import_attributes_of_import_type(file, node);
+                if spec.is_some() {
+                    self.resolve_names_below_type_arguments(file, node, args);
+                }
             }
             // `checkThisType`
             TypeNodeKind::Keyword(Keyword::This) => {
@@ -1395,6 +1398,71 @@ impl<'s> Checker<'_, 's> {
             // The rest have no `check` function.
             _ => {}
         }
+    }
+
+    /// The names that `isTypeParameterPossiblyReferenced` can resolve below the type arguments `args` of the import type
+    /// `node` of `file`.
+    ///
+    /// `checkImportType` checks no type argument. Where type parameters are in scope, `getObjectTypeInstantiation`
+    /// still resolves names there, the first time `instantiateType` gets to the type around them: the name of each
+    /// type reference without type arguments and the first identifier of each type query, up to the first reference
+    /// to each type parameter. `instantiate` leaves out many types that `instantiateType` gets to, so the check of the
+    /// import type resolves those names itself. A name that doesn't resolve is reported here also where tsc instantiates
+    /// nothing around it.
+    fn resolve_names_below_type_arguments(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        args: IdList<TypeNodeId>,
+    ) {
+        let scope = self.bound(file).type_scope[node.idx()];
+        let type_parameters = self.type_params_in_scope(file, scope);
+        if type_parameters.is_empty() {
+            return;
+        }
+        // `tp.isThisType`: a `this` type is no reason to resolve a type reference.
+        let resolves_type_references =
+            (type_parameters.iter()).any(|&tp| matches!(self.data(tp), TypeData::TypeParam(..)));
+        let hir = self.hir(file);
+        for argument in hir.ids(args) {
+            self.resolve_names_in(file, hir.node(argument), resolves_type_references);
+        }
+    }
+
+    /// `resolve_names_below_type_arguments` for `node` and what is below it.
+    fn resolve_names_in(&mut self, file: FileId, node: Node, resolves_type_references: bool) {
+        let hir = self.hir(file);
+        if let NodeData::Type(t) = hir.data(node) {
+            match hir[t].kind {
+                TypeNodeKind::Ref { name, args } if args.is_empty() && resolves_type_references => {
+                    // `links.resolvedSymbol`: with the type of the node its name is resolved.
+                    let is_resolved = (self.p.type_node_types.get(&self.task, &(file, t)))
+                        .is_some()
+                        || self.stack.contains(&Query::TypeNode(file, t));
+                    let scope = self.bound(file).type_scope[t.idx()];
+                    // Whatever reports that the name doesn't resolve belongs to the node.
+                    if !is_resolved
+                        && (self.resolve_type_reference_name(file, scope, name, true)).is_none()
+                    {
+                        self.type_from_node(file, t);
+                    }
+                }
+                TypeNodeKind::Typeof { expr, .. } => {
+                    let first = first_identifier(hir, expr);
+                    // `checkIdentifier` of an identifier that doesn't resolve reports that, and no more.
+                    if let ExprKind::Ident(name) = hir[first].kind
+                        && self.symbol_of_identifier(file, first, name).is_none()
+                    {
+                        self.type_of_expr(file, first);
+                    }
+                }
+                _ => {}
+            }
+        }
+        hir.for_each_child(node, &mut |child| {
+            self.resolve_names_in(file, child, resolves_type_references);
+            false
+        });
     }
 
     /// `checkSourceElement` for a statement. The last call of `checkIfStatement`,

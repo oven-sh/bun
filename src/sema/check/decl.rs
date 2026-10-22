@@ -795,12 +795,6 @@ fn tuple_element_info(file: FileId, hir: &hir::File, elem: &TupleElem) -> ElemFl
     })
 }
 
-/// True if `pos` is at or after the `{` of the body of `f`, which is a block.
-fn is_in_body_of(hir: &hir::File, f: FnId, pos: u32) -> bool {
-    let open_brace = hir.start(hir.node(f).with(Part::Body));
-    open_brace != 0 && pos >= open_brace
-}
-
 impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── type parameters in scope ─────────────────────────────
 
@@ -1001,7 +995,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `len(tp.symbol.Declarations) == 1`. `infer U` occurring twice is one symbol of its scope.
     /// The type parameters of a class or an interface are among its members.
-    pub(super) fn type_param_has_one_declaration(&self, file: FileId, tp: TypeParamId) -> bool {
+    fn type_param_has_one_declaration(&self, file: FileId, tp: TypeParamId) -> bool {
         let bound = self.bound(file);
         let symbol = bound.type_param_symbol[tp.idx()];
         let files = self.files();
@@ -1026,9 +1020,14 @@ impl<'p, 's> Checker<'p, 's> {
             match s.kind {
                 ScopeKind::Block => return self.type_params_in_scope(file, scope).len(),
                 ScopeKind::Fn(f) => {
-                    // A function's body shares its scope with the signature, so the `{` of the body distinguishes
-                    // them. A JSDoc comment of the first statement is in the body too.
-                    if matches!(hir[f].body, FnBody::Block(_)) && is_in_body_of(hir, f, pos) {
+                    // A function's body shares its scope with the signature, so the body's start
+                    // position distinguishes them.
+                    if let FnBody::Block(stmts) = hir[f].body
+                        && hir
+                            .ids(stmts)
+                            .next()
+                            .is_some_and(|first| pos >= hir[first].start)
+                    {
                         return self.type_params_in_scope(file, scope).len();
                     }
                     // The separate scope for a function expression's name isn't a block.
@@ -1112,12 +1111,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if `node`, in `scope`, is the body of a type alias that has type parameters.
-    pub(super) fn is_body_of_generic_alias(
-        &self,
-        file: FileId,
-        scope: ScopeId,
-        node: TypeNodeId,
-    ) -> bool {
+    fn is_body_of_generic_alias(&self, file: FileId, scope: ScopeId, node: TypeNodeId) -> bool {
         self.alias_with_body(file, scope, node)
             .is_some_and(|alias| !self.hir(file)[alias].type_params.is_empty())
     }
@@ -1221,7 +1215,10 @@ impl<'p, 's> Checker<'p, 's> {
                 && hir[f].type_params.is_empty()
                 && self.takes_context(file, f).is_some()
                 && match hir[f].body {
-                    FnBody::Block(_) => is_in_body_of(hir, f, pos),
+                    FnBody::Block(stmts) => hir
+                        .ids(stmts)
+                        .next()
+                        .is_some_and(|first| pos >= hir[first].start),
                     FnBody::Expr(body) => pos >= hir[body].pos,
                     FnBody::None => false,
                 }
@@ -1376,44 +1373,6 @@ impl<'p, 's> Checker<'p, 's> {
             let param = self.type_param(file, tp);
             out.enclosing_infer_params.push(param);
         }
-    }
-
-    /// `getOuterTypeParameters`: the `infer` type parameters of the conditional types around `node`.
-    pub(super) fn infer_type_parameters_around(
-        &mut self,
-        file: FileId,
-        node: TypeNodeId,
-    ) -> SmallVec<[TypeId; 4]> {
-        let mut mentioned = Mentioned::default();
-        if self.files().has_conditional_or_mapped_type(file)
-            && self.is_in_conditional_type_with_infer(file, node)
-        {
-            self.collect_enclosing_infer_params(file, node, &mut mentioned);
-        }
-        mentioned.enclosing_infer_params
-    }
-
-    /// `FirstRequest::RESOLVES_NAMES_AT_INSTANTIATION` for the type of the syntax from `start` to `end`, which is in
-    /// `scope` and is an anonymous type for `getObjectTypeInstantiation`. `isTypeParameterPossiblyReferenced` resolves
-    /// names below the type arguments of an import type that no check visits.
-    pub(super) fn first_request_of_anonymous_type(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        (start, end): (u32, u32),
-    ) -> FirstRequest {
-        let unchecked = self.hir(file).type_arguments_of_import_types();
-        // One whose end is unknown extends to the end.
-        let end = if end <= start { u32::MAX } else { end };
-        // Without a report there is nothing for the walk to do: a declaration file under `skipLibCheck`.
-        if unchecked.is_empty()
-            || !unchecked.intersect(start, end)
-            || !self.reports_semantic_errors(file)
-            || self.type_params_in_scope(file, scope).is_empty()
-        {
-            return FirstRequest::NONE;
-        }
-        FirstRequest::RESOLVES_NAMES_AT_INSTANTIATION
     }
 
     fn collect_fn_mentions(&self, file: FileId, func: FnId, out: &mut Mentioned) {
@@ -3145,11 +3104,8 @@ impl<'p, 's> Checker<'p, 's> {
         let alias = alias
             .as_ref()
             .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
-        let range = (self.hir(file)[node].pos, self.hir(file)[node].end);
-        let first_request = self.first_request_of_anonymous_type(file, scope, range);
-        let first_request = first_request.with(FirstRequest::FROM_TYPE_NODE);
         let first_new_type_id = self.types().first_new_type_id();
-        let ty = (self.types()).as_first_request(first_request, || {
+        let ty = (self.types()).as_first_request(FirstRequest::FROM_TYPE_NODE, || {
             self.deferred_type_reference(reference, alias)
         });
         self.types().mark_from_type_node(ty, first_new_type_id);
@@ -3281,7 +3237,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             TypeNodeKind::Fn(func) => {
                 let mapper = self.identity_mapper_for_node(file, scope, node);
-                self.fns_type(&[(file, func)], mapper)
+                self.intern_key(TypeKey::Fns {
+                    decls: &[(file, func)],
+                    mapper,
+                })
             }
             TypeNodeKind::Object(members) => {
                 // `emptyTypeLiteralType`, unless it's the body of an alias.
@@ -3295,13 +3254,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 self.get_members_of_type_literal(file, members);
                 let mapper = self.identity_mapper_for_node(file, scope, node);
-                let range = (hir[node].pos, hir[node].end);
-                let first_request = self.first_request_of_anonymous_type(file, scope, range);
-                let literal = TypeData::Anon {
+                self.intern(TypeData::Anon {
                     origin: Origin::TypeLiteral(file, node),
                     mapper,
-                };
-                (self.types()).as_first_request(first_request, || self.intern(literal))
+                })
             }
             TypeNodeKind::Mapped(m) => {
                 // `getTypeFromMappedTypeNode`: the constraint of the key is resolved eagerly,
@@ -3310,20 +3266,9 @@ impl<'p, 's> Checker<'p, 's> {
                 let key = self.type_param(file, hir[m].param);
                 self.base_constraint(key);
                 let mapper = self.identity_mapper_for_node(file, scope, node);
-                let range = (hir[node].pos, hir[node].end);
-                let first_request = self.first_request_of_anonymous_type(file, scope, range);
-                if first_request != FirstRequest::NONE {
-                    // The record that `instantiate_mapped` finds for the declared type.
-                    let declared = TypeData::Anon {
-                        origin: Origin::Mapped(file, node),
-                        mapper,
-                    };
-                    (self.types()).as_first_request(first_request, || self.intern(declared));
-                }
                 self.instantiate_mapped(file, node, mapper)
             }
             TypeNodeKind::Cond { .. } => {
-                self.resolve_names_of_conditional_type(file, scope, node);
                 let mapper = self.identity_mapper_for_node(file, scope, node);
                 self.conditional_type(file, node, mapper)
             }
@@ -5001,14 +4946,6 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if read.has(i) {
                 let is_asked = read.asks_for(i);
-                // `getTypeOfInstantiatedSymbol`: `instantiateType(c.getTypeOfSymbol(links.target), links.mapper)`
-                if (is_asked || parameter.rest)
-                    && (self.types().object_flags(parameter.ty))
-                        .contains(ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION)
-                    && self.has_type_arguments_of_signature(file, func, mapper)
-                {
-                    self.resolve_names_under_own_type_parameters(parameter.ty);
-                }
                 let ty = self.instantiate_parameter(&parameter, mapper, maps_this_only, is_asked);
                 out.push(SigParam { ty, ..parameter });
             }

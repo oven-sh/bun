@@ -821,7 +821,6 @@ impl Checker<'_, '_> {
             });
             let (argument, mapper) = (type_arguments[i], *mapper);
             let constraint = self.with_outer_type_arguments(type_parameter, constraint, outer);
-            self.resolve_names_under_own_type_parameters(constraint);
             let constraint = self.instantiate(constraint, mapper);
             // A default has no node, and nothing is reported for it.
             let error_node = (i < nodes.len()).then(|| {

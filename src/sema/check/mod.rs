@@ -65,7 +65,6 @@ mod links;
 mod loop_cycles;
 mod mapped;
 mod order;
-mod possibly_referenced;
 mod print;
 pub(crate) mod regexp_scanner;
 mod relate;
@@ -904,7 +903,6 @@ impl<'s> Program<'s> {
             reported: Vec::new(),
             is_checking_in_flow_loop: false,
             never_checked: Default::default(),
-            names_resolved_at_instantiation: Default::default(),
             never_in_progress: Vec::new(),
             reduced_unions: spare.reduced_unions,
             union_members: Default::default(),
@@ -1707,8 +1705,6 @@ pub struct Checker<'p, 's> {
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
-    /// `links.outerTypeParameters != nil`, for the declarations that `resolve_names_at_first_instantiation` has walked.
-    names_resolved_at_instantiation: crate::util::FxHashSet<(FileId, hir::Node)>,
     /// The intersections being tested for being uninhabited.
     pub(super) never_in_progress: Vec<TypeId>,
     /// `resolvedReducedType` of a union, once the answer for every member is final.

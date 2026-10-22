@@ -135,7 +135,10 @@ impl<'p, 's> Checker<'p, 's> {
         let func = self.hir(file)[m].func;
         let parent_scope = bound.scopes[bound.fns[func.idx()].scope.idx()].parent;
         let mapper = self.identity_mapper_for_fns(file, parent_scope, &[(file, func)]);
-        self.fns_type(&[(file, func)], mapper)
+        self.intern_key(TypeKey::Fns {
+            decls: &[(file, func)],
+            mapper,
+        })
     }
 
     /// `getDecoratorCallSignature`. Returns `None` if the target can't be decorated.

@@ -3972,7 +3972,10 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.bound(file).fns[func.idx()].scope;
         let parent = self.bound(file).scopes[scope.idx()].parent;
         let mapper = self.identity_mapper_with_adopted(file, parent);
-        self.fns_type(&[(file, func)], mapper)
+        self.intern_key(TypeKey::Fns {
+            decls: &[(file, func)],
+            mapper,
+        })
     }
 
     /// `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`

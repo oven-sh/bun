@@ -912,7 +912,6 @@ impl Checker<'_, '_> {
                 continue;
             };
             let constraint = self.with_outer_type_arguments(type_params[i], constraint, outer);
-            self.resolve_names_under_own_type_parameters(constraint);
             let constraint = self.instantiate(constraint, mapper);
             let constraint = self.type_with_this_argument(constraint, filled[i]);
             let error_node = error_nodes.map(|(file, nodes)| {

@@ -2732,13 +2732,6 @@ impl<R: std::ops::Deref<Target = [TextRange]>> RangeSet<R> {
         after > 0 && pos < self.0[after - 1].end
     }
 
-    /// Whether a range has a position from `pos` up to `end`.
-    #[inline]
-    pub fn intersect(&self, pos: u32, end: u32) -> bool {
-        let before = self.0.partition_point(|range| range.end <= pos);
-        (self.0.get(before)).is_some_and(|range| range.pos < end)
-    }
-
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()

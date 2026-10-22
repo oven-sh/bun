@@ -271,7 +271,6 @@ impl Checker<'_, '_> {
         self.signatures_resolved_with_errors_discarded.clear();
         self.expressions_cached_with_errors_discarded.clear();
         self.starts_of_discarded_errors.clear();
-        self.names_resolved_at_instantiation.clear();
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;

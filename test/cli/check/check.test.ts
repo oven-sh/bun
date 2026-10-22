@@ -24068,6 +24068,67 @@ describe.concurrent("--check", () => {
     });
   });
 
+  // A page that an argument names is checked, also when its path is a pattern that matches another page: `{a,b}` matches
+  // `a`, and `p{1}.html` matches `p1.html`.
+  test.each([
+    ["{a,b}/app", ["./index.html"], ["index"]],
+    ["{a,b}/app", ["index.html"], ["index"]],
+    ["{a,b}/app", ["./index.html", "./about.html"], ["index", "about"]],
+    ["{a,b}/app", ["./index.html", "<root>/{a,b}/app/about.html"], ["index", "about"]],
+    [".", ["./{a,b}/app/index.html"], ["index"]],
+    [".", ["<root>/{a,b}/app/index.html"], ["index"]],
+    ["names", ["./p{1}.html"], ["named"]],
+    ["names", ["./index.html", "./p{1}.html"], ["index", "named"]],
+    // A pattern that matches its own text stays a pattern: it finds the page with that name too.
+    ...(isWindows ? [] : [["stars", ["./*.html"], ["index", "named"]] as [string, string[], string[]]]),
+  ])("bun --check in %s, %j checks the scripts of the pages that are named", async (cwd, pages, checked) => {
+    const page = (script: string) => `<!doctype html>\n<script type="module" src="${script}"></script>\n`;
+    const wrong = (name: string) => `export const ${name}: number = "1";\n`;
+    using dir = project({
+      ...(isWindows ? {} : { "stars/*.html": page("./named.ts"), "stars/index.html": page("./index.ts") }),
+      "stars/index.ts": wrong("index"),
+      "stars/named.ts": wrong("named"),
+      "{a,b}/app/index.html": page("./index.ts"),
+      "{a,b}/app/about.html": page("./about.ts"),
+      "{a,b}/app/index.ts": wrong("index"),
+      "{a,b}/app/about.ts": wrong("about"),
+      "a/app/index.html": page("./other.ts"),
+      "a/app/about.html": page("./other.ts"),
+      "a/app/other.ts": wrong("other"),
+      "names/index.html": page("./index.ts"),
+      "names/p{1}.html": page("./named.ts"),
+      "names/p1.html": page("./other.ts"),
+      "names/index.ts": wrong("index"),
+      "names/named.ts": wrong("named"),
+      "names/other.ts": wrong("other"),
+    });
+    const args = pages.map(it => it.replace("<root>", String(dir)));
+    const { stderr, exitCode } = await run(join(String(dir), cwd), ["--check", ...args]);
+    const reported = ["index", "about", "named", "other"].filter(it => stderr.includes(`${it}.ts(1,14): error TS2322`));
+    expect({ reported, exitCode }).toEqual({ reported: checked, exitCode: 1 });
+  });
+
+  // An error ends the search for pages early. The pages that were found before it are checked. If their scripts have
+  // no error, the run that follows reports the error of the search. The superuser can read every directory.
+  test.skipIf(isWindows || isRoot).each([
+    [`"1"`, "index.ts(1,14): error TS2322"],
+    [`1`, "EACCES"],
+  ])("bun --check './**/*.html' with a directory that cannot be read, index = %s", async (value, error) => {
+    using dir = project({
+      "index.html": `<!doctype html>\n<script type="module" src="./index.ts"></script>\n`,
+      "index.ts": `export const index: number = ${value};\n`,
+      "locked/other.html": "",
+    });
+    const locked = join(String(dir), "locked");
+    chmodSync(locked, 0o000);
+    try {
+      const { stderr, exitCode } = await run(String(dir), ["--check", "./**/*.html"]);
+      expect({ reported: stderr.includes(error), exitCode }).toEqual({ reported: true, exitCode: 1 });
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  });
+
   // A directory means the tsconfig.json in it, as with `tsc -p`.
   test.each([
     ["tsconfig.build.json", "tsconfig.build.json", "."],

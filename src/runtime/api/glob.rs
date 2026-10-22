@@ -266,10 +266,21 @@ pub(crate) enum AnyGlobWalker {
 }
 
 impl AnyGlobWalker {
-    fn walk(&mut self) -> Result<bun_sys::Result<()>, bun_core::Error> {
+    pub(crate) fn walk(&mut self) -> Result<bun_sys::Result<()>, bun_core::Error> {
         match self {
             AnyGlobWalker::Fs(walker) => walker.walk(),
             AnyGlobWalker::Standalone(walker) => walker.walk(),
+        }
+    }
+
+    /// The paths that `walk` matched, moved out of the walker.
+    pub(crate) fn take_matched_paths(&mut self) -> Vec<Box<[u8]>> {
+        fn take<A: walk::Accessor>(walker: &mut walk::GlobWalker<A, false>) -> Vec<Box<[u8]>> {
+            core::mem::take(&mut *walker.matched_paths).into_entries().0
+        }
+        match self {
+            AnyGlobWalker::Fs(walker) => take(walker),
+            AnyGlobWalker::Standalone(walker) => take(walker),
         }
     }
 
@@ -352,16 +363,21 @@ impl JobContext for WalkTask {
 }
 
 impl Glob {
+    /// The walker of `new Bun.Glob(pattern).scanSync(cwd)`, for native code that scans as JavaScript does.
+    pub(crate) fn scan_sync_walker<'a>(
+        pattern: &[u8],
+        cwd: &'a [u8],
+    ) -> Result<AnyGlobWalker, ScanError<'a>> {
+        Self::make_glob_walker(pattern, Some(GlobScanArgument::Cwd(cwd)), "scanSync")
+    }
+
     fn make_glob_walker<'a>(
-        &self,
+        pattern: &[u8],
         argument: Option<GlobScanArgument<'a>>,
         fn_name: &'static str,
     ) -> Result<AnyGlobWalker, ScanError<'a>> {
-        if bun_core::strings::contains_char(self.pattern.slice(), 0) {
-            return Err(ScanError::NullBytes(
-                "pattern",
-                Box::from(self.pattern.slice()),
-            ));
+        if bun_core::strings::contains_char(pattern, 0) {
+            return Err(ScanError::NullBytes("pattern", Box::from(pattern)));
         }
         let match_opts = ScanOpts::new(argument, fn_name)?;
 
@@ -399,11 +415,11 @@ impl Glob {
         // Match the walker's root choice (`Iterator::init`): an absolute
         // pattern roots at its literal prefix and ignores the cwd, a relative
         // pattern roots at the cwd. A `/$bunfs/` root walks the graph.
-        let pattern_is_absolute = resolve_path::is_absolute(self.pattern.slice())
-            || (cfg!(windows) && resolve_path::is_absolute_posix(self.pattern.slice()));
+        let pattern_is_absolute = resolve_path::is_absolute(pattern)
+            || (cfg!(windows) && resolve_path::is_absolute_posix(pattern));
         let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some()
             && if pattern_is_absolute {
-                bun_standalone_graph::is_bun_standalone_file_path(self.pattern.slice())
+                bun_standalone_graph::is_bun_standalone_file_path(pattern)
             } else {
                 match_opts
                     .cwd
@@ -413,11 +429,11 @@ impl Glob {
 
         if in_standalone_graph {
             return Ok(AnyGlobWalker::Standalone(
-                init_walker::<StandaloneAccessor>(self.pattern.slice(), &match_opts)?,
+                init_walker::<StandaloneAccessor>(pattern, &match_opts)?,
             ));
         }
         Ok(AnyGlobWalker::Fs(init_walker::<walk::SyscallAccessor>(
-            self.pattern.slice(),
+            pattern,
             &match_opts,
         )?))
     }
@@ -446,7 +462,9 @@ impl Glob {
         cx: &mut JsScope<'a>,
         options: Option<GlobScanArgument<'a>>,
     ) -> Result<JsLocal<'a>, ScanError<'a>> {
-        let walker = this.with(&cx.payloads, |glob| glob.make_glob_walker(options, "scan"))?;
+        let walker = this.with(&cx.payloads, |glob| {
+            Self::make_glob_walker(glob.pattern.slice(), options, "scan")
+        })?;
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
         Job::<WalkTask>::schedule(
@@ -462,7 +480,7 @@ impl Glob {
         heap: &JsHeap<'a>,
         options: Option<GlobScanArgument<'a>>,
     ) -> Result<JsLocal<'a>, ScanError<'a>> {
-        let mut walker = self.make_glob_walker(options, "scanSync")?;
+        let mut walker = Self::make_glob_walker(self.pattern.slice(), options, "scanSync")?;
         walker
             .walk()
             .map_err(|err| ScanError::Runtime(err.into()))?

@@ -225,6 +225,9 @@ export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindin
 
 export const readTarball: (tarball: string) => any = $newRustFunction("pack_command.rs", "bindings.jsReadTarball", 1);
 
+/** `undefined` if `bun <arg>` serves the page at the path `arg`, else the pages that match the pattern `arg`. */
+export const htmlPagesOf = $bindgen("html_pages.bind.ts", "pagesOf");
+
 export const isArchitectureMatch: (architecture: string[]) => boolean = $newRustFunction(
   "npm.rs",
   "Architecture.jsFunctionArchitectureIsMatch",

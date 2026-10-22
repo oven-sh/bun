@@ -146,6 +146,8 @@ pub(crate) mod filter_arg;
 pub(crate) mod filter_run;
 #[path = "format_command.rs"]
 pub(crate) mod format_command;
+#[path = "html_pages.rs"]
+pub(crate) mod html_pages;
 #[path = "link_command.rs"]
 pub(crate) mod link_command;
 #[path = "lint_command.rs"]

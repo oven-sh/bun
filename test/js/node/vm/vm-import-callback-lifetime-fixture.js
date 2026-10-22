@@ -1,5 +1,5 @@
-// Scenarios for vm-script-fetcher-leak.test.ts; prints one JSON line. Also runs on
-// node --expose-gc --experimental-vm-modules --no-compilation-cache.
+// Scenarios for vm-script-fetcher-leak.test.ts and vm-module-graph-evaluation-bun.test.ts; prints one JSON line.
+// Also runs on node --expose-gc --experimental-vm-modules --no-compilation-cache.
 const vm = require("node:vm");
 const { setImmediate: tick } = require("node:timers/promises");
 
@@ -51,6 +51,17 @@ async function outcome(seen, fn) {
   } catch (e) {
     return { result: e?.code ?? e?.message, referrer: seen?.referrer };
   }
+}
+
+// An initializeImportMeta callback and what it was called with.
+function makeInitializeImportMeta() {
+  const seen = { calls: 0, referrer: undefined };
+  const initializeImportMeta = (meta, referrer) => {
+    seen.calls++;
+    seen.referrer = kindOf(referrer);
+    meta.initialized = true;
+  };
+  return { initializeImportMeta, seen };
 }
 
 async function evaluated(module) {
@@ -146,6 +157,150 @@ const scenarios = {
     })();
     await collectGarbage();
     return outcome(seen, f);
+  },
+
+  // initializeImportMeta is called before the body of its module. Until then the code of the module keeps the
+  // callback, and the module that the callback gets, alive. A deferred module runs at the first read of its
+  // namespace (`import defer` is not in Node v26.3.0).
+  async "alive-importMetaDeferred"() {
+    const { touch, seen } = await (async () => {
+      const { initializeImportMeta, seen } = makeInitializeImportMeta();
+      const dep = new vm.SourceTextModule("export const value = import.meta.initialized", { initializeImportMeta });
+      const root = new vm.SourceTextModule('import defer * as dep from "dep"; export const touch = () => dep.value;');
+      await root.link(() => dep);
+      await root.evaluate();
+      return { touch: root.namespace.touch, seen };
+    })();
+    await collectGarbage();
+    return { before: seen.calls, result: touch(), ...seen };
+  },
+  // After the call, code of the module that is alive keeps neither the callback nor the module alive. Node keeps
+  // both.
+  async "freed-importMeta"() {
+    let finalized = 0;
+    const registry = new FinalizationRegistry(() => finalized++);
+    const build = async i => {
+      const initializeImportMeta = meta => void (meta.i = i);
+      const m = await evaluated(
+        new vm.SourceTextModule("export const f = () => import.meta.i; f();", { initializeImportMeta }),
+      );
+      registry.register(initializeImportMeta, undefined);
+      registry.register(m, undefined);
+      return m.namespace.f;
+    };
+    const kept = [];
+    for (let i = 0; i < N; i++) kept.push(await build(i));
+    await collect(() => finalized === 2 * N);
+    return { alive: 2 * N - finalized, last: kept[N - 1]() };
+  },
+
+  // The evaluateCallback of a SyntheticModule runs where Evaluate() reaches the module. Until then the record of
+  // the module keeps the module, and so the callback, alive. A deferred module runs at the first read of its
+  // namespace (`import defer` is not in Node v26.3.0).
+  async "alive-evaluateCallbackDeferred"() {
+    let calls = 0;
+    const touch = await (async () => {
+      const dep = new vm.SyntheticModule(["value"], function () {
+        calls++;
+        this.setExport("value", true);
+      });
+      const root = new vm.SourceTextModule('import defer * as dep from "dep"; export const touch = () => dep.value;');
+      await root.link(() => dep);
+      await root.evaluate();
+      return root.namespace.touch;
+    })();
+    await collectGarbage();
+    return { before: calls, result: touch(), calls };
+  },
+  // After the call, the record of the SyntheticModule keeps neither the callback nor the module alive.
+  async "freed-evaluateCallback"() {
+    let finalized = 0;
+    const registry = new FinalizationRegistry(() => finalized++);
+    const build = async i => {
+      const evaluateCallback = function () {
+        this.setExport("value", i);
+      };
+      const dep = new vm.SyntheticModule(["value"], evaluateCallback);
+      const importer = new vm.SourceTextModule('import { value } from "dep"; export const f = () => value;');
+      await importer.link(() => dep);
+      await importer.evaluate();
+      registry.register(evaluateCallback, undefined);
+      registry.register(dep, undefined);
+      return importer.namespace.f;
+    };
+    const kept = [];
+    for (let i = 0; i < N; i++) kept.push(await build(i));
+    await collect(() => finalized === 2 * N);
+    return { alive: 2 * N - finalized, last: kept[N - 1]() };
+  },
+  // Two requests with one specifier, and a linker that keeps no module: both modules run.
+  async "alive-evaluateCallbackSameSpecifier"() {
+    const ran = [];
+    const root = new vm.SourceTextModule(
+      'import one from "dep"; import two from "dep" with { type: "json" }; export const got = [one, two];',
+    );
+    await root.link((specifier, referrer, { attributes }) => {
+      const name = attributes.type === "json" ? "two" : "one";
+      return new vm.SyntheticModule(["default"], function () {
+        ran.push(name);
+        this.setExport("default", name);
+      });
+    });
+    await collectGarbage();
+    await root.evaluate();
+    return { got: root.namespace.got, ran };
+  },
+  // A module keeps the modules that it was linked to alive, as the ModuleWrap of Node does. Before instantiate()
+  // no code of the dependency exists that keeps its callbacks, and the module that they get, alive.
+  async "alive-linkedDependency-importMeta"() {
+    const { initializeImportMeta, seen } = makeInitializeImportMeta();
+    const root = new vm.SourceTextModule('import { value } from "dep"; export { value };');
+    (() => {
+      root.linkRequests([
+        new vm.SourceTextModule("export const value = import.meta.initialized", { initializeImportMeta }),
+      ]);
+    })();
+    await collectGarbage();
+    root.instantiate();
+    await root.evaluate();
+    return { result: root.namespace.value, ...seen };
+  },
+  async "alive-linkedDependency-import"() {
+    const { hook, seen } = makeHook();
+    const root = new vm.SourceTextModule('export { f } from "dep";');
+    (() => {
+      root.linkRequests([
+        new vm.SourceTextModule("export const f = () => import('x')", { importModuleDynamically: hook }),
+      ]);
+    })();
+    await collectGarbage();
+    root.instantiate();
+    await root.evaluate();
+    return outcome(seen, root.namespace.f);
+  },
+  // The modules that a timeout stopped are collected like any other.
+  async "freed-modulesStoppedByTimeout"() {
+    return {
+      alive: await countAlive(async () => {
+        for (;;) {
+          const context = vm.createContext({});
+          let started = false;
+          const s = new vm.SyntheticModule(
+            [],
+            () => {
+              started = true;
+              for (;;) {}
+            },
+            { context },
+          );
+          const a = new vm.SourceTextModule('import "s";', { context });
+          await a.link(() => s);
+          await a.evaluate({ timeout: 5 }).catch(() => {});
+          // The timeout stopped the evaluateCallback, and not the walk before it.
+          if (started) return s;
+        }
+      }),
+    };
   },
 
   // One closure per Script run in a long-lived context, as a REPL does.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <JavaScriptCore/SourceProvider.h>
 #include <wtf/URL.h>
 #include <wtf/text/WTFString.h>
 
@@ -9,6 +10,8 @@ namespace Bun {
 struct NodeVMSourceOriginCache {
     WTF::String filename;
     WTF::URL url;
+    // The source of every vm.SyntheticModule record of the VM; see NodeVMSyntheticModule::createModuleRecord().
+    RefPtr<JSC::SourceProvider> syntheticModuleSource;
 };
 
 } // namespace Bun

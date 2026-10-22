@@ -338,20 +338,7 @@ class Module {
       // Always call into native, even when already evaluated: Node re-enters
       // ModuleWrap::Evaluate, which performs the afterEvaluate microtask
       // checkpoint for contexts with their own microtask queue.
-      const result = this[kNative].evaluate(timeout, breakOnSigint);
-      if (status === kEvaluated) {
-        // Re-evaluating a settled module resolves synchronously with
-        // undefined (a then-chain on the cached promise would be pending).
-        return PromiseResolve(undefined);
-      }
-      if ($isPromise(result)) {
-        // Spec-style module evaluation capability: already settled (with
-        // undefined) for synchronous modules, pending for top-level await.
-        // Return it directly like Node returns ModuleWrap's promise — a
-        // then-chain would make a synchronously-settled result look pending.
-        return result;
-      }
-      return PromiseResolve(undefined);
+      return this[kNative].evaluate(timeout, breakOnSigint);
     } catch (e) {
       return PromiseReject(e);
     }
@@ -473,7 +460,7 @@ class SourceTextModule extends Module {
           throw $ERR_VM_MODULE_DIFFERENT_CONTEXT();
         }
         if (mod.status === "errored") {
-          throw $ERR_VM_MODULE_LINK_FAILURE(`request for '${specifier}' resolved to an errored mod`, mod.error);
+          throw $ERR_VM_MODULE_LINK_FAILURE(`request for '${specifier}' resolved to an errored module`, mod.error);
         }
         if (mod.status === "unlinked") {
           await mod[kLink](linker);

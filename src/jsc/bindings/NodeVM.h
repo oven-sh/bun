@@ -54,6 +54,8 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue,
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
 bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue& contextArg);
 bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
+// For a realm's moduleLoaderEvaluate hook: runs the body, or the evaluateCallback, of a module that node:vm made.
+JSC::JSValue evaluateModuleBody(JSC::JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, JSC::JSValue sentValue, JSC::JSValue resumeMode);
 
 } // namespace NodeVM
 
@@ -124,6 +126,7 @@ public:
     bool hasOwnMicrotaskQueue() const { return m_contextOptions.ownMicrotaskQueue; }
     // Performs a microtask checkpoint on this context's own queue
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
+    // No-op also inside a job of that queue, as in V8.
     void drainOwnMicrotasks();
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
@@ -135,6 +138,7 @@ public:
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
+    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>, JSC::JSValue sentValue, JSC::JSValue resumeMode);
 
 private:
     // The contextified object that acts as the global proxy

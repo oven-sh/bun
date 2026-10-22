@@ -14,6 +14,7 @@
 #include "NodeVMModule.h"
 #include "NodeVMSourceTextModule.h"
 #include "NodeVMSyntheticModule.h"
+#include "../vm/NodeVMRunTermination.h"
 
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "JavaScriptCore/JSWebAssemblyCompileError.h"
@@ -51,7 +52,11 @@
 #include "NodeValidator.h"
 
 #include "AsyncContextFrame.h"
+#include "JavaScriptCore/BuiltinNames.h"
 #include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/JSModuleEnvironment.h"
+#include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
@@ -994,7 +999,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         nullptr, // moduleLoaderResolve
         nullptr, // moduleLoaderFetch
         nullptr, // moduleLoaderCreateImportMetaProperties
-        nullptr, // moduleLoaderEvaluate
+        &moduleLoaderEvaluate,
         &promiseRejectionTrackerForNodeVM,
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
@@ -1151,11 +1156,15 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
 {
     if (!m_contextOptions.ownMicrotaskQueue)
         return;
+    if (microtaskQueue().isPerformingMicrotaskCheckpoint())
+        return;
 
     VM& vm = this->vm();
-    // Same drain mode as VM::drainMicrotasks so process.nextTick interop
-    // (onEachMicrotaskTick) keeps working inside the checkpoint.
-    microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // No onEachMicrotaskTick hook: it would run process.nextTick callbacks and jobs of the main queue in here.
+    microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ false>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
+    if (JSC::Exception* exception = scope.exception(); exception && vm.isTerminationException(exception)) [[unlikely]]
+        NodeVMRunTermination::noteCheckpointCutShort(this);
 }
 
 // JSObject::put() can't see the prototype chain, which is on the proxy.
@@ -1700,6 +1709,58 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
     else
         promise->reject(vm, createError(globalObject, message));
     return promise;
+}
+
+// Node calls the option at the first `import.meta` of the module's code. This calls it once, before the body.
+static void initializeImportMeta(JSGlobalObject* globalObject, JSC::JSModuleRecord* record, NodeVMScriptFetcher& fetcher)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The code keeps the module alive for this call, not longer.
+    JSValue module = fetcher.owner();
+    JSValue callback = fetcher.takeInitializeImportMeta();
+    if (callback.isUndefined())
+        return;
+
+    // A module whose source has no import.meta has no such variable.
+    JSValue importMeta = record->moduleEnvironment()->get(globalObject, vm.propertyNames->builtinNames().metaPrivateName());
+    RETURN_IF_EXCEPTION(scope, );
+    if (!importMeta.isObject())
+        return;
+
+    MarkedArgumentBuffer args;
+    args.append(importMeta);
+    args.append(module);
+    scope.release();
+    JSC::call(globalObject, callback, JSC::getCallData(callback), jsUndefined(), args);
+}
+
+JSValue NodeVM::evaluateModuleBody(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSValue key, JSC::JSModuleRecord* record, JSValue sentValue, JSValue resumeMode)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* fetcher = NodeVMScriptFetcher::of(record->sourceCode());
+    ASSERT(fetcher);
+    // The record of a vm.SyntheticModule has no code. Its evaluateCallback runs in the place of a body.
+    if (fetcher->isSyntheticModule()) {
+        NodeVMSyntheticModule::runEvaluationSteps(globalObject, record);
+        RETURN_IF_EXCEPTION(scope, {});
+        return jsUndefined();
+    }
+
+    initializeImportMeta(globalObject, record, *fetcher);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(globalObject, key, record, nullptr, sentValue, resumeMode));
+}
+
+JSValue NodeVMGlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher, JSValue sentValue, JSValue resumeMode)
+{
+    auto* record = dynamicDowncast<JSC::JSModuleRecord>(moduleRecordValue);
+    if (record && NodeVMScriptFetcher::of(record->sourceCode())) [[likely]]
+        return NodeVM::evaluateModuleBody(globalObject, moduleLoader, key, record, sentValue, resumeMode);
+    return moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
 }
 
 JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin, bool deferred)

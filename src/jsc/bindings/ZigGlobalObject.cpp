@@ -168,6 +168,7 @@
 #include "napi.h"
 #include "NodeHTTP.h"
 #include "NodeVM.h"
+#include "NodeVMScriptFetcher.h"
 #include "Performance.h"
 #include "ProcessBindingConstants.h"
 #include "ProcessBindingTTYWrap.h"
@@ -4343,6 +4344,15 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     Bun__VM__noteEntryEvaluationStarted(bunVM);
 }
 
+// Only a module that node:vm made has a NodeVMScriptFetcher as the fetcher of its source.
+static ALWAYS_INLINE JSC::JSModuleRecord* moduleRecordOfNodeVM(JSValue moduleRecordValue)
+{
+    auto* record = dynamicDowncast<JSC::JSModuleRecord>(moduleRecordValue);
+    if (!record || !Bun::NodeVMScriptFetcher::of(record->sourceCode())) [[likely]]
+        return nullptr;
+    return record;
+}
+
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
@@ -4354,6 +4364,8 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
     noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
+    if (auto* record = moduleRecordOfNodeVM(moduleRecordValue)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Bun::NodeVM::evaluateModuleBody(lexicalGlobalObject, moduleLoader, key, record, sentValue, resumeMode));
     RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
 
@@ -4373,6 +4385,8 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
     noteModuleEvaluation(globalObject, moduleLoader);
+    if (auto* record = moduleRecordOfNodeVM(moduleRecordValue)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Bun::NodeVM::evaluateModuleBody(lexicalGlobalObject, moduleLoader, key, record, sentValue, resumeMode));
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of

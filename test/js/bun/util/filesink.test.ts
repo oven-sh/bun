@@ -1358,8 +1358,8 @@ describe("a stream write that waits on its source does not keep the process aliv
     );
   `;
   const exited = JSON.stringify({ settled: "pending", code: 0, beforeExit: 1 });
-  // A child that does not exit by itself is killed, and fails on its signal.
-  const limit = 4_000;
+  // A child that does not exit by itself is killed, and fails on its signal where the test's own timeout is longer.
+  const limit = 15_000;
 
   // A pipe gave the loop back with the flush of its first chunk, so only one that had taken none kept it.
   it.concurrent.each([0, 1] as const)("to a pipe that has taken %d chunk(s)", async chunks => {

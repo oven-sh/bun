@@ -2302,7 +2302,6 @@ describe.concurrent("bun pm cache prune", () => {
   });
 
   type Fixture = {
-    title: string;
     /** Added to a cache in which nothing is old enough to prune. */
     extra?: DirectoryTree;
     /** Index links, `<index directory>/<link>`, each with the package directory that it is a link to. */
@@ -2355,10 +2354,24 @@ describe.concurrent("bun pm cache prune", () => {
   const tree = (cache: string) => readdirSync(cache, { recursive: true }).sort();
   const keptAll = "Done! Checked 3 packages, none older than 30 days (nothing to prune)\n";
 
+  // An npm package of this link would be `<index directory>@<link>`, which is too long for a file name here.
+  test.skipIf(isWindows)("removes a dangling index link whose name does not fit in the name of a package", async () => {
+    const index = Buffer.alloc(200, "a").toString();
+    const link = `owner-repo-${Buffer.alloc(48, "0").toString()}@@@1`;
+    using box = freshCache("pm-cache-prune-long-name", {
+      extra: { [index]: {} },
+      links: { [`${index}/${link}`]: `@GH@${link}` },
+    });
+
+    expect(await prune(box.dir, box.cache)).toEqual({ stdout: keptAll, stderr: "", exitCode: 0 });
+    expect(tree(box.cache)).toEqual(box.before.filter(entry => !entry.startsWith(index)));
+  });
+
   // Bun may not remove a directory on a read-only mount (EROFS) or in a directory without write
   // permission (EACCES). rmdir(2) gives that answer before it looks at whether the directory is empty.
   describe("a cache that cannot be written to", () => {
     type Cell = Fixture & {
+      title: string;
       args?: string[];
       /** From the cache root, the directories that get mode 555 in the second group. */
       locked?: string[];
@@ -2502,7 +2515,8 @@ exec "$BUN" pm cache prune "$@"`,
         using unprivileged = unprivilegedSpawnOptions(box.dir);
         box.age();
         const locked = (cell.locked ?? ["."]).map(path => join(box.cache, path));
-        for (const path of locked) chmodSync(path, 0o555);
+        using _unlock = { [Symbol.dispose]: () => locked.forEach(path => chmodSync(path, 0o755)) };
+        locked.forEach(path => chmodSync(path, 0o555));
 
         await using proc = Bun.spawn({
           cmd: [bunExe(), "pm", "cache", "prune", ...(cell.args ?? [])],
@@ -2513,7 +2527,6 @@ exec "$BUN" pm cache prune "$@"`,
           ...unprivileged,
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        for (const path of locked) chmodSync(path, 0o755);
 
         expect({ stdout, stderr, exitCode }).toEqual(outcome(cell, "EACCES: Permission denied"));
         expect(tree(box.cache)).toEqual(box.before.filter(entry => !cell.deleted?.includes(entry)));
@@ -2589,6 +2602,7 @@ long syscall(long nr, ...) {
     afterAll(() => shimDir?.[Symbol.dispose]());
 
     type Race = Fixture & {
+      title: string;
       /** The directory that the other process changes, from the cache root. */
       dir: string;
       remove?: string;

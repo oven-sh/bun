@@ -1985,7 +1985,7 @@ function runTunnel(proto: string, event: string, listener: string, peer = "clien
      process.on("exit", () => console.log(JSON.stringify(result)));`,
   );
 }
-// More than a loopback socket takes in one write.
+// More than a loopback socket takes in one write, except on Windows.
 const large = 8 * 1024 * 1024;
 
 describe.concurrent.each([
@@ -2003,25 +2003,27 @@ describe.concurrent.each([
     expect(await runTunnel(proto, event, listener)).toEqual(exitedWith({ buffered: 65536 }));
   });
 
-  test("keeps the process alive again while it sends and when it reads", async () => {
+  // 'beforeExit': nothing keeps the process alive. It has to wait for what the listener starts there.
+  test("keeps the process alive again while it sends", async () => {
     const listener = `
       server.close();
       socket.write(reply);
-      Object.assign(result, { sent: false, serverReceived: 0, clientReceived: 0 });
-      // 'beforeExit': nothing keeps the process alive. It has to wait for what each step starts.
-      const steps = [
-        () => socket.write(Buffer.alloc(${large}, "x"), () => (result.sent = true)),
-        () => socket.on("data", chunk => (result.serverReceived += chunk.length)).on("end", () => socket.end()),
-      ];
-      process.on("beforeExit", () => steps.shift()?.());`;
-    const peer = `
-      client.write(full);
-      client.on("data", chunk => {
-        if ((result.clientReceived += chunk.length) === ${large}) client.end(Buffer.alloc(${large}, "b"));
-      });`;
-    expect(await runTunnel(proto, event, listener, peer)).toEqual(
-      exitedWith({ sent: true, serverReceived: 65536 + large, clientReceived: large }),
+      process.once("beforeExit", () => socket.write(Buffer.alloc(${large}, "x"), () => (result.sent = true)));`;
+    expect(await runTunnel(proto, event, listener, "client.write(full); client.resume();")).toEqual(
+      exitedWith({ sent: true }),
     );
+  });
+
+  test("keeps the process alive again when it reads", async () => {
+    const listener = `
+      server.close();
+      socket.write(reply);
+      result.received = 0;
+      process.once("beforeExit", () => {
+        socket.on("data", chunk => (result.received += chunk.length)).on("end", () => socket.end());
+        client.end(Buffer.alloc(${large}, "b"));
+      });`;
+    expect(await runTunnel(proto, event, listener)).toEqual(exitedWith({ received: 65536 + large }));
   });
 });
 

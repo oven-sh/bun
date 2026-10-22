@@ -2217,7 +2217,14 @@ describe("HTTP Server Security Tests - Advanced", () => {
         codes.push(err.code);
         replyBadRequest(socket);
       });
-      const targets = ["/\x7f", "/\x01", "/a?b=\x7f", "/a#\x7f", "/aaaaaaaaaaaaaaaaaaaa\x7faaaaaaaaaaaaaaaaaaaa", "http://a\x7f/"];
+      const targets = [
+        "/\x7f",
+        "/\x01",
+        "/a?b=\x7f",
+        "/a#\x7f",
+        "/aaaaaaaaaaaaaaaaaaaa\x7faaaaaaaaaaaaaaaaaaaa",
+        "http://a\x7f/",
+      ];
       for (const target of targets) {
         const msg = `GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`;
         expect(await sendRequest(msg)).toStartWith("HTTP/1.1 400 Bad Request");

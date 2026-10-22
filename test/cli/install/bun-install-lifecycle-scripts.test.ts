@@ -1682,6 +1682,55 @@ describe("the trusted set", () => {
       expect(trust.exitCode).toBe(0);
     });
 
+    // The optional peer that only `lender` provides is left out, and still counts for the name of the store entry.
+    test.concurrent("a package that `bun install --filter` installed without an optional peer is found", async () => {
+      const members = {
+        "packages/app": { name: "app", version: "1.0.0", dependencies: { "lifecycle-postinstall": "1.0.0" } },
+        "packages/lender": { name: "lender", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } },
+      };
+      using ctx = await project("isolated", {
+        "package.json": { name: "root", workspaces: ["packages/*"] },
+        "packages/app/package.json": members["packages/app"],
+        "packages/lender/package.json": members["packages/lender"],
+        "bun.lock": {
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: { "": { name: "root" }, ...members },
+          packages: {
+            app: ["app@workspace:packages/app"],
+            lender: ["lender@workspace:packages/lender"],
+            "lifecycle-postinstall": [
+              "lifecycle-postinstall@1.0.0",
+              "",
+              { peerDependencies: { "no-deps": "*" }, optionalPeers: ["no-deps"] },
+              "",
+            ],
+            "no-deps": ["no-deps@1.0.0", "", {}, ""],
+          },
+        },
+      });
+      const install = await bun(ctx, ["install", "--frozen-lockfile", "--filter", "app"]);
+      expect(install.out).toContain("1 package installed");
+      expect(install.exitCode).toBe(0);
+      const [entry, ...others] = (await readdirSorted(join(ctx.packageDir, "node_modules", ".bun"))).filter(
+        name => name !== "node_modules",
+      );
+      expect({ entry, others }).toEqual({
+        entry: expect.stringMatching(/^lifecycle-postinstall@1\.0\.0\+[0-9a-f]{16}$/),
+        others: [],
+      });
+      const folder = join("node_modules", ".bun", entry, "node_modules", "lifecycle-postinstall");
+
+      const untrusted = await bun(ctx, ["pm", "untrusted"]);
+      expect(untrusted.out).toContain(`.${sep}${folder} @1.0.0`);
+      expect(untrusted.exitCode).toBe(0);
+
+      const trust = await bun(ctx, ["pm", "trust", "lifecycle-postinstall"]);
+      expect(trust.out).toContain("1 script ran across 1 package");
+      expect(await textOf(ctx.packageDir, folder, "postinstall.txt")).toBe("postinstall!");
+      expect(trust.exitCode).toBe(0);
+    });
+
     // It has no folder in the store.
     test.concurrent.each([
       {

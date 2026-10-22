@@ -1127,7 +1127,6 @@ impl LinkedRows<'_> {
             todo.push((0, 0, false));
         }
         let mut walked = vec![false; lists.len()];
-        let mut foreign: Option<Option<DynamicBitSet>> = None;
         while let Some((from, pkg_id, shipped)) = todo.pop() {
             walked[pkg_id as usize] = true;
             let list = self.resolution_lists[pkg_id as usize];
@@ -1192,22 +1191,15 @@ impl LinkedRows<'_> {
                     continue;
                 }
                 let filler_pkg_id = self.resolutions[filler as usize];
-                if dep.behavior.is_optional_peer()
-                    && foreign
-                        .get_or_insert_with(|| {
-                            reachable::foreign_packages(
-                                self.workspace_filters,
-                                self.install_root_dependencies,
-                                self.manager,
-                                self.lockfile,
-                                self.resolutions,
-                            )
-                        })
-                        .as_ref()
-                        .is_some_and(|foreign| {
-                            foreign.is_set_allow_out_of_bound(filler_pkg_id as usize, false)
-                        })
-                {
+                if self.linked.is_foreign_peer(
+                    dep.behavior,
+                    filler_pkg_id,
+                    self.workspace_filters,
+                    self.install_root_dependencies,
+                    self.manager,
+                    self.lockfile,
+                    self.resolutions,
+                ) {
                     continue;
                 }
                 kept.insert(tree_id, row, if follows { dep_id } else { row });

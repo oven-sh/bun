@@ -506,7 +506,7 @@ Each flag can be repeated, takes `*` to allow every value, and takes `!name` to 
 
 The isolated linker applies these rules everywhere a package is used. The hoisted linker usually installs a package once, and that copy loads whichever version of the peer is nearest to it in `node_modules`. If another version of the peer is at the top of `node_modules`, the packages that need the peer can each get their own copy of it.
 
-If a peer dependency is marked optional in `peerDependenciesMeta`, Bun doesn't install it, but uses a version that's already installed if there is one.
+If a peer dependency is marked optional in `peerDependenciesMeta`, Bun doesn't install it, but uses a version that's already installed if there is one. With `--filter`, a package that only the workspaces left out depend on doesn't count as installed.
 
 With `--verbose`, an install that resolves dependencies prints every peer dependency that ended up out of range:
 

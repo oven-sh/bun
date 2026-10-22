@@ -68,6 +68,10 @@ struct QueuedNode {
     parent_id: store::node::Id,
     dep_id: DependencyID,
     pkg_id: PackageID,
+    /// False for an optional peer that does not install its package. Peers are resolved as if it
+    /// did, so leaving it out changes no peer hash, and with that no entry's name. Only the node
+    /// is not added to its parent's `nodes`: no entry and no link.
+    is_linked: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -554,6 +558,7 @@ fn build_store(
         parent_id: store::node::Id::INVALID,
         dep_id: invalid_dependency_id,
         pkg_id: 0,
+        is_linked: true,
     });
 
     let mut dep_ids_sort_buf: Vec<DependencyID> = Vec::new();
@@ -767,7 +772,9 @@ fn build_store(
                         // implicit workspace dep != explicit workspace dep
                         curr_dep.behavior.is_workspace() == entry_dep.behavior.is_workspace()
                     {
-                        node_nodes[entry.parent_id.get() as usize].push(curr_id);
+                        if entry.is_linked {
+                            node_nodes[entry.parent_id.get() as usize].push(curr_id);
+                        }
                         continue 'next_node;
                     }
                 }
@@ -929,7 +936,9 @@ fn build_store(
                         }
                     }
 
-                    node_nodes[entry.parent_id.get() as usize].push(dedupe_node_id);
+                    if entry.is_linked {
+                        node_nodes[entry.parent_id.get() as usize].push(dedupe_node_id);
+                    }
                     continue 'next_node;
                 }
 
@@ -965,7 +974,9 @@ fn build_store(
             ..
         } = nodes_slice.split_mut();
 
-        if let Some(parent_id) = entry.parent_id.try_get() {
+        if let Some(parent_id) = entry.parent_id.try_get()
+            && entry.is_linked
+        {
             node_nodes[parent_id as usize].push(node_id);
         }
 
@@ -1020,6 +1031,7 @@ fn build_store(
                                     parent_id: node_id,
                                     dep_id,
                                     pkg_id,
+                                    is_linked: true,
                                 });
                                 break;
                             }
@@ -1063,6 +1075,7 @@ fn build_store(
                         parent_id: node_id,
                         dep_id,
                         pkg_id,
+                        is_linked: true,
                     });
                     continue;
                 }
@@ -1211,6 +1224,19 @@ fn build_store(
             if !visited_parent_node_ids.is_empty() {
                 // visited parents length == 0 means the node satisfied it's own
                 // peer. don't queue.
+
+                // An entry in the global store is named after everything it links, and other
+                // workspaces share the link to it.
+                let is_linked = manager.options.enable.global_virtual_store()
+                    || !linked.is_foreign_peer(
+                        dependencies[peer_dep_id as usize].behavior,
+                        resolved_pkg_id,
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        lockfile,
+                        resolutions,
+                    );
                 node_dependencies[node_id.get() as usize].push(store::node::DependencyIds {
                     dep_id: peer_dep_id,
                     pkg_id: resolved_pkg_id,
@@ -1219,6 +1245,7 @@ fn build_store(
                     parent_id: node_id,
                     dep_id: peer_dep_id,
                     pkg_id: resolved_pkg_id,
+                    is_linked,
                 });
             }
         }

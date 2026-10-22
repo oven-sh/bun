@@ -88,6 +88,8 @@ impl Options {
 pub(crate) struct Linked {
     /// The packages that this install links, given `--production`, `--omit` and `--filter`.
     packages: Option<DynamicBitSet>,
+    /// See `foreign_packages`.
+    foreign: Option<Option<DynamicBitSet>>,
 }
 
 impl Linked {
@@ -125,6 +127,33 @@ impl Linked {
         });
         !linked.is_set(resolutions[dep_id as usize] as usize)
     }
+
+    /// `behavior` is an optional peer, and `pkg_id` is one of the `foreign_packages`.
+    pub(crate) fn is_foreign_peer(
+        &mut self,
+        behavior: Behavior,
+        pkg_id: PackageID,
+        workspace_filters: &[WorkspaceFilter],
+        install_root_dependencies: bool,
+        manager: &PackageManager,
+        lockfile: &Lockfile,
+        resolutions: &[PackageID],
+    ) -> bool {
+        behavior.is_optional_peer()
+            && self
+                .foreign
+                .get_or_insert_with(|| {
+                    foreign_packages(
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        lockfile,
+                        resolutions,
+                    )
+                })
+                .as_ref()
+                .is_some_and(|foreign| foreign.is_set_allow_out_of_bound(pkg_id as usize, false))
+    }
 }
 
 /// The importers that `--filter` or a pruned checkout leaves to link. `None` if it's all of them.
@@ -160,9 +189,9 @@ fn linked_importers(
 
 /// Returns the packages that an optional peer does not install under `--filter`: the importers left
 /// out depend on them, and the selected importers use no version of them. Every dependency group
-/// counts, but not an optional peer or the inside of a tarball. `None` without `--filter`, also in
-/// a pruned checkout, which does install them.
-pub(crate) fn foreign_packages(
+/// counts, but not the inside of a tarball, and an optional peer only if it installs its package.
+/// `None` without `--filter`, also in a pruned checkout, which does install them.
+fn foreign_packages(
     workspace_filters: &[WorkspaceFilter],
     install_root_dependencies: bool,
     manager: &PackageManager,
@@ -172,7 +201,7 @@ pub(crate) fn foreign_packages(
     if workspace_filters.is_empty() {
         return None;
     }
-    let selected = linked_importers(
+    let mut selected = linked_importers(
         workspace_filters,
         install_root_dependencies,
         manager,
@@ -195,14 +224,35 @@ pub(crate) fn foreign_packages(
     };
     let mut foreign = packages_from(lockfile, resolutions, &left_out, false, options);
     let names = lockfile.packages.items_name_hash();
-    let own = packages_from(lockfile, resolutions, &selected, false, options);
-    let mut own = own.iterator::<true, true>();
-    while let Some(id) = own.next() {
-        for &version in lockfile.packages_named(names[id]) {
-            foreign.unset(version as usize);
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let dep_slices = lockfile.packages.items_dependencies();
+    loop {
+        let own = packages_from(lockfile, resolutions, &selected, false, options);
+        let mut ids = own.iterator::<true, true>();
+        while let Some(id) = ids.next() {
+            for &version in lockfile.packages_named(names[id]) {
+                foreign.unset(version as usize);
+            }
+        }
+        // What an optional peer does install brings its own dependencies.
+        let walked = selected.len();
+        let mut ids = own.iterator::<true, true>();
+        while let Some(id) = ids.next() {
+            for row in dep_slices[id].begin() as usize..dep_slices[id].end() as usize {
+                let target = resolutions[row];
+                if deps[row].behavior.is_optional_peer()
+                    && !own.is_set_allow_out_of_bound(target as usize, true)
+                    && !foreign.is_set(target as usize)
+                    && !selected.contains(&target)
+                {
+                    selected.push(target);
+                }
+            }
+        }
+        if selected.len() == walked {
+            return Some(foreign);
         }
     }
-    Some(foreign)
 }
 
 // `resolutions` is passed separately so callers can walk a candidate resolution buffer (dedupe).

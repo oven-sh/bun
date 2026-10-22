@@ -2,11 +2,13 @@
 //
 //   [MB=64] [STALL=0] [CONCURRENCY=1] bun bench/fetch/streaming-backpressure.mjs <scenario>
 //
-// scenarios: fetch-to-fetch | readable-body | download-proxy
+// scenarios: fetch-to-fetch | readable-body | download-proxy | status-only | late-read | batch-read
 // prints one JSON line: elapsedMs, peakRssMB (sampled), cpuMs, per-run totals.
 // All servers are in-process net/http servers on loopback, so the numbers are
 // the runtime's own overhead moving MB-per-stream x CONCURRENCY streams.
 // STALL>0 pauses the consumer that long before draining (rate-mismatch case).
+// The last three fetch N bodies of MB one after another: status-only never reads
+// them, late-read reads each a turn after its head, batch-read reads BATCH at a time.
 import http from "node:http";
 import net from "node:net";
 import { spawn } from "node:child_process";
@@ -15,7 +17,8 @@ import { pipeline } from "node:stream/promises";
 
 const scenario = process.argv[2];
 const MB = Number(process.env.MB ?? 64), STALL = Number(process.env.STALL ?? 0), C = Number(process.env.CONCURRENCY ?? 1);
-const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = MB * 16, TOTAL = CHUNK.length * COUNT;
+const N = Number(process.env.N ?? 200), BATCH = Math.max(1, Math.floor(Number(process.env.BATCH ?? 8)) || 1);
+const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = Math.max(1, Math.round(MB * 16)), TOTAL = CHUNK.length * COUNT;
 const rt = typeof Bun !== "undefined" ? "bun " + Bun.version_with_sha : "node " + process.version;
 
 let peak = 0;
@@ -74,7 +77,29 @@ async function downloadProxy() {
   });
   server.close(); source.close();
 }
-const table = { "fetch-to-fetch": fetchToFetch, "readable-body": readableBody, "download-proxy": downloadProxy };
+async function statusOnly() {
+  const source = await makeSource();
+  for (let i = 0; i < N; i++) if ((await fetch(source.url)).status !== 200) throw new Error("status");
+  source.close();
+}
+async function lateRead() {
+  const source = await makeSource();
+  for (let i = 0; i < N; i++) {
+    const res = await fetch(source.url);
+    await new Promise(r => setImmediate(r));
+    if ((await res.arrayBuffer()).byteLength !== TOTAL) throw new Error("short body");
+  }
+  source.close();
+}
+async function batchRead() {
+  const source = await makeSource();
+  for (let i = 0; i < N; i += BATCH) {
+    const responses = await Promise.all(Array.from({ length: Math.min(BATCH, N - i) }, () => fetch(source.url)));
+    for (const body of await Promise.all(responses.map(res => res.arrayBuffer()))) if (body.byteLength !== TOTAL) throw new Error("short body");
+  }
+  source.close();
+}
+const table = { "fetch-to-fetch": fetchToFetch, "readable-body": readableBody, "download-proxy": downloadProxy, "status-only": statusOnly, "late-read": lateRead, "batch-read": batchRead };
 const fn = table[scenario];
 if (!fn) { console.error("scenarios:", Object.keys(table).join(" ")); process.exit(2); }
 await Promise.all(Array.from({ length: C }, (_, i) => fn(i)));

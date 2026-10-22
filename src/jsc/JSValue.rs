@@ -229,6 +229,14 @@ impl JSValue {
         }
         JSC__JSValue__isLiveCell(self)
     }
+    /// A GC safepoint: a collection can finish inside this call and finalize cells, this one too.
+    #[inline]
+    pub fn report_extra_memory_allocated(self, bytes: usize) {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__reportExtraMemoryAllocated(this: JSValue, bytes: usize);
+        }
+        JSC__JSValue__reportExtraMemoryAllocated(self, bytes)
+    }
     #[inline]
     pub fn is_int32(self) -> bool {
         const NUMBER_TAG: usize = 0xfffe_0000_0000_0000;

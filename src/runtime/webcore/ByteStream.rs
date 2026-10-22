@@ -416,6 +416,12 @@ impl ByteStream {
         self.buffered.len()
     }
 
+    /// A reader's pull has waited here for a chunk, now or before.
+    #[inline]
+    pub(crate) fn has_had_pending_pull(&self) -> bool {
+        self.pending.get().state != streams::PendingState::None
+    }
+
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
     pub fn resume(&self) {
         if !self.sink_paused.get() {

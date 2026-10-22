@@ -91,6 +91,26 @@ impl FetchTaskletRequestDrain {
     }
 }
 
+/// Counts a body that the head found held back, after the task that settles the `fetch()` promise.
+#[repr(transparent)]
+pub(crate) struct FetchTaskletUnreadBody(FetchTasklet);
+impl Taskable for FetchTaskletUnreadBody {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletUnreadBody;
+    /// Carries the +1 `on_progress_update` took.
+    unsafe fn release_unrun(this: *mut Self) {
+        FetchTasklet::deref(this.cast::<FetchTasklet>());
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+impl FetchTaskletUnreadBody {
+    pub(crate) fn run(this: *mut Self) {
+        FetchTasklet::count_unread_body(this.cast::<FetchTasklet>());
+    }
+}
+
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
     /// A progress hop the HTTP thread posted: it carries the +1 that
@@ -143,6 +163,10 @@ pub struct FetchTasklet {
     pub(crate) native_response: JsCell<Option<RefPtr<Response>>>,
     /// The response body stream while this tasklet is its producer.
     pub(crate) response_stream: crate::webcore::byte_stream::ProducerHold,
+    /// The unread body bytes that the Response wrapper answers for.
+    unread_body_charged: core::cell::Cell<usize>,
+    /// A consumer took the body, or the fetch gave it up. The wrapper is charged no more.
+    unread_body_claimed: core::cell::Cell<bool>,
     pub(crate) request_headers: Headers,
     /// `Content-Length` framing a streaming body; `write_request_data` counts against it.
     pub(crate) declared_request_body_len: Option<u64>,
@@ -751,7 +775,8 @@ impl FetchTasklet {
         Ok(())
     }
 
-    fn on_body_received(&mut self) -> JsResult<()> {
+    /// Sets `unread` when this visit learns how many body bytes wait unread.
+    fn on_body_received(&mut self, unread: &mut Option<usize>) -> JsResult<()> {
         let success = self.result.is_success();
         let global_this = self.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
@@ -780,6 +805,7 @@ impl FetchTasklet {
         }
 
         if !success {
+            *unread = Some(0);
             // `ValueError`
             // has no `Drop` (it's reset-in-place, see Body.rs), so the Strong installed by
             // `to_js` would leak on the sink-cancel / no-response / `?` exits. Hold it in a
@@ -830,8 +856,14 @@ impl FetchTasklet {
                 bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream done");
                 bytes.size_hint.set(self.get_size_hint());
                 buffer_reset.set(false);
+                if bytes.has_had_pending_pull() {
+                    self.claim_unread_body();
+                }
                 let chunk = self.scheduled_response_buffer.list.as_slice();
                 bytes.on_data(Self::temporary_chunk(chunk, true));
+                if !self.unread_body_claimed.get() {
+                    *unread = Some(bytes.buffered_len());
+                }
                 return Ok(());
             }
         } else if let Some(bytes) = self.response_stream.bytes() {
@@ -840,7 +872,7 @@ impl FetchTasklet {
             let chunk = self.scheduled_response_buffer.list.as_slice();
             bytes.on_data(Self::temporary_chunk(chunk, false));
             if self.response_stream.is_held() {
-                self.after_body_chunk_delivered(&bytes);
+                *unread = self.unread_behind_stream(&bytes);
             }
             return Ok(());
         }
@@ -876,6 +908,7 @@ impl FetchTasklet {
             // the defer still drops the bytes.
             // SAFETY: just obtained from live `response`.
             if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
+                *unread = Some(0);
                 return Ok(());
             }
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
@@ -923,6 +956,13 @@ impl FetchTasklet {
                         headers,
                     )?;
                 }
+                // Nothing waited for the body: it stays on the Response.
+                // SAFETY: `response` is live (`native_response`); `resolve` is done with `body`.
+                if let BodyValue::InternalBlob(unread_body) = unsafe { &*body } {
+                    *unread = Some(unread_body.bytes.len());
+                }
+            } else {
+                *unread = self.unread_body_held_back();
             }
         }
         Ok(())
@@ -957,9 +997,7 @@ impl FetchTasklet {
         }
 
         let global_this = self.global_this;
-        // explicit cleanup at each return (a closure keeps borrowck happy)
-        let cleanup = |this: &mut FetchTasklet| {
-            this.mutex.unlock();
+        let finish = |this: &mut FetchTasklet| {
             // if we are not done we wait until the next call
             if is_done {
                 // The HTTP response has been fully received. If the request body
@@ -972,6 +1010,11 @@ impl FetchTasklet {
                 // SAFETY: `this` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(this));
             }
+        };
+        // explicit cleanup at each return (a closure keeps borrowck happy)
+        let cleanup = |this: &mut FetchTasklet| {
+            this.mutex.unlock();
+            finish(this);
         };
 
         if self.is_waiting_request_stream_start && self.result.can_stream {
@@ -1041,11 +1084,25 @@ impl FetchTasklet {
                 && self.result.has_more
                 && self.result.is_success()
             {
-                cleanup(self);
+                // The stream that took those bytes still counts when nothing reads it.
+                let unread = self
+                    .response_stream
+                    .bytes()
+                    .and_then(|bytes| self.unread_behind_stream(&bytes));
+                self.mutex.unlock();
+                if let Some(unread) = unread {
+                    self.sync_unread_body_charge(unread);
+                }
+                finish(self);
                 return Ok(());
             }
-            let r = self.on_body_received();
-            cleanup(self);
+            let mut unread = None;
+            let r = self.on_body_received(&mut unread);
+            self.mutex.unlock();
+            if let Some(unread) = unread {
+                self.sync_unread_body_charge(unread);
+            }
+            finish(self);
             return r;
         }
         // Run the user-supplied `checkServerIdentity` callback as soon as the
@@ -1198,6 +1255,17 @@ impl FetchTasklet {
         // SAFETY: `vm.event_loop()` is the live JS-thread loop.
         unsafe {
             (*vm.event_loop()).enqueue_task(Task::from_boxed(holder));
+        }
+        if self.is_waiting_body && self.signal_store.body_receive_mode() == BodyReceiveMode::Paused
+        {
+            bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: count the held-back body");
+            self.ref_();
+            // SAFETY: as above.
+            unsafe {
+                (*vm.event_loop()).enqueue_task(Task::init(
+                    std::ptr::from_mut(self).cast::<FetchTaskletUnreadBody>(),
+                ));
+            }
         }
 
         dispatch_cleanup(self);
@@ -1784,6 +1852,7 @@ impl FetchTasklet {
     }
 
     pub(crate) fn on_stream_drained(&self) {
+        self.claim_unread_body();
         self.unpark_body_stream();
         self.resume_receive();
     }
@@ -1796,11 +1865,89 @@ impl FetchTasklet {
 
     /// A native sink was wired to the stream: something waits for bytes again.
     pub(crate) fn on_consumer_attached(&self) {
+        self.claim_unread_body();
         self.unpark_body_stream();
     }
 
-    /// The other half of this rule is in `callback` (HTTP thread).
-    fn after_body_chunk_delivered(&self, bytes: &crate::webcore::ByteStream) {
+    /// The bytes in `scheduled_response_buffer` that the transport is held back for. Under `mutex`.
+    fn unread_body_held_back(&self) -> Option<usize> {
+        (self.signal_store.body_receive_mode() == BodyReceiveMode::Paused)
+            .then_some(self.scheduled_response_buffer.list.len())
+    }
+
+    /// Pauses or parks the stream as after a delivery. Returns what waits in it once it is parked.
+    fn unread_behind_stream(&self, bytes: &crate::webcore::ByteStream) -> Option<usize> {
+        if bytes.has_had_pending_pull() {
+            self.claim_unread_body();
+        }
+        (self.after_body_chunk_delivered(bytes) && !self.unread_body_claimed.get())
+            .then(|| bytes.buffered_len())
+    }
+
+    /// `FetchTaskletUnreadBody`: the caller's reactions have run. JS thread.
+    fn count_unread_body(this: *mut FetchTasklet) {
+        let this_ref = Self::from_raw_ref(this);
+        this_ref.mutex.lock();
+        let unread = if this_ref.result.has_more && this_ref.result.is_success() {
+            match this_ref.response_stream.bytes() {
+                Some(bytes) => this_ref.unread_behind_stream(&bytes),
+                None => this_ref.unread_body_held_back(),
+            }
+        } else {
+            None
+        };
+        this_ref.mutex.unlock();
+        if let Some(unread) = unread {
+            this_ref.sync_unread_body_charge(unread);
+        }
+        // SAFETY: `this` is the live heap tasklet; the hop holds a ref.
+        FetchTasklet::deref(this);
+    }
+
+    /// Makes the Response wrapper answer for `unread` bytes. JS thread, `mutex` not held.
+    fn sync_unread_body_charge(&self, unread: usize) {
+        let charged = self.unread_body_charged.get();
+        if unread == charged {
+            return;
+        }
+        let Some(response) = self.native_response.get().as_deref() else {
+            return;
+        };
+        bun_output::scoped_log!(
+            FetchTasklet,
+            "syncUnreadBodyCharge {} -> {}",
+            charged,
+            unread
+        );
+        if unread < charged {
+            self.unread_body_charged.set(unread);
+            response.uncharge_unread_body(charged - unread);
+            return;
+        }
+        let Some(wrapper) = self.response.get() else {
+            return;
+        };
+        self.unread_body_charged.set(unread);
+        response.charge_unread_body(unread - charged);
+        // Last: the report can finalize this very Response and re-enter `on_response_finalize`.
+        wrapper.report_extra_memory_allocated(unread - charged);
+    }
+
+    /// A consumer took the body, or the fetch gave it up. Touches no JS cell: a GC sweep gets here.
+    fn claim_unread_body(&self) {
+        if self.unread_body_claimed.replace(true) {
+            return;
+        }
+        let charged = self.unread_body_charged.replace(0);
+        if charged > 0
+            && let Some(response) = self.native_response.get().as_deref()
+        {
+            response.uncharge_unread_body(charged);
+        }
+    }
+
+    /// The other half of this rule is in `callback` (HTTP thread). Returns whether it parked.
+    fn after_body_chunk_delivered(&self, bytes: &crate::webcore::ByteStream) -> bool {
         use crate::webcore::byte_stream::AfterDelivery;
         bun_output::scoped_log!(
             FetchTasklet,
@@ -1808,11 +1955,18 @@ impl FetchTasklet {
             bytes.buffered_len()
         );
         match self.response_stream.after_delivery(bytes) {
-            AfterDelivery::Resume => self.resume_receive(),
-            AfterDelivery::Pause => self.signal_store.pause_receive(),
+            AfterDelivery::Resume => {
+                self.resume_receive();
+                false
+            }
+            AfterDelivery::Pause => {
+                self.signal_store.pause_receive();
+                false
+            }
             AfterDelivery::Park => {
                 self.signal_store.pause_receive();
                 self.park_body_stream();
+                true
             }
         }
     }
@@ -1835,6 +1989,7 @@ impl FetchTasklet {
 
     fn on_start_buffering_callback(ctx: NonNull<c_void>) {
         let this = Self::from_ctx(ctx);
+        this.claim_unread_body();
         this.poll_ref
             .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
         if this.signal_store.receive_all() {
@@ -1946,6 +2101,7 @@ impl FetchTasklet {
     /// request-body sink is left for `clear_sink()` in `deinit()`.
     fn abandon_response_body(&self) {
         bun_output::scoped_log!(FetchTasklet, "abandonResponseBody");
+        self.claim_unread_body();
         self.signal_store.abandon();
         self.abort_transport();
         self.poll_ref
@@ -2009,6 +2165,8 @@ impl FetchTasklet {
             response: jsc::Weak::default(),
             native_response: JsCell::new(None),
             response_stream: Default::default(),
+            unread_body_charged: core::cell::Cell::new(0),
+            unread_body_claimed: core::cell::Cell::new(false),
             request_headers: fetch_options.headers,
             declared_request_body_len: None,
             request_body_len_written: 0,

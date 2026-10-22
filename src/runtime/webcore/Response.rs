@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_jsc::JsCell;
 use bun_jsc::{AbortSignal, GlobalRef};
@@ -220,8 +221,8 @@ pub(crate) struct Response {
     weak_ptr_data: WeakPtrData,
     js_ref: JsCell<JsRef>,
 
-    // We must report a consistent value for this
-    reported_estimated_size: Cell<usize>,
+    /// What `estimated_size` answers. GC marker threads read it while the JS thread writes it.
+    reported_estimated_size: AtomicUsize,
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
     abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
@@ -237,7 +238,7 @@ impl Default for Response {
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
-            reported_estimated_size: Cell::new(0),
+            reported_estimated_size: AtomicUsize::new(0),
             abort_listener: JsCell::new(None),
         }
     }
@@ -410,7 +411,21 @@ impl Response {
     }
 
     pub(crate) fn estimated_size(this: &Response) -> usize {
-        this.reported_estimated_size.get()
+        this.reported_estimated_size.load(Ordering::Relaxed)
+    }
+
+    /// The caller then reports `bytes` against the wrapper, as its last use of this Response.
+    pub(crate) fn charge_unread_body(&self, bytes: usize) {
+        self.reported_estimated_size
+            .fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// `bytes` that were charged have left: a consumer took them, or they were dropped.
+    pub(crate) fn uncharge_unread_body(&self, bytes: usize) {
+        let charged = self
+            .reported_estimated_size
+            .fetch_sub(bytes, Ordering::Relaxed);
+        debug_assert!(charged >= bytes);
     }
 
     /// R-2: returns `&mut BodyValue` from `&self` via the `JsCell` escape
@@ -441,11 +456,12 @@ impl Response {
     }
 
     pub(crate) fn calculate_estimated_byte_size(&self) {
-        self.reported_estimated_size.set(
+        self.reported_estimated_size.store(
             self.body.get().value.get().estimated_size()
                 + self.url.get().byte_slice().len()
                 + self.init.get().status_text.byte_slice().len()
                 + mem::size_of::<Response>(),
+            Ordering::Relaxed,
         );
     }
 

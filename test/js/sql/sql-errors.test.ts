@@ -1,4 +1,5 @@
 import { SQL } from "bun";
+import { describe as describeCell } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer } from "harness";
 
@@ -50,6 +51,11 @@ function layout(error: object, ignored: string[]) {
 }
 // An Error that JavaScript makes has these. They describe the place where it was made.
 const stackKeys = ["stack", "sourceURL", "originalLine", "originalColumn"];
+
+/** How many Structures the errors have. They are all alive here, so no id is one that was used again. */
+function structuresOf(errors: object[]): number {
+  return new Set(errors.map(error => /StructureID: (\d+)/.exec(describeCell(error))![1])).size;
+}
 
 class UserError extends Error {}
 const thrownValues: [kind: string, value: unknown][] = [
@@ -186,6 +192,21 @@ describeWithContainer("mysql", { image: "mysql_plain", concurrent: true }, conta
     );
     await expectUsable(sql);
   });
+
+  test("errors with the same fields have one Structure", async () => {
+    await container.ready;
+    await using sql = connect();
+
+    const fromServer: object[] = [];
+    for (let i = 0; i < 20; i++) fromServer.push(await rejectionOf(sql`SELECT * FROM no_such_table_for_sql_errors`));
+    const madeHere = fromServer.map(({ message, code, errno, sqlState }: any) => {
+      return new SQL.MySQLError(message, { code, errno, sqlState });
+    });
+    expect({ fromServer: structuresOf(fromServer), madeHere: structuresOf(madeHere) }).toEqual({
+      fromServer: 1,
+      madeHere: 1,
+    });
+  });
 });
 
 describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
@@ -297,6 +318,20 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       unchanged,
     );
     await expectUsable(sql);
+  });
+
+  test("errors with the same fields have one Structure", async () => {
+    await container.ready;
+    await using sql = connect();
+
+    // Each one loses the `line` and `column` that JavaScriptCore gave it, and gets the fields of the server after that.
+    const fromServer: object[] = [];
+    for (let i = 0; i < 20; i++) fromServer.push(await rejectionOf(sql`SELECT * FROM no_such_table_for_sql_errors`));
+    const madeHere = fromServer.map((error: any) => new SQL.PostgresError(error.message, { ...error }));
+    expect({ fromServer: structuresOf(fromServer), madeHere: structuresOf(madeHere) }).toEqual({
+      fromServer: 1,
+      madeHere: 1,
+    });
   });
 });
 

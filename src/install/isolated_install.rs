@@ -497,52 +497,106 @@ struct PeerMark {
     peer: store::node::TransitivePeer,
 }
 
-/// Records each queued peer on its start node and on every ancestor below the first one whose
-/// dependencies provide the peer's name, as the walk up from the peer's declarer does.
+/// The node columns a peer mark reads and writes, split out of the node list.
+struct PeerColumns<'a> {
+    pkg_ids: &'a [PackageID],
+    parent_ids: &'a [store::node::Id],
+    dependencies: &'a [Vec<store::node::DependencyIds>],
+    peers: &'a mut [store::node::Peers],
+}
+
+/// Marks the peers that pass through a node on the chains that link to it.
 ///
-/// A node that another node links to instead of a child of its own (an ancestor at the end of a
-/// dependency cycle, or the node an early dedupe found) stands in for the whole subtree there too.
-/// A peer that newly passes through it therefore also passes up through each of those link
-/// parents, so it is queued again from each one. A peer that is already on the node was queued
-/// from them when it arrived, or was copied to them when the link was made.
-fn mark_transitive_peers(
-    queue: &mut Vec<PeerMark>,
-    node_pkg_ids: &[PackageID],
-    node_parent_ids: &[store::node::Id],
-    node_dependencies: &[Vec<store::node::DependencyIds>],
-    node_peers: &mut [store::node::Peers],
-    link_parents: &[Vec<store::node::Id>],
-    first_named: &FirstNamed,
-    dependencies: &[install::Dependency],
-    contained: &DynamicBitSet,
-    peer_ctx: &store::node::TransitivePeerOrderedArraySetCtx<'_>,
-) -> Result<(), AllocError> {
-    while let Some(PeerMark { start, peer }) = queue.pop() {
-        let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
-        let mut curr_id = start;
-        'walk: while curr_id != store::node::Id::INVALID {
-            for ids in dependencies_named(first_named, node_dependencies, curr_id, peer_name_hash) {
-                if dependencies[ids.dep_id as usize].name_hash == peer_name_hash
-                    && !contained.is_set(ids.dep_id as usize)
-                {
-                    break 'walk;
-                }
-            }
-            // A package is never its own peer.
-            if node_pkg_ids[curr_id.get() as usize] != peer.pkg_id
-                && node_peers[curr_id.get() as usize].insert(peer, peer_ctx)?
-            {
-                for &link_parent in &link_parents[curr_id.get() as usize] {
-                    queue.push(PeerMark {
-                        start: link_parent,
-                        peer,
-                    });
-                }
-            }
-            curr_id = node_parent_ids[curr_id.get() as usize];
+/// A node that another node takes as a child in place of a node of its own (an ancestor at the
+/// end of a dependency cycle, or the node an early dedupe found) stands in for the whole subtree
+/// there too. Its peers are the marks the subtree would have left on that chain, so they are
+/// copied when the link is made, and a peer that newly passes through it later is queued again
+/// from each of its link parents.
+struct PeerMarker<'a> {
+    dependencies: &'a [install::Dependency],
+    contained: &'a DynamicBitSet,
+    peer_ctx: &'a store::node::TransitivePeerOrderedArraySetCtx<'a>,
+    queue: Vec<PeerMark>,
+    path: Vec<store::node::Id>,
+}
+
+impl<'a> PeerMarker<'a> {
+    /// `parent` takes `target`, an existing node, as a child.
+    fn link(
+        &mut self,
+        parent: store::node::Id,
+        target: store::node::Id,
+        node_nodes: &mut [Vec<store::node::Id>],
+        link_parents: &mut [Vec<store::node::Id>],
+        cols: &mut PeerColumns<'_>,
+        first_named: &FirstNamed,
+    ) -> Result<(), AllocError> {
+        node_nodes[parent.get() as usize].push(target);
+        link_parents[target.get() as usize].push(parent);
+        for &peer in cols.peers[target.get() as usize].slice() {
+            self.queue.push(PeerMark {
+                start: parent,
+                peer,
+            });
         }
+        self.mark(cols, link_parents, first_named)
     }
-    Ok(())
+
+    /// Records each queued peer on its start node and on every ancestor below the one that
+    /// resolves the peer's name, as the walk up from the peer's declarer does.
+    ///
+    /// A chain that resolves the name to another package is left alone: a declarer below it takes
+    /// that nearer package, and a mark for the linked one would make it choose the far one.
+    fn mark(
+        &mut self,
+        cols: &mut PeerColumns<'_>,
+        link_parents: &[Vec<store::node::Id>],
+        first_named: &FirstNamed,
+    ) -> Result<(), AllocError> {
+        while let Some(PeerMark { start, peer }) = self.queue.pop() {
+            let name_hash = self.dependencies[peer.dep_id as usize].name_hash;
+            self.path.clear();
+            let mut curr_id = start;
+            let resolved: Option<PackageID> = 'walk: loop {
+                if curr_id == store::node::Id::INVALID {
+                    break None;
+                }
+                for ids in dependencies_named(first_named, cols.dependencies, curr_id, name_hash) {
+                    if self.dependencies[ids.dep_id as usize].name_hash == name_hash
+                        && !self.contained.is_set(ids.dep_id as usize)
+                    {
+                        break 'walk Some(ids.pkg_id);
+                    }
+                }
+                for ids in &cols.peers[curr_id.get() as usize].list {
+                    if !ids.auto_installed
+                        && self.dependencies[ids.dep_id as usize].name_hash == name_hash
+                    {
+                        break 'walk Some(ids.pkg_id);
+                    }
+                }
+                self.path.push(curr_id);
+                curr_id = cols.parent_ids[curr_id.get() as usize];
+            };
+            if resolved.is_some_and(|pkg_id| pkg_id != peer.pkg_id) {
+                continue;
+            }
+            for &node_id in &self.path {
+                // A package is never its own peer.
+                if cols.pkg_ids[node_id.get() as usize] != peer.pkg_id
+                    && cols.peers[node_id.get() as usize].insert(peer, self.peer_ctx)?
+                {
+                    for &link_parent in &link_parents[node_id.get() as usize] {
+                        self.queue.push(PeerMark {
+                            start: link_parent,
+                            peer,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The store of an install that selects everything.
@@ -782,7 +836,13 @@ fn build_store(
     // For each node, the nodes that link to it in place of a child of their own: the parent of a
     // dependency that closed a cycle, and the parent of a dependency an early dedupe resolved to it.
     let mut link_parents: Vec<Vec<store::node::Id>> = Vec::new();
-    let mut peer_marks: Vec<PeerMark> = Vec::new();
+    let mut peer_marker = PeerMarker {
+        dependencies,
+        contained: &contained,
+        peer_ctx: &peer_ctx,
+        queue: Vec::new(),
+        path: Vec::new(),
+    };
 
     // First pass: create full dependency tree with resolved peers
     'next_node: while let Some(entry) = node_queue.pop() {
@@ -840,28 +900,20 @@ fn build_store(
                 ..
             } = nodes_slice.split_mut();
 
-            node_nodes[entry.parent_id.get() as usize].push(cycle_node_id);
-            link_parents[cycle_node_id.get() as usize].push(entry.parent_id);
-
             // The ancestor's subtree is not finished, so the peers that pass through it later
-            // reach this chain through the link parent. The ones it has now are copied here.
-            for &peer in node_peers[cycle_node_id.get() as usize].slice() {
-                peer_marks.push(PeerMark {
-                    start: entry.parent_id,
-                    peer,
-                });
-            }
-            mark_transitive_peers(
-                &mut peer_marks,
-                node_pkg_ids,
-                node_parent_ids,
-                node_dependencies,
-                node_peers,
-                &link_parents,
+            // reach this chain as a link parent.
+            peer_marker.link(
+                entry.parent_id,
+                cycle_node_id,
+                node_nodes,
+                &mut link_parents,
+                &mut PeerColumns {
+                    pkg_ids: node_pkg_ids,
+                    parent_ids: node_parent_ids,
+                    dependencies: node_dependencies,
+                    peers: node_peers,
+                },
                 &first_named,
-                dependencies,
-                &contained,
-                &peer_ctx,
             )?;
             continue 'next_node;
         }
@@ -992,26 +1044,19 @@ fn build_store(
                     // ancestor chain marking each node with its leaking peers.
                     // DFS guarantees `dedupe_node`'s subtree is fully processed,
                     // so its `peers` is that set unless a cycle inside it adds
-                    // more later; propagate it here and record the link for then.
-                    node_nodes[entry.parent_id.get() as usize].push(dedupe_node_id);
-                    link_parents[dedupe_node_id.get() as usize].push(entry.parent_id);
-                    for &peer in node_peers[dedupe_node_id.get() as usize].slice() {
-                        peer_marks.push(PeerMark {
-                            start: entry.parent_id,
-                            peer,
-                        });
-                    }
-                    mark_transitive_peers(
-                        &mut peer_marks,
-                        node_pkg_ids,
-                        node_parent_ids,
-                        node_dependencies,
-                        node_peers,
-                        &link_parents,
+                    // more later, which then arrive here as a link parent.
+                    peer_marker.link(
+                        entry.parent_id,
+                        dedupe_node_id,
+                        node_nodes,
+                        &mut link_parents,
+                        &mut PeerColumns {
+                            pkg_ids: node_pkg_ids,
+                            parent_ids: node_parent_ids,
+                            dependencies: node_dependencies,
+                            peers: node_peers,
+                        },
                         &first_named,
-                        dependencies,
-                        &contained,
-                        &peer_ctx,
                     )?;
                     continue 'next_node;
                 }
@@ -1291,24 +1336,22 @@ fn build_store(
                 };
                 if node_peers[visited_parent_id.get() as usize].insert(peer, &peer_ctx)? {
                     for &link_parent in &link_parents[visited_parent_id.get() as usize] {
-                        peer_marks.push(PeerMark {
+                        peer_marker.queue.push(PeerMark {
                             start: link_parent,
                             peer,
                         });
                     }
                 }
             }
-            mark_transitive_peers(
-                &mut peer_marks,
-                node_pkg_ids,
-                node_parent_ids,
-                node_dependencies,
-                node_peers,
+            peer_marker.mark(
+                &mut PeerColumns {
+                    pkg_ids: node_pkg_ids,
+                    parent_ids: node_parent_ids,
+                    dependencies: node_dependencies,
+                    peers: node_peers,
+                },
                 &link_parents,
                 &first_named,
-                dependencies,
-                &contained,
-                &peer_ctx,
             )?;
 
             if !visited_parent_node_ids.is_empty() {

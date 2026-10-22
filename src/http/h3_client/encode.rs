@@ -46,6 +46,10 @@ pub(crate) fn write_request(
     );
 
     let request = client.build_request(body_len);
+    // lsxpack holds a field length in 16 bits: a longer method would go out as its first bytes.
+    if request.method.len() > usize::from(u16::MAX) {
+        return Err(crate::Error::HTTP3HeaderEncodingError);
+    }
     if verbose != HTTPVerboseLevel::None {
         let body = req_body.slice();
         crate::print_request(

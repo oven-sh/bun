@@ -52,7 +52,7 @@ use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::http_request_body::StreamFraming;
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
-use bun_http_types::Method::Method;
+use bun_http_types::Method::{Method, OwnedMethod};
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -562,7 +562,30 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
+    // The init's method, else the Request's, else the `{ url, method }` input's, else GET.
+    let extract_method = move || -> JsResult<OwnedMethod> {
+        if let Some(options) = options_object {
+            if let Some(method) = method_jsc::request_method_from_init(global_this, options)? {
+                return Ok(method);
+            }
+        }
+
+        if let Some(req) = request_mut!() {
+            return Ok(req.method.clone());
+        }
+
+        if let Some(request_init) = request_init_object {
+            if let Some(method) = method_jsc::request_method_from_init(global_this, request_init)? {
+                return Ok(method);
+            }
+        }
+
+        Ok(Method::GET.into())
+    };
+
     if url_str.starts_with_ascii(b"data:") {
+        // A data: URL answers every method, and still none that is not a method.
+        extract_method()?;
         return Ok(data_url_response(url_str, global_this));
     }
 
@@ -590,26 +613,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // **Start with the harmless ones.**
 
     // "method"
-    let mut method = 'extract_method: {
-        if let Some(options) = options_object {
-            if let Some(method_) = options.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                break 'extract_method method_jsc::from_js(global_this, method_)?;
-            }
-        }
-
-        if let Some(req) = request_mut!() {
-            break 'extract_method Some(req.method);
-        }
-
-        if let Some(req) = request_init_object {
-            if let Some(method_) = req.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                break 'extract_method method_jsc::from_js(global_this, method_)?;
-            }
-        }
-
-        break 'extract_method None;
-    }
-    .unwrap_or(Method::GET);
+    let mut method = extract_method()?;
 
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
@@ -1474,8 +1478,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally
     // rejects TRACE (RFC 9110 §9.3.8 "MUST NOT send content") since it does
-    // not enforce forbidden methods. has_request_body() encodes exactly that.
-    if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
+    // not forbid TRACE itself. has_request_body() encodes that for a verb of the table.
+    if !ALLOW_GET_BODY
+        && method.known().is_some_and(|verb| !verb.has_request_body())
+        && body.has_body()
+        && !upgraded_connection
+    {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!("fetch() request with GET/HEAD method cannot have body."),
@@ -1766,7 +1774,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // we cannot direct stream to s3 we need to use multi part upload
             // `defer body.ReadableStream.deinit()` → Drop on `body` scope exit.
 
-            if method != Method::PUT && method != Method::POST {
+            if !matches!(method.known(), Some(Method::PUT | Method::POST)) {
                 return Ok(JSPromise::rejected_promise(
                     global_this,
                     global_this.create_error_instance(format_args!(
@@ -1835,14 +1843,24 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
         }
-        if method == Method::POST {
-            method = Method::PUT;
-        }
+        let sign_method = match method.known() {
+            Some(Method::POST) => Method::PUT,
+            Some(verb) => verb,
+            // S3 signs verbs of the table only.
+            None => {
+                return Ok(JSPromise::rejected_promise(
+                    global_this,
+                    s3::get_js_sign_error(bun_s3_signing::Error::InvalidMethod, global_this),
+                )
+                .to_js());
+            }
+        };
+        method = sign_method.into();
 
         let mut result = match credentials_with_options.credentials.sign_request::<false>(
             &SignOptions {
                 path: url.s3_path(),
-                method,
+                method: sign_method,
                 ..Default::default()
             },
             None,
@@ -1959,10 +1977,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     } else {
         None
     };
+    let mut request_headers = headers.take().unwrap_or_default();
     let fetch_options = FetchOptions {
-        method,
+        // A method outside the table goes to the HTTP thread in the header buffer.
+        method: method.to_ref(&mut request_headers),
         url: url_static,
-        headers: headers.take().unwrap_or_default(),
+        headers: request_headers,
         body,
         stream_framing,
         disable_keepalive,
@@ -2041,7 +2061,6 @@ impl<'a> S3StreamWrapper<'a> {
             s3::S3UploadResult::Success => {
                 let response = Box::new(Response::init(
                     response::Init {
-                        method: Method::PUT,
                         status_code: 200,
                         ..Default::default()
                     },
@@ -2059,7 +2078,6 @@ impl<'a> S3StreamWrapper<'a> {
             s3::S3UploadResult::Failure(err) => {
                 let response = Box::new(Response::init(
                     response::Init {
-                        method: Method::PUT,
                         status_code: 500,
                         status_text: BunString::create_atom_if_possible(err.code),
                         ..Default::default()

@@ -359,11 +359,13 @@ describe("hop-by-hop headers", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HEAD / DELETE / PUT / PATCH / OPTIONS through every proxy combination.
+// HEAD / DELETE / PUT / PATCH / OPTIONS through every proxy combination, and
+// two methods that fetch sends as written: BREW and PatCh.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("method matrix", () => {
-  const METHODS = ["HEAD", "DELETE", "PUT", "PATCH", "OPTIONS"] as const;
+  const METHODS = ["HEAD", "DELETE", "PUT", "PATCH", "OPTIONS", "BREW", "PatCh"] as const;
+  const WITH_BODY: readonly string[] = ["PUT", "PATCH", "PatCh"];
   for (const { proxyTls, originTls } of cartesian({ proxyTls: [false, true], originTls: [false, true] } as const)) {
     for (const method of METHODS) {
       test.concurrent(
@@ -371,10 +373,11 @@ describe("method matrix", () => {
         async () => {
           await using origin = await createAdversarialOrigin({ tls: originTls, body: "m" });
           const proxy = sharedProxy(proxyTls);
+          const body = WITH_BODY.includes(method) ? "body" : undefined;
 
           const res = await fetch(origin.url, {
             method,
-            body: method === "PUT" || method === "PATCH" ? "body" : undefined,
+            body,
             proxy: proxy.url,
             keepalive: false,
             tls: laxTls,
@@ -384,7 +387,10 @@ describe("method matrix", () => {
           if (method !== "HEAD") {
             expect(await res.text()).toBe("m");
           }
-          expect(origin.requests[0].method).toBe(method);
+          expect({ method: origin.requests[0].method, body: origin.requests[0].body.toString() }).toEqual({
+            method,
+            body: body ?? "",
+          });
         },
       );
     }

@@ -21,6 +21,8 @@ use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, strings};
 use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
+use bun_http_jsc::method_jsc;
+use bun_http_types::Method::OwnedMethod;
 use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
@@ -2084,7 +2086,7 @@ where
         }
 
         let mut headers: Option<HeadersRef> = None;
-        let mut method = Method::GET;
+        let mut method = OwnedMethod::from(Method::GET);
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
         let mut args = jsc::ArgumentsSlice::init(ctx.bun_vm(), arguments);
 
@@ -2124,9 +2126,14 @@ where
 
             if arguments.len() >= 2 && arguments[1].is_object() {
                 let opts = arguments[1];
-                if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::Method)? {
-                    let slice_ = method_.to_utf8(ctx)?;
-                    method = Method::which(slice_.slice()).unwrap_or(method);
+                match method_jsc::request_method_from_init(ctx, opts) {
+                    Ok(Some(method_)) => method = method_,
+                    Ok(None) => {}
+                    Err(err) => {
+                        return Ok(
+                            JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js()
+                        );
+                    }
                 }
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {

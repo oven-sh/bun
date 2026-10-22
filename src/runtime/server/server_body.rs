@@ -26,8 +26,8 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue,
-    JsCellRefExt as _, JsError, JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
+    self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
+    JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -1413,6 +1413,13 @@ fn set_request_timeout<'a>(
 ) -> bindgen::Result<'a, JSValue> {
     let (request, seconds) = (request.to_js(), seconds.to_js());
 
+    if request.is_undefined_or_null() {
+        return Err(heap.error_with_code(
+            jsc::ErrorCode::MISSING_ARGS,
+            format_args!("Not enough arguments to 'timeout'. Expected 2."),
+        ));
+    }
+
     if address.is_unix() {
         return Ok(JSValue::NULL);
     }
@@ -1422,12 +1429,10 @@ fn set_request_timeout<'a>(
     }
     let value = seconds.to_u32();
 
-    if let Some(request) = <Request as bun_jsc::JsClass>::from_js(request) {
-        // SAFETY: from_js returns a live *mut Request; shared access only.
-        let _ = unsafe { (*request).request_context.set_timeout(value) };
-    } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(request) {
-        // SAFETY: from_js returns a live *mut NodeHTTPResponse
-        unsafe { (*response).set_timeout((value % 255) as u8) };
+    if let Some(request) = request.as_class_ref::<Request>() {
+        let _ = request.request_context.set_timeout(value);
+    } else if let Some(response) = request.as_class_ref::<NodeHTTPResponse>() {
+        response.set_timeout((value % 255) as u8);
     } else {
         return Err(heap.invalid_arguments(format_args!("timeout() requires a Request object")));
     }
@@ -1484,7 +1489,7 @@ where
         let global = cx.global();
         let topic = topic.to_js();
 
-        if topic.is_empty_or_undefined_or_null() {
+        if topic.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "subscriberCount requires a topic name as a string"
             )));
@@ -1549,10 +1554,6 @@ where
             cx.global()
                 .throw_invalid_arguments(format_args!("Expected Request object"))
         })?;
-        self.request_ip(request)
-    }
-
-    pub(crate) fn request_ip(&self, request: &Request) -> JsResult<JSValue> {
         if self.config.get().address.is_unix() {
             return Ok(JSValue::NULL);
         }
@@ -1941,20 +1942,17 @@ where
         Ok(true)
     }
 
-    pub(crate) fn do_reload(
+    pub(crate) fn do_reload<'a>(
         &self,
-        cx: &mut JsScope<'_>,
-        options: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
-        let arguments = [options.to_js()];
-
-        // SAFETY: bun_vm() returns the live per-thread VM singleton.
-        let mut args_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &arguments);
 
         let mut new_config = ServerConfig::from_js(
             global,
-            &mut args_slice,
+            options.to_js(),
             server_config::FromJSOptions {
                 allow_bake_config: false,
                 is_fetch_required: true,
@@ -1970,7 +1968,7 @@ where
         let _handler_pins = super::protect_handler_shadows(&new_config);
         self.on_reload_from_zig(&mut new_config, global);
 
-        Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
+        Ok(this_value)
     }
 
     pub(crate) fn do_fetch(
@@ -2071,13 +2069,10 @@ where
             ))
         } else if let Some(request_) = input
             .is_object()
-            .then(|| <Request as bun_jsc::JsClass>::from_js(input))
+            .then(|| input.as_class_ref::<Request>())
             .flatten()
         {
-            // SAFETY: JsClass::from_js returns a live *mut Request.
-            // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
-            // sentinel and calls `clone_into(.., preserve_url=false)`.
-            unsafe { (*request_).clone(&global.js_thread_of_caller_no_frame())? }
+            request_.clone(&global.js_thread_of_caller_no_frame())?
         } else {
             let fetch_error = Fetch::fetch_type_error_string(input);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(global, format_args!("{}", fetch_error));
@@ -2089,7 +2084,7 @@ where
         let on_request = self.config.get().on_request;
         // SAFETY: `request` was just allocated via `heap::alloc`; its ref
         // transfers to the JS wrapper inside `to_js`.
-        let request_value = unsafe { (*request).to_js(&global_this) };
+        let request_value = unsafe { Request::to_js(request, &global_this) };
         let response_value =
             match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
                 Ok(v) => v,
@@ -2143,10 +2138,10 @@ where
 
     pub(crate) fn do_stop(
         &self,
-        _: &mut JsScope<'_>,
+        cx: &mut JsScope<'_>,
         close_active_connections: JsLocal<'_>,
     ) -> JSValue {
-        let rc = self.get_all_closed_promise(&self.global());
+        let rc = self.get_all_closed_promise(cx.global());
 
         let close_active_connections = close_active_connections.to_js();
         let abrupt = close_active_connections.is_boolean() && close_active_connections.to_boolean();
@@ -2200,7 +2195,7 @@ where
     }
 
     pub(crate) fn get_pending_requests(&self) -> i32 {
-        (self.pending_requests.get() as u32 & 0x7FFF_FFFF) as i32
+        (self.pending_requests.get() & 0x7FFF_FFFF) as i32
     }
 
     pub(crate) fn get_pending_web_sockets(&self) -> i32 {
@@ -2698,8 +2693,8 @@ where
         // handle takes the raw pointer, not a reborrow of `request_object`:
         // writes through `request_object` below would otherwise invalidate it.
         ctx.set_request_weakref(request_object_ptr);
-        // SAFETY: freshly leaked; shared view — everything below (headers/url
-        // population, `to_js`) takes `&Request`.
+        // SAFETY: freshly leaked; shared view — the headers/url population
+        // below takes `&Request`.
         let request_object: &Request = unsafe { &*request_object_ptr };
 
         // The lazy `getRequest()` path that backs Request.url / .headers
@@ -2793,12 +2788,17 @@ where
 
         Some(PreparedRequestFor {
             js_request: match create_js_request {
-                CreateJsRequest::Yes => request_object.to_js(&server.global()),
-                CreateJsRequest::Bake => match request_object.to_js_for_bake(&server.global()) {
-                    Ok(v) => v,
-                    Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                    Err(_) => return None,
+                // SAFETY: from `Request::new` above; the wrapper adopts its ref.
+                CreateJsRequest::Yes => unsafe {
+                    Request::to_js(request_object_ptr, &server.global())
                 },
+                CreateJsRequest::Bake => {
+                    match Request::to_js_for_bake(request_object_ptr, &server.global()) {
+                        Ok(v) => v,
+                        Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+                        Err(_) => return None,
+                    }
+                }
                 CreateJsRequest::No => JSValue::ZERO,
             },
             request_object: request_object_ptr,
@@ -2976,8 +2976,11 @@ where
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
-        // SAFETY: `request_object_ptr` is live; no other borrow is outstanding.
-        let args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
+        // SAFETY: from `Request::new` above; the wrapper adopts its ref.
+        let args = [
+            unsafe { Request::to_js(request_object_ptr, &global) },
+            server_js,
+        ];
         args[0].ensure_still_alive();
 
         let response_value = match this.config.get().on_request.call(&global, server_js, &args) {
@@ -3336,39 +3339,17 @@ fn server_set_app_flags(
         )));
     }
 
-    if let Some(this) = server.as_class_ref::<HTTPServer>() {
-        this.set_flags(
-            require_host_header,
-            use_strict_method_validation,
-            lenient_http_flags,
-            http_allow_half_open,
-        );
-    } else if let Some(this) = server.as_class_ref::<HTTPSServer>() {
-        this.set_flags(
-            require_host_header,
-            use_strict_method_validation,
-            lenient_http_flags,
-            http_allow_half_open,
-        );
-    } else if let Some(this) = server.as_class_ref::<DebugHTTPServer>() {
-        this.set_flags(
-            require_host_header,
-            use_strict_method_validation,
-            lenient_http_flags,
-            http_allow_half_open,
-        );
-    } else if let Some(this) = server.as_class_ref::<DebugHTTPSServer>() {
-        this.set_flags(
-            require_host_header,
-            use_strict_method_validation,
-            lenient_http_flags,
-            http_allow_half_open,
-        );
-    } else {
+    let Some(server) = super::AnyServer::from_js(server) else {
         return Err(global.throw(format_args!(
             "Failed to set timeout: The 'this' value is not a Server."
         )));
-    }
+    };
+    server.set_flags(
+        require_host_header,
+        use_strict_method_validation,
+        lenient_http_flags,
+        http_allow_half_open,
+    );
     Ok(JSValue::UNDEFINED)
 }
 
@@ -3377,25 +3358,12 @@ fn server_set_max_http_header_size(
     server: JSValue,
     max_header_size: u64,
 ) -> JsResult<JSValue> {
-    if !server.is_object() {
+    let Some(server) = super::AnyServer::from_js(server) else {
         return Err(global.throw(format_args!(
             "Failed to set maxHeaderSize: The 'this' value is not a Server."
         )));
-    }
-
-    if let Some(this) = server.as_class_ref::<HTTPServer>() {
-        this.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_class_ref::<HTTPSServer>() {
-        this.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_class_ref::<DebugHTTPServer>() {
-        this.set_max_http_header_size(max_header_size);
-    } else if let Some(this) = server.as_class_ref::<DebugHTTPSServer>() {
-        this.set_max_http_header_size(max_header_size);
-    } else {
-        return Err(global.throw(format_args!(
-            "Failed to set maxHeaderSize: The 'this' value is not a Server."
-        )));
-    }
+    };
+    server.set_max_http_header_size(max_header_size);
     Ok(JSValue::UNDEFINED)
 }
 
@@ -3404,23 +3372,13 @@ fn server_set_max_headers_count(
     server: JSValue,
     max_headers_count: u32,
 ) -> JsResult<JSValue> {
-    if server.is_object() {
-        macro_rules! handle {
-            ($T:ty) => {
-                if let Some(this) = server.as_class_ref::<$T>() {
-                    this.set_max_headers_count(max_headers_count);
-                    return Ok(JSValue::UNDEFINED);
-                }
-            };
-        }
-        handle!(HTTPServer);
-        handle!(HTTPSServer);
-        handle!(DebugHTTPServer);
-        handle!(DebugHTTPSServer);
-    }
-    Err(global.throw(format_args!(
-        "Failed to set maxHeadersCount: The 'this' value is not a Server."
-    )))
+    let Some(server) = super::AnyServer::from_js(server) else {
+        return Err(global.throw(format_args!(
+            "Failed to set maxHeadersCount: The 'this' value is not a Server."
+        )));
+    };
+    server.set_max_headers_count(max_headers_count);
+    Ok(JSValue::UNDEFINED)
 }
 
 // `host_fn.wrap{3,4}` C-ABI shims: each forwards through `to_js_host_call`

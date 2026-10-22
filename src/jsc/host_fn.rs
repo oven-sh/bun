@@ -227,8 +227,6 @@ pub fn host_fn_result<R: IntoHostFnReturn>(
 }
 
 // ──────────────────────── safe codegen-thunk entry points ────────────────────────
-//
-// A thunk's params are `&JSGlobalObject` / `&CallFrame`: ABI-identical to the pointers C++ passes, which are never null.
 
 /// `fn(&JSGlobalObject, &CallFrame) -> R`.
 #[track_caller]

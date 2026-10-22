@@ -3,7 +3,7 @@
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
-use crate::generated_bindgen::js_bundler::js_BuildArtifact;
+use crate::generated_bindgen::js_bundler::js_BuildArtifact as js;
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
 use bun_ast::Target;
@@ -2102,8 +2102,8 @@ impl BuildArtifact {
             &cx.js_thread(),
             this_value.to_js(),
             chunk_size.to_js(),
-            js_BuildArtifact::stream_get_cached,
-            js_BuildArtifact::stream_set_cached,
+            js::stream_get_cached,
+            js::stream_set_cached,
         )
     }
 
@@ -2246,7 +2246,7 @@ impl BuildArtifact {
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>sourcemap<r>: "),
                 )?;
 
-                let sourcemap_value = js_BuildArtifact::sourcemap_get_cached(this_value);
+                let sourcemap_value = js::sourcemap_get_cached(this_value);
                 if let Some((sm_value, sm_ptr)) =
                     sourcemap_value.and_then(|v| v.as_::<BuildArtifact>().map(|p| (v, p)))
                 {

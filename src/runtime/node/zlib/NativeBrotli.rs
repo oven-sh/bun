@@ -65,7 +65,7 @@ mod _impl {
     use bun_jsc::{ErrorCode, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -161,7 +161,7 @@ mod _impl {
             let this_value = this_value.to_js();
             // Racing an in-flight async write would alias `&mut Context`
             // across threads; a closed `Context` cannot be re-initialized.
-            CompressionStream::<Self>::throw_unless_idle(self, global_this)?;
+            self.throw_unless_idle(global_this)?;
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
@@ -244,7 +244,7 @@ mod _impl {
 
             let mut err = self.stream.with_mut(|s| s.init(dictionary));
             if err.is_error() {
-                CompressionStream::<Self>::emit_error(self, global_this, this_value, err);
+                self.emit_error(global_this, this_value, err);
                 return Ok(false);
             }
 
@@ -682,7 +682,7 @@ mod _impl {
     }
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs).
+    /// (see `CompressionStreamImpl::write` in node_zlib_binding.rs).
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}

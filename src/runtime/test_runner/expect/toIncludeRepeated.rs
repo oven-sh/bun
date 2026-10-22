@@ -21,7 +21,6 @@ impl Expect {
         this.increment_expect_call_counter();
 
         let substring = substring.to_js();
-        substring.ensure_still_alive();
 
         if !substring.is_string() {
             return Err(global.throw(format_args!(
@@ -30,7 +29,6 @@ impl Expect {
         }
 
         let count = count.to_js();
-        count.ensure_still_alive();
 
         if !count.is_any_int() {
             return Err(global.throw(format_args!(

@@ -9,6 +9,7 @@ use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
 
+use crate::generated_bindgen::server::js_ServerWebSocket as js;
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSType, JSValue, JsError,
@@ -24,7 +25,7 @@ use crate::generated_bindgen::server::BinaryType;
 
 // Stored inline in its JS wrapper, which `this_value` keeps alive while uWS has the address as the socket's user data.
 //
-// R-2: every uws/JS callback into this socket can re-enter
+// Every uws/JS callback into this socket can re-enter
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` of the SAME socket. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior
@@ -128,8 +129,6 @@ impl Flags {
         }
     }
 }
-
-use crate::generated_bindgen::server::js_ServerWebSocket as js;
 
 /// RFC 6455 §5.5: control frame payloads are at most 125 bytes.
 const MAX_CONTROL_FRAME_PAYLOAD: usize = 125;
@@ -454,7 +453,9 @@ impl ServerWebSocket {
     fn publish_message(
         &self,
         global_this: &JSGlobalObject,
-        [topic_value, message_value, compress_value]: [JSValue; 3],
+        topic_value: JSValue,
+        message_value: JSValue,
+        compress_value: JSValue,
         fn_name: &'static str,
         accept: Accept,
     ) -> JsResult<JSValue> {
@@ -954,8 +955,14 @@ impl ServerWebSocket {
         data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let args = [topic.to_js(), data.to_js(), compress.to_js()];
-        self.publish_message(cx.global(), args, "publish", Accept::Any)
+        self.publish_message(
+            cx.global(),
+            topic.to_js(),
+            data.to_js(),
+            compress.to_js(),
+            "publish",
+            Accept::Any,
+        )
     }
 
     pub(crate) fn publish_text(
@@ -965,8 +972,14 @@ impl ServerWebSocket {
         data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let args = [topic.to_js(), data.to_js(), compress.to_js()];
-        self.publish_message(cx.global(), args, "publishText", Accept::Text)
+        self.publish_message(
+            cx.global(),
+            topic.to_js(),
+            data.to_js(),
+            compress.to_js(),
+            "publishText",
+            Accept::Text,
+        )
     }
 
     pub(crate) fn publish_binary(
@@ -976,8 +989,14 @@ impl ServerWebSocket {
         data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let args = [topic.to_js(), data.to_js(), compress.to_js()];
-        self.publish_message(cx.global(), args, "publishBinary", Accept::Binary)
+        self.publish_message(
+            cx.global(),
+            topic.to_js(),
+            data.to_js(),
+            compress.to_js(),
+            "publishBinary",
+            Accept::Binary,
+        )
     }
 
     pub(crate) fn cork(

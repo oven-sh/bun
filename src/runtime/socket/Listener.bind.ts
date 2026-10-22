@@ -6,16 +6,15 @@ export default b.module({ rustPath: "crate::socket::listener" });
 /** What `Bun.listen()` returns. */
 export const Listener = b.class({
   rustPath: "crate::socket::Listener",
-  configurable: false,
   /** The `JSSocketHandlers` cell shared with every socket this listener accepted. */
   internalFields: ["handlers"],
   proto: {
-    data: { getter: b.any, capability: "heap", setter: { capability: "js" } },
+    data: { getter: b.any, setter: { capability: "js" }, capability: "heap" },
     fd: { getter: b.any, capability: "heap" },
     getsockname: { args: { out: b.any }, capability: "js", throws: true },
     hostname: { getter: b.string.utf8.optional, cache: true },
     port: { getter: b.u16.optional },
-    ref: { passThis: true, capability: "js", rustName: "ref_" },
+    ref: { capability: "js", passThis: true, rustName: "ref_" },
     reload: { args: { options: b.any }, capability: "js", throws: true },
     stop: { args: { closeActiveConnections: b.any }, capability: "js" },
     unix: { getter: b.string.utf8.optional, cache: true },

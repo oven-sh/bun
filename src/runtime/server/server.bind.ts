@@ -9,7 +9,6 @@ function server(name: string) {
     refCounted: true,
     finalize: true,
     memoryCost: true,
-    configurable: false,
     /** GC roots for the handlers (the struct keeps raw copies for the request path) and for the C++ route list. */
     internalFields: [
       "routeList",
@@ -55,9 +54,10 @@ function server(name: string) {
       ref: { returns: b.self, passThis: true, rustName: "do_ref" },
       reload: {
         args: { options: b.any },
-        returns: b.any,
+        returns: b.self,
         capability: "js",
         throws: true,
+        passThis: true,
         length: 2,
         rustName: "do_reload",
       },
@@ -136,7 +136,6 @@ const topic = { args: { topic: b.any }, returns: b.bool, capability: "js", throw
 export const ServerWebSocket = b.class({
   rustPath: "crate::server::ServerWebSocket",
   memoryCost: true,
-  configurable: false,
   construct: { capability: "heap", throws: true },
   /** `server` keeps the handlers the struct points at alive. */
   internalFields: ["data", "server"],
@@ -151,7 +150,7 @@ export const ServerWebSocket = b.class({
       throws: true,
       passThis: true,
     },
-    data: { internalField: "data", setter: true },
+    data: { setter: true, internalField: "data" },
     getBufferedAmount: { returns: b.usize },
     isPaused: { getter: b.bool },
     isSubscribed: topic,

@@ -1,9 +1,9 @@
 //! Proc-macros for `bun_jsc`.
 //!
-//! These generate the JSC host-function glue. Rust
-//! cannot accept a macro in `extern "<abi>"` position, so the JSC calling
-//! convention (`"sysv64"` on Windows-x64, `"C"` elsewhere) is encoded by
-//! emitting two `#[cfg]`-gated shims from a proc-macro instead.
+//! These generate the JSC host-function glue. Rust cannot accept a macro in
+//! `extern "<abi>"` position, so the JSC calling convention (`"sysv64"` on
+//! Windows-x64, `"C"` elsewhere) is encoded by emitting two `#[cfg]`-gated
+//! shims from a proc-macro instead.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -118,7 +118,7 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> TokenStream2 {
 
 // ──────────────────────────────────────────────────────────────────────────
 // #[bun_jsc::host_call] — bare ABI rewrite for non-JSHostFn signatures
-// (e.g. `estimatedSize: extern fn(*mut Self) -> usize`).
+// (e.g. a static getter, `fn(*mut JSGlobalObject, JSValue, *const c_void) -> JSValue`).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[proc_macro_attribute]

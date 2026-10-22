@@ -1,8 +1,8 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, StringOrJsBytes};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsResult, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsClass as _, JsResult, StringJsc};
 
 use crate::generated_bindgen::crypto::{EncodedUUID, UUIDEncoding};
 use crate::node::Encoding;
@@ -275,5 +275,5 @@ pub(crate) fn random_uuid_v5<'a>(
 extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::mark_binding!();
 
-    Crypto.into_js_value(global)
+    Crypto.to_js(global)
 }

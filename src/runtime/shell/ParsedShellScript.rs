@@ -56,10 +56,7 @@ impl ParsedShellScript {
     }
 
     // Returns a tuple; callers destructure it.
-    pub(crate) fn take(
-        &self,
-        _global: &JSGlobalObject,
-    ) -> (Box<ShellArgs>, bool, Option<BunString>, Option<EnvMap>) {
+    pub(crate) fn take(&self) -> (Box<ShellArgs>, bool, Option<BunString>, Option<EnvMap>) {
         let args = self.args.replace(None).expect("args already taken");
         let quiet = self.quiet.get();
         let cwd = self.cwd.replace(None);

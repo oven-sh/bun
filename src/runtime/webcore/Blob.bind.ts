@@ -6,21 +6,20 @@ const unlink = { ...method, args: { options: b.any }, rustName: "do_unlink", len
 
 export const Blob = b.class({
   rustPath: "bun_jsc::webcore_types::Blob",
-  rustTraits: ["crate::webcore::blob::BlobExt"],
   refCounted: true,
-  overridesToJS: true,
   final: false,
+  overridesToJS: true,
+  rustTraits: ["crate::webcore::blob::BlobExt"],
   estimatedSize: true,
-  configurable: false,
-  internalFields: ["stream"],
   construct: { args: { parts: b.any, options: b.any }, ...js, length: 0 },
+  internalFields: ["stream"],
   proto: {
     arrayBuffer: { ...method, rustName: "get_array_buffer" },
     bytes: { ...method, rustName: "get_bytes" },
     delete: unlink,
     exists: { ...method, rustName: "get_exists" },
     formData: { ...method, rustName: "get_form_data" },
-    // `new Bun.Image(this, options)`
+    /** `new Bun.Image(this, options)` */
     image: { ...method, args: { options: b.any }, passThis: true, rustName: "do_image", length: 0 },
     json: { ...method, rustName: "get_json" },
     lastModified: { getter: b.f64 },

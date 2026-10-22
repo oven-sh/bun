@@ -19,7 +19,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
-use crate::generated_bindgen::listener::{ListenerContext, ServerHandle, js_Listener};
+use crate::generated_bindgen::listener::{ListenerContext, ServerHandle, js_Listener as js};
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
@@ -187,10 +187,10 @@ impl Listener {
         if matches!(self.listener.get(), ListenerType::None)
             && self.handlers.active_connections.get() == 0
         {
-            return Err(global.throw(format_args!("Expected 1 argument")));
+            return Err(global.throw(format_args!("Listener is closed")));
         }
 
-        if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
+        if !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
         }
 
@@ -227,7 +227,7 @@ impl Listener {
         // `Listener` clones out of it.
         //
         // The handlers cell has no JS wrapper holding it yet — root it until
-        // `js_Listener::handlers_set_cached` below.
+        // `js::handlers_set_cached` below.
         let _cell_root = socket_config.handlers.root_cell(cx.global());
 
         let port = socket_config.port;
@@ -370,7 +370,7 @@ impl Listener {
                 }
                 // The listener holds the handlers cell in a visited slot; every
                 // accepted socket shares the same cell.
-                js_Listener::handlers_set_cached(js_value, cx.global(), this_ref.handlers.cell());
+                js::handlers_set_cached(js_value, cx.global(), this_ref.handlers.cell());
                 this_ref
                     .handlers
                     .set_listener(Some(this_value.payload_ptr()));
@@ -607,7 +607,7 @@ impl Listener {
 
         // The listener holds the handlers cell in a visited slot; every
         // accepted socket shares the same cell.
-        js_Listener::handlers_set_cached(js_value, cx.global(), this_ref.handlers.cell());
+        js::handlers_set_cached(js_value, cx.global(), this_ref.handlers.cell());
         this_ref
             .handlers
             .set_listener(Some(this_value.payload_ptr()));
@@ -808,45 +808,45 @@ impl Listener {
     }
 
     pub(crate) fn dispose(&self, _: &mut JsScope<'_>) {
-        Self::do_stop(self, true);
+        self.do_stop(true);
     }
 
     pub(crate) fn stop(&self, _: &mut JsScope<'_>, close_active_connections: JsLocal<'_>) {
         log!("close");
-        Self::do_stop(self, close_active_connections.to_js() == JSValue::TRUE);
+        self.do_stop(close_active_connections.to_js() == JSValue::TRUE);
     }
 
-    fn do_stop(this: &Self, force_close: bool) {
-        let connections = this.handlers.active_connections.get();
+    fn do_stop(&self, force_close: bool) {
+        let connections = self.handlers.active_connections.get();
         // Accepted sockets have no handle of their own: this one is how their context's stop
         // reaches them, so it stays until they are gone (`Handlers::mark_inactive`).
         if force_close || connections == 0 {
-            this.abort_handle.leave();
+            self.abort_handle.leave();
         }
-        if matches!(this.listener.get(), ListenerType::None) {
+        if matches!(self.listener.get(), ListenerType::None) {
             // Stopped gracefully earlier; what is still connected goes now.
             if force_close && connections != 0 {
-                this.group.with_mut(|g| g.close_all());
+                self.group.with_mut(|g| g.close_all());
             }
             return;
         }
-        let listener = this.listener.replace(ListenerType::None);
+        let listener = self.listener.replace(ListenerType::None);
 
         if matches!(listener, ListenerType::Uws(_)) {
-            Self::unlink_unix_socket_path(this);
+            self.unlink_unix_socket_path();
         }
 
         // The listener's poll_ref tracks the listening socket only; accepted
         // sockets each have their own (see `on_create`). Drop it now so a
         // closed server whose connections the caller unref'd lets the process
         // exit like Node does.
-        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if connections == 0 {
-            this.this_value.with_mut(|r| r.downgrade());
-            this.strong_data
+            self.this_value.with_mut(|r| r.downgrade());
+            self.strong_data
                 .with_mut(|s| s.clear_without_deallocation());
         } else if force_close {
-            this.group.with_mut(|g| g.close_all());
+            self.group.with_mut(|g| g.close_all());
         }
 
         match listener {
@@ -863,13 +863,13 @@ impl Listener {
             ListenerType::None => {}
         }
 
-        this.secure_ctx.set(None);
+        self.secure_ctx.set(None);
     }
 
     /// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
     /// Unlinking after close would race with another process creating a socket at the same path.
-    fn unlink_unix_socket_path(this: &Self) {
-        let UnixOrHost::Unix(path) = &this.connection else {
+    fn unlink_unix_socket_path(&self) {
+        let UnixOrHost::Unix(path) = &self.connection else {
             return;
         };
         // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
@@ -1405,7 +1405,7 @@ impl Drop for Listener {
         this.abort_handle.leave();
         match this.listener.replace(ListenerType::None) {
             ListenerType::Uws(socket) => {
-                Self::unlink_unix_socket_path(this);
+                this.unlink_unix_socket_path();
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(socket).close();
             }

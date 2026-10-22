@@ -196,12 +196,8 @@ pub(crate) trait BlobExt {
         set_cached: fn(JSValue, &JSGlobalObject, JSValue),
     ) -> JsResult<JSValue>;
     fn get_text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
-    fn get_text_clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn get_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
-    fn get_json_share(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
-    fn get_array_buffer_clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn get_array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
-    fn get_bytes_clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn get_bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_exists_sync(&self) -> JSValue;
@@ -1154,39 +1150,27 @@ impl BlobExt for Blob {
         Ok(stream)
     }
     fn get_text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.get_text_clone(&cx.js_thread())
-    }
-
-    fn get_text_clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone(); // hold a ref across the call
-        JSPromise::wrap(cx.global(), |_| self.to_string(cx, Lifetime::Clone))
+        let cx = cx.js_thread();
+        JSPromise::wrap(cx.global(), |_| self.to_string(&cx, Lifetime::Clone))
     }
 
     fn get_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.get_json_share(&cx.js_thread())
-    }
-
-    fn get_json_share(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
-        JSPromise::wrap(cx.global(), |_| self.to_json(cx, Lifetime::Share))
-    }
-
-    fn get_array_buffer_clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        let _store = self.store.get().clone();
-        JSPromise::wrap(cx.global(), |_| self.to_array_buffer(cx, Lifetime::Clone))
+        let cx = cx.js_thread();
+        JSPromise::wrap(cx.global(), |_| self.to_json(&cx, Lifetime::Share))
     }
 
     fn get_array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.get_array_buffer_clone(&cx.js_thread())
-    }
-
-    fn get_bytes_clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
-        JSPromise::wrap(cx.global(), |_| self.to_uint8_array(cx, Lifetime::Clone))
+        let cx = cx.js_thread();
+        JSPromise::wrap(cx.global(), |_| self.to_array_buffer(&cx, Lifetime::Clone))
     }
 
     fn get_bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.get_bytes_clone(&cx.js_thread())
+        let _store = self.store.get().clone();
+        let cx = cx.js_thread();
+        JSPromise::wrap(cx.global(), |_| self.to_uint8_array(&cx, Lifetime::Clone))
     }
 
     fn get_form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1258,7 +1242,7 @@ impl BlobExt for Blob {
                     // override the content type
                     set_content_type_from_js(global_this, self, content_type)?;
                 }
-            } else if !options_object.is_empty_or_undefined_or_null() {
+            } else if !options_object.is_null() {
                 return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
             }
         }
@@ -1763,9 +1747,6 @@ impl BlobExt for Blob {
         content_type: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let mut arguments_ = [start.to_js(), end.to_js(), content_type.to_js()];
-        // index the full fixed-3 array (args[2] is written below regardless of len).
-        let args = &mut arguments_[..];
 
         if self.size.get() == 0 {
             let ptr = Blob::new(Blob::init_empty(global_this));
@@ -1782,58 +1763,45 @@ impl BlobExt for Blob {
         // If the optional end parameter is not used, let relativeEnd be size.
         let mut relative_end: i64 = size_i64;
 
-        // Mutate the fixed-3 args array in place to shift the string arg into [2].
-        if args[0].is_string() {
-            args[2] = args[0];
-            args[1] = JSValue::ZERO;
-            args[0] = JSValue::ZERO;
-        } else if args[1].is_string() {
-            args[2] = args[1];
-            args[1] = JSValue::ZERO;
-        }
+        // A string in place of `start` or `end` is the content type.
+        let (start, end, content_type) = match (start.to_js(), end.to_js(), content_type.to_js()) {
+            (start, _, _) if start.is_string() => (JSValue::UNDEFINED, JSValue::UNDEFINED, start),
+            (start, end, _) if end.is_string() => (start, JSValue::UNDEFINED, end),
+            args => args,
+        };
 
-        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_[..3]);
-        if let Some(start_) = args_iter.next_eat() {
-            if start_.is_number() {
-                let start = start_.to_int64();
-                if start < 0 {
-                    relative_start = start.saturating_add(size_i64).max(0);
-                } else {
-                    relative_start = start.min(size_i64);
-                }
+        if start.is_number() {
+            let start = start.to_int64();
+            if start < 0 {
+                relative_start = start.saturating_add(size_i64).max(0);
+            } else {
+                relative_start = start.min(size_i64);
             }
         }
 
-        if let Some(end_) = args_iter.next_eat() {
-            if end_.is_number() {
-                let end = end_.to_int64();
-                if end < 0 {
-                    relative_end = end.saturating_add(size_i64).max(0);
-                } else {
-                    relative_end = end.min(size_i64);
-                }
+        if end.is_number() {
+            let end = end.to_int64();
+            if end < 0 {
+                relative_end = end.saturating_add(size_i64).max(0);
+            } else {
+                relative_end = end.min(size_i64);
             }
         }
 
-        let mut content_type = BlobContentType::default();
-        if let Some(content_type_) = args_iter.next_eat() {
-            'inner: {
-                if content_type_.is_string() {
-                    let content_type_view = content_type_.to_js_string_view(global_this)?;
-                    let slicer = content_type_view.to_utf8();
-                    let slice = slicer.slice();
-                    if !is_valid_blob_type(slice) {
-                        break 'inner;
-                    }
-                    content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
-                        Some(mime) => BlobContentType::from(mime),
-                        None => BlobContentType::from_lowercased(slice),
-                    };
-                }
+        let mut blob_content_type = BlobContentType::default();
+        if content_type.is_string() {
+            let content_type_view = content_type.to_js_string_view(global_this)?;
+            let slicer = content_type_view.to_utf8();
+            let slice = slicer.slice();
+            if is_valid_blob_type(slice) {
+                blob_content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
+                    Some(mime) => BlobContentType::from(mime),
+                    None => BlobContentType::from_lowercased(slice),
+                };
             }
         }
 
-        Ok(self.get_slice_from(global_this, relative_start, relative_end, content_type))
+        Ok(self.get_slice_from(global_this, relative_start, relative_end, blob_content_type))
     }
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {

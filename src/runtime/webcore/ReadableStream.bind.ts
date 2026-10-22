@@ -3,12 +3,12 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const method = { returns: b.any, capability: "js", throws: true } as const;
 
 const members = {
-  cancel: { rustName: "cancel_from_js", length: 1 },
+  cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
   drain: { ...method, rustName: "drain_from_js", length: 1 },
   isClosed: { getter: b.bool, rustName: "is_closed_from_js" },
   pull: { ...method, args: { view: b.any, flags: b.any }, passThis: true, rustName: "pull_from_js", length: 1 },
   start: { ...method, rustName: "start_from_js", length: 1 },
-  updateRef: { args: { enable: b.any }, rustName: "update_ref_from_js" },
+  updateRef: { args: { enable: b.bool.loose }, rustName: "set_ref" },
 } as const;
 
 /** Reads the whole stream. */
@@ -34,7 +34,7 @@ const bufferedSource = {
   updateRef: members.updateRef,
 } as const;
 
-const source = { refCounted: true, finalize: true, memoryCost: true, configurable: false } as const;
+const source = { refCounted: true, finalize: true, memoryCost: true } as const;
 
 /** `owner` roots the peer that produces into this source, `sinkOwner` the peer it pipes into. */
 const internalFields = ["pendingPromise", "closeAdapter", "owner", "sinkOwner"] as const;
@@ -57,8 +57,8 @@ export const FileInternalReadableStreamSource = b.class({
     drain: members.drain,
     isClosed: members.isClosed,
     pull: members.pull,
-    setFlowing: { args: { flag: b.any }, rustName: "set_flowing_from_js" },
-    setRawMode: { returns: b.any, args: { flag: b.any }, capability: "js", rustName: "set_raw_mode_from_js" },
+    setFlowing: { args: { flag: b.any }, capability: "js", rustName: "set_flowing_from_js" },
+    setRawMode: { args: { flag: b.any }, returns: b.any, capability: "js", rustName: "set_raw_mode_from_js" },
     start: members.start,
     updateRef: members.updateRef,
   },

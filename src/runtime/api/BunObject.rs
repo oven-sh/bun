@@ -1191,25 +1191,16 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
 fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // The server is the calling script's.
     let context = global_object.bun_vm().context_of_caller(callframe);
-    let arguments = callframe.arguments();
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = global_object.bun_vm().as_mut();
-    let mut config: crate::server::ServerConfig = 'brk: {
-        let mut args = ArgumentsSlice::init(vm, arguments);
-
-        let config = crate::server::ServerConfig::from_js(
-            global_object,
-            &mut args,
-            crate::server::server_config::FromJSOptions {
-                allow_bake_config: bun_core::FeatureFlags::bake(),
-                is_fetch_required: true,
-                previous_fetch: false,
-                previous_routes: false,
-            },
-        )?;
-
-        break 'brk config;
-    };
+    let mut config = crate::server::ServerConfig::from_js(
+        global_object,
+        callframe.argument(0),
+        crate::server::server_config::FromJSOptions {
+            allow_bake_config: bun_core::FeatureFlags::bake(),
+            is_fetch_required: true,
+            previous_fetch: false,
+            previous_routes: false,
+        },
+    )?;
 
     // `init()` below `mem::take`s `config` into a heap-boxed `NewServer`, so
     // past that point the raw-`JSValue` handler shadows have no GC root until
@@ -1224,7 +1215,6 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     let _handler_pins: [bun_jsc::js_value::Protected; 10] =
         crate::server::protect_handler_shadows(&config);
 
-    // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = global_object.bun_vm().as_mut();
 
     // NOTE (layering): `HotMap` is a tagged union over the four
@@ -1553,7 +1543,8 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     let vm = global_this.bun_vm();
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(
         &global_this.js_thread(vm.root_context()),
-        &[JSValue::UNDEFINED],
+        JSValue::UNDEFINED,
+        JSValue::UNDEFINED,
     ) {
         Ok(p) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,

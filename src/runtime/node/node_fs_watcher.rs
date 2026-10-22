@@ -759,8 +759,6 @@ impl FSWatcher {
         self.js_this.get_or_undefined()
     }
 
-    /// `FSWatcher.initJS`.
-    ///
     /// # Safety
     /// `this` must be the unique `heap::alloc` pointer produced by `init`;
     /// JS-thread only.

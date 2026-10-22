@@ -19,7 +19,6 @@ export const RouteKind = b.enumeration(["exact", "catch-all", "optional-catch-al
 
 export const MatchedRoute = b.class({
   rustPath: "crate::api::filesystem_router::MatchedRoute",
-  configurable: false,
   proto: {
     filePath: text,
     kind: { getter: RouteKind, cache: true },
@@ -43,7 +42,6 @@ export const RouterStyle = b.enumeration(["nextjs"]);
 
 export const FileSystemRouter = b.class({
   rustPath: "crate::api::filesystem_router::FileSystemRouter",
-  configurable: false,
   construct: {
     args: { options: FileSystemRouterOptions },
     expected: { options: "Expected object" },
@@ -61,7 +59,7 @@ export const FileSystemRouter = b.class({
       throws: true,
     },
     origin: { getter: b.string.utf8.nullable, cache: true },
-    reload: { returns: b.self, passThis: true, capability: "js", throws: true },
+    reload: { returns: b.self, capability: "js", throws: true, passThis: true },
     routes: { getter: b.record(b.string.utf8), cache: true },
     style: { getter: RouterStyle, cache: true },
   },
@@ -70,7 +68,6 @@ export const FileSystemRouter = b.class({
 /** `frameworkRouterInternals.FrameworkRouter` of `bun:internal-for-testing`. */
 export const FrameworkFileSystemRouter = b.class({
   rustPath: "crate::bake::router::JSFrameworkRouter",
-  configurable: false,
   construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
   proto: {
     match: { args: { path: b.string.loose.utf8 }, returns: b.any, capability: "js", throws: true },

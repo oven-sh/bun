@@ -10,17 +10,17 @@ mod _impl {
     use bun_ptr::RefPtr;
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
     use bun_zlib::NodeMode;
 
-    /// Placeholder WorkPoolTask callback — overwritten by CompressionStream::write
+    /// Placeholder WorkPoolTask callback — overwritten by CompressionStreamImpl::write
     /// before the task is ever scheduled.
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn unset_task_callback(_: *mut WorkPoolTask) {
-        unreachable!("WorkPoolTask scheduled before CompressionStream set its callback");
+        unreachable!("WorkPoolTask scheduled before write set its callback");
     }
 
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -79,7 +79,7 @@ mod _impl {
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by
-                // CompressionStream::write before scheduling; placeholder here.
+                // CompressionStreamImpl::write before scheduling; placeholder here.
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),
                     callback: unset_task_callback,
@@ -118,7 +118,7 @@ mod _impl {
             let this_value = this_value.to_js();
             // Racing an in-flight async write would alias `&mut Context`
             // across threads; a closed `Context` cannot be re-initialized.
-            CompressionStream::<Self>::throw_unless_idle(self, global)?;
+            self.throw_unless_idle(global)?;
 
             let init_params_array_value = init_params_array.to_js();
             let pledged_src_size_value = pledged_src_size.to_js();
@@ -154,7 +154,6 @@ mod _impl {
 
             let write_js_callback =
                 validators::validate_function(global, "processCallback", process_callback_value)?;
-            // js.writeCallbackSetCached — codegen'd cached-property setter on the C++ wrapper.
             js::write_callback_set_cached(
                 this_value,
                 global,
@@ -195,7 +194,7 @@ mod _impl {
                 .stream
                 .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
-                CompressionStream::<Self>::emit_error(self, global, this_value, err);
+                self.emit_error(global, this_value, err);
                 return Ok(false);
             }
 

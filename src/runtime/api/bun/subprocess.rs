@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
 
-use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
     VirtualMachine,
@@ -327,7 +327,7 @@ impl Subprocess<'_> {
 
             return Ok(JSValue::UNDEFINED);
         };
-        Ok(ResourceUsage { rusage }.into_js_value(global_object))
+        Ok(ResourceUsage { rusage }.to_js(global_object))
     }
 
     pub(crate) fn has_exited(&self) -> bool {
@@ -508,16 +508,16 @@ impl Subprocess<'_> {
         self.stderr.with_mut(|s| s.to_js(&cx.js_thread(), exited))
     }
 
-    pub(crate) fn get_stdin(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn get_stdin(&self, cx: &mut JsScope<'_>) -> JSValue {
         // When terminal is used, stdin goes through the terminal
         if self.terminal.get().is_some() {
-            return Ok(JSValue::NULL);
+            return JSValue::NULL;
         }
         self.observable_getters
             .set(self.observable_getters.get() | ObservableGetter::Stdin);
         // `Writable::to_js` takes only the parent and projects `stdin`
         // internally so no two `&mut` overlap here.
-        Ok(Writable::to_js(self, cx.global()))
+        Writable::to_js(self, cx.global())
     }
 
     pub(crate) fn get_stdout(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {

@@ -7,7 +7,6 @@ export const Terminal = b.class({
   rustPath: "crate::api::bun_terminal_body::Terminal",
   refCounted: true,
   finalize: true,
-  configurable: false,
   construct: { passStructure: true, args: { options: b.any }, capability: "js", throws: true, length: 0 },
   internalFields: ["data", "drain", "exit"],
   proto: {

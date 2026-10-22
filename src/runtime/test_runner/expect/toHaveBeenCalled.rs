@@ -12,7 +12,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         bun_jsc::mark_binding!();
-        let (this, calls, _value) =
+        let (this, calls, _) =
             self.mock_prologue(global, this_value.to_js(), "toHaveBeenCalled", "", super::mock::MockKind::Calls)?;
         // arg-check after prologue: counter bump + post_match still fire on bad-arity.
         if !expected.to_js().is_undefined() {

@@ -1627,8 +1627,6 @@ pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<
 /// Mixin trait with provided methods.
 /// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
 /// and optionally override `get_body_readable_stream`.
-///
-/// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`.
 pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// R-2 interior-mutability boundary: implementors project `&mut Value`
     /// from `&self` via `JsCell` (Response) or a raw `NonNull` deref (Request);

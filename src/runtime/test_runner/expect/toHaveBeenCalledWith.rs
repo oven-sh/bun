@@ -16,7 +16,7 @@ impl Expect {
         let global = cx.global();
         bun_jsc::mark_binding!();
         let expected = JsLocal::to_js_slice(expected);
-        let (this, calls, _value) = self.mock_prologue(
+        let (this, calls, _) = self.mock_prologue(
             global,
             this_value.to_js(),
             "toHaveBeenCalledWith",

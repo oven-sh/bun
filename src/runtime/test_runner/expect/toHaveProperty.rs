@@ -14,19 +14,14 @@ impl Expect {
         value: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
-        let this = scopeguard::guard(self, |this| this.post_match(global));
+        let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
 
         this.increment_expect_call_counter();
 
         let expected_property_path = key_path.to_js();
-        expected_property_path.ensure_still_alive();
         let expected_property: Option<JSValue> = value.first().map(|value| value.to_js());
-        if let Some(ev) = expected_property {
-            ev.ensure_still_alive();
-        }
 
         let value: JSValue = this.get_value(
             global,

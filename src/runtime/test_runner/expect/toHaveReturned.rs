@@ -31,7 +31,7 @@ fn to_have_returned_times_fn(
     mode: Mode,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-    let (this, returns_arr, _value) = this.mock_prologue(
+    let (this, returns_arr, _) = this.mock_prologue(
         global,
         this_value,
         mode.tag_name(),

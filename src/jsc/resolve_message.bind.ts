@@ -4,8 +4,8 @@ const js = { capability: "js", throws: true } as const;
 const cached = { getter: b.any, cache: true, ...js } as const;
 const text = { getter: b.string.utf8, cache: true } as const;
 
-// Error.prototype in the chain: userland checks `err instanceof Error`.
-const errorClass = { construct: "illegal", configurable: false, prototypeBase: "Error" } as const;
+/** Error.prototype in the chain: userland checks `err instanceof Error`. */
+const errorClass = { construct: "illegal", prototypeBase: "Error" } as const;
 const methods = {
   toJSON: { returns: b.any, ...js },
   toString: { returns: b.any, ...js },
@@ -28,7 +28,6 @@ export const ResolveMessage = b.class({
     specifier: text,
     stack: { ...text, writable: true },
     ...methods,
-    name: { value: "ResolveMessage" },
   },
 });
 
@@ -43,6 +42,5 @@ export const BuildMessage = b.class({
     notes: cached,
     position: cached,
     ...methods,
-    name: { value: "BuildMessage" },
   },
 });

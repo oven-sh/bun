@@ -56,10 +56,10 @@ pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
 
 `b.module` says where the file's functions are; an export named
 `requiredAndOptionalArg` is `required_and_optional_arg` there. A `rustPath` key on
-a function gives its full path instead. `length` sets the function's `.length`,
-which is otherwise the number of arguments up to the last that is not written
-`.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull` or `.default()`. The ones after that are
-the ones TypeScript lets a caller leave out.
+a function gives its full path instead. The arguments after the last that is not written
+`.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull` or `.default()` are the ones
+TypeScript lets a caller leave out. The function's `.length` is the number of the others,
+unless `length` sets it.
 
 A function of a `node:*` module names what Node's own source expects of an argument:
 `expected: { data: ["Buffer", "TypedArray", "DataView", "string"] }`. A value the argument's type
@@ -134,8 +134,7 @@ Throwing tells the debugger, which can run code, so after a throw the body retur
 reading what it borrowed. A `mutates: true` method does not throw: what the debugger runs can call
 a method of the same object while the `&mut self` is live. It returns the error, which is thrown
 after the borrow ends. Every `heap.create_*` that returns a `Result` throws at once, except
-`create_utf16_string_from_vec`. A method that has to call one takes `capability: "js"` and borrows
-with `with_mut` (see [the receiver](#the-receiver)).
+`create_utf16_string_from_vec`, so a `mutates: true` method calls none of the others.
 
 ```rust
 // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
@@ -215,7 +214,7 @@ any other: nothing looks at how many there are, except a body that takes `b.any.
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
-| `b.class(options)`                               | `&'a T`, `JsWrapper<'a, T>`      | an instance; the second if a member has `mutates`             |
+| `b.class(options)`                               | `&'a T`                          | an instance                                                   |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported. It is used by
@@ -520,6 +519,7 @@ impl Glob {
 | [the receiver](#the-receiver)               | not in `static` or `construct`                                      |
 | `this_value: JsWrapper<'a, Self>`           | `passThis: true`                                                    |
 | `heap: &JsHeap<'a>`, `cx: &mut JsScope<'a>` | [`capability`](#what-a-function-may-do-capability) `"heap"`, `"js"` |
+| `structure: JsStructure<'a, Self>`          | `construct` with `passStructure: true`                              |
 | one for each of `args`                      |                                                                     |
 
 Arguments, results, `capability` and `throws` are those of a function. The generated code is in
@@ -538,23 +538,23 @@ is collected, make the class [`refCounted`](#refcounted).
 | `rustPath`       | the struct                                                                                     |
 | `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
 | `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
-| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
-| `call`           | `Name(..)` without `new`, which otherwise throws. It is `fn call(..)`, with no receiver.       |
-| `proto`          | properties of the prototype                                                                    |
-| `static`         | properties of the constructor: native functions and accessors without `cache`                  |
-| `internalFields` | JS values the object holds                                                                     |
-| `configurable`   | `false` makes the native properties non-configurable                                           |
+| `final`          | with `refCounted`: `false` lets hand-written C++ subclass `JSName`                             |
+| `overridesToJS`  | with `refCounted`: `impl JsClass` is not generated; write it by hand with `js_Name::to_js`     |
+| `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
+| `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
+| `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
+| `configurable`   | `true` makes the native properties configurable                                                |
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
-| `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`                                       |
 | `memoryCost`     | [`fn memory_cost(&self) -> usize`](#memory), for a heap snapshot                               |
 | `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the GC                                     |
-| `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
-| `overridesToJS`  | with `refCounted`: `impl JsClass` is not generated; write it by hand with `js_Name::to_js`     |
-| `final`          | with `refCounted`: `false` lets hand-written C++ subclass `JSName`                             |
-| `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
+| `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
+| `call`           | `Name(..)` without `new`, which otherwise throws. It is `fn call(..)`, with no receiver.       |
+| `internalFields` | JS values the object holds                                                                     |
+| `proto`          | properties of the prototype                                                                    |
+| `static`         | properties of the constructor: native functions and accessors without `cache`                  |
 
-Code that has the global object and no capability makes one with
-`payload.into_js_value(global)`, which returns a `JSValue`.
+Code that has the global object and no capability makes one with `payload.to_js(global)`, which returns a
+`JSValue`, or `payload.into_js_wrapper(global)`, which returns the `JsWrapper`.
 
 A class that JavaScript names but cannot make, like `Crypto`, declares `construct: "illegal"`:
 `new Crypto()` throws `Illegal constructor`, and there is no `constructor` in Rust.
@@ -584,7 +584,6 @@ A property of `proto` is one of these.
 | `{ getter: T, cache: true \| "field", .. }`   | an accessor that returns an [internal field](#internalfields)                              |
 | `{ internalField: "field", setter }`          | an accessor that reads the field, and with `setter` stores any value, without calling Rust |
 | `{ builtin: true, length }`                   | the export of that name in `src/js/builtins/<class name>.ts`                               |
-| `{ value: "text" }`                           | a read-only string                                                                         |
 | `[{ rustName, args, .. }, ..]`                | a native function with [overloads](#overloads)                                             |
 
 The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
@@ -593,11 +592,11 @@ overloads of a function, and two members of `proto` and `static` that share a na
 also have the same `rustName`. The getter of `x` is `get_x` and its setter is `set_x`, and a leading
 `_` of the property is dropped: `_idleStart` is `get_idle_start`.
 `setter: true` gives the setter the getter's `capability`, and `setter: { capability: "js" }` its own. An
-accessor of `static` ignores its receiver, so a subclass inherits it. `enumerable` and `configurable` on a function
-or an accessor override the class's.
+accessor of `static` ignores its receiver, so a subclass inherits it. `configurable` on a getter overrides the
+class's.
 
 A key that starts with `@@` is a well-known symbol: `"@@dispose"` defines `prototype[Symbol.dispose]`. The function is
-writable, configurable (even with `configurable: false`) and not enumerable, like the built-in ones. Its `name` is
+writable, configurable and not enumerable, like the built-in ones, whatever the class says. Its `name` is
 `[Symbol.dispose]` and its Rust function is `dispose`. `name` overrides the function's `name`: Node's
 `Timeout.prototype[Symbol.dispose].name` is `""`. Only a function can have an `@@` key.
 
@@ -626,34 +625,9 @@ is an instance. `js_Glob::from_js_direct(value)` returns `None` for an instance 
 properties, either of which may override a member. `wrapper.payload_ptr()` is the address of the struct, which
 never changes.
 
-If any member has `mutates: true`, every member's receiver follows this table:
-
-| The method is                    | It receives                 |
-| -------------------------------- | --------------------------- |
-| `capability: "none"` or `"heap"` | `&self`                     |
-| …with `mutates: true`            | `&mut self`                 |
-| a setter                         | `&mut self`                 |
-| `capability: "js"`               | `this: JsWrapper<'a, Self>` |
-
-A method that can run JavaScript can be re-entered, by a callback that calls
-another method of the same object. A `&mut self` held across that would be
-undefined behaviour, so it gets the wrapper instead and borrows the payload for as
-long as nothing else can run:
-
-```rust
-pub(crate) fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bindgen::Result<'a, i32> {
-    if let Some(listener) = js_TestCounter::listener_get_cached(this.to_js())
-        && let Some(listener) = JsLocal::new(&cx.heap, listener).as_callable()
-    {
-        listener.call(cx, this.as_value(), &[])?;
-    }
-    Ok(this.with(&cx.payloads, |counter| counter.count))
-}
-```
-
-`this.with(&cx.payloads, ..)` and `this.with_mut(&mut cx.payloads, ..)` borrow one
-field of `cx`; running JavaScript needs all of it. `cx.heap` is another field, so
-allocating or viewing a buffer inside the closure is fine.
+A member with `mutates: true` takes `&mut self`, and so does every setter of its class. JavaScript that ran
+during another member could call it on the same object, so no member of that class has `capability: "js"`. The class
+is not an argument type, has no `estimatedSize`, and does not implement `JsClass`.
 
 ### `internalFields`
 
@@ -729,8 +703,8 @@ back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it 
 
 ### Memory
 
-The GC counts the object, and the struct of a `refCounted` class. Two keys report the extra memory
-the struct owns.
+The GC counts the object. Two keys report the extra memory the struct owns. With `estimatedSize`, the struct of a
+`refCounted` class is counted too.
 
 | Key             | Rust                                | Who calls it                                                   |
 | --------------- | ----------------------------------- | -------------------------------------------------------------- |
@@ -746,12 +720,6 @@ change once the object is created, or atomics: if the size changes, keep it in a
 `test` and `describe` are functions with properties. JavaScript only sees a function bound to the
 instance, with the class's prototype as its prototype. With `forBind: true`, members are called with
 that function as `this`, and `&self` is its `boundThis`. The prototype inherits from `Function.prototype`.
-
-### Staying alive
-
-To keep an object alive while native work is pending, hold a
-`JsWrapperStrong<T>` (`this.to_strong(heap)`) with the work and drop it on the JS
-thread when the work completes.
 
 ## Tests
 

@@ -287,7 +287,7 @@ impl JSValkeyClient {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Valkey client wrapper for JavaScript
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `JsCell` is
 // `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
 // `ValkeyClient::parent`) sees identical offsets.
@@ -466,7 +466,7 @@ impl JSValkeyClient {
         options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let new_client =
-            Self::create_no_js_no_pubsub(&cx.js_thread(), &[url.to_js(), options.to_js()])?;
+            Self::create_no_js_no_pubsub(&cx.js_thread(), url.to_js(), options.to_js())?;
         let this = new_client.this_ptr();
         let this_value = structure.create(&cx.heap, new_client);
 
@@ -484,13 +484,14 @@ impl JSValkeyClient {
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
         cx: &bun_jsc::JsThread<'_>,
-        arguments: &[JSValue],
+        url: JSValue,
+        options: JSValue,
     ) -> JsResult<RefPtr<JSValkeyClient>> {
         let vm: &'static VirtualMachine = cx.global().bun_vm();
         let vm_ref = vm;
 
-        let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
-            arguments[0].to_bun_string(cx.global())?
+        let url_str = if !url.is_undefined_or_null() {
+            url.to_bun_string(cx.global())?
         } else {
             let env = vm_ref.env_loader();
             match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
@@ -628,11 +629,8 @@ impl JSValkeyClient {
             }
         };
 
-        let options = if arguments.len() >= 2
-            && !arguments[1].is_undefined_or_null()
-            && arguments[1].is_object()
-        {
-            Options::from_js(cx.global(), arguments[1])?
+        let options = if options.is_object() {
+            Options::from_js(cx.global(), options)?
         } else {
             valkey::Options::default()
         };
@@ -689,7 +687,7 @@ impl JSValkeyClient {
 
         bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-        // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
+        // `_subscription_ctx` is a placeholder: the caller sets it once the JS object exists.
         Ok(RefPtr::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),

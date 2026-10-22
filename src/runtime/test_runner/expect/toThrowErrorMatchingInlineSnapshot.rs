@@ -12,8 +12,7 @@ impl Expect {
         expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // The guard owns the &mut, Derefs to it, and runs post_match on Drop.
-        let this = scopeguard::guard(self, |t| t.post_match(global));
+        let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
 
@@ -63,8 +62,7 @@ impl Expect {
             );
         };
 
-        Expect::inline_snapshot(
-            &**this,
+        this.inline_snapshot(
             global,
             value,
             None,

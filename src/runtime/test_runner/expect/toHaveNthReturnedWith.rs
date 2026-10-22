@@ -15,8 +15,9 @@ impl Expect {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         bun_jsc::mark_binding!();
-        let [nth, expected] = [nth.to_js(), expected.to_js()];
-        let (this, returns, _value) = self.mock_prologue(
+        let nth = nth.to_js();
+        let expected = expected.to_js();
+        let (this, returns, _) = self.mock_prologue(
             global,
             this_value.to_js(),
             "toHaveNthReturnedWith",

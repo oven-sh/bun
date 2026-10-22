@@ -987,11 +987,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             js_request: match create_js_request {
                 // SAFETY: `request_object` is the freshly-allocated heap
                 // `Request`; ownership transfers to the JS wrapper.
-                CreateJsRequest::Yes => unsafe { (*request_object).to_js(global) },
+                CreateJsRequest::Yes => unsafe {
+                    crate::webcore::Request::to_js(request_object, global)
+                },
                 CreateJsRequest::Bake => {
-                    // SAFETY: `request_object` is the freshly-allocated heap
-                    // `Request`; ownership transfers to the JS wrapper.
-                    match unsafe { (*request_object).to_js_for_bake(global) } {
+                    match crate::webcore::Request::to_js_for_bake(request_object, global) {
                         Ok(v) => v,
                         Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(_) => return None,
@@ -3813,6 +3813,21 @@ impl AnyServer {
         }
     }
 
+    /// `None` if `value` is not what `Bun.serve` returns. `value` keeps the server alive.
+    pub(crate) fn from_js(value: JSValue) -> Option<AnyServer> {
+        if let Some(server) = value.as_class_ref::<HTTPServer>() {
+            Some(Self::from(std::ptr::from_ref(server)))
+        } else if let Some(server) = value.as_class_ref::<HTTPSServer>() {
+            Some(Self::from(std::ptr::from_ref(server)))
+        } else if let Some(server) = value.as_class_ref::<DebugHTTPServer>() {
+            Some(Self::from(std::ptr::from_ref(server)))
+        } else {
+            value
+                .as_class_ref::<DebugHTTPSServer>()
+                .map(|server| Self::from(std::ptr::from_ref(server)))
+        }
+    }
+
     /// Re-pack into the tagged-pointer wire format
     /// (`u49` ptr | `u15` tag) for the C++ FFI boundary. Inverse of
     /// [`NodeHTTPResponse::any_server_from_packed`]. Tag values are
@@ -4106,6 +4121,33 @@ impl AnyServer {
 
     pub(crate) fn get_url_as_string(&self) -> Result<bun_core::String, bun_alloc::AllocError> {
         any_server_dispatch!(self, |s| s.get_url_as_string())
+    }
+
+    pub(crate) fn set_flags(
+        &self,
+        require_host_header: bool,
+        use_strict_method_validation: bool,
+        lenient_http_flags: u8,
+        http_allow_half_open: bool,
+    ) {
+        any_server_dispatch!(self, |s| s.set_flags(
+            require_host_header,
+            use_strict_method_validation,
+            lenient_http_flags,
+            http_allow_half_open,
+        ))
+    }
+
+    pub(crate) fn set_max_http_header_size(&self, max_header_size: u64) {
+        any_server_dispatch!(self, |s| s.set_max_http_header_size(max_header_size))
+    }
+
+    pub(crate) fn set_max_headers_count(&self, max_headers_count: u32) {
+        any_server_dispatch!(self, |s| s.set_max_headers_count(max_headers_count))
+    }
+
+    pub(crate) fn get_all_closed_promise(&self, global: &JSGlobalObject) -> JSValue {
+        any_server_dispatch!(self, |s| s.get_all_closed_promise(global))
     }
 }
 

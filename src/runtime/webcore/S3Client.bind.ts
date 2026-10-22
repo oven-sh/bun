@@ -1,6 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const method = { returns: b.any, capability: "js", throws: true, length: 2 } as const;
+const method = { returns: b.any, capability: "js", throws: true } as const;
 const pathMethod = { ...method, args: { path: b.any, options: b.any } } as const;
 
 /** `S3Client.write(..)` uses the credentials of the environment, `client.write(..)` those of the client. */
@@ -11,17 +11,16 @@ const members = (prefix: "" | "static_") =>
     file: { ...pathMethod, rustName: `${prefix}file` },
     list: { ...method, args: { input: b.any, options: b.any }, rustName: `${prefix}list_objects` },
     /** `presign(path, undefined)` is not `presign(path)`: see `presign_args`. */
-    presign: { ...method, args: { args: b.any.variadic }, rustName: `${prefix}presign` },
+    presign: { ...method, args: { args: b.any.variadic }, length: 2, rustName: `${prefix}presign` },
     size: { ...pathMethod, rustName: `${prefix}size` },
     stat: { ...pathMethod, rustName: `${prefix}stat` },
     unlink: { ...pathMethod, rustName: `${prefix}unlink` },
-    write: { ...method, args: { path: b.any, data: b.any, options: b.any }, rustName: `${prefix}write` },
+    write: { ...method, args: { path: b.any, data: b.any, options: b.any }, length: 2, rustName: `${prefix}write` },
   }) as const;
 
 export const S3Client = b.class({
   rustPath: "crate::webcore::s3_client::S3Client",
-  configurable: false,
   construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
-  static: members("static_"),
   proto: members(""),
+  static: members("static_"),
 });

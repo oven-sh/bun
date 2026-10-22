@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::bindgen::{
     self, BufferSource, Callable, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _,
-    JsScope, JsStructure, JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
+    JsScope, JsStructure, JsWrapper, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag,
@@ -101,7 +101,7 @@ pub(crate) fn describe_value(value: TestValue<'_>) -> Vec<u8> {
     }
 }
 
-pub(crate) fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a>) -> Vec<u8> {
+pub(crate) fn describe_anything(value: TestAnything<'_>) -> Vec<u8> {
     match value {
         TestAnything::Nothing => b"nothing".to_vec(),
         TestAnything::Flag(flag) => format!("flag {flag}").into_bytes(),
@@ -113,10 +113,7 @@ pub(crate) fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a
             format!("bytes {}", buffer.byte_slice().len()).into_bytes()
         }
         TestAnything::Blob(_) => b"blob".to_vec(),
-        TestAnything::Counter(counter) => {
-            let count = counter.with(&cx.payloads, |counter| counter.count);
-            format!("counter {count}").into_bytes()
-        }
+        TestAnything::Counter(counter) => format!("counter {}", counter.count.get()).into_bytes(),
         TestAnything::Token(token) => format!("token {}", token.id).into_bytes(),
         TestAnything::List(list) => format!("list {list:?}").into_bytes(),
         TestAnything::Options(options) => format!("options {}", options.count).into_bytes(),
@@ -146,9 +143,7 @@ pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: &TestOuter<'a>) 
         TestColorOrRest::Rest(rest) if rest.is_undefined() => "undefined".to_owned(),
         TestColorOrRest::Rest(_) => "given".to_owned(),
     };
-    let counter = options.counter.is_some();
-    format!("inner: {inner}; value: {value}; choice: {choice}; rest: {rest}; counter: {counter}")
-        .into_bytes()
+    format!("inner: {inner}; value: {value}; choice: {choice}; rest: {rest}").into_bytes()
 }
 
 pub(crate) fn overloaded_text_times(text: &[u8], times: u32) -> Vec<u8> {
@@ -176,12 +171,8 @@ pub(crate) fn overloaded_list(list: Vec<f64>) -> Vec<u8> {
     format!("list {:?}", list.into_boxed_slice()).into_bytes()
 }
 
-pub(crate) fn overloaded_counter<'a>(
-    cx: &mut JsScope<'a>,
-    counter: JsWrapper<'a, TestCounter>,
-) -> Vec<u8> {
-    let count = counter.with(&cx.payloads, |counter| counter.count);
-    format!("counter {count}").into_bytes()
+pub(crate) fn overloaded_counter(counter: &TestCounter) -> Vec<u8> {
+    format!("counter {}", counter.count.get()).into_bytes()
 }
 
 pub(crate) fn sum_array(numbers: Vec<i32>) -> f64 {
@@ -382,16 +373,16 @@ pub(crate) fn fail<'a>(
 static ALIVE: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) struct TestCounter {
-    count: i32,
-    label: Vec<u8>,
+    count: Cell<i32>,
+    label: RefCell<Vec<u8>>,
 }
 
 impl TestCounter {
     fn new(count: i32) -> Self {
         ALIVE.fetch_add(1, Ordering::SeqCst);
         TestCounter {
-            count,
-            label: Vec::new(),
+            count: Cell::new(count),
+            label: RefCell::default(),
         }
     }
 }
@@ -411,35 +402,35 @@ impl TestCounter {
     }
 
     pub(crate) fn get_count(&self) -> i32 {
-        self.count
+        self.count.get()
     }
 
-    pub(crate) fn get_label(&self) -> impl AsRef<[u8]> {
-        &self.label
+    pub(crate) fn get_label(&self) -> Vec<u8> {
+        self.label.borrow().clone()
     }
 
-    pub(crate) fn set_label<'a>(&mut self, value: &'a [u8]) {
-        self.label = value.to_vec();
+    pub(crate) fn set_label(&self, value: &[u8]) {
+        *self.label.borrow_mut() = value.to_vec();
     }
 
     pub(crate) fn get_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
-        bindgen::to_js::array(heap, [self.count], bindgen::to_js::i32)
+        bindgen::to_js::array(heap, [self.count.get()], bindgen::to_js::i32)
     }
 
     pub(crate) fn get_same_tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         self.get_tag(heap)
     }
 
-    pub(crate) fn increment(&mut self, by: i32) -> i32 {
-        self.count = self.count.wrapping_add(by);
-        self.count
+    pub(crate) fn increment(&self, by: i32) -> i32 {
+        self.count.set(self.count.get().wrapping_add(by));
+        self.count.get()
     }
 
-    pub(crate) fn add_length<'a>(&mut self, text: &'a [u8], times: i32) -> i32 {
+    pub(crate) fn add_length(&self, text: &[u8], times: i32) -> i32 {
         self.increment((text.len() as i32).wrapping_mul(times))
     }
 
-    pub(crate) fn add_number(&mut self, by: i32) -> i32 {
+    pub(crate) fn add_number(&self, by: i32) -> i32 {
         self.increment(by)
     }
 
@@ -463,24 +454,20 @@ impl TestCounter {
     }
 
     pub(crate) fn notify<'a>(
-        this: JsWrapper<'a, Self>,
+        &self,
+        this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> bindgen::Result<'a, i32> {
-        if let Some(listener) = js_TestCounter::listener_get_cached(this.to_js())
+        if let Some(listener) = js_TestCounter::listener_get_cached(this_value.to_js())
             && let Some(listener) = JsLocal::new(&cx.heap, listener).as_callable()
         {
-            listener.call(cx, this.as_value(), &[])?;
+            listener.call(cx, this_value.as_value(), &[])?;
         }
-        Ok(this.with(&cx.payloads, |counter| counter.count))
+        Ok(self.count.get())
     }
 
-    pub(crate) fn plus<'a>(
-        this: JsWrapper<'a, Self>,
-        cx: &mut JsScope<'a>,
-        other: JsWrapper<'a, Self>,
-    ) -> i32 {
-        let other = other.with(&cx.payloads, |counter| counter.count);
-        this.with(&cx.payloads, |counter| counter.count.wrapping_add(other))
+    pub(crate) fn plus(&self, other: &Self) -> i32 {
+        self.count.get().wrapping_add(other.count.get())
     }
 
     pub(crate) fn starting<'a>(heap: &JsHeap<'a>, at: i32) -> JsWrapper<'a, Self> {
@@ -500,24 +487,34 @@ impl TestCounter {
     }
 }
 
-pub(crate) struct TestHolder {
-    counter: JsWrapperStrong<TestCounter>,
+pub(crate) struct TestMutates {
+    count: i32,
+    label: Vec<u8>,
 }
 
-impl TestHolder {
-    pub(crate) fn constructor<'a>(heap: &JsHeap<'a>, counter: JsWrapper<'a, TestCounter>) -> Self {
-        TestHolder {
-            counter: counter.to_strong(heap),
+impl TestMutates {
+    pub(crate) fn constructor(count: i32) -> Self {
+        TestMutates {
+            count,
+            label: Vec::new(),
         }
     }
 
-    pub(crate) fn get_counter<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, TestCounter> {
-        self.counter.get(heap)
+    pub(crate) fn get_count(&self) -> i32 {
+        self.count
     }
 
-    pub(crate) fn increment_counter<'a>(&self, cx: &mut JsScope<'a>) -> i32 {
-        let counter = self.counter.get(&cx.heap);
-        counter.with_mut(&mut cx.payloads, |counter| counter.increment(1))
+    pub(crate) fn get_label(&self) -> impl AsRef<[u8]> {
+        &self.label
+    }
+
+    pub(crate) fn set_label(&mut self, value: &[u8]) {
+        self.label = value.to_vec();
+    }
+
+    pub(crate) fn increment(&mut self, by: i32) -> i32 {
+        self.count = self.count.wrapping_add(by);
+        self.count
     }
 }
 
@@ -703,19 +700,25 @@ impl TestRefCountedNote {
 
 pub(crate) struct TestBoundThis {
     value: i32,
+    labels: Cell<u32>,
 }
 
 impl TestBoundThis {
     pub(crate) fn constructor(value: i32) -> Self {
-        Self { value }
+        Self {
+            value,
+            labels: Cell::new(0),
+        }
     }
 
     pub(crate) fn get_value(&self) -> i32 {
         self.value
     }
 
-    pub(crate) fn get_label(&self, _: &JsHeap<'_>) -> bun_core::String {
-        bun_core::String::clone_utf8(format!("bound to {}", self.value).as_bytes())
+    pub(crate) fn get_label(&self) -> bun_core::String {
+        self.labels.set(self.labels.get() + 1);
+        let label = format!("label {} of {}", self.labels.get(), self.value);
+        bun_core::String::clone_utf8(label.as_bytes())
     }
 
     pub(crate) fn plus(&self, other: i32) -> i32 {

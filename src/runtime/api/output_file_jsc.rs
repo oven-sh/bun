@@ -6,8 +6,7 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
-use bun_jsc::bindgen::JsPayload as _;
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass as _};
 
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
@@ -77,7 +76,7 @@ impl OutputFileJsc for OutputFile {
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(copy.pathname.as_ref()),
                 }
-                .into_js_value(global_object)
+                .to_js(global_object)
             }
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
@@ -100,7 +99,7 @@ impl OutputFileJsc for OutputFile {
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(path_to_use),
                 }
-                .into_js_value(global_object)
+                .to_js(global_object)
             }
             OutputFileValue::Buffer { bytes } => {
                 let bytes_len = bytes.len();
@@ -120,7 +119,7 @@ impl OutputFileJsc for OutputFile {
                     output_kind: self.output_kind,
                     path,
                 }
-                .into_js_value(global_object)
+                .to_js(global_object)
             }
             OutputFileValue::Noop => {
                 // SAFETY: filtered out by the early-out match above.

@@ -191,10 +191,21 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "when: .asDate is a result",
   );
   expect(() => b.namespace({ f: {} }, { call: "g" })).toThrow("call: g is not one of its functions");
-  const mutable = b.class({ rustPath: "T", proto: { f: { mutates: true } } });
-  for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), mutable]) {
+  for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any })]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");
   }
+  const mutable = b.class({ rustPath: "T", proto: { f: { mutates: true } } });
+  for (const type of [mutable, mutable.nullable, b.union({ object: mutable, none: b.null })]) {
+    expect(() => b.fn({ args: { value: type } })).toThrow(
+      "value: a class with a mutates member is not an argument type",
+    );
+  }
+  expect(() => b.class({ rustPath: "T", proto: { f: { mutates: true }, g: { capability: "js" } } })).toThrow(
+    "g: JavaScript could call a mutates member of the same object while this one runs",
+  );
+  expect(() => b.class({ rustPath: "T", estimatedSize: true, proto: { f: { mutates: true } } })).toThrow(
+    "estimatedSize: a marking thread would read the struct while a mutates member writes it",
+  );
   expect(() => b.dictionary({ fooBar: b.bool, foo_bar: b.bool })).toThrow("two fields are both foo_bar");
   expect(() => b.union({ "a-b": b.bool })).toThrow("an alternative is named in camelCase");
   expect(() => b.enumeration(["self"])).toThrow("Self cannot name anything in Rust");
@@ -228,10 +239,6 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ ...constructible, static: { x: { getter: b.u32, cache: true } } })).toThrow(
     "x: a static getter has no cache",
   );
-  // @ts-expect-error
-  expect(() => b.class({ ...constructible, static: { x: { value: "x" } } })).toThrow(
-    "x: a value is a property of the prototype",
-  );
   expect(() => b.class({ rustPath: "T", proto: { x: { getter: b.u32, writable: true } } })).toThrow(
     "x: writable is only for a cached getter",
   );
@@ -255,9 +262,6 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "forBind: a member is a function or a getter without a setter",
   );
   expect(() => b.class({ rustPath: "T", call: {} })).toThrow("call needs a constructor object: add construct");
-  expect(() => b.class({ rustPath: "T", proto: { "@@dispose": { enumerable: true } } })).toThrow(
-    "@@dispose: enumerable and configurable are only for a string key",
-  );
   // @ts-expect-error
   expect(() => b.class({ ...constructible, static: { x: { builtin: true, length: 0 } } })).toThrow(
     "x: a builtin is a property of the prototype",
@@ -739,30 +743,26 @@ describe("dictionaries", () => {
   });
 
   it("a default written in the schema reaches every member, the nested ones included", () => {
-    const defaults = "inner: a=true b=7 name=inner; value: undefined; choice: none; rest: undefined; counter: false";
+    const defaults = "inner: a=true b=7 name=inner; value: undefined; choice: none; rest: undefined";
     expect(bindgen.describeDefaults()).toBe(defaults);
     expect(bindgen.describeDefaults(undefined)).toBe(defaults);
     expect(bindgen.describeDefaults({ inner: {} })).toBe(defaults);
-    expect(bindgen.describeDefaults({})).toBe(
-      "inner: none; value: undefined; choice: none; rest: undefined; counter: false",
-    );
+    expect(bindgen.describeDefaults({})).toBe("inner: none; value: undefined; choice: none; rest: undefined");
     expect(
       bindgen.describeDefaults({
         inner: { a: false, name: "n" },
         value: null,
         choice: true,
         rest: "lime",
-        counter: new (bindgen as any).TestCounter(),
       }),
-    ).toBe("inner: a=false b=7 name=n; value: given; choice: true; rest: Green; counter: true");
+    ).toBe("inner: a=false b=7 name=n; value: given; choice: true; rest: Green");
   });
 
   it("a member that is absent is absent, whatever was on the stack before", () => {
-    const counter = new (bindgen as any).TestCounter();
     for (let i = 0; i < 100; i++) {
-      expect(bindgen.describeDefaults({ counter })).toEndWith("counter: true");
-      expect(bindgen.describeDefaults({})).toEndWith("counter: false");
-      expect(bindgen.describeDefaults({ counter: null })).toEndWith("counter: false");
+      expect(bindgen.describeDefaults({ inner: {} })).toStartWith("inner: a=true");
+      expect(bindgen.describeDefaults({})).toStartWith("inner: none");
+      expect(bindgen.describeDefaults({ inner: null })).toStartWith("inner: none");
     }
   });
 
@@ -1113,7 +1113,7 @@ describe("unions", () => {
   });
 
   it("an enumeration takes strings, and b.any what nothing before it took", () => {
-    const rest = (value: unknown) => bindgen.describeDefaults({ rest: value }).match(/rest: (.*);/)![1];
+    const rest = (value: unknown) => bindgen.describeDefaults({ rest: value }).match(/rest: (.*)$/)![1];
     expect(rest("blue")).toBe("Blue");
     expect(() => rest("purple")).toThrow('TestOuter.rest must be "red", "green", or "blue"');
     expect(rest(new Uint8Array([1, 2]))).toBe("[1, 2]");
@@ -1833,7 +1833,7 @@ describe("errors", () => {
 });
 
 describe("classes", () => {
-  const { TestCounter, TestHolder } = bindgen as any;
+  const { TestCounter } = bindgen as any;
 
   it("looks like a class", () => {
     expect(typeof TestCounter).toBe("function");
@@ -2084,14 +2084,12 @@ describe("classes", () => {
     expect(Object.getPrototypeOf(bindgen.makeToken(8))).toBe(prototype);
   });
 
-  it("a payload keeps another object alive with a Strong", () => {
-    const holder = new TestHolder(new TestCounter(5));
-    Bun.gc(true);
-    expect(holder.counter).toBeInstanceOf(TestCounter);
-    expect(holder.counter).toBe(holder.counter);
-    expect(holder.incrementCounter()).toBe(6);
-    expect(holder.counter.count).toBe(6);
-    expect(() => new TestHolder({})).toThrow("counter must be an instance of TestCounter");
+  it("mutates: the member and the setter take &mut self", () => {
+    const object = new (bindgen as any).TestMutates(1);
+    expect(object.increment(2)).toBe(3);
+    expect(object.count).toBe(3);
+    object.label = "label";
+    expect(object.label).toBe("label");
   });
 
   it("drops the Rust value when the object is collected", () => {
@@ -2101,13 +2099,11 @@ describe("classes", () => {
       counter.label = "label " + i;
       counter.listen(() => counter);
       counter.tag;
-      return new TestHolder(counter);
+      return counter;
     });
     Bun.gc(true);
     expect(TestCounter.alive()).toBeGreaterThanOrEqual(counters.length);
     counters = null;
-    // The first collection drops the holders and their Strongs, the second the counters.
-    Bun.gc(true);
     Bun.gc(true);
     expect(TestCounter.alive()).toBeLessThan(count);
   });
@@ -2119,13 +2115,14 @@ describe("classes", () => {
       return { enumerable, configurable };
     };
 
-    it("enumerable and configurable are the class's, unless the member has its own", () => {
+    it("enumerable and configurable are the class's, unless a getter has its own configurable", () => {
       const { prototype } = TestError;
       expect(attributes(prototype, "message")).toEqual({ enumerable: false, configurable: true });
-      expect(attributes(prototype, "code")).toEqual({ enumerable: true, configurable: true });
+      expect(attributes(prototype, "describe")).toEqual({ enumerable: false, configurable: true });
       expect(attributes(prototype, "nonConfigurableCode")).toEqual({ enumerable: false, configurable: false });
-      expect(attributes(prototype, "describe")).toEqual({ enumerable: false, configurable: false });
-      expect(Object.keys(prototype)).toEqual(["code", "name"]);
+      expect(Object.keys(prototype)).toEqual(["name"]);
+      expect(attributes(TestCounter.prototype, "count")).toEqual({ enumerable: true, configurable: false });
+      expect(attributes(TestCounter.prototype, "increment")).toEqual({ enumerable: true, configurable: false });
     });
 
     it("prototypeBase is what the prototype inherits from", () => {
@@ -2135,7 +2132,7 @@ describe("classes", () => {
       expect(String(error)).toBe("TestError: error 4");
     });
 
-    it("a value is a read-only string", () => {
+    it("with prototypeBase, the prototype's name is the class's", () => {
       expect(Object.getOwnPropertyDescriptor(TestError.prototype, "name")).toEqual({
         value: "TestError",
         writable: false,
@@ -2268,7 +2265,7 @@ describe("classes", () => {
       const five = bound(5);
       expect(five.value).toBe(5);
       expect(five.plus(2)).toBe(7);
-      expect(five.label).toBe("bound to 5");
+      expect(five.label).toBe("label 1 of 5");
     });
 
     it("a cached getter caches in the instance", () => {
@@ -2277,8 +2274,8 @@ describe("classes", () => {
         Object.setPrototypeOf(function () {}.bind(instance), TestBoundThis.prototype),
       );
       const { get } = Object.getOwnPropertyDescriptor(TestBoundThis.prototype, "label")!;
-      expect(get!.call(first)).toBe("bound to 1");
-      expect(get!.call(second)).toBe("bound to 1");
+      expect(get!.call(first)).toBe("label 1 of 1");
+      expect(get!.call(second)).toBe("label 1 of 1");
     });
 
     it("the prototype inherits from Function.prototype", () => {

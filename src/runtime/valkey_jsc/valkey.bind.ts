@@ -220,7 +220,6 @@ export const RedisClient = b.class({
   rustPath: "crate::valkey_jsc::JSValkeyClient",
   refCounted: true,
   finalize: true,
-  configurable: false,
   memoryCost: true,
   construct: {
     passStructure: true,
@@ -230,22 +229,22 @@ export const RedisClient = b.class({
     length: 0,
   },
   internalFields: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
-  // Every member needs a declaration in packages/bun-types/redis.d.ts: redis-client-types.test.ts compares the two.
+  /** Every member needs a declaration in packages/bun-types/redis.d.ts: redis-client-types.test.ts compares the two. */
   proto: Object.fromEntries(
     [
       ...Object.entries(commands).map(
         ([name, [names, length, rustName]]) =>
           [
             name,
-            { args: args(names), returns: b.any, passThis: true, capability: "js", throws: true, length, rustName },
+            { args: args(names), returns: b.any, capability: "js", throws: true, passThis: true, length, rustName },
           ] as const,
       ),
       ["bufferedAmount", { getter: b.u32 }] as const,
-      ["close", { rustName: "js_disconnect", capability: "js", throws: true }] as const,
+      ["close", { capability: "js", throws: true, rustName: "js_disconnect" }] as const,
       ["connected", { getter: b.bool }] as const,
       ["duplicate", { returns: b.any, capability: "js", throws: true }] as const,
       ["onclose", eventHandler("on_close")] as const,
       ["onconnect", eventHandler("on_connect")] as const,
-    ].sort(([a], [b]) => a.localeCompare(b)),
+    ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });

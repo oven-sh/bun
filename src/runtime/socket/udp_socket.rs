@@ -7,7 +7,7 @@ use bun_core::{String as BunString, Utf8Bytes};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope};
+use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc, SysErrorJsc,
@@ -536,7 +536,7 @@ pub(crate) struct UDPSocket {
 
 bun_jsc::impl_abort_handle_owner!(UDPSocket, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run).
-    UDPSocket::close_socket(unsafe { &*this })
+    UDPSocket::close(unsafe { &*this })
 });
 
 impl UDPSocket {
@@ -599,13 +599,7 @@ impl UDPSocket {
         // Without this, failed config parsing or bind would leave the wrapper
         // pinned forever by the Strong handle and leak. This is idempotent, so
         // it is safe even if onClose() already downgraded via socket.close().
-        //
-        // Capture the raw pointer (Copy) and re-derive inside the closure so
-        // borrowck does not see `this` as held across the guard's lifetime.
-        let guard = scopeguard::guard(this_ptr, |ptr| {
-            // SAFETY: the payload of `this_value`, which this frame holds.
-            // R-2: shared borrow — mutation through `Cell`/`JsCell`.
-            let this = unsafe { &*ptr };
+        let guard = scopeguard::guard(this, |this| {
             this.closed.set(true);
             // Hoist before `(*socket).close()`: that call SYNCHRONOUSLY re-enters
             // `on_close` (udp.c `s->on_close(s)`), which re-derives `&UDPSocket`
@@ -841,34 +835,7 @@ impl UDPSocket {
         cx: &mut JsScope<'a>,
         enabled: JsLocal<'a>,
     ) -> JsResult<JsLocal<'a>> {
-        let global_this = cx.global();
-        if self.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
-        }
-
-        let Some(socket) = self.socket.get() else {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
-        };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_broadcast(enabled.to_js().to_boolean());
-
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
-
-        Ok(enabled)
+        self.set_any_flag(cx.global(), enabled, uws::udp::Socket::set_broadcast)
     }
 
     pub(crate) fn set_multicast_loopback<'a>(
@@ -876,33 +843,32 @@ impl UDPSocket {
         cx: &mut JsScope<'a>,
         enabled: JsLocal<'a>,
     ) -> JsResult<JsLocal<'a>> {
-        let global_this = cx.global();
+        self.set_any_flag(
+            cx.global(),
+            enabled,
+            uws::udp::Socket::set_multicast_loopback,
+        )
+    }
+
+    fn set_any_flag<'a>(
+        &self,
+        global_this: &JSGlobalObject,
+        enabled: JsLocal<'a>,
+        function: fn(&mut uws::udp::Socket, bool) -> c_int,
+    ) -> JsResult<JsLocal<'a>> {
         if self.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
+            return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
-        // On Windows we can observe
-        // `closed=false && socket=None` here (panic seen in
-        // test-dgram-multicast-loopback.js). Throw EBADF to match the
-        // `closed` branch above instead of panicking.
+        // Windows: `closed` can be false with no socket (test-dgram-multicast-loopback.js).
         let Some(socket) = self.socket.get() else {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
+            return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket)
-            .set_multicast_loopback(enabled.to_js().to_boolean());
+        let res = function(
+            uws::udp::Socket::opaque_mut(socket),
+            enabled.to_js().to_boolean(),
+        );
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -919,13 +885,7 @@ impl UDPSocket {
         drop: bool,
     ) -> JsResult<bool> {
         if self.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
+            return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
         let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
@@ -998,17 +958,13 @@ impl UDPSocket {
     fn set_source_specific_membership(
         &self,
         global_this: &JSGlobalObject,
-        [source_address, group_address, interface_address]: [JSValue; 3],
+        source_address: JSValue,
+        group_address: JSValue,
+        interface_address: JSValue,
         drop: bool,
     ) -> JsResult<bool> {
         if self.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
+            return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
         // See `set_multicast_interface`: zero-init instead of `MaybeUninit` —
@@ -1082,12 +1038,13 @@ impl UDPSocket {
         group_address: JsLocal<'_>,
         interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
-        let addresses = [
+        self.set_source_specific_membership(
+            cx.global(),
             source_address.to_js(),
             group_address.to_js(),
             interface_address.to_js(),
-        ];
-        self.set_source_specific_membership(cx.global(), addresses, false)
+            false,
+        )
     }
 
     pub(crate) fn drop_source_specific_membership(
@@ -1097,12 +1054,13 @@ impl UDPSocket {
         group_address: JsLocal<'_>,
         interface_address: JsLocal<'_>,
     ) -> JsResult<bool> {
-        let addresses = [
+        self.set_source_specific_membership(
+            cx.global(),
             source_address.to_js(),
             group_address.to_js(),
             interface_address.to_js(),
-        ];
-        self.set_source_specific_membership(cx.global(), addresses, true)
+            true,
+        )
     }
 
     pub(crate) fn set_multicast_interface(
@@ -1112,13 +1070,7 @@ impl UDPSocket {
     ) -> JsResult<bool> {
         let global_this = cx.global();
         if self.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
+            return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
         // `parse_addr` only writes the leading sockaddr_in/in6 prefix (≤28
@@ -1171,13 +1123,7 @@ impl UDPSocket {
         function: fn(&mut uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<i32> {
         if self.closed.get() {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EBADF as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
+            return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
         let ttl = ttl.coerce_to_i32(global_this)?;
@@ -1208,32 +1154,9 @@ impl UDPSocket {
         // into two phases: phase 1 collects/validates payloads and runs all
         // user JS; phase 2 borrows byte slices only once no more user JS
         // sits between capture and `socket.send`.
-        struct Ctx<'a> {
-            this: &'a UDPSocket,
-            global_this: &'a JSGlobalObject,
-            packets: JSValue,
-            result: JsResult<i32>,
-        }
-        extern "C" fn run(ctx: *mut Ctx<'_>, payload_roots: *mut MarkedArgumentBuffer) {
-            // SAFETY: `ctx` and `payload_roots` are the stack locals
-            // `MarkedArgumentBuffer::run` lends exclusively to this callback;
-            // the reborrows are scoped to this single call.
-            unsafe {
-                (*ctx).result = (*ctx).this.send_many_impl(
-                    (*ctx).global_this,
-                    (*ctx).packets,
-                    &mut *payload_roots,
-                );
-            }
-        }
-        let mut ctx = Ctx {
-            this: self,
-            global_this: cx.global(),
-            packets: packets.to_js(),
-            result: Ok(0),
-        };
-        MarkedArgumentBuffer::run(&mut ctx, run);
-        ctx.result
+        MarkedArgumentBuffer::new(|payload_roots| {
+            self.send_many_impl(cx.global(), packets.to_js(), payload_roots)
+        })
     }
 
     fn send_many_impl(
@@ -1592,12 +1515,8 @@ impl UDPSocket {
     }
 
     pub(crate) fn close(&self) {
-        Self::close_socket(self);
-    }
-
-    fn close_socket(this: &Self) {
-        if !this.closed.get() {
-            let Some(socket) = this.socket.take() else {
+        if !self.closed.get() {
+            let Some(socket) = self.socket.take() else {
                 return;
             };
             // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
@@ -1605,11 +1524,11 @@ impl UDPSocket {
             // user pointer. R-2: with `&self` + `Cell`/`JsCell` the sibling
             // shared borrow is sound; the (idempotent) downgrade is hoisted
             // because `on_close` repeats it.
-            this.this_value.with_mut(|r| r.downgrade());
+            self.this_value.with_mut(|r| r.downgrade());
             // Unregister before close(2) so no other thread can observe a
             // stale entry for the recycled number (on_close is the backstop).
             #[cfg(not(windows))]
-            if let Some(fd) = this.registered_fd.take() {
+            if let Some(fd) = self.registered_fd.take() {
                 dgram_remove_fd(fd, DgramFdState::Adopted);
             }
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
@@ -1617,14 +1536,17 @@ impl UDPSocket {
         }
     }
 
-    pub(crate) fn reload(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<()> {
-        let Some(this_value) = self.this_value.get().try_get() else {
-            return Ok(());
-        };
-        let config = UDPSocketConfig::from_js(cx.global(), options.to_js(), this_value)?;
-
-        let _ = self.config.replace(config);
-
+    pub(crate) fn reload(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        options: JsLocal<'_>,
+    ) -> JsResult<()> {
+        self.config.set(UDPSocketConfig::from_js(
+            cx.global(),
+            options.to_js(),
+            this_value.to_js(),
+        )?);
         Ok(())
     }
 
@@ -1632,8 +1554,17 @@ impl UDPSocket {
         self.closed.get()
     }
 
+    /// Underlying socket descriptor as a number, or -1 once closed. Backs
+    /// node:dgram's handle.fd.
     pub(crate) fn get_fd(&self) -> i32 {
-        get_fd(self)
+        if self.closed.get() {
+            return -1;
+        }
+        let Some(socket) = self.socket.get() else {
+            return -1;
+        };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        uws::udp::Socket::opaque_mut(socket).fd()
     }
 
     pub(crate) fn get_hostname(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1712,7 +1643,7 @@ impl UDPSocket {
 
     /// Underlying socket descriptor, or `None` once closed. IPC send dups/exports this for a `dgram.Socket` handle.
     pub(crate) fn native_fd(&self) -> Option<bun_sys::Fd> {
-        let raw = get_fd(self);
+        let raw = self.get_fd();
         if raw < 0 {
             return None;
         }
@@ -1815,8 +1746,6 @@ pub(crate) fn disconnect<'a>(heap: &JsHeap<'a>, this: &UDPSocket) -> bindgen::Re
 /// reads the current value, non-zero sets it. Backs node:dgram's
 /// get/setRecvBufferSize and get/setSendBufferSize.
 pub(crate) fn buffer_size(this: &UDPSocket, size: i32, is_recv: bool) -> bun_sys::Result<i32> {
-    let bad_fd =
-        || bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt);
     if this.closed.get() {
         return Err(bad_fd());
     }
@@ -1834,17 +1763,8 @@ pub(crate) fn buffer_size(this: &UDPSocket, size: i32, is_recv: bool) -> bun_sys
     Ok(value)
 }
 
-/// Underlying socket descriptor as a number, or -1 once closed. Backs
-/// node:dgram's handle.fd.
-pub(crate) fn get_fd(this: &UDPSocket) -> i32 {
-    if this.closed.get() {
-        return -1;
-    }
-    let Some(socket) = this.socket.get() else {
-        return -1;
-    };
-    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-    uws::udp::Socket::opaque_mut(socket).fd()
+fn bad_fd() -> bun_sys::Error {
+    bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
 }
 
 // ─── Raw-descriptor helpers for node:dgram's internal UDP handle shim ────────

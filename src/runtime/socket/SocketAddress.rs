@@ -505,10 +505,7 @@ unsafe extern "C" {
 
 impl SocketAddress {
     pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.address_to_js(cx.global())
-    }
-
-    fn address_to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let global = cx.global();
         // toJS increments ref count
         let addr_ = self.address();
         Ok(match addr_.tag() {
@@ -638,9 +635,10 @@ impl SocketAddress {
             }
         }
         let family = self.get_family(&cx.heap).to_js();
+        let address = self.get_address(cx)?;
         let global = cx.global();
         let pojo = ToJson {
-            address: self.address_to_js(global)?,
+            address,
             family,
             port: JSValue::js_number(f64::from(self.port())),
             flowlabel: JSValue::js_number(f64::from(self.get_flow_label())),

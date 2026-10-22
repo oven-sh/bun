@@ -25,7 +25,6 @@ impl Expect {
                 expected.to_fmt(&mut formatter),
             )));
         }
-        expected.ensure_still_alive();
 
         if !value.is_string() {
             return Err(global.throw(format_args!(

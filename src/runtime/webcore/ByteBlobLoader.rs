@@ -40,35 +40,100 @@ impl Default for ByteBlobLoader {
 pub(crate) type Source = readable_stream::NewSource<ByteBlobLoader>;
 
 impl readable_stream::SourceContext for ByteBlobLoader {
-    const NAME: &'static str = "Blob";
-    // setRefUnrefFn = null
-    const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BlobInternalReadableStreamSource);
 
     fn on_start(&self) -> streams::Start {
-        Self::on_start(self)
+        // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
+        streams::Start::ChunkSize(self.chunk_size)
     }
-    fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result {
-        Self::on_pull(self, buf, view)
+
+    fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result {
+        array.ensure_still_alive();
+        let _keep = bun_jsc::EnsureStillAlive(array);
+        if self.store.get().is_none() || self.done.get() {
+            return streams::Result::Done;
+        }
+
+        let rest = self.remaining();
+        let take = buffer.len().min(rest.len());
+        if take == 0 {
+            self.clear_data();
+            self.done.set(true);
+            return streams::Result::Done;
+        }
+        debug_assert!(buffer.as_ptr() != rest.as_ptr());
+        buffer[..take].copy_from_slice(&rest[..take]);
+
+        let copied = blob::SizeType::try_from(take).expect("int cast");
+        self.remain.set(self.remain.get().saturating_sub(copied));
+        self.offset.set(self.offset.get().saturating_add(copied));
+        if self.remain.get() == 0 {
+            return streams::Result::IntoArrayAndDone(streams::IntoArray {
+                value: array,
+                len: copied,
+            });
+        }
+
+        streams::Result::IntoArray(streams::IntoArray {
+            value: array,
+            len: copied,
+        })
     }
+
     fn on_cancel(&self) {
-        Self::on_cancel(self);
+        self.clear_data();
     }
+
     fn deinit_fn(&self) {
-        Self::deinit(self)
+        self.clear_data();
     }
+
     fn drain_internal_buffer(&self) -> Vec<u8> {
-        Self::drain(self)
+        let rest = self.remaining();
+
+        // A single owning copy (avoids a `ManuallyDrop` borrow dance).
+        let cloned = Vec::<u8>::from_slice(&rest[..rest.len().min(16384)]);
+        self.offset.set(
+            self.offset
+                .get()
+                .saturating_add(cloned.len() as blob::SizeType),
+        );
+        self.remain.set(
+            self.remain
+                .get()
+                .saturating_sub(cloned.len() as blob::SizeType),
+        );
+
+        cloned
     }
+
     fn memory_cost_fn(&self) -> usize {
-        Self::memory_cost(self)
+        // ReadableStreamSource covers @sizeOf(FileReader)
+        if let Some(store) = self.store.get() {
+            return store.memory_cost();
+        }
+        0
     }
+
     fn to_buffered_value(
         &self,
         cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
-    ) -> Option<JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, cx, action))
+    ) -> JsResult<JSValue> {
+        if let Some(mut blob) = self.to_any_blob(cx.global()) {
+            let result = blob.to_promise(cx, action);
+            blob.detach();
+            return result;
+        }
+
+        // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()
+        Ok(cx
+            .global()
+            .err(
+                bun_jsc::ErrorCode::BODY_ALREADY_USED,
+                format_args!("Body already used"),
+            )
+            .reject())
     }
 }
 
@@ -100,12 +165,7 @@ impl ByteBlobLoader {
         };
     }
 
-    pub(crate) fn on_start(&self) -> streams::Start {
-        // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
-        streams::Start::ChunkSize(self.chunk_size)
-    }
-
-    /// The bytes `drain` and `on_pull` have yet to hand over.
+    /// The bytes `drain_internal_buffer` and `on_pull` have yet to hand over.
     fn remaining(&self) -> &[u8] {
         let Some(store) = self.store.get() else {
             return &[];
@@ -113,39 +173,6 @@ impl ByteBlobLoader {
         let view = store.shared_view();
         let view = &view[(self.offset.get() as usize).min(view.len())..];
         &view[..view.len().min(self.remain.get() as usize)]
-    }
-
-    pub(crate) fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result {
-        array.ensure_still_alive();
-        let _keep = bun_jsc::EnsureStillAlive(array);
-        if self.store.get().is_none() || self.done.get() {
-            return streams::Result::Done;
-        }
-
-        let rest = self.remaining();
-        let take = buffer.len().min(rest.len());
-        if take == 0 {
-            self.clear_data();
-            self.done.set(true);
-            return streams::Result::Done;
-        }
-        debug_assert!(buffer.as_ptr() != rest.as_ptr());
-        buffer[..take].copy_from_slice(&rest[..take]);
-
-        let copied = blob::SizeType::try_from(take).expect("int cast");
-        self.remain.set(self.remain.get().saturating_sub(copied));
-        self.offset.set(self.offset.get().saturating_add(copied));
-        if self.remain.get() == 0 {
-            return streams::Result::IntoArrayAndDone(streams::IntoArray {
-                value: array,
-                len: copied,
-            });
-        }
-
-        streams::Result::IntoArray(streams::IntoArray {
-            value: array,
-            len: copied,
-        })
     }
 
     pub(crate) fn to_any_blob(&self, global: &JSGlobalObject) -> Option<blob::Any> {
@@ -187,72 +214,12 @@ impl ByteBlobLoader {
         None
     }
 
-    pub(crate) fn on_cancel(&self) {
-        self.clear_data();
-    }
-
-    // Kept as inherent method (not `Drop`) — invoked via `SourceContext::deinit_fn`.
-    // Only side-effect teardown lives here; the enclosing `Box<Source>` is freed by
-    // the caller (`NewSource::decrement_count`) *after* this returns. Freeing the
-    // parent here would deallocate the storage backing `&self` (dangling UAF).
-    pub(crate) fn deinit(&self) {
-        self.clear_data();
-    }
-
     fn clear_data(&self) {
         self.content_type.set(blob::BlobContentType::default());
 
         if let Some(store) = self.store.take() {
             drop(store); // store.deref()
         }
-    }
-
-    pub(crate) fn drain(&self) -> Vec<u8> {
-        let rest = self.remaining();
-
-        // A single owning copy (avoids a `ManuallyDrop` borrow dance).
-        let cloned = Vec::<u8>::from_slice(&rest[..rest.len().min(16384)]);
-        self.offset.set(
-            self.offset
-                .get()
-                .saturating_add(cloned.len() as blob::SizeType),
-        );
-        self.remain.set(
-            self.remain
-                .get()
-                .saturating_sub(cloned.len() as blob::SizeType),
-        );
-
-        cloned
-    }
-
-    pub(crate) fn to_buffered_value(
-        &self,
-        cx: &bun_jsc::JsThread<'_>,
-        action: streams::BufferActionTag,
-    ) -> JsResult<JSValue> {
-        if let Some(mut blob) = self.to_any_blob(cx.global()) {
-            let result = blob.to_promise(cx, action);
-            blob.detach();
-            return result;
-        }
-
-        // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()
-        Ok(cx
-            .global()
-            .err(
-                bun_jsc::ErrorCode::BODY_ALREADY_USED,
-                format_args!("Body already used"),
-            )
-            .reject())
-    }
-
-    pub(crate) fn memory_cost(&self) -> usize {
-        // ReadableStreamSource covers @sizeOf(FileReader)
-        if let Some(store) = self.store.get() {
-            return store.memory_cost();
-        }
-        0
     }
 }
 

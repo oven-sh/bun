@@ -42,7 +42,6 @@ impl Expect {
             self.matcher_prelude(global, this_value, "toContainEqual", "<green>expected<r>")?;
 
         let expected = expected.to_js();
-        expected.ensure_still_alive();
         let mut pass = false;
 
         let value_type = value.js_type();

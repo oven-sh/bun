@@ -26,7 +26,6 @@ export const NodeHTTPResponse = b.class({
   rustPath: "crate::server::NodeHTTPResponse",
   refCounted: true,
   finalize: true,
-  configurable: false,
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },

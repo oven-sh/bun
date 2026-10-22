@@ -736,8 +736,8 @@ pub struct ParserError<'bump> {
 type ParseResult<T> = crate::Result<T>;
 
 impl<'bump> Parser<'bump> {
-    pub fn new(bump: &'bump Bump, lex_result: LexResult<'bump>) -> ParseResult<Parser<'bump>> {
-        Ok(Parser {
+    pub fn new(bump: &'bump Bump, lex_result: LexResult<'bump>) -> Parser<'bump> {
+        Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
             js_string_ranges: lex_result.js_string_ranges,
@@ -746,7 +746,7 @@ impl<'bump> Parser<'bump> {
             errors: bun_alloc::ArenaVec::new_in(bump),
             inside_subshell: None,
             stack_check: StackCheck::init(),
-        })
+        }
     }
 
     /// __WARNING__:

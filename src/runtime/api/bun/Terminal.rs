@@ -39,56 +39,15 @@ use bun_sys::windows;
 
 bun_output::declare_scope!(Terminal, hidden);
 
-pub(crate) mod js {
-    pub(crate) use crate::generated_bindgen::terminal::js_Terminal::{
-        data_get_cached, data_set_cached, drain_get_cached, drain_set_cached, exit_get_cached,
-        exit_set_cached, from_js, to_js,
-    };
-
-    /// Typed accessor for the `internalFields`.
-    pub(crate) mod gc {
-        use bun_jsc::{JSGlobalObject, JSValue};
-
-        #[derive(Clone, Copy)]
-        pub(crate) enum GcValue {
-            Data,
-            Exit,
-            Drain,
-        }
-
-        #[inline]
-        pub(crate) fn get(which: GcValue, this_value: JSValue) -> Option<JSValue> {
-            match which {
-                GcValue::Data => super::data_get_cached(this_value),
-                GcValue::Exit => super::exit_get_cached(this_value),
-                GcValue::Drain => super::drain_get_cached(this_value),
-            }
-        }
-
-        #[inline]
-        pub(crate) fn set(
-            which: GcValue,
-            this_value: JSValue,
-            global: &JSGlobalObject,
-            value: JSValue,
-        ) {
-            match which {
-                GcValue::Data => super::data_set_cached(this_value, global, value),
-                GcValue::Exit => super::exit_set_cached(this_value, global, value),
-                GcValue::Drain => super::drain_set_cached(this_value, global, value),
-            }
-        }
-    }
-    pub(crate) use gc::GcValue;
-}
+pub(crate) use crate::generated_bindgen::terminal::js_Terminal as js;
 
 /// Reference counting for Terminal.
 /// Refs are held by:
-/// 1. JS side (released in finalize)
+/// 1. The JS wrapper (released when it is collected)
 /// 2. Reader (released in onReaderDone/onReaderError)
 /// 3. Writer (released in onWriterClose)
 ///
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
+// Every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The
 // BufferedReader/StreamingWriter parent-vtable thunks deref `*mut Self` as
 // `&*this` (shared); all field mutation routes through the cells.
@@ -532,13 +491,13 @@ impl Terminal {
         // Note: callbacks were already validated in parseFromJS() and may be wrapped in AsyncContextFrame
         // by withAsyncContextIfNeeded(), so we don't re-check isCallable() here
         if let Some(cb) = options.data_callback {
-            js::gc::set(js::GcValue::Data, this_value, global_object, cb);
+            js::data_set_cached(this_value, global_object, cb);
         }
         if let Some(cb) = options.exit_callback {
-            js::gc::set(js::GcValue::Exit, this_value, global_object, cb);
+            js::exit_set_cached(this_value, global_object, cb);
         }
         if let Some(cb) = options.drain_callback {
-            js::gc::set(js::GcValue::Drain, this_value, global_object, cb);
+            js::drain_set_cached(this_value, global_object, cb);
         }
 
         if let Some(context) = global_object.bun_vm().as_graph_context(context) {
@@ -1740,7 +1699,7 @@ impl Terminal {
         bun_output::scoped_log!(Terminal, "onWriterReady");
         // Call drain callback
         if let Some(this_jsvalue) = self.this_value.get().try_get() {
-            if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
+            if let Some(callback) = js::drain_get_cached(this_jsvalue) {
                 let global_this = self.global();
                 global_this.bun_vm().event_loop_mut().run_callback(
                     bun_event_loop::ContextId::NONE,
@@ -1865,7 +1824,7 @@ impl Terminal {
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
             return;
         };
-        let Some(callback) = js::gc::get(js::GcValue::Exit, this_jsvalue) else {
+        let Some(callback) = js::exit_get_cached(this_jsvalue) else {
             return;
         };
 
@@ -1904,7 +1863,7 @@ impl Terminal {
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
             return true;
         };
-        let Some(callback) = js::gc::get(js::GcValue::Data, this_jsvalue) else {
+        let Some(callback) = js::data_get_cached(this_jsvalue) else {
             return true;
         };
 

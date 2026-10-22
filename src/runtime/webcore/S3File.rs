@@ -6,9 +6,8 @@ use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
-use bun_jsc::bindgen::JsPayload as _;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, JsThread};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
 use bun_ptr::RefPtr;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
@@ -110,7 +109,7 @@ where
 
 /// Shared prologue of the S3 static host fns: parse the first argument as a
 /// path or Blob and require Blob arguments to be S3-backed.
-fn parse_s3_path_or_blob(
+pub(crate) fn parse_s3_path_or_blob(
     global: &JSGlobalObject,
     path: JSValue,
     error_message: &str,
@@ -132,7 +131,7 @@ fn parse_s3_path_or_blob(
 }
 
 /// Rejects file-descriptor paths, and constructs the env-credentialed store for path arguments.
-fn resolve_s3_blob(
+pub(crate) fn resolve_s3_blob(
     global: &JSGlobalObject,
     options: Option<JSValue>,
     path_or_blob: PathOrBlob,
@@ -151,88 +150,14 @@ fn resolve_s3_blob(
     }
 }
 
-pub(crate) fn presign(
+pub(crate) fn s3_blob_from_js(
     global: &JSGlobalObject,
     path: JSValue,
     options: Option<JSValue>,
-) -> JsResult<JSValue> {
-    let error_message = "Expected a S3 or path to presign";
+    error_message: &str,
+) -> JsResult<Box<Blob>> {
     let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
-    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
-    get_presign_url_from(&blob, global, options)
-}
-
-pub(crate) fn unlink(
-    cx: &JsThread<'_>,
-    path: JSValue,
-    options: Option<JSValue>,
-) -> JsResult<JSValue> {
-    let global = cx.global();
-    let error_message = "Expected a S3 or path to delete";
-    let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
-    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
-    let store = blob.store.get().as_ref().unwrap().clone();
-    store.data.as_s3().unlink(store.clone(), cx, options)
-}
-
-pub(crate) fn write(
-    cx: &JsThread<'_>,
-    path: JSValue,
-    data: JSValue,
-    options: Option<JSValue>,
-) -> JsResult<JSValue> {
-    let global = cx.global();
-    let error_message = "Expected a S3 or path to upload";
-    let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
-
-    if data.is_undefined() {
-        return Err(global
-            .err(
-                bun_jsc::ErrorCode::MISSING_ARGS,
-                format_args!("Expected a Blob-y thing to upload"),
-            )
-            .throw());
-    }
-
-    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
-    // `write_file_internal` takes `&mut PathOrBlob`; rewrap the resolved blob.
-    let mut blob_internal = PathOrBlob::Blob(blob);
-    blob::write_file_internal(
-        cx,
-        &mut blob_internal,
-        data,
-        blob::WriteFileOptions {
-            mkdirp_if_not_exists: Some(false),
-            extra_options: options,
-            ..Default::default()
-        },
-    )
-}
-
-pub(crate) fn size(
-    cx: &JsThread<'_>,
-    path: JSValue,
-    options: Option<JSValue>,
-) -> JsResult<JSValue> {
-    let global = cx.global();
-    let error_message = "Expected a S3 or path to get size";
-    let mut blob = match parse_s3_path_or_blob(global, path, error_message)? {
-        PathOrBlob::Blob(blob) => return Ok(JSValue::js_number(blob.get_size())),
-        path => resolve_s3_blob(global, options, path, error_message)?,
-    };
-    S3BlobStatTask::size(cx, &mut blob)
-}
-
-pub(crate) fn exists(
-    cx: &JsThread<'_>,
-    path: JSValue,
-    options: Option<JSValue>,
-) -> JsResult<JSValue> {
-    let global = cx.global();
-    let error_message = "Expected a S3 or path to check if it exists";
-    let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
-    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
-    S3BlobStatTask::exists(cx, &blob)
+    resolve_s3_blob(global, options, path_or_blob, error_message)
 }
 
 fn construct_s3_file_internal_store(
@@ -437,7 +362,7 @@ impl S3BlobStatTask {
                     stat_result.last_modified,
                     global,
                 ) {
-                    Ok(stat) => stat.into_js_value(global),
+                    Ok(stat) => stat.to_js(global),
                     Err(_) => {
                         return this.promise.reject(global, Err(JsError::Thrown));
                     }
@@ -637,18 +562,6 @@ fn get_presign_url(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     get_presign_url_from(this, global, callframe.arguments().first().copied())
-}
-
-pub(crate) fn stat(
-    cx: &JsThread<'_>,
-    path: JSValue,
-    options: Option<JSValue>,
-) -> JsResult<JSValue> {
-    let global = cx.global();
-    let error_message = "Expected a S3 or path to get size";
-    let path_or_blob = parse_s3_path_or_blob(global, path, error_message)?;
-    let blob = resolve_s3_blob(global, options, path_or_blob, error_message)?;
-    S3BlobStatTask::stat(cx, &blob)
 }
 
 pub(crate) fn construct_internal_js(

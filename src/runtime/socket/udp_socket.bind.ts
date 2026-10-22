@@ -15,17 +15,16 @@ export const dgramListenFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramCloseFd = b.fn({ args: { fd: b.i32 }, throws: true });
 
 const js = { capability: "js", throws: true } as const;
-const membership = { ...js, args: { multicastAddress: b.any, interfaceAddress: b.any }, returns: b.bool };
+const membership = { ...js, args: { multicastAddress: b.any, interfaceAddress: b.any }, returns: b.bool } as const;
 const sourceSpecificMembership = {
   ...js,
   args: { sourceAddress: b.any, groupAddress: b.any, interfaceAddress: b.any },
   returns: b.bool,
-};
+} as const;
 
 /** What `Bun.udpSocket()` resolves to. */
 export const UDPSocket = b.class({
   rustPath: "crate::socket::udp_socket::UDPSocket",
-  configurable: false,
   internalFields: ["onData", "onDrain", "onError"],
   proto: {
     addMembership: membership,
@@ -40,7 +39,7 @@ export const UDPSocket = b.class({
     hostname: { ...js, getter: b.any, cache: true },
     port: { getter: b.i32.optional, cache: true },
     ref: { rustName: "ref_" },
-    reload: { ...js, args: { options: b.any } },
+    reload: { ...js, passThis: true, args: { options: b.any } },
     remoteAddress: { ...js, getter: b.any, cache: true },
     /** `(data)` when connected, `(data, port, address)` when not. */
     send: { ...js, args: { data: b.any, port: b.any, address: b.any }, returns: b.bool },
@@ -70,4 +69,8 @@ export const bufferSize = b.fn({
   returns: b.i32,
   throws: true,
 });
-export const getFd = b.fn({ args: { socket: UDPSocket }, returns: b.i32 });
+export const getFd = b.fn({
+  args: { socket: UDPSocket },
+  returns: b.i32,
+  rustPath: "crate::socket::udp_socket::UDPSocket::get_fd",
+});

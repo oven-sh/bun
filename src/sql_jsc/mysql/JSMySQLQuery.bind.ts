@@ -8,10 +8,9 @@ export const MySQLQuery = b.class({
   refCounted: true,
   finalize: true,
   estimatedSize: true,
-  configurable: false,
   internalFields: ["pendingValue", "target", "binding"],
   proto: {
-    cancel: { rustName: "do_cancel", capability: "js" },
+    cancel: { capability: "js", rustName: "do_cancel" },
     describeResult: { ...js, args: { number: b.any }, returns: b.any },
     run: { ...js, args: { connection: MySQLConnection, query: b.any }, passThis: true, rustName: "do_run" },
     setMode: { ...js, args: { mode: b.any }, rustName: "set_mode_from_js" },

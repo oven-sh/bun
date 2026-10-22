@@ -4,10 +4,9 @@ export default b.module({ rustPath: "crate::shell::interpreter" });
 
 export const ShellInterpreter = b.class({
   rustPath: "crate::shell::Interpreter",
-  configurable: false,
-  internalFields: ["resolve", "reject", "jsobjs"],
   memoryCost: true,
   estimatedSize: true,
+  internalFields: ["resolve", "reject", "jsobjs"],
   proto: {
     run: { capability: "js", throws: true, rustName: "run_from_js" },
   },

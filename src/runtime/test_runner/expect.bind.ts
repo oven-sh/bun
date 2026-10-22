@@ -10,7 +10,6 @@ const matcherWithExpected = { ...matcher, args: { expected: b.any } } as const;
 const matcherWithCallArguments = { ...matcher, args: { expected: b.any.variadic } } as const;
 const matcherWithNthCallArguments = { ...matcher, args: { nth: b.any, expected: b.any.variadic }, length: 0 } as const;
 const matcherWithNthExpected = { ...matcher, args: { nth: b.any, expected: b.any }, length: 1 } as const;
-const snapshotMatcher = { ...matcher, args: { propertyMatchers: b.any, hint: b.any }, length: 1 } as const;
 
 export const ExpectAnything = b.class({ rustPath: "crate::test_runner::ExpectAnything" });
 
@@ -58,7 +57,6 @@ const asymmetricMatchers = {
 /** `expect.not`, `expect.resolvesTo` and `expect.rejectsTo` */
 export const ExpectStatic = b.class({
   rustPath: "crate::test_runner::ExpectStatic",
-  configurable: false,
   proto: {
     any: asymmetricMatchers.any,
     anything: asymmetricMatchers.anything,
@@ -75,7 +73,6 @@ export const ExpectStatic = b.class({
 
 export const Expect = b.class({
   rustPath: "crate::test_runner::Expect",
-  configurable: false,
   construct: { capability: "heap", throws: true },
   call: { args: { value: b.any, message: b.any }, returns: b.self, ...js },
   internalFields: ["capturedValue"],
@@ -87,8 +84,8 @@ export const Expect = b.class({
     nthCalledWith: { ...matcherWithNthCallArguments, rustName: "to_have_been_nth_called_with" },
     nthReturnedWith: { ...matcherWithNthExpected, rustName: "to_have_nth_returned_with" },
     pass: { args: { message: b.any }, returns: b.any, ...js },
-    rejects: { getter: b.self, passThis: true, capability: "heap", throws: true },
-    resolves: { getter: b.self, passThis: true, capability: "heap", throws: true },
+    rejects: { getter: b.self, capability: "heap", throws: true, passThis: true },
+    resolves: { getter: b.self, capability: "heap", throws: true, passThis: true },
     toBe: matcherWithExpected,
     toBeArray: matcher,
     toBeArrayOfSize: { ...matcher, args: { size: b.any } },
@@ -142,7 +139,7 @@ export const Expect = b.class({
     toEndWith: matcherWithExpected,
     toEqual: matcherWithExpected,
     toEqualIgnoringWhitespace: matcherWithExpected,
-    // Throws when it is given an argument.
+    /** Throws when it is given an argument. */
     toHaveBeenCalled: { ...matcherWithExpected, length: 0 },
     toHaveBeenCalledOnce: matcher,
     toHaveBeenCalledTimes: matcherWithExpected,
@@ -152,7 +149,7 @@ export const Expect = b.class({
     toHaveLastReturnedWith: matcherWithExpected,
     toHaveLength: matcherWithExpected,
     toHaveNthReturnedWith: matcherWithNthExpected,
-    // `toHaveProperty("a", undefined)` compares the value, `toHaveProperty("a")` does not.
+    /** `toHaveProperty("a", undefined)` compares the value, `toHaveProperty("a")` does not. */
     toHaveProperty: { ...matcher, args: { keyPath: b.any, value: b.any.variadic }, length: 2 },
     toHaveReturned: matcherWithExpected,
     toHaveReturnedTimes: matcherWithExpected,
@@ -162,7 +159,7 @@ export const Expect = b.class({
     toMatch: matcherWithExpected,
     toMatchInlineSnapshot: { ...matcher, args: { propertyMatchers: b.any, value: b.any }, length: 1 },
     toMatchObject: matcherWithExpected,
-    toMatchSnapshot: snapshotMatcher,
+    toMatchSnapshot: { ...matcher, args: { propertyMatchers: b.any, hint: b.any }, length: 1 },
     toReturn: { ...matcherWithExpected, rustName: "to_have_returned" },
     toSatisfy: { ...matcher, args: { predicate: b.any } },
     toStartWith: matcherWithExpected,
@@ -194,7 +191,6 @@ export const Expect = b.class({
 /** What a matcher of `expect.extend()` makes when it is called on `expect` itself. */
 export const ExpectCustomAsymmetricMatcher = b.class({
   rustPath: "crate::test_runner::ExpectCustomAsymmetricMatcher",
-  configurable: false,
   internalFields: ["matcherFn", "capturedArgs"],
   proto: {
     asymmetricMatch: { args: { received: b.any }, returns: b.bool, passThis: true, ...js },
@@ -204,7 +200,6 @@ export const ExpectCustomAsymmetricMatcher = b.class({
 /** The `this` of a matcher of `expect.extend()`. */
 export const ExpectMatcherContext = b.class({
   rustPath: "crate::test_runner::ExpectMatcherContext",
-  configurable: false,
   proto: {
     equals: { args: { a: b.any, b: b.any }, returns: b.bool, ...js, length: 3 },
     expand: { getter: b.bool },
@@ -219,10 +214,9 @@ const printer = { args: { value: b.any }, returns: b.any, ...js } as const;
 /** `this.utils` in a matcher of `expect.extend()`. */
 export const ExpectMatcherUtils = b.class({
   rustPath: "crate::test_runner::ExpectMatcherUtils",
-  configurable: false,
   proto: {
     EXPECTED_COLOR: { ...printer, rustName: "print_expected" },
-    // `matcherHint("toBe", undefined)` prints no "received", `matcherHint("toBe")` does.
+    /** `matcherHint("toBe", undefined)` prints no "received", `matcherHint("toBe")` does. */
     matcherHint: { args: { matcherName: b.any, rest: b.any.variadic }, returns: b.any, ...js },
     printExpected: printer,
     printReceived: printer,
@@ -231,13 +225,12 @@ export const ExpectMatcherUtils = b.class({
   },
 });
 
-const typeAssertion = { rustName: "type_assertion", length: 1 } as const;
+const typeAssertion = { length: 1, rustName: "type_assertion" } as const;
 const typeProperty = { getter: b.self, capability: "heap", rustName: "type_property" } as const;
 
 /** Only the type checker looks at `expectTypeOf()`: at run time nothing is checked. */
 export const ExpectTypeOf = b.class({
   rustPath: "crate::test_runner::ExpectTypeOf",
-  configurable: false,
   construct: { capability: "heap", throws: true },
   call: { returns: b.self, capability: "heap" },
   proto: {

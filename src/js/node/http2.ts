@@ -6321,11 +6321,7 @@ class ClientHttp2Session extends Http2Session {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-      if (typeof options === "undefined") {
-        this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames);
-      } else {
-        this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
-      }
+      this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }

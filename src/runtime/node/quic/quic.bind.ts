@@ -6,14 +6,13 @@ const method = { returns: b.any, ...js } as const;
 /** `internalBinding("quic").Endpoint` of Node. */
 export const QuicEndpoint = b.class({
   rustPath: "crate::node::quic::QuicEndpoint",
-  configurable: false,
-  construct: { args: { options: b.any }, capability: "js", throws: true, length: 0, passStructure: true },
+  construct: { passStructure: true, args: { options: b.any }, capability: "js", throws: true, length: 0 },
   proto: {
-    address: method,
+    address: { returns: b.any, capability: "js" },
     closeGracefully: { capability: "js", passThis: true },
     connect: { ...method, args: { address: b.any, options: b.any, sessionTicket: b.any }, passThis: true },
     listen: { ...js, args: { options: b.any }, passThis: true },
-    markBusy: { args: { busy: b.any } },
+    markBusy: { args: { busy: b.bool.loose } },
     releaseSocket: { capability: "js" },
     setSNIContexts: { ...js, args: { entries: b.any, replace: b.any } },
   },
@@ -21,15 +20,14 @@ export const QuicEndpoint = b.class({
 
 export const QuicSession = b.class({
   rustPath: "crate::node::quic::QuicSession",
-  configurable: false,
   proto: {
     applicationOptions: method,
     destroy: { ...js, args: { options: b.any } },
     getCertificate: method,
     getEphemeralKey: method,
-    getLocalAddress: method,
+    getLocalAddress: { returns: b.any, capability: "js" },
     getPeerCertificate: method,
-    getRemoteAddress: method,
+    getRemoteAddress: { returns: b.any, capability: "js" },
     gracefulClose: { ...js, args: { options: b.any } },
     localTransportParams: method,
     openStream: { ...method, args: { direction: b.any, body: b.any }, passThis: true },
@@ -41,9 +39,8 @@ export const QuicSession = b.class({
 
 export const QuicStream = b.class({
   rustPath: "crate::node::quic::QuicStream",
-  configurable: false,
   proto: {
-    abortForDestroy: { capability: "js", args: { stopSendingCode: b.any, resetCode: b.any } },
+    abortForDestroy: { args: { stopSendingCode: b.any, resetCode: b.any }, capability: "js" },
     attachSource: { ...js, args: { source: b.any } },
     destroy: { ...js, args: { error: b.any } },
     endWrite: { capability: "js" },
@@ -51,11 +48,11 @@ export const QuicStream = b.class({
     getReader: { returns: b.self, passThis: true },
     initStreamingSource: {},
     pull: { ...js, args: { callback: b.any } },
-    resetStream: { capability: "js", args: { code: b.any } },
+    resetStream: { args: { code: b.any }, capability: "js" },
     sendHeaders: { ...method, args: { kind: b.any, headers: b.any, flags: b.any } },
     setPriority: { ...js, args: { priority: b.any } },
-    setWakeup: { capability: "js", args: { callback: b.any } },
-    stopSending: { capability: "js", args: { code: b.any } },
+    setWakeup: { args: { callback: b.any }, capability: "js" },
+    stopSending: { args: { code: b.any }, capability: "js" },
     write: { ...method, args: { batch: b.any } },
   },
 });

@@ -713,7 +713,7 @@ impl Handlers {
     ) -> JsResult<Handlers> {
         let mut handlers = Handlers::new(global_object);
 
-        if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
+        if !opts.is_object() {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected \"handlers\" to be an object")));
         }
@@ -4273,7 +4273,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         options: JSValue,
     ) -> JsResult<()> {
-        if options.is_empty_or_undefined_or_null() || !options.is_object() {
+        if !options.is_object() {
             return Err(global_object.throw(format_args!("Expected settings to be a object")));
         }
 
@@ -4524,12 +4524,12 @@ impl H2FrameParser {
         &self,
         cx: &mut JsScope<'_>,
         settings: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<bool> {
         let global_object = cx.global();
         let settings = settings.to_js();
         self.load_settings_from_js_value(global_object, settings)?;
 
-        Ok(JSValue::from(self.set_settings(self.local_settings.get())))
+        Ok(self.set_settings(self.local_settings.get()))
     }
 
     pub(crate) fn set_local_window_size(
@@ -4593,7 +4593,7 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn get_frame_counters(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn get_frame_counters(&self, cx: &mut JsScope<'_>) -> JSValue {
         let global_object = cx.global();
         self.sync_engine_frame_counters();
         let result = JSValue::create_empty_object(global_object, 2);
@@ -4609,10 +4609,10 @@ impl H2FrameParser {
                 (self.frames_sent_legacy.get() + self.engine_frames_sent.get()) as f64,
             ),
         );
-        Ok(result)
+        result
     }
 
-    pub(crate) fn get_current_state(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn get_current_state(&self, cx: &mut JsScope<'_>) -> JSValue {
         let global_object = cx.global();
         let result = JSValue::create_empty_object(global_object, 9);
         result.put(
@@ -4665,7 +4665,7 @@ impl H2FrameParser {
             b"outboundQueueSize",
             JSValue::js_number(self.outbound_queue_size.get() as f64),
         );
-        Ok(result)
+        result
     }
 
     pub(crate) fn goaway(
@@ -4684,7 +4684,7 @@ impl H2FrameParser {
         }
         let error_code = code.to_int32();
 
-        if !last_stream_id.is_empty_or_undefined_or_null() && !last_stream_id.is_number() {
+        if !last_stream_id.is_undefined_or_null() && !last_stream_id.is_number() {
             return Err(global_object.throw(format_args!("Expected lastStreamId to be a number")));
         }
         let id = if last_stream_id.is_number() {
@@ -4698,7 +4698,7 @@ impl H2FrameParser {
         } else {
             self.last_peer_stream_id.get()
         };
-        if !opaque_data.is_empty_or_undefined_or_null() {
+        if !opaque_data.is_undefined_or_null() {
             if let Some(array_buffer) = opaque_data.as_array_buffer(global_object) {
                 // Own the bytes: write() re-enters JS on JS-backed sockets and can detach this.
                 let copied = array_buffer.byte_slice().to_vec();
@@ -4717,20 +4717,20 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn ping(&self, cx: &mut JsScope<'_>, payload: JsLocal<'_>) -> JsResult<JSValue> {
+    pub(crate) fn ping(&self, cx: &mut JsScope<'_>, payload: JsLocal<'_>) -> JsResult<bool> {
         let global_object = cx.global();
         let payload = payload.to_js();
         // node (Http2Session::AddPing): when the outstanding-ping budget is exhausted, ping()
         // returns false and the JS callback is invoked with ERR_HTTP2_PING_CANCEL — it does NOT
         // throw.
         if self.out_standing_pings.get() >= self.max_outstanding_pings.get() {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         }
 
         if let Some(array_buffer) = payload.as_array_buffer(global_object) {
             let slice = array_buffer.slice();
             self.send_ping(false, slice);
-            return Ok(JSValue::TRUE);
+            return Ok(true);
         }
 
         Err(global_object.throw(format_args!("Expected payload to be a Buffer")))
@@ -4739,7 +4739,7 @@ impl H2FrameParser {
     pub(crate) fn origin(&self, cx: &mut JsScope<'_>, origin: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
         let origin = origin.to_js();
-        if origin.is_empty_or_undefined_or_null() {
+        if origin.is_undefined_or_null() {
             // empty origin frame
             let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
             let mut stream = FixedBufferStream::new(&mut buffer);
@@ -4836,7 +4836,7 @@ impl H2FrameParser {
         let mut origin_view = None;
         let mut value_view = None;
         let origin = origin.to_js();
-        if !origin.is_empty_or_undefined_or_null() {
+        if !origin.is_undefined_or_null() {
             if !origin.is_string() {
                 return Err(
                     global_object.throw_invalid_argument_type_value(b"origin", b"origin", origin)
@@ -4846,7 +4846,7 @@ impl H2FrameParser {
         }
 
         let value = value.to_js();
-        if !value.is_empty_or_undefined_or_null() {
+        if !value.is_undefined_or_null() {
             if !value.is_string() {
                 return Err(
                     global_object.throw_invalid_argument_type_value(b"value", b"value", value)
@@ -4856,7 +4856,7 @@ impl H2FrameParser {
         }
 
         let stream_id = stream_id.to_js();
-        let stream_id: u32 = if stream_id.is_empty_or_undefined_or_null() {
+        let stream_id: u32 = if stream_id.is_undefined_or_null() {
             0
         } else if stream_id.is_number() {
             stream_id.to_u32()
@@ -4889,7 +4889,7 @@ impl H2FrameParser {
         &self,
         cx: &mut JsScope<'_>,
         stream_id: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<bool> {
         let global_object = cx.global();
         let stream_id = stream_id.to_js();
         if !stream_id.is_number() {
@@ -4906,7 +4906,7 @@ impl H2FrameParser {
         };
 
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-        Ok(JSValue::from(unsafe { (*stream).end_after_headers }))
+        Ok(unsafe { (*stream).end_after_headers })
     }
 
     pub(crate) fn get_stream_state(
@@ -5313,9 +5313,11 @@ impl H2FrameParser {
         (settled_state, callback_deferred)
     }
 
-    pub(crate) fn no_trailers(&self, cx: &mut JsScope<'_>, stream_id: JsLocal<'_>) -> JsResult<()> {
-        let global_object = cx.global();
-        let stream_id = stream_id.to_js();
+    fn stream_from_js(
+        &self,
+        global_object: &JSGlobalObject,
+        stream_id: JSValue,
+    ) -> JsResult<*mut Stream> {
         if !stream_id.is_number() {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));
         }
@@ -5328,6 +5330,11 @@ impl H2FrameParser {
         let Some(stream) = self.streams.get().get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
+        Ok(stream)
+    }
+
+    pub(crate) fn no_trailers(&self, cx: &mut JsScope<'_>, stream_id: JsLocal<'_>) -> JsResult<()> {
+        let stream = self.stream_from_js(cx.global(), stream_id.to_js())?;
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
 
@@ -5473,21 +5480,9 @@ impl H2FrameParser {
         sensitive_headers: JsLocal<'_>,
     ) -> JsResult<()> {
         let global_object = cx.global();
-        let stream_id = stream_id.to_js();
         let headers = headers.to_js();
         let sensitive_headers = sensitive_headers.to_js();
-        if !stream_id.is_number() {
-            return Err(global_object.throw(format_args!("Expected stream to be a number")));
-        }
-
-        let stream_id = stream_id.to_u32();
-        if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let Some(stream_ptr) = self.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream_ptr = self.stream_from_js(global_object, stream_id.to_js())?;
         // The header/sensitive-object getters and value coercions below can run user JS
         // while `stream` is borrowed.
         let mut stream = self.enter_stream_dispatch(stream_ptr);
@@ -5797,26 +5792,13 @@ impl H2FrameParser {
         defer_callback: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_object = cx.global();
-        let stream_id = stream_id.to_js();
         let data = data.to_js();
         let encoding = encoding.to_js();
-        let close = close.to_js();
+        let close = close.to_js().to_boolean();
         let callback = callback.to_js();
         let defer_callback = defer_callback.to_js();
 
-        if !stream_id.is_number() {
-            return Err(global_object.throw(format_args!("Expected stream to be a number")));
-        }
-
-        let stream_id = stream_id.to_u32();
-        if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-        let close = close.to_boolean();
-
-        let Some(stream_ptr) = self.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream_ptr = self.stream_from_js(global_object, stream_id.to_js())?;
         // Coercing `data` (a String subclass's toString) can run user JS while `stream`
         // is borrowed.
         let mut stream = self.enter_stream_dispatch(stream_ptr);
@@ -6232,7 +6214,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         }
         let stream_id = stream_id.to_u32();
-        if context.is_empty_or_undefined_or_null() {
+        if context.is_undefined_or_null() {
             // Release: a pushed stream torn down before its PUSH_PROMISE left has no reset
             // dispatch coming, so the JS layer drops the context root explicitly.
             self.sctx.with_mut(|m| {
@@ -6270,7 +6252,6 @@ impl H2FrameParser {
             return;
         }
         let this_arg = this_arg.to_js();
-        let mut _count: u32 = 0;
         let mut it = StreamResumableIterator::init(self);
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
@@ -6284,7 +6265,6 @@ impl H2FrameParser {
                 this_arg,
                 &[value],
             );
-            _count += 1;
         }
     }
 
@@ -6390,8 +6370,7 @@ impl H2FrameParser {
         }
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
-        let stream_id: u32 = if !stream_id.is_empty_or_undefined_or_null() && stream_id.is_number()
-        {
+        let stream_id: u32 = if stream_id.is_number() {
             stream_id.to_u32()
         } else {
             self.get_next_stream_id()
@@ -6523,7 +6502,7 @@ impl H2FrameParser {
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
-                        if !context.is_empty_or_undefined_or_null() && context.is_object() {
+                        if context.is_object() {
                             stream.set_context(context, global_object);
                         }
                         self.schedule_header_compression_session_error();
@@ -6693,7 +6672,7 @@ impl H2FrameParser {
                             };
                             // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                             let stream = unsafe { &mut *stream };
-                            if !context.is_empty_or_undefined_or_null() && context.is_object() {
+                            if context.is_object() {
                                 stream.set_context(context, global_object);
                             }
                             self.schedule_header_compression_session_error();
@@ -6761,7 +6740,7 @@ impl H2FrameParser {
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
-                        if !context.is_empty_or_undefined_or_null() && context.is_object() {
+                        if context.is_object() {
                             stream.set_context(context, global_object);
                         }
                         self.schedule_header_compression_session_error();
@@ -6777,7 +6756,7 @@ impl H2FrameParser {
         };
         // The `options` getters below can run user JS while `stream` is borrowed.
         let mut stream = self.enter_stream_dispatch(stream_ptr);
-        if !context.is_empty_or_undefined_or_null() && context.is_object() {
+        if context.is_object() {
             stream.set_context(context, global_object);
         }
         let mut flags: u8 = HeadersFrameFlags::END_HEADERS as u8;
@@ -6788,7 +6767,7 @@ impl H2FrameParser {
         let mut silent: bool = false;
         let mut wait_for_trailers: bool = false;
         let mut end_stream: bool = false;
-        if !options.is_empty_or_undefined_or_null() {
+        if !options.is_undefined_or_null() {
             if !options.is_object() {
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
@@ -7196,7 +7175,6 @@ impl H2FrameParser {
     pub(crate) fn read(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
         let data = data.to_js();
-        data.ensure_still_alive();
         // Same engine-driven inbound path as on_native_read (JS-fed sockets / proxied streams).
         // The engine dispatches into JS between frames, and a handler can detach/transfer this
         // ArrayBuffer; copy the bytes so the parse never reads freed memory.
@@ -7287,7 +7265,7 @@ impl H2FrameParser {
         let global_object = cx.global();
         let options = options.to_js();
 
-        if options.is_empty_or_undefined_or_null() || options.is_boolean() || !options.is_object() {
+        if !options.is_object() {
             return Err(
                 global_object.throw_invalid_arguments(format_args!("expected options as argument"))
             );

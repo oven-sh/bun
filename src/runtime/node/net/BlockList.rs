@@ -29,6 +29,21 @@ fn z(s: &ZStr) -> &str {
     unsafe { core::str::from_utf8_unchecked(s.as_bytes()) }
 }
 
+/// The address of a `SocketAddress`, or of an address string in `family`.
+fn sockaddr_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+    family: JSValue,
+) -> JsResult<sockaddr> {
+    if let Some(sa) = value.as_class_ref::<SocketAddress>() {
+        return Ok(sa._addr);
+    }
+    validators::validate_string(global, value, name)?;
+    validators::validate_string(global, family, "family")?;
+    Ok(SocketAddress::init_from_addr_family(global, value, family)?._addr)
+}
+
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct BlockList {
     // Intrusive thread-safe refcount.
@@ -69,7 +84,7 @@ impl BlockList {
     }
 
     pub(crate) fn constructor() -> *mut Self {
-        bun_core::heap::into_raw(Box::new(Self {
+        bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
@@ -79,7 +94,8 @@ impl BlockList {
                 bun_boringssl_sys::rand_bytes(&mut n);
                 u64::from_ne_bytes(n)
             },
-        }))
+        })
+        .into_raw()
     }
 
     /// May be called from any thread.
@@ -103,20 +119,9 @@ impl BlockList {
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
-            sa._addr
-        } else {
-            validators::validate_string(global, address_js, format_args!("address"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, address_js, family_js)?._addr
-        };
+        let address = sockaddr_from_js(global, address_js, "address", family_js)?;
 
-        let _guard = self.mutex.lock_guard();
-        self.da_rules.with_mut(|r| r.insert(0, Rule::Addr(address)));
-        self.estimated_size.fetch_add(
-            u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
-            AtomicOrdering::Relaxed,
-        );
+        self.add_rule(Rule::Addr(address));
         Ok(())
     }
 
@@ -132,20 +137,8 @@ impl BlockList {
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
-            sa._addr
-        } else {
-            validators::validate_string(global, start_js, format_args!("start"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, start_js, family_js)?._addr
-        };
-        let end = if let Some(sa) = end_js.as_class_ref::<SocketAddress>() {
-            sa._addr
-        } else {
-            validators::validate_string(global, end_js, format_args!("end"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, end_js, family_js)?._addr
-        };
+        let start = sockaddr_from_js(global, start_js, "start", family_js)?;
+        let end = sockaddr_from_js(global, end_js, "end", family_js)?;
         if let Some(ord) = compare(&start, &end) {
             if ord == Ordering::Greater {
                 return Err(global.throw_invalid_argument_value_custom(
@@ -155,13 +148,7 @@ impl BlockList {
                 ));
             }
         }
-        let _guard = self.mutex.lock_guard();
-        self.da_rules
-            .with_mut(|r| r.insert(0, Rule::Range { start, end }));
-        self.estimated_size.fetch_add(
-            u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
-            AtomicOrdering::Relaxed,
-        );
+        self.add_rule(Rule::Range { start, end });
         Ok(())
     }
 
@@ -178,13 +165,7 @@ impl BlockList {
         if family_js.is_undefined() {
             family_js = global.common_strings().ipv4_lower();
         }
-        let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
-            sa._addr
-        } else {
-            validators::validate_string(global, network_js, format_args!("network"))?;
-            validators::validate_string(global, family_js, format_args!("family"))?;
-            SocketAddress::init_from_addr_family(global, network_js, family_js)?._addr
-        };
+        let network = sockaddr_from_js(global, network_js, "network", family_js)?;
         let mut prefix: u8 = 0;
         let fam = network.family_raw();
         if fam == AF_INET as inet::sa_family_t {
@@ -206,14 +187,17 @@ impl BlockList {
             )?)
             .unwrap();
         }
+        self.add_rule(Rule::Subnet { network, prefix });
+        Ok(())
+    }
+
+    fn add_rule(&self, rule: Rule) {
         let _guard = self.mutex.lock_guard();
-        self.da_rules
-            .with_mut(|r| r.insert(0, Rule::Subnet { network, prefix }));
+        self.da_rules.with_mut(|r| r.insert(0, rule));
         self.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
-        Ok(())
     }
 
     pub(crate) fn check(
@@ -423,7 +407,7 @@ pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(
         unsafe { (*this).ref_() };
         this
     };
-    // SAFETY: the ref taken above transfers to the wrapper, whose `finalize` releases it.
+    // SAFETY: the wrapper adopts the ref taken above.
     unsafe { BlockList::to_js_ptr(this, global) }
 }
 

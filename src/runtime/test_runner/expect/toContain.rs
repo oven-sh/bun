@@ -20,7 +20,6 @@ impl Expect {
             self.matcher_prelude(global, this_value.to_js(), "toContain", "<green>expected<r>")?;
 
         let expected = expected.to_js();
-        expected.ensure_still_alive();
         let mut pass = false;
 
         // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs

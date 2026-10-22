@@ -186,9 +186,9 @@ impl bun_jsc::JsClass for Response {
     }
 }
 
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Response` (not
+/// Every JS-facing member takes `&Response` (not
 /// `&mut Response`) so re-entrant JS calls cannot stack two `&mut` to the same
-/// instance. Fields mutated by host-fns are therefore wrapped in `Cell` (Copy
+/// instance. Fields the members mutate are therefore wrapped in `Cell` (Copy
 /// scalars) or `JsCell` (non-Copy `body`/`init`/`url`/`js_ref`). Both are
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
@@ -442,13 +442,16 @@ impl Response {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        self.calculate_estimated_byte_size();
-        // C++ stores `self` as an opaque `void*`, so forming `*mut` from `&self` is provenance-safe.
-        let js_value = js::to_js(core::ptr::from_ref::<Self>(self).cast_mut(), global_object);
-        self.js_ref.set(JsRef::init_weak(js_value));
+    /// # Safety
+    /// `this` is a live heap allocation and the caller owns a ref on it, which the wrapper adopts.
+    pub(crate) unsafe fn to_js(this: *mut Self, global_object: &JSGlobalObject) -> JSValue {
+        // SAFETY: fn contract.
+        let response = unsafe { &*this };
+        response.calculate_estimated_byte_size();
+        let js_value = js::to_js(this, global_object);
+        response.js_ref.set(JsRef::init_weak(js_value));
 
-        self.check_body_stream_ref(global_object);
+        response.check_body_stream_ref(global_object);
         js_value
     }
 
@@ -765,7 +768,7 @@ impl Response {
     /// JS wrapper.
     pub(crate) fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
         // SAFETY: caller contract — `ptr` is live and uniquely owned.
-        unsafe { (*ptr).to_js(global_object) }
+        unsafe { Response::to_js(ptr, global_object) }
     }
 
     pub(crate) fn clone_value(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Response> {
@@ -823,14 +826,13 @@ impl Response {
     }
 
     pub(crate) fn finalize(&self) {
-        self.js_ref.with_mut(JsRef::finalize);
+        self.js_ref.with_mut(|r| r.finalize());
     }
 
     pub(crate) fn construct_json(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
         let global_this = cx.global();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        let mut args =
-            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), JsLocal::to_js_slice(args));
+        let args = JsLocal::to_js_slice(args);
 
         // `Init`'s field drop glue releases its refs on `?`. `Body` has NO `Drop` and its
         // `WTFStringImpl` arm is a raw `*mut` (no drop glue), so wrap the
@@ -847,9 +849,8 @@ impl Response {
             },
             |r| r.body.get().reset(),
         );
-        let json_value = args.next_eat().unwrap_or_default();
 
-        if !json_value.is_empty() {
+        if let Some(&json_value) = args.first() {
             // Validate top-level values that are not JSON serializable (Node.js compatibility)
             if json_value.is_undefined()
                 || json_value.is_symbol()
@@ -881,7 +882,7 @@ impl Response {
             }
         }
 
-        if let Some(arg_init) = args.next_eat() {
+        if let Some(&arg_init) = args.get(1) {
             if arg_init.is_undefined_or_null() {
                 // no-op
             } else if arg_init.is_number() {
@@ -905,10 +906,9 @@ impl Response {
         )?;
         // Disarm the body-reset guard: all fallible ops have succeeded.
         let response = scopeguard::ScopeGuard::into_inner(response);
-        // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let ptr = bun_core::heap::into_raw(Box::new(response));
-        // SAFETY: `ptr` is freshly boxed and uniquely owned here.
-        Ok(unsafe { (*ptr).to_js(global_this) })
+        // SAFETY: `ptr` is freshly boxed; the wrapper adopts its ref.
+        Ok(unsafe { Response::to_js(ptr, global_this) })
     }
 
     fn validate_redirect_status_code(
@@ -931,60 +931,40 @@ impl Response {
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let response = Self::construct_redirect_impl(global_this, JsLocal::to_js_slice(args))?;
-        // Ownership transfers to the JSC wrapper (freed via `finalize`).
-        let ptr = bun_core::heap::into_raw(Box::new(response));
-        // SAFETY: `ptr` is freshly boxed and uniquely owned here.
-        Ok(unsafe { (*ptr).to_js(global_this) })
-    }
-
-    fn construct_redirect_impl(
-        global_this: &JSGlobalObject,
-        args: &[JSValue],
-    ) -> JsResult<Response> {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), args);
+        let args = JsLocal::to_js_slice(args);
 
-        let url_string: BunString;
-        let response: Response = 'brk: {
-            let response = Response {
-                init: JsCell::new(Init {
-                    status_code: 302,
-                    ..Default::default()
-                }),
-                body: JsCell::new(Body::new(BodyValue::Null)),
+        let url_string = match args.first() {
+            Some(url) => url.to_bun_string(global_this)?,
+            None => BunString::EMPTY,
+        };
+        let response = Response {
+            init: JsCell::new(Init {
+                status_code: 302,
                 ..Default::default()
-            };
+            }),
+            body: JsCell::new(Body::new(BodyValue::Null)),
+            ..Default::default()
+        };
 
-            let url_string_value = args.next_eat().unwrap_or_default();
-            url_string = if url_string_value.is_empty() {
-                BunString::EMPTY
-            } else {
-                url_string_value.to_bun_string(global_this)?
-            };
+        if let Some(&arg_init) = args.get(1) {
+            if arg_init.is_undefined_or_null() {
+                // no-op
+            } else if arg_init.is_number() {
+                let status = Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
+                response.init.with_mut(|i| i.status_code = status);
+            } else if let Some(init) = Init::init(global_this, arg_init)? {
+                // cleanup is handled by Init's drop glue on `?` below
+                response.init.set(init);
 
-            if let Some(arg_init) = args.next_eat() {
-                if arg_init.is_undefined_or_null() {
-                    // no-op
-                } else if arg_init.is_number() {
+                let status = response.init.get().status_code;
+                if status != 200 {
                     let status =
-                        Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
+                        Self::validate_redirect_status_code(global_this, i32::from(status))?;
                     response.init.with_mut(|i| i.status_code = status);
-                } else if let Some(init) = Init::init(global_this, arg_init)? {
-                    // cleanup is handled by Init's drop glue on `?` below
-                    response.init.set(init);
-
-                    let status = response.init.get().status_code;
-                    if status != 200 {
-                        let status =
-                            Self::validate_redirect_status_code(global_this, i32::from(status))?;
-                        response.init.with_mut(|i| i.status_code = status);
-                    }
                 }
             }
-
-            break 'brk response;
-        };
+        }
 
         // `get_or_create_headers` already populated init.headers.
         let headers = response.get_or_create_headers(global_this)?;
@@ -995,12 +975,13 @@ impl Response {
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;
-        Ok(response)
+        let ptr = bun_core::heap::into_raw(Box::new(response));
+        // SAFETY: `ptr` is freshly boxed; the wrapper adopts its ref.
+        Ok(unsafe { Response::to_js(ptr, global_this) })
     }
 
     pub(crate) fn construct_error(cx: &mut JsScope<'_>) -> JSValue {
         let global_this = cx.global();
-        // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let response = bun_core::heap::into_raw(Box::new(Response {
             init: JsCell::new(Init {
                 status_code: 0,
@@ -1010,11 +991,8 @@ impl Response {
             ..Default::default()
         }));
 
-        // SAFETY: `response` is freshly boxed and uniquely owned here.
-        let js_value = unsafe { (*response).to_js(global_this) };
-        // SAFETY: `to_js` does not free the payload; still uniquely owned.
-        unsafe { (*response).js_ref.set(JsRef::init_weak(js_value)) };
-        js_value
+        // SAFETY: `response` is freshly boxed; the wrapper adopts its ref.
+        unsafe { Response::to_js(response, global_this) }
     }
 
     pub(crate) fn constructor<'a>(
@@ -1024,12 +1002,10 @@ impl Response {
         init: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
-        let ptr = response.as_ptr();
+        let this = response.this_ptr();
         let this_value = structure.create(&cx.heap, response);
-        // SAFETY: `this_value` holds the ref.
-        let response = unsafe { &*ptr };
-        response.js_ref.set(JsRef::init_weak(this_value.to_js()));
-        response.check_body_stream_ref(cx.global());
+        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
+        this.check_body_stream_ref(cx.global());
         Ok(this_value)
     }
 
@@ -1038,15 +1014,13 @@ impl Response {
         body: JSValue,
         init: JSValue,
     ) -> JsResult<RefPtr<Response>> {
-        let arguments = [body, init];
-
-        if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
+        if body.is_object() {
             // `as_class_ref` is the safe shared-borrow downcast (one audited
             // unsafe in `JSValue`); only `&self` accessors (`is_s3`, `store`)
             // are touched on this path.
-            if let Some(blob) = arguments[0].as_class_ref::<Blob>() {
+            if let Some(blob) = body.as_class_ref::<Blob>() {
                 if blob.is_s3() {
-                    if !arguments[1].is_empty_or_undefined_or_null() {
+                    if !init.is_undefined_or_null() {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "new Response(s3File) do not support ResponseInit options",
                         )));
@@ -1100,15 +1074,15 @@ impl Response {
             }
         }
         let mut init: Init = 'brk: {
-            if arguments[1].is_undefined_or_null() {
+            if init.is_undefined_or_null() {
                 break 'brk Init {
                     status_code: 200,
                     headers: None,
                     ..Default::default()
                 };
             }
-            if arguments[1].is_object() {
-                break 'brk Init::init(global_this, arguments[1])?.expect("unreachable");
+            if init.is_object() {
+                break 'brk Init::init(global_this, init)?.expect("unreachable");
             }
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
@@ -1116,11 +1090,11 @@ impl Response {
         };
 
         let body: Body = 'brk: {
-            if arguments[0].is_undefined_or_null() {
+            if body.is_undefined_or_null() {
                 break 'brk Body::new(BodyValue::Null);
             }
             // `Body::extract` is a free fn re-exported as `body::extract`.
-            super::body::extract(global_this, arguments[0])?
+            super::body::extract(global_this, body)?
         };
         // `Body` has NO `Drop`; arm a guard so the
         // error returns below release the extracted body payload.

@@ -297,7 +297,7 @@ pub(crate) struct Interpreter {
     /// The JS wrapper. Strong from `run_from_js` until `finish` has settled the promise.
     pub(crate) this_value: JsCell<JsRef>,
     pub(crate) cleanup_state: Cell<CleanupState>,
-    pub(crate) estimated_size_for_gc: Cell<usize>,
+    pub(crate) estimated_size_for_gc: usize,
 
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
     /// when running under a Worker). See [`Interpreter::get_vm_args_utf8`].
@@ -430,7 +430,7 @@ impl Interpreter {
             *out_lex_result = Some(lex_result);
             return Err(ParseError::Lex.into());
         }
-        *out_parser = Some(Parser::new(arena, lex_result)?);
+        *out_parser = Some(Parser::new(arena, lex_result));
         Ok(out_parser.as_mut().unwrap().parse()?)
     }
 
@@ -564,7 +564,7 @@ impl Interpreter {
             exit_code: Cell::new(None),
             this_value: JsCell::new(JsRef::empty()),
             cleanup_state: Cell::new(CleanupState::NeedsFullCleanup),
-            estimated_size_for_gc: Cell::new(0),
+            estimated_size_for_gc: 0,
             vm_args_utf8: JsCell::new(Vec::new()),
             command_ctx: ctx,
         };
@@ -1065,7 +1065,7 @@ impl Interpreter {
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
-        self.estimated_size_for_gc.get()
+        self.estimated_size_for_gc
     }
 
     /// Safe accessor for the set-once `global_this: Cell<*mut JSGlobalObject>`
@@ -2927,14 +2927,14 @@ pub(crate) fn create_shell_interpreter<'a>(
         )));
     }
 
-    let (shargs, quiet, cwd, export_env) = parsed_shell_script.take(global);
+    let (shargs, quiet, cwd, export_env) = parsed_shell_script.take();
 
     let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
     // bun_vm() returns the live thread-local VM for a Bun-owned global; that
     // pointer is the live `jsc::EventLoop` `EventLoopHandle::init` expects.
     let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
-    let interpreter = match Interpreter::init(
+    let mut interpreter = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),
         event_loop,
@@ -2954,9 +2954,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     interpreter
         .global_this
         .set(std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut());
-    interpreter
-        .estimated_size_for_gc
-        .set(interpreter.memory_cost());
+    interpreter.estimated_size_for_gc = interpreter.memory_cost();
 
     let this_value = interpreter.into_js(&cx.heap);
     let js_value = this_value.to_js();

@@ -49,7 +49,7 @@ pub enum Mode {
     Test,
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. All three
+// Every JS-exposed method takes `&self`. All three
 // fields are written exactly once in `create_unbound` and never mutated again,
 // so no `Cell`/`JsCell` wrapping is needed — the type is read-only after
 // construction. `generic_if`/`generic_extend`/`each`/`call_as_function` all
@@ -123,15 +123,9 @@ impl ScopeFunctions {
 fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
-    let Some(this_ptr) = ScopeFunctions::from_js(frame.this()) else {
+    let Some(this) = frame.this().as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
-    // SAFETY: `from_js` returned non-null; the JS wrapper keeps the
-    // ScopeFunctions alive for the duration of this call (we hold `frame.this()`).
-    // R-2: deref as shared (`&*const`) — every field is read-only after
-    // `create_unbound`, and the body re-enters JS (get_length / array_iterator /
-    // bind / enqueue) which can form fresh `&ScopeFunctions` to the same object.
-    let this: &ScopeFunctions = unsafe { &*this_ptr.cast_const() };
     let line_no = jest::capture_test_line_number(frame, global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;

@@ -13,8 +13,7 @@ impl Expect {
         expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let this = self;
-        let res = (|| -> JsResult<JSValue> {
+        let this = self.post_match_guard(global);
         let this_value = this_value.to_js();
 
         this.increment_expect_call_counter();
@@ -28,7 +27,6 @@ impl Expect {
                 expected.to_fmt(&mut formatter),
             )));
         }
-        expected.ensure_still_alive();
 
         let value: JSValue =
             this.get_value(global, this_value, "toBeInstanceOf", "<green>expected<r>")?;
@@ -64,9 +62,6 @@ impl Expect {
             "\n\nExpected constructor: <green>{}<r>\nReceived value: <red>{}<r>\n",
             expected_fmt, value_fmt,
         )
-        })();
-        this.post_match(global);
-        res
     }
 }
 

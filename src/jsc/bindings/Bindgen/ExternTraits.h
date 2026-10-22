@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -168,9 +169,7 @@ template<> struct ExternTraits<JSC::ArgList> {
 // `data()` is never null, which a Rust slice needs.
 inline JSC::ArgList variadicArguments(JSC::CallFrame* callFrame, unsigned startIndex)
 {
-    JSC::ArgList arguments { callFrame };
-    unsigned skipped = std::min<unsigned>(startIndex, arguments.size());
-    return { arguments.data() + skipped, static_cast<unsigned>(arguments.size()) - skipped };
+    return { callFrame, static_cast<int>(std::min<size_t>(startIndex, callFrame->argumentCount())) };
 }
 
 // A converted argument and the argument itself.

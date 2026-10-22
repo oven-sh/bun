@@ -12,7 +12,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         bun_jsc::mark_binding!();
-        let (this, calls, _value) = self.mock_prologue(
+        let (this, calls, _) = self.mock_prologue(
             global,
             this_value.to_js(),
             "toHaveBeenCalledOnce",

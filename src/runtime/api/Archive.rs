@@ -144,7 +144,7 @@ impl Archive {
         cx: &mut JsScope<'_>,
         data: JsLocal<'_>,
         options: JsLocal<'_>,
-    ) -> JsResult<Archive> {
+    ) -> JsResult<Self> {
         let global = cx.global();
         let data = data.to_js();
 
@@ -154,7 +154,7 @@ impl Archive {
         // For Blob/Archive, ref the existing store (zero-copy)
         if let Some(blob) = blob_from_js(data) {
             if let Some(store) = blob.store.get().as_ref() {
-                return Ok(Archive {
+                return Ok(Self {
                     store: store.clone(),
                     compress,
                 });

@@ -27,7 +27,7 @@ bun_output::declare_scope!(UpgradedDuplex, visible);
 
 pub(crate) struct UpgradedDuplex {
     pub wrapper: JsCell<Option<WrapperType>>,
-    /// The owning `JSTLSSocket` wrapper. Its `values:` slots root `origin` and
+    /// The owning `JSTLSSocket` wrapper. Its `internalFields` root `origin` and
     /// the four listener thunks; the `JSValue` fields below are read-side
     /// shadows of those slots.
     pub js_wrapper: JSValue,
@@ -113,7 +113,7 @@ pub(crate) struct Handlers {
 use crate::jsc_hooks::timer_all_mut as timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
-/// into the owning `JSTLSSocket` wrapper's visited `values:` slot (the GC
+/// into the owning `JSTLSSocket` wrapper's internal field (the GC
 /// root). All four `get_js_handlers` slots follow the identical
 /// `NewFunctionWithData(global, null, 0, fn, self)` → `ensureStillAlive` →
 /// `setFunctionData(self)` → store pattern.

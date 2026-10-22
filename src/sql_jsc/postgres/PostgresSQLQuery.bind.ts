@@ -8,10 +8,9 @@ export const PostgresSQLQuery = b.class({
   refCounted: true,
   finalize: true,
   estimatedSize: true,
-  configurable: false,
   internalFields: ["pendingValue", "target", "binding", "copy"],
   proto: {
-    cancel: { rustName: "do_cancel", capability: "js" },
+    cancel: { capability: "js", rustName: "do_cancel" },
     copyDone: { capability: "js" },
     copyFail: { args: { message: b.string.loose.utf8 }, capability: "js" },
     copyResume: {},

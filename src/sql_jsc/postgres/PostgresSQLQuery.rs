@@ -419,7 +419,7 @@ impl PostgresSQLQuery {
     pub fn set_mode_from_js(&self, cx: &mut JsScope<'_>, mode: JsLocal<'_>) -> JsResult<()> {
         let global_object = cx.global();
         let js_mode = mode.to_js();
-        if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
+        if !js_mode.is_number() {
             return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
         }
 

@@ -208,6 +208,7 @@ impl Offsets {
 
 pub(crate) struct FFI {
     pub dylib: JsCell<Option<bun_sys::DynLib>>,
+    /// Leaked when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
     pub functions: ManuallyDrop<JsCell<StringArrayHashMap<Function>>>,
     pub closed: Cell<bool>,
     pub shared_state: Cell<Option<NonNull<TCC::State>>>,
@@ -220,16 +221,6 @@ impl Default for FFI {
             functions: ManuallyDrop::new(JsCell::new(StringArrayHashMap::default())),
             closed: Cell::new(false),
             shared_state: Cell::new(None),
-        }
-    }
-}
-
-impl Drop for FFI {
-    // Intentional leak when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
-    fn drop(&mut self) {
-        if self.closed.get() {
-            // SAFETY: nothing reads `functions` after this.
-            unsafe { ManuallyDrop::drop(&mut self.functions) };
         }
     }
 }
@@ -1353,7 +1344,7 @@ impl FFI {
             // SAFETY: state is a valid TCC::State pointer; we have exclusive ownership
             unsafe { TCC::State::destroy(state.as_ptr()) };
         }
-        self.functions.with_mut(|f| f.clear_retaining_capacity());
+        self.functions.set(StringArrayHashMap::default());
     }
 
     pub(crate) fn print_callback(global: &JSGlobalObject, object: JSValue) -> JsResult<JSValue> {

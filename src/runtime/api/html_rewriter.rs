@@ -306,10 +306,10 @@ pub(crate) struct HTMLRewriter {
 }
 
 impl HTMLRewriter {
-    pub(crate) fn constructor() -> HTMLRewriter {
+    pub(crate) fn constructor() -> Self {
         bun_core::analytics::Features::HTML_REWRITER
             .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        HTMLRewriter {
+        Self {
             context: Rc::new(RefCell::new(LOLHTMLContext::default())),
         }
     }
@@ -376,7 +376,7 @@ impl HTMLRewriter {
         cx: &mut JsScope<'_>,
         input: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let cx = &cx.js_thread();
+        let cx = cx.js_thread();
         let (this_value, input) = (this_value.to_js(), input.to_js());
         if let Some(response) = js_Response::from_js(input).map(BackRef::<Response>::from) {
             // An already-failed body surfaces its stored upstream error (abort
@@ -392,7 +392,7 @@ impl HTMLRewriter {
                     .global()
                     .throw_invalid_arguments(format_args!("Response body already used")));
             }
-            let out = self.begin_transform(cx, this_value, &response, None)?;
+            let out = self.begin_transform(&cx, this_value, &response, None)?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out.to_error() {
                 return Err(cx.global().throw_value(err));
@@ -432,7 +432,7 @@ impl HTMLRewriter {
             } else {
                 "an ArrayBuffer"
             };
-            let out_response_value = self.begin_transform(cx, this_value, &resp, Some(noun))?;
+            let out_response_value = self.begin_transform(&cx, this_value, &resp, Some(noun))?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out_response_value.to_error() {
                 return Err(cx.global().throw_value(err));
@@ -452,8 +452,8 @@ impl HTMLRewriter {
                 .use_as_any_blob_allow_non_utf8_string();
 
             return match kind {
-                ResponseKind::String => blob.to_string(cx, webcore::Lifetime::Transfer),
-                ResponseKind::ArrayBuffer => blob.to_array_buffer(cx, webcore::Lifetime::Transfer),
+                ResponseKind::String => blob.to_string(&cx, webcore::Lifetime::Transfer),
+                ResponseKind::ArrayBuffer => blob.to_array_buffer(&cx, webcore::Lifetime::Transfer),
                 ResponseKind::Other => unreachable!(),
             };
         }
@@ -695,7 +695,7 @@ impl RewriterPipe {
     /// here may touch other GC cells, and the other ref holders may still
     /// dispatch into the pipe after this cell is swept.
     pub fn finalize(&self) {
-        self.cell.with_mut(JsRef::finalize);
+        self.cell.with_mut(|r| r.finalize());
     }
 
     /// Release one ref, deferring the release of the *last* ref to the event
@@ -1013,7 +1013,8 @@ impl RewriterPipe {
         // https://github.com/oven-sh/bun/issues/3334
         result_ref.set_init_headers(original.clone_init_headers(cx.global())?);
 
-        let response_js_value = result_ref.to_js(&this.global);
+        // SAFETY: the wrapper adopts the ref `result` was allocated with.
+        let response_js_value = unsafe { Response::to_js(result.as_ptr(), &this.global) };
 
         // Hand ownership of `pipe` to its `JSHTMLRewriterTransform` wrapper cell.
         // The cell's WriteBarrier slots root the Response and (later) the

@@ -263,38 +263,151 @@ impl core::ops::Deref for PinnedBytes {
 }
 
 impl readable_stream::SourceContext for ByteStream {
-    const NAME: &'static str = "Bytes";
-    // setRefUnrefFn = null
-    const SUPPORTS_REF: bool = false;
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
 
     fn on_start(&self) -> streams::Start {
-        Self::on_start(self)
+        if self.has_received_last_chunk.get() {
+            // `Empty` would close the stream without the pull that returns the stored error.
+            if self.has_pending_error() {
+                return streams::Start::Ready;
+            }
+            if self.buffered.is_empty() {
+                return streams::Start::Empty;
+            }
+            return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(self.buffered.take()));
+        }
+
+        if self.high_water_mark == 0 {
+            return streams::Start::Ready;
+        }
+
+        // For HTTP, the maximum streaming response body size will be 512 KB.
+        // #define LIBUS_RECV_BUFFER_LENGTH 524288
+        // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
+        // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
+        let page_size: blob::SizeType =
+            blob::SizeType::try_from(bun_sys::page_size()).expect("int cast");
+        streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
     }
-    fn on_pull(&self, buf: &mut [u8], view: JSValue) -> streams::Result {
-        Self::on_pull(self, buf, view)
+
+    fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
+        bun_jsc::mark_binding!();
+        debug_assert!(!buffer.is_empty());
+        debug_assert!(self.buffer_action.get().is_none());
+
+        if !self.buffered.is_empty() {
+            debug_assert!(self.value().is_empty()); // == .zero
+            let to_write = self.buffered.copy_out(buffer);
+            // Both sides are non-empty, so the copy moved at least one byte.
+            debug_assert!(to_write > 0);
+
+            if self.buffered.is_empty() {
+                self.signal_drained();
+            }
+
+            return streams::Result::IntoArray(IntoArray {
+                value: view,
+                len: to_write as blob::SizeType, // @truncate
+            });
+        }
+
+        if self.has_received_last_chunk.get() {
+            // Surface a stored terminal error (set by `append(Err)` when no
+            // reader was waiting) instead of silently reporting `Done`.
+            if self.has_pending_error() {
+                return self
+                    .pending
+                    .with_mut(|p| core::mem::replace(&mut p.result, streams::Result::Done));
+            }
+            return streams::Result::Done;
+        }
+
+        // Raw borrow of a JS-owned buffer; rooted by `set_value`.
+        self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
+        self.set_value(view);
+
+        // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
+        // returned `streams::Result::Pending` raw-backref needs.
+        streams::Result::Pending(self.pending.as_ptr())
     }
+
     fn on_cancel(&self) {
         Self::on_cancel(self)
     }
+
     fn deinit_fn(&self) {
-        Self::finalize(self)
+        bun_jsc::mark_binding!();
+        self.buffered.clear();
+
+        self.pending_value.with_mut(|pv| pv.deinit());
+        if !self.done.get() {
+            self.done.set(true);
+
+            self.pending_buffer.set(Self::empty_pending_buffer());
+            let is_promise = self.pending.with_mut(|p| {
+                p.result.release();
+                p.result = streams::Result::Done;
+                p.state == streams::PendingState::Pending
+                    && matches!(p.future, streams::PendingFuture::Promise { .. })
+            });
+            if is_promise {
+                // We must never run JavaScript inside of a GC finalizer.
+                self.pending.with_mut(|p| p.run_on_next_tick());
+            } else {
+                // A `Handler` future is a native continuation, not script:
+                // nothing to settle, so nothing can be left pending.
+                self.pending.with_mut(|p| p.run());
+            }
+        }
+        if let Some(action) = self.buffer_action.replace(None) {
+            // JSPromiseStrong implements Drop, so dropping the enum releases
+            // each variant's JSPromiseStrong payload.
+            drop(action);
+        }
     }
+
     fn wrapper_finalized(&self) {
         self.parent_const().producer.get().consumer_collected();
     }
+
     fn drain_internal_buffer(&self) -> Vec<u8> {
         Self::drain(self)
     }
+
     fn memory_cost_fn(&self) -> usize {
-        Self::memory_cost(self)
+        // ReadableStreamSource covers @sizeOf(ByteStream)
+        self.buffered.capacity()
     }
+
     fn to_buffered_value(
         &self,
         cx: &bun_jsc::JsThread<'_>,
         action: streams::BufferActionTag,
-    ) -> Option<bun_jsc::JsResult<JSValue>> {
-        Some(Self::to_buffered_value(self, cx, action))
+    ) -> bun_jsc::JsResult<JSValue> {
+        if self.buffer_action.get().is_some() {
+            return Err(cx.global().throw(format_args!("Cannot buffer value twice")));
+        }
+
+        if let streams::Result::Err(err) = &self.pending.get().result {
+            let err_js = err.to_js(cx.global());
+            err_js.ensure_still_alive();
+            self.pending.with_mut(|p| p.result = streams::Result::Done);
+            self.done.set(true);
+            self.buffered.clear();
+            return Ok(jsc::JSPromise::rejected_promise(cx.global(), err_js).to_js());
+        }
+
+        if let Some(blob_) = self.to_any_blob() {
+            let mut blob = blob_;
+            return blob.to_promise(cx, action);
+        }
+
+        self.buffer_action.set(Some(BufferAction::new(action, cx)));
+        let promise = self.buffer_action.get().as_ref().unwrap().value();
+        // Signal after the action is installed so a backpressure-gated
+        // producer observes it; a synchronous producer may fulfil it inline.
+        self.signal_drained();
+        Ok(promise)
     }
 }
 
@@ -331,31 +444,6 @@ impl ByteStream {
             }
             DrainResult::Aborted => {}
         }
-    }
-
-    fn on_start(&self) -> streams::Start {
-        if self.has_received_last_chunk.get() {
-            // `Empty` would close the stream without the pull that returns the stored error.
-            if self.has_pending_error() {
-                return streams::Start::Ready;
-            }
-            if self.buffered.is_empty() {
-                return streams::Start::Empty;
-            }
-            return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(self.buffered.take()));
-        }
-
-        if self.high_water_mark == 0 {
-            return streams::Start::Ready;
-        }
-
-        // For HTTP, the maximum streaming response body size will be 512 KB.
-        // #define LIBUS_RECV_BUFFER_LENGTH 524288
-        // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
-        // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
-        let page_size: blob::SizeType =
-            blob::SizeType::try_from(bun_sys::page_size()).expect("int cast");
-        streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
     }
 
     fn value(&self) -> JSValue {
@@ -766,47 +854,6 @@ impl ByteStream {
         self.pending_value.with_mut(|pv| pv.set(global, view));
     }
 
-    fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
-        bun_jsc::mark_binding!();
-        debug_assert!(!buffer.is_empty());
-        debug_assert!(self.buffer_action.get().is_none());
-
-        if !self.buffered.is_empty() {
-            debug_assert!(self.value().is_empty()); // == .zero
-            let to_write = self.buffered.copy_out(buffer);
-            // Both sides are non-empty, so the copy moved at least one byte.
-            debug_assert!(to_write > 0);
-
-            if self.buffered.is_empty() {
-                self.signal_drained();
-            }
-
-            return streams::Result::IntoArray(IntoArray {
-                value: view,
-                len: to_write as blob::SizeType, // @truncate
-            });
-        }
-
-        if self.has_received_last_chunk.get() {
-            // Surface a stored terminal error (set by `append(Err)` when no
-            // reader was waiting) instead of silently reporting `Done`.
-            if self.has_pending_error() {
-                return self
-                    .pending
-                    .with_mut(|p| core::mem::replace(&mut p.result, streams::Result::Done));
-            }
-            return streams::Result::Done;
-        }
-
-        // Raw borrow of a JS-owned buffer; rooted by `set_value`.
-        self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
-        self.set_value(view);
-
-        // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
-        // returned `streams::Result::Pending` raw-backref needs.
-        streams::Result::Pending(self.pending.as_ptr())
-    }
-
     /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
     pub(crate) fn error_native_consumer(&self, reason: JSValue) {
         let waiting = self.sink.get().is_some()
@@ -854,48 +901,6 @@ impl ByteStream {
             );
             self.buffer_action.set(None);
         }
-    }
-
-    fn memory_cost(&self) -> usize {
-        // ReadableStreamSource covers @sizeOf(ByteStream)
-        self.buffered.capacity()
-    }
-
-    /// NOTE: not `impl Drop` — `ByteStream` is the `context` payload of a
-    /// `ReadableStreamSource`; teardown is driven by the GC finalizer via `Source::finalize`,
-    /// which calls this.
-    fn finalize(&self) {
-        bun_jsc::mark_binding!();
-        self.buffered.clear();
-
-        self.pending_value.with_mut(|pv| pv.deinit());
-        if !self.done.get() {
-            self.done.set(true);
-
-            self.pending_buffer.set(Self::empty_pending_buffer());
-            let is_promise = self.pending.with_mut(|p| {
-                p.result.release();
-                p.result = streams::Result::Done;
-                p.state == streams::PendingState::Pending
-                    && matches!(p.future, streams::PendingFuture::Promise { .. })
-            });
-            if is_promise {
-                // We must never run JavaScript inside of a GC finalizer.
-                self.pending.with_mut(|p| p.run_on_next_tick());
-            } else {
-                // A `Handler` future is a native continuation, not script:
-                // nothing to settle, so nothing can be left pending.
-                self.pending.with_mut(|p| p.run());
-            }
-        }
-        if let Some(action) = self.buffer_action.replace(None) {
-            // JSPromiseStrong implements Drop, so dropping the enum releases
-            // each variant's JSPromiseStrong payload.
-            drop(action);
-        }
-        // Enclosing `Box<NewSource<ByteStream>>` is freed by the caller
-        // (`NewSource::decrement_count`) after this returns; freeing it here would
-        // deallocate the storage backing `&self` (dangling UAF).
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
@@ -956,37 +961,6 @@ impl ByteStream {
         }
 
         None
-    }
-
-    fn to_buffered_value(
-        &self,
-        cx: &bun_jsc::JsThread<'_>,
-        action: streams::BufferActionTag,
-    ) -> bun_jsc::JsResult<JSValue> {
-        if self.buffer_action.get().is_some() {
-            return Err(cx.global().throw(format_args!("Cannot buffer value twice")));
-        }
-
-        if let streams::Result::Err(err) = &self.pending.get().result {
-            let err_js = err.to_js(cx.global());
-            err_js.ensure_still_alive();
-            self.pending.with_mut(|p| p.result = streams::Result::Done);
-            self.done.set(true);
-            self.buffered.clear();
-            return Ok(jsc::JSPromise::rejected_promise(cx.global(), err_js).to_js());
-        }
-
-        if let Some(blob_) = self.to_any_blob() {
-            let mut blob = blob_;
-            return blob.to_promise(cx, action);
-        }
-
-        self.buffer_action.set(Some(BufferAction::new(action, cx)));
-        let promise = self.buffer_action.get().as_ref().unwrap().value();
-        // Signal after the action is installed so a backpressure-gated
-        // producer observes it; a synchronous producer may fulfil it inline.
-        self.signal_drained();
-        Ok(promise)
     }
 }
 

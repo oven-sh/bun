@@ -12,7 +12,7 @@ impl Expect {
         expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let (this, calls, _value) = self.mock_prologue(
+        let (this, calls, _) = self.mock_prologue(
             global,
             this_value.to_js(),
             "toHaveBeenCalledTimes",

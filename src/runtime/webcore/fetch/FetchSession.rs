@@ -276,11 +276,10 @@ impl FetchSession {
         }
         let check_server_identity = Self::parse_options(&mut this, cx.global(), init.to_js())?;
 
-        let this = bun_core::heap::into_raw(this);
-        // SAFETY: the wrapper adopts the allocation's one ref.
-        let this_value = structure.create(&cx.heap, unsafe { RefPtr::from_raw(this) });
-        // SAFETY: `this_value` holds the ref.
-        let this = unsafe { &*this };
+        // SAFETY: the allocation's one ref, which the wrapper adopts.
+        let session = unsafe { RefPtr::from_raw(bun_core::heap::into_raw(this)) };
+        let this = session.this_ptr();
+        let this_value = structure.create(&cx.heap, session);
         this.this_value.set(JsRef::init_weak(this_value.to_js()));
         if let Some(callback) = check_server_identity {
             js::check_server_identity_set_cached(this_value.to_js(), cx.global(), callback);
@@ -416,7 +415,7 @@ impl FetchSession {
     }
 
     pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(JsRef::finalize);
+        self.this_value.with_mut(|r| r.finalize());
         self.close();
     }
 }

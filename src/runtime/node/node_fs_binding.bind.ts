@@ -54,7 +54,6 @@ const getter = { getter: b.any, capability: "js" } as const;
 /** What `createBinding` makes: `src/js/internal/fs/binding.ts`. */
 export const NodeJSFS = b.class({
   rustPath: "crate::node::node_fs_binding::Binding",
-  configurable: false,
   proto: Object.fromEntries(
     [
       ...Object.entries(operations).flatMap(([name, [length, syncLength]]) => [
@@ -68,6 +67,6 @@ export const NodeJSFS = b.class({
       ["watchFile", operation(3)] as const,
       ["Dirent", getter] as const,
       ["Stats", getter] as const,
-    ].sort(([a], [b]) => a.localeCompare(b)),
+    ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });

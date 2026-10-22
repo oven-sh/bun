@@ -13,11 +13,11 @@ mod _impl {
     use bun_jsc::{JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
     use bun_ptr::RefPtr;
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
+    use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive};
     use crate::node::util::validators;
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs).
+    /// (see `CompressionStreamImpl::write` in node_zlib_binding.rs).
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
@@ -94,7 +94,7 @@ mod _impl {
             let this_value = this_value.to_js();
             // Racing an in-flight async write would alias `&mut Context`
             // across threads; a closed `Context` cannot be re-initialized.
-            CompressionStream::<Self>::throw_unless_idle(self, global)?;
+            self.throw_unless_idle(global)?;
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
@@ -185,14 +185,14 @@ mod _impl {
             let global = cx.global();
             // `set_params` calls `deflateParams` on the same `z_stream` an
             // in-flight async write's `deflate()` is using.
-            CompressionStream::<Self>::throw_unless_idle(self, global)?;
+            self.throw_unless_idle(global)?;
 
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));
             if err.is_error() {
                 // `&self` over `Cell`/`JsCell` fields — `emit_error` →
                 // `run_callback` may re-enter `close()`/`reset()` via a fresh
                 // `&Self`; interior mutability makes that sound.
-                CompressionStream::<Self>::emit_error(self, global, this_value.to_js(), err);
+                self.emit_error(global, this_value.to_js(), err);
             }
             Ok(())
         }

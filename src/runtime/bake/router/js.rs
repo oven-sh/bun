@@ -10,7 +10,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOpt
 use bun_paths as paths;
 
 use super::*;
-use crate::generated_bindgen::filesystem_router::js_FrameworkFileSystemRouter;
+use crate::generated_bindgen::filesystem_router::js_FrameworkFileSystemRouter as js;
 
 /// `generated_js2native.rs` calls `js_framework_router::get_bindings`.
 pub(crate) use self::JSFrameworkRouter as js_framework_router;
@@ -44,11 +44,7 @@ impl JSFrameworkRouter {
                 Default::default(),
             ),
         );
-        obj.put(
-            global,
-            b"FrameworkRouter",
-            js_FrameworkFileSystemRouter::get_constructor(global),
-        );
+        obj.put(global, b"FrameworkRouter", js::get_constructor(global));
         Ok(obj)
     }
 

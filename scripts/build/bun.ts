@@ -279,8 +279,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // unified.ts for N). Generated at configure time; depfiles track the underlying
   // .cpp files so editing one rebuilds its bundle. Codegen .cpp are kept
   // separate — those are already large single TUs and bundling them would
-  // serialize work. Always called so
-  // stale bundles are pruned even with --unifiedSources=false.
+  // serialize work. Always called so stale bundles are pruned even with
+  // --unifiedSources=false.
   const split = generateUnifiedSources(cfg, sources.cxx);
   const cxxSources = [...split.unified, ...split.standalone];
   const cSources = [...sources.c];

@@ -29,6 +29,7 @@
 #include "JSDOMConvertBase.h"
 #include "JSDOMGlobalObject.h"
 #include "BunIDLConvertBase.h"
+#include <JavaScriptCore/StringObject.h>
 
 namespace WebCore {
 

@@ -26,7 +26,7 @@ fn to_have_returned_with_impl(
     expected: JSValue,
     return_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
-    let (this, returns, _value) = this.mock_prologue(
+    let (this, returns, _) = this.mock_prologue(
         global,
         this_value,
         "toHaveReturnedWith",

@@ -13,10 +13,11 @@ impl Expect {
         value: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let this = scopeguard::guard(self, |this| this.post_match(global));
+        let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
-        let [first, second] = [property_matchers.to_js(), value.to_js()];
+        let first = property_matchers.to_js();
+        let second = value.to_js();
 
         this.increment_expect_call_counter();
 
@@ -76,8 +77,7 @@ impl Expect {
             "toMatchInlineSnapshot",
             "<green>properties<r><d>, <r>hint",
         )?;
-        Expect::inline_snapshot(
-            &**this,
+        this.inline_snapshot(
             global,
             value,
             property_matchers,

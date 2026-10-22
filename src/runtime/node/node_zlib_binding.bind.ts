@@ -35,9 +35,8 @@ const compressionStream = <Init extends object, Params extends object>(
 ) =>
   b.class({
     rustPath,
-    rustTraits: ["crate::node::node_zlib_binding::CompressionStreamImpl"],
     refCounted: true,
-    configurable: false,
+    rustTraits: ["crate::node::node_zlib_binding::CompressionStreamImpl"],
     estimatedSize: true,
     construct: { args: { mode: b.u8.validateInteger(firstMode, lastMode) }, capability: "js", length: 0 },
     internalFields: ["writeCallback", "errorCallback", "pendingInput", "pendingOutput", "writeResult"],

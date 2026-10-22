@@ -28,7 +28,6 @@ impl Expect {
         let (this, value, not) = self.matcher_prelude(global, this_value.to_js(), "toBeTypeOf", "")?;
 
         let expected = expected.to_js();
-        expected.ensure_still_alive();
 
         if !expected.is_string() {
             return Err(global.throw_invalid_arguments(format_args!("toBeTypeOf() requires a string argument")));

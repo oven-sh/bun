@@ -7,7 +7,9 @@ use std::collections::VecDeque;
 
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong};
+use bun_jsc::{
+    ArrayBuffer, JSGlobalObject, JSValue, JsCell, JsClass as _, JsRef, JsResult, StringJsc, Strong,
+};
 
 use bun_lsquic_sys as lsquic;
 
@@ -186,7 +188,7 @@ impl StoredAddr {
             ip.copy_from_slice(addr);
             SocketAddress::init_ipv6(ip, port, 0, 0)
         };
-        socket_address.into_js_value(global)
+        socket_address.to_js(global)
     }
 }
 
@@ -539,7 +541,7 @@ impl QuicSession {
     pub(super) fn bind_conn(&self, conn: *mut lsquic::lsquic_conn) {
         self.conn.set(conn);
         // SAFETY: `conn` is the live conn lsquic just promoted; `self` is
-        // the heap-allocated session (conn-ctx contract).
+        // the session inside its wrapper (conn-ctx contract).
         unsafe { lsquic::lsquic_conn_set_ctx(conn, core::ptr::from_ref(self).cast_mut().cast()) };
         // SAFETY: `conn` is the live conn lsquic just promoted.
         let promoted = unsafe { lsquic::Conn::from_raw(conn) };
@@ -1821,7 +1823,7 @@ impl QuicSession {
         }
         let streams = self.streams.with_mut(core::mem::take);
         // Each `teardown` can run user JS that destroys a later entry and
-        // lets GC free its Box mid-loop; the taken Vec is not a GC root, so
+        // lets GC free it mid-loop; the taken Vec is not a GC root, so
         // root every wrapper up front.
         let _roots: Vec<Strong> = streams
             .iter()
@@ -1857,13 +1859,11 @@ impl QuicSession {
         self.this_value.with_mut(|r| r.downgrade());
     }
 
-    pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        Ok(self.remote_addr.get().to_js_socket_address(global))
+    pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JSValue {
+        self.remote_addr.get().to_js_socket_address(cx.global())
     }
-    pub(crate) fn get_local_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        Ok(self.local_addr.get().to_js_socket_address(global))
+    pub(crate) fn get_local_address(&self, cx: &mut JsScope<'_>) -> JSValue {
+        self.local_addr.get().to_js_socket_address(cx.global())
     }
     fn parse_close_options(
         &self,
@@ -2396,7 +2396,7 @@ impl QuicSession {
 
     /// Replaces `on_conn_closed` after `QuicEndpoint::detach_for_finalize`.
     pub(super) unsafe extern "C" fn on_closed_detached(ctx: *mut c_void) {
-        // SAFETY: `finalize` nulls the lsquic ctx, so a non-null ctx is live.
+        // SAFETY: `Drop` nulls the lsquic ctx, so a non-null ctx is live.
         // `endpoint` and `streams` may be freed, so only touch `conn`.
         if let Some(session) = unsafe { super::ffi::ctx_ref::<QuicSession>(ctx) } {
             session.conn.set(null_mut());

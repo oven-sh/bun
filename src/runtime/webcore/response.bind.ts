@@ -24,15 +24,14 @@ const clone = { ...method, passThis: true, rustName: "do_clone", length: 1 } as 
 
 export const Request = b.class({
   rustPath: "crate::webcore::Request",
-  rustTraits: body.rustTraits,
   refCounted: true,
-  overridesToJS: true,
   final: false,
-  estimatedSize: true,
+  overridesToJS: true,
+  rustTraits: body.rustTraits,
   memoryCost: true,
-  configurable: false,
-  internalFields: ["stream"],
+  estimatedSize: true,
   construct: { args: { input: b.any, init: b.any }, ...js, passStructure: true, length: 0 },
+  internalFields: ["stream"],
   proto: {
     arrayBuffer: body.arrayBuffer,
     blob: body.blob,
@@ -61,21 +60,13 @@ export const Request = b.class({
 
 export const Response = b.class({
   rustPath: "crate::webcore::Response",
-  rustTraits: body.rustTraits,
   refCounted: true,
   finalize: true,
   overridesToJS: true,
+  rustTraits: body.rustTraits,
   estimatedSize: true,
-  configurable: false,
-  internalFields: ["stream", "transform"],
   construct: { args: { body: b.any, init: b.any }, ...js, passStructure: true, length: 0 },
-  static: {
-    error: { returns: b.any, capability: "js", rustName: "construct_error" },
-    // `Response.json()` is an empty body and `Response.json(undefined)` throws.
-    json: { ...method, args: { args: b.any.variadic }, rustName: "construct_json", length: 0 },
-    // `Response.redirect()` is to "" and `Response.redirect(undefined)` to "undefined".
-    redirect: { ...method, args: { args: b.any.variadic }, rustName: "construct_redirect", length: 0 },
-  },
+  internalFields: ["stream", "transform"],
   proto: {
     arrayBuffer: body.arrayBuffer,
     blob: body.blob,
@@ -94,5 +85,12 @@ export const Response = b.class({
     textStream: body.textStream,
     type: { ...getter, rustName: "response_type" },
     url: cached,
+  },
+  static: {
+    error: { returns: b.any, capability: "js", rustName: "construct_error" },
+    /** `Response.json()` is an empty body and `Response.json(undefined)` throws. */
+    json: { ...method, args: { args: b.any.variadic }, rustName: "construct_json" },
+    /** `Response.redirect()` is to "" and `Response.redirect(undefined)` to "undefined". */
+    redirect: { ...method, args: { args: b.any.variadic }, rustName: "construct_redirect" },
   },
 });

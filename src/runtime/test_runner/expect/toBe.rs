@@ -18,7 +18,6 @@ impl Expect {
             self.matcher_prelude(global_this, this_value.to_js(), "toBe", "<green>expected<r>")?;
 
         let right = expected.to_js();
-        right.ensure_still_alive();
         let mut pass = right.is_same_value(left, global_this)?;
 
         if not {

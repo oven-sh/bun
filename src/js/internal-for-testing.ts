@@ -294,7 +294,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   presentUnlessEmptyString: $bindgen("bindgen_test.bind.ts", "presentUnlessEmptyString"),
   fail: $bindgen("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
-  TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
+  TestMutates: $bindgen("bindgen_test.bind.ts", "TestMutates"),
   TestRefCounted: $bindgen("bindgen_test.bind.ts", "TestRefCounted"),
   makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
   TestError: $bindgen("bindgen_test.bind.ts", "TestError"),

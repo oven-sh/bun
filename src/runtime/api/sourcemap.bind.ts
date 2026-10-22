@@ -4,7 +4,7 @@ const find = { returns: b.any, capability: "js", throws: true } as const;
 
 export const SourceMap = b.class({
   rustPath: "crate::api::js_source_map::JSSourceMap",
-  configurable: false,
+  estimatedSize: true,
   construct: {
     passStructure: true,
     args: { payload: b.any, options: b.any },
@@ -12,7 +12,6 @@ export const SourceMap = b.class({
     throws: true,
     length: 0,
   },
-  estimatedSize: true,
   internalFields: ["lineLengths", "payload"],
   proto: {
     findEntry: { ...find, args: { lineOffset: b.any, columnOffset: b.any } },

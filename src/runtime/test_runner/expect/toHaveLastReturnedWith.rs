@@ -17,7 +17,7 @@ impl Expect {
         let global_this = cx.global();
         bun_jsc::mark_binding!();
         let expected = expected.to_js();
-        let (this, returns, _value) = self.mock_prologue(
+        let (this, returns, _) = self.mock_prologue(
             global_this,
             this_value.to_js(),
             "toHaveBeenLastReturnedWith",

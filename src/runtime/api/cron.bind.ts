@@ -6,7 +6,6 @@ export const CronJob = b.class({
   rustPath: "crate::api::cron::CronJob",
   refCounted: true,
   finalize: true,
-  configurable: false,
   internalFields: ["callback", "pendingPromise", "cron"],
   proto: {
     cron: { internalField: "cron" },

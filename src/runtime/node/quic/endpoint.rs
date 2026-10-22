@@ -447,7 +447,7 @@ extern "C" fn on_data(
     if user.is_null() {
         return;
     }
-    // SAFETY: `user` was set to the heap-allocated QuicEndpoint at bind time
+    // SAFETY: `user` was set to the QuicEndpoint at bind time
     // and stays live until close; all mutated fields are Cell-based.
     let this = unsafe { &*user.cast::<QuicEndpoint>() };
     let global_ptr = this.global.get();
@@ -566,7 +566,7 @@ extern "C" fn on_data(
                     for other_ptr in others {
                         // Registration is the liveness guarantee: `teardown`
                         // unregisters before dropping the self-reference that
-                        // gates finalize, so a listed pointer is allocated.
+                        // keeps the wrapper alive, so a listed pointer is live.
                         if !ENDPOINT_REGISTRY.with_borrow(|v| v.contains(&other_ptr)) {
                             continue;
                         }
@@ -978,13 +978,10 @@ fn apply_transport_params(
             let Some(addr_js) = tp.get(global, key)?.filter(|v| v.is_object()) else {
                 continue;
             };
-            let Some(addr) =
-                crate::generated_bindgen::socket_address::js_SocketAddress::from_js(addr_js)
-            else {
+            let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() else {
                 continue;
             };
-            // SAFETY: `from_js` returned a live SocketAddress.
-            let stored = session::StoredAddr::from_socket_address(unsafe { addr.as_ref() });
+            let stored = session::StoredAddr::from_socket_address(addr);
             let Some((_family, port, ip)) = stored.decode() else {
                 continue;
             };
@@ -1214,12 +1211,8 @@ impl QuicEndpoint {
                 .get(global, "address")?
                 .filter(|v| !v.is_empty_or_undefined_or_null())
             {
-                if let Some(addr) =
-                    crate::generated_bindgen::socket_address::js_SocketAddress::from_js(addr_js)
-                {
-                    // SAFETY: `from_js` returned a live SocketAddress owned by
-                    // the JS value.
-                    let stored = StoredAddr::from_socket_address(unsafe { addr.as_ref() });
+                if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
+                    let stored = StoredAddr::from_socket_address(addr);
                     if let Some((_, port, ip)) = stored.decode() {
                         use core::fmt::Write;
                         let mut host = String::new();
@@ -1331,7 +1324,7 @@ impl QuicEndpoint {
     }
     /// Upgrade a session pointer to a reference, verifying it is still in
     /// the `sessions` registry — `unregister_session` always precedes the
-    /// session's teardown/finalize, so a registered pointer is live on the
+    /// session's teardown and `Drop`, so a registered pointer is live on the
     /// JS thread.
     fn live_session(&self, p: *mut QuicSession) -> Option<&QuicSession> {
         // SAFETY: see doc comment.
@@ -2305,9 +2298,7 @@ impl QuicEndpoint {
         let address = address.to_js();
         let options = options.to_js();
         let session_ticket = session_ticket.to_js();
-        let Some(addr) =
-            crate::generated_bindgen::socket_address::js_SocketAddress::from_js(address)
-        else {
+        let Some(addr) = address.as_class_ref::<crate::socket::SocketAddress>() else {
             return Err(global
                 .err(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -2315,8 +2306,7 @@ impl QuicEndpoint {
                 )
                 .throw());
         };
-        // SAFETY: `from_js` returned a live SocketAddress.
-        let remote = StoredAddr::from_socket_address(unsafe { addr.as_ref() });
+        let remote = StoredAddr::from_socket_address(addr);
         if let Some(version) = read_u64_option(global, options, "version")?
             .map(|v| v as u32)
             .filter(|v| *v != QUIC_VERSION_1 && *v != QUIC_VERSION_2)
@@ -2416,7 +2406,7 @@ impl QuicEndpoint {
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         // SAFETY: engine is live; local/remote/sni/resume are valid for this
         // call (lsquic copies the resume blob); `session` is the
-        // heap-allocated conn-ctx.
+        // conn-ctx, at its final address in its wrapper.
         let conn = unsafe {
             lsquic::lsquic_engine_connect(
                 self.client_engine.get(),
@@ -2600,12 +2590,10 @@ impl QuicEndpoint {
         self.poll_ref.with_mut(|p| p.disable());
     }
 
-    pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        Ok(self.local_addr.get().to_js_socket_address(global))
+    pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JSValue {
+        self.local_addr.get().to_js_socket_address(cx.global())
     }
-    pub(crate) fn mark_busy(&self, busy: JsLocal<'_>) {
-        let busy = busy.to_js().to_boolean();
+    pub(crate) fn mark_busy(&self, busy: bool) {
         // SAFETY: state buffer is live.
         self.with_state(|s| s.busy = busy as u8);
     }
@@ -2691,7 +2679,7 @@ impl QuicEndpoint {
     ///
     /// Teardown finalizes endpoints, sessions and streams in any order, so
     /// `lsquic_engine_destroy` can call back for a session or stream that's already freed.
-    /// `finalize` nulls a freed object's lsquic ctx, and for a live one these callbacks
+    /// `Drop` nulls a freed object's lsquic ctx, and for a live one these callbacks
     /// don't dereference session or endpoint pointers.
     fn detach_for_finalize(&self) {
         self.sessions.with_mut(Vec::clear);

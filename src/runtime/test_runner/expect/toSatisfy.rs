@@ -21,7 +21,6 @@ impl Expect {
         this.increment_expect_call_counter();
 
         let predicate = predicate.to_js();
-        predicate.ensure_still_alive();
 
         if !predicate.is_callable() {
             return Err(global.throw(format_args!("toSatisfy() argument must be a function")));

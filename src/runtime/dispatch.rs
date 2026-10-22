@@ -190,14 +190,12 @@ pub(crate) fn run_task(
             task.ptr.cast::<$ty>()
         };
     }
-    /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
+    /// `run_from_js_thread` takes `*mut T` (full
     /// allocation provenance) so its trailing `T::deref()` may free the box.
     macro_rules! compression_arm {
         ($T:ty) => {{
             // SAFETY: §Dispatch — tag identifies pointee; live payload.
-            unsafe {
-                node_zlib_binding::CompressionStream::<$T>::run_from_js_thread(cast_ptr!($T))
-            };
+            unsafe { node_zlib_binding::run_from_js_thread(cast_ptr!($T)) };
         }};
     }
     // NB: `TaskTag` is `#[derive(PartialEq, Eq)]` over `u8` → structural-match

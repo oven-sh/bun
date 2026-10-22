@@ -174,7 +174,7 @@ unsafe extern "C" {
         key_length: usize,
         value: JSValue,
     ) -> bool;
-    pub(super) safe fn Bun__Bindgen__constructorForClass(
+    pub(super) fn Bun__Bindgen__constructorForClass(
         global: &JSGlobalObject,
         class_index: u32,
     ) -> JSValue;

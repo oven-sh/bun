@@ -19,7 +19,6 @@ impl Expect {
         let value: JSValue = this.get_value(global, this_value, "toBeArrayOfSize", "")?;
 
         let size = size.to_js();
-        size.ensure_still_alive();
 
         if !size.is_any_int() {
             return Err(global.throw(format_args!("toBeArrayOfSize() requires the first argument to be a number")));

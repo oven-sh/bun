@@ -15,7 +15,6 @@ const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.any,
 /** The bound `this` of `test`, `describe` and what their modifiers give, such as `test.skip`. */
 export const ScopeFunctions = b.class({
   rustPath: "crate::test_runner::scope_functions::ScopeFunctions",
-  configurable: false,
   forBind: true,
   internalFields: ["each"],
   proto: {

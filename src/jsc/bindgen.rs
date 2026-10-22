@@ -27,15 +27,10 @@ type OpaqueFfi = (UnsafeCell<[u8; 0]>, PhantomPinned);
 #[repr(C)]
 pub struct JsHeap<'a>(OpaqueFfi, InvariantLifetime<'a>, NotSend);
 
-/// What reaches the Rust payloads of wrapper objects.
-#[repr(C)]
-pub struct JsPayloads<'a>(OpaqueFfi, InvariantLifetime<'a>, NotSend);
-
-/// `&mut JsScope` is what runs JavaScript. It is the `JSGlobalObject*`: both fields are zero-sized at offset 0.
+/// `&mut JsScope` is what runs JavaScript. It is the `JSGlobalObject*`: `heap` is zero-sized at offset 0.
 #[repr(C)]
 pub struct JsScope<'a> {
     pub heap: JsHeap<'a>,
-    pub payloads: JsPayloads<'a>,
 }
 
 impl<'a> JsHeap<'a> {
@@ -685,11 +680,6 @@ pub unsafe trait JsPayload: Sized + 'static {
         // SAFETY: a `JsHeap` is the global object.
         self.into_js(unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() })
     }
-
-    #[inline]
-    fn into_js_value(self, global: &JSGlobalObject) -> JSValue {
-        self.into_js_wrapper(global).to_js()
-    }
 }
 
 /// A class whose constructor creates the object itself: `passStructure`.
@@ -728,16 +718,13 @@ impl<'a, T: JsCreateWithStructure> JsStructure<'a, T> {
     }
 }
 
-/// A [`JsPayload`] with a member that takes `&mut self`. It is reached only through [`JsPayloads`].
-///
 /// # Safety
-/// Implemented by generated code only.
-pub unsafe trait JsPayloadMut: JsPayload {}
-
+/// `class_index` is the index of a generated class.
 #[doc(hidden)]
 #[inline]
-pub fn constructor_for_class(global: &JSGlobalObject, class_index: u32) -> JSValue {
-    extern_types::Bun__Bindgen__constructorForClass(global, class_index)
+pub unsafe fn constructor_for_class(global: &JSGlobalObject, class_index: u32) -> JSValue {
+    // SAFETY: forwarded.
+    unsafe { extern_types::Bun__Bindgen__constructorForClass(global, class_index) }
 }
 
 /// # Safety
@@ -866,47 +853,6 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     pub fn payload_ptr(self) -> NonNull<T> {
         // SAFETY: inside the cell, which is not null.
         unsafe { NonNull::new_unchecked(self.payload()) }
-    }
-
-    /// Keeps the wrapper, and so the payload, alive past the call.
-    #[inline]
-    pub fn to_strong(self, heap: &JsHeap<'a>) -> JsWrapperStrong<T> {
-        JsWrapperStrong(self.as_value().to_strong(heap), PhantomData)
-    }
-}
-
-impl<'a, T: JsPayloadMut> JsWrapper<'a, T> {
-    /// Lends the payload. `f` cannot run JavaScript: that takes the `&mut JsScope` the `JsPayloads` is borrowed from.
-    #[inline(always)]
-    pub fn with<R>(self, _: &JsPayloads<'a>, f: impl FnOnce(&T) -> R) -> R {
-        // SAFETY: a `&mut T` is lent by `with_mut`, which holds `JsPayloads` exclusively, or to a body that has no `JsPayloads`.
-        let result = f(unsafe { &*self.payload() });
-        self.to_js().ensure_still_alive();
-        result
-    }
-
-    /// As [`with`](Self::with), exclusively.
-    #[inline(always)]
-    pub fn with_mut<R>(self, _: &mut JsPayloads<'a>, f: impl FnOnce(&mut T) -> R) -> R {
-        // SAFETY: the exclusive borrow of `JsPayloads` excludes every other payload reference.
-        let result = f(unsafe { &mut *self.payload() });
-        self.to_js().ensure_still_alive();
-        result
-    }
-}
-
-/// A [`Strong`] on a wrapper; gives it back to code that has a capability again.
-pub struct JsWrapperStrong<T: JsPayload>(Strong, PhantomData<*const T>);
-impl<T: JsPayload> JsWrapperStrong<T> {
-    #[inline]
-    pub fn get<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, T> {
-        // SAFETY: made from a `JsWrapper<T>`; a cell value is its pointer.
-        unsafe {
-            JsWrapper::from_extern(
-                NonNull::new_unchecked(self.0.get().encoded() as *mut c_void),
-                heap,
-            )
-        }
     }
 }
 

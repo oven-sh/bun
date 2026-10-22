@@ -290,7 +290,7 @@ impl QuicStream {
     }
 
     /// The owning session, if still attached. The `session_js` Strong keeps
-    /// the session's JS wrapper (and thus the boxed `QuicSession`) alive
+    /// the session's JS wrapper (and thus the `QuicSession` inside it) alive
     /// while this stream holds the back-pointer; `teardown()` nulls the
     /// pointer before that Strong is dropped, so a non-null pointer is
     /// always dereferenceable on the JS thread.
@@ -632,7 +632,7 @@ impl QuicStream {
         ctx: *mut c_void,
         _s: *mut lsquic::lsquic_stream,
     ) {
-        // SAFETY: `finalize` nulls the lsquic ctx, so a non-null ctx is live.
+        // SAFETY: `Drop` nulls the lsquic ctx, so a non-null ctx is live.
         // `session` may be freed, so only touch `raw`.
         if let Some(qs) = unsafe { super::ffi::ctx_ref::<QuicStream>(ctx) } {
             qs.raw.set(null_mut());
@@ -648,7 +648,7 @@ impl QuicStream {
         let global = cx.global();
         let cb = callback.to_js();
 
-        if cb.is_empty_or_undefined_or_null() {
+        if cb.is_undefined_or_null() {
             self.wakeup.set(None);
         } else {
             self.wakeup.set(Some(Strong::create(cb, global)));
@@ -700,7 +700,7 @@ impl QuicStream {
             return Ok(());
         }
         let source = source.to_js();
-        let bytes = if source.is_empty_or_undefined_or_null() {
+        let bytes = if source.is_undefined_or_null() {
             Vec::new()
         } else if let Some(buf) = source.as_array_buffer(global) {
             buf.byte_slice().to_vec()

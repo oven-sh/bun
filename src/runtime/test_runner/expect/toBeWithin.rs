@@ -20,7 +20,6 @@ impl Expect {
         )?;
 
         let start = start.to_js();
-        start.ensure_still_alive();
 
         if !start.is_number() {
             return Err(global.throw(format_args!(
@@ -29,7 +28,6 @@ impl Expect {
         }
 
         let end = end.to_js();
-        end.ensure_still_alive();
 
         if !end.is_number() {
             return Err(global.throw(format_args!(

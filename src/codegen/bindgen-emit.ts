@@ -30,7 +30,6 @@ import {
   Signature,
   snakeCase,
   StringType,
-  StringValue,
   type Type,
   UnionType,
   UnitType,
@@ -652,17 +651,11 @@ const cppExtern = (
 
 // ───────────────────────────── C++: classes ─────────────────────────────
 
-/** `Bun__Bindgen__<Name><Class|Prototype>__<member>` */
 const symbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}__${member}`;
 const classSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Class__${member}`;
 const protoSymbolName = (type: ClassType, member: string) => `Bun__Bindgen__${type.name}Prototype__${member}`;
-const nativeFunctions = (type: ClassType) => [
-  ...type.functions,
-  ...type.staticFunctions,
-  ...(type.call ? [type.call] : []),
-];
 const functionOf = (type: ClassType, method: Method) =>
-  nativeFunctions(type).find(fn => fn.signatures.includes(method))!;
+  type.nativeFunctions.find(fn => fn.signatures.includes(method))!;
 const methodSymbolName = (type: ClassType, method: Method) =>
   (method.receiver === "static" ? classSymbolName : protoSymbolName)(
     type,
@@ -723,9 +716,8 @@ public:
     static constexpr unsigned classIndex = ${type.classIndex};
 
     DECLARE_INFO;
-${hasFields || type.estimatedSize ? "    DECLARE_VISIT_CHILDREN;\n" : ""}${
-    hasFields ? "    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);\n" : ""
-  }${cppExtraMemorySize(type, "heapSnapshot") ? "    static size_t estimatedSize(JSC::JSCell*, JSC::VM&);\n" : ""}    static void destroy(JSC::JSCell*);
+${hasFields || type.estimatedSize ? "    DECLARE_VISIT_CHILDREN;\n" : ""}    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);
+${cppExtraMemorySize(type, "heapSnapshot") ? "    static size_t estimatedSize(JSC::JSCell*, JSC::VM&);\n" : ""}    static void destroy(JSC::JSCell*);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -850,18 +842,14 @@ ${type.internalFields.map(field => `    visitor.appendHidden(thisObject->m_${fie
 DEFINE_VISIT_CHILDREN(${cpp});
 `
       : ""
-  }${
-    type.internalFields.length > 0
-      ? `
+  }
 void ${cpp}::analyzeHeap(JSC::JSCell* cell, JSC::HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<${cpp}>(cell);
+    ${createsUninitialized(type) ? "if (thisObject->m_wrapped)\n        " : ""}analyzer.setWrappedObjectForCell(cell, thisObject->${payload});
     Base::analyzeHeap(cell, analyzer);
-${type.internalFields.map(field => `    Bun::Bindgen::analyzeInternalField(thisObject, analyzer, thisObject->m_${field}, ${asciiLiteral(field)});`).join("\n")}
-}
-`
-      : ""
-  }`;
+${type.internalFields.map(field => `    Bun::Bindgen::analyzeInternalField(thisObject, analyzer, thisObject->m_${field}, ${asciiLiteral(field)});\n`).join("")}}
+`;
 }
 
 /** `value` cast to the class (for `forBind`, its bound `this`), or null. */
@@ -990,15 +978,15 @@ ${getter.hasSetter ? cppSetter(type, getter) : getter.writable ? cppInternalFiel
 
 function cppSourceForClass(type: ClassType): string {
   const { name } = type;
-  const attributesOf = (member: { enumerable: boolean | undefined; configurable: boolean | undefined }) =>
-    `${(member.enumerable ?? type.enumerable) ? "" : " | JSC::PropertyAttribute::DontEnum"}${(member.configurable ?? type.configurable) ? "" : " | JSC::PropertyAttribute::DontDelete"}`;
+  const attributes = (configurable = type.configurable) =>
+    `${type.enumerable ? "" : " | JSC::PropertyAttribute::DontEnum"}${configurable ? "" : " | JSC::PropertyAttribute::DontDelete"}`;
   const row = (key: string, attributes: string, value: string) =>
     `    { ${asciiLiteral(key)}, static_cast<unsigned>(${attributes}), JSC::NoIntrinsic, { ${value} } },`;
   const privateSymbol = (fn: FunctionDefinition) => (fn.signatures[0] as Method).privateSymbol;
   const methodRow = (fn: FunctionDefinition) =>
     row(
       fn.name,
-      `JSC::PropertyAttribute::Function${attributesOf(fn.signatures[0] as Method)}`,
+      `JSC::PropertyAttribute::Function${attributes()}`,
       `JSC::HashTableValue::NativeFunctionType, ${methodHostFunctionName(type, fn)}, ${fn.length}`,
     );
   // DOMAttribute has JSC check that the receiver is an instance. A static getter ignores it, and a forBind getter's is a bound function.
@@ -1006,7 +994,7 @@ function cppSourceForClass(type: ClassType): string {
     const assignable = getter.hasSetter || (getter instanceof Getter && getter.writable);
     return row(
       getter.name,
-      `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${attributesOf(getter)}`,
+      `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${attributes(getter instanceof Getter ? getter.configurable : undefined)}`,
       `JSC::HashTableValue::GetterSetterType, ${getter instanceof Getter && getter.isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter)}, ${assignable ? setterHostFunctionName(type, getter) : "0"}`,
     );
   };
@@ -1019,7 +1007,6 @@ function cppSourceForClass(type: ClassType): string {
   /** In the order the schema has them, which `for-in` shows. */
   const rowsOf = (members: readonly ClassMember[]) =>
     members
-      .filter((member): member is Exclude<ClassMember, StringValue> => !(member instanceof StringValue))
       .filter(
         member => !(member instanceof FunctionDefinition && (privateSymbol(member) || wellKnownSymbol(member.name))),
       )
@@ -1039,7 +1026,7 @@ function cppSourceForClass(type: ClassType): string {
   const symbolFunctions = type.functions.filter(fn => wellKnownSymbol(fn.name));
   const construct = type.construct;
   return `${cppSourceForCell(type)}
-${nativeFunctions(type)
+${type.nativeFunctions
   .map(fn => cppMethod(type, fn))
   .join(
     "",
@@ -1113,12 +1100,11 @@ ${privateFunctions
       fn =>
         `    prototype->putDirectWithoutTransition(vm, vm.propertyNames->${wellKnownSymbol(fn.name)}Symbol, JSC::JSFunction::create(vm, globalObject, ${fn.length}, ${asciiLiteral((fn.signatures[0] as Method).functionName ?? `[Symbol.${wellKnownSymbol(fn.name)}]`)}, ${methodHostFunctionName(type, fn)}, JSC::ImplementationVisibility::Public), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));\n`,
     )
-    .join("")}${type.stringValues
-    .map(
-      ({ name, value }) =>
-        `    prototype->putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, ${asciiLiteral(name)}), JSC::jsString(vm, WTF::String(${asciiLiteral(value)})), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));\n`,
-    )
-    .join("")}    Bun::putToStringTagWithoutTransition(vm, prototype, ${type.cpp}::info());
+    .join("")}${
+    type.prototypeBase === "Error"
+      ? `    prototype->putDirectWithoutTransition(vm, vm.propertyNames->name, JSC::jsString(vm, WTF::String(${asciiLiteral(name)})), static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));\n`
+      : ""
+  }    Bun::putToStringTagWithoutTransition(vm, prototype, ${type.cpp}::info());
     init.setPrototype(prototype);
     init.setStructure(${type.cpp}::createStructure(vm, globalObject, prototype));
 ${
@@ -1263,6 +1249,7 @@ export function cppSource(file: SchemaFile): string {
   const accepted = file.types.filter(type => type instanceof DictionaryType && type.accepted) as DictionaryType[];
   if (accepted.length > 0) headers.add("Bindgen/DictionaryMemberReader.h");
   const systemHeaders = ["JavaScriptCore/JSFunction.h"];
+  if (file.types.some(type => type instanceof ClassType)) systemHeaders.unshift("JavaScriptCore/HeapAnalyzer.h");
   if (accepted.some(type => !type.allowArray)) systemHeaders.unshift("JavaScriptCore/ArrayConstructor.h");
   if (file.namespaces.length > 0) systemHeaders.push("JavaScriptCore/ObjectConstructor.h");
   if (file.types.some(type => type instanceof EnumerationType)) systemHeaders.push("wtf/SortedArrayMap.h");
@@ -1580,13 +1567,27 @@ ${type.members.map(member => `            ${value(member)},`).join("\n")}
   return text;
 }
 
+const rustImplJsClass = (type: ClassType, toJS: string) => `impl bun_jsc::JsClass for ${type.rustPath} {
+    #[inline]
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        ${toJS}
+    }
+    #[inline]
+    fn from_js(value: JSValue) -> Option<*mut Self> {
+        js_${type.name}::from_js(value).map(core::ptr::NonNull::as_ptr)
+    }
+    #[inline]
+    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+        js_${type.name}::from_js_direct(value).map(core::ptr::NonNull::as_ptr)
+    }
+}`;
+
 /** Thunks call the struct's inherent methods by path. */
 function rustForClass(type: ClassType, scope: RustScope): string {
   const { rustPath, refCounted } = type;
   const receiverArgument = {
     ref: [refCounted ? "wrapped" : "this.payload_ref()"],
     mut: ["this.payload_mut()"],
-    wrapper: ["this"],
     static: [],
   };
   type Receiver = keyof typeof receiverArgument;
@@ -1598,7 +1599,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   };
   const leading = (receiver: Receiver, passThis: boolean, capability: Capability) => [
     ...receiverArgument[receiver],
-    ...(passThis && receiver !== "wrapper" ? ["this"] : []),
+    ...(passThis ? ["this"] : []),
     ...capabilityArgument[capability],
   ];
   let thunks = "";
@@ -1724,25 +1725,7 @@ unsafe impl bindgen::JsPayload for ${rustPath} {
         : ""
     }
 }
-${
-  type.sharedThis
-    ? `impl bun_jsc::JsClass for ${rustPath} {
-    #[inline]
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        bindgen::JsPayload::into_js_value(self, global)
-    }
-    #[inline]
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js_${type.name}::from_js(value).map(core::ptr::NonNull::as_ptr)
-    }
-    #[inline]
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js_${type.name}::from_js_direct(value).map(core::ptr::NonNull::as_ptr)
-    }
-}`
-    : `// SAFETY: a member takes \`&mut self\`, so no \`&${rustPath}\` is lent across JavaScript.
-unsafe impl bindgen::JsPayloadMut for ${rustPath} {}`
-}
+${type.sharedThis ? rustImplJsClass(type, "bindgen::JsPayload::into_js_wrapper(self, global).to_js()") : ""}
 // A cell is at a multiple of 8, and so is the payload in it.
 const _: () = assert!(align_of::<${rustPath}>() <= 8);
 const _: () = assert!(${offsetOfPayload(type)} + size_of::<${rustPath}>() <= ${maxCellSize}, "too large to be stored in its JS object: box its largest field");
@@ -1783,20 +1766,7 @@ ${
         js_${name}::to_js(ptr.as_ptr(), global)
     }
 }
-impl bun_jsc::JsClass for ${rustPath} {
-    #[inline]
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        js_${name}::to_js(bun_ptr::RefPtr::new(self).into_raw(), global)
-    }
-    #[inline]
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js_${name}::from_js(value).map(core::ptr::NonNull::as_ptr)
-    }
-    #[inline]
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js_${name}::from_js_direct(value).map(core::ptr::NonNull::as_ptr)
-    }
-}`
+${rustImplJsClass(type, `js_${name}::to_js(bun_ptr::RefPtr::new(self).into_raw(), global)`)}`
 }
 `;
 }
@@ -1826,7 +1796,8 @@ ${
   type.construct
     ? `    #[inline]
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        bindgen::constructor_for_class(global, ${type.classIndex})
+        // SAFETY: the index of this class.
+        unsafe { bindgen::constructor_for_class(global, ${type.classIndex}) }
     }
 `
     : ""
@@ -1999,7 +1970,7 @@ ${[
     accessor => `    ${accessor.hasSetter ? "" : "readonly "}${JSON.stringify(accessor.name)}: any;`,
   ),
   ...type.builtins.map(builtin => member(builtin.name, false, "(...args: any[]) => any")),
-  ...type.stringValues.map(({ name, value }) => `    readonly ${JSON.stringify(name)}: ${JSON.stringify(value)};`),
+  ...(type.prototypeBase === "Error" ? [`    readonly "name": ${JSON.stringify(type.name)};`] : []),
 ].join("\n")}
   }${
     type.construct

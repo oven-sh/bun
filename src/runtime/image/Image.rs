@@ -1873,8 +1873,6 @@ impl PipelineTask {
                             Ok(d) => d,
                             Err(e) => return promise.reject(global, Err(e)),
                         };
-                        // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
-                        // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];
                         let mut arg_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &args);
                         let mut path_or_blob = match crate::webcore::blob::write_destination_from_js(

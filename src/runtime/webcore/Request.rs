@@ -51,13 +51,13 @@ impl bun_jsc::JsClass for Request {
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         let ptr = Request::new(self);
         // SAFETY: `ptr` is a new heap allocation; the wrapper made by the inherent `to_js` adopts its ref.
-        unsafe { Request::to_js(&*ptr, global) }
+        unsafe { Request::to_js(ptr, global) }
     }
 }
 
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Request` (not
+/// Every JS-facing member takes `&Request` (not
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
-/// instance. Fields mutated by host-fns are wrapped in `Cell` (Copy scalars)
+/// instance. Fields the members mutate are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
 /// field layout is unchanged. `method`/`flags`/`request_context`/`body`/
 /// `weak_ptr_data` are only written during construction or via raw-ptr
@@ -455,29 +455,26 @@ impl Request {
         <Self as BodyMixin>::get_body_readable_stream(self)
     }
 
-    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        self.calculate_estimated_byte_size();
-        // C++ stores `self` as an opaque `void*`, so forming `*mut` from `&self` is provenance-safe.
-        let js_value = js::to_js(
-            std::ptr::from_ref::<Request>(self).cast_mut(),
-            global_object,
-        );
-        self.js_ref.set(JsRef::init_weak(js_value));
+    /// # Safety
+    /// `this` is from [`Request::new`] and the caller owns its ref, which the wrapper adopts.
+    pub(crate) unsafe fn to_js(this: *mut Self, global_object: &JSGlobalObject) -> JSValue {
+        // SAFETY: fn contract.
+        let request = unsafe { &*this };
+        request.calculate_estimated_byte_size();
+        let js_value = js::to_js(this, global_object);
+        request.js_ref.set(JsRef::init_weak(js_value));
 
-        self.check_body_stream_ref(global_object);
+        request.check_body_stream_ref(global_object);
         js_value
     }
 }
 
-// Request is opaque on the C++ side; see note on the JsClass extern block above.
 // C++ side defines `extern "C" SYSV_ABI` (JSBunRequest.cpp).
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
     // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `request_ptr` is stored opaquely as `void*` (module-private —
-    // sole caller forwards `from_ref(self)`). Matches the `*__createObject`
-    // precedent.
+    // `request_ptr` is stored opaquely as `void*`.
     safe fn Bun__JSRequest__createForBake(
         global_object: &JSGlobalObject,
         request_ptr: *mut Request,
@@ -485,13 +482,13 @@ bun_jsc::jsc_abi_extern! {
 }
 
 impl Request {
-    pub(crate) fn to_js_for_bake(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    /// The wrapper adopts the ref of `this`, which is from [`Request::new`].
+    pub(crate) fn to_js_for_bake(
+        this: *mut Self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_object, || {
-            // C++ stores `self` as an opaque `void*`; see `to_js` note.
-            Bun__JSRequest__createForBake(
-                global_object,
-                std::ptr::from_ref::<Request>(self).cast_mut(),
-            )
+            Bun__JSRequest__createForBake(global_object, this)
         })
     }
 }
@@ -1426,12 +1423,10 @@ impl Request {
     ) -> JsResult<JsWrapper<'a, Self>> {
         let request = Self::construct_into(&cx.js_thread(), input.to_js(), init.to_js())?;
         let request = RefPtr::new(request);
-        let ptr = request.as_ptr();
+        let this = request.this_ptr();
         let this_value = structure.create(&cx.heap, request);
-        // SAFETY: `this_value` holds the ref.
-        let request = unsafe { &*ptr };
-        request.js_ref.set(JsRef::init_weak(this_value.to_js()));
-        request.check_body_stream_ref(cx.global());
+        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
+        this.check_body_stream_ref(cx.global());
         Ok(this_value)
     }
 
@@ -1445,7 +1440,7 @@ impl Request {
         self.throw_if_body_unusable(global_this)?;
         let cloned_ptr = self.clone(&cx)?;
         // SAFETY: `clone` just allocated it; the wrapper adopts its ref in `to_js`.
-        let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
+        let js_wrapper = unsafe { Request::to_js(cloned_ptr, global_this) };
         self.sync_cloned_body_stream_caches(this_value.to_js(), js_wrapper, global_this);
         Ok(js_wrapper)
     }

@@ -36,7 +36,7 @@ use bun_jsc::js_error_to_write_error;
 
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the only
+// Every JS-exposed method takes `&self`; the only
 // field mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
 // chaining getters) is `Cell`-wrapped. `parent` and `custom_label` are
 // read-only after `call()` constructs the wrapper.
@@ -591,31 +591,27 @@ impl Expect {
         value: *mut JSValue,
         any_constructor_type: *mut u8,
     ) -> bool {
-        // SAFETY: `from_js` returns the live payload owned by `instance_value`.
-        let flags: Flags = 'flags: { unsafe {
-            if let Some(instance) = ExpectCustomAsymmetricMatcher::from_js(instance_value) {
-                break 'flags (*instance).flags;
-            } else if let Some(instance) = ExpectAny::from_js(instance_value) {
-                let f = (*instance).flags;
-                // SAFETY: any_constructor_type is a valid out-ptr provided by C++ caller
-                *any_constructor_type = f.asymmetric_matcher_constructor_type() as u8;
-                break 'flags f;
-            } else if let Some(instance) = ExpectAnything::from_js(instance_value) {
-                break 'flags (*instance).flags;
-            } else if let Some(instance) = ExpectStringMatching::from_js(instance_value) {
-                break 'flags (*instance).flags;
-            } else if let Some(instance) = ExpectCloseTo::from_js(instance_value) {
-                break 'flags (*instance).flags;
-            } else if let Some(instance) = ExpectObjectContaining::from_js(instance_value) {
-                break 'flags (*instance).flags;
-            } else if let Some(instance) = ExpectStringContaining::from_js(instance_value) {
-                break 'flags (*instance).flags;
-            } else if let Some(instance) = ExpectArrayContaining::from_js(instance_value) {
-                break 'flags (*instance).flags;
-            } else {
-                break 'flags Flags::default();
-            }
-        } };
+        let flags: Flags = if let Some(instance) = instance_value.as_class_ref::<ExpectCustomAsymmetricMatcher>() {
+            instance.flags
+        } else if let Some(instance) = instance_value.as_class_ref::<ExpectAny>() {
+            // SAFETY: any_constructor_type is a valid out-ptr provided by C++ caller
+            unsafe { *any_constructor_type = instance.flags.asymmetric_matcher_constructor_type() as u8 };
+            instance.flags
+        } else if let Some(instance) = instance_value.as_class_ref::<ExpectAnything>() {
+            instance.flags
+        } else if let Some(instance) = instance_value.as_class_ref::<ExpectStringMatching>() {
+            instance.flags
+        } else if let Some(instance) = instance_value.as_class_ref::<ExpectCloseTo>() {
+            instance.flags
+        } else if let Some(instance) = instance_value.as_class_ref::<ExpectObjectContaining>() {
+            instance.flags
+        } else if let Some(instance) = instance_value.as_class_ref::<ExpectStringContaining>() {
+            instance.flags
+        } else if let Some(instance) = instance_value.as_class_ref::<ExpectArrayContaining>() {
+            instance.flags
+        } else {
+            Flags::default()
+        };
 
         // SAFETY: out_flags is a valid out-ptr provided by C++ caller
         unsafe { *out_flags = flags.encode() };
@@ -719,15 +715,8 @@ impl Expect {
             parent: active_execution_entry_ref,
         };
         let expect_js_value = expect.to_js(global_this);
-        expect_js_value.ensure_still_alive();
         super::expect::js::captured_value_set_cached(expect_js_value, global_this, value);
-        expect_js_value.ensure_still_alive();
-
-        if let Some(expect_ptr) = Self::from_js(expect_js_value) {
-            // SAFETY: `expect_ptr` is the live payload of the just-created
-            // wrapper, kept alive by `expect_js_value.ensure_still_alive()` above.
-            unsafe { (*expect_ptr).post_match(global_this) };
-        }
+        global_this.bun_vm().auto_garbage_collect();
         Ok(expect_js_value)
     }
 
@@ -757,9 +746,7 @@ impl Expect {
 
     pub(crate) fn pass(&self, cx: &mut JsScope<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
-        // The guard owns the `&Self` and calls
-        // post_match on drop so it runs on every exit path.
-        let this = scopeguard::guard(self, |t| t.post_match(global_this));
+        let this = self.post_match_guard(global_this);
 
         let value = message.to_js();
 
@@ -775,26 +762,15 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.get().not();
-        let mut pass = true;
+        if !this.flags.get().not() { return Ok(JSValue::UNDEFINED); }
 
-        if not { pass = !pass; }
-        if pass { return Ok(JSValue::UNDEFINED); }
-
-        if not {
-            let signature = Self::get_signature("pass", "", true);
-            return throw!(this, global_this, signature, "\n\n{}\n", message);
-        }
-
-        // should never reach here
-        Ok(JSValue::ZERO)
+        let signature = Self::get_signature("pass", "", true);
+        throw!(this, global_this, signature, "\n\n{}\n", message)
     }
 
     pub(crate) fn fail(&self, cx: &mut JsScope<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
-        // The guard owns the `&Self` borrow
-        // so `post_match` runs on every exit.
-        let this = scopeguard::guard(self, |t| t.post_match(global_this));
+        let this = self.post_match_guard(global_this);
 
         let value = message.to_js();
 
@@ -810,11 +786,7 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let not = this.flags.get().not();
-        let mut pass = false;
-
-        if not { pass = !pass; }
-        if pass { return Ok(JSValue::UNDEFINED); }
+        if this.flags.get().not() { return Ok(JSValue::UNDEFINED); }
 
         let signature = Self::get_signature("fail", "", true);
         throw!(this, global_this, signature, "\n\n{}\n", message)
@@ -1516,15 +1488,10 @@ impl Expect {
 
         // try to retrieve the Expect instance
         let this_value: JSValue = call_frame.this();
-        let Some(expect_ptr) = Expect::from_js(this_value) else {
+        let Some(expect) = this_value.as_class_ref::<Expect>() else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
             return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, matcher_fn);
         };
-        // SAFETY: from_js returned a non-null live payload pointer owned by the JS wrapper.
-        // R-2: deref as shared (`&*`) — `process_promise` below may re-enter JS (await on a
-        // thenable's user-defined `then`), which can call another matcher on this same
-        // `expect()` chain; aliased `&Expect` is sound, aliased `&mut Expect` is not.
-        let expect = unsafe { &*expect_ptr };
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
@@ -1652,14 +1619,6 @@ impl Expect {
 
     /// Shared front-matter for `expect(received).toX(...)` matchers.
     ///
-    /// Composes the four lines every hand-ported matcher repeats — currently
-    /// stamped out in **four** different shapes (scopeguard-rebind,
-    /// scopeguard-side-binding, inner-closure-then-`post_match`, and *missing
-    /// entirely* in `toContainAllValues` / `toBeArrayOfSize`). Third member of
-    /// the matcher-scaffold family alongside [`Self::run_unary_predicate`] and
-    /// [`Self::mock_prologue`], for matchers that need the received value but
-    /// are NOT a pure unary predicate and NOT a mock-function matcher.
-    ///
     /// Returns `(guard, received_value, not)`. The guard derefs to `&Expect`
     /// and runs `post_match` on drop; `not` is `flags.not()` snapshotted once.
     /// Callers that don't need `not` until later destructure as `(this, v, _)`.
@@ -1682,7 +1641,7 @@ impl Expect {
         let global_this = cx.global();
         let arg = message.to_js();
 
-        if arg.is_empty_or_undefined_or_null() {
+        if arg.is_undefined_or_null() {
             let error_value = global_this.create_error_instance(format_args!("reached unreachable code"));
             error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
@@ -1901,7 +1860,6 @@ impl Expect {
     ) -> JsResult<JSValue> {
         let this = self.post_match_guard(global);
 
-        expected.ensure_still_alive();
         if !expected.is_string() {
             return Err(global.throw(format_args!(
                 "{matcher_name}() requires the first argument to be a string"
@@ -2024,7 +1982,6 @@ impl Expect {
         if matches!(expected_array, ExpectedArray::BeforeValue) && !expected.js_type().is_array() {
             return Err(global.throw_invalid_argument_type(matcher_name, "expected", "array"));
         }
-        expected.ensure_still_alive();
 
         let value = this.get_value(global, this_value, matcher_name, "<green>expected<r>")?;
         if matches!(expected_array, ExpectedArray::AfterValue) && !expected.js_type().is_array() {
@@ -2136,8 +2093,6 @@ impl ExpectCloseTo {
         }
 
         let instance_jsvalue = ExpectCloseTo { flags }.to_js(global_this);
-        number_value.ensure_still_alive();
-        precision_value.ensure_still_alive();
         js_ExpectCloseTo::number_value_set_cached(instance_jsvalue, global_this, number_value);
         js_ExpectCloseTo::digits_value_set_cached(instance_jsvalue, global_this, precision_value);
 
@@ -2201,7 +2156,6 @@ impl ExpectAny {
             ));
         }
 
-        constructor.ensure_still_alive();
         if !constructor.is_constructor() {
             return Err(crate::throw_pretty_static!(
                 global_this,
@@ -2249,9 +2203,9 @@ impl ExpectArrayContaining {
 ///
 /// Reference: `AsymmetricMatcher` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 /// (but only created for *custom* matchers, as built-ins have their own classes)
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The only
+// Every JS-exposed method takes `&self`. The only
 // field, `flags`, is set once at construction (`create()`) and never written
-// thereafter, so it stays a bare `Flags` (no `Cell` needed). Both host-fns
+// thereafter, so it stays a bare `Flags` (no `Cell` needed). Both members
 // call into user JS (`execute_impl` → `execute_custom_matcher`, `custom_print`
 // → `matcher_fn.call`) which can re-enter on the same payload; holding a
 // `noalias` `&mut Self` across that call is Stacked-Borrows UB even with no
@@ -2266,9 +2220,8 @@ impl ExpectCustomAsymmetricMatcher {
     /// This will not run the matcher, but just capture the args etc.
     pub(crate) fn create(global_this: &JSGlobalObject, call_frame: &CallFrame, matcher_fn: JSValue) -> JsResult<JSValue> {
         // try to retrieve the ExpectStatic instance (to get the flags)
-        let flags = if let Some(expect_static) = <ExpectStatic as bun_jsc::JsClass>::from_js(call_frame.this()) {
-            // SAFETY: from_js returns the live payload for this JSValue.
-            unsafe { (*expect_static).flags }
+        let flags = if let Some(expect_static) = call_frame.this().as_class_ref::<ExpectStatic>() {
+            expect_static.flags
         } else {
             // if it's not an ExpectStatic instance, assume it was called from the Expect constructor, so use the default flags
             Flags::default()
@@ -2292,7 +2245,7 @@ impl ExpectCustomAsymmetricMatcher {
     }
 
     fn execute_impl(
-        this: &Self,
+        &self,
         this_value: JSValue,
         global_this: &JSGlobalObject,
         received: JSValue,
@@ -2333,7 +2286,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, this.flags, true)
+        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, self.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2349,7 +2302,7 @@ impl ExpectCustomAsymmetricMatcher {
         received: JSValue,
     ) -> bool {
         // SAFETY: called from C++ with valid pointers
-        unsafe { Self::execute_impl(&*this, this_value, &*global_this, received) }.unwrap_or(false)
+        unsafe { (*this).execute_impl(this_value, &*global_this, received) }.unwrap_or(false)
     }
 
     pub(crate) fn asymmetric_match(
@@ -2358,7 +2311,7 @@ impl ExpectCustomAsymmetricMatcher {
         cx: &mut JsScope<'_>,
         received: JsLocal<'_>,
     ) -> JsResult<bool> {
-        Self::execute_impl(self, this_value.to_js(), cx.global(), received.to_js())
+        self.execute_impl(this_value.to_js(), cx.global(), received.to_js())
     }
 
     fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> crate::Result<bool> {

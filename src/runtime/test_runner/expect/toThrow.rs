@@ -20,7 +20,7 @@ impl Expect {
         expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let this = scopeguard::guard(self, |t| t.post_match(global));
+        let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
 

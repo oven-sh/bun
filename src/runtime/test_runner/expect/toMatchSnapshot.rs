@@ -14,10 +14,11 @@ impl Expect {
         hint: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let this = scopeguard::guard(self, |this| this.post_match(global));
+        let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
-        let [first, second] = [property_matchers.to_js(), hint.to_js()];
+        let first = property_matchers.to_js();
+        let second = hint.to_js();
 
         this.increment_expect_call_counter();
 
@@ -91,6 +92,6 @@ impl Expect {
             "<green>properties<r><d>, <r>hint",
         )?;
 
-        Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
+        this.snapshot(global, value, property_matchers, hint.slice(), "toMatchSnapshot")
     }
 }

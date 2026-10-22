@@ -71,6 +71,6 @@ getter) and use `js_Matcher::callback_set_cached(this_value, global, value)` / `
 
 ## Reference implementations
 
-- `src/jsc/bindgen_test.bind.ts` + `src/jsc/bindgen_test.rs`: one example of every key
+- `src/jsc/bindgen_test.bind.ts` + `src/jsc/bindgen_test.rs`: an example of most keys
 - `src/jsc/resolve_message.bind.ts`: cached getters, `prototypeBase`, `construct: "illegal"`
 - `src/runtime/api/cron.bind.ts`: `refCounted`, `finalize`

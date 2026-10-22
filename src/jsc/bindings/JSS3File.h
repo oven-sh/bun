@@ -21,7 +21,7 @@ public:
     }
     DECLARE_INFO;
 
-    static JSS3File* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ptr);
+    static JSS3File* create(JSC::VM& vm, JSC::Structure* structure, void* ptr);
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 };
 

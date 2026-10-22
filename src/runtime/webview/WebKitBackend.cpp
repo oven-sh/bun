@@ -282,7 +282,7 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
         // `await blob.bytes()` reads directly from these pages.
         void* impl = Blob__fromMmapWithType(g, static_cast<uint8_t*>(map), byteLen, mime);
         ok = true;
-        return Bun::Bindgen::Generated::JSBlob::create(g->vm(), Bun::Bindgen::structureForClass<Bun::Bindgen::Generated::JSBlob>(g), impl);
+        return Bun::Bindgen::createWrapper<Bun::Bindgen::Generated::JSBlob>(g, impl);
     }
     case ScreenshotEncoding::Buffer: {
         // ArrayBuffer adopts the mapping — createFromBytes + a
@@ -526,7 +526,7 @@ void HostClient::onData(const char* data, int length)
         off += sizeof(Frame) + h.len;
 
         handleReply(h, r);
-        // createError/jsString/JSBlob::create can throw (OOM). Report +
+        // createError/jsString can throw (OOM). Report +
         // clear so one bad frame doesn't poison the rest of the batch.
         if (auto* exception = catchScope.exception()) [[unlikely]] {
             if (!catchScope.clearExceptionExceptTermination()) break;

@@ -1030,7 +1030,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         void* impl = Blob__fromBytesWithType(g, decoded->span().data(), decoded->size(),
             screenshotMimeType(view->m_screenshotFormat));
         settle(g, view, entry.slot, true,
-            Bun::Bindgen::Generated::JSBlob::create(g->vm(), Bun::Bindgen::structureForClass<Bun::Bindgen::Generated::JSBlob>(g), impl));
+            Bun::Bindgen::createWrapper<Bun::Bindgen::Generated::JSBlob>(g, impl));
         return;
     }
 

@@ -18,9 +18,6 @@
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSPromise.h>
 
-using Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource;
-using Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource;
-using Bun::Bindgen::Generated::JSFileInternalReadableStreamSource;
 // The extern "C" / Rust FFI surface. Every symbol name, signature, and ReadableStreamTag
 // discriminant (Invalid=-1, JavaScript=0, Blob=1, File=2, Direct=3 [never emitted], Bytes=4)
 // is frozen by ReadableStream.rs's assert_ffi_discr!.
@@ -47,6 +44,9 @@ static JSReadableStream* toReadableStream(Zig::GlobalObject* globalObject, Throw
 using namespace JSC;
 using namespace WebCore;
 using namespace Bun::WebStreams;
+using Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource;
+using Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource;
+using Bun::Bindgen::Generated::JSFileInternalReadableStreamSource;
 
 // A JSReadableStream's tag and native source. Pure: no scope, no traps, no script.
 static int32_t tagOfStream(JSReadableStream* stream, void** ptr)

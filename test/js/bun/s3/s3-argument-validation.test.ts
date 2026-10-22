@@ -43,6 +43,16 @@ test("S3File.prototype inherits from Blob.prototype", () => {
   expect(Object.getOwnPropertyNames(prototype).sort()).toEqual(["bucket", "presign", "stat"]);
 });
 
+test("S3File.prototype[Symbol.toStringTag] is read-only and not enumerable", () => {
+  const prototype = Object.getPrototypeOf(Bun.s3.file("key"));
+  expect(Object.getOwnPropertyDescriptor(prototype, Symbol.toStringTag)).toEqual({
+    value: "S3File",
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+});
+
 describe("S3Client instance method argument validation", () => {
   const client = new Bun.S3Client({
     accessKeyId: "test",

@@ -38,9 +38,6 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/text/MakeString.h>
 
-using Bun::Bindgen::Generated::JSBlobInternalReadableStreamSource;
-using Bun::Bindgen::Generated::JSBytesInternalReadableStreamSource;
-using Bun::Bindgen::Generated::JSFileInternalReadableStreamSource;
 namespace WebCore {
 
 using namespace JSC;
@@ -165,6 +162,9 @@ namespace Bun {
 namespace WebStreams {
 
 using namespace JSC;
+using Bindgen::Generated::JSBlobInternalReadableStreamSource;
+using Bindgen::Generated::JSBytesInternalReadableStreamSource;
+using Bindgen::Generated::JSFileInternalReadableStreamSource;
 using WebCore::JSBunStandaloneTextSink;
 
 static constexpr size_t nativeSourceMinChunkSize = 64 * 1024;

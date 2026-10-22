@@ -616,7 +616,7 @@ table of the object that has the class:
 
 Rust gets it with `js_Glob::get_constructor(global)`. In C++, the generated header gives the structure,
 prototype and constructor: `Bun::Bindgen::structureForClass<JSGlob>(globalObject)`, `prototypeForClass<JSGlob>` and
-`constructorForClass<JSGlob>`.
+`constructorForClass<JSGlob>`. `createWrapper<JSBlob>(globalObject, wrapped)` is a new instance of a `refCounted` class.
 
 ### The receiver
 

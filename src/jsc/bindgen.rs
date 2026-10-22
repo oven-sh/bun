@@ -51,8 +51,9 @@ impl<'a> JsHeap<'a> {
         self.global_object()
     }
 
+    #[doc(hidden)]
     #[inline(always)]
-    fn global_ptr(&self) -> *mut JSGlobalObject {
+    pub fn global_ptr(&self) -> *mut JSGlobalObject {
         self.global_object().as_mut_ptr()
     }
 
@@ -651,15 +652,13 @@ pub unsafe trait JsPayload: Sized + 'static {
     #[doc(hidden)]
     const PAYLOAD_OFFSET: usize;
     /// # Safety
-    /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
+    /// `structure` is null, for the class's own, or a Structure of this class. The new cell owns `payload`.
     #[doc(hidden)]
-    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
-    /// The extra memory to report to the GC for a new object.
-    #[doc(hidden)]
-    #[inline(always)]
-    fn extra_memory_size(&self) -> usize {
-        0
-    }
+    unsafe fn create_cell(
+        global: *mut JSGlobalObject,
+        structure: *mut c_void,
+        payload: Self,
+    ) -> NonNull<c_void>;
 
     /// A new JS object that owns `self`.
     #[inline]
@@ -684,11 +683,11 @@ pub unsafe trait JsCreateWithStructure: Sized {
     /// The struct, or a ref on the struct of a `refCounted` class.
     type Wrapped;
     /// # Safety
-    /// `cell` is a Structure of this class, or for a `refCounted` class the object `new` created, whose struct is not set yet.
+    /// `structure` is a Structure of this class.
     #[doc(hidden)]
     unsafe fn create_with_structure<'a>(
         heap: &JsHeap<'a>,
-        cell: *mut c_void,
+        structure: *mut c_void,
         wrapped: Self::Wrapped,
     ) -> JsWrapper<'a, Self>;
 }
@@ -700,8 +699,8 @@ impl<'a, T: JsCreateWithStructure> JsStructure<'a, T> {
     /// As [`JsCreateWithStructure::create_with_structure`], and the call `heap` belongs to holds it.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn from_extern(cell: *mut c_void, _: &JsHeap<'a>) -> Self {
-        Self(cell, PhantomData, PhantomData)
+    pub unsafe fn from_extern(structure: *mut c_void, _: &JsHeap<'a>) -> Self {
+        Self(structure, PhantomData, PhantomData)
     }
 
     /// The new object, which owns `wrapped`.
@@ -801,21 +800,8 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         structure: *mut c_void,
         payload: T,
     ) -> Self {
-        // SAFETY: nothing runs between the allocation and the write, which cannot panic.
-        unsafe {
-            let this = Self::from_extern(T::create_cell(heap.global_ptr(), structure), heap);
-            this.payload().write(payload);
-            // This can collect, which visits the payload.
-            let size = (*this.payload()).extra_memory_size();
-            if size > 0 {
-                extern_types::Bun__Bindgen__reportExtraMemoryAllocated(
-                    heap.global_ptr(),
-                    this.0.as_ptr(),
-                    size,
-                );
-            }
-            this
-        }
+        // SAFETY: forwarded.
+        unsafe { Self::from_extern(T::create_cell(heap.global_ptr(), structure, payload), heap) }
     }
 
     /// # Safety
@@ -1078,11 +1064,16 @@ pub fn host_fn_construct_return<'a, T, E: IntoError<'a>>(
     cx: &mut JsScope<'a>,
     result: core::result::Result<*mut T, E>,
 ) -> *mut c_void {
-    match result {
+    let wrapped: *mut c_void = match result {
         Ok(wrapped) => wrapped.cast(),
         Err(error) => {
             error.into_error(&cx.heap).into_host_fn_return(cx);
             core::ptr::null_mut()
         }
-    }
+    };
+    debug_assert!(
+        cx.heap.exception_presence_matches(wrapped.is_null()),
+        "a constructor fails exactly when an exception is pending",
+    );
+    wrapped
 }

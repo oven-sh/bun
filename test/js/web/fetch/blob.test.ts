@@ -204,6 +204,19 @@ test("estimateShallowMemoryUsageOf(new File()) is at least that of a Blob", () =
   );
 });
 
+test("new File reads new.target.prototype before it looks for the realm of new.target", () => {
+  const { proxy, revoke } = Proxy.revocable(function () {}, {});
+  revoke();
+  const keys: PropertyKey[] = [];
+  const newTarget = new Proxy(proxy, {
+    get(target, key) {
+      keys.push(key);
+    },
+  });
+  expect(() => Reflect.construct(File, [[], "file.txt"], newTarget)).toThrow(TypeError);
+  expect(keys).toEqual(["prototype"]);
+});
+
 // https://github.com/oven-sh/bun/issues/13049
 test("new File(new Uint8Array()) is supported", async () => {
   const blob = new File(Buffer.from("1234") as any, "file.txt");

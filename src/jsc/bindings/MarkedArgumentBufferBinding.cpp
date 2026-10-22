@@ -26,7 +26,13 @@ extern "C" size_t MarkedArgumentBuffer__size(void* args)
     return static_cast<JSC::MarkedArgumentBuffer*>(args)->size();
 }
 
-extern "C" JSC::EncodedJSValue MarkedArgumentBuffer__constructArray(void* args, JSC::JSGlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue MarkedArgumentBuffer__constructArray(void* ptr, JSC::JSGlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), *static_cast<JSC::MarkedArgumentBuffer*>(args)));
+    auto& args = *static_cast<JSC::MarkedArgumentBuffer*>(ptr);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    if (args.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args)));
 }

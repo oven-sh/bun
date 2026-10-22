@@ -56,9 +56,9 @@
 #include "GeneratedBlob.h"
 #include "GCDefferalContext.h"
 
-using Bun::Bindgen::Generated::JSBlob;
 namespace WebCore {
 using namespace JSC;
+using Bun::Bindgen::Generated::JSBlob;
 
 struct JSBlobWrapperConverter {
     static RefPtr<Blob> toWrapped(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)

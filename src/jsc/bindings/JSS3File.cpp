@@ -49,7 +49,7 @@ static const HashTableValue JSS3FilePrototypeTableValues[] = {
     { "bucket"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor | PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, getterS3File_bucket, 0 } },
 };
 
-JSS3File* JSS3File::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ptr)
+JSS3File* JSS3File::create(JSC::VM& vm, JSC::Structure* structure, void* ptr)
 {
     JSS3File* thisObject = new (NotNull, JSC::allocateCell<JSS3File>(vm)) JSS3File(vm, structure, ptr);
     thisObject->finishCreation(vm);
@@ -63,7 +63,7 @@ JSValue constructS3FileInternal(JSC::JSGlobalObject* lexicalGlobalObject, void* 
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* structure = globalObject->m_JSS3FileStructure.getInitializedOnMainThread(lexicalGlobalObject);
-    return JSS3File::create(vm, globalObject, structure, ptr);
+    return JSS3File::create(vm, structure, ptr);
 }
 
 JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
@@ -72,8 +72,8 @@ JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
 
     JSC::JSObject* superPrototype = Bun::Bindgen::prototypeForClass<Base>(globalObject);
     auto* prototype = Bun::Bindgen::createClassPrototype(vm, globalObject, superPrototype, info(), JSS3FilePrototypeTableValues);
-    prototype->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsOwnedString(vm, "S3File"_s), 0);
-    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), NonArray);
+    Bun::putToStringTagWithoutTransition(vm, prototype, info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info(), NonArray);
 }
 
 Structure* createJSS3FileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

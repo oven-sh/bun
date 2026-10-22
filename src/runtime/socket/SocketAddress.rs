@@ -607,10 +607,6 @@ impl SocketAddress {
         }
     }
 
-    pub(crate) fn estimated_size(&self) -> usize {
-        self._presentation.get().estimated_size()
-    }
-
     pub(crate) fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         // `jsc.JSObject.create` requires a `PojoFields` impl, so use a local
         // struct.

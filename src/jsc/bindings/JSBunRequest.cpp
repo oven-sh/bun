@@ -65,7 +65,7 @@ JSBunRequest* JSBunRequest::create(JSC::VM& vm, JSC::Structure* structure, void*
 
 JSC::Structure* JSBunRequest::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info());
 }
 
 JSC::GCClient::IsoSubspace* JSBunRequest::subspaceForImpl(JSC::VM& vm)
@@ -153,13 +153,6 @@ JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr
     , m_cookies(nullptr, JSC::WriteBarrierEarlyInit)
 {
 }
-extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
-void JSBunRequest::finishCreation(JSC::VM& vm)
-{
-    Base::finishCreation(vm);
-
-    vm.heap.reportExtraMemoryAllocated(this, extraMemorySize(wrapped()));
-}
 
 template<typename Visitor>
 void JSBunRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -215,6 +208,8 @@ private:
 
 const JSC::ClassInfo JSBunRequestPrototype::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequestPrototype) };
 const JSC::ClassInfo JSBunRequest::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequest) };
+// `destroy` is JSRequest's.
+STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSBunRequest);
 
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {

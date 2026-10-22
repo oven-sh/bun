@@ -18,7 +18,6 @@ public:
     ~DOMClientIsoSubspaces();
 
     /* --- bun --- */
-    GCClient::IsoSubspace* m_clientSubspaceForBunClassConstructor { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFFIFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWrappingFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiClass { nullptr };

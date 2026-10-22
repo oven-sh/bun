@@ -5,7 +5,6 @@ export const SocketAddress = b.class({
   rustPath: "crate::socket::SocketAddress",
   configurable: true,
   enumerable: false,
-  estimatedSize: true,
   construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
   proto: {
     address: { getter: b.any, cache: true, capability: "js", throws: true },

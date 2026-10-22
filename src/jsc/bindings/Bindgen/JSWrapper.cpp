@@ -113,11 +113,6 @@ extern "C" JSC::EncodedJSValue Bun__Bindgen__constructorForClass(JSC::JSGlobalOb
     return JSC::JSValue::encode(Bun::Bindgen::constructorForClass(globalObject, classIndex));
 }
 
-extern "C" void Bun__Bindgen__reportExtraMemoryAllocated(JSC::JSGlobalObject* globalObject, JSC::JSCell* cell, size_t size)
-{
-    JSC::getVM(globalObject).heap.reportExtraMemoryAllocated(cell, size);
-}
-
 extern "C" void Bun__Bindgen__setInternalField(JSC::JSGlobalObject* globalObject, JSC::JSCell* cell, uint32_t offset, JSC::EncodedJSValue value)
 {
     auto* field = reinterpret_cast<JSC::WriteBarrier<JSC::Unknown>*>(reinterpret_cast<uint8_t*>(cell) + offset);

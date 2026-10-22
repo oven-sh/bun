@@ -67,19 +67,10 @@ public:
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
     {
-        auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-        auto& vm = JSC::getVM(globalObject);
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSObject* newTarget = asObject(callFrame->newTarget());
-        auto* constructor = globalObject->JSDOMFileConstructor();
-        Structure* structure = Bun::Bindgen::structureForClass<JSBlob>(globalObject);
-        if (constructor != newTarget) {
-            // ShadowRealm functions belong to a different global object.
-            auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(lexicalGlobalObject, newTarget));
-            RETURN_IF_EXCEPTION(scope, {});
-            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, Bun::Bindgen::structureForClass<JSBlob>(functionGlobalObject));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
+        Structure* structure = Bun::Bindgen::structureForNewTarget(lexicalGlobalObject, callFrame, JSBlob::classIndex);
+        RETURN_IF_EXCEPTION(scope, {});
 
         void* ptr = JSDOMFile__construct(lexicalGlobalObject, callFrame);
         RETURN_IF_EXCEPTION(scope, {});

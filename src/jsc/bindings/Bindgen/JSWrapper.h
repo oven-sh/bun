@@ -83,6 +83,8 @@ JSC::JSObject* constructorForClass(JSC::JSGlobalObject*, unsigned classIndex);
 template<typename T> JSC::Structure* structureForClass(JSC::JSGlobalObject* globalObject) { return structureForClass(globalObject, T::classIndex); }
 template<typename T> JSC::JSObject* prototypeForClass(JSC::JSGlobalObject* globalObject) { return prototypeForClass(globalObject, T::classIndex); }
 template<typename T> JSC::JSObject* constructorForClass(JSC::JSGlobalObject* globalObject) { return constructorForClass(globalObject, T::classIndex); }
+// A new instance of a `refCounted` class. Takes the caller's ref on `wrapped`.
+template<typename T> T* createWrapper(JSC::JSGlobalObject* globalObject, void* wrapped) { return T::create(JSC::getVM(globalObject), structureForClass<T>(globalObject), wrapped); }
 // The class's own, or one for `new.target` (a subclass, Reflect.construct). May throw.
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject*, JSC::CallFrame*, unsigned classIndex);
 

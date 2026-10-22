@@ -4,8 +4,8 @@ use core::ptr::null_mut;
 use std::collections::VecDeque;
 
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult, StringJsc,
-    Strong,
+    ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSType, JSValue, JsCell, JsRef, JsResult,
+    StringJsc, Strong,
 };
 use bun_lsquic_sys as lsquic;
 
@@ -235,7 +235,6 @@ impl QuicStream {
                 s.close();
             }
         }
-        // Bit 0 of the id is the initiator (RFC 9000 §2.1).
         let uni = id & STREAM_ID_UNI_BIT != 0;
         let (urgency, incremental) = self.priority.get();
         if (urgency, incremental) != DEFAULT_PRIORITY {
@@ -272,16 +271,12 @@ impl QuicStream {
             }
         }
         if uni {
-            let session = self.session.get();
-            // SAFETY: the session outlives its streams.
-            let is_server = !session.is_null() && unsafe { (*session).is_server() };
-            let local = (id & 1 == 0) != is_server;
-            if local {
-                self.inbound.with_mut(|i| i.ended = true);
-                self.with_state(|s| s.read_ended = 1);
-            } else {
+            if self.is_receive_only() {
                 self.with_state(|s| s.write_ended = 1);
                 s.want_read(true);
+            } else {
+                self.inbound.with_mut(|i| i.ended = true);
+                self.with_state(|s| s.read_ended = 1);
             }
         } else {
             s.want_read(true);
@@ -391,6 +386,18 @@ impl QuicStream {
 
     pub(super) fn stream_id(&self) -> i64 {
         self.with_state(|s| s.id)
+    }
+
+    /// A unidirectional stream the peer opened has no send side (RFC 9000
+    /// §2.1). False while pending: only a stream this side opens can be
+    /// pending, and it has no id yet.
+    fn is_receive_only(&self) -> bool {
+        let id = self.stream_id();
+        id >= 0
+            && id & STREAM_ID_UNI_BIT != 0
+            && self
+                .session_ref()
+                .is_some_and(|session| (id & 1 == 0) == session.is_server())
     }
 
     fn push_inbound(&self, data: &[u8], fin: bool) {
@@ -718,6 +725,10 @@ impl QuicStream {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
+        // Node's `Stream::set_outbound` drops the source of a remote unidirectional stream.
+        if self.is_receive_only() {
+            return Ok(JSValue::UNDEFINED);
+        }
         let source = frame.arguments_as_array::<1>()[0];
         let bytes = if source.is_empty_or_undefined_or_null() {
             Vec::new()
@@ -740,11 +751,20 @@ impl QuicStream {
 
     pub(crate) fn init_streaming_source(
         &self,
-        _g: &JSGlobalObject,
+        global: &JSGlobalObject,
         _f: &CallFrame,
     ) -> JsResult<JSValue> {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
+        }
+        // Node's `Stream::InitStreaming` throws this for a remote unidirectional stream.
+        if self.is_receive_only() {
+            return Err(global
+                .err(
+                    ErrorCode::INVALID_STATE,
+                    format_args!("Stream is not writable"),
+                )
+                .throw());
         }
         self.outbound.with_mut(|o| o.started = true);
         self.with_state(|s| {
@@ -758,6 +778,7 @@ impl QuicStream {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
+        debug_assert!(!self.is_receive_only());
         let batch = frame.arguments_as_array::<1>()[0];
         let mut queued: u64 = 0;
         let mut append = |bytes: &[u8]| {
@@ -789,6 +810,7 @@ impl QuicStream {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
         }
+        debug_assert!(!self.is_receive_only());
         let wants_trailers = self.with_state(|s| s.wants_trailers != 0);
         self.outbound.with_mut(|o| {
             o.started = true;
@@ -838,6 +860,7 @@ impl QuicStream {
                         if self.outbound.get().data.is_empty() {
                             s.close();
                         } else {
+                            debug_assert!(!self.is_receive_only());
                             s.reset(code);
                         }
                     }
@@ -858,6 +881,10 @@ impl QuicStream {
     pub(crate) fn reset_stream(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);
+        }
+        // Node's `ResetStream` returns here too. `false` tells the JS side that nothing was reset.
+        if self.is_receive_only() {
+            return Ok(JSValue::FALSE);
         }
         let code = error_code_arg(frame.arguments_as_array::<1>()[0]);
         self.with_state(|s| {
@@ -908,6 +935,7 @@ impl QuicStream {
         let [stop_arg, reset_arg] = frame.arguments_as_array::<2>();
         let stop = (!stop_arg.is_empty_or_undefined_or_null()).then(|| error_code_arg(stop_arg));
         let reset = (!reset_arg.is_empty_or_undefined_or_null()).then(|| error_code_arg(reset_arg));
+        debug_assert!(reset.is_none() || !self.is_receive_only());
         if let Some(code) = stop {
             self.inbound.with_mut(|i| i.ended = true);
             self.with_state(|s| {

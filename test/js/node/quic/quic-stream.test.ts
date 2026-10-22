@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 
@@ -66,6 +67,238 @@ describe("QuicStream.destroy after the app ended the send side", () => {
     expect(readError).toBeUndefined();
     expect(chunks).toBeGreaterThan(0);
     expect(await gotHeaders.promise).toBe("200");
+  });
+});
+
+// A unidirectional stream that the peer opened has no send side. RFC 9000
+// sections 19.4 and 19.8: an endpoint that gets a RESET_STREAM or a STREAM
+// frame for a stream it only sends on closes the whole connection with
+// STREAM_STATE_ERROR. Node sends neither.
+describe("a unidirectional stream that the peer opened", () => {
+  const encoder = new TextEncoder();
+  const settled = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      (err: any) => `rejected: ${err.code}` + (err.errorCode === undefined ? "" : ` ${err.errorCode}`),
+    );
+  async function readAll(stream: any) {
+    let text = "";
+    for await (const batch of stream) for (const chunk of batch) text += Buffer.from(chunk).toString("latin1");
+    return text;
+  }
+
+  // Runs `work` on both ends of a new raw QUIC connection. The result is
+  // "a session closed" if either end closes before `work` is done, so a
+  // connection that the peer closed fails the assertion at once.
+  async function onConnection<T>(work: (conn: { client: any; server: any }) => Promise<T>) {
+    const sessionErrors: string[] = [];
+    const accepted = Promise.withResolvers<any>();
+    await using endpoint = await listen(
+      (session: any) => {
+        session.onerror = (err: any) => sessionErrors.push(`server: ${err.message}`);
+        accepted.resolve(session);
+      },
+      { alpn: ["quic-test"], sni: { "*": { keys: [key], certs: [cert] } } },
+    );
+    const client: any = await connect(endpoint.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      onerror(err: any) {
+        sessionErrors.push(`client: ${err.message}`);
+      },
+    } as SessionOptions);
+    const server = await accepted.promise;
+    const died = Promise.race([settled(client.closed), settled(server.closed)]).then(() => "a session closed" as const);
+    try {
+      await Promise.all([client.opened, server.opened]);
+      return { result: await Promise.race([work({ client, server }), died]), sessionErrors };
+    } finally {
+      // The endpoint closes once no session is left.
+      client.destroy();
+      server.destroy();
+    }
+  }
+
+  // `sender` opens a unidirectional stream and writes the first half of a
+  // message, so the stream is open when `onReceive` runs on the receiving end.
+  // The receiver then opens a stream of its own, and the sender writes the
+  // second half only when it sees that stream: every frame the call put on the
+  // wire has reached the peer by then, and the peer accepted it.
+  async function transfer(
+    sender: any,
+    receiver: any,
+    onReceive: (stream: any) => unknown,
+    afterRead?: (stream: any) => unknown,
+  ) {
+    const incoming = Promise.withResolvers<any>();
+    receiver.onstream = incoming.resolve;
+    const answered = Promise.withResolvers<void>();
+    sender.onstream = (stream: any) => {
+      stream.closed.catch(() => {});
+      answered.resolve();
+    };
+
+    const out = await sender.createUnidirectionalStream();
+    out.closed.catch(() => {});
+    out.writer.writeSync(encoder.encode("part one, "));
+
+    const stream = await incoming.promise;
+    const closed = settled(stream.closed);
+    let thrown = "nothing";
+    try {
+      onReceive(stream);
+    } catch (err: any) {
+      thrown = `${err.code}: ${err.message}`;
+    }
+    const received = readAll(stream).then(text => (afterRead?.(stream), text));
+
+    const answer = await receiver.createUnidirectionalStream({ body: encoder.encode("go") });
+    answer.closed.catch(() => {});
+    await answered.promise;
+    out.writer.writeSync(encoder.encode("part two"));
+    out.writer.endSync();
+    return { thrown, received: await received, closed: await closed };
+  }
+  const delivered = { received: "part one, part two", closed: "resolved" };
+  const notWritable = "ERR_INVALID_STATE: Stream is not writable";
+
+  describe.each([
+    ["client", "server"],
+    ["server", "client"],
+  ] as const)("and the %s received", (receiver, sender) => {
+    // [call, what it throws]. After each call every byte still arrives and
+    // the stream closes without an error.
+    test.each<[string, (stream: any) => unknown, string?]>([
+      ["resetStream(7n) and resetStream() do nothing", stream => (stream.resetStream(7n), stream.resetStream())],
+      ["setBody(bytes) is dropped", stream => stream.setBody(new Uint8Array(4096))],
+      ["setBody(string) is dropped", stream => stream.setBody(Buffer.alloc(4096, "a").toString())],
+      ["setBody(Blob) is dropped", stream => stream.setBody(new Blob([new Uint8Array(4096)]))],
+      ["setBody(Promise of bytes) is dropped", stream => stream.setBody(Promise.resolve(new Uint8Array(4096)))],
+      ["setOutbound(bytes) is dropped", stream => stream.setOutbound(new Uint8Array(4096))],
+      // These three bodies need a streaming source. Node's Stream::InitStreaming refuses one.
+      ["setBody(null) throws", stream => stream.setBody(null), notWritable],
+      ["setBody(iterable) throws", stream => stream.setBody([new Uint8Array(4096)]), notWritable],
+      ["setBody(async iterable) throws", stream => stream.setBody((async function* () {})()), notWritable],
+    ])("%s", async (_, call, thrown = "nothing") => {
+      const outcome = await onConnection(conn => transfer(conn[sender], conn[receiver], call));
+      expect(outcome).toEqual({ result: { thrown, ...delivered }, sessionErrors: [] });
+    });
+
+    // lsquic has closed its stream by then, and `closed` is not settled yet.
+    test("resetStream() after the last byte is read records no error", async () => {
+      const outcome = await onConnection(conn =>
+        transfer(
+          conn[sender],
+          conn[receiver],
+          () => {},
+          stream => stream.resetStream(9n),
+        ),
+      );
+      expect(outcome).toEqual({ result: { thrown: "nothing", ...delivered }, sessionErrors: [] });
+    });
+
+    // Nothing reads a file that is the body of a receive-only stream.
+    test.each<[string, (stream: any, file: any) => unknown]>([
+      ["setBody(FileHandle)", (stream, file) => stream.setBody(file)],
+      ["setBody(Promise of FileHandle)", (stream, file) => stream.setBody(Promise.resolve(file))],
+    ])("%s closes the file and sends nothing", async (_, setBody) => {
+      await using file = await open(join(keysDir, "agent1-cert.pem"));
+      const outcome = await onConnection(conn =>
+        transfer(conn[sender], conn[receiver], stream => setBody(stream, file)),
+      );
+      expect({ outcome, fd: file.fd }).toEqual({
+        outcome: { result: { thrown: "nothing", ...delivered }, sessionErrors: [] },
+        fd: -1,
+      });
+    });
+
+    // `work` gets the receiving end of a stream the sender keeps open. The
+    // session is still open afterwards if a new stream gets through.
+    async function thenRoundTrip(conn: { client: any; server: any }, work: (stream: any) => Promise<unknown>) {
+      const incoming = Promise.withResolvers<any>();
+      conn[receiver].onstream = incoming.resolve;
+      const answered = Promise.withResolvers<string>();
+      conn[sender].onstream = (stream: any) => answered.resolve(readAll(stream));
+      const out = await conn[sender].createUnidirectionalStream();
+      out.closed.catch(() => {});
+      out.writer.writeSync(encoder.encode("hello"));
+
+      const result = await work(await incoming.promise);
+      const answer = await conn[receiver].createUnidirectionalStream({ body: encoder.encode("still here") });
+      answer.closed.catch(() => {});
+      return { result, answer: await answered.promise };
+    }
+
+    // destroy() flushes a queued body and resets the stream when the flush
+    // does not finish. With no body queued it does neither.
+    test.each([4096, 8 * 1024 * 1024])("setBody(%i bytes) then destroy() keeps the session open", async size => {
+      const outcome = await onConnection(conn =>
+        thenRoundTrip(conn, stream => {
+          const closed = settled(stream.closed);
+          stream.setBody(new Uint8Array(size));
+          stream.destroy();
+          return closed;
+        }),
+      );
+      expect(outcome).toEqual({ result: { result: "resolved", answer: "still here" }, sessionErrors: [] });
+    });
+
+    // The throw of a body that comes from a Promise has no caller to reach.
+    test("setBody(Promise of null) destroys the stream with ERR_INVALID_STATE", async () => {
+      const outcome = await onConnection(conn =>
+        thenRoundTrip(conn, stream => {
+          stream.setBody(Promise.resolve(null));
+          return settled(stream.closed);
+        }),
+      );
+      expect(outcome).toEqual({
+        result: { result: "rejected: ERR_INVALID_STATE", answer: "still here" },
+        sessionErrors: [],
+      });
+    });
+
+    // stopSending() is valid on this stream, and the peer answers it with a
+    // RESET_STREAM that carries its code. resetStream() must not replace it.
+    test.each<[string, (stream: any) => void]>([
+      ["stopSending(3n) then resetStream(7n)", stream => (stream.stopSending(3n), stream.resetStream(7n))],
+      ["resetStream(7n) then stopSending(3n)", stream => (stream.resetStream(7n), stream.stopSending(3n))],
+    ])("%s closes the stream with code 3", async (_, call) => {
+      const outcome = await onConnection(conn =>
+        thenRoundTrip(conn, stream => {
+          const closed = settled(stream.closed);
+          call(stream);
+          return closed;
+        }),
+      );
+      expect(outcome).toEqual({
+        result: { result: "rejected: ERR_QUIC_APPLICATION_ERROR 3", answer: "still here" },
+        sessionErrors: [],
+      });
+    });
+
+    // The half the other end has still works: the sender resets the stream
+    // and the receiver gets the code.
+    test("resetStream() by the sender resets it", async () => {
+      const outcome = await onConnection(async conn => {
+        const incoming = Promise.withResolvers<any>();
+        conn[receiver].onstream = incoming.resolve;
+        const out = await conn[sender].createUnidirectionalStream();
+        out.closed.catch(() => {});
+        out.writer.writeSync(encoder.encode("hello"));
+
+        const stream = await incoming.promise;
+        const reset = Promise.withResolvers<string>();
+        stream.onreset = (err: any) => reset.resolve(`${err.code} ${err.errorCode}`);
+        const closed = settled(stream.closed);
+        out.resetStream(5n);
+        return { reset: await reset.promise, closed: await closed };
+      });
+      expect(outcome).toEqual({
+        result: { reset: "ERR_QUIC_APPLICATION_ERROR 5", closed: "rejected: ERR_QUIC_APPLICATION_ERROR 5" },
+        sessionErrors: [],
+      });
+    });
   });
 });
 

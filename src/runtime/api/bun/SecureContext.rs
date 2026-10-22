@@ -72,6 +72,9 @@ impl SecureContext {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let (pfx, passphrase) = (pfx.to_js(), passphrase.to_js());
+        if pfx.is_undefined() {
+            return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
+        }
         // The passphrase is optional; the C side treats NULL as "". Coerce it
         // before borrowing the pfx ArrayBuffer so a user toString() cannot
         // detach the buffer behind the borrowed slice.

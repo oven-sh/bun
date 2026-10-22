@@ -157,7 +157,8 @@ export const Expect = b.class({
     toInclude: matcherWithExpected,
     toIncludeRepeated: { ...matcher, args: { substring: b.any, count: b.any } },
     toMatch: matcherWithExpected,
-    toMatchInlineSnapshot: { ...matcher, args: { propertyMatchers: b.any, value: b.any }, length: 1 },
+    /** The snapshot is written over the call's arguments in the source, where `(undefined)` is not `()`. */
+    toMatchInlineSnapshot: { ...matcher, args: { args: b.any.variadic }, length: 1 },
     toMatchObject: matcherWithExpected,
     toMatchSnapshot: { ...matcher, args: { propertyMatchers: b.any, hint: b.any }, length: 1 },
     toReturn: { ...matcherWithExpected, rustName: "to_have_returned" },
@@ -166,7 +167,8 @@ export const Expect = b.class({
     toStrictEqual: matcherWithExpected,
     toThrow: matcherWithExpected,
     toThrowError: { ...matcherWithExpected, rustName: "to_throw" },
-    toThrowErrorMatchingInlineSnapshot: matcherWithExpected,
+    /** As `toMatchInlineSnapshot`. */
+    toThrowErrorMatchingInlineSnapshot: { ...matcher, args: { args: b.any.variadic }, length: 1 },
     toThrowErrorMatchingSnapshot: { ...matcher, args: { hint: b.any } },
   },
   static: {

@@ -3638,7 +3638,6 @@ describe.concurrent("ServerWebSocket argument validation", () => {
       [[[1, 2], "c"], 1, "c"],
       [[named, "d"], 1, "d"],
       [[{}, "e"], 1, "e"],
-      [["t"], 9, "undefined"],
       [["t", undefined], 9, "undefined"],
       [["t", null], 4, "null"],
       [["t", 7], 1, "7"],
@@ -3663,7 +3662,8 @@ describe.concurrent("ServerWebSocket argument validation", () => {
 
     const thrown: [unknown[], string][] = [
       [[], "Expected string"],
-      [[""], "publish requires a topic string"],
+      [["t"], "Missing argument"],
+      [[""], "Missing argument"],
       [[undefined], "Expected string"],
       [[undefined, "x"], "Expected string"],
       [[null, "x"], "Expected string"],
@@ -3678,8 +3678,9 @@ describe.concurrent("ServerWebSocket argument validation", () => {
   it("server.publish() without a websocket handler returns 0, even for an empty topic", () => {
     using server = serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("no") });
     const publish = server.publish.bind(server) as (...args: unknown[]) => number;
-    expect([publish("t", "x"), publish("", "x"), publish(42, undefined, 1), publish("t")]).toEqual([0, 0, 0, 0]);
+    expect([publish("t", "x"), publish("", "x"), publish(42, undefined, 1)]).toEqual([0, 0, 0]);
     expect(() => publish(null, "x")).toThrow("Expected string");
+    expect(() => publish("t")).toThrow("Missing argument");
   });
 });
 

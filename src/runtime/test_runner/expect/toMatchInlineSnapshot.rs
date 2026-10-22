@@ -9,15 +9,12 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        property_matchers: JsLocal<'_>,
-        value: JsLocal<'_>,
+        args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let this = self.post_match_guard(global);
 
         let this_value = this_value.to_js();
-        let first = property_matchers.to_js();
-        let second = value.to_js();
 
         this.increment_expect_call_counter();
 
@@ -34,37 +31,45 @@ impl Expect {
 
         let mut expected_string = None;
         let mut property_matchers: Option<JSValue> = None;
-        if !second.is_undefined() {
-            if !first.is_object() {
-                let signature = Expect::get_signature(
-                    "toMatchInlineSnapshot",
-                    "<green>properties<r><d>, <r>hint",
-                    false,
-                );
-                return throw!(
-                    this,
-                    global,
-                    signature,
-                    "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
-                );
+        match *args {
+            [] => {}
+            [first] => {
+                let first = first.to_js();
+                if first.is_string() {
+                    expected_string = Some(first.to_js_string_view(global)?);
+                } else if first.is_object() {
+                    property_matchers = Some(first);
+                } else {
+                    return throw!(
+                        this,
+                        global,
+                        "",
+                        "\n\nMatcher error: Expected first argument to be a string or object\n",
+                    );
+                }
             }
+            [first, second, ..] => {
+                let (first, second) = (first.to_js(), second.to_js());
+                if !first.is_object() {
+                    let signature = Expect::get_signature(
+                        "toMatchInlineSnapshot",
+                        "<green>properties<r><d>, <r>hint",
+                        false,
+                    );
+                    return throw!(
+                        this,
+                        global,
+                        signature,
+                        "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
+                    );
+                }
 
-            property_matchers = Some(first);
+                property_matchers = Some(first);
 
-            if second.is_string() {
-                expected_string = Some(second.to_js_string_view(global)?);
+                if second.is_string() {
+                    expected_string = Some(second.to_js_string_view(global)?);
+                }
             }
-        } else if first.is_string() {
-            expected_string = Some(first.to_js_string_view(global)?);
-        } else if first.is_object() {
-            property_matchers = Some(first);
-        } else if !first.is_undefined() {
-            return throw!(
-                this,
-                global,
-                "",
-                "\n\nMatcher error: Expected first argument to be a string or object\n",
-            );
         }
 
         let expected = expected_string.as_ref().map(|s| s.to_utf8());

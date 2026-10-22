@@ -9,7 +9,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: JsLocal<'_>,
+        args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let this = self.post_match_guard(global);
@@ -30,16 +30,27 @@ impl Expect {
         }
 
         let mut expected_string = None;
-        let expected = expected.to_js();
-        if expected.is_string() {
-            expected_string = Some(expected.to_js_string_view(global)?);
-        } else if !expected.is_undefined() {
-            return throw!(
-                this,
-                global,
-                "",
-                "\n\nMatcher error: Expected first argument to be a string\n",
-            );
+        match *args {
+            [] => {}
+            [expected] if expected.to_js().is_string() => {
+                expected_string = Some(expected.to_js().to_js_string_view(global)?);
+            }
+            [_] => {
+                return throw!(
+                    this,
+                    global,
+                    "",
+                    "\n\nMatcher error: Expected first argument to be a string\n",
+                );
+            }
+            _ => {
+                return throw!(
+                    this,
+                    global,
+                    "",
+                    "\n\nMatcher error: Expected zero or one arguments\n",
+                );
+            }
         }
 
         let expected = expected_string.as_ref().map(|s| s.to_utf8());

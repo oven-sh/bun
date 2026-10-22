@@ -1186,6 +1186,13 @@ it("getServername on a closed TLS socket should not crash", async () => {
   expect(client.getServername()).toBeUndefined();
 });
 
+it("reload() of a stopped listener says that the listener is closed", () => {
+  const socket = { data() {} };
+  const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket });
+  listener.stop();
+  expect(() => listener.reload({ socket })).toThrow("Listener is closed");
+});
+
 it("getPeerCertificate and exportKeyingMaterial accept undefined for optional arguments", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });

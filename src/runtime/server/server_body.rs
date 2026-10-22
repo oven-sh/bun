@@ -1509,20 +1509,25 @@ where
         &self,
         cx: &mut JsScope<'_>,
         topic: JsLocal<'_>,
-        data: JsLocal<'_>,
-        compress: JsLocal<'_>,
+        rest: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         use super::server_web_socket::{Accept, payload_from_js, send_status_to_js};
 
         let global = cx.global();
-        let (topic, data, compress) = (topic.to_js(), data.to_js(), compress.to_js());
+        let topic = topic.to_js();
         if topic.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
         let topic_view = topic.to_js_string_view(global)?;
         let topic = topic_view.to_utf8();
+        let Some((data, rest)) = rest.split_first() else {
+            return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
+        };
+        let compress = rest
+            .first()
+            .map_or(JSValue::UNDEFINED, |compress| compress.to_js());
         let compress = compress.is_undefined() || compress.to_boolean();
-        let payload = payload_from_js(global, "publish", data, Accept::AnyOrNullish)?;
+        let payload = payload_from_js(global, "publish", data.to_js(), Accept::AnyOrNullish)?;
         let bytes = payload.bytes();
 
         if self.config.get().websocket.is_none() {

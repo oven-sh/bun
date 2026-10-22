@@ -44,11 +44,13 @@ function server(name: string) {
       pendingWebSockets: { getter: b.i32 },
       port: { getter: b.u16.optional },
       protocol: { getter: ServerProtocol },
+      /** `publish(topic)` throws. `publish(topic, undefined)` sends the text "undefined". */
       publish: {
-        args: { topic: b.any, data: b.any, compress: b.any },
+        args: { topic: b.any, rest: b.any.variadic },
         returns: b.any,
         capability: "js",
         throws: true,
+        length: 3,
         rustName: "do_publish",
       },
       ref: { returns: b.self, passThis: true, rustName: "do_ref" },

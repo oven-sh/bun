@@ -704,6 +704,24 @@ Date)
       `,
     );
   });
+  it("does not take undefined for no argument", async () => {
+    await tester.testError(
+      { msg: "Matcher error: Expected first argument to be a string or object" },
+      /*js*/ `
+        test("cases", () => {
+          expect(1).toMatchInlineSnapshot(undefined);
+        });
+      `,
+    );
+    await tester.testError(
+      { msg: "Matcher error: Expected first argument to be a string" },
+      /*js*/ `
+        test("cases", () => {
+          expect(() => { throw new Error("1"); }).toThrowErrorMatchingInlineSnapshot(undefined);
+        });
+      `,
+    );
+  });
   it("only replaces when the argument is a literal string 3", async () => {
     await tester.testError(
       {
@@ -970,7 +988,6 @@ test("snapshot matchers treat undefined arguments as omitted", async () => {
         expect({ a: 3 }).toMatchSnapshot({ a: 3 }, undefined);
         expect(thrower).toThrowErrorMatchingSnapshot(undefined);
         expect(thrower).toThrowErrorMatchingSnapshot("hint", "ignored");
-        expect(thrower).toThrowErrorMatchingInlineSnapshot(\`"message"\`, "ignored");
       });
     `,
   });

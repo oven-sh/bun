@@ -2531,6 +2531,11 @@ describe("expect()", () => {
     expect(results).toEqual([true, false]);
   });
 
+  test("resolves and rejects look at the promise before the matcher looks at its arguments", () => {
+    expect(() => expect(1).resolves.toBeGreaterThan()).toThrow("Expected promise");
+    expect(() => expect(1).rejects.toHaveProperty()).toThrow("Expected promise");
+  });
+
   test("expect.not, resolvesTo and rejectsTo work on an object that inherits from expect", () => {
     expect("b").toEqual(Object.create(expect).not.stringContaining("a"));
     expect(Promise.resolve("a")).toEqual(Object.create(expect).resolvesTo.stringContaining("a"));

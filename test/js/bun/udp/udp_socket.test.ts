@@ -312,6 +312,8 @@ describe("udpSocket()", () => {
       expect(client.send("hello", undefined, undefined)).toBe(true);
       expect(await promise).toBe("hello");
       // @ts-expect-error
+      expect(client.send("hello", undefined, undefined, "ignored")).toBe(true);
+      // @ts-expect-error
       expect(() => client.send("hello", server.port)).toThrow("Cannot specify destination on connected socket");
     } finally {
       client.close();

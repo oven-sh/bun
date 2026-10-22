@@ -100,6 +100,10 @@ impl<'p, 's> Checker<'p, 's> {
             return self.check_expression_worker(file, e);
         }
         cold_path();
+        // `getTypeOfExpression(e)` doesn't check `e` on behalf of its parent.
+        if self.type_only_node == Some((file, e)) {
+            return self.check_expression_ex(file, e, check_mode);
+        }
         let check_mode = self.check_mode_passed_to(file, e, check_mode);
         self.check_expression_ex(file, e, check_mode)
     }

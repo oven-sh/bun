@@ -11094,6 +11094,46 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    test("checks an initializer in the mode of the request on the second visit while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function id<T>(value: T): T;
+declare function onlyB(value: "b"): "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = "b";
+  do {
+    if (more) {
+      let same: boolean = y === "b";
+      z = id(same) ? y : z!;
+    }
+    switch (true) {
+      case id(y) === z:
+        x = onlyB(y);
+    }
+    let other: boolean | undefined = next[z] === y;
+    y = id(id(other)) ? y : next[x];
+    if (more) {
+    } else {
+      y = (() => z)();
+      z = id(next[y]);
+    }
+  } while (more);
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(17,19): error TS2345: Argument of type 'Letter' is not assignable to parameter of type '"b"'.
+          Type '"a"' is not assignable to type '"b"'.
+        a.ts(23,12): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

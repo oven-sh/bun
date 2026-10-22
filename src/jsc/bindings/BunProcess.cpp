@@ -1557,8 +1557,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
     if (auto* jsPromise = dynamicDowncast<JSC::JSPromise>(promise))
         reason = jsPromise->result();
     bool dispatched = !!dispatchPromiseRejectionEvent(globalObject, WebCore::eventNames().rejectionhandledEvent, promise, reason, false);
-    if (vm.hasPendingTerminationException()) [[unlikely]]
-        return true;
+    RETURN_IF_EXCEPTION(scope, true);
 
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {

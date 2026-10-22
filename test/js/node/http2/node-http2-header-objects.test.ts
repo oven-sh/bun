@@ -13,7 +13,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import type { AddressInfo } from "node:net";
-import { describe, test } from "node:test";
+import { after, describe, test } from "node:test";
 
 type Headers = Record<string | symbol, any>;
 type ServerStream = http2.ServerHttp2Stream & {
@@ -619,276 +619,297 @@ describe("http2 outbound header blocks are null-prototype copies", () => {
     }
   });
 
-  // Each row puts one header name on Object.prototype for the time of one call that builds a header
-  // block, and notes what the other end of the session receives. `how` is the property:
-  // "enumerable" is a data property, "read-only" is one that is not writable, "accessor" has a
-  // getter and a setter. The expected text is what node v26.3.0 notes.
-  test("a header name on Object.prototype does not reach a header block", async () => {
-    type Case = {
-      call: string;
-      key: string | symbol;
-      value: unknown;
-      how?: string[];
-      request?: (client: http2.ClientHttp2Session) => http2.ClientHttp2Stream;
-      // Answers the request. When it throws, the stream still answers with a 200.
-      serve?: (stream: ServerStream, failed: Fail, polluted: (call: () => void) => void) => void;
-      // A file response sends its headers after it has opened the file: the name stays until the stream closes.
-      untilClose?: true;
-      // The row makes its call in a later turn, inside `polluted()`.
-      late?: true;
+  describe("with a name on Object.prototype", () => {
+    // The names that the test has on Object.prototype at this moment.
+    const inherited = new Set<string | symbol>();
+    let over = false;
+    const removeAll = () => {
+      for (const key of inherited) delete (Object.prototype as Headers)[key];
+      inherited.clear();
     };
-    type Row = Omit<Case, "how"> & { how: string };
-    const ownBefore = Reflect.ownKeys(Object.prototype);
-    const fd = fs.openSync(thisFile, "r");
-    let setterCalls = 0;
-    // Each value is new: HPACK sends a value that is in its table as a reference, with no never-index flag.
-    let unique = 0;
-    const put = ({ key, value, how }: Row) =>
-      Object.defineProperty(
-        Object.prototype,
-        key,
-        how === "accessor"
-          ? { configurable: true, get: () => value, set: () => void setterCalls++ }
-          : { configurable: true, value, enumerable: true, writable: how !== "read-only" },
-      );
-    const remove = ({ key }: Row) => delete (Object.prototype as Headers)[key];
-    const respondThenEnd = (stream: ServerStream) => {
-      stream.respond({ ":status": 200 });
-      stream.end("body");
-    };
-    const push = (stream: ServerStream, failed: Fail) => {
-      stream.pushStream({ ":path": "/p" }, (err, pushed) => {
-        if (err) return failed(err);
-        pushed.respond({ ":status": 200 });
-        pushed.end("pushed");
-      });
-      respondThenEnd(stream);
-    };
-    const cases: Case[] = [
-      {
-        call: 'request({ ":path": "/x" })',
-        key: ":method",
-        value: "DELETE",
-        request: c => c.request({ ":path": "/x" }),
-      },
-      {
-        call: 'request({ ":path": "/x" })',
-        key: ":authority",
-        value: "evil.example",
-        request: c => c.request({ ":path": "/x" }),
-      },
-      {
-        call: 'request({ ":path": "/x" })',
-        key: ":scheme",
-        value: "https",
-        request: c => c.request({ ":path": "/x" }),
-      },
-      {
-        call: 'request({ ":path": "/x" })',
-        key: "host",
-        value: "evil.example",
-        request: c => c.request({ ":path": "/x" }),
-      },
-      { call: "request()", key: ":path", value: "/pol", how: ["enumerable", "read-only"], request: c => c.request() },
-      { call: "request()", key: ":method", value: "DELETE", how: ["accessor"], request: c => c.request() },
-      // The names that HPACK must never index are kept by name too.
-      {
-        call: "request({ authorization })",
-        key: "authorization",
-        value: "polluted",
-        how: ["read-only", "accessor"],
-        request: c => c.request({ authorization: `a${unique++}` }),
-      },
-      {
-        call: "request({ cookie })",
-        key: "cookie",
-        value: "polluted",
-        how: ["read-only", "accessor"],
-        request: c => c.request({ cookie: `c=${unique++}` }),
-      },
-      {
-        call: 'request({ "x-secret", [http2.sensitiveHeaders]: ["x-secret"] })',
-        key: "x-secret",
-        value: "polluted",
-        how: ["read-only", "accessor"],
-        request: c => c.request({ "x-secret": `s${unique++}`, [sensitiveHeaders]: ["x-secret"] }),
-      },
-      {
-        call: "respond()",
-        key: ":status",
-        value: 302,
-        how: ["enumerable", "read-only", "accessor"],
-        serve: stream => {
-          stream.respond();
-          stream.end("body");
-        },
-      },
-      // A status that is out of range makes respond() throw.
-      {
-        call: "respond()",
-        key: ":status",
-        value: 700,
-        how: ["out of range"],
-        serve: stream => {
-          stream.respond();
-          stream.end("body");
-        },
-      },
-      { call: 'end("body")', key: ":status", value: 302, serve: stream => stream.end("body") },
-      {
-        call: 'respondWithFile(path, { a: "1" })',
-        key: ":status",
-        value: 302,
-        untilClose: true,
-        serve: stream => stream.respondWithFile(thisFile, { a: "1" }, { length: 4 }),
-      },
-      {
-        call: "respondWithFile(path)",
-        key: ":status",
-        value: 302,
-        untilClose: true,
-        serve: stream => stream.respondWithFile(thisFile, undefined, { length: 4 }),
-      },
-      {
-        call: 'respondWithFD(fd, { a: "1" })',
-        key: ":status",
-        value: 302,
-        untilClose: true,
-        serve: stream => stream.respondWithFD(fd, { a: "1" }, { length: 4 }),
-      },
-      {
-        call: "respondWithFD(fd)",
-        key: ":status",
-        value: 302,
-        untilClose: true,
-        serve: stream => stream.respondWithFD(fd, undefined, { length: 4 }),
-      },
-      {
-        call: 'respond({ ":status": 200 })',
-        key: "date",
-        value: "polluted",
-        how: ["enumerable", "read-only"],
-        serve: respondThenEnd,
-      },
-      {
-        call: 'additionalHeaders({ ":status": 103 })',
-        key: ":pol",
-        value: "1",
-        serve: stream => {
-          stream.additionalHeaders({ ":status": 103 });
-          respondThenEnd(stream);
-        },
-      },
-      { call: 'pushStream({ ":path": "/p" })', key: "te", value: "gzip", serve: push },
-      { call: 'pushStream({ ":path": "/p" })', key: "connection", value: "close", serve: push },
-      // node reads the never-index list of a response through the caller's object, and that of
-      // every other block from the copy. The list must be an array.
-      { call: 'respond({ ":status": 200 })', key: sensitiveHeaders, value: "not an array", serve: respondThenEnd },
-      {
-        call: 'sendTrailers({ "x-t": "1" })',
-        key: sensitiveHeaders,
-        value: "not an array",
-        late: true,
-        serve: (stream, failed, polluted) => {
-          stream.respond({ ":status": 200 }, { waitForTrailers: true });
-          stream.on("wantTrailers", () => {
-            try {
-              polluted(() => stream.sendTrailers({ "x-t": "1" }));
-            } catch (e) {
-              failed(e);
-              stream.close();
-            }
-          });
-          stream.end("body");
-        },
-      },
-    ];
-    const rows = cases.flatMap(c => (c.how ?? ["enumerable"]).map((how): Row => ({ ...c, how })));
-    // The name is on Object.prototype while `call` runs, and not after that.
-    const during = <T>(row: Row, call: () => T): T => {
-      put(row);
-      try {
-        return call();
-      } finally {
-        remove(row);
-      }
-    };
+    // A test that timed out did not reach its `finally`, and its rows can still run later.
+    after(() => {
+      over = true;
+      removeAll();
+    });
 
-    // `serving` is the server row in progress. With none, the server answers with what it received.
-    let serving: ((stream: ServerStream) => void) | undefined;
-    const { client, received, settled, close } = await pair((stream, headers) => {
-      if (serving) return serving(stream);
-      const list = headers[sensitiveHeaders] ?? [];
-      stream.respond({ ":status": 200 });
-      stream.end(
-        [headers[":method"], headers[":scheme"], headers[":authority"], headers[":path"]].join(" ") +
-          (list.length ? `, never indexed: ${list}` : ""),
-      );
-    });
-    const pushes: string[] = [];
-    client.on("stream", (pushed, headers) => {
-      pushed.resume();
-      pushes.push(`push ${headers[":path"]}`);
-    });
-    try {
-      const lines: string[] = [];
-      for (const row of rows) {
-        let text: string;
-        if (row.request) {
-          setterCalls = 0;
-          try {
-            const req = during(row, () => row.request!(client));
-            text = await received(req).then(
-              ({ body }) => body.replace(/ 127\.0\.0\.1:\d+ /, " peer "),
-              e => `error ${e.code}`,
-            );
-          } catch (e: any) {
-            text = `throws ${e.code ?? e.name}`;
-          }
-          if (setterCalls) text += `, setter calls: ${setterCalls}`;
-        } else {
-          pushes.length = 0;
-          let threw: string | undefined;
-          const failed: Fail = (e: any) => void (threw = `throws ${e.code ?? e}`);
-          const polluted = (call: () => void) => during(row, call);
-          serving = stream => {
-            try {
-              if (row.late) return row.serve!(stream, failed, polluted);
-              if (!row.untilClose) return polluted(() => row.serve!(stream, failed, polluted));
-              put(row);
-              stream.on("close", () => remove(row));
-              row.serve!(stream, failed, polluted);
-            } catch (e) {
-              failed(e);
-              remove(row);
-              respondThenEnd(stream);
-            }
-          };
-          // The request is made before the name is on Object.prototype.
-          const seen = await received(client.request({ ":path": "/" })).then(
-            ({ info, headers, trailers }) => [
-              ...info.map(informational => `info ${informational[":status"]}`),
-              `status ${headers[":status"]}`,
-              ...(row.key !== "date" ? [] : [isDate(headers.date) ? "with a date" : `date ${headers.date}`]),
-              ...(trailers ? [`trailers ${Object.keys(trailers)}`] : []),
-            ],
-            e => [`error ${e.code}`],
-          );
-          await settled();
-          serving = undefined;
-          text = [...(threw ? [threw] : []), ...seen, ...pushes].join(", ");
+    // Each row puts one header name on Object.prototype for the time of one call that builds a header
+    // block, and notes what the other end of the session receives. `how` is the property:
+    // "enumerable" is a data property, "read-only" is one that is not writable, "accessor" has a
+    // getter and a setter. The expected text is what node v26.3.0 notes.
+    test("a header name on Object.prototype does not reach a header block", async () => {
+      type Case = {
+        call: string;
+        key: string | symbol;
+        value: unknown;
+        how?: string[];
+        request?: (client: http2.ClientHttp2Session) => http2.ClientHttp2Stream;
+        // Answers the request. When it throws, the stream still answers with a 200.
+        serve?: (stream: ServerStream, failed: Fail, polluted: (call: () => void) => void) => void;
+        // A file response sends its headers after it has opened the file: the name stays until the stream closes.
+        untilClose?: true;
+        // The row makes its call in a later turn, inside `polluted()`.
+        late?: true;
+      };
+      type Row = Omit<Case, "how"> & { how: string };
+      const ownBefore = Reflect.ownKeys(Object.prototype);
+      const fd = fs.openSync(thisFile, "r");
+      let setterCalls = 0;
+      // Each value is new: HPACK sends a value that is in its table as a reference, with no never-index flag.
+      let unique = 0;
+      const put = ({ key, value, how }: Row) => {
+        if (over) throw new Error("the test is over");
+        inherited.add(key);
+        Object.defineProperty(
+          Object.prototype,
+          key,
+          how === "accessor"
+            ? { configurable: true, get: () => value, set: () => void setterCalls++ }
+            : { configurable: true, value, enumerable: true, writable: how !== "read-only" },
+        );
+      };
+      const remove = ({ key }: Row) => {
+        inherited.delete(key);
+        delete (Object.prototype as Headers)[key];
+      };
+      const respondThenEnd = (stream: ServerStream) => {
+        stream.respond({ ":status": 200 });
+        stream.end("body");
+      };
+      const push = (stream: ServerStream, failed: Fail) => {
+        stream.pushStream({ ":path": "/p" }, (err, pushed) => {
+          if (err) return failed(err);
+          pushed.respond({ ":status": 200 });
+          pushed.end("pushed");
+        });
+        respondThenEnd(stream);
+      };
+      const cases: Case[] = [
+        {
+          call: 'request({ ":path": "/x" })',
+          key: ":method",
+          value: "DELETE",
+          request: c => c.request({ ":path": "/x" }),
+        },
+        {
+          call: 'request({ ":path": "/x" })',
+          key: ":authority",
+          value: "evil.example",
+          request: c => c.request({ ":path": "/x" }),
+        },
+        {
+          call: 'request({ ":path": "/x" })',
+          key: ":scheme",
+          value: "https",
+          request: c => c.request({ ":path": "/x" }),
+        },
+        {
+          call: 'request({ ":path": "/x" })',
+          key: "host",
+          value: "evil.example",
+          request: c => c.request({ ":path": "/x" }),
+        },
+        { call: "request()", key: ":path", value: "/pol", how: ["enumerable", "read-only"], request: c => c.request() },
+        { call: "request()", key: ":method", value: "DELETE", how: ["accessor"], request: c => c.request() },
+        // The names that HPACK must never index are kept by name too.
+        {
+          call: "request({ authorization })",
+          key: "authorization",
+          value: "polluted",
+          how: ["read-only", "accessor"],
+          request: c => c.request({ authorization: `a${unique++}` }),
+        },
+        {
+          call: "request({ cookie })",
+          key: "cookie",
+          value: "polluted",
+          how: ["read-only", "accessor"],
+          request: c => c.request({ cookie: `c=${unique++}` }),
+        },
+        {
+          call: 'request({ "x-secret", [http2.sensitiveHeaders]: ["x-secret"] })',
+          key: "x-secret",
+          value: "polluted",
+          how: ["read-only", "accessor"],
+          request: c => c.request({ "x-secret": `s${unique++}`, [sensitiveHeaders]: ["x-secret"] }),
+        },
+        {
+          call: "respond()",
+          key: ":status",
+          value: 302,
+          how: ["enumerable", "read-only", "accessor"],
+          serve: stream => {
+            stream.respond();
+            stream.end("body");
+          },
+        },
+        // A status that is out of range makes respond() throw.
+        {
+          call: "respond()",
+          key: ":status",
+          value: 700,
+          how: ["out of range"],
+          serve: stream => {
+            stream.respond();
+            stream.end("body");
+          },
+        },
+        { call: 'end("body")', key: ":status", value: 302, serve: stream => stream.end("body") },
+        {
+          call: 'respondWithFile(path, { a: "1" })',
+          key: ":status",
+          value: 302,
+          untilClose: true,
+          serve: stream => stream.respondWithFile(thisFile, { a: "1" }, { length: 4 }),
+        },
+        {
+          call: "respondWithFile(path)",
+          key: ":status",
+          value: 302,
+          untilClose: true,
+          serve: stream => stream.respondWithFile(thisFile, undefined, { length: 4 }),
+        },
+        {
+          call: 'respondWithFD(fd, { a: "1" })',
+          key: ":status",
+          value: 302,
+          untilClose: true,
+          serve: stream => stream.respondWithFD(fd, { a: "1" }, { length: 4 }),
+        },
+        {
+          call: "respondWithFD(fd)",
+          key: ":status",
+          value: 302,
+          untilClose: true,
+          serve: stream => stream.respondWithFD(fd, undefined, { length: 4 }),
+        },
+        {
+          call: 'respond({ ":status": 200 })',
+          key: "date",
+          value: "polluted",
+          how: ["enumerable", "read-only"],
+          serve: respondThenEnd,
+        },
+        {
+          call: 'additionalHeaders({ ":status": 103 })',
+          key: ":pol",
+          value: "1",
+          serve: stream => {
+            stream.additionalHeaders({ ":status": 103 });
+            respondThenEnd(stream);
+          },
+        },
+        { call: 'pushStream({ ":path": "/p" })', key: "te", value: "gzip", serve: push },
+        { call: 'pushStream({ ":path": "/p" })', key: "connection", value: "close", serve: push },
+        // node reads the never-index list of a response through the caller's object, and that of
+        // every other block from the copy. The list must be an array.
+        { call: 'respond({ ":status": 200 })', key: sensitiveHeaders, value: "not an array", serve: respondThenEnd },
+        {
+          call: 'sendTrailers({ "x-t": "1" })',
+          key: sensitiveHeaders,
+          value: "not an array",
+          late: true,
+          serve: (stream, failed, polluted) => {
+            stream.respond({ ":status": 200 }, { waitForTrailers: true });
+            stream.on("wantTrailers", () => {
+              try {
+                polluted(() => stream.sendTrailers({ "x-t": "1" }));
+              } catch (e) {
+                failed(e);
+                stream.close();
+              }
+            });
+            stream.end("body");
+          },
+        },
+      ];
+      const rows = cases.flatMap(c => (c.how ?? ["enumerable"]).map((how): Row => ({ ...c, how })));
+      // The name is on Object.prototype while `call` runs, and not after that.
+      const during = <T>(row: Row, call: () => T): T => {
+        put(row);
+        try {
+          return call();
+        } finally {
+          remove(row);
         }
-        const name = typeof row.key === "symbol" ? "[http2.sensitiveHeaders]" : JSON.stringify(row.key);
-        lines.push(`${row.call} | ${name} ${row.how}: ${text}`);
+      };
+
+      // `serving` is the server row in progress. With none, the server answers with what it received.
+      let serving: ((stream: ServerStream) => void) | undefined;
+      const { client, received, settled, close } = await pair((stream, headers) => {
+        if (serving) return serving(stream);
+        const list = headers[sensitiveHeaders] ?? [];
+        stream.respond({ ":status": 200 });
+        stream.end(
+          [headers[":method"], headers[":scheme"], headers[":authority"], headers[":path"]].join(" ") +
+            (list.length ? `, never indexed: ${list}` : ""),
+        );
+      });
+      const pushes: string[] = [];
+      client.on("stream", (pushed, headers) => {
+        pushed.resume();
+        pushes.push(`push ${headers[":path"]}`);
+      });
+      try {
+        const lines: string[] = [];
+        for (const row of rows) {
+          let text: string;
+          if (row.request) {
+            setterCalls = 0;
+            try {
+              const req = during(row, () => row.request!(client));
+              text = await received(req).then(
+                ({ body }) => body.replace(/ 127\.0\.0\.1:\d+ /, " peer "),
+                e => `error ${e.code}`,
+              );
+            } catch (e: any) {
+              text = `throws ${e.code ?? e.name}`;
+            }
+            if (setterCalls) text += `, setter calls: ${setterCalls}`;
+          } else {
+            pushes.length = 0;
+            let threw: string | undefined;
+            const failed: Fail = (e: any) => void (threw = `throws ${e.code ?? e}`);
+            const polluted = (call: () => void) => during(row, call);
+            serving = stream => {
+              try {
+                if (row.late) return row.serve!(stream, failed, polluted);
+                if (!row.untilClose) return polluted(() => row.serve!(stream, failed, polluted));
+                put(row);
+                stream.on("close", () => remove(row));
+                row.serve!(stream, failed, polluted);
+              } catch (e) {
+                failed(e);
+                remove(row);
+                respondThenEnd(stream);
+              }
+            };
+            // The request is made before the name is on Object.prototype.
+            const seen = await received(client.request({ ":path": "/" })).then(
+              ({ info, headers, trailers }) => [
+                ...info.map(informational => `info ${informational[":status"]}`),
+                `status ${headers[":status"]}`,
+                ...(row.key !== "date" ? [] : [isDate(headers.date) ? "with a date" : `date ${headers.date}`]),
+                ...(trailers ? [`trailers ${Object.keys(trailers)}`] : []),
+              ],
+              e => [`error ${e.code}`],
+            );
+            await settled();
+            serving = undefined;
+            text = [...(threw ? [threw] : []), ...seen, ...pushes].join(", ");
+          }
+          const name = typeof row.key === "symbol" ? "[http2.sensitiveHeaders]" : JSON.stringify(row.key);
+          lines.push(`${row.call} | ${name} ${row.how}: ${text}`);
+        }
+        assert.deepStrictEqual(
+          { lines, left: Reflect.ownKeys(Object.prototype).filter(key => !ownBefore.includes(key)) },
+          { lines: pollutionExpected, left: [] },
+        );
+      } finally {
+        removeAll();
+        close();
+        fs.closeSync(fd);
       }
-      assert.deepStrictEqual(
-        { lines, left: Reflect.ownKeys(Object.prototype).filter(key => !ownBefore.includes(key)) },
-        { lines: pollutionExpected, left: [] },
-      );
-    } finally {
-      for (const row of rows) remove(row);
-      close();
-      fs.closeSync(fd);
-    }
+    });
   });
 });

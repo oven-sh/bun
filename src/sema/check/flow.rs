@@ -6650,11 +6650,12 @@ impl<'p, 's> Checker<'p, 's> {
                         && walk.steps < MAX_STEPS
                         && interruptions_before == self.interruptions()
                     {
-                        self.flow_memo
-                            .flow_loop_cache
-                            .entry(key)
-                            .or_default()
-                            .push((walk.reference.clone(), result.ty));
+                        // It overwrites what a walk in the meantime has stored.
+                        let cached = self.flow_memo.flow_loop_cache.entry(key).or_default();
+                        match cached.iter_mut().find(|c| c.0 == walk.reference) {
+                            Some(cached) => cached.1 = result.ty,
+                            None => cached.push((walk.reference.clone(), result.ty)),
+                        }
                         self.flow_memo.flow_loop_cached_at = self.work;
                     }
                     break result.ty;

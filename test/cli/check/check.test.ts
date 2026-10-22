@@ -10781,6 +10781,39 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    test("keeps the type of a loop that was stored last", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const more: boolean;
+declare function id<T>(value: T): T;
+export function f(z: Letter) {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  while (more) {
+    z = next[x];
+    while (z === y) {}
+    x = id<Letter>(y);
+  }
+}
+export function g(z: Letter) {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  while (y) {
+    z = next[x];
+    while (z === y) {}
+    x = id<Letter>(y);
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(10,12): error TS2367: This comparison appears to be unintentional because the types '"b"' and '"a"' have no overlap."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

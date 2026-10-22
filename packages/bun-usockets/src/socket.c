@@ -751,6 +751,10 @@ __attribute__((always_inline)) int us_socket_is_shut_down(struct us_socket_t *s)
     return us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN;
 }
 
+int us_socket_read_ended(struct us_socket_t *s) {
+    return s->ssl ? s->ssl_end_delivered : s->read_eof;
+}
+
 int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) {
     return c->shutdown;
 }

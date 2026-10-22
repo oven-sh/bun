@@ -139,6 +139,10 @@ impl us_socket_t {
         c::us_socket_is_shut_down(self) > 0
     }
 
+    pub(crate) fn read_ended(&self) -> bool {
+        c::us_socket_read_ended(self) > 0
+    }
+
     /// `None` when `getsockname()` fails or the address family has no port.
     pub(crate) fn local_port(&self) -> Option<u16> {
         u16::try_from(c::us_socket_local_port(self)).ok()
@@ -589,6 +593,7 @@ mod c {
         ) -> i32;
         pub(super) safe fn us_socket_shutdown_read(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_read_ended(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
         pub(super) safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
         pub(super) safe fn us_socket_buffer_size(

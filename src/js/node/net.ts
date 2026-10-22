@@ -280,6 +280,8 @@ const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkSer
 const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
 const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
 const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
+// _final, after shutdown(): the handle holds the FIN behind output it still owes, and a drain follows that FIN.
+const isShutdownHeld = $bindgen("socket_body.bind.ts", "isShutdownHeld");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -352,6 +354,8 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
+// The callback of _final while the handle holds the FIN (endNT).
+const kshutdownCallback = Symbol("shutdownCallback");
 const kRejectedWrite = Symbol("kRejectedWrite");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -446,8 +450,29 @@ function endNT(self, socket, callback) {
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
   // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
   const current = self._handle;
-  (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
+  const handle = !socket || current?.[kAdoptedTLSRaw] ? current : socket;
+  handle?.shutdown();
+  if (!isShutdownHeld(handle)) {
+    callback();
+    return;
+  }
+  // _final completes after the FIN as node's does (afterShutdown), in the async context of its caller: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L548-L566
+  const frame = $getInternalField($asyncContext, 0);
+  self[kshutdownCallback] =
+    frame === undefined ? callback : () => require("internal/async_context_frame").run(frame, callback);
+  // The peer's FIN dropped the handle's hold on the loop (finishSocketEnd). A parked end takes it back as a pending write does (_write), and unref() still wins.
+  if (self[kended] && !self[kUserUnrefed]) handle.ref?.();
+}
+// The drain that follows the held FIN, or the handle closes, is destroyed or dials again: like node's afterShutdown, the stream finishes whatever became of the shutdown.
+function completeShutdown(self) {
+  const callback = self[kshutdownCallback];
+  if (callback === undefined) return;
+  self[kshutdownCallback] = undefined;
   callback();
+}
+// The peer's FIN arrived and the end waits behind an HTTP/2 session's frames (endNT). Node reports no error when a reset loses those: https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1889-L1893
+function endWaitsAfterFIN(self) {
+  return self[kended] && self[kshutdownCallback] !== undefined;
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -854,6 +879,7 @@ const SocketHandlers = {
 
       self[kBytesWritten] = socket.bytesWritten;
     }
+    if (self[kshutdownCallback] !== undefined) completeShutdown(self);
   },
   end(socket) {
     const self = socket.data;
@@ -997,8 +1023,9 @@ function finishSocketEnd(self) {
   // that: drop this handle's hold on the loop unless a write is still waiting on drain, and
   // forget any readStop-time unref so a later read()/resume() does not pin the loop again.
   // A subsequent buffered write re-refs (see _write) so its callback can still fire.
+  // A parked end (endNT) waits for a drain as a write does.
   const socket = self._handle;
-  if (socket && !self[kwriteCallback]) {
+  if (socket && !self[kwriteCallback] && !self[kshutdownCallback]) {
     socket.unref?.();
     self[kPausedUnref] = false;
   }
@@ -1033,7 +1060,8 @@ function SocketEmitEndNT(self, _err?) {
   // writableFinished (everything actually flushed) - NOT writableEnded (end()
   // merely called): a peer reset while queued data is still unflushed is the
   // peer aborting mid-transfer and must surface (test-net-error-twice).
-  const teardownNoise = self[kended] && self.writableFinished;
+  // An end that waits behind an HTTP/2 session's frames counts as flushed: the socket's own writes have left (endWaitsAfterFIN).
+  const teardownNoise = self[kended] && (self.writableFinished || endWaitsAfterFIN(self));
   // _hadError: the failure already reached JS through the error dispatch
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
@@ -1076,6 +1104,8 @@ function SocketEmitEndNT(self, _err?) {
     }
     return;
   }
+  // The handle closed under a parked end: the write side finishes first, so 'finish' still comes before 'close'.
+  if (self[kclosed] && self[kshutdownCallback] !== undefined) completeShutdown(self);
   if (!self[kended]) {
     finishSocketEnd(self);
   } else if (_err && !self.destroyed && !(teardownNoise && !self.readableEnded)) {
@@ -1713,6 +1743,7 @@ const SocketHandlers2 = {
         self._pendingData = null;
       }
     }
+    if (self[kshutdownCallback] !== undefined) completeShutdown(self);
   },
   end(socket) {
     $debug("Bun.Socket end");
@@ -1750,8 +1781,15 @@ const SocketHandlers2 = {
     // socket's current handle: connection attempts that lost the
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
-    // cleanly.
-    if (!leftToTLSSocket && err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
+    // cleanly. So does a reset under an end that waits after the peer's FIN (SocketEmitEndNT).
+    if (
+      !leftToTLSSocket &&
+      err &&
+      !self.destroyed &&
+      socket === self._handle &&
+      !endWaitsAfterFIN(self) &&
+      self.listenerCount("error") > 0
+    ) {
       // See SocketEmitEndNT.
       if (self.emit(kReadError, err)) return void self.destroy();
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
@@ -1774,6 +1812,7 @@ const SocketHandlers2 = {
       }
       return;
     }
+    if (self[kshutdownCallback] !== undefined) completeShutdown(self);
     if (!leftToTLSSocket && !deferEndForOnreadTail(self)) finishSocketEnd(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
@@ -1933,6 +1972,8 @@ function kConnectDispatch(self, req, opts) {
   // oncomplete; doConnect instead fires connectError inside this call. Bracket
   // it so connectError hands the errno back here instead of re-entering.
   req.dispatching = true;
+  // The handle dials again: the end of the connection it had is over.
+  if (self[kshutdownCallback] !== undefined) completeShutdown(self);
   const promise = doConnect(self._handle, opts);
   req.dispatching = false;
   promise.catch(_reason => {
@@ -2320,6 +2361,7 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd != null) {
+      if (this[kshutdownCallback] !== undefined) completeShutdown(this);
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -2501,6 +2543,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
 
   // What closes with this socket clears its own.
   clearTimeout(this[kTimeout]);
+  // Node cancels a pending shutdown and still runs its callback; a destroyed stream emits no 'finish'.
+  if (this[kshutdownCallback] !== undefined) completeShutdown(this);
   const released = unadoptedTransport(this);
   if (released !== undefined && !this.resetAndClosing && this[kSessionAccepted] === true) releaseTransport(released);
 

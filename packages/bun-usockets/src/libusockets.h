@@ -686,6 +686,8 @@ void us_socket_flush(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown_read(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_shut_down(us_socket_r s) nonnull_fn_decl;
+/* The peer's end of stream was dispatched as on_end, and the socket stayed open (half-open). */
+int us_socket_read_ended(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
 
 /* Return codes of us_socket_queued_input. */

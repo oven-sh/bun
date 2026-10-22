@@ -41,12 +41,11 @@ const wrongIn = (file: string) => `${file}(2,14): error TS2322: Type 'number' is
 const noParameter = (name: string) =>
   `error TS8024: JSDoc '@param' tag has name '${name}', but there is no parameter with that name.`;
 
-// A debug build that was just linked is read from the disk by its first process, and starts several processes together
-// too slowly for the time that a test has. So the first one is not on the time of a test, and the tests start one at a
-// time.
+// The first process of a debug build that was just linked reads it from the disk, which takes longer than a test has.
+// So the first one is not on the time of a test.
 await check({ "tsconfig.json": tsconfig(options, ["a.ts"]), "a.ts": `export {};\n` });
 
-describe("bun check, an `import()` type in a JSDoc comment", () => {
+describe.concurrent("bun check, an `import()` type in a JSDoc comment", () => {
   test("in a `@param` tag of a statement that is no function, names a file of the program", async () => {
     expect(
       await check({
@@ -310,24 +309,27 @@ await (foo());
 
 // The tree of the file has no place for the type arguments of a second base class. `tsc` has them, and checks nothing in
 // them: the file that one names is in the program, and one that names no file is no error.
-test("bun check, an `import()` type in the type arguments of a second base class is not resolved", async () => {
-  expect(
-    await check({
-      "tsconfig.json": tsconfig({ ...options, module: "commonjs" }, ["src/main.ts"]),
-      "other/o.ts": target,
-      "src/main.ts": `class A {}
+test.concurrent(
+  "bun check, an `import()` type in the type arguments of a second base class is not resolved",
+  async () => {
+    expect(
+      await check({
+        "tsconfig.json": tsconfig({ ...options, module: "commonjs" }, ["src/main.ts"]),
+        "other/o.ts": target,
+        "src/main.ts": `class A {}
 class B<T> { x!: T }
 class C extends A, B<import("../other/o").O> {}
 class D extends A, B<import("../other/missing").O> {}
 new C(); new D();
 `,
-    }),
-  ).toEqual({
-    lines: [
-      wrongIn("other/o.ts"),
-      "src/main.ts(3,20): error TS1174: Classes can only extend a single class.",
-      "src/main.ts(4,20): error TS1174: Classes can only extend a single class.",
-    ],
-    exitCode: 1,
-  });
-});
+      }),
+    ).toEqual({
+      lines: [
+        wrongIn("other/o.ts"),
+        "src/main.ts(3,20): error TS1174: Classes can only extend a single class.",
+        "src/main.ts(4,20): error TS1174: Classes can only extend a single class.",
+      ],
+      exitCode: 1,
+    });
+  },
+);

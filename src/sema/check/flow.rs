@@ -5663,10 +5663,11 @@ impl<'p, 's> Checker<'p, 's> {
         // stored for the check in progress only.
         let depth = self.flow_type_cache_depth;
         if evolved.incomplete && depth == usize::MAX {
-            let checked = &mut self.flow_memo.checked_with_incomplete_walk;
-            for &q in self.stack.iter().rev() {
-                let Query::Expr(file, e) = q else { break };
-                checked.insert((file, e));
+            for at in (0..self.stack.len()).rev() {
+                let Query::Expr(file, e) = self.stack[at] else {
+                    break;
+                };
+                self.note_checked_with_incomplete_walk(file, e);
             }
         } else if evolved.incomplete && self.is_flow_loop_visible(depth) {
             self.taint_from(depth);
@@ -7962,6 +7963,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// `checkExpression` computes the type again.
     fn type_of_expr_outside_loops(&mut self, file: FileId, e: ExprId) -> TypeId {
         self.outside_flow_loops(|c| c.check_expression_again(file, e))
+    }
+
+    pub(super) fn note_checked_with_incomplete_walk(&mut self, file: FileId, e: ExprId) {
+        let checked = &mut self.flow_memo.checked_with_incomplete_walk;
+        checked.insert((file, e));
     }
 
     pub(super) fn is_checked_with_incomplete_walk(&self, file: FileId, e: ExprId) -> bool {

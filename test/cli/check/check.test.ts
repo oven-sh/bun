@@ -10512,6 +10512,45 @@ export function withDefault(o: { p: boolean }) {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the arguments of a generic call again if control flow analysis resolves the call", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const make: () => number;
+declare function assertDefined<T>(value: T): asserts value is NonNullable<T>;
+declare function assertNumber(value: unknown): asserts value is number;
+export function checkedFirst(o: { p?: number }) {
+  fail();
+  while (c && c) {}
+  assertDefined(o.p);
+  return make();
+}
+export const resolvedFirst = (o: { p?: number }) => {
+  fail();
+  while (c && c) {}
+  assertDefined(o.p);
+  return make();
+};
+export const notGeneric = (o: { p?: number }) => {
+  fail();
+  while (c && c) {}
+  assertNumber(o.p);
+  return make();
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,19): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(15,19): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(16,10): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures.
+        a.ts(22,10): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

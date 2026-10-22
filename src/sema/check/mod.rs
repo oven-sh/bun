@@ -4033,6 +4033,9 @@ impl<'p, 's> Checker<'p, 's> {
             // arguments again.
             is_in_stored_call |= stores_signatures && matches!(self.stack[at], Query::Call(..));
             if is_in_stored_call {
+                if let Query::Expr(file, e) = self.stack[at] {
+                    self.note_checked_with_incomplete_walk(file, e);
+                }
                 continue;
             }
             self.frames[at].tainted = true;

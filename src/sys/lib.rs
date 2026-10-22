@@ -1210,7 +1210,7 @@ pub mod O {
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod file;
-pub use file::{File, ReadToEndResult};
+pub use file::File;
 pub mod dir;
 pub use dir::*;
 
@@ -1945,6 +1945,76 @@ mod posix_impl {
             }
         }
         openat(dir, path, flags, mode)
+    }
+    /// `openat` without `O_NOFOLLOW` that says ELOOP for a symlink anywhere in `path`. `None`: no such open here.
+    pub fn openat_no_symlinks(
+        dir: impl AsFd,
+        path: &ZStr,
+        flags: i32,
+        mode: Mode,
+    ) -> Option<Maybe<Fd>> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            use core::sync::atomic::{AtomicBool, Ordering};
+            static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+
+            if UNAVAILABLE.load(Ordering::Relaxed) {
+                return None;
+            }
+            let dir = dir.as_fd();
+            let flags = flags | O::CLOEXEC;
+            // `openat2` says EINVAL for a mode that no file gets.
+            let creates = flags & O::CREAT != 0 || flags & O::TMPFILE == O::TMPFILE;
+            let mode = if creates { mode } else { 0 };
+            let error = |e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes());
+            // What a kernel or a sandbox without `openat2` answers. `openat2` answers some of them for a path too.
+            let missing = |e| {
+                matches!(
+                    e,
+                    libc::ENOSYS
+                        | libc::EPERM
+                        | libc::EACCES
+                        | libc::EFAULT
+                        | libc::EOPNOTSUPP
+                        | libc::EINVAL
+                        | libc::E2BIG
+                )
+            };
+            match super::linux_syscall::openat2_no_symlinks(dir, path, flags, mode) {
+                Ok(fd) => Some(Ok(fd)),
+                // No `openat2`, or an error about `path`? `/` opens for every process, so the same call on it tells.
+                Err(e) if missing(e) => {
+                    let probe = super::linux_syscall::openat2_no_symlinks(
+                        dir,
+                        bun_core::zstr!("/"),
+                        O::PATH | O::DIRECTORY | O::CLOEXEC,
+                        0,
+                    );
+                    match probe {
+                        Err(e) if missing(e) => {
+                            UNAVAILABLE.store(true, Ordering::Relaxed);
+                            None
+                        }
+                        other => {
+                            if let Ok(fd) = other {
+                                let _ = close(fd);
+                            }
+                            Some(Err(error(e)))
+                        }
+                    }
+                }
+                Err(e) => Some(Err(error(e))),
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Some(openat(dir, path, flags | O::NOFOLLOW_ANY, mode))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        {
+            let _ = (dir, path, flags, mode);
+            None
+        }
     }
     pub fn close(fd: Fd) -> Maybe<()> {
         // Call close ONCE; never retry on EINTR (Linux may have already
@@ -4049,6 +4119,27 @@ mod windows_impl {
         // honoured. Do NOT fall back to libuv `open()` here — that returns a
         // CRT-fd-backed `Fd` and ignores the directory/nofollow flags.
         super::openat_windows_a(dir, path.as_bytes(), flags, mode)
+    }
+    /// `openat` of a file that says ELOOP for a junction or a symlink in `path` (relative, no `.` or `..`).
+    pub fn openat_no_symlinks(
+        dir: impl AsFd,
+        path: &ZStr,
+        flags: i32,
+        mode: Mode,
+    ) -> Option<Maybe<Fd>> {
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let wide = match super::convert_path_u8_to_u16(&mut wbuf.0[..], path.as_bytes()) {
+            Ok(wide) => wide,
+            Err(err) => return Some(Err(err)),
+        };
+        Some(super::openat_windows_below(
+            dir.as_fd(),
+            wide,
+            // With it, a link at the last name opens as itself.
+            flags & !O::NOFOLLOW,
+            mode,
+            bun_windows_sys::OBJ_DONT_REPARSE,
+        ))
     }
     /// `DuplicateHandle` with `bInheritHandle = FALSE`, the equivalent of the
     /// POSIX arm's `F_DUPFD_CLOEXEC`: libuv spawns children with
@@ -6379,6 +6470,8 @@ pub struct NtCreateFileOptions {
     pub options: u32,
     pub attributes: u32,
     pub sharing_mode: u32,
+    /// `OBJECT_ATTRIBUTES.Attributes`.
+    pub object_attributes: u32,
 }
 #[cfg(windows)]
 impl Default for NtCreateFileOptions {
@@ -6389,6 +6482,7 @@ impl Default for NtCreateFileOptions {
             options: 0,
             attributes: bun_windows_sys::FILE_ATTRIBUTE_NORMAL,
             sharing_mode: FILE_SHARE,
+            object_attributes: 0,
         }
     }
 }
@@ -6938,7 +7032,7 @@ pub(crate) fn open_file_at_windows_nt_path(
         } else {
             Fd::cwd().native()
         },
-        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        Attributes: options.object_attributes, // Note we do not use OBJ_CASE_INSENSITIVE here.
         SecurityDescriptor: core::ptr::null_mut(),
         SecurityQualityOfService: core::ptr::null_mut(),
     };
@@ -7059,7 +7153,6 @@ pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions)
 /// translation.
 #[cfg(windows)]
 fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -> Maybe<Fd> {
-    use bun_windows_sys::externs as w;
     if (flags & O::DIRECTORY) != 0 {
         // We interpret `O_PATH` as meaning "no iteration".
         return open_dir_at_windows_nt_path(
@@ -7074,6 +7167,13 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         );
     }
 
+    open_file_at_windows_nt_path(dir, norm, nt_file_options(flags, perm))
+}
+
+/// What `NtCreateFile` gets for the POSIX `flags` and `perm` of a file open.
+#[cfg(windows)]
+fn nt_file_options(flags: i32, perm: Mode) -> NtCreateFileOptions {
+    use bun_windows_sys::externs as w;
     let nonblock = (flags & O::NONBLOCK) != 0;
 
     // Matches libuv fs__open: O_RDONLY asks for read access only. GENERIC_WRITE
@@ -7124,17 +7224,13 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         attributes |= w::FILE_ATTRIBUTE_READONLY;
     }
 
-    open_file_at_windows_nt_path(
-        dir,
-        norm,
-        NtCreateFileOptions {
-            access_mask,
-            disposition,
-            options: opts,
-            attributes,
-            ..Default::default()
-        },
-    )
+    NtCreateFileOptions {
+        access_mask,
+        disposition,
+        options: opts,
+        attributes,
+        ..Default::default()
+    }
 }
 
 /// `openatWindows` — UTF-16 input.
@@ -7157,6 +7253,70 @@ pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> 
     let mut buf2 = bun_paths::w_path_buffer_pool::get();
     let norm = normalize_path_windows(dir, wide, &mut buf2.0[..])?;
     openat_windows_impl(dir, norm, flags, perm)
+}
+
+// Opens below a directory handle: the name stays relative to `RootDirectory`, so `OBJ_DONT_REPARSE` covers all of it.
+
+/// `path` for `NtCreateFile` below a directory handle: `\` between the names, and no root, `.`, `..` or empty name.
+#[cfg(windows)]
+fn nt_name_below<'a>(path: &[u16], buf: &'a mut [u16]) -> Maybe<&'a bun_core::WStr> {
+    const DOT: u16 = b'.' as u16;
+    if path.len() >= buf.len() {
+        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open));
+    }
+    let mut len = 0usize;
+    for name in path.split(|c| bun_paths::is_sep_any_t::<u16>(*c)) {
+        if matches!(name, [] | [DOT] | [DOT, DOT]) {
+            return Err(Error::from_code(E::EINVAL, Tag::open));
+        }
+        if len != 0 {
+            buf[len] = b'\\' as u16;
+            len += 1;
+        }
+        buf[len..len + name.len()].copy_from_slice(name);
+        len += name.len();
+    }
+    buf[len] = 0;
+    Ok(bun_core::WStr::from_buf(&buf[..], len))
+}
+
+/// `openat_windows` of a file below `dir`.
+#[cfg(windows)]
+pub fn openat_windows_below(
+    dir: Fd,
+    path: &[u16],
+    flags: i32,
+    perm: Mode,
+    object_attributes: u32,
+) -> Maybe<Fd> {
+    debug_assert!((flags & O::DIRECTORY) == 0);
+    let mut buf = bun_paths::w_path_buffer_pool::get();
+    let name = nt_name_below(path, &mut buf.0[..])?;
+    let mut options = nt_file_options(flags, perm);
+    options.object_attributes = object_attributes;
+    open_file_at_windows_nt_path(dir, name, options)
+}
+
+/// Whether a network redirector owns the volume of `fd`: then a server resolves the paths below `fd`.
+#[cfg(windows)]
+pub fn is_remote_device(fd: Fd) -> Maybe<bool> {
+    use bun_windows_sys::externs as w;
+    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut device: w::FILE_FS_DEVICE_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: FFI; `fd` is a live HANDLE and `device` is valid for write.
+    let rc = unsafe {
+        w::ntdll::NtQueryVolumeInformationFile(
+            fd.native(),
+            &mut io,
+            core::ptr::from_mut(&mut device).cast(),
+            core::mem::size_of::<w::FILE_FS_DEVICE_INFORMATION>() as u32,
+            w::FS_INFORMATION_CLASS::FileFsDeviceInformation,
+        )
+    };
+    if w::NT_ERROR(rc) {
+        return Err(Error::new(rc, Tag::fstat).with_fd(fd));
+    }
+    Ok((device.Characteristics & w::FILE_REMOTE_DEVICE) != 0)
 }
 
 // ── existence checks ──

@@ -194,6 +194,13 @@ export const memfd_create: (size: number) => number = $newRustFunction(
   1,
 );
 
+// Opens the file `path` in `dir` with the open that refuses a symlink in the path. Null: no such open here.
+export const openatNoSymlinks: (dir: string, path: string) => true | null = $newRustFunction(
+  "node_fs_binding.rs",
+  "openatNoSymlinksForTesting",
+  2,
+);
+
 export const createStatsForIno: (ino: bigint, big: boolean) => any = $newRustFunction(
   "Stat.rs",
   "createStatsForIno",

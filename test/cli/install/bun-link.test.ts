@@ -1,4 +1,5 @@
 import { file, spawn } from "bun";
+import { openatNoSymlinks } from "bun:internal-for-testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import {
   access,
@@ -28,6 +29,7 @@ import {
   toHaveBins,
 } from "harness";
 import { basename, join } from "path";
+import { TestRegistry } from "registry";
 import {
   createTestContext,
   destroyTestContext,
@@ -1255,3 +1257,128 @@ describe.each(["hoisted", "isolated"] as const)("when a package fails to install
     });
   });
 });
+
+// Where bun.lock has a package from the registry, the hoisted linker replaces a link with that
+// package and installs nothing through the link. symlink-path-traversal.test.ts has the other
+// places a link can be in. The linker needs an open that refuses a link in a path: FreeBSD has
+// none, and neither has a Linux that refuses `openat2`.
+describe.skipIf(openatNoSymlinks(import.meta.dir, basename(import.meta.path)) === null)(
+  "a link where bun.lock has a registry package",
+  () => {
+    const registry = new TestRegistry();
+    beforeAll(() => registry.start());
+    afterAll(() => registry.stop());
+
+    // The registry has one-one-dep@1.0.0 -> one-dep@1.0.0 -> no-deps@1.0.1. A root with
+    // no-deps@2.0.0 makes no-deps@1.0.1 install below one-dep.
+    const hoisted = `[install]\nlinker = "hoisted"\n`;
+    const project = (manifest: object) => ({ "package.json": JSON.stringify(manifest), "bunfig.toml": hoisted });
+    const app = project({ name: "app", dependencies: { "no-deps": "2.0.0", "one-dep": "1.0.0" } });
+    // A folder of the user's with the name and the version of a published package.
+    const folder = (name: string, version: string, more: object = {}) => ({
+      "package.json": JSON.stringify({ name, version }),
+      "own.txt": "",
+      ...more,
+    });
+    // Its own installed dependency is in the place where the published one-dep has another version.
+    const checkout = folder("one-dep", "1.0.0", { node_modules: { "no-deps": folder("no-deps", "2.0.0") } });
+    const ownFiles = ["own.txt", "package.json"];
+
+    // Each test has its own global directory, so each has its own `bun link` registrations.
+    function commands(root: string) {
+      return async (cwd: string, ...args: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: join(root, cwd),
+          env: {
+            ...env,
+            BUN_INSTALL: join(root, ".bun"),
+            BUN_INSTALL_CACHE_DIR: join(root, ".cache"),
+            BUN_CONFIG_REGISTRY: registry.registryUrl(),
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        return stderr;
+      };
+    }
+
+    const isLink = (path: string) =>
+      readlink(path).then(
+        () => true,
+        () => false,
+      );
+    const versionOf = async (dir: string) => (await file(join(dir, "package.json")).json()).version;
+
+    // What the checkout and the place of one-dep are when the link was replaced.
+    async function stateOf(root: string, slot: string) {
+      const own = join(root, "checkout", "node_modules", "no-deps");
+      return {
+        slot: {
+          link: await isLink(slot),
+          files: await readdirSorted(slot),
+          "no-deps": await versionOf(join(slot, "node_modules", "no-deps")),
+        },
+        checkout: {
+          files: await readdirSorted(join(root, "checkout")),
+          "no-deps": { files: await readdirSorted(own), version: await versionOf(own) },
+        },
+      };
+    }
+    const replaced = {
+      slot: { link: false, files: ["node_modules", "package.json"], "no-deps": "1.0.1" },
+      checkout: { files: ["node_modules", ...ownFiles], "no-deps": { files: ownFiles, version: "2.0.0" } },
+    };
+
+    it.concurrent("bun install replaces the link that bun link wrote without --save", async () => {
+      using dir = tempDir("bun-link-slot-", { checkout, app });
+      const root = String(dir);
+      const bun = commands(root);
+      const slot = join(root, "app", "node_modules", "one-dep");
+
+      await bun("checkout", "link");
+      await bun("app", "install");
+      await bun("app", "link", "one-dep");
+      expect(await isLink(slot)).toBe(true);
+
+      // A replaced link prints nothing, as with npm and with the isolated linker.
+      expect(await bun("app", "install")).not.toContain("warn:");
+      expect(await stateOf(root, slot)).toEqual(replaced);
+    });
+
+    it.concurrent("bun add replaces the link that bun link --save wrote (#28964)", async () => {
+      using dir = tempDir("bun-link-slot-", { lib: folder("no-deps", "1.0.0"), app: project({ name: "app" }) });
+      const root = String(dir);
+      const bun = commands(root);
+      const slot = join(root, "app", "node_modules", "no-deps");
+
+      await bun("lib", "link");
+      await bun("app", "link", "--save", "no-deps");
+      expect(await isLink(slot)).toBe(true);
+
+      expect(await bun("app", "add", "no-deps@1.0.0")).not.toContain("warn:");
+      expect({
+        link: await isLink(slot),
+        files: await readdirSorted(slot),
+        lib: await readdirSorted(join(root, "lib")),
+      }).toEqual({ link: false, files: ["index.js", "package.json"], lib: ownFiles });
+    });
+
+    it.concurrent("bun add -g replaces a bun link registration", async () => {
+      using dir = tempDir("bun-link-slot-", { checkout });
+      const root = String(dir);
+      const bun = commands(root);
+      const slot = join(root, ".bun", "install", "global", "node_modules", "one-dep");
+
+      await bun("checkout", "link");
+      expect(await isLink(slot)).toBe(true);
+
+      await bun(".", "add", "-g", "one-one-dep", "no-deps@2.0.0");
+      expect(await stateOf(root, slot)).toEqual(replaced);
+    });
+  },
+);

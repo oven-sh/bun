@@ -196,7 +196,7 @@ impl Plan {
 
 /// Formats `path` for a message. On Windows a path can mix separators, because bun.lock stores a
 /// workspace's path with `/` and `join` adds the platform's separator.
-fn native_path(path: &[u8]) -> impl core::fmt::Display + '_ {
+pub(crate) fn native_path(path: &[u8]) -> impl core::fmt::Display + '_ {
     use bun_core::fmt::{EscapeControlChars, PathFormatOptions, PathSep, fmt_path};
     // On other platforms `\` is an ordinary character in a file name, so it is not converted.
     let path_sep = if cfg!(windows) {

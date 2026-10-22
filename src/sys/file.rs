@@ -22,14 +22,6 @@ impl Drop for File {
     }
 }
 
-/// `{ bytes, err? }` pair so callers can recover the partially-read
-/// buffer even on error.
-#[derive(Default)]
-pub struct ReadToEndResult {
-    pub bytes: Vec<u8>,
-    pub err: Option<Error>,
-}
-
 // `File` high-level helpers — wrap the syscall surface above.
 impl File {
     // ── construction / identity ──────────────────────────────────────────

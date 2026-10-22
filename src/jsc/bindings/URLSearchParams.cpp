@@ -147,7 +147,6 @@ void URLSearchParams::sort()
         return WTF::codePointCompareLessThan(a.key, b.key);
     });
     updateURL();
-    needsSorting = false;
 }
 
 ExceptionOr<void> URLSearchParams::set(const String& name, const String& value)
@@ -167,7 +166,6 @@ ExceptionOr<void> URLSearchParams::set(const String& name, const String& value)
             return false;
         });
         updateURL();
-        needsSorting = true;
         return {};
     }
     return append(name, value);
@@ -178,7 +176,6 @@ ExceptionOr<void> URLSearchParams::append(const String& name, const String& valu
     if (!tryAppendPair(m_pairs, { name, value })) [[unlikely]]
         return Exception { OutOfMemoryError };
     updateURL();
-    needsSorting = true;
     return {};
 }
 
@@ -200,7 +197,6 @@ void URLSearchParams::remove(const StringView name, const String& value)
         return pair.key == name && (value.isNull() || pair.value == value);
     });
     updateURL();
-    needsSorting = true;
 }
 
 String URLSearchParams::toString() const

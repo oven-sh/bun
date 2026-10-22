@@ -124,10 +124,6 @@ pub(crate) struct Terminal {
     #[cfg(windows)]
     hpcon: Cell<Option<windows::HPCON>>,
 
-    /// Current terminal size
-    cols: Cell<u16>,
-    rows: Cell<u16>,
-
     /// Event loop handle for callbacks. Read-only after construction.
     event_loop_handle: EventLoopHandle,
 
@@ -429,16 +425,6 @@ impl Terminal {
             slave_fd: Cell::new(pty_result.slave),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
-            cols: Cell::new(if cfg!(windows) {
-                u16::try_from(clamp_to_coord(options.cols)).expect("int cast")
-            } else {
-                options.cols
-            }),
-            rows: Cell::new(if cfg!(windows) {
-                u16::try_from(clamp_to_coord(options.rows)).expect("int cast")
-            } else {
-                options.rows
-            }),
             event_loop_handle: EventLoopHandle::init(
                 global_object.bun_vm().as_mut().event_loop().cast(),
             ),
@@ -1318,6 +1304,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
 }
 
 /// COORD.X/Y are i16; clamp the u16 cols/rows to its range.
+#[cfg(windows)]
 #[inline]
 fn clamp_to_coord(v: u16) -> i16 {
     i16::try_from(v.min(u16::try_from(i16::MAX).expect("int cast"))).unwrap()
@@ -1604,17 +1591,6 @@ impl Terminal {
                 }
             }
         }
-
-        self.cols.set(if cfg!(windows) {
-            u16::try_from(clamp_to_coord(new_cols)).expect("int cast")
-        } else {
-            new_cols
-        });
-        self.rows.set(if cfg!(windows) {
-            u16::try_from(clamp_to_coord(new_rows)).expect("int cast")
-        } else {
-            new_rows
-        });
 
         Ok(JSValue::UNDEFINED)
     }

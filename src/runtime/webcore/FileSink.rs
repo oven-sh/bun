@@ -37,7 +37,6 @@ pub struct FileSink {
     pub(crate) pending: JsCell<streams::WritablePending>,
     pub(crate) source: JsCell<streams::SourceHandle>,
     pub(crate) done: Cell<bool>,
-    pub(crate) started: Cell<bool>,
     pub(crate) must_be_kept_alive_until_eof: Cell<bool>,
     /// `to_result` returned `Backpressure` to a ByteStream; drain callbacks resume it.
     pub(crate) source_pending_pull: Cell<bool>,
@@ -896,7 +895,6 @@ impl FileSink {
         }
 
         self.done.set(false);
-        self.started.set(true);
         self.source.with_mut(|s| s.start());
         sys::Result::Ok(())
     }
@@ -1611,7 +1609,6 @@ impl FileSink {
             }),
             source: JsCell::new(streams::SourceHandle::default()),
             done: Cell::new(false),
-            started: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
             source_pending_pull: Cell::new(false),
             pollable: Cell::new(false),

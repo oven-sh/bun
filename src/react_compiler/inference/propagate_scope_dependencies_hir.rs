@@ -1929,6 +1929,71 @@ impl<'a> DependencyCollectionContext<'a> {
         self.declare(phi.place.identifier, before_block, env);
     }
 
+    /// Not in upstream: what only a path that returns or throws assigns leaves the scope as it came in, without a phi.
+    fn visit_reassignments_at_fallthrough(
+        &mut self,
+        scope_id: ScopeId,
+        func: &HirFunction,
+        fallthrough: &BasicBlock,
+        env: &mut Environment,
+    ) {
+        for index in 0..env.scopes[scope_id.0 as usize].reassignments.len() {
+            let reassignment = env.scopes[scope_id.0 as usize].reassignments[index];
+            let declaration = env.identifiers[reassignment.0 as usize].declaration_id;
+            // A definition in the scope is not a valid dependency of it.
+            if let Some(dep) = self.reaching_definition(func, env, fallthrough, declaration) {
+                self.visit_dependency(dep, env);
+            }
+        }
+    }
+
+    /// What the variable holds at the end of the predecessors of `block`. `None` when nothing reaches the block.
+    fn reaching_definition<'b>(
+        &self,
+        func: &'b HirFunction,
+        env: &Environment,
+        mut block: &'b BasicBlock,
+        declaration: DeclarationId,
+    ) -> Option<ReactiveScopeDependency> {
+        let is_variable =
+            |id: IdentifierId| env.identifiers[id.0 as usize].declaration_id == declaration;
+        let is_place = |place: &&Place| is_variable(place.identifier);
+        let definition = loop {
+            if block.id == func.body.entry {
+                break func.params.iter().map(ParamPattern::place).find(is_place)?;
+            }
+            // Without a phi for the variable all predecessors agree on it. A back edge has a later id.
+            block = (block.preds.iter())
+                .filter_map(|id| func.body.blocks.get(id))
+                .find(|pred| {
+                    pred.terminal.evaluation_order() < block.terminal.evaluation_order()
+                })?;
+            // A scope that assigns the variable and lets it through asked the same. Its last dependency is the answer.
+            if let Terminal::Scope { scope, .. } = &block.terminal
+                && (env.scopes[scope.0 as usize].reassignments.iter()).any(|id| is_variable(*id))
+                && let Some(deps) = self.deps.get(scope)
+                && let Some(known) = (deps.iter().rev())
+                    .find(|dep| dep.path.is_empty() && is_variable(dep.identifier))
+            {
+                return Some(known.clone());
+            }
+            let definition = (block.instructions.iter().rev())
+                .find_map(|id| {
+                    visitors::value_lvalues(&func.instructions[id.0 as usize].value).find(is_place)
+                })
+                .or_else(|| block.phis.iter().map(|phi| &phi.place).find(is_place));
+            if let Some(definition) = definition {
+                break definition;
+            }
+        };
+        Some(ReactiveScopeDependency {
+            identifier: definition.identifier,
+            reactive: definition.reactive,
+            path: hir_vec![],
+            loc: definition.loc,
+        })
+    }
+
     fn current_scope(&self) -> Option<ScopeId> {
         self.scope_stack.last().copied()
     }
@@ -2326,6 +2391,9 @@ fn handle_function_deps(
                 ctx.enter_scope(*scope);
             }
             Some(ScopeBlockInfo::End { scope, pruned, .. }) => {
+                if !*pruned {
+                    ctx.visit_reassignments_at_fallthrough(*scope, func, block, env);
+                }
                 ctx.exit_scope(*scope, *pruned, env)?;
             }
             None => {}

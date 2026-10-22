@@ -3374,6 +3374,29 @@ describe("bundler", () => {
     ReadThenReassign [2,["x"]] [3,["x"]] [3,["x"]]*
     CounterInLoop [1,[3]] [1,[3]]* [0,[1,2]]
     AssignedBeforeLoop ["i:b",[1,2]] ["j:b",[1,2]]* ["j:3",[3]]
+    AssignThenReturn [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]]
+    AssignThenThrow [1,["x"]] [2,["x"]] [2,["x"]]* THROW(o) [4,["x"]]
+    PatternThenReturn [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]]
+    useParamThenReturn [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]]
+    ReturnInLoop [1,["i","j"]] [2,["i","j"]] [2,["i","j"]]* ["j",["i"]] [4,["i","j"]]
+    JoinBehindBlock [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]] ["alt",["x"]] [6,["x"]]
+    JoinInFrontOfBlock [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]] ["late",["x"]] ["late",["x"]]*
+    BlockInOneArm [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]] [5,null]
+    ElseArmAlsoAssigns [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]] ["alt",null] [6,["x"]]
+    BlockInSwitchCase [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]] ["alt",null] [6,["x"]]
+    HandlerAssigns [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]]
+    ReturnInTry [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]] [5,null] [6,["x"]]
+    ReturnInNestedBlocks [1,["c"]] [2,["c"]] [2,["c"]]* ["o",[]] [4,["c"]]
+    AssignedInOuterBlock [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]]
+    TwoBlocks [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]] ["alt",[]] [6,["x"]]
+    OlderValueGoesAround [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]] [5,null] [6,["x"]]
+    OlderValueIsReadLast [1,["x"]] [2,["x"]] [2,["x"]]* ["o",[]] [4,["x"]] ["none",null] [6,["x"]]
+    ReadPathThenAssignThenReturn [1,["a","x"]] [2,["a","x"]] [2,["a","x"]]* [3,["a"]] [3,["z"]]
+    ReadThenAssignThenReturn [1,[1,"x"]] [2,[2,"x"]] [2,[2,"x"]]* ["o",[3]] [4,[4,"x"]] ["o",[5]] ["o",["o"]]
+    UpdateThenReturn [1,["x"]] [2,["x"]] [2,["x"]]* [4,[]] [4,["x"]] [6,[]] [7,[]]
+    BlockInFrontReads [1,[]] [1,[{"v":1}]] [1,[{"v":1}]]*
+    GoesAroundTheBlock [1,["x"]] [2,["x"]]* [3,["y"]] [4,4]
+    AssignedOnTheOnlyPath [1,["o"]] [2,["o"]]* [3,["p"]] [4,null]
   `;
   for (const reactCompiler of [false, true]) {
     itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
@@ -3588,7 +3611,7 @@ describe("bundler", () => {
             return <div label={label} list={list} />;
           }
 
-          // In the last two the value that the variable came in with is not an input. Here it is a constant.
+          // In the next two the value that the variable came in with is not an input. Here it is a constant.
           function CounterInLoop(p) {
             let count = 0;
             const list = [];
@@ -3610,6 +3633,329 @@ describe("bundler", () => {
               list.push(item.v);
             }
             return <div label={initial + ":" + found} list={list} />;
+          }
+
+          // In the next eighteen what the block assigns does not reach the end of the block: the path returns or
+          // throws, and nothing joins it. The path to the end leaves the variable as it came in, so that value is an
+          // input of the block.
+          function AssignThenReturn(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) {
+              label = p.other;
+              return <a label={label} list={list} />;
+            }
+            list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          function AssignThenThrow(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) {
+              label = p.other;
+              throw new Error(label);
+            }
+            list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          function PatternThenReturn(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) {
+              [label] = [p.other];
+              return <a label={label} list={list} />;
+            }
+            list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          function useParamThenReturn(p, label) {
+            "use memo";
+            const list = [];
+            if (p.flag) {
+              label = p.other;
+              return { label, list };
+            }
+            list.push(p.b);
+            return { label, list };
+          }
+
+          function ReturnInLoop(p) {
+            let label = p.count;
+            const list = [];
+            for (const item of p.items) {
+              if (item === p.other) {
+                label = item;
+                return <a label={label} list={list} />;
+              }
+              list.push(item);
+            }
+            return <div label={label} list={list} />;
+          }
+
+          function JoinBehindBlock(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) {
+              label = p.other;
+              return <a label={label} list={list} />;
+            }
+            list.push(p.b);
+            if (p.late) label = p.alt;
+            return <div label={label} list={list} />;
+          }
+
+          // The value that label comes in with is the join of two paths.
+          function JoinInFrontOfBlock(p) {
+            let label = p.count;
+            if (p.late) label = "late";
+            const list = [];
+            if (p.flag) {
+              label = p.other;
+              return <a label={label} list={list} />;
+            }
+            list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          function BlockInOneArm(p) {
+            let label = p.count;
+            let list = null;
+            if (p.outer) {
+              list = [];
+              if (p.flag) {
+                label = p.other;
+                return <a label={label} list={list} />;
+              }
+              list.push(p.b);
+            }
+            return <div label={label} list={list} />;
+          }
+
+          function ElseArmAlsoAssigns(p) {
+            let label = p.count;
+            let list = null;
+            if (p.outer) {
+              list = [];
+              if (p.flag) {
+                label = p.other;
+                return <a label={label} list={list} />;
+              }
+              list.push(p.b);
+            } else {
+              label = p.alt;
+            }
+            return <div label={label} list={list} />;
+          }
+
+          function BlockInSwitchCase(p) {
+            let label = p.count;
+            let list = null;
+            switch (p.kind) {
+              case "a":
+                list = [];
+                if (p.flag) {
+                  label = p.other;
+                  return <a label={label} list={list} />;
+                }
+                list.push(p.b);
+                break;
+              case "b":
+                label = p.alt;
+                break;
+            }
+            return <div label={label} list={list} />;
+          }
+
+          // The assignment is in the handler, which is not in the block. The compiler numbers it inside the range of
+          // the block.
+          const checked = value => {
+            if (value === "bad") throw new Error(value);
+            return value;
+          };
+          function HandlerAssigns(p) {
+            let label = p.count;
+            let list = null;
+            try {
+              list = [];
+              if (p.outer) list.push(checked(p.b));
+            } catch (e) {
+              label = p.other;
+            }
+            return <div label={label} list={list} />;
+          }
+
+          function ReturnInTry(p) {
+            let label = p.count;
+            let list = null;
+            try {
+              list = [];
+              if (p.flag) {
+                label = p.other;
+                return <a label={label} list={list} />;
+              }
+              list.push(checked(p.b));
+            } catch (e) {
+              list = null;
+            }
+            return <div label={label} list={list} />;
+          }
+
+          function ReturnInNestedBlocks(p) {
+            let label = p.count;
+            const outer = [];
+            const inner = [];
+            if (p.flag) {
+              label = p.other;
+              return <a label={label} list={outer} inner={inner} />;
+            }
+            inner.push(p.b);
+            outer.push(p.c);
+            return <div label={label} list={outer} inner={inner} />;
+          }
+
+          // The block of outer assigns the value that label has when the block of inner starts.
+          function AssignedInOuterBlock(p) {
+            let label = "none";
+            const outer = [];
+            label = p.count;
+            outer.push(p.c, label);
+            const inner = [];
+            if (p.flag) {
+              label = p.other;
+              return <a label={label} list={inner} />;
+            }
+            inner.push(p.b);
+            outer.push(inner);
+            return <div label={label} list={inner} outer={outer} />;
+          }
+
+          function TwoBlocks(p) {
+            let label = p.count;
+            const first = [];
+            if (p.flag) {
+              label = p.other;
+              return <a label={label} list={first} />;
+            }
+            first.push(p.b);
+            const second = [];
+            if (p.late) {
+              label = p.alt;
+              return <a label={label} list={second} />;
+            }
+            second.push(p.c);
+            return <div label={label} list={first} second={second} />;
+          }
+
+          // In the next two "none" is an older value of label, and it goes around the block.
+          function OlderValueGoesAround(p) {
+            let label = "none";
+            let list = null;
+            if (p.outer) {
+              label = p.count;
+              if (p.inner) {
+                list = [];
+                if (p.flag) {
+                  label = p.other;
+                  return <a label={label} list={list} />;
+                }
+                list.push(p.b);
+              }
+            }
+            return <div label={label} list={list} />;
+          }
+
+          function OlderValueIsReadLast(p) {
+            let label = "none";
+            if (p.outer) {
+              label = p.count;
+              const list = [];
+              if (p.flag) {
+                label = p.other;
+                return <a label={label} list={list} />;
+              }
+              list.push(p.b);
+              return <div label={label} list={list} />;
+            }
+            return <span label={label} list={null} />;
+          }
+
+          // The block reads object.x and gives back object, so all of object is an input.
+          function ReadPathThenAssignThenReturn(p) {
+            let object = p.o;
+            const list = [];
+            list.push(object.x);
+            if (p.flag) {
+              object = p.o2;
+              return <a label={object.y} list={list} />;
+            }
+            list.push(p.b);
+            return <div label={object.y} list={list} />;
+          }
+
+          // In the next two the block reads what it assigns. On the path that returns too, the slot of that input has
+          // to keep the value that it came in with.
+          function ReadThenAssignThenReturn(p) {
+            let label = p.count;
+            const list = [];
+            list.push(label);
+            if (p.flag) {
+              label = p.other;
+              return <a label={label} list={list} />;
+            }
+            list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          function UpdateThenReturn(p) {
+            let count = p.count;
+            const list = [];
+            if (p.flag) {
+              count++;
+              return <a label={count} list={list} />;
+            }
+            list.push(p.b);
+            return <div label={count} list={list} />;
+          }
+
+          // The block of el reads label and the block of list assigns it. As one block they would save label as an
+          // input after the assignment.
+          const isBig = el => el.v > 5;
+          const one = () => 1;
+          function BlockInFrontReads(p) {
+            let label = p.count;
+            const el = <i v={label} />;
+            const list = [];
+            if (isBig(el)) {
+              label = one(el);
+              return <a label={label} list={list} />;
+            }
+            list.push(el);
+            return <div label={label} list={list} />;
+          }
+
+          // In the last two the value that the variable came in with is not an input. Here it goes around the block.
+          function GoesAroundTheBlock(p) {
+            let x = p.count;
+            if (p.outer) {
+              x = [];
+              x.push(p.b);
+            }
+            return <div label={p.count} list={x} />;
+          }
+
+          function AssignedOnTheOnlyPath(p) {
+            let label = p.count;
+            let list = null;
+            if (p.outer) {
+              list = [];
+              label = p.other;
+              list.push(label);
+              return <b label={p.count} list={list} />;
+            }
+            return <div label={label} list={list} />;
           }
 
           function run(Component, ...renders) {
@@ -3734,6 +4080,46 @@ describe("bundler", () => {
             { initial: "j", b: "b", items: none },
             { initial: "j", b: "b", items: some },
           );
+          const stays = {
+            count: 1, flag: false, late: false, outer: true, inner: true, kind: "a",
+            b: "x", c: "c", other: "o", alt: "alt", items: ["i", "j"],
+          };
+          const twice = [stays, { ...stays, count: 2 }, { ...stays, count: 2 }];
+          const leaves = [...twice, { ...stays, count: 3, flag: true }, { ...stays, count: 4 }];
+          run(AssignThenReturn, ...leaves);
+          run(AssignThenThrow, ...leaves);
+          run(PatternThenReturn, ...leaves);
+          run(useParamThenReturn, [stays, 1], [stays, 2], [stays, 2], [{ ...stays, flag: true }, 3], [stays, 4]);
+          run(ReturnInLoop, ...twice, { ...stays, count: 3, other: "j" }, { ...stays, count: 4 });
+          run(JoinBehindBlock, ...leaves, { ...stays, count: 5, late: true }, { ...stays, count: 6 });
+          run(JoinInFrontOfBlock, ...leaves, { ...stays, count: 5, late: true }, { ...stays, count: 6, late: true });
+          run(BlockInOneArm, ...leaves, { ...stays, count: 5, outer: false });
+          run(ElseArmAlsoAssigns, ...leaves, { ...stays, count: 5, outer: false }, { ...stays, count: 6 });
+          run(BlockInSwitchCase, ...leaves, { ...stays, count: 5, kind: "b" }, { ...stays, count: 6 });
+          run(HandlerAssigns, ...twice, { ...stays, count: 3, b: "bad" }, { ...stays, count: 4 });
+          run(ReturnInTry, ...leaves, { ...stays, count: 5, b: "bad" }, { ...stays, count: 6 });
+          run(ReturnInNestedBlocks, ...leaves);
+          run(AssignedInOuterBlock, ...leaves);
+          run(TwoBlocks, ...leaves, { ...stays, count: 5, late: true }, { ...stays, count: 6 });
+          run(OlderValueGoesAround, ...leaves, { ...stays, count: 5, inner: false }, { ...stays, count: 6 });
+          run(OlderValueIsReadLast, ...leaves, { ...stays, count: 5, outer: false }, { ...stays, count: 6 });
+          const y1 = { x: "a", y: 1 }, y2 = { x: "a", y: 2 }, y3 = { x: "z", y: 3 };
+          run(
+            ReadPathThenAssignThenReturn,
+            { ...stays, o: y1, o2: y3 },
+            { ...stays, o: y2, o2: y3 },
+            { ...stays, o: y2, o2: y3 },
+            { ...stays, o: y2, o2: y3, flag: true },
+            { ...stays, o: y3, o2: y3, flag: true },
+          );
+          // The last render comes in with the value that the render before it assigned.
+          const returns = { ...stays, flag: true };
+          run(ReadThenAssignThenReturn, ...leaves, { ...returns, count: 5 }, { ...returns, count: "o" });
+          run(UpdateThenReturn, ...leaves, { ...returns, count: 5 }, { ...returns, count: 6 });
+          run(BlockInFrontReads, { count: 7 }, { count: 1 }, { count: 1 });
+          const around = [stays, { ...stays, count: 2 }, { ...stays, count: 3, b: "y", other: "p" }];
+          run(GoesAroundTheBlock, ...around, { ...stays, count: 4, outer: false });
+          run(AssignedOnTheOnlyPath, ...around, { ...stays, count: 4, outer: false });
         `,
         // One memo cache per component, kept between renders, as a fiber keeps it.
         "/node_modules/react/index.js": /* js */ `

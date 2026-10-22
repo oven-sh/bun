@@ -992,13 +992,22 @@ describe("an entry is resolved again after other packages of the same install", 
     return dir;
   }
 
-  /** The install must not resolve `has` again in its first pass, so a frozen install names it. */
-  async function expectBehind(dir: string, has: string, wants: string) {
-    const { stderr, exitCode } = await bun(dir, "install", "--frozen-lockfile");
-    expect(stderr).toBe(
-      `error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has ${has}, overrides in package.json wants ${wants}\nnote: try re-running without --frozen-lockfile and commit the updated lockfile`,
-    );
-    expect(exitCode).toBe(1);
+  /**
+   * Only the second pass moves `has`: a frozen install does not have that pass and accepts bun.lock, and an install
+   * saves `moved` in its place. bun.lock is put back.
+   */
+  async function expectBehind(dir: string, has: string, moved: string) {
+    const lock = await lockfile(dir);
+    const frozen = await bun(dir, "install", "--frozen-lockfile", "--lockfile-only");
+    expect({ stderr: frozen.stderr, exitCode: frozen.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect((await locked(dir, "")).all).toContain(has);
+
+    const { stderr, exitCode } = await bun(dir, "install", "--lockfile-only");
+    expect({ stderr, exitCode }).toEqual({ stderr: "Saved lockfile", exitCode: 0 });
+    const { all } = await locked(dir, "");
+    expect(all).not.toContain(has);
+    expect(all).toContain(moved);
+    await write(join(dir, "bun.lock"), lock);
   }
 
   /** From bun.lock: the package that `owner` gets for its dependency `name`, and every package once. */
@@ -1171,7 +1180,7 @@ describe("an entry is resolved again after other packages of the same install", 
       "packages/app/package.json": JSON.stringify({ name: "app", dependencies: app?.() }),
       "packages/w/package.json": JSON.stringify(w),
     });
-    await expectBehind(dir, "remote-dep@1.0.0", "2.0.0");
+    await expectBehind(dir, "remote-dep@1.0.0", "remote-dep@2.0.0");
     if (root) await editPackageJson(dir, pkg => void (pkg.dependencies = { ...root, "no-deps": rules["no-deps"] }));
 
     const { stderr, exitCode } = await bun(dir, "add", ...add.split(" "), "--filter", "app");
@@ -1209,7 +1218,7 @@ describe("an entry is resolved again after other packages of the same install", 
         },
         recorded,
       );
-      await expectBehind(dir, "no-deps@2.0.0", "^1.0.0");
+      await expectBehind(dir, "no-deps@2.0.0", "no-deps@1.0.1");
 
       const { stderr, exitCode } = await bun(dir, "update", "no-deps", "--filter", "b");
       expect(stderr).toBe("Saved lockfile");
@@ -1232,12 +1241,12 @@ describe("an entry is resolved again after other packages of the same install", 
     },
   );
 
-  // Workspace `b` reaches the new scope-leaf@2.0.0 through `scope-host`, and both entries are resolved again. The
-  // packages of the other workspace come first or last by its name, so `scope-leaf` is resolved before `scope-host`
-  // in one project and after it in the other. The `no-deps` of scope-leaf must not depend on that.
-  test.concurrent(
-    "bun update <name> --filter: a new package gets one version, whichever entry comes first",
-    async () => {
+  // Workspace `b` reaches the new scope-leaf@2.0.0 only through `scope-host`, and both entries are resolved again. The
+  // packages of the other workspace come first or last by its name, so `scope-leaf` is resolved before `scope-host` in
+  // one project and after it in the other. While `scope-host` waits, a walk from `b` does not get to scope-leaf.
+  test.concurrent.each(["a", "c"])(
+    "bun update <name> --filter updates the dependency of a new package in scope, next to workspace %s",
+    async other => {
       using published = new TestRegistry().start();
       await publish(published, [
         { name: "scope-top", version: "1.0.0", dependencies: { "scope-host": "1.0.0" } },
@@ -1247,32 +1256,40 @@ describe("an entry is resolved again after other packages of the same install", 
         { name: "scope-leaf", version: "1.0.0" },
         { name: "scope-leaf", version: "2.0.0", dependencies: { "no-deps": "^1.0.0" } },
       ]);
-      const versionForLeaf = async (other: string) => {
-        const dir = await behindRules(
-          { workspaces: ["packages/*"] },
-          { "scope-host": "2.0.0", "scope-leaf": "2.0.0" },
-          {
-            "packages/b/package.json": JSON.stringify({
-              name: "b",
-              dependencies: { "no-deps": "1.0.0", "one-dep": "1.0.0", "scope-top": "1.0.0" },
-            }),
-            [`packages/${other}/package.json`]: JSON.stringify({
-              name: other,
-              dependencies: { "scope-shared": "1.0.0" },
-            }),
-          },
-          published,
-        );
-        const { stderr, exitCode } = await bun(dir, "update", "no-deps", "--filter", "b");
-        expect(stderr).toBe("Saved lockfile");
-        expect(exitCode).toBe(0);
-        const { all, "no-deps": version } = await locked(dir, "scope-leaf");
-        expect(all).toContain("scope-leaf@2.0.0");
-        return version;
-      };
+      const dir = await behindRules(
+        { workspaces: ["packages/*"] },
+        { "scope-host": "2.0.0", "scope-leaf": "2.0.0" },
+        {
+          "packages/b/package.json": JSON.stringify({
+            name: "b",
+            dependencies: { "no-deps": "1.0.0", "one-dep": "1.0.0", "scope-top": "1.0.0" },
+          }),
+          [`packages/${other}/package.json`]: JSON.stringify({
+            name: other,
+            dependencies: { "scope-shared": "1.0.0" },
+          }),
+        },
+        published,
+      );
 
-      const [first, last] = await Promise.all([versionForLeaf("a"), versionForLeaf("c")]);
-      expect(last).toBe(first);
+      const { stderr, exitCode } = await bun(dir, "update", "no-deps", "--filter", "b");
+      expect(stderr).toBe("Saved lockfile");
+      expect(await locked(dir, "scope-leaf")).toEqual({
+        "no-deps": "no-deps@1.1.0",
+        all: [
+          "b@workspace:packages/b",
+          `${other}@workspace:packages/${other}`,
+          "no-deps@1.0.0",
+          "no-deps@1.0.1",
+          "no-deps@1.1.0",
+          "one-dep@1.0.0",
+          "scope-host@2.0.0",
+          "scope-leaf@2.0.0",
+          "scope-shared@1.0.0",
+          "scope-top@1.0.0",
+        ].sort(),
+      });
+      expect(exitCode).toBe(0);
     },
   );
 
@@ -1314,7 +1331,7 @@ describe("an entry is resolved again after other packages of the same install", 
   test.concurrent("an install that failed in the first pass fails with that error", async () => {
     const dependencies = { "a-dep": "1.0.1", ...fillers };
     const dir = await behindRules({ dependencies }, { "a-dep": "1.0.2" });
-    await expectBehind(dir, "a-dep@1.0.1", "1.0.2");
+    await expectBehind(dir, "a-dep@1.0.1", "a-dep@1.0.2");
     await editPackageJson(dir, pkg => {
       pkg.dependencies = { ...dependencies, "peer-deps-fixed": "1.0.0" };
       pkg.peerDependencies = { missing: "file:./missing" };
@@ -1350,7 +1367,7 @@ describe("an entry is resolved again after other packages of the same install", 
     ]);
     const dependencies = { "remote-dep": "1.0.0", ...fillers };
     const dir = await behindRules({ dependencies }, { "remote-dep": "2.0.0" }, {}, gated);
-    await expectBehind(dir, "remote-dep@1.0.0", "2.0.0");
+    await expectBehind(dir, "remote-dep@1.0.0", "remote-dep@2.0.0");
     await editPackageJson(
       dir,
       pkg => void (pkg.dependencies = { ...dependencies, "missing-tarball": "1.0.0", "remote-peer-host": "1.0.0" }),
@@ -1376,7 +1393,7 @@ describe("an entry is resolved again after other packages of the same install", 
       const missing = { "missing-tarball": "1.0.0" };
       await publish(own, family("remote-dep", { [dropped]: missing }, { [resolved]: missing }));
       const dir = await behindRules({ dependencies: { "remote-dep": "1.0.0" } }, { "remote-dep": "2.0.0" }, {}, own);
-      await expectBehind(dir, "remote-dep@1.0.0", "2.0.0");
+      await expectBehind(dir, "remote-dep@1.0.0", "remote-dep@2.0.0");
       await editPackageJson(dir, pkg => void (pkg.dependencies = dropsMinor("remote-dep")));
       const lock = await lockfile(dir);
 

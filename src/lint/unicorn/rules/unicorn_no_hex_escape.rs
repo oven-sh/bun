@@ -39,7 +39,7 @@ impl Rule for NoHexEscape {
     }
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
-        // The quotes are part of the place.
+        // The reported span includes the quotes.
         check(literal.span().shrink(1, 1), literal.span(), cx);
     }
 }
@@ -49,7 +49,7 @@ impl NoHexEscape {
         let ExprKind::Template(lit) = e.kind() else {
             return;
         };
-        // Its own text only: templates can be in each other.
+        // Only its own quasis, because templates can nest.
         for i in 0..lit.quasi_count() {
             let start = lit.quasi_span(i).start + 1;
             let quasi = Span::new(start, start + lit.raw(i).len() as u32);
@@ -73,7 +73,7 @@ impl NoHexEscape {
             .and_then(|rest| strings::index_of_char_usize(rest, b'\\'))
         {
             at += found;
-            // `\x` without two digits is an `x`.
+            // `\x` without two digits is just an `x`.
             if let Some([b'\\', b'x', digits @ ..]) = pattern.get(at..at + 4)
                 && digits.iter().all(u8::is_ascii_hexdigit)
             {
@@ -86,21 +86,21 @@ impl NoHexEscape {
     }
 }
 
-/// `escapes`: where the text with the escapes is.
-fn check<'a>(escapes: Span, place: Span, cx: &Cx<'a, NoHexEscape>) {
+/// `escapes` is the span of the text that has the escapes.
+fn check<'a>(escapes: Span, report_span: Span, cx: &Cx<'a, NoHexEscape>) {
     if let Some(fixed) = check_escape(cx.slice(escapes)) {
-        // With the quotes, as oxlint replaces it.
+        // oxlint's fix replaces the quotes too.
         let (before, after) = (
-            Span::new(place.start, escapes.start),
-            Span::new(escapes.end, place.end),
+            Span::new(report_span.start, escapes.start),
+            Span::new(escapes.end, report_span.end),
         );
         let fixed = [cx.slice(before), &fixed, cx.slice(after)].concat();
-        cx.report(place, NO_HEX_ESCAPE)
-            .fix(|fixer| fixer.replace(place, fixed));
+        cx.report(report_span, NO_HEX_ESCAPE)
+            .fix(|fixer| fixer.replace(report_span, fixed));
     }
 }
 
-/// `value` with `\u00` for each `\x`, if it has one.
+/// Returns `value` with each `\x` replaced by `\u00`, if it has one.
 fn check_escape(value: &[u8]) -> Option<Vec<u8>> {
     let mut fixed = Vec::new();
     let (mut at, mut last) = (0, 0);

@@ -10,10 +10,9 @@ pub struct NoPlusplus {
 const UNEXPECTED_UNARY_OP: Message =
     Message::new("unexpectedUnaryOp", "Unary operator '{{operator}}' used.");
 
-/// ESLint's `isForLoopAfterthought`: `e` is the update of a `for`, or an operand of comma operators
-/// that are.
+/// ESLint's `isForLoopAfterthought`: `e` is a `for` loop's update, or an operand of a comma expression that is.
 fn is_for_loop_afterthought<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
-    // For oxlint it can as well be the `init` or the test of a `for` that has an update.
+    // oxlint also accepts the `init` or the test of a `for` that has an update.
     let is_oxlint = e.file().language().is_oxlint;
     let found = known.find(Node::Expr(e), |at, parent| match parent {
         Node::Expr(parent) if parent.binary_op() == Some(BinOp::Comma) => None,
@@ -29,7 +28,7 @@ fn is_for_loop_afterthought<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>)
 impl Rule for NoPlusplus {
     const META: Meta = Meta::eslint("no-plusplus", Kind::Suggestion);
     const ON: On = On::new().unaries(&[UnOp::PreInc, UnOp::PostInc, UnOp::PreDec, UnOp::PostDec]);
-    /// `is_for_loop_afterthought`
+    /// Memo for `is_for_loop_afterthought`.
     type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
@@ -53,7 +52,7 @@ impl Rule for NoPlusplus {
         if cx.language().is_oxlint {
             report = report.data("sign", if matches!(op, UnOp::PreInc | UnOp::PostInc) { "+" } else { "-" });
         }
-        // What oxlint suggests for a name, and for a property whose name is known.
+        // oxlint has a suggestion for an identifier and for a property with a static name.
         let has_name = operand.tag() == ExprTag::Ident || static_property_name_or_regex(operand).is_some();
         if cx.language().is_oxlint && has_name {
             let operator: &[u8] = if matches!(op, UnOp::PreInc | UnOp::PostInc) { b" += 1" } else { b" -= 1" };

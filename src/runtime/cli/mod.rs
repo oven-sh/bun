@@ -1297,7 +1297,7 @@ pub(crate) mod command {
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
-            lint_command::read_program_of_script(ctx);
+            lint_command::read_program_from_stdin(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
 
@@ -1825,12 +1825,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                path_buf[..entry.len()].copy_from_slice(entry);
-                path_buf[entry.len()] = 0;
-                // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
-                let lockfile_path = bun_core::ZStr::from_buf(&path_buf[..], entry.len());
-                let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
+                let file = match bun_sys::File::openat(
+                    bun_sys::Fd::cwd(),
+                    &entry[..],
+                    bun_sys::O::RDONLY,
+                    0,
+                ) {
                     Ok(f) => f,
                     Err(err) => {
                         Output::err(err, "failed to open lockfile", ());
@@ -1925,7 +1925,10 @@ Flags:
   <cyan>--cwd <blue>\\<path\\><r>            Set the working directory
   <cyan>--env-file <blue>\\<file\\><r>       Load environment variables from the specified file(s)
   <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
+  <cyan>--registry <blue>\\<url\\><r>        Install from a specific registry
+  <cyan>--ca <blue>\\<cert\\><r>, <cyan>--cafile <blue>\\<path\\><r>  Trust a Certificate Authority signing certificate during installation
   <cyan>--trust<r>                Run the lifecycle scripts of the package and of ALL of its dependencies during installation
+  <cyan>--ignore-scripts<r>       Run no lifecycle scripts during installation
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
 

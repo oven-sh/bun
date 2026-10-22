@@ -586,8 +586,8 @@ pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::R
         if result.read == 0 || result.written == 0 {
             break;
         }
-        write_bytes(writer, &chunk[..result.written as usize])?;
-        slice = &slice[result.read as usize..];
+        write_bytes(writer, &chunk[..result.written])?;
+        slice = &slice[result.read..];
     }
     Ok(())
 }
@@ -608,7 +608,7 @@ pub(crate) fn format_utf16_type_with_path_options(
             break;
         }
 
-        let to_write = &chunk[..result.written as usize];
+        let to_write = &chunk[..result.written];
         if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
             write_bytes(writer, to_write)?;
         } else {
@@ -625,7 +625,7 @@ pub(crate) fn format_utf16_type_with_path_options(
             }
             write_bytes(writer, ptr)?;
         }
-        slice = &slice[result.read as usize..];
+        slice = &slice[result.read..];
     }
     Ok(())
 }
@@ -1267,8 +1267,8 @@ pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result
         if result.read == 0 || result.written == 0 {
             break;
         }
-        write_bytes(writer, &chunk[..result.written as usize])?;
-        slice = &slice[result.read as usize..];
+        write_bytes(writer, &chunk[..result.written])?;
+        slice = &slice[result.read..];
     }
 
     if !slice.is_empty() {

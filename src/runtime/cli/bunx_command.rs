@@ -12,6 +12,7 @@ use bun_ast::ExprData;
 use bun_bundler::Transpiler;
 use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
+use bun_install::CommandLineArguments;
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
@@ -107,8 +108,14 @@ pub(crate) struct Options {
     /// Passes `--trust` to `bun add`, so the lifecycle scripts of the package and of everything it
     /// depends on run.
     pub(crate) trust: bool,
+    /// Passes `--ignore-scripts` to `bun add`, which wins over `--trust`.
+    pub(crate) ignore_scripts: bool,
     /// In seconds, as typed. It's forwarded to `bun add` and is part of the cache directory's name.
     pub(crate) minimum_release_age: Option<&'static [u8]>,
+    /// Forwarded to `bun add`, like `ca` and `cafile`. It's part of the cache directory's name.
+    pub(crate) registry: Option<&'static [u8]>,
+    pub(crate) ca: Vec<&'static [u8]>,
+    pub(crate) cafile: Option<&'static [u8]>,
 }
 
 impl Options {
@@ -176,7 +183,11 @@ impl Options {
                     opts.silent_install = true;
                 } else if positional == b"--bun" || positional == b"-b" {
                     ctx.debug.run_in_bun = true;
-                } else if positional == b"--no-install" {
+                } else if matches!(
+                    positional,
+                    // The others are npm's names for it.
+                    b"--no-install" | b"--no" | b"--no-yes" | b"--yes=false" | b"-n" | b"--offline"
+                ) {
                     opts.no_install = true;
                 } else if positional == b"--package" || positional == b"-p" {
                     i += 1;
@@ -190,8 +201,15 @@ impl Options {
                     .or_else(|| positional.strip_prefix(b"-p="))
                 {
                     opts.specified_package = Some(Self::non_empty_package(package));
+                } else if positional == b"--yes"
+                    && (argv.get(i + 1)).is_some_and(|next| next.as_bytes() == b"false")
+                {
+                    opts.no_install = true;
+                    i += 1;
                 } else if positional == b"--trust" {
                     opts.trust = true;
+                } else if matches!(positional, b"--ignore-scripts" | b"--ignore-scripts=true") {
+                    opts.ignore_scripts = true;
                 } else if let Some(file) = Self::flag_value(argv, &mut i, "--env-file") {
                     ctx.args.env_files.push(Box::<[u8]>::from(file));
                 } else if let Some(dir) = Self::flag_value(argv, &mut i, "--cwd") {
@@ -214,12 +232,26 @@ impl Options {
                         Global::exit(1);
                     }
                     opts.minimum_release_age = Some(age);
+                } else if let Some(url) = Self::flag_value(argv, &mut i, "--registry")
+                    // The names that npm and pnpm also have for it.
+                    .or_else(|| Self::flag_value(argv, &mut i, "--reg"))
+                    .or_else(|| Self::flag_value(argv, &mut i, "--config.registry"))
+                {
+                    opts.registry = Some(url);
+                } else if let Some(ca) = Self::flag_value(argv, &mut i, "--ca") {
+                    opts.ca.push(ca);
+                } else if let Some(path) = Self::flag_value(argv, &mut i, "--cafile") {
+                    opts.cafile = Some(path);
                 } else if positional == b"--help" || positional == b"-h" {
                     crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
                     Global::exit(0);
-                } else if !matches!(positional, b"--" | b"--yes" | b"-y")
-                    && !is_from_bun_options(argv[i])
-                {
+                } else if positional == b"--" || is_from_bun_options(argv[i]) {
+                } else if let Some(value_is_next_arg) = CommandLineArguments::bunx_skips_flag(
+                    positional,
+                    argv.get(i + 1).map_or(b"".as_slice(), |arg| arg.as_bytes()),
+                ) {
+                    i += usize::from(value_is_next_arg);
+                } else {
                     // Skipping it would make the value of `--flag value` the package that is downloaded and run.
                     Output::err_generic(
                         "bunx has no <b>{}<r> flag. Flags for the package go after its name.",
@@ -803,9 +835,15 @@ impl BunxCommand {
         if opts.trust {
             package_fmt.extend_from_slice(b"+trust");
         }
+        if opts.ignore_scripts {
+            package_fmt.extend_from_slice(b"+ignore-scripts");
+        }
         if let Some(age) = opts.minimum_release_age {
             package_fmt.extend_from_slice(b"+min-age=");
             package_fmt.extend_from_slice(age);
+        }
+        if let Some(registry) = opts.registry {
+            package_fmt.extend_from_slice(format!("+registry={:x}", hash(registry)).as_bytes());
         }
         bun_output::scoped_log!(bunx, "package_fmt: {}", BStr::new(&package_fmt));
 
@@ -850,7 +888,7 @@ impl BunxCommand {
         };
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir: &[u8] = unsafe { &*this_transpiler.fs }.top_level_dir;
+        let top_level_dir: &[u8] = unsafe { &*this_transpiler.fs }.top_level_dir();
         let which_cwd: &[u8] = if ignore_cwd.is_empty() {
             top_level_dir
         } else {
@@ -1068,9 +1106,23 @@ impl BunxCommand {
             .then(|| bun_sys::stat(&package_json_path).ok())
             .flatten();
 
-        let minimum_release_age_arg = opts
-            .minimum_release_age
-            .map(|age| [b"--minimum-release-age=".as_slice(), age].concat());
+        // `bun add` runs in another directory.
+        let cafile = opts.cafile.map(|path| {
+            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(top_level_dir, path)
+                .to_vec()
+        });
+        let flags_with_value: Vec<Vec<u8>> = [
+            (
+                b"--minimum-release-age=".as_slice(),
+                opts.minimum_release_age,
+            ),
+            (b"--registry=", opts.registry),
+            (b"--cafile=", cafile.as_deref()),
+        ]
+        .into_iter()
+        .chain(opts.ca.iter().map(|ca| (b"--ca=".as_slice(), Some(*ca))))
+        .filter_map(|(name, value)| Some([name, value?].concat()))
+        .collect();
         let mut args: Vec<&[u8]> = vec![
             bun_core::self_exe_path()?.as_bytes(),
             b"add",
@@ -1094,9 +1146,10 @@ impl BunxCommand {
         if opts.trust {
             args.push(b"--trust");
         }
-        if let Some(arg) = &minimum_release_age_arg {
-            args.push(arg);
+        if opts.ignore_scripts {
+            args.push(b"--ignore-scripts");
         }
+        args.extend(flags_with_value.iter().map(Vec::as_slice));
 
         bun_output::scoped_log!(
             bunx,

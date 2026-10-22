@@ -81,18 +81,19 @@ impl DevServer {
         scopeguard::defer! { unsafe { (*self_ptr).bun_watcher.flush_evictions() } };
 
         for event in events {
+            let event_index = event.index.get_usize();
             // TODO: why does this out of bounds when you delete every file in the directory?
-            if event.index as usize >= file_paths.len() {
+            if event_index >= file_paths.len() {
                 continue;
             }
 
-            let file_path = &file_paths[event.index as usize];
+            let file_path = &file_paths[event_index];
             // SAFETY: `counts` is a disjoint SoA column owned by `watchlist`
             // (see above); accesses are statement-scoped.
-            let update_count = unsafe { (*counts)[event.index as usize] } + 1;
+            let update_count = unsafe { (*counts)[event_index] } + 1;
             // SAFETY: as above.
-            unsafe { (*counts)[event.index as usize] = update_count };
-            let kind = kinds[event.index as usize];
+            unsafe { (*counts)[event_index] = update_count };
+            let kind = kinds[event_index];
 
             debug_log!(
                 "{} change: {} {}",
@@ -110,12 +111,7 @@ impl DevServer {
                         || event.op.contains(bun_watcher::Op::RENAME)
                     {
                         // TODO: audit this line heavily
-                        self.bun_watcher.remove_at_index::<false>(
-                            bun_watcher::Kind::File,
-                            event.index,
-                            0,
-                            &[],
-                        );
+                        self.bun_watcher.remove_at_index::<false>(event.index);
                     }
 
                     // SAFETY: `ev_ptr` is this thread's exclusively-acquired

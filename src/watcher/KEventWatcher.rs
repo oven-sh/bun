@@ -1,7 +1,7 @@
 use bun_core::output as Output;
 use bun_sys::Fd;
 
-use crate::watcher_impl::{Op, WatchEvent, Watcher};
+use crate::watcher_impl::{Op, WatchEvent, WatchItemIndex, Watcher};
 
 pub(crate) type Platform = KEventWatcher;
 
@@ -44,8 +44,7 @@ fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     }
     WatchEvent {
         op,
-        // @truncate(kevent.udata)
-        index: kevent.udata as _,
+        index: WatchItemIndex::init(kevent.udata as usize),
         ..Default::default()
     }
 }

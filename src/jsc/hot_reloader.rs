@@ -51,7 +51,7 @@ impl ImportWatcher {
         let _guard = w.mutex.lock_guard();
         let index = w.index_of(hash)?;
         w.watchlist
-            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
+            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index.get_usize()]
     }
 
     #[inline]
@@ -862,19 +862,20 @@ where
         let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
 
         for event in events.iter() {
+            let event_index = event.index.get_usize();
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
-            if event.index as usize >= file_paths.len() {
+            if event_index >= file_paths.len() {
                 continue;
             }
-            let file_path: &[u8] = &file_paths[event.index as usize];
-            let update_count = counts[event.index as usize] + 1;
-            counts[event.index as usize] = update_count;
-            let kind = kinds[event.index as usize];
+            let file_path: &[u8] = &file_paths[event_index];
+            let update_count = counts[event_index] + 1;
+            counts[event_index] = update_count;
+            let kind = kinds[event_index];
 
             // so it's consistent with the rest
             // if we use .extname we might run into an issue with whether or not the "." is included.
             // let path = Fs::PathName::init(file_path);
-            let current_hash = hashes[event.index as usize];
+            let current_hash = hashes[event_index];
 
             match kind {
                 bun_watcher::Kind::File => {
@@ -887,14 +888,7 @@ where
                         // only buffers the eviction, and the borrow is scoped
                         // to this call so it never overlaps the watchlist
                         // column slices above.
-                        unsafe {
-                            (*ctx).remove_at_index::<false>(
-                                bun_watcher::Kind::File,
-                                event.index,
-                                0,
-                                &[],
-                            )
-                        };
+                        unsafe { (*ctx).remove_at_index::<false>(event.index) };
                     }
 
                     if self.verbose {
@@ -986,11 +980,8 @@ where
                                             name_buf[basename.len()] = 0;
                                             // SAFETY: name_buf[..=basename.len()] is NUL-terminated.
                                             let z = ZStr::from_buf(&name_buf[..], basename.len());
-                                            bun_sys::faccessat(
-                                                file_descriptors[event.index as usize],
-                                                z,
-                                            )
-                                            .is_ok()
+                                            bun_sys::faccessat(file_descriptors[event_index], z)
+                                                .is_ok()
                                         } else {
                                             false
                                         };
@@ -1193,10 +1184,7 @@ where
                                                             // above.
                                                             unsafe {
                                                                 (*ctx).remove_at_index::<false>(
-                                                                    bun_watcher::Kind::File,
-                                                                    entry_id as bun_watcher::WatchItemIndex,
-                                                                    0,
-                                                                    &[],
+                                                                    bun_watcher::WatchItemIndex::init(entry_id),
                                                                 )
                                                             };
                                                         }

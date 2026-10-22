@@ -668,6 +668,7 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgen("DevServer.bind.ts", "getDeinitCountForTesting");
+export const padWatchlistForTesting = $bindgen("watchlist_testing.bind.ts", "padWatchlistForTesting");
 export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
 export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "collections/linear_fifo.rs",

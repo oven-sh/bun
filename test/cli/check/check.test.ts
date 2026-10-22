@@ -15677,6 +15677,65 @@ export function t<T extends NS & [number, string[]]>(x: T) { const p: never = x[
       expect(exitCode).toBe(1);
     });
 
+    test("`this` is the type parameter in a tuple type that its constraint intersects with another type", async () => {
+      using dir = project({
+        "a.ts": `interface Self { me(): this }
+export function f<T extends [number] & { brand: 1 }>(t: T) {
+  const a: never = t.sort();
+  const b: never = t["sort"]();
+  const c: never = t.fill(0);
+  const d: never = t.copyWithin(0, 1);
+  // Not \`this\`.
+  const e: never = t.reverse();
+  const g: never = t.brand;
+  const h: never = t.length;
+  const i: never = t[0];
+  return t.sort();
+}
+declare const narrower: [number] & { brand: 1; extra: 2 };
+export const extra: 2 = f(narrower).extra;
+export function g<T extends [Self] & Self, U extends T>(t: T, u: U) {
+  const a: never = t.sort();
+  const b: never = t.me();
+  const c: never = u.sort();
+  return [a, b, c];
+}
+// Both constituents have \`length\`.
+export function h<T extends [number] & { length: 1 }>(t: T) {
+  const a: never = t.length;
+  const b: never = t.sort();
+  return [a, b];
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { brand: 1; }' is not assignable to type 'never'.
+        a.ts(4,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { brand: 1; }' is not assignable to type 'never'.
+        a.ts(5,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { brand: 1; }' is not assignable to type 'never'.
+        a.ts(6,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { brand: 1; }' is not assignable to type 'never'.
+        a.ts(8,9): error TS2322: Type 'number[]' is not assignable to type 'never'.
+        a.ts(9,9): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(10,9): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(11,9): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(17,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[Self] & Self' is not assignable to type 'never'.
+        a.ts(18,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[Self] & Self' is not assignable to type 'never'.
+        a.ts(19,9): error TS2322: Type 'U' is not assignable to type 'never'.
+          Type 'T' is not assignable to type 'never'.
+            Type '[Self] & Self' is not assignable to type 'never'.
+        a.ts(24,9): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(25,9): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number] & { length: 1; }' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2345 for a function argument against an index signature inferred from `keyof T`", async () => {
       using dir = project({
         "a.ts": `declare function m<T>(a: T, b: keyof T): T;

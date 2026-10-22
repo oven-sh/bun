@@ -8238,7 +8238,38 @@ impl<'p, 's> Checker<'p, 's> {
         skip_object_function_property_augment: bool,
     ) -> Option<(&'p Prop<'p>, MapperId)> {
         let holder = self.property_holder_for_a_name(ty);
+        if self.is_deferred(ty)
+            && let PropertyHolder::Members(apparent, _) | PropertyHolder::Unlisted(apparent) =
+                holder
+            && let Some(found) = self.property_of_only_tuple_constituent(ty, apparent, name)
+        {
+            return Some(found);
+        }
         self.property_of_holder(holder, name, skip_object_function_property_augment)
+    }
+
+    /// Returns the property `name` of the tuple in the intersection `apparent`, if no other constituent has that property.
+    /// `createUnionOrIntersectionProperty` returns such a property as it is. `apparent` is the apparent type of the type
+    /// variable `ty`, so `this` is `ty` in each constituent. A tuple has no slot for that, and in the intersection's own
+    /// members its `this` is the intersection.
+    fn property_of_only_tuple_constituent(
+        &mut self,
+        ty: TypeId,
+        apparent: TypeId,
+        name: Atom,
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
+        let TypeData::Intersection(parts) = self.data(apparent) else {
+            return None;
+        };
+        let tuple = *parts.iter().find(|&&part| self.is_tuple(part))?;
+        let members = self.members_with_this(tuple, ty)?;
+        let prop = members.resolved.prop(name)?;
+        for &part in parts.iter() {
+            if part != tuple && self.get_property_of_type(part, name).is_some() {
+                return None;
+            }
+        }
+        Some((prop, members.mapper))
     }
 
     /// The part of `getPropertyOfTypeEx(ty, ..)` that doesn't depend on the name.

@@ -13,7 +13,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:assert`](https://nodejs.org/api/assert.html)
 
-🟢 Fully implemented. Legacy-mode `deepEqual` uses `Bun.deepEquals` semantics rather than Node's loose `==` comparison, and function-valued or `printf`-style `message` arguments are not formatted.
+🟢 Fully implemented. Legacy-mode `deepEqual` does not compare a non-enumerable `Symbol.toStringTag` with an object that has no tag, so a `Headers` object can equal `{}`. Function-valued or `printf`-style `message` arguments are not formatted.
 
 ### [`node:buffer`](https://nodejs.org/api/buffer.html)
 

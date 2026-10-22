@@ -882,6 +882,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepStrictEqual,
     return JSValue::encode(jsBoolean(result));
 }
 
+extern "C" bool Bun__deepEqualsNodeLoose(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* globalObject);
+
+// assert.deepEqual / assert.notDeepEqual: node's loose mode (kLoose).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepEqual,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    bool result = Bun__deepEqualsNodeLoose(JSValue::encode(callframe->argument(0)), JSValue::encode(callframe->argument(1)), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(result));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe))

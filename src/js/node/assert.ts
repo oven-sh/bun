@@ -29,6 +29,8 @@ const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
+// node's kLoose comparison, behind deepEqual and notDeepEqual (NodeUtilTypesModule.cpp).
+const isDeepEqual = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsDeepEqual", 2);
 // node's kPartial comparison, fully native (NodeUtilTypesModule.cpp).
 const nodePartialDeepStrictEqual = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionPartialDeepStrictEqual", 2);
 const NumberIsNaN = Number.isNaN;
@@ -48,10 +50,6 @@ type nodeAssert = typeof import("node:assert");
 const kOptions = Symbol("options");
 
 const { isDeepStrictEqual } = require("internal/util/comparisons");
-
-function isDeepEqual(a, b) {
-  return Bun.deepEquals(a, b, false);
-}
 
 var _inspect;
 function lazyInspect() {

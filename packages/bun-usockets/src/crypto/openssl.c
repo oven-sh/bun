@@ -143,6 +143,7 @@ long us_ssl_ctx_live_count(void) {
  *   - us_ssl_rare_ex_idx (SSL): us_ssl_rare_t.
  *   - us_ssl_wrapper_ex_idx (SSL): the owner of an SSL that no us_socket_t drives.
  *   - us_ssl_alpn_offer_ex_idx (SSL): us_alpn_offer_t.
+ *   - us_ctx_identities_ex_idx (SSL_CTX): us_ssl_ctx_identities_t.
  *
  * SSL_CTX creation runs from both the JS thread (SecureContext, Bun.connect/
  * listen) and the HTTP-client thread (HTTPContext.initWithOpts). A racy `<0`
@@ -161,6 +162,9 @@ static int us_ssl_rare_ex_idx = -1;
 static int us_ssl_wrapper_ex_idx = -1;
 /* (SSL) The ALPN protocols of the ClientHello, from us_select_cert_cb until us_ssl_alpn_offer_cert_cb. */
 static int us_ssl_alpn_offer_ex_idx = -1;
+static int us_ctx_identities_ex_idx = -1;
+/* Marks an SSL_CTX built with `sigalgs`: the signing preferences of its legacy credential are not BoringSSL's default. */
+static int us_ctx_sigalgs_ex_idx = -1;
 /* BIO type of the loop's shared BIO: tells a us_socket_t's SSL from an SSLWrapper's. */
 static int us_ssl_bio_type = 0;
 /* (SSL_CTX) packed client-certificate policy of a Bun.serve per-serverName
@@ -253,6 +257,23 @@ static void us_ssl_alpn_offer_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                                    int index, long argl, void *argp) {
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
   us_free(ptr);
+}
+
+/* In OpenSSL's order of preference: BoringSSL serves the first usable credential. */
+enum { US_KEY_TYPE_ECDSA, US_KEY_TYPE_EDDSA, US_KEY_TYPE_RSA, US_KEY_TYPES };
+
+/* The credentials of an SSL_CTX with several certificates, for us_ssl_set_key_cert: BoringSSL has no getter for them. */
+struct us_ssl_ctx_identities_t {
+  SSL_CREDENTIAL *identity[US_KEY_TYPES];
+};
+
+static void us_ctx_identities_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                   int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  struct us_ssl_ctx_identities_t *identities = ptr;
+  if (!identities) return;
+  for (int type = 0; type < US_KEY_TYPES; type++) SSL_CREDENTIAL_free(identities->identity[type]);
+  us_free(identities);
 }
 
 /* Upper bounds for parked payloads: a serialized SSL_SESSION (i2d) and a
@@ -394,6 +415,8 @@ static void us_ex_idx_init(void) {
   us_ssl_rare_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_rare_free);
   us_ssl_wrapper_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_alpn_offer_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_alpn_offer_free);
+  us_ctx_identities_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ctx_identities_free);
+  us_ctx_sigalgs_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_bio_type = BIO_get_new_index() | BIO_TYPE_SOURCE_SINK;
 }
 
@@ -1121,18 +1144,16 @@ static SSL_CREDENTIAL *us_ssl_ctx_copy_legacy_identity(SSL_CTX *ctx) {
 /* One identity per key type, as in OpenSSL: the last certificate of a type wins, with whichever key fits it. */
 static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, unsigned int cert_count,
                                      const char *const *key, unsigned int key_count) {
-  /* In OpenSSL's order of preference: BoringSSL serves the first usable credential. */
-  enum { TYPE_ECDSA, TYPE_EDDSA, TYPE_RSA, KEY_TYPES };
-  const char *leaf[KEY_TYPES] = {NULL};
-  SSL_CREDENTIAL *identity[KEY_TYPES] = {NULL};
+  const char *leaf[US_KEY_TYPES] = {NULL};
+  SSL_CREDENTIAL *identity[US_KEY_TYPES] = {NULL};
   int ok = 1;
   for (unsigned int i = 0; i < cert_count; i++) {
     if (us_ssl_ctx_use_certificate_chain(ctx, cert[i]) != 1) return 0;
     int id = EVP_PKEY_id(X509_get0_pubkey(SSL_CTX_get0_certificate(ctx)));
-    leaf[id == EVP_PKEY_EC ? TYPE_ECDSA : id == EVP_PKEY_ED25519 ? TYPE_EDDSA : TYPE_RSA] = cert[i];
+    leaf[id == EVP_PKEY_EC ? US_KEY_TYPE_ECDSA : id == EVP_PKEY_ED25519 ? US_KEY_TYPE_EDDSA : US_KEY_TYPE_RSA] = cert[i];
   }
   /* Least preferred first: the legacy slot, which getCertificate() reads, is left holding the most preferred. */
-  for (int type = KEY_TYPES; ok && type-- > 0;) {
+  for (int type = US_KEY_TYPES; ok && type-- > 0;) {
     if (leaf[type] == NULL) continue;
     ok = us_ssl_ctx_use_certificate_chain(ctx, leaf[type]) == 1;
     int has_key = 0, mismatched = 0;
@@ -1154,11 +1175,17 @@ static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, unsi
       ok = 0;
     }
   }
-  for (int type = 0; type < KEY_TYPES; type++) {
+  for (int type = 0; type < US_KEY_TYPES; type++) {
     if (ok && identity[type] != NULL) ok = SSL_CTX_add1_credential(ctx, identity[type]);
-    SSL_CREDENTIAL_free(identity[type]);
   }
-  return ok;
+  struct us_ssl_ctx_identities_t *identities = ok ? us_calloc(1, sizeof(*identities)) : NULL;
+  if (identities != NULL && SSL_CTX_set_ex_data(ctx, us_ctx_identities_ex_idx, identities)) {
+    memcpy(identities->identity, identity, sizeof(identity));
+    return 1;
+  }
+  us_free(identities);
+  for (int type = 0; type < US_KEY_TYPES; type++) SSL_CREDENTIAL_free(identity[type]);
+  return 0;
 }
 
 static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
@@ -1557,6 +1584,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     ssl_ctx_build_fail(ssl_context);
     return NULL;
   }
+  if (options.sigalgs) SSL_CTX_set_ex_data(ssl_context, us_ctx_sigalgs_ex_idx, (void *)1);
 
   if (options.ecdh_curve) {
     if (!SSL_CTX_set1_groups_list(ssl_context, options.ecdh_curve)) {
@@ -3616,6 +3644,14 @@ int us_ssl_set_key_cert(SSL *ssl, SSL_CTX *ctx, const unsigned char *sid_ctx, si
            SSL_set1_verify_cert_store(ssl, store) &&
            SSL_set_session_id_context(ssl, sid_ctx, sid_ctx_length);
   sk_X509_pop_free(built, X509_free);
+  /* The credentials of a context with several certificates carry no signing preferences, so a
+   * connection that restricts those serves the first certificate only, from the legacy slot. */
+  const struct us_ssl_ctx_identities_t *identities = SSL_CTX_get_ex_data(ctx, us_ctx_identities_ex_idx);
+  if (identities != NULL && SSL_CTX_get_ex_data(SSL_get_SSL_CTX(ssl), us_ctx_sigalgs_ex_idx) == NULL) {
+    for (int type = 0; ok && type < US_KEY_TYPES; type++) {
+      if (identities->identity[type] != NULL) ok = SSL_add1_credential(ssl, identities->identity[type]);
+    }
+  }
   if (!ok) return -1;
   SSL_set_client_CA_list(ssl, SSL_dup_CA_list(SSL_CTX_get_client_CA_list(ctx)));
   return 1;

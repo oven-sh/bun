@@ -2076,6 +2076,79 @@ describe("ALPNCallback", () => {
   });
 });
 
+// setKeyCert() gives a connection every certificate of its context and none of those it had.
+describe("setKeyCert() with one certificate per key type", () => {
+  const rsa2 = { key: agent2Key, cert: agent2Cert };
+  const rsa3 = { key: agent3Key, cert: agent3Cert };
+  const ec10 = { key: loadPEM("ec10-key.pem"), cert: loadPEM("ec10-cert.pem") };
+  const withEc10 = (rsa: typeof rsa3) => ({ key: [rsa.key, ec10.key], cert: [rsa.cert, ec10.cert] });
+  const refused = "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE";
+
+  // The CN of the certificate that a client of each kind is served, or its error code.
+  async function servedToEachKindOfClient(server: tls.Server) {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const kinds = {
+      "TLS 1.2, ECDSA only": { maxVersion: "TLSv1.2", ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256" },
+      "TLS 1.2, RSA only": { maxVersion: "TLSv1.2", ciphers: "ECDHE-RSA-AES128-GCM-SHA256" },
+      "TLS 1.3, ECDSA only": { sigalgs: "ecdsa_secp256r1_sha256" },
+      "TLS 1.3, RSA only": { sigalgs: "rsa_pss_rsae_sha256" },
+    } as const;
+    const served: Record<string, string> = {};
+    for (const [kind, options] of Object.entries(kinds)) {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      const client = tls.connect({
+        host: "127.0.0.1",
+        port,
+        rejectUnauthorized: false,
+        ALPNProtocols: ["a"],
+        ...options,
+      });
+      client.on("secureConnect", () => resolve(client.getPeerCertificate().subject.CN));
+      client.on("error", err => resolve((err as NodeJS.ErrnoException).code ?? err.message));
+      client.on("close", () => resolve("closed"));
+      served[kind] = await promise;
+      client.destroy();
+    }
+    return served;
+  }
+
+  it.each([
+    ["one certificate on a server with two", withEc10(rsa2), rsa3, { ecdsa: refused, rsa: "agent3" }],
+    ["two certificates on a server with one", rsa2, withEc10(rsa3), { ecdsa: "agent10.example.com", rsa: "agent3" }],
+    // The certificates beside the first one carry no signing preferences of their own.
+    [
+      "the first of two certificates on a server with `sigalgs`",
+      { ...rsa2, sigalgs: "ecdsa_secp256r1_sha256:rsa_pss_rsae_sha256" },
+      withEc10(rsa3),
+      { ecdsa: "agent10.example.com", rsa: refused },
+    ],
+  ] as const)("serves %s", async (_name, ofServer, ofContext, expected) => {
+    const context = tls.createSecureContext(ofContext);
+    const server = tls.createServer(
+      {
+        ...ofServer,
+        ALPNCallback(this: tls.TLSSocket, { protocols }: { protocols: string[] }) {
+          this.setKeyCert(context);
+          return protocols[0];
+        },
+      },
+      socket => void socket.on("error", () => {}).end(),
+    );
+    server.on("tlsClientError", () => {});
+    try {
+      expect(await servedToEachKindOfClient(server)).toEqual({
+        "TLS 1.2, ECDSA only": expected.ecdsa,
+        "TLS 1.2, RSA only": expected.rsa,
+        "TLS 1.3, ECDSA only": expected.ecdsa,
+        "TLS 1.3, RSA only": expected.rsa,
+      });
+    } finally {
+      server.close();
+    }
+  });
+});
+
 it("accepts every BoringSSL named group (and alias) as ecdhCurve", () => {
   // Mirrors vendor/boringssl/ssl/ssl_key_share.cc kNamedGroups at the pinned
   // commit. This pins the set the public API accepts; it cannot detect a NEW

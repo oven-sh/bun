@@ -641,6 +641,9 @@ console.log("PRELOAD");
 [env]
 file = false
       `,
+      // TOML has no null. A JSON config file has one.
+      "/env-null.json": `{ "env": null }`,
+      "/env-file-null.json": `{ "env": { "file": null } }`,
     },
     run: [
       { setCwd: true, stdout: "main: from_dotenv, worker: from_dotenv" },
@@ -651,6 +654,16 @@ file = false
       {
         cwd: "bunfig-env-file-false",
         env: { BUN_OPTIONS: "--smol" },
+        stdout: "main: not found, worker: not found",
+      },
+      {
+        setCwd: true,
+        env: { BUN_OPTIONS: "--config=env-null.json" },
+        stdout: "main: not found, worker: not found",
+      },
+      {
+        setCwd: true,
+        env: { BUN_OPTIONS: "--config=env-file-null.json" },
         stdout: "main: not found, worker: not found",
       },
     ],

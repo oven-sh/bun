@@ -749,6 +749,168 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/EmbeddedFileCopiesKeepName", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { deserialize, serialize } from "bun:jsc";
+        import { blob as consumeBlob } from "node:stream/consumers";
+        import v8 from "node:v8";
+        import { getEnvironmentData, isMainThread, parentPort, setEnvironmentData, Worker, workerData } from "node:worker_threads";
+        import a from "./a.bin" with { type: "file" };
+        import empty from "./empty.bin" with { type: "file" };
+
+        const name = blob => blob.name ?? null;
+
+        if (!isMainThread) {
+          parentPort.postMessage({ workerData: name(workerData), environmentData: name(getEnvironmentData("file")) });
+          parentPort.on("message", blob => parentPort.postMessage({ received: name(blob), sentBack: blob }));
+        } else {
+          // Each receiver rejects on an error, so that a failure does not wait for a timeout.
+          const viaMessageChannel = value => {
+            const { port1, port2 } = new MessageChannel();
+            const { promise, resolve, reject } = Promise.withResolvers();
+            port2.onmessage = event => resolve(event.data);
+            port2.onmessageerror = reject;
+            port1.postMessage(value);
+            return promise.finally(() => {
+              port1.close();
+              port2.close();
+            });
+          };
+          const viaBroadcastChannel = value => {
+            const sender = new BroadcastChannel("names");
+            const receiver = new BroadcastChannel("names");
+            const { promise, resolve, reject } = Promise.withResolvers();
+            receiver.onmessage = event => resolve(event.data);
+            receiver.onmessageerror = reject;
+            sender.postMessage(value);
+            return promise.finally(() => {
+              sender.close();
+              receiver.close();
+            });
+          };
+          const streamCopy = blob => new Response(blob.stream()).blob();
+          const multipartFilename = async blob => {
+            const form = new FormData();
+            form.append("file", blob);
+            return /filename="([^"]*)"/.exec(await new Response(form).text())?.[1] ?? null;
+          };
+
+          const file = Bun.file(a);
+          const emptyFile = Bun.file(empty);
+
+          setEnvironmentData("file", file);
+          const worker = new Worker(new URL(import.meta.url), { workerData: file });
+          const nextMessage = () => {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            worker.once("message", resolve);
+            worker.once("messageerror", reject);
+            worker.once("error", reject);
+            worker.once("exit", code => reject(new Error("the worker exited with code " + code)));
+            return promise;
+          };
+          const atStart = await nextMessage();
+          worker.postMessage(file);
+          const echo = await nextMessage();
+          await worker.terminate();
+
+          const response = new Response(file.stream());
+          const responseClone = response.clone();
+
+          console.log(
+            JSON.stringify({
+              file: file.name,
+              clones: {
+                structuredClone: name(structuredClone(file)),
+                nested: name(structuredClone({ list: [file] }).list[0]),
+                slice: name(structuredClone(file.slice(0, 2))),
+                newBlob: name(structuredClone(new Blob([file]))),
+                cloneOfClone: name(structuredClone(structuredClone(file))),
+                embeddedFiles: name(structuredClone(Bun.embeddedFiles.find(blob => blob.name === file.name))),
+                bunJsc: name(deserialize(serialize(file))),
+                nodeV8: name(v8.deserialize(v8.serialize(file))),
+                messageChannel: name(await viaMessageChannel(file)),
+                broadcastChannel: name(await viaBroadcastChannel(file)),
+                workerReceived: echo.received,
+                workerSentBack: name(echo.sentBack),
+                workerData: atStart.workerData,
+                environmentData: atStart.environmentData,
+                performanceMark: name(performance.mark("mark", { detail: file }).detail),
+              },
+              streams: {
+                response: name(await streamCopy(file)),
+                request: name(await new Request("http://localhost/", { method: "POST", body: file.stream() }).blob()),
+                responseBody: name(await new Response(new Response(file).body).blob()),
+                responseAndItsClone: [name(await response.blob()), name(await responseClone.blob())],
+                streamBlob: name(await file.stream().blob()),
+                readableStreamToBlob: name(await Bun.readableStreamToBlob(file.stream())),
+                streamConsumers: name(await consumeBlob(file.stream())),
+                ofSlice: name(await streamCopy(file.slice(0, 2))),
+                ofClone: name(await streamCopy(structuredClone(file))),
+              },
+              multipartFilenames: {
+                ofClone: await multipartFilename(structuredClone(file)),
+                ofStreamCopy: await multipartFilename(await streamCopy(file)),
+              },
+              cloneRecordHasBunfsPath: Buffer.from(serialize(file)).includes(a),
+              emptyFile: emptyFile.name,
+              streamCopyOfEmptyFile: name(await streamCopy(emptyFile)),
+              // A File has its own name.
+              cloneOfFileOverEmbeddedFile: name(structuredClone(new File([file], "wrapped.bin"))),
+            }),
+          );
+        }
+      `,
+      "/a.bin": "abc",
+      "/empty.bin": "",
+    },
+    run: {
+      validate({ stdout }) {
+        const names = JSON.parse(stdout);
+        const { file, emptyFile } = names;
+        expect(names).toEqual({
+          file: expect.stringMatching(/^a-[a-z0-9]+\.bin$/),
+          clones: {
+            structuredClone: file,
+            nested: file,
+            slice: file,
+            newBlob: file,
+            cloneOfClone: file,
+            embeddedFiles: file,
+            bunJsc: file,
+            nodeV8: file,
+            messageChannel: file,
+            broadcastChannel: file,
+            workerReceived: file,
+            workerSentBack: file,
+            workerData: file,
+            environmentData: file,
+            performanceMark: file,
+          },
+          streams: {
+            response: file,
+            request: file,
+            responseBody: file,
+            responseAndItsClone: [file, file],
+            streamBlob: file,
+            readableStreamToBlob: file,
+            streamConsumers: file,
+            ofSlice: file,
+            ofClone: file,
+          },
+          multipartFilenames: {
+            ofClone: file,
+            ofStreamCopy: file,
+          },
+          cloneRecordHasBunfsPath: false,
+          emptyFile: expect.stringMatching(/^empty-[a-z0-9]+\.bin$/),
+          streamCopyOfEmptyFile: emptyFile,
+          cloneOfFileOverEmbeddedFile: "wrapped.bin",
+        });
+      },
+    },
+  });
   itBundled("compile/EmbeddedFileNamesPerThread", {
     compile: true,
     assetNaming: "[name].[ext]",

@@ -3,13 +3,13 @@
 
 use std::borrow::Cow;
 
-pub(crate) type Id = u32;
-pub(crate) type FragmentId = u32;
+pub type Id = u32;
+pub type FragmentId = u32;
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
-pub(crate) struct Span {
-    pub(crate) start: u32,
-    pub(crate) end: u32,
+pub struct Span {
+    pub start: u32,
+    pub end: u32,
 }
 
 impl Span {
@@ -20,7 +20,7 @@ impl Span {
         }
     }
 
-    pub(crate) fn of(self, text: &[u8]) -> &[u8] {
+    pub fn of(self, text: &[u8]) -> &[u8] {
         text.get(self.start as usize..self.end as usize)
             .unwrap_or_default()
     }
@@ -28,7 +28,7 @@ impl Span {
 
 /// An expression's ESTree node type. Only the types that some code checks get their own variant.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum ExpressionKind {
+pub enum ExpressionKind {
     Identifier,
     StringLiteral,
     /// The text of `this="a"`, which Svelte turns into a string literal.
@@ -43,13 +43,15 @@ pub(crate) enum ExpressionKind {
 
 /// An expression. `span` is the node without its surrounding parentheses.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) struct Expression {
-    pub(crate) span: Span,
-    pub(crate) kind: ExpressionKind,
+pub struct Expression {
+    pub span: Span,
+    pub kind: ExpressionKind,
     /// Start of the first of its `leadingComments`, or of the node if it has none.
     pub(crate) from: u32,
     /// The node with its surrounding parentheses, plus the comments before, between and after them.
-    pub(crate) outer: Span,
+    pub outer: Span,
+    /// svelte-eslint-parser's `hasTypeInfo`: true if it states its own type, so no type is given to it.
+    pub has_type_info: bool,
 }
 
 impl Expression {
@@ -60,15 +62,21 @@ impl Expression {
             kind,
             from: span.start,
             outer: span,
+            has_type_info: false,
         }
+    }
+
+    /// The start of its first leading comment, or otherwise its own start.
+    pub fn from(self) -> u32 {
+        self.from
     }
 }
 
 /// A pattern, with its type annotation.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) struct Pattern {
+pub struct Pattern {
     /// Extends to the end of the annotation, unless the pattern is an identifier.
-    pub(crate) span: Span,
+    pub span: Span,
     /// `typeAnnotation.typeAnnotation`, starting at the first comment after the `:`.
     pub(crate) annotation: Option<Span>,
     /// True for comments in the pattern or in the annotation.
@@ -77,7 +85,7 @@ pub(crate) struct Pattern {
 
 impl Pattern {
     /// The span including the annotation, which an identifier's `span` excludes.
-    pub(crate) fn with_annotation(self) -> Span {
+    pub fn with_annotation(self) -> Span {
         Span {
             start: self.span.start,
             end: (self.annotation).map_or(self.span.end, |it| it.end.max(self.span.end)),
@@ -86,7 +94,7 @@ impl Pattern {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum ElementKind {
+pub enum ElementKind {
     RegularElement,
     Component,
     TitleElement,
@@ -104,7 +112,7 @@ pub(crate) enum ElementKind {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum DirectiveKind {
+pub enum DirectiveKind {
     Use,
     Animate,
     Bind,
@@ -131,7 +139,7 @@ impl DirectiveKind {
 
 /// `attribute.value`
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Value {
+pub enum Value {
     True,
     /// An `ExpressionTag`.
     Tag(Id),
@@ -141,7 +149,7 @@ pub(crate) enum Value {
 
 impl Value {
     /// Its `Text` and `ExpressionTag` nodes.
-    pub(crate) fn parts(&self) -> &[Id] {
+    pub fn parts(&self) -> &[Id] {
         match self {
             Value::True => &[],
             Value::Tag(tag) => std::slice::from_ref(tag),
@@ -151,22 +159,26 @@ impl Value {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Element<'a> {
-    pub(crate) kind: ElementKind,
-    pub(crate) name: &'a [u8],
-    pub(crate) attributes: Vec<Id>,
-    pub(crate) fragment: FragmentId,
+pub struct Element<'a> {
+    pub kind: ElementKind,
+    pub name: &'a [u8],
+    pub attributes: Vec<Id>,
+    pub fragment: FragmentId,
     /// `expression` of `<svelte:component this={..}>`, `tag` of `<svelte:element this={..}>`.
     pub(crate) this: Option<Expression>,
     /// The span of the `this` attribute, if its value has several parts and `this` above is only the first:
     /// `this="h{level}"`.
     pub(crate) multipart_this_attribute: Option<Span>,
+    /// The `this` attribute of `<svelte:component>` and `<svelte:element>`, which isn't in `attributes`.
+    pub this_definition: Option<Id>,
     /// Offset of the start tag's `>` or `/>`.
-    pub(crate) start_tag_end: u32,
+    pub start_tag_end: u32,
+    /// True if the start tag ends with `/>`.
+    pub is_self_closing: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum Kind<'a> {
+pub enum Kind<'a> {
     /// The printer trims it and merges adjacent text nodes.
     Text {
         raw: Cow<'a, [u8]>,
@@ -246,10 +258,10 @@ pub(crate) enum Kind<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Node<'a> {
-    pub(crate) kind: Kind<'a>,
-    pub(crate) start: u32,
-    pub(crate) end: u32,
+pub struct Node<'a> {
+    pub kind: Kind<'a>,
+    pub start: u32,
+    pub end: u32,
 }
 
 /// `//` or `/* */` between attributes, or in an expression.
@@ -260,20 +272,27 @@ pub(crate) struct Comment {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Tree<'a> {
+pub struct Tree<'a> {
     pub(crate) nodes: Vec<Node<'a>>,
     pub(crate) fragments: Vec<Vec<Id>>,
     /// `root.fragment`
-    pub(crate) fragment: FragmentId,
+    pub fragment: FragmentId,
     /// `<svelte:options>`, which isn't in the fragment.
-    pub(crate) options: Option<Id>,
-    pub(crate) module: Option<Id>,
-    pub(crate) instance: Option<Id>,
-    pub(crate) css: Option<Id>,
+    pub options: Option<Id>,
+    pub module: Option<Id>,
+    pub instance: Option<Id>,
+    pub css: Option<Id>,
     /// Only the comments between attributes.
     pub(crate) comments: Vec<Comment>,
     /// The plugin's `_svelte_ts` (a `<script>` or `<style>` has `lang="ts"`), or Svelte's `ts`.
     pub(crate) uses_typescript: bool,
+    /// The tags that open blocks, `{#if a}`, in reading order.
+    pub open_tags: Vec<(Id, Span)>,
+    /// The end tags of the elements and blocks that have one, `</p>` and `{/if}`, in reading order. An `{:else if}` has
+    /// the `{/if}` of its enclosing block.
+    pub end_tags: Vec<(Id, Span)>,
+    /// The tag that each clause fragment starts after: `{:else}`, `{:else if a}`, `{:then v}`, `{:catch e}`.
+    pub clause_tags: Vec<(FragmentId, Span)>,
 }
 
 impl<'a> Tree<'a> {
@@ -291,9 +310,27 @@ impl<'a> Tree<'a> {
         (self.fragments.len() - 1) as FragmentId
     }
 
-    pub(crate) fn fragment(&self, id: FragmentId) -> &[Id] {
+    pub fn fragment(&self, id: FragmentId) -> &[Id] {
         self.fragments.get(id as usize).map_or(&[], |it| &it[..])
     }
+
+    /// The component's top-level nodes in source order: the scripts, the style sheet, `<svelte:options>` and the
+    /// fragment's contents.
+    pub fn top_level(&self) -> Vec<Id> {
+        let outside = [self.module, self.instance, self.css, self.options];
+        let mut all: Vec<Id> = outside.into_iter().flatten().collect();
+        all.extend_from_slice(self.fragment(self.fragment));
+        crate::sort::sort_by_key(&mut all, |&it| self[it].start);
+        all
+    }
+}
+
+/// The span of `part` in `text`, if it's a slice of it, as the tree's names are: an `{#each}`'s index, a directive's
+/// name and a component's name.
+pub fn span_in(text: &[u8], part: &[u8]) -> Option<Span> {
+    let start = part.as_ptr().addr().checked_sub(text.as_ptr().addr())?;
+    let end = start.checked_add(part.len())?;
+    (end <= text.len()).then(|| Span::new(start, end))
 }
 
 impl<'a> std::ops::Index<Id> for Tree<'a> {

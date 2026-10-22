@@ -1616,6 +1616,249 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// A top-level statement in a style sheet, as `postcss-safe-parser` 7 has it.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SafeStatement {
+    /// A declaration, from its first word: its start and end (`source.start.offset`, `source.end.offset`), and the span
+    /// of `prop` without a leading `_` or `*`, which then comes before it.
+    Declaration {
+        start: u32,
+        end: u32,
+        prop: (u32, u32),
+    },
+    Comment {
+        start: u32,
+        end: u32,
+    },
+}
+
+/// What eslint-plugin-svelte 3's `TemplateSafeParser` produces for `css`, the value of a component's `style` attribute:
+/// `postcss-safe-parser` 7 on `postcss` 8.5's tokens with `ignoreErrors`, where `templateTokenize` makes one word from
+/// a `{` up to its `}`. So there are no blocks. `None` if there's an at-rule, in which case the plugin doesn't read the
+/// value. Offsets are bytes of `css`. Where `postcss` would leave a position `undefined` or `0` and fall back to the
+/// next one (`token[3] || token[2]`), so does this.
+pub fn parse_safe_template(css: &[u8]) -> Option<Vec<SafeStatement>> {
+    if css.len() >= (u32::MAX / 2) as usize {
+        return None;
+    }
+    let mut parser = SafeParser {
+        css,
+        tokenizer: Tokenizer {
+            css,
+            syntax: Syntax::Css,
+            rejection: Rejection::default(),
+            pos: 0,
+            shift: 0,
+            buffer: Vec::new(),
+            returned: Vec::new(),
+            last_bad_paren: None,
+            next_close: None,
+        },
+        statements: Vec::new(),
+        has_block: false,
+    };
+    while !parser.tokenizer.end_of_file() {
+        let token = parser.next()?;
+        match token.kind {
+            TokenKind::Space | TokenKind::Control(b';' | b'}') => {}
+            TokenKind::Comment => parser.statements.push(SafeStatement::Comment {
+                start: token.start,
+                end: token.last.unwrap_or(token.start) + 1,
+            }),
+            TokenKind::AtWord | TokenKind::Control(b'{') => return None,
+            _ => parser.other(token),
+        }
+        if parser.has_block {
+            return None;
+        }
+    }
+    Some(parser.statements)
+}
+
+/// JavaScript's `a || b` for two positions, where `0` also counts as no position.
+fn either(a: Option<u32>, b: Option<u32>) -> Option<u32> {
+    a.filter(|&it| it != 0).or(b)
+}
+
+/// `token[2]`, which a space doesn't have.
+fn start_of(token: Token) -> Option<u32> {
+    (token.kind != TokenKind::Space).then_some(token.start)
+}
+
+struct SafeParser<'a> {
+    css: &'a [u8],
+    tokenizer: Tokenizer<'a>,
+    statements: Vec<SafeStatement>,
+    /// True once a rule has started, which the plugin doesn't read either.
+    has_block: bool,
+}
+
+impl SafeParser<'_> {
+    /// `templateTokenize`'s `nextToken`.
+    fn next(&mut self) -> Option<Token> {
+        let mut depth = 0i32;
+        let mut merged: Option<(Token, Option<u32>, u32)> = None;
+        while let Some(token) = self.tokenizer.next_token(true).ok().flatten() {
+            match token.kind {
+                TokenKind::Control(b'{') => depth += 1,
+                TokenKind::Control(b'}') => depth -= 1,
+                _ => {}
+            }
+            if depth != 0 || merged.is_some() {
+                let last = merged.as_ref().and_then(|it| it.1);
+                let last = either(either(token.last, start_of(token)), last);
+                let first = merged.map_or(token, |it| it.0);
+                merged = Some((first, last, token.range.end));
+            }
+            if depth == 0 {
+                match merged {
+                    None => return Some(token),
+                    Some(_) => break,
+                }
+            }
+        }
+        let (first, last, end) = merged?;
+        Some(Token {
+            kind: TokenKind::Word,
+            range: Range::new(first.range.start, end),
+            start: first.start,
+            last,
+            inline: false,
+        })
+    }
+
+    /// `postcss`'s `Parser#other`.
+    fn other(&mut self, start: Token) {
+        let is_custom = start.range.of(self.css).starts_with(b"--");
+        let (mut tokens, mut brackets, mut colon, mut end) = (Vec::new(), Vec::new(), false, false);
+        let mut next = Some(start);
+        while let Some(token) = next {
+            tokens.push(token);
+            match token.kind {
+                TokenKind::Control(b'(') => brackets.push(b')'),
+                TokenKind::Control(b'[') => brackets.push(b']'),
+                TokenKind::Control(b'{') if is_custom && colon => brackets.push(b'}'),
+                TokenKind::Control(control) if brackets.is_empty() => match control {
+                    b';' if colon => return self.decl(&tokens),
+                    b';' => break,
+                    b'{' => {
+                        self.has_block = true;
+                        return;
+                    }
+                    b'}' => {
+                        self.tokenizer.back(tokens.pop());
+                        end = true;
+                        break;
+                    }
+                    b':' => colon = true,
+                    _ => {}
+                },
+                TokenKind::Control(control) if brackets.last() == Some(&control) => {
+                    brackets.pop();
+                }
+                _ => {}
+            }
+            next = self.next();
+        }
+        end |= self.tokenizer.end_of_file();
+        if end && colon {
+            if !is_custom {
+                while tokens.last().is_some_and(|it| it.is_space_or_comment()) {
+                    self.tokenizer.back(tokens.pop());
+                }
+            }
+            self.decl(&tokens);
+        }
+    }
+
+    /// `postcss-safe-parser`'s `decl`: `postcss`'s, where a word spans several tokens. The safe parser's
+    /// `precheckMissedSemicolon` makes a separate declaration of what follows a word before a second `:`, and so on,
+    /// which is a loop here where `postcss` recurses.
+    fn decl(&mut self, mut tokens: &[Token]) {
+        loop {
+            if tokens.len() < 2 || !tokens.iter().any(|it| it.kind == TokenKind::Word) {
+                return;
+            }
+            let Some((&last, before)) = tokens.split_last() else {
+                return;
+            };
+            if last.is(b';') {
+                tokens = before;
+            }
+            let positioned = (tokens.iter().rev())
+                .find_map(|it| either(it.last, start_of(*it)).filter(|&at| at != 0));
+            let end = either(either(last.last, start_of(last)), positioned).unwrap_or(0) + 1;
+            let Some(mut at) = tokens.iter().position(|it| it.kind == TokenKind::Word) else {
+                return;
+            };
+            let prop_start = at;
+            while tokens
+                .get(at)
+                .is_some_and(|it| !it.is(b':') && !it.is_space_or_comment())
+            {
+                at += 1;
+            }
+            let (first, mut prop) = (tokens[prop_start], Range::new(0, 0));
+            if let Some(prop_end) = at.checked_sub(1).and_then(|it| tokens.get(it)) {
+                prop = Range::new(first.range.start, prop_end.range.end);
+            }
+            if matches!(prop.of(self.css).first(), Some(b'_' | b'*')) {
+                prop.start += 1;
+            }
+            self.statements.push(SafeStatement::Declaration {
+                start: first.start,
+                end,
+                prop: (prop.start, prop.end),
+            });
+            while let Some(token) = tokens.get(at) {
+                at += 1;
+                if token.is(b':') {
+                    break;
+                }
+            }
+            while tokens.get(at).is_some_and(|it| it.is_space_or_comment()) {
+                at += 1;
+            }
+            let value = tokens.get(at..).unwrap_or_default();
+            let Some(colon) = self.colon(value) else {
+                return;
+            };
+            let word = (0..colon)
+                .rev()
+                .find(|&it| value[it].kind == TokenKind::Word);
+            match word.filter(|&it| it > 0) {
+                Some(next_start) => tokens = &value[next_start..],
+                None => return,
+            }
+        }
+    }
+
+    /// `postcss`'s `Parser#colon`, whose `doubleColon` the safe parser leaves alone.
+    fn colon(&self, tokens: &[Token]) -> Option<usize> {
+        let (mut brackets, mut prev) = (0i32, None::<Token>);
+        for (i, &token) in tokens.iter().enumerate() {
+            match token.kind {
+                TokenKind::Control(b'(') => brackets += 1,
+                TokenKind::Control(b')') => brackets -= 1,
+                _ => {}
+            }
+            if brackets == 0 && token.is(b':') {
+                match prev {
+                    None => {}
+                    Some(it)
+                        if it.kind == TokenKind::Word && it.range.of(self.css) == b"progid" =>
+                    {
+                        continue;
+                    }
+                    Some(_) => return Some(i),
+                }
+            }
+            prev = Some(token);
+        }
+        None
+    }
+}
+
 pub(crate) fn parse(
     css: &[u8],
     syntax: Syntax,

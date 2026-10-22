@@ -2364,6 +2364,17 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
 
   test.each<[string, string, string, [line: number, column: number, text: string]]>([
     ["in the markup", "<div>\n  <p>a</p>\n", "Unclosed element", [1, 1, "<div>"]],
+    // Reported where the unclosed element opens, though Svelte reports it at the end of the file.
+    ["a <script> that is not closed", "<p>a</p>\n<script>\n  let a;\n", "Unclosed element", [2, 1, "<script>"]],
+    ["a <style> that is not closed", "<style>\n  a {\n  }\n", "Unclosed element", [1, 1, "<style>"]],
+    [
+      "a <script> in an element",
+      "<div>\n  <script>let a;</div>\n",
+      "Unclosed element",
+      [2, 3, "  <script>let a;</div>"],
+    ],
+    // An arrow function is kept once its `=>` is read, and the error is in its body.
+    ["an arrow function without a body", "<p>{((x)=>)}</p>\n", "Unexpected token", [1, 11, "<p>{((x)=>)}</p>"]],
     [
       "in an expression, after a script and a style sheet",
       "<script>\n  let a;\n</script>\n<style>\n  a {\n  }\n</style>\n<p>{a +}</p>\n",

@@ -776,7 +776,9 @@ fn signature(
     sensitivity: HtmlWhitespaceSensitivity,
 ) -> Option<(Signature, u32)> {
     let text = super::trimmed(text);
-    let tree = parsers.tree_of(text).ok()?;
+    let tree = parsers
+        .tree_of(text, 0, super::parser::ReadFor::Formatting)
+        .ok()?;
     let mut check = Check {
         tree: &tree,
         text,

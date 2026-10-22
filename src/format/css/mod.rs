@@ -17,6 +17,8 @@ mod sink;
 mod value_groups;
 mod value_parser;
 
+pub use self::postcss::{SafeStatement, parse_safe_template};
+
 use self::doc::Doc;
 use self::memo::Memo;
 use self::sink::Sink;

@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -1233,6 +1233,348 @@ describe("bundler", () => {
     },
     run: {
       stdout: "function/undefined",
+    },
+  });
+
+  // ============================================================================
+  // A CommonJS module whose evaluation threw is not loaded. __commonJS runs it
+  // again on the next load, as Node's require() does. Unless a test says
+  // otherwise, the expected output is what `node` prints for the source files.
+  // ============================================================================
+
+  const throwsOnLoad = /* js */ `
+    exports.v = 1;
+    globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
+    throw new Error("boom");
+  `;
+  const requireTwice = /* js */ `
+    for (let i = 1; i <= 2; i++) {
+      try {
+        console.log(i, "loaded", JSON.stringify(require("./thrower.cjs")));
+      } catch (e) {
+        console.log(i, "threw", e.message);
+      }
+    }
+    console.log("evaluations:", globalThis.evaluations);
+  `;
+  const minify = { minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: true };
+
+  // Test 63: require() twice. The second call throws again. It does not return
+  // the half-filled exports of the first.
+  for (const [variant, options] of [
+    ["esm", { format: "esm" }],
+    ["cjs", { format: "cjs" }],
+    ["esm_minify", { format: "esm", ...minify }],
+    ["cjs_minify_cli", { format: "cjs", backend: "cli", ...minify }],
+    ["bytecode", { bytecode: true }],
+  ] as const) {
+    itBundled(`cjs/__commonJS_throw_require_twice_${variant}`, {
+      files: {
+        "/entry.cjs": requireTwice,
+        "/thrower.cjs": throwsOnLoad,
+      },
+      ...options,
+      run: {
+        stdout: "1 threw boom\n2 threw boom\nevaluations: 2",
+      },
+    });
+  }
+
+  const requireThreeTimes = /* js */ `
+    const seen = [];
+    for (let i = 1; i <= 3; i++) {
+      try {
+        seen.push(require("./flaky.cjs"));
+      } catch (e) {
+        seen.push(e.message);
+      }
+    }
+    console.log(JSON.stringify(seen), seen[1] === seen[2], "evaluations:", globalThis.evaluations);
+  `;
+
+  // Test 64: a module that fails once loads on the second call. The third call
+  // returns the object of the second call.
+  itBundled("cjs/__commonJS_throw_then_load", {
+    files: {
+      "/entry.cjs": requireThreeTimes,
+      "/flaky.cjs": /* js */ `
+        globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
+        exports.attempt = globalThis.evaluations;
+        if (globalThis.evaluations === 1) throw new Error("not ready");
+        exports.ready = true;
+      `,
+    },
+    run: {
+      stdout: `["not ready",{"attempt":2,"ready":true},{"attempt":2,"ready":true}] true evaluations: 2`,
+    },
+  });
+
+  // Test 65: the module record decides, not the value of module.exports. A
+  // module that sets module.exports to null is loaded and does not run again.
+  itBundled("cjs/__commonJS_throw_then_null_module_exports", {
+    files: {
+      "/entry.cjs": requireThreeTimes,
+      "/flaky.cjs": /* js */ `
+        globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
+        if (globalThis.evaluations === 1) throw new Error("not ready");
+        module.exports = null;
+      `,
+    },
+    run: {
+      stdout: `["not ready",null,null] true evaluations: 2`,
+    },
+  });
+
+  // Test 66: a cycle where the inner module throws. a.cjs catches the error and
+  // completes. b.cjs is not loaded, so the next require() runs it again.
+  itBundled("cjs/__commonJS_throw_inner_module_of_cycle", {
+    files: {
+      "/entry.cjs": /* js */ `
+        require("./a.cjs");
+        console.log(JSON.stringify(require("./b.cjs")), "a:", globalThis.a, "b:", globalThis.b);
+      `,
+      "/a.cjs": /* js */ `
+        globalThis.a = (globalThis.a ?? 0) + 1;
+        try {
+          require("./b.cjs");
+        } catch {}
+        exports.complete = true;
+      `,
+      "/b.cjs": /* js */ `
+        globalThis.b = (globalThis.b ?? 0) + 1;
+        if (!require("./a.cjs").complete) throw new Error("a is not ready");
+        exports.ok = true;
+      `,
+    },
+    run: {
+      stdout: `{"ok":true} a: 1 b: 2`,
+    },
+  });
+
+  // Test 67: a cycle where the outer module throws. b.cjs is loaded and keeps
+  // the exports of the failed a.cjs. The next require() of a.cjs runs it again.
+  itBundled("cjs/__commonJS_throw_outer_module_of_cycle", {
+    files: {
+      "/entry.cjs": /* js */ `
+        for (let i = 1; i <= 2; i++) {
+          try {
+            console.log(i, "loaded", JSON.stringify(require("./a.cjs")));
+          } catch (e) {
+            console.log(i, "threw", e.message);
+          }
+        }
+        console.log("b saw a:", require("./b.cjs").sawA, "a:", globalThis.a, "b:", globalThis.b);
+      `,
+      "/a.cjs": /* js */ `
+        globalThis.a = (globalThis.a ?? 0) + 1;
+        exports.id = globalThis.a;
+        require("./b.cjs");
+        if (globalThis.a === 1) throw new Error("a failed");
+      `,
+      "/b.cjs": /* js */ `
+        globalThis.b = (globalThis.b ?? 0) + 1;
+        exports.sawA = require("./a.cjs").id;
+      `,
+    },
+    run: {
+      stdout: `1 threw a failed\n2 loaded {"id":2}\nb saw a: 1 a: 2 b: 1`,
+    },
+  });
+
+  // Test 68: an error that goes up through a parent module leaves the parent
+  // and the child not loaded. Both run again.
+  itBundled("cjs/__commonJS_throw_through_parent", {
+    files: {
+      "/entry.cjs": /* js */ `
+        for (let i = 1; i <= 2; i++) {
+          try {
+            console.log(i, "loaded", JSON.stringify(require("./parent.cjs")));
+          } catch (e) {
+            console.log(i, "threw", e.message);
+          }
+        }
+        console.log("parent:", globalThis.parent, "child:", globalThis.child);
+      `,
+      "/parent.cjs": /* js */ `
+        globalThis.parent = (globalThis.parent ?? 0) + 1;
+        exports.child = require("./child.cjs");
+      `,
+      "/child.cjs": /* js */ `
+        globalThis.child = (globalThis.child ?? 0) + 1;
+        if (globalThis.child === 1) throw new Error("child failed");
+        exports.ok = true;
+      `,
+    },
+    run: {
+      stdout: `1 threw child failed\n2 loaded {"child":{"ok":true}}\nparent: 2 child: 2`,
+    },
+  });
+
+  // Test 69: a lazy getter that tries an optional native module first. Each
+  // call gets the fallback.
+  itBundled("cjs/__commonJS_throw_optional_module_fallback", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function impl() {
+          try {
+            return require("./native.cjs");
+          } catch {
+            return require("./fallback.cjs");
+          }
+        }
+        for (const s of ["a", "b"]) {
+          const m = impl();
+          console.log(m.name, typeof m.hash);
+        }
+      `,
+      "/native.cjs": /* js */ `
+        exports.name = "native";
+        throw new Error("the native addon is not there");
+      `,
+      "/fallback.cjs": /* js */ `
+        exports.name = "fallback";
+        exports.hash = s => "js:" + s;
+      `,
+    },
+    run: {
+      stdout: "fallback function\nfallback function",
+    },
+  });
+
+  // Test 70: import() of the module rejects each time. It does not fulfill
+  // with the half-filled namespace.
+  for (const format of ["esm", "iife"] as const) {
+    itBundled(`cjs/__commonJS_throw_import_twice_${format}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          async function main() {
+            for (let i = 1; i <= 2; i++)
+              await import("./thrower.cjs").then(
+                ns => console.log(i, "fulfilled", JSON.stringify(ns)),
+                e => console.log(i, "rejected", e.message),
+              );
+          }
+          main();
+        `,
+        "/thrower.cjs": throwsOnLoad,
+      },
+      format,
+      run: {
+        stdout: "1 rejected boom\n2 rejected boom",
+      },
+    });
+  }
+
+  // Test 71: a second ES module that imports the failed module, and an
+  // `export *` of it, reject too. The expected output is what `bun run`
+  // prints for the source files.
+  itBundled("cjs/__commonJS_throw_second_static_importer", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const rejected = name => e => console.log(name, "rejected", e.message);
+        const fulfilled = name => ns => console.log(name, "fulfilled", JSON.stringify(ns));
+        async function main() {
+          await import("./default.mjs").then(fulfilled("default"), rejected("default"));
+          await import("./star.mjs").then(fulfilled("star"), rejected("star"));
+          await import("./reexport.mjs").then(fulfilled("reexport"), rejected("reexport"));
+        }
+        main();
+      `,
+      "/default.mjs": /* js */ `
+        import thrower from "./thrower.cjs";
+        export const v = thrower.v;
+      `,
+      "/star.mjs": /* js */ `
+        import * as thrower from "./thrower.cjs";
+        export const keys = Object.keys(thrower);
+      `,
+      "/reexport.mjs": /* js */ `
+        export * from "./thrower.cjs";
+      `,
+      "/thrower.cjs": /* js */ `
+        module.exports = { v: 1 };
+        throw new Error("boom");
+      `,
+    },
+    run: {
+      stdout: "default rejected boom\nstar rejected boom\nreexport rejected boom",
+    },
+  });
+
+  // Test 72: with --splitting, require() after a failed import() of the same
+  // module throws and runs the module again.
+  itBundled("cjs/__commonJS_throw_splitting_require_after_import", {
+    files: {
+      "/entry.js": /* js */ `
+        import("./thrower.cjs")
+          .then(
+            () => console.log("import() fulfilled"),
+            e => console.log("import() rejected", e.message),
+          )
+          .then(() => {
+            try {
+              console.log("require() loaded", JSON.stringify(require("./thrower.cjs")));
+            } catch (e) {
+              console.log("require() threw", e.message);
+            }
+            console.log("evaluations:", globalThis.evaluations);
+          });
+      `,
+      "/thrower.cjs": throwsOnLoad,
+    },
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/entry.js",
+      stdout: "import() rejected boom\nrequire() threw boom\nevaluations: 2",
+    },
+  });
+
+  const throwSiteDep = /* js */ `
+    exports.name = "dep";
+    throw new Error("dep failed to load");
+  `;
+
+  // Test 73: __commonJS resets with `finally` and does not rethrow, so the
+  // module's own `throw` stays the reported throw site of an uncaught
+  // load-time error. A `catch` that rethrows makes the helper the throw site.
+  itBundled("cjs/__commonJS_throw_site_is_the_module", {
+    files: {
+      "/entry.cjs": /* js */ `
+        try {
+          require("./dep.cjs");
+        } catch {}
+        queueMicrotask(() => require("./dep.cjs"));
+      `,
+      "/dep.cjs": throwSiteDep,
+    },
+    run: {
+      error: "error: dep failed to load",
+      errorLineMatch: /throw new Error\("dep failed to load"\)/,
+    },
+  });
+
+  // Test 74: the same under node, which prints the source line of the throw
+  // site in its report of an uncaught error.
+  itBundled("cjs/__commonJS_throw_site_is_the_module_node", {
+    files: {
+      "/entry.cjs": /* js */ `
+        try {
+          require("./dep.cjs");
+        } catch {}
+        require("./dep.cjs");
+      `,
+      "/dep.cjs": throwSiteDep,
+    },
+    format: "cjs",
+    target: "node",
+    run: {
+      runtime: "node",
+      error: "Error: dep failed to load",
+      validate({ stderr }) {
+        expect(stderr).toContain('throw new Error("dep failed to load");');
+        expect(stderr).toContain("Error: dep failed to load");
+      },
     },
   });
 });

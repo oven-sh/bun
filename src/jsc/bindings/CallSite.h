@@ -53,6 +53,17 @@ public:
         return callSite;
     }
 
+    // For a frame of a trace that a collection formatted. getFunction() is undefined, and the position is the one in stackString.
+    static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame)
+    {
+        auto& vm = JSC::getVM(globalObject);
+        CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
+        callSite->finishCreation(vm, stackString, collectedFrame);
+        return callSite;
+    }
+
+    static unsigned int flagsOf(JSCStackFrame& stackFrame, bool encounteredStrictFrame);
+
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -99,6 +110,7 @@ private:
     }
 
     void finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
+    void finishCreation(VM& vm, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame);
 
     DECLARE_VISIT_CHILDREN;
 };

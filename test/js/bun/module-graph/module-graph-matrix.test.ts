@@ -960,7 +960,7 @@ export function capture(message) {
     return error;
   }
 }
-// Two errors with the same trace: one to compare, one to find out how it was materialized.
+// Two errors with the same trace: one to read as a string, one to read through Error.prepareStackTrace.
 export function pair(message) {
   const errors = [capture(message), capture(message)];
   return errors;
@@ -993,9 +993,12 @@ async function collect() {
   await tick();
   Bun.gc(true);
 }
-// graph.run(...args) under a function that is garbage once it returns. Its frame is not one of the
-// graphs' modules, so graphFrames() leaves it out.
-const underDeadFrame = (graph, args) => new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}')(graph, args);
+// graph.run(...args) under a function that is garbage once it returns, and a WeakRef that tells whether it
+// was collected. Its frame is not one of the graphs' modules, so graphFrames() leaves it out.
+const underDeadFrame = (graph, args) => {
+  const deadFrame = new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}');
+  return [...deadFrame(graph, args), new WeakRef(deadFrame)];
+};
 
 // Whether a root reaches the graph that globalThis.__matrixProbe.weak points at. A WeakRef that still
 // derefs says only that the cell was marked, not that anything holds it; the debugging snapshot has
@@ -1063,9 +1066,11 @@ const graphFrames = stack =>
     .filter((line, index) => index === 0 || /[\\/](origin|other)\.mjs:/.test(line))
     .map(line => line.replace(/\(?[^()]*[\\/]((?:origin|other)\.mjs:\d+:\d+)\)?/, "$1"));
 
-// How a first read finds a stack, seen on the error's twin (same trace, same dead frame): a
-// prepareStackTrace installed for the read is consulted only if the stack is not a string yet.
-function firstReadPath([, twin]) {
+// How a first read finds a stack: already a string ("early") if a collection found the dead frame's function dead.
+const firstReadPath = ([, , deadFrame]) => (deadFrame.deref() === undefined ? "early" : "on access");
+
+// Whether a prepareStackTrace installed for the first read of the pair's second error is consulted.
+function consultsPrepareStackTrace([, twin]) {
   let consulted = false;
   const builtin = Error.prepareStackTrace;
   Error.prepareStackTrace = () => ((consulted = true), "");
@@ -1074,7 +1079,7 @@ function firstReadPath([, twin]) {
   } finally {
     Error.prepareStackTrace = builtin;
   }
-  return consulted ? "on access" : "early";
+  return consulted;
 }
 
 // A cell up to the point where the collection may pass over it. A cell with no collection is done here.
@@ -1104,7 +1109,7 @@ function finish({ gc, firstRead, reader, read, weak, candidates, pair, path, bef
     origin = rootReachesProbedGraph() ? "rooted" : "gone";
     delete globalThis.__matrixProbe;
   }
-  return { gc, firstRead, reader, path, stack: graphFrames(after), stable: before === undefined || before === after, origin };
+  return { gc, firstRead, reader, path, consulted: consultsPrepareStackTrace(pair), stack: graphFrames(after), stable: before === undefined || before === after, origin };
 }
 
 // Every cell is set up first, and one collection passes over all of them.
@@ -1164,6 +1169,7 @@ void kept;
             reader,
             // Only an unread stack that collections passed over is materialized by one.
             path: firstRead === "after" && gc !== "none" ? "early" : "on access",
+            consulted: true,
             stack: frames[trace],
             stable: true,
             origin: gc === "collected" ? "gone" : "alive",

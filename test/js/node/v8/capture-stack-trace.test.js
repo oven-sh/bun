@@ -1557,25 +1557,23 @@ test("lazy error-info materialization does not store an empty stack value when t
 
 // A collection that finds a frame of an unread trace dead turns the frames into a string before they are
 // lost (ErrorInstance::reconcileWeakReferencesAtGCEnd), and `.stack` must then read as it does when it
-// is materialized on access. Known exceptions: an installed Error.prepareStackTrace (it needs the
-// trace), a SyntaxError's "at <parse>" line, and the positions of node:vm frames in a transpiled file.
+// is materialized on access. Known exceptions: a call site's column and getFunction(), a wasm call site's
+// function name, a SyntaxError's "at <parse>" line, and the positions of node:vm frames in a transpiled file.
 //
 // Whether the collection materializes a given stack is not up to the test, so each shape makes several
-// errors, each under its own functions that are garbage once they return, and each with a twin: a plain
-// Error made in the same frames, so a collection that materializes the twin's stack (its frames are
-// among the error's) materializes the error's too. A prepareStackTrace installed for a read is consulted
-// only if the stack is not a string yet, which the twin tells whatever the error's name, message or
-// realm is. The errors whose twin was materialized are the ones compared, and there must be one.
+// errors, each under its own function that is garbage once it returns. The errors whose function a
+// WeakRef says was collected are the ones compared, and there must be one.
 const materializedByACollection = `
   const SAMPLES = 8;
-  const twins = new WeakMap();
+  const deadFrames = new WeakMap();
   // The finally blocks keep every return out of tail position.
   const capture = make => {
-    const [error, twin] = new Function(
+    const deadFrame = new Function(
       "make",
-      '"use strict"; function thrower() { try { return [make(), new Error("twin")]; } finally {} } try { return thrower(); } finally {}',
-    )(make);
-    twins.set(error, twin);
+      '"use strict"; function thrower() { try { return make(); } finally {} } try { return thrower(); } finally {}',
+    );
+    const error = deadFrame(make);
+    deadFrames.set(error, new WeakRef(deadFrame));
     return error;
   };
   // One on-access error and SAMPLES more from one call site, so every trace reads the same to the column.
@@ -1584,14 +1582,7 @@ const materializedByACollection = `
     await new Promise(resolve => setImmediate(resolve));
     Bun.gc(true);
   };
-  const materialized = error => {
-    let consulted = false;
-    const builtin = Error.prepareStackTrace;
-    Error.prepareStackTrace = () => ((consulted = true), "");
-    void twins.get(error).stack;
-    Error.prepareStackTrace = builtin;
-    return !consulted;
-  };
+  const materialized = error => deadFrames.get(error).deref() === undefined;
   // read(error) for each sample the collection materialized.
   const readMaterialized = (samples, read) => samples.filter(materialized).map(read);
 `;
@@ -1729,7 +1720,15 @@ test.concurrent(
   "an error whose stack a collection materialized behaves as one whose stack is materialized on access",
   async () => {
     const src = `
+    import vm from "node:vm";
     ${materializedByACollection}
+    const errorAStreamThatIsRead = error => {
+      let controller;
+      const reader = new ReadableStream({ start: c => void (controller = c) }).getReader();
+      (async function awaitsRead() { await reader.read(); })().catch(() => {});
+      controller.error(error);
+    };
+    const captureStackTraceOfAContext = vm.runInContext("Error.captureStackTrace", vm.createContext({}));
     const operations = {
       "line, column, sourceURL": error => [error.line, error.column, typeof error.sourceURL],
       "assign stack": error => ((error.stack = "assigned"), error.stack),
@@ -1739,6 +1738,15 @@ test.concurrent(
       "structuredClone": error => structuredClone(error).stack.split("\\n").filter(line => line.includes("boom")),
       "Bun.inspect": error => Bun.inspect(error).split("\\n").filter(line => line.includes("boom")).map(line => line.trim()),
       "JSON.stringify": error => JSON.stringify(error),
+      "given to a stream": error => (errorAStreamThatIsRead(error), error.stack.includes("at thrower")),
+      "printed, then given to a stream": error => (Bun.inspect(error), errorAStreamThatIsRead(error), error.stack.includes("at thrower")),
+      "printed, then Error.appendStackTrace": error => (Bun.inspect(error), Error.appendStackTrace(new Error("source"), error), error.stack.includes("at thrower")),
+      "not extensible, captureStackTrace of a node:vm context, assign stack, printed": error => {
+        Object.preventExtensions(error);
+        captureStackTraceOfAContext(error);
+        error.stack = "Error: assigned\\n    at assigned (/assigned.js:1:1)";
+        return Bun.inspect(error).includes("at assigned");
+      },
     };
     const rows = {};
     for (const [name, operation] of Object.entries(operations)) {
@@ -1762,6 +1770,10 @@ test.concurrent(
       "structuredClone": row(["TypeError: boom"]),
       "Bun.inspect": row([expect.stringContaining("TypeError: boom")]),
       "JSON.stringify": row(expect.any(String)),
+      "given to a stream": row(true),
+      "printed, then given to a stream": row(true),
+      "printed, then Error.appendStackTrace": row(true),
+      "not extensible, captureStackTrace of a node:vm context, assign stack, printed": row(true),
     });
     expect(exitCode).toBe(0);
   },
@@ -1819,6 +1831,171 @@ test.concurrent("a stack that a collection materializes reads the same in a Work
   });
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("Error.prepareStackTrace gets the call sites of a stack that a collection materialized", async () => {
+  const src = `
+    ${materializedByACollection}
+    const is = ["isToplevel", "isEval", "isNative", "isConstructor", "isAsync"];
+    // What is compared of a call site; the column and getFunction() differ. The functions that die are a script of
+    // their own in each sample, so a script id is told by where in the trace it first appears. 0 is no script.
+    Error.prepareStackTrace = (error, callSites) => {
+      const scriptIds = [0, ...new Set(callSites.map(site => site.getScriptId()).filter(Boolean))];
+      return callSites.map(site => ({
+        name: site.getFunctionName(),
+        file: site.getFileName(),
+        line: site.getLineNumber(),
+        script: scriptIds.indexOf(site.getScriptId()),
+        is: is.filter(method => site[method]()).join(" "),
+        text: site.toString().replace(/:\\d+\\)?$/, ""),
+      }));
+    };
+    const shapes = {
+      "in a strict function": () => { "use strict"; try { return new Error("boom"); } finally {} },
+      "in a sloppy function": new Function('try { return new Error("boom"); } finally {}'),
+      "in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
+      "in eval code": () => (0, eval)("new Error('boom')"),
+      "under a builtin": () => [0].map(() => { try { return new Error("boom"); } finally {} })[0],
+      "under a host function": () => JSON.parse("0", () => { try { return new Error("boom"); } finally {} }),
+    };
+    const framesToShow = { "under a builtin": 2, "under a host function": 2 };
+    const cases = Object.entries(shapes).map(([shape, make]) => {
+      const [onAccess, ...samples] = captureAll(make);
+      return { shape, expected: onAccess.stack, samples };
+    });
+    // After an await the trace has only the async functions, so one of them is the function that dies.
+    const afterAnAwait = () => {
+      const [promise, deadFrame] = new Function(
+        '"use strict"; async function inner() { await 1; try { return new Error("boom"); } finally {} } async function outer() { return await inner(); } return [outer(), inner];',
+      )();
+      return promise.then(error => (deadFrames.set(error, new WeakRef(deadFrame)), error));
+    };
+    const [onAccess, ...samples] = await Promise.all(Array.from({ length: 1 + SAMPLES }, afterAnAwait));
+    cases.push({ shape: "after an await", expected: onAccess.stack, samples });
+    framesToShow["after an await"] = 2;
+
+    await collect();
+    const rows = {};
+    for (const { shape, expected, samples } of cases) {
+      const stacks = readMaterialized(samples, error => JSON.stringify(error.stack));
+      rows[shape] = {
+        materializedByACollection: stacks.length > 0,
+        same: stacks.every(stack => stack === JSON.stringify(expected)),
+        frames: expected.slice(0, framesToShow[shape] ?? 1).map(({ name, script, is }) => [name, script, is]),
+      };
+    }
+    console.log(JSON.stringify(rows));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const row = (...frames) => ({ materializedByACollection: true, same: true, frames });
+  expect(JSON.parse(stdout)).toEqual({
+    "in a strict function": row(["in a strict function", 1, "isToplevel"]),
+    "in a sloppy function": row(["anonymous", 1, ""]),
+    "in a constructor": row(["Widget", 1, "isToplevel isConstructor"]),
+    "in eval code": row(["", 1, "isToplevel isEval"]),
+    "under a builtin": row(["", 1, "isToplevel"], ["map", 0, "isToplevel isNative"]),
+    "under a host function": row(["", 1, "isToplevel"], ["parse", 0, "isToplevel isNative"]),
+    "after an await": row(["inner", 1, "isToplevel"], ["outer", 1, "isToplevel isAsync"]),
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent(
+  "Error.prepareStackTrace is used for a stack that a collection materialized as it is on access",
+  async () => {
+    const src = `
+    import vm from "node:vm";
+    ${materializedByACollection}
+    const count = (error, callSites) => "call sites: " + callSites.length;
+    const install = formatter => read => error => {
+      Error.prepareStackTrace = formatter;
+      try {
+        return read(error);
+      } finally {
+        Error.prepareStackTrace = undefined;
+      }
+    };
+    const context = vm.createContext({});
+    vm.runInContext("Error.prepareStackTrace = (error, callSites) => 'context: ' + callSites.length", context);
+    const uses = {
+      "installed for the read": [() => new Error("boom"), install(count)(error => error.stack)],
+      "reads error.stack": [() => new Error("boom"), install(error => error.stack.split("\\n")[0])(error => error.stack)],
+      "throws": [
+        () => new Error("boom"),
+        install(() => { throw new Error("from the formatter"); })(error => {
+          try {
+            return error.stack;
+          } catch (thrown) {
+            return [thrown.message, error.stack.split("\\n")[0]];
+          }
+        }),
+      ],
+      "called once": [
+        () => new Error("boom"),
+        error => {
+          let calls = 0;
+          install(() => ++calls)(error => [error.stack, error.stack, error.line && error.stack])(error);
+          return calls;
+        },
+      ],
+      "after Error.captureStackTrace": [
+        () => { const error = new Error("boom"); Error.captureStackTrace(error); return error; },
+        install(count)(error => error.stack),
+      ],
+      "of a node:vm context": [() => vm.runInContext("new Error('boom')", context), error => error.stack],
+      "not called to print, and called for a read after it": [
+        () => new Error("boom"),
+        error => {
+          let calls = 0;
+          return install(() => ++calls)(error => [Bun.inspect(error).includes("at thrower"), calls, error.stack])(error);
+        },
+      ],
+      "not called to print a stack whose text has no frame to parse": [
+        Object.defineProperty(() => { try { return new Error("boom"); } finally {} }, "name", { value: "two\\nlines" }),
+        error => {
+          let calls = 0;
+          return install(() => ++calls)(error => (Bun.inspect(error), [calls, error.stack !== undefined]))(error);
+        },
+      ],
+      "read by the stack getter of an error that is printed": [
+        () => new Error("boom"),
+        install(count)(error => {
+          Bun.inspect(Object.defineProperty(new Error("printed"), "stack", { get: () => error.stack }));
+          return error.stack;
+        }),
+      ],
+    };
+    const cases = Object.entries(uses).map(([use, [make, read]]) => {
+      const [onAccess, ...samples] = captureAll(make);
+      return { use, read, expected: read(onAccess), samples };
+    });
+    await collect();
+    const rows = {};
+    for (const { use, read, expected, samples } of cases) {
+      const results = readMaterialized(samples, error => JSON.stringify(read(error)));
+      rows[use] = { materializedByACollection: results.length > 0, same: results.every(result => result === JSON.stringify(expected)), onAccess: expected };
+    }
+    console.log(JSON.stringify(rows));
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const row = onAccess => ({ materializedByACollection: true, same: true, onAccess });
+    expect(JSON.parse(stdout)).toEqual({
+      "installed for the read": row(expect.stringMatching(/^call sites: [1-9]/)),
+      "reads error.stack": row("Error: boom"),
+      "throws": row(["from the formatter", "Error: boom"]),
+      "called once": row(1),
+      "after Error.captureStackTrace": row(expect.stringMatching(/^call sites: [1-9]/)),
+      "of a node:vm context": row(expect.stringMatching(/^context: [1-9]/)),
+      "not called to print, and called for a read after it": row([true, 0, 1]),
+      "not called to print a stack whose text has no frame to parse": row([0, true]),
+      "read by the stack getter of an error that is printed": row(expect.stringMatching(/^call sites: [1-9]/)),
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Materializing the stack can throw (a Symbol message). Asking for the property's descriptor must throw
 // that, not report the property found with the exception still pending, however the stack is materialized.

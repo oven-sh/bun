@@ -516,6 +516,9 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
         auto* codeblock = frame.codeBlock();
         if (codeblock->isConstructor()) {
             isConstructor = true;
+            if (flags) {
+                *flags |= static_cast<unsigned int>(FunctionNameFlags::Constructor);
+            }
         }
 
         auto codeType = codeblock->codeType();

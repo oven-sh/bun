@@ -34,6 +34,7 @@ namespace JSC {
 class VM;
 class JSGlobalObject;
 class StackFrame;
+struct CollectedStackFrame;
 class ErrorInstance;
 class CallFrame;
 enum class PropertyAttribute : unsigned;
@@ -68,7 +69,8 @@ WTF::String formatStackTrace(
     WTF::OrdinalNumber& column,
     WTF::String& sourceURL,
     WTF::Vector<JSC::StackFrame>& stackTrace,
-    JSC::JSObject* errorInstance);
+    JSC::JSObject* errorInstance,
+    WTF::Vector<JSC::CollectedStackFrame>* collectedFrames = nullptr);
 
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
@@ -80,8 +82,9 @@ JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);
 JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 
 // Internal wrapper functions for JSC error info callbacks
-WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL);
+WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, WTF::Vector<JSC::CollectedStackFrame>& collectedFrames);
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);
+JSC::JSValue computeCollectedErrorInfoToJSValue(JSC::VM& vm, const WTF::String& stackString, const WTF::Vector<JSC::CollectedStackFrame>& collectedFrames, JSC::JSObject* errorInstance);
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL);
 } // namespace Bun
 

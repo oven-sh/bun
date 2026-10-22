@@ -3573,7 +3573,13 @@ impl<'p, 's> Checker<'p, 's> {
             match hir[parent].kind {
                 StmtKind::ForIn { left, expr, .. } if left == stmt => {
                     // The keys of a generic type are its own keys, restricted to strings.
-                    let object = self.with_flow_loops_visible(|c| c.type_of_expr(file, expr));
+                    // `checkForInStatement` checks the expression too, before or after this.
+                    let object = self.with_flow_loops_visible(|c| match c.flow_type_cache_depth {
+                        usize::MAX => {
+                            c.outside_flow_loops(|c| c.check_expression_again(file, expr))
+                        }
+                        _ => c.check_expression_again(file, expr),
+                    });
                     let object = self.non_nullable_type_if_needed(object);
                     let keys = self.keyof(object);
                     if matches!(

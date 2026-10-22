@@ -10390,6 +10390,35 @@ export function operator(value: unknown) {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the expression of a for in statement again for the type of the statement's variable", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+export function declared(o: { p: object }) {
+  fail();
+  while (c || c) { for (const key in o.p) {} }
+}
+export function assigned(o: { p: object }, key: string) {
+  fail();
+  while (c || c) { for (key in o.p) {} }
+}
+export function usedBefore(o: { p: object }) {
+  fail();
+  while (c || c) {
+    key;
+    for (var key in o.p) {}
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,40): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(15,23): error TS2339: Property 'p' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

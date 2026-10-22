@@ -279,7 +279,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (typeof statusMessage === "string" && checkInvalidHeaderChar(statusMessage)) {
         throw $ERR_INVALID_CHAR("statusMessage");
       }
-      head = { statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs };
+      // `headers` is renderNativeHeaders()'s array, which the next response reuses. This head can go out ticks later.
+      head = { statusCode, statusMessage, headers: headers?.slice(), autoHeaderBits, keepAliveTimeoutSecs };
     },
     flushHeaders() {
       writeHeadToSocket(null);

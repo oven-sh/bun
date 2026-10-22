@@ -577,9 +577,6 @@ function isPseudoHeader(name) {
   }
 }
 
-function isConnectionHeaderAllowed(name, value) {
-  return name !== HTTP2_HEADER_CONNECTION || value === "trailers";
-}
 let statusConnectionHeaderWarned = false;
 let statusMessageWarned = false;
 function statusMessageWarn() {
@@ -611,7 +608,7 @@ function assertValidHeader(name, value) {
   if (value === undefined || value === null) {
     throw $ERR_HTTP2_INVALID_HEADER_VALUE(value, name);
   }
-  if (!isConnectionHeaderAllowed(name, value)) {
+  if (isConnectionSpecificHeader(name, value)) {
     connectionHeaderMessageWarn();
   }
 }
@@ -876,6 +873,7 @@ class Http2ServerResponse extends Stream {
     validateString(name, "name");
     name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
+    if (isConnectionSpecificHeader(name, value)) return;
     this[kTrailers][name] = value;
   }
 
@@ -935,7 +933,8 @@ class Http2ServerResponse extends Stream {
     name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
 
-    if (!isConnectionHeaderAllowed(name, value)) {
+    // Node throws from respond() for all of these but `connection`. They often come from an upstream's HTTP/1.1 response, so drop them all.
+    if (isConnectionSpecificHeader(name, value)) {
       return;
     }
 
@@ -956,7 +955,8 @@ class Http2ServerResponse extends Stream {
     name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
     assertValidHeader(name, value);
 
-    if (!isConnectionHeaderAllowed(name, value)) {
+    // Node throws from respond() for all of these but `connection`. They often come from an upstream's HTTP/1.1 response, so drop them all.
+    if (isConnectionSpecificHeader(name, value)) {
       return;
     }
 
@@ -1209,10 +1209,15 @@ class Http2ServerResponse extends Stream {
     }
     const stream = this[kStream];
     if (stream.headersSent || this[kState].closed) return false;
-    stream.additionalHeaders({
-      ...(headers || {}),
-      [HTTP2_HEADER_STATUS]: statusCode,
-    });
+    const outHeaders = { __proto__: null };
+    const keys = ObjectKeys(headers || {});
+    for (let i = 0; i < keys.length; i++) {
+      const value = headers[keys[i]];
+      if (isConnectionSpecificHeader(StringPrototypeToLowerCase.$call(keys[i]), value)) connectionHeaderMessageWarn();
+      else outHeaders[keys[i]] = value;
+    }
+    outHeaders[HTTP2_HEADER_STATUS] = statusCode;
+    stream.additionalHeaders(outHeaders);
     return true;
   }
 
@@ -1706,7 +1711,6 @@ const {
   HTTP2_HEADER_ACCESS_CONTROL_REQUEST_METHOD,
   HTTP2_HEADER_AGE,
   HTTP2_HEADER_AUTHORIZATION,
-  HTTP2_HEADER_CONNECTION,
   HTTP2_HEADER_CONTENT_ENCODING,
   HTTP2_HEADER_CONTENT_LENGTH,
   HTTP2_HEADER_CONTENT_TYPE,
@@ -2928,9 +2932,12 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   }
 
   write(chunk, encoding?, callback?) {
-    // Drop a write to a closed stream whose writable side user code didn't end. An 'error' would be uncaught in a handler that answers HEAD like GET.
-    const dropped = StreamState.NativeClosed | StreamState.EndedForUser;
-    if ((this[bunHTTP2StreamStatus] & dropped) === dropped) {
+    // Drop a write if user code didn't end the writable side and the stream is closed, or its 'error' would be uncaught (a handler that answers HEAD like GET).
+    const status = this[bunHTTP2StreamStatus];
+    if (
+      (status & StreamState.EndedForUser) !== 0 &&
+      ((status & StreamState.NativeClosed) !== 0 || this.listenerCount("error") === 0)
+    ) {
       if (typeof encoding === "function") callback = encoding;
       if (typeof callback === "function") process.nextTick(callback, $ERR_STREAM_WRITE_AFTER_END());
       return false;
@@ -3961,19 +3968,20 @@ const kForbiddenConnectionHeaders = new SafeSet([
   "proxy-connection",
   "transfer-encoding",
 ]);
-// Only a `te` value is stringified here, so a user toString() on any other field runs once, in the native walk.
+// `name` is lowercase. Only a `te` value is stringified here, so a user toString() on any other field runs once, in the native walk.
+function isConnectionSpecificHeader(name: string, value): boolean {
+  if (kForbiddenConnectionHeaders.has(name)) return true;
+  if (name !== "te") return false;
+  if ($isArray(value) && value.length === 1) value = value[0];
+  return `${value}` !== "trailers";
+}
 function assertNoConnectionHeaders(headers): void {
   const keys = ObjectKeys(headers);
   for (let i = 0; i < keys.length; i++) {
-    let value = headers[keys[i]];
+    const value = headers[keys[i]];
     if (value === undefined || ($isArray(value) && value.length === 0)) continue;
     const lower = keys[i].toLowerCase();
-    let forbidden = kForbiddenConnectionHeaders.has(lower);
-    if (!forbidden && lower === "te") {
-      if ($isArray(value) && value.length === 1) value = value[0];
-      forbidden = `${value}` !== "trailers";
-    }
-    if (forbidden) {
+    if (isConnectionSpecificHeader(lower, value)) {
       throw $ERR_HTTP2_INVALID_CONNECTION_HEADERS(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
     }
   }

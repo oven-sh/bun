@@ -4413,8 +4413,9 @@ function emitResponseFinishedThenClose(res, callback) {
 }
 
 ServerResponse.prototype.flushHeaders = function () {
-  if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) return; // Should be idempotent.
-  if (this[headerStateSymbol] !== NodeHTTPHeaderState.assigned) this._implicitHeader();
+  // Should be idempotent. write() leaves the head of a response without a body open, and the handle ends it only once.
+  if (this[headerStateSymbol] === NodeHTTPHeaderState.sent && (this._hasBody || this.finished)) return;
+  if (this[headerStateSymbol] === NodeHTTPHeaderState.none) this._implicitHeader();
 
   if (this[kPipelinedQueuedState] !== undefined) {
     // Queued pipelined response: its headers go out when it is assigned the

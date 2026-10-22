@@ -5300,6 +5300,27 @@ it("write('') after writeHead() ends the header section", async () => {
 });
 
 describe.each(["listen()", "emit('connection')"])("a response without a body on a %s connection", transport => {
+  // `handler` gets every request but /other, which answers with headers of its own.
+  async function start(handler: (req: IncomingMessage, res: ServerResponse) => void) {
+    const server = createServer((req, res) => {
+      if (req.url !== "/other") return handler(req, res);
+      res.setHeader("Set-Cookie", "other=1");
+      res.end("other");
+    });
+    const listener = transport === "listen()" ? server : createNetServer(s => void server.emit("connection", s));
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    const { port } = listener.address() as AddressInfo;
+    return {
+      port,
+      // After a round trip on a second connection, the first client has read whatever the server sent it.
+      roundTrip: async () =>
+        expect(await (await fetch(`http://127.0.0.1:${port}/other`, { headers: { Connection: "close" } })).text()).toBe(
+          "other",
+        ),
+      [Symbol.asyncDispose]: () => listener[Symbol.asyncDispose](),
+    };
+  }
+
   it.each([
     ["HEAD", 200, false],
     ["GET", 204, false],
@@ -5308,9 +5329,9 @@ describe.each(["listen()", "emit('connection')"])("a response without a body on 
   ])("%s %i ends its head at end(), not at write() (write callback: %p)", async (method, status, withCallback) => {
     const events: string[] = [];
     const wrote = Promise.withResolvers<ServerResponse>();
-    const server = createServer((req, res) => {
-      if (req.url === "/ping") return void res.end("pong");
+    await using server = await start((req, res) => {
       res.statusCode = status;
+      res.setHeader("X-Mine", "1");
       for (const event of ["aborted", "error"]) req.on(event, () => events.push(`req ${event}`));
       for (const event of ["finish", "close"]) res.on(event, () => events.push(`res ${event}`));
       setImmediate(() => {
@@ -5318,12 +5339,9 @@ describe.each(["listen()", "emit('connection')"])("a response without a body on 
         else wrote.resolve((res.write("a"), res));
       });
     });
-    await using listener = transport === "listen()" ? server : createNetServer(s => void server.emit("connection", s));
-    await once(listener.listen(0, "127.0.0.1"), "listening");
-    const { port } = listener.address() as AddressInfo;
 
     let received = "";
-    const client = connect(port, "127.0.0.1");
+    const client = connect(server.port, "127.0.0.1");
     client.setEncoding("latin1").on("data", chunk => {
       received += chunk;
       // Like `curl -I`, leave as soon as the head is complete.
@@ -5332,18 +5350,48 @@ describe.each(["listen()", "emit('connection')"])("a response without a body on 
     client.write(`${method} / HTTP/1.1\r\nHost: localhost\r\n\r\n`);
 
     const res = await wrote.promise;
-    // After a round trip on a second connection, the client has read whatever write() sent.
-    expect(await (await fetch(`http://127.0.0.1:${port}/ping`, { headers: { Connection: "close" } })).text()).toBe(
-      "pong",
-    );
+    await server.roundTrip();
     expect(received).not.toContain("\r\n\r\n");
 
     res.write("b");
     res.end();
     await once(client, "close");
-    expect(received).toStartWith(`HTTP/1.1 ${status} `);
-    expect(received).toEndWith("\r\n\r\n");
+    expect(received.replace(/^Date: .*\r\n/m, "")).toBe(
+      `HTTP/1.1 ${status} ${http.STATUS_CODES[status]}\r\nX-Mine: 1\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n`,
+    );
     expect(events).toEqual(["res finish", "res close"]);
+  });
+
+  it.each([
+    ["HEAD", 200],
+    ["GET", 204],
+    ["GET", 304],
+  ])("%s %i ends its head at a flushHeaders() that follows write()", async (method, status) => {
+    const flushed = Promise.withResolvers<ServerResponse>();
+    await using server = await start((req, res) => {
+      res.statusCode = status;
+      res.write("a");
+      res.flushHeaders();
+      res.flushHeaders();
+      flushed.resolve(res);
+    });
+
+    let received = "";
+    const client = connect(server.port, "127.0.0.1");
+    // Disposed before the server, whose close() waits for this connection.
+    using _ = { [Symbol.dispose]: () => void client.destroy() };
+    client.setEncoding("latin1").on("data", chunk => (received += chunk));
+    client.write(`${method} / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+
+    const res = await flushed.promise;
+    await server.roundTrip();
+    const head = `HTTP/1.1 ${status} ${http.STATUS_CODES[status]}\r\nConnection: close\r\n\r\n`;
+    expect(received.replace(/^Date: .*\r\n/m, "")).toBe(head);
+
+    res.end();
+    res.flushHeaders();
+    await once(client, "close");
+    expect(received.replace(/^Date: .*\r\n/m, "")).toBe(head);
   });
 });
 

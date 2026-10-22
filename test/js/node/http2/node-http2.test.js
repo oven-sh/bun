@@ -5256,6 +5256,69 @@ describe("http2 outbound header objects", () => {
       server.close();
     }
   });
+
+  // Node drops only `connection` and throws for the rest. A front end copies these from its upstream's HTTP/1.1 response.
+  it("the compat API drops connection-specific headers and warns once", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http2 = require("node:http2");
+        const warnings = [];
+        process.on("warning", warning => warnings.push(warning.name));
+        const fromUpstream = {
+          "Connection": "keep-alive",
+          "Keep-Alive": "timeout=5",
+          "Transfer-Encoding": "chunked",
+          "Proxy-Connection": "keep-alive",
+          "Upgrade": "h2c",
+          "HTTP2-Settings": "AAMAAABk",
+          "TE": "gzip",
+        };
+        const result = {};
+        const server = http2.createServer((req, res) => {
+          res.setHeader("Keep-Alive", "timeout=5");
+          res.appendHeader("Transfer-Encoding", "chunked");
+          result.stored = [String(res.getHeader("keep-alive")), res.hasHeader("transfer-encoding"), res.getHeaderNames()];
+          res.writeEarlyHints({ link: "</a.css>; rel=preload", ...fromUpstream });
+          res.addTrailers({ ...fromUpstream, "x-trailer": "1" });
+          res.writeHead(200, { ...fromUpstream, "content-type": "text/plain" });
+          res.end("body");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = http2.connect("http://127.0.0.1:" + server.address().port);
+          const req = client.request({ ":path": "/" });
+          const names = headers => Object.keys(headers).filter(name => name[0] !== ":" && name !== "date");
+          req.on("headers", headers => (result.hints = names(headers)));
+          req.on("response", headers => (result.response = names(headers)));
+          req.on("trailers", headers => (result.trailers = names(headers)));
+          req.setEncoding("utf8");
+          result.body = "";
+          req.on("data", chunk => (result.body += chunk));
+          req.on("close", () => {
+            console.log(JSON.stringify({ ...result, rstCode: req.rstCode, warnings }));
+            client.close();
+            server.close();
+          });
+        });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("UnsupportedWarning");
+    expect(JSON.parse(stdout)).toEqual({
+      stored: ["undefined", false, []],
+      hints: ["link"],
+      response: ["content-type"],
+      trailers: ["x-trailer"],
+      body: "body",
+      rstCode: 0,
+      warnings: ["UnsupportedWarning"],
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // "x-a" is valid and comes first. If a rejected block leaves it in the HPACK table, the peer decodes later blocks wrong.

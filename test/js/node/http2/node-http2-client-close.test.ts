@@ -958,30 +958,35 @@ describe("a stream that errors after both halves have closed", () => {
   });
 });
 
-// respond() ends the response to a HEAD request itself. Node emits 'error' for the write(), which is uncaught here.
+// respond() ends these responses itself. Node emits 'error' for the write(), which is uncaught here.
 test(
-  "a handler that awaits and then answers HEAD like GET doesn't crash the server",
+  "a handler that answers HEAD, 204 and 304 like GET doesn't crash the server",
   { skip: !process.versions.bun },
   async () => {
     const script = `
     const http2 = require("node:http2");
+    const waits = { none: fn => fn(), queueMicrotask, nextTick: process.nextTick, setImmediate };
     const server = http2.createServer();
-    server.on("stream", async stream => {
-      await new Promise(setImmediate);
-      stream.respond({ ":status": 200 });
-      stream.write("body");
-      stream.end();
+    server.on("stream", (stream, headers) => {
+      const [, wait, status] = headers[":path"].split("/");
+      waits[wait](() => {
+        stream.respond({ ":status": Number(status) });
+        stream.write("body");
+        stream.end();
+      });
     });
     server.listen(0, "127.0.0.1", async () => {
       const client = http2.connect("http://127.0.0.1:" + server.address().port);
       const results = [];
-      for (const method of ["HEAD", "GET"]) {
-        const req = client.request({ ":method": method, ":path": "/" });
-        const result = { method, body: "" };
-        req.on("response", headers => (result.status = headers[":status"]));
-        req.on("data", chunk => (result.body += chunk));
-        await new Promise(resolve => req.on("close", resolve));
-        results.push({ ...result, rstCode: req.rstCode });
+      for (const wait of Object.keys(waits)) {
+        for (const [method, status] of [["HEAD", 200], ["GET", 204], ["GET", 304], ["GET", 200]]) {
+          const req = client.request({ ":method": method, ":path": "/" + wait + "/" + status });
+          let line = wait + " " + method;
+          req.on("response", headers => (line += " " + headers[":status"]));
+          req.on("data", chunk => (line += " " + chunk));
+          await new Promise(resolve => req.on("close", resolve));
+          results.push(line + " rstCode " + req.rstCode);
+        }
       }
       console.log(JSON.stringify(results));
       client.close();
@@ -989,10 +994,15 @@ test(
     });
   `;
     const { stdout } = await promisify(execFile)(process.execPath, ["-e", script]);
-    assert.deepStrictEqual(JSON.parse(stdout), [
-      { method: "HEAD", body: "", status: 200, rstCode: 0 },
-      { method: "GET", body: "body", status: 200, rstCode: 0 },
-    ]);
+    assert.deepStrictEqual(
+      JSON.parse(stdout),
+      ["none", "queueMicrotask", "nextTick", "setImmediate"].flatMap(wait => [
+        `${wait} HEAD 200 rstCode 0`,
+        `${wait} GET 204 rstCode 0`,
+        `${wait} GET 304 rstCode 0`,
+        `${wait} GET 200 body rstCode 0`,
+      ]),
+    );
   },
 );
 

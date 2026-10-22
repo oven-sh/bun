@@ -8,6 +8,55 @@ import { readFileSync } from "node:fs";
 const say = line => console.error("DIAG " + line);
 const hex = n => "0x" + n.toString(16);
 
+// The function starts of a Mach-O image, from LC_FUNCTION_STARTS (it is still there in a stripped binary), so that
+// a return address can be given as a function's size and an offset into it: the test binary has no symbols.
+function machFunctionStarts(read, header, slide) {
+  const u32 = (bytes, at) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(at, true);
+  const u64 = (bytes, at) =>
+    Number(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(at, true));
+  const head = read(header, 32);
+  const count = u32(head, 16);
+  const commands = read(header + 32, u32(head, 20));
+  let text, linkedit, table;
+  for (let i = 0, at = 0; i < count; i++) {
+    const command = u32(commands, at);
+    if (command === 0x19) {
+      const name = String.fromCharCode(...commands.subarray(at + 8, at + 24)).replace(/\0+$/, "");
+      if (name === "__TEXT") text = u64(commands, at + 24);
+      if (name === "__LINKEDIT") linkedit = { address: u64(commands, at + 24), offset: u64(commands, at + 40) };
+    } else if (command === 0x26) table = { offset: u32(commands, at + 8), size: u32(commands, at + 12) };
+    at += u32(commands, at + 4);
+  }
+  const data = read(slide + linkedit.address + (table.offset - linkedit.offset), table.size);
+  const starts = [];
+  for (let i = 0, address = text; i < data.length; ) {
+    let delta = 0,
+      scale = 1,
+      byte;
+    do {
+      byte = data[i++];
+      delta += (byte & 0x7f) * scale;
+      scale *= 128;
+    } while (byte & 0x80);
+    if (delta === 0) break;
+    starts.push((address += delta));
+  }
+  return starts;
+}
+let starts;
+/** " (function of 0x.. bytes, +0x..)" for an address of the image with its slide taken off, or "". */
+function inFunction(address) {
+  if (!starts) return "";
+  let low = 0,
+    high = starts.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (starts[middle] <= address) low = middle + 1;
+    else high = middle;
+  }
+  if (low === 0 || low === starts.length) return "";
+  return ` (function of ${hex(starts[low] - starts[low - 1])} bytes, +${hex(address - starts[low - 1])})`;
+}
 let bounds, view;
 /** Once, before anything that matters: where this thread's stack is. */
 export function prepareStack() {
@@ -38,6 +87,16 @@ export function prepareStack() {
         slide: Number(c._dyld_get_image_vmaddr_slide(0)),
         imageLow: Number(c._dyld_get_image_header(0)),
       };
+      try {
+        starts = machFunctionStarts(
+          (address, length) => new Uint8Array(toArrayBuffer(address, 0, length)),
+          bounds.imageLow,
+          bounds.slide,
+        );
+        say(`function starts: ${starts.length}, ${hex(starts[0])} to ${hex(starts.at(-1))}`);
+      } catch (error) {
+        say("function starts failed: " + (error?.stack ?? error));
+      }
     } else {
       const maps = readFileSync("/proc/self/maps", "utf8").split("\n");
       const [from, high] = maps
@@ -191,7 +250,8 @@ export function report(types, stack, { wrapped = true } = {}) {
       }
       if (found.length > chain.length) chain = found;
     }
-    const where = pc => (pc >= imageLow && pc < imageHigh ? "image " + hex(pc - slide) : "other " + hex(pc));
+    const where = pc =>
+      pc >= imageLow && pc < imageHigh ? "image " + hex(pc - slide) + inFunction(pc - slide) : "other " + hex(pc);
     result.hits = hits.length;
     // The words in frames that are live (not the leftovers below them), for watching.
     result.slots = hits

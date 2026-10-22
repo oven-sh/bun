@@ -9,7 +9,7 @@ use bun_core::EncodedSlice;
 
 use crate::{
     ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSGlobalObject, JSObject, JSString,
-    JSValue, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -372,12 +372,6 @@ impl<'a, T> JsLocal<'a, T> {
     #[inline(always)]
     pub fn as_value(self) -> JsLocal<'a> {
         JsLocal::from_raw(self.0)
-    }
-
-    /// Keeps the value past the call.
-    #[inline]
-    pub fn to_strong(self, heap: &JsHeap<'a>) -> Strong {
-        Strong::create(self.0, heap.global_object())
     }
 }
 

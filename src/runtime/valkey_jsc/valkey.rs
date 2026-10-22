@@ -542,6 +542,22 @@ impl ValkeyClient {
         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
     }
 
+    /// The open socket's TLS session broke, and uSockets closes it next: what was sent over it
+    /// hears why, and the rest is `on_close`'s, like any lost connection. The caller enters no
+    /// event loop scope, so the rejections are only observed once `on_close` has run.
+    pub(crate) fn on_tls_session_error(
+        &mut self,
+        ssl_error: &uws::us_bun_verify_error_t,
+    ) -> JsResult<()> {
+        if self.in_flight.is_empty() {
+            return Ok(());
+        }
+        let global_this = self.global_object();
+        let jsvalue = crate::socket::uws_jsc::verify_error_to_js(ssl_error, &global_this);
+        let mut entries = command::entry::Queue::new();
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+    }
+
     /// Flush pending data to the socket
     pub(crate) fn flush_data(&mut self) -> bool {
         let chunk = self.write_buffer.remaining();

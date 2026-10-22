@@ -8314,6 +8314,7 @@ impl<'p, 's> Checker<'p, 's> {
             from: first as u32 + 1,
             height: height as u32,
             event_bits: 1,
+            flow_loops: 0,
             serial: self.frames[first].serial,
         };
         self.provisional.insert(q, entry);

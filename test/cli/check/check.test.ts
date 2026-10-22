@@ -10937,6 +10937,33 @@ export function f(o: { kind: string }, maybe: { kind: string } | undefined) {
       expect(exitCode).toBe(1);
     });
 
+    test("computes an argument again after one more loop has come into analysis", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function pair<T>(first: T, second: T): T;
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+declare const more: boolean;
+export function f() {
+  let z: Letter = "b";
+  for (const item of list) {
+    do {
+      z = pair(z, z);
+      z = next[z];
+    } while (more);
+  }
+  const probe: never = z;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(14,9): error TS2322: Type 'Letter' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

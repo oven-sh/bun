@@ -165,6 +165,8 @@ struct Provisional {
     /// - 32: a request for members got the members in place, which bit 1 doesn't cover
     /// - 64: `anySignature` was read
     event_bits: u8,
+    /// The length of `flow_loops` when it was computed.
+    flow_loops: u32,
     serial: u64,
 }
 
@@ -3876,6 +3878,7 @@ impl<'p, 's> Checker<'p, 's> {
                         | u8::from(is_behind_barrier) << 4
                         | since(self.members_in_place_hit_at) << 5
                         | since(self.any_signature_read_at) << 6,
+                    flow_loops: self.flow_loops.len() as u32,
                     serial: scope.serial,
                 },
             );
@@ -3929,7 +3932,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `checkExpressionCached` empties `flowLoopStack`, so what follows from a loop's incomplete
         // type is recomputed where the loop isn't visible.
-        if entry.event_bits & 4 != 0 && !self.is_flow_loop_visible(depth) {
+        if entry.event_bits & 4 != 0
+            && (!self.is_flow_loop_visible(depth)
+                || entry.flow_loops != self.flow_loops.len() as u32)
+        {
             return None;
         }
         // Without the barrier the cycle is marked.

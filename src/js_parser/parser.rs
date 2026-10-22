@@ -1792,10 +1792,8 @@ pub enum WrapMode {
 ///
 /// 1. For all Components (which is defined as any top-level function/function variable, that is
 ///    named with a capital letter; see `isComponentishName`), register them to the runtime using
-///    `$RefreshReg$(ComponentFunction, "Component");`. Implemented in `p.emit_react_refresh_register`.
-///    A component can also be the value of calls around a function, as in `memo(forwardRef(fn))`
-///    or `withRouter(fn)`. `p.register_react_refresh_wrapper` registers the function, the value of
-///    each call, and the binding.
+///    `$RefreshReg$(ComponentFunction, "Component");`. Implemented in `p.handleReactRefreshRegister`
+///    A component in wrapper calls, as in `memo(fn)`: see `p.register_react_refresh_wrapper`.
 ///
 /// 2. For all functions which call a Hook (a hook is an identifier matching /^use[A-Z]/):
 ///     a. Outside of the function, create a signature function `const _s = $RefreshSig$();`
@@ -1826,15 +1824,11 @@ pub struct ReactRefresh<'a> {
     pub(crate) register_used: bool,
     pub(crate) signature_used: bool,
 
-    /// Set when a function is registered under its own binding. The dev server then lets the
-    /// module accept its own updates, if every export looks like a component at run time.
-    /// A wrapper call does not set it. That run-time test does not know which exports are
-    /// registered, so a module that starts to accept its own updates because of `memo(fn)`
-    /// would stop showing edits to an export that is not registered, such as a class.
+    /// A function, not a wrapper call, was registered: the module emits `hmr.reactRefreshAccept()`.
     pub(crate) function_registered: bool,
 
-    /// $RefreshReg$ is called on all top-level variables that are components,
-    /// and on the default export when it is one.
+    /// $RefreshReg$ is called on all top-level variables that are
+    /// components, as well as HOCs found in the `export default` clause.
     pub(crate) register_ref: Ref,
 
     /// $RefreshSig$ is called to create a signature function, which is
@@ -1871,8 +1865,7 @@ pub struct ReactRefresh<'a> {
     /// stack-local address without the `'a` borrow the visitor cannot satisfy.
     pub(crate) hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext>>>,
 
-    /// The components registered so far under a module-scope name, newest first.
-    /// `hoc(Name)` is registered only when `Name` is in this list.
+    /// The components registered so far by name, newest first. `hoc(Name)` needs `Name` in it.
     pub(crate) registered: Option<&'a RegisteredComponent<'a>>,
 }
 

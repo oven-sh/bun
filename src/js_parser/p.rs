@@ -265,8 +265,7 @@ pub(crate) struct ReactRefreshSignature {
 }
 
 impl ReactRefreshSignature {
-    /// Reads back a call that `P::react_refresh_signature_call` built. Code from the source has
-    /// a location, and the visitor builds no other call of this shape as the value of a binding.
+    /// Reads back a `P::react_refresh_signature_call` call. Only generated code has no location.
     fn read(expr: Expr) -> Option<Self> {
         let js_ast::ExprData::ECall(call) = expr.data else {
             return None;
@@ -312,8 +311,7 @@ impl ReactRefreshSignature {
         Some(signature)
     }
 
-    /// The signature of a function declaration with hooks. `s_function` pushes its
-    /// `_s(Name, "hash")` statement last.
+    /// `s_function` pushes the `_s(Name, "hash")` statement of a function with hooks last.
     fn of_declaration(stmts: &[Stmt], name: Ref) -> Option<Self> {
         let js_ast::StmtData::SExpr(signed) = stmts.last()?.data else {
             return None;
@@ -8659,9 +8657,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }));
     }
 
-    /// The component in the visited value of a module-scope binding: a function, or calls that
-    /// each take one as their first argument, as in `memo(forwardRef(fn))`. `hoc(Name)` counts
-    /// when this module has registered `Name`.
+    /// A function, or calls that each take one as first argument: `memo(fn)`, `hoc(Registered)`.
     fn react_refresh_component(&self, value: Expr) -> Option<ReactRefreshComponent> {
         let mut expr = value;
         let mut is_wrapped = false;
@@ -8717,8 +8713,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(name)
     }
 
-    /// Registers the components that the declarators of a module-scope statement hold.
-    /// The statement is the last one in `stmts`.
+    /// `decls` are those of the module-scope statement that was pushed last.
     #[inline(never)] // PERF: only the React Fast Refresh path of `s_local` pays for this.
     pub(crate) fn register_react_refresh_decls(
         &mut self,
@@ -8753,11 +8748,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Registers the value of `export default <expr>` when it is a component:
-    ///
-    /// > const default_export = memo(fn);
-    /// > $RefreshReg$(default_export, "App.tsx:default%memo");
-    /// > export default default_export;
+    /// `export default memo(fn)` -> `const default_export = memo(fn); export default default_export`
     #[inline(never)] // PERF: only the React Fast Refresh path of `s_export_default` pays for this.
     pub(crate) fn register_react_refresh_default_export(
         &mut self,
@@ -8799,8 +8790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Registers what `react_refresh_component` found in `value`, the initializer of `binding`.
-    /// The statements that it pushes go after the declaration of `binding`.
+    /// The statements that this pushes go after the declaration of `binding`.
     fn register_react_refresh_component(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -8822,25 +8812,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Registers the function of `Name = a(b(fn))`, the value of each call, and the binding:
-    ///
-    /// > const Name = a(Name$a = b(Name$a$b = fn));
-    /// > var Name$a, Name$a$b;
-    /// > $RefreshReg$(Name$a$b, "file.tsx:Name$a$b");
-    /// > $RefreshReg$(Name$a, "file.tsx:Name$a%b");
-    /// > $RefreshReg$(Name, "file.tsx:Name%a$b");
-    ///
-    /// React renders the fibers of an id's old value with its new value. The id of a call's
-    /// value spells the whole chain, with `%` before its own call, so an edit that adds, removes
-    /// or swaps a wrapper makes new ids. `memo(fn)` and `memo(forwardRef(fn))` under one id
-    /// would give a fiber of one kind a type of the other.
-    ///
-    /// When `fn` calls hooks, the value of each call is signed like `fn`:
-    ///
-    /// > const Name = _s(a(Name$a = _s(fn, "hash")), "hash");
-    ///
-    /// A wrapper such as mobx's `observer` calls `fn` inside its own component. That component
-    /// must mount again when the hooks of `fn` change.
+    /// `Name = a(b(fn))` becomes `Name = a(Name$a = b(Name$a$b = fn))`, and each value is registered.
     fn register_react_refresh_wrapper(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -8893,6 +8865,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             let argument = &mut call.args.slice_mut()[0];
             let mut passed = *argument;
+            // A wrapper may call `fn` inside its own component, so it gets the hook signature of `fn`.
             if inner_call.is_some()
                 && let Some(signature) = signature
             {
@@ -8932,7 +8905,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts.extend_from_slice(registrations.as_slice());
     }
 
-    /// "file.tsx:Name$a%b" for the path "Name$a$b" and the offset of its second `$`.
+    /// "file.tsx:Name$a%b". The id spells every call, so an edit of the wrappers makes new ids.
     fn react_refresh_wrapper_id(&self, path: &[u8], separator: usize) -> &'a [u8] {
         react_refresh_id(
             self.arena,

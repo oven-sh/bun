@@ -226,31 +226,20 @@ declare module "bun" {
        * `injectIntoGlobalHook(window): void`
        * Called on first startup, before the user entrypoint.
        *
-       * `register(value, uniqueId: string): void`
-       * Called on the value of every top-level binding with an uppercase name
-       * that holds a function, or calls around a function such as
-       * `memo(forwardRef(fn))`. For such calls it is also called on the
-       * function and on the value of each call inside. A function may or may
-       * not be a component, and the value of a call can be of any type.
+       * `register(component, uniqueId: string): void`
+       * Called on every function that starts with an uppercase letter. These
+       * may or may not be components. The value of a call such as `memo(fn)` is registered too.
        *
        * `createSignatureFunctionForTransform(): ReactRefreshSignatureFunction`
-       * Called once for every function that calls a hook. A passing no-op for
-       * this api is `return value => value`
+       * Called for each function that calls a hook. A passing no-op for this api is `return x => x`
        *
        * @default "react-refresh/runtime"
        */
       importSource: ImportSource | undefined;
     }
 
-    interface ReactRefreshSignatureFunction {
-      /** Called each time the function runs. */
-      (): void;
-      /**
-       * Called on the function, and on the value of each call around it. It
-       * returns that value.
-       */
-      <T>(value: T, hash: string, force?: boolean, customHooks?: () => Function[]): T;
-    }
+    type ReactRefreshSignatureFunction = () =>
+      void | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
 
     /** This API is similar, but unrelated to `Bun.FileSystemRouter`  */
     interface FrameworkFileSystemRouterType {

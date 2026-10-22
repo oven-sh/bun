@@ -1,19 +1,20 @@
-// Writes expected.json: what oxlint and ESLint report for the inputs of ../../react-compiler.test.ts.
+// Writes expected.json, which has what oxlint and ESLint report for the inputs of ../../react-compiler.test.ts.
 //
 //   bun expected.ts --oxlint=<path to oxlint> [--cases=<oxc>/crates/oxc_linter/src/rules/react]
 //   bun expected.ts --modules=<node_modules>
 //   bun expected.ts --compare="<command>"
 //
-// Run it after a new release of oxlint, with `--cases` from the sources of that release: oxlint's own test cases are kept in
-// expected.json, and are taken from there without `--cases`. The fixtures of the compiler that are named below are copied into it
-// too (`--fixtures=<directory>`: from elsewhere). The other inputs are in inputs.ts.
+// Run it after a new oxlint release, with `--cases` pointing at that release's sources. oxlint's own test cases are
+// stored in expected.json, and are read from there without `--cases`. The compiler fixtures listed below are copied
+// into it too (`--fixtures=<directory>` reads them from another directory). The other inputs are in inputs.ts.
 //
-// Run it with `--modules` after a new release of eslint-plugin-react-hooks: <node_modules> has it, eslint and
-// @typescript-eslint/parser. What is not asked for stays as it is in expected.json.
+// Run it with `--modules` after a new eslint-plugin-react-hooks release. <node_modules> needs the plugin, eslint and
+// @typescript-eslint/parser. The parts of expected.json that a run doesn't record are kept.
 //
-// `--compare` writes nothing: it runs a command that takes the arguments of oxlint and of ESLint on the same inputs, with the
-// configuration file of the one and then of the other, and says where its reports are not those of expected.json. A fixture goes into
-// the list only if there is no difference with oxlint, and is named in `NOT_WITH_ESLINT` if there is one with ESLint.
+// `--compare` doesn't write anything. It runs a command that accepts both oxlint's and ESLint's arguments on the same
+// inputs, first with oxlint's config file and then with ESLint's, and prints where its reports differ from
+// expected.json. Only add a fixture to the list if it doesn't differ from oxlint, and add it to `NOT_WITH_ESLINT` if it
+// differs from ESLint.
 
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -34,7 +35,7 @@ import {
 } from "./inputs.ts";
 import { jsonDocuments, options } from "./shared.ts";
 
-/** Of test/bundler/transpiler/react-compiler-fixtures: two to four for each rule that reports anything in them. */
+/** From test/bundler/transpiler/react-compiler-fixtures: two to four for each rule that reports anything in them. */
 const FIXTURES = [
   "allow-global-reassignment-in-effect.js",
   "context-variable-as-jsx-element-tag.js",
@@ -78,29 +79,29 @@ const FIXTURES = [
   "useMemo-if-else-multiple-return.js",
   "useMemo-named-function.ts",
 ];
-/** Inputs for which `bun lint` does not say what the plugin says: an `fbt` that is not imported. */
+/** Inputs for which `bun lint` and the plugin report different things: an `fbt` that isn't imported. */
 const NOT_WITH_ESLINT = new Set(["todo/02.invalid.tsx", "fbt/error.todo-locally-require-fbt.js"]);
 
 type Report = { exit: number; files: number; diagnostics: Record<string, unknown[]> };
 export type Expected = {
-  /** The version of oxlint. */
+  /** oxlint's version. */
   oxlint: string;
-  /** oxlint's own test cases: the path says the rule and whether the case is valid. */
+  /** oxlint's own test cases. The path has the rule and whether the case is valid. */
   cases: Files;
-  /** Fixtures of the compiler. */
+  /** Compiler fixtures. */
   fixtures: Files;
-  /** What oxlint reports for each directory of inputs. Only the files that have diagnostics are named. */
+  /** oxlint's report for each directory of inputs. Only files with diagnostics are listed. */
   reports: Record<string, Report>;
   eslint: {
-    /** The versions of ESLint and of the plugin. */
+    /** The versions of ESLint and the plugin. */
     eslint: string;
     plugin: string;
-    /** The inputs of `cases` and `fixtures` that are not linted. */
+    /** The inputs in `cases` and `fixtures` that aren't linted. */
     without: string[];
-    /** For each message the rule, the place and the first line. Only the files that have messages are named. */
+    /** Each message's rule, location and first line. Only files with messages are listed. */
     cases: Record<string, string[]>;
     fixtures: Record<string, string[]>;
-    /** The messages as they are. */
+    /** The complete messages. */
     small: ReturnType<typeof byEslintFile>;
   };
 };
@@ -123,7 +124,7 @@ const spawn = (args: string[], cwd: string) =>
     env: { ...process.env, NO_COLOR: "1" },
   });
 
-/** What the command prints with `-f json` in a directory that has `files`. */
+/** Runs the command with `-f json` in a temporary directory with `files`, and passes its output to `then`. */
 function inDirectory<T>(files: Files, then: (stdout: string, exit: number, directory: string) => T | null): T {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "react-compiler-")));
   try {
@@ -158,12 +159,13 @@ const likeEslint = (files: Files) =>
       : null,
   );
 
-/** The real one, without a directory. */
+/** Runs real ESLint in-process, without writing the files to disk. */
 function eslint(modules: string, files: Files) {
   type Linter = { verify(text: string, config: object[], options: object): []; getSuppressedMessages(): [] };
   const { Linter } = createRequire(join(modules, "x.js"))("eslint") as { Linter: new (options: object) => Linter };
   const linter = new Linter({ configType: "flat", cwd: "/directory" });
-  // The rules in the order of `eslintConfig`: that is the order of the messages that are at the same place.
+  // List the rules in the same order as `eslintConfig`, because messages at the same location are reported in that
+  // order.
   const [first, ...others] = configOf(modules).config;
   const config = [{ ...first, rules: Object.fromEntries(ESLINT_RULES.map(rule => [rule, "error"])) }, ...others];
   const results = Object.entries(files).map(([name, text]) => ({
@@ -184,7 +186,7 @@ const fixtures: Files = Object.fromEntries(
   FIXTURES.map(name => [name, readFileSync(join(fixturesDirectory, name), "utf8")]),
 );
 const withEslint = (files: Files): Files =>
-  // ESLint does not lint what is in `node_modules`.
+  // ESLint doesn't lint files in `node_modules`.
   Object.fromEntries(
     Object.entries(files).filter(([name]) => !NOT_WITH_ESLINT.has(name) && !name.includes("node_modules/")),
   );
@@ -229,10 +231,10 @@ if (compare === undefined) {
     console.log(`ESLint, fixtures: ${total(expected.eslint.fixtures)} messages`);
     console.log(`ESLint, small: ${total(briefly(expected.eslint.small))} messages`);
   }
-  const { oxlint, reports, eslint: ofEslint } = expected as Expected;
+  const { oxlint, reports, eslint: eslintReports } = expected as Expected;
   writeFileSync(
     path,
-    JSON.stringify({ oxlint, cases, fixtures, reports, eslint: ofEslint } satisfies Expected, null, 1) + "\n",
+    JSON.stringify({ oxlint, cases, fixtures, reports, eslint: eslintReports } satisfies Expected, null, 1) + "\n",
   );
 } else {
   const expected = before();

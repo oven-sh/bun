@@ -1,4 +1,4 @@
-//! What the rules have in common. Each reports the diagnostics of one category.
+//! Code shared by the rules. Each rule reports the diagnostics of one category.
 
 use crate::Flavor;
 use crate::eslint::{self, Suggested};
@@ -13,7 +13,7 @@ use bun_react_compiler::diagnostics::ErrorCategory;
 const MESSAGE: Message = Message::new("", "{{message}}");
 const DESCRIPTION: Message = Message::new("", "{{description}}");
 
-/// oxlint's `run_react_compiler_rule`: reports what the compiler says of the file in `category`.
+/// oxlint's `run_react_compiler_rule`. Reports the compiler's diagnostics for the file in `category`.
 pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
     report_with(cx.file(), category, &|at| cx.report(at, MESSAGE));
 }
@@ -35,11 +35,11 @@ fn report_with<'a>(
         } = rendered;
         let mut labels = labels.into_iter();
         let first = labels.next();
-        // oxlint prints a diagnostic without a label without a place.
-        let place = first
+        // oxlint prints a diagnostic that has no label without a location.
+        let report_span = first
             .as_ref()
             .map_or_else(|| Span::empty(0), |label| label.span);
-        let mut report = report_at(place)
+        let mut report = report_at(report_span)
             .data("message", message.into_owned())
             .help(help)
             .note(note);
@@ -53,7 +53,7 @@ fn report_with<'a>(
     }
 }
 
-/// `makeRule` of eslint-plugin-react-hooks: reports what the compiler says of the file in `category`.
+/// eslint-plugin-react-hooks' `makeRule`. Reports the compiler's diagnostics for the file in `category`.
 pub fn report_as_eslint<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
     report_as_eslint_with(cx.file(), category, &|at| cx.report(at, MESSAGE));
 }
@@ -84,7 +84,7 @@ fn report_as_eslint_with<'a>(
     }
 }
 
-/// Whether the rule for `category` has anything to do in the file. For [`Rule::register`].
+/// True if the rule for `category` has anything to do in the file. Call it from [`Rule::start`].
 pub fn starts<'a>(file: &'a File<'a>, flavor: Flavor, category: ErrorCategory) -> bool {
     let starts = crate::program::may_have_react_code(file, flavor)
         && (flavor == Flavor::Eslint || should_run(file));

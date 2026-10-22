@@ -41,6 +41,11 @@ does. In 7.0 the result depends on which type is compared first. One test shows 
 `classVarianceResolveCircularity2.errors.txt` and `classVarianceResolveCircularity2.types` are those of
 microsoft/TypeScript 5237fd46890956e4bb8177a1a05dcd69e4166560. A sync with an older version brings the old ones back.
 
+At 100 nested comparisons `bun check` assumes that the two types are related, as TypeScript 7.1 does. 7.0 gives up
+there and reports TS2321, and what it caches then depends on which comparison came first. One test shows the
+difference: `excessivelyDeepConditionalTypes` has no `.errors.txt`, as in typescript-go
+89d5d5b2849a0db0957065889ca58536fa6d2e4a. A sync with an older version brings it back.
+
 ```sh
 bun bd test test/cli/check/conformance
 # One test, or all whose path contains the text

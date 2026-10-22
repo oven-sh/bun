@@ -52,6 +52,7 @@ describe("path.posix.matchesGlob(path, glob)", () => {
     ["foo/bar", "*"],
     ["a/", "a/{**,b}/*"],
     ["a/b", "*{zz,[!x]}*"],
+    ["b/c", "{a/**,*[!x]*}"],
   ])("path '%s' does not match pattern '%s'", (pathname, glob) => {
     expect(path.posix.matchesGlob(pathname, glob)).toBeFalse();
   });
@@ -80,6 +81,7 @@ describe("path.win32.matchesGlob(path, glob)", () => {
     ["foo/bar", "*"],
     ["a\\", "a/{**,b}/*"],
     ["a\\b", "*{zz,[!x]}*"],
+    ["b\\c", "{a/**,*[!x]*}"],
   ])("path '%s' does not match pattern '%s'", (pathname, glob) => {
     expect(path.win32.matchesGlob(pathname, glob)).toBeFalse();
   });

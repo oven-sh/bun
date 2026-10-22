@@ -2513,6 +2513,21 @@ describe("Glob.match", () => {
     ["{*,[!x]}*", ["*", "[!x]*"]],
     ["{*a,b}*[!x]*", ["*a*[!x]*", "b*[!x]*"]],
     ["\\*{*,a}[!x]*", ["\\**[!x]*", "\\*a[!x]*"]],
+    ["*{,[!x]}**", ["*", "*[!x]*"]],
+    // With a `**` in an alternative.
+    ["{a/**,*[!x]*}", ["a/**", "*[!x]*"]],
+    ["{**/a,*[!x]*}", ["**/a", "*[!x]*"]],
+    ["a/{**/,}*[!x]*", ["a/**/*[!x]*", "a/*[!x]*"]],
+    ["*[!x]*{/**,a}", ["*[!x]*/**", "*[!x]*a"]],
+    // A `**` that isn't a whole segment is a `*`.
+    ["**a{,b}[!x]*a", ["**a[!x]*a", "**ab[!x]*a"]],
+    ["*{[!x]**,zz}", ["*[!x]**", "*zz"]],
+    ["*[!x]{a,**}", ["*[!x]a", "*[!x]**"]],
+    ["**{a,[!x]}*", ["*a*", "*[!x]*"]],
+    ["*{a,[!x]}**", ["*a*", "*[!x]*"]],
+    ["{a,b}**[!x]*", ["a*[!x]*", "b*[!x]*"]],
+    // `**/**` is its last `**`, which is a globstar.
+    ["{a,b}**/**/*[!x]*", ["a**/**/*[!x]*", "b**/**/*[!x]*"]],
   ])(
     "a group matches what its alternatives match, with a `*` and a class that can match a separator: %s",
     (pattern, alternatives) => {
@@ -2537,17 +2552,46 @@ describe("Glob.match", () => {
   test.each([
     ["*{zz,[!x]}*", ["a", "azz", "/b", "x/b", "xx/"], ["a/b", "a/", "a/b/c", "a/zz", "x", ""]],
     ["!*{zz,[!x]}*", ["a/b", "a/", "x"], ["a", "/b"]],
-    // Written out, these would mean something else: a leading `!`, `**/*` at the end, `*(a)`.
+    ["{*[!x]*,src/**/*}", ["src/c.ts", "src/", "src/a/b", "ab", "x/y"], ["lib/c.ts", "a/b", "x"]],
+    ["/{*[!x],/**/}{,*}", ["/a", "/ab", "//", "//a"], ["/a/b", "/"]],
+    ["{**,*[!x]}*", ["ab", "x/y"], ["a/b", "a/"]],
+    // The `n` at the end isn't literal, and the first `*` isn't escaped.
+    ["*{y,[!x]}*\\n", ["a\n", "y\n", "/b\n"], ["an", "a/b\n", "a"]],
+    ["\\\\*{*/**/a,[/]}", ["\\/", "\\b/", "\\b/a", "\\/c/a"], ["\\a", "\\b"]],
+    // A pattern that ends with `**/*` itself doesn't match `a/`.
+    ["{a,*[!x]}/**/*", ["a/b", "ab/c", "c/a/b"], ["a/", "a", "ab/"]],
+    // Written out as they are, these would mean something else: a leading `!`, `**/*` at the end, `*(a)`.
     ["{*[!x],}!*", ["!", "!a", "a!b", "/!a", "a/!"], ["a", "a/b", ""]],
     ["*[/]{/**/*,x}", ["//", "a//", "a//b/", "a/x"], ["/", "a/", "a/x/"]],
     ["{*,[!x]}(a)", ["(a)", "x(a)", "b(a)", "/(a)"], ["a", "", "aa"]],
     ["{,}*{{},}(,[!x]}", ["(,a}", "a(,a}", "(,/}"], ["(,x}", "(,a", "a"]],
+    ["{*,!}[/]", ["a/", "/", "!/"], ["a", "a/b"]],
+    ["{a{+,b},}(*[!x]*", ["(a", "ab(c", "a+(c"], ["(a/b", "a", "ab"]],
+    ["{**,}{*a,[!x],}", ["aaax", "a", "a/"], ["a/b"]],
+    ["{*[!x],}**", ["a", "ab", "x/y"], ["a/b", "a/"]],
+    ["**{[!x]/,,a}", ["b", "ba", "b/", "ab/"], ["b//", "/"]],
+    // These aren't written out.
+    ["/**/*[!a]**/{*,[!x][!x]}", ["/!//", "/!/"], ["/a/b", "a/"]],
+    ["{a{*,b},}**/**/*[!x]*", ["/!/", "b/", "a/b", "c"], []],
+    ["*{a,[!x]}*@(b)", ["ab", "a/b", "ab/b"], ["a", "a/"]],
     ["*[/]{1..3}", ["a/1", "a/2", "/3"], ["a/4", "a1", "a/1..3"]],
-    // Up to 64 patterns are written out.
+    ["*[!x]{*,[}", ["a/b", "a/", "a["], ["x", ""]],
+    ["*[!x]*{a,b", ["ab{a,b"], ["ab", "a/b{a,b"]],
+    // `a{**/b}` has a globstar and `a**/b` has none.
+    ["b{**/}[/]", ["b/", "b//"], ["b", "bx/"]],
+    ["*[!x]a{**/,b}c", ["ba/c", "b/ac", "ca/x/c", "cabc"], ["a/b", "ba/"]],
+    // `{**,a}b` has no globstar and `**` has one.
+    ["{**,[!x]}*", ["a", "ab", "/a"], ["a/", "a/b"]],
+    ["{/**,[!x]}{}", ["a", "/", "/a"], ["//", "ab"]],
+    ["b**/{**/}[!x][!x]", ["b/ab", "b/a/bc"], ["b/a", "b/"]],
+    ["b**/{,[!x]}**/**/", ["b/", "bx/", "b/x/"], ["b", "a/"]],
+    ["\\**{[/]}", ["*a/", "*/"], ["a/", "*a"]],
+    // Up to 64 patterns are written out. Each group counts as two or more.
     [`*{${Array.from({ length: 63 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z62", "/b"], ["a/b", "x"]],
     [`*{${Array.from({ length: 64 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z63", "/b", "a/b"], ["x"]],
     [`*${Buffer.alloc(6 * 8, "{a,[!x]}")}*`, ["aaaaaa", "aaaaa/"], ["aaaaaaa/b", "aaaaa"]],
     [`*${Buffer.alloc(7 * 8, "{a,[!x]}")}*`, ["aaaaaaa", "aaaaaa/", "aaaaaaaa/b"], ["aaaaaa"]],
+    [`*${Buffer.alloc(7 * 3, "{a}")}[!x]*`, ["aaaaaaaab", "aaaaaaa/", "aaaaaaaa/b"], ["aaaaaaa"]],
   ])("a group, a `*` and a class that can match a separator: %s", (pattern, matches, others) => {
     const glob = new Glob(pattern);
     for (let round = 0; round < 12; round++) {
@@ -2898,7 +2942,7 @@ describe("Glob.match", () => {
     ["*[^b]*{a,b}/x", ["ca/x", "/a/x"], ["abc/ab/x", "cc/x", "abc/cc/x"]],
     ["a/**/*[^/]*[!a]*{a,b}", ["a/bcaa", "a/x/bca"], ["a/x/bc/a", "a/aa", "b/bcaa"]],
     ["**/*[!a]*[^/]/**/*{,b}/*", ["bc/x/y", "x/bc/y/z"], ["b/./.a/é", "2/x//y/z", "a}/n/../", "a/a", "aa"]],
-    ["**/*[^b]**a*/**/{a,b}*/*", ["1/a/aa/aa", "1/a/aa/aa/x"], ["1/c/cc/cc"]],
+    ["**/*[^b]**a*/**/{a,b}*/*", ["ca/a/x", "x/ca/y/b/z", "1/a/aa/aa/x"], ["1/a/aa/aa", "1/c/cc/cc"]],
     ["**/*[!a]*[+-9]/**/*/{*a,b}/b", ["b2/x/a/b", "y/b2/x/b/b"], ["a,b/2/ba//a/b", "x/2/ba//a/b", "x/2/c/c/c"]],
     ["**/*[!a]*[!a]/**/*/{,b}/*/*", ["bb/x//y/z", "bb/x/b/y/z"], ["ab/ab/x//x/+", "ab/ab/x//x/y", "aa/aa"]],
   ])("a group after a `*` and a class that can match a separator: %s", (pattern, matches, others) => {

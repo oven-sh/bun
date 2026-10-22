@@ -1,8 +1,5 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, JsHeap};
 use bun_jsc::{JSGlobalObject, JsResult, bun_string_jsc};
-
-use crate::generated_bindgen::s3_stat::S3StatClass;
 
 pub(crate) struct S3Stat {
     pub(crate) size: u64,
@@ -31,26 +28,20 @@ impl S3Stat {
     }
 }
 
-impl S3StatClass for S3Stat {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {
-        Err(heap.illegal_constructor())
-    }
-
-    fn etag(&self) -> BunString {
+impl S3Stat {
+    pub(crate) fn get_etag(&self) -> BunString {
         self.etag.clone()
     }
 
-    fn last_modified(&self) -> f64 {
+    pub(crate) fn get_last_modified(&self) -> f64 {
         self.last_modified
     }
 
-    fn size(&self) -> u64 {
+    pub(crate) fn get_size(&self) -> u64 {
         self.size
     }
 
-    fn content_type(&self) -> BunString {
+    pub(crate) fn get_content_type(&self) -> BunString {
         self.content_type.clone()
     }
 }

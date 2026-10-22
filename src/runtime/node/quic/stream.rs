@@ -11,7 +11,7 @@ use bun_lsquic_sys as lsquic;
 
 use super::endpoint::alloc_exposed_array_buffer;
 use super::ffi::lsquic_callback;
-use super::session::{QuicSession, SessionEvent};
+use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
@@ -257,6 +257,18 @@ impl QuicStream {
                 } else {
                     want_write = true;
                 }
+            } else {
+                // sendHeaders() returned true when it queued this block, so
+                // `closed` is what reports the failure.
+                s.reset(H3_INTERNAL_ERROR);
+                s.stop_sending(H3_INTERNAL_ERROR);
+                self.mark_reset(H3_INTERNAL_ERROR);
+                self.with_state(|st| st.write_ended = 1);
+                self.outbound.with_mut(|o| {
+                    o.data.clear();
+                    o.end = PendingEnd::None;
+                });
+                break;
             }
         }
         if uni {
@@ -1154,7 +1166,24 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                 got_any = true;
                 break;
             }
-            _ => break,
+            _ => {
+                // lsquic resets a request above the id of a GOAWAY without on_reset,
+                // and calls on_read on every tick until the stream is closed.
+                if stream.reset_received() {
+                    /// RFC 9114 §8.1: the server did no application processing.
+                    const H3_REQUEST_REJECTED: u64 = 0x10b;
+                    qs.mark_reset(H3_REQUEST_REJECTED);
+                    stream.close();
+                    if let Some(session) = qs.session_ref() {
+                        session.push_event(SessionEvent::StreamReset {
+                            stream: qs.key,
+                            code: H3_REQUEST_REJECTED,
+                        });
+                    }
+                    got_any = true;
+                }
+                break;
+            }
         }
     }
     if got_any {

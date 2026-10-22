@@ -206,10 +206,18 @@ describe("css tests", () => {
     minify_test(`a { margin-left: calc(1px * sign(rem(-7px, 3px))) }`, `a{margin-left:-1px}`);
     // Operands of one sign. The exact remainder of the stored f32 values (`a % b`) is 5% and
     // 10% for the first two rows: 5% is stored as 0.05f32, and 25% is not a multiple of that.
+    // These two rows do not show that every multiple folds to 0: `rem(63%, 9%)` is 9%.
     minify_test(`a { scale: rem(25%, 5%) }`, `a{scale:0%}`);
     minify_test(`a { font-stretch: rem(100%, 10%) }`, `a{font-stretch:0%}`);
     minify_test(`a { margin-left: rem(7px, 3px) }`, `a{margin-left:1px}`);
     minify_test(`a { margin-left: rem(-7px, -3px) }`, `a{margin-left:-1px}`);
+  });
+  describe("mod() keeps the sign of the divisor", () => {
+    // The examples of CSS Values 4, "Stepped Value Functions".
+    minify_test(`a { margin-left: mod(18px, 5px) }`, `a{margin-left:3px}`);
+    minify_test(`a { margin-left: mod(-18px, 5px) }`, `a{margin-left:2px}`);
+    minify_test(`a { rotate: mod(140deg, -90deg) }`, `a{rotate:-40deg}`);
+    minify_test(`a { rotate: mod(-140deg, -90deg) }`, `a{rotate:-50deg}`);
   });
   describe("clamp() simplification", () => {
     // The cases lightningcss asserts in its calc tests.

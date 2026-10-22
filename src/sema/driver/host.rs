@@ -311,7 +311,8 @@ pub struct Provided {
     /// `Session::drop_before_the_process_ends`.
     pub ends_the_process: bool,
     /// `--runExternalCode`: starts the content mappers that configuration files list, and talks to them. `None`: no
-    /// content mapper runs. Only a flag on the command line of `bun check` may set this.
+    /// content mapper runs. Only a flag that a person typed on the command line may set this, or the caller of
+    /// `Bun.build`.
     pub content_mapper_transport: Option<Box<dyn Transport>>,
 }
 

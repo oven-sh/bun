@@ -3516,6 +3516,8 @@ declare module "bun" {
      * from the file that `tsconfig` names. The check also uses the `conditions`
      * and the `loader` of the build.
      *
+     * An object also turns the check on, and sets its options.
+     *
      * @default false
      *
      * @example
@@ -3532,7 +3534,34 @@ declare module "bun" {
      * }
      * ```
      */
-    check?: boolean;
+    check?:
+      | boolean
+      | {
+          /**
+           * Run the project's content mappers during the check. Equivalent to
+           * `--check --runExternalCode` in the CLI.
+           *
+           * A content mapper is a program from a package in `node_modules`
+           * that turns a file TypeScript cannot read, such as a `.vue` file,
+           * into TypeScript. `contentMappers` in `tsconfig.json` lists the
+           * packages, and the `package.json` of each package names the command.
+           *
+           * The programs run with the permissions of this process. Set this
+           * only for a project whose `tsconfig.json` and `node_modules` you
+           * trust.
+           *
+           * Each build starts the programs it needs, and they have exited when
+           * the returned promise settles.
+           *
+           * Without it no program starts, and a project that lists content
+           * mappers fails the check with TS18068. Bun reads it from this object
+           * only: the flags of the running process and `tsconfig.json` do not
+           * turn it on.
+           *
+           * @default false
+           */
+          runExternalCode?: boolean;
+        };
 
     /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.

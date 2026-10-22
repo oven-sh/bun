@@ -1,9 +1,12 @@
-//! The programs that `bun check --runExternalCode` runs: TypeScript's content mappers, which a project's `tsconfig.json`
-//! lists and which turn files such as `.vue` files into TypeScript.
+//! The programs that a type check runs with `--runExternalCode`: TypeScript's content mappers, which a project's
+//! `tsconfig.json` lists and which turn files such as `.vue` files into TypeScript.
 //!
 //! One thread owns an event loop, and everything that touches a program or its pipes happens on that thread, without
 //! blocking. The threads that load the project's files only queue a command for it and then wait in
 //! `Connection::wait`. What a program writes is passed on as is. The checker decodes and validates it.
+//!
+//! The process may go on after the check, as it does for `Bun.build`. `Programs::close` leaves nothing behind: the
+//! programs have exited, the pipes and the loop are closed, and the thread has ended.
 
 use core::ffi::CStr;
 use core::time::Duration;
@@ -56,8 +59,8 @@ enum Command {
 struct LoopToWake(*mut bun_uws::Loop);
 
 // SAFETY: the pointer is only used to wake the loop, under the lock of the `Inbox` that has it. The I/O thread removes
-// it from there before it ends. The loop is that thread's own `MiniEventLoop`: `bun check` has no VM, so there's no VM
-// or JS state behind it.
+// it from there before it ends. The loop is that thread's own `MiniEventLoop`. A VM in the process has a loop of its
+// own, so there's no VM or JS state behind this one.
 unsafe impl Send for LoopToWake {}
 
 #[derive(Default)]

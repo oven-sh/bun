@@ -93,6 +93,10 @@ complete -c bun \
 	-n $flag_applies --no-files -l 'use' -r -d 'Use a framework (ex: next)'
 complete -c bun \
 	-n $flag_applies --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
+complete -c bun \
+	-n $flag_applies --no-files -l 'check' -d 'Type check before running. Nothing runs if there are type errors'
+complete -c bun \
+	-n $flag_applies --no-files -l 'runExternalCode' -d 'With --check: run the programs from node_modules that contentMappers in tsconfig.json lists'
 
 # Complete dev and create as first subcommand.
 complete -c bun \

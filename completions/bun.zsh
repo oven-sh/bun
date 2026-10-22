@@ -502,6 +502,8 @@ _bun_run_completion() {
         '--port[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
         '-p[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
         '--smol[Use less memory, but run garbage collection more often]' \
+        '--check[Type check before running. Nothing runs if there are type errors]' \
+        '--runExternalCode[With --check: run the programs from node_modules that contentMappers in tsconfig.json lists]' \
         '--minify[Minify (experimental)]' \
         '--minify-syntax[Minify syntax and inline data (experimental)]' \
         '--minify-whitespace[Minify Whitespace (experimental)]' \
@@ -596,6 +598,8 @@ _bun_build_completion() {
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--splitting[Whether to enable code splitting (requires --outdir)]' \
         '--compile[generating a standalone binary from a TypeScript or JavaScript file]' \
+        '--check[Type check the entry points and what they import. Nothing is bundled if there are type errors]' \
+        '--runExternalCode[With --check: run the programs from node_modules that contentMappers in tsconfig.json lists]' \
         '--format[Specifies the module format to be used in the generated bundles]: :->format' &&
         ret=0
 
@@ -1059,6 +1063,8 @@ _bun_test_completion() {
         '--port[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
         '-p[Port to serve bun'"'"'s dev server on. Default: '"'"'3000'"'"']:port' \
         '--smol[Use less memory, but run garbage collection more often]' \
+        '--check[Type check before running. Nothing runs if there are type errors]' \
+        '--runExternalCode[With --check: run the programs from node_modules that contentMappers in tsconfig.json lists]' \
         '--minify[Minify (experimental)]' \
         '--minify-syntax[Minify syntax and inline data (experimental)]' \
         '--minify-identifiers[Minify identifiers]' \

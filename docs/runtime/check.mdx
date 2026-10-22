@@ -669,15 +669,42 @@ src/App.vue(12,7): error TS2322: Type 'string' is not assignable to type 'number
   projects whose `tsconfig.json` and `node_modules` you trust.
 </Warning>
 
-The flag only works on the command line of `bun check`, after `check`. It has no effect in `tsconfig.json`, `bunfig.toml`, `BUN_OPTIONS`, or a response file (`@file`). Without the flag, `bun check` starts nothing and reports TS18068:
+The flag counts only if you type it on the command line, after `check`. It has no effect in `tsconfig.json`, `bunfig.toml`, `BUN_OPTIONS`, or a response file (`@file`). Without the flag, `bun check` starts nothing and reports TS18068:
 
 ```txt
 tsconfig.json(2,3): error TS18068: Content mappers require the '--runExternalCode' command line flag to be enabled.
 ```
 
-`bun --check`, `bun test --check`, `bun build --check`, `Bun.build({ check: true })`, and `bun lint` never run a content mapper.
+Each mapper runs once per check, in its package's directory, and stops when the check ends. A mapper whose command is `node` runs with Bun if `node` is not installed. What it prints to standard error appears in your terminal. `bun check` does not trust what a mapper answers: an answer that is malformed or points outside of the file is an error on that file, and after five such files the mapper is not used again.
 
-Each mapper runs once per `bun check`, in its package's directory, and stops when the check ends. A mapper whose command is `node` runs with Bun if `node` is not installed. What it prints to standard error appears in your terminal. `bun check` does not trust what a mapper answers: an answer that is malformed or points outside of the file is an error on that file, and after five such files the mapper is not used again.
+### With `--check`
+
+[`--check`](#check-before-you-run-build-or-test) runs the content mappers if you also allow it:
+
+| You run                          | You allow it with                                               |
+| -------------------------------- | --------------------------------------------------------------- |
+| `bun --check`, `bun run --check` | `bun --check --runExternalCode src/index.ts`                    |
+| `bun test --check`               | `bun test --check --runExternalCode`                            |
+| `bun build --check`              | `bun build --check --runExternalCode src/index.ts --outdir out` |
+| `Bun.build`                      | `check: { runExternalCode: true }`                              |
+
+The same rule applies as for `bun check`: the flag counts only if you type it on the command line. Put it before the file or script that Bun runs. What follows the file or script belongs to your program, which reads it from `process.argv`. Without `--check`, the flag has no effect.
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./out",
+  check: { runExternalCode: true },
+});
+```
+
+`Bun.build` reads `runExternalCode` from the object you pass, and from nowhere else. With `check: true`, it starts nothing and reports TS18068. The mappers have stopped when the promise settles.
+
+With [`--watch`](#watch-mode), every check starts the mappers again.
+
+A content mapper only serves the type check. To run or bundle a `.vue` file, Bun needs a [plugin](/runtime/plugins) that loads it.
+
+`bun lint` never runs a content mapper.
 
 ## Differences from `tsc`
 

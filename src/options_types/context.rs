@@ -28,6 +28,9 @@ pub struct ContextData {
     pub log: *mut bun_ast::Log,
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
+    /// `--runExternalCode`, typed by the person who ran the command: `--check` runs the content mappers that
+    /// tsconfig.json lists. Nothing but the command line sets this.
+    pub runs_external_code: bool,
     pub install: Option<Box<api::BunInstall>>,
 
     pub debug: DebugOptions,
@@ -71,6 +74,7 @@ impl Default for ContextData {
             log: core::ptr::null_mut(),
             positionals: Vec::new(),
             passthrough: Vec::new(),
+            runs_external_code: false,
             install: None,
             debug: DebugOptions::default(),
             test_options: TestOptions::default(),

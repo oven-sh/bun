@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunExe, isWindows, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { bunExe, isLinux, isWindows, tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, longLimit, spawn } from "../children";
 import { env as plainOutput } from "./differential";
@@ -805,12 +805,383 @@ ${withoutPlace}`,
   test("after `--`", async () => {
     await expectNotStarted({}, ["--", "--runExternalCode"]);
   });
+});
 
-  test("bun --check, bun test --check and bun build --check", async () => {
-    const files = { "main.test.ts": main, "index.ts": main };
-    await expectNotStarted({ files }, [], {}, ["--check", "--runExternalCode", "index.ts"]);
-    await expectNotStarted({ files }, [], {}, ["test", "--check", "--runExternalCode"]);
-    await expectNotStarted({ files }, [], {}, ["build", "--check", "--runExternalCode", "index.ts", "--outdir", "out"]);
+// `tsc` has no counterpart to any of these.
+describe.concurrent("--check", () => {
+  // The mapper adds its process id to a file, which is how a test knows that it has run.
+  const mapper = `fs.appendFileSync(__dirname + "/pids.txt", process.pid + "\\n"); serve();`;
+  const pidsOf = (dir: { toString(): string }) => {
+    const path = join(String(dir), "node_modules/m/pids.txt");
+    return existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").map(Number) : [];
+  };
+  // Only the types of `App.vue` are imported, because nothing here teaches the runtime or the bundler to load it.
+  const files = {
+    "App.vue": `<script>\nexport type Count = number;\n</script>\n`,
+    "main.ts": `import type { Count } from "./App.vue";\nconst one: Count = 1;\nconsole.log(["ran", one, ...process.argv.slice(2)].join(" "));\n`,
+    "main.test.ts": `import { test } from "bun:test";\nimport type { Count } from "./App.vue";\ntest("counts", () => {\n  const one: Count = 1;\n  console.log("ran", one);\n});\n`,
+    "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\ndeclare const console: { log(...values: unknown[]): void };\ndeclare const process: { argv: string[]; execArgv: string[] };\n`,
+    "package.json": JSON.stringify({ name: "app", scripts: { start: `"${bunExe().replaceAll("\\", "/")}" main.ts` } }),
+  };
+  const wrong = { "App.vue": `<script>\nexport type Count = number;\nconst wrong: Count = "one";\n</script>\n` };
+  const isWrong = "TS2322: Type 'string' is not assignable to type 'number'.";
+  const notAllowed = "TS18068: Content mappers require the '--runExternalCode' command line flag to be enabled.";
+
+  async function run(dir: { toString(): string }, cmd: string[], extra: Record<string, string> = {}) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env: { ...env, ...extra },
+      timeout: longLimit,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, output: stdout + stderr, exitCode };
+  }
+
+  // Each command, given the flags to put next to `--check`, and what follows its last argument.
+  const commands: [string, (flags: string[], rest?: string[]) => string[]][] = [
+    ["bun --check main.ts", (flags, rest = []) => ["--check", ...flags, "main.ts", ...rest]],
+    ["bun run --check main.ts", (flags, rest = []) => ["run", "--check", ...flags, "main.ts", ...rest]],
+    ["bun run --check start", (flags, rest = []) => ["run", "--check", ...flags, "start", ...rest]],
+    ["bun test --check", (flags, rest = []) => ["test", "--check", ...flags, "main.test.ts", ...rest]],
+    ["bun build --check", (flags, rest = []) => ["build", "--check", ...flags, "main.ts", "--outdir", "out", ...rest]],
+  ];
+  /** Whether the command went on after the check. */
+  const hasRun = (dir: { toString(): string }, stdout: string) =>
+    stdout.includes("ran 1") || existsSync(join(String(dir), "out/main.js"));
+
+  describe.each(commands)("%s", (name, command) => {
+    test("with --runExternalCode, it goes on if there are no errors", async () => {
+      using dir = project({ mapper, files });
+      const { stdout, output, exitCode } = await run(dir, command(["--runExternalCode"]));
+      expect(output).not.toContain("error");
+      expect({ mappers: pidsOf(dir).length, hasRun: hasRun(dir, stdout), exitCode }).toEqual({
+        mappers: 1,
+        hasRun: true,
+        exitCode: 0,
+      });
+    });
+
+    test("with --runExternalCode, it reports the errors in App.vue", async () => {
+      using dir = project({ mapper, files: { ...files, ...wrong } });
+      const { stdout, output, exitCode } = await run(dir, command(["--runExternalCode"]));
+      expect(output).toContain(isWrong);
+      expect(output).toMatch(/App\.vue[(:]3[,:]7\b/);
+      expect(output).not.toContain("TS18068");
+      expect({ mappers: pidsOf(dir).length, hasRun: hasRun(dir, stdout), exitCode }).toEqual({
+        mappers: 1,
+        hasRun: false,
+        exitCode: 1,
+      });
+      expect(() => process.kill(pidsOf(dir)[0], 0)).toThrow();
+    });
+
+    test.each([
+      ["without the flag", command([]), {}, {}],
+      ["with the flag in BUN_OPTIONS", command([]), { BUN_OPTIONS: "--runExternalCode" }, {}],
+      ["with the flag after `--`", command([], ["--", "--runExternalCode"]), {}, {}],
+      [
+        "with the flag in BUN_OPTIONS and after `--`",
+        command([], ["--", "--runExternalCode"]),
+        { BUN_OPTIONS: "--runExternalCode" },
+        {},
+      ],
+      ["with the option in tsconfig.json", command([]), {}, { runExternalCode: true }],
+    ])("%s, nothing starts", async (where, cmd, extra, compilerOptions) => {
+      using dir = project({ mapper, files, compilerOptions });
+      const { stdout, output, exitCode } = await run(dir, cmd, extra);
+      // To `bun build`, what follows `--` is an entry point.
+      const isEntryPoint = name === "bun build --check" && where.endsWith("after `--`");
+      expect(output).toContain(isEntryPoint ? `ModuleNotFound resolving "--runExternalCode"` : notAllowed);
+      expect({ mappers: pidsOf(dir), hasRun: hasRun(dir, stdout), exitCode }).toEqual({
+        mappers: [],
+        hasRun: false,
+        exitCode: 1,
+      });
+    });
+
+    test("with the flag and without --check, nothing starts", async () => {
+      using dir = project({ mapper, files });
+      const cmd = command(["--runExternalCode"]).filter(arg => arg !== "--check");
+      const { stdout, exitCode } = await run(dir, cmd);
+      expect({ mappers: pidsOf(dir), hasRun: hasRun(dir, stdout), exitCode }).toEqual({
+        mappers: [],
+        hasRun: true,
+        exitCode: 0,
+      });
+    });
+  });
+
+  test("bun --check --runExternalCode alone checks the project", async () => {
+    using dir = project({ mapper, files: { ...files, ...wrong } });
+    const [alone, afterRun, inOptions] = await Promise.all([
+      run(dir, ["--check", "--runExternalCode"]),
+      run(dir, ["run", "--check", "--runExternalCode"]),
+      run(dir, ["--check"], { BUN_OPTIONS: "--runExternalCode" }),
+    ]);
+    const error = `App.vue(3,7): error ${isWrong}\n`;
+    expect([alone.stdout, afterRun.stdout]).toEqual([error, error]);
+    expect(inOptions.stdout).toContain(notAllowed);
+    expect(pidsOf(dir)).toHaveLength(2);
+  });
+
+  test.each([
+    ["bun --check main.ts", ["--check", "main.ts", "--runExternalCode"]],
+    ["bun run --check main.ts", ["run", "--check", "main.ts", "--runExternalCode"]],
+    ["bun run --check start", ["run", "--check", "start", "--runExternalCode"]],
+  ])("%s --runExternalCode: the flag is the program's", async (_, cmd) => {
+    using dir = project({ mapper, files });
+    const [checked, alsoInOptions] = await Promise.all([
+      run(dir, cmd),
+      run(dir, cmd, { BUN_OPTIONS: "--runExternalCode" }),
+    ]);
+    expect(checked.output).toContain(notAllowed);
+    expect(alsoInOptions.output).toContain(notAllowed);
+    expect(pidsOf(dir)).toEqual([]);
+    const unchecked = await run(
+      dir,
+      cmd.filter(arg => arg !== "--check"),
+    );
+    expect(unchecked.stdout).toContain("ran 1 --runExternalCode\n");
+  });
+
+  test("the program doesn't see the flag, and a process that it starts needs its own", async () => {
+    using dir = project({
+      mapper,
+      files: {
+        ...files,
+        "parent.ts": `import type { Count } from "./App.vue";
+declare const Bun: { spawnSync(options: object): { exitCode: number } };
+const one: Count = 1;
+console.log(["ran", one, ...process.argv.slice(2), ...process.execArgv].join(" "));
+const child = Bun.spawnSync({ cmd: [process.argv[0], "--check", "main.ts"], stdio: ["ignore", "inherit", "inherit"] });
+console.log("the child exited with", child.exitCode);
+`,
+      },
+    });
+    const { stdout, output } = await run(dir, ["--check", "--runExternalCode", "parent.ts", "argument"]);
+    expect(stdout).toBe("ran 1 argument --check\nthe child exited with 1\n");
+    expect(output).toContain(notAllowed);
+    expect(pidsOf(dir)).toHaveLength(1);
+  });
+
+  test.each(["--watch", "--hot"])(
+    "bun %s --check --runExternalCode starts the mapper again for each check",
+    async flag => {
+      using dir = project({ mapper, files });
+      await using proc = spawn({
+        cmd: [bunExe(), flag, "--no-clear-screen", "--check", "--runExternalCode", "main.ts"],
+        cwd: String(dir),
+        env,
+        timeout: longLimit,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      let output = "";
+      let wake = () => {};
+      const read = async (stream: ReadableStream<Uint8Array>) => {
+        for await (const chunk of stream) {
+          output += Buffer.from(chunk).toString();
+          wake();
+        }
+      };
+      let hasExited = false;
+      const closed = Promise.all([read(proc.stdout), read(proc.stderr)]).then(() => {
+        hasExited = true;
+        wake();
+      });
+      const until = async (pattern: RegExp) => {
+        while (!pattern.test(output) && !hasExited) await new Promise<void>(resolve => (wake = resolve));
+      };
+      await until(/ran 1|error/);
+      expect(output).toBe("ran 1\n");
+      const [first] = pidsOf(dir);
+      expect(() => process.kill(first, 0)).toThrow();
+      await Bun.write(join(String(dir), "App.vue"), wrong["App.vue"]);
+      await until(/Found \d+ error/);
+      expect(output).toContain(isWrong);
+      expect(pidsOf(dir)).toEqual([first, expect.any(Number)]);
+      proc.kill();
+      await closed;
+    },
+  );
+});
+
+describe.concurrent("Bun.build", () => {
+  const files = {
+    "App.vue": `<script>\nexport type Count = number;\n</script>\n`,
+    "main.ts": `import type { Count } from "./App.vue";\nexport const one: Count = 1;\n`,
+  };
+  const wrong = { "App.vue": `<script>\nexport type Count = number;\nconst wrong: Count = "one";\n</script>\n` };
+  const recordsPid = `fs.appendFileSync(__dirname + "/pids.txt", process.pid + "\\n");`;
+  // What each program starts with. `build` returns what a test compares. The mappers that have started by then are in
+  // `running` if they're still there.
+  const start = String.raw`
+const fs = require("fs");
+const pids = () => {
+  try {
+    return fs.readFileSync("node_modules/m/pids.txt", "utf8").trim().split("\n").map(Number);
+  } catch {
+    return [];
+  }
+};
+const isRunning = pid => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+async function build(check) {
+  const { success, logs } = await Bun.build({ entrypoints: ["./main.ts"], check, throw: false });
+  const messages = logs.map(log => log.message.split("\n")[0]);
+  return { success, messages, started: pids().length, running: pids().filter(isRunning) };
+}
+`;
+
+  /** Runs `program` in a project with `options`. Returns what it passes to `done`. */
+  async function run(options: Project, program: string, extra: Record<string, string> = {}, flags: string[] = []) {
+    using dir = project({
+      ...options,
+      files: {
+        ...files,
+        ...options.files,
+        "build.js": `${start}const done = value => console.log(JSON.stringify(value));\n${program}`,
+      },
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...flags, "build.js"],
+      cwd: String(dir),
+      env: { ...env, ...extra },
+      timeout: longLimit,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+  const allowed = `done(await build({ runExternalCode: true }));`;
+  const notAllowed = "TS18068: Content mappers require the '--runExternalCode' command line flag to be enabled.";
+
+  test("check: { runExternalCode: true } runs the mapper", async () => {
+    expect(await run({ mapper: `${recordsPid} serve();` }, allowed)).toEqual({
+      success: true,
+      messages: [],
+      started: 1,
+      running: [],
+    });
+  });
+
+  test("the errors in App.vue fail the build", async () => {
+    expect(await run({ mapper: `${recordsPid} serve();`, files: wrong }, allowed)).toEqual({
+      success: false,
+      messages: ["TS2322: Type 'string' is not assignable to type 'number'."],
+      started: 1,
+      running: [],
+    });
+  });
+
+  test("a mapper that exits in the middle of a request", async () => {
+    expect(await run({ mapper: `${recordsPid} serve({ transform: () => process.exit(3) });` }, allowed)).toEqual({
+      success: false,
+      messages: ["TS18069: The content mapper 'm' failed to transform this file."],
+      started: 1,
+      running: [],
+    });
+  });
+
+  test("a mapper that never answers", async () => {
+    const mapper = `${recordsPid} setInterval(() => {}, 1000);`;
+    const result = await run({ mapper }, allowed, { BUN_DEBUG_TEST_CONTENT_MAPPER_TIMEOUT_MS: "1" });
+    expect(result).toEqual({
+      success: false,
+      messages: expect.arrayContaining(["TS18099: The content mapper 'm' could not be initialized."]),
+      // It may be killed before it gets to write the file.
+      started: expect.any(Number),
+      running: [],
+    });
+  });
+
+  test.each([
+    ["true", "true"],
+    ["{}", "{}"],
+    ["{ runExternalCode: false }", "{ runExternalCode: false }"],
+    ["{ runExternalCode: undefined }", "{ runExternalCode: undefined }"],
+    ["an object that inherits it", "(Object.prototype.runExternalCode = true, {})"],
+  ])("check: %s starts nothing", async (_, check) => {
+    const result = await run({ mapper: `${recordsPid} serve();` }, `done(await build(${check}));`);
+    expect(result).toEqual({
+      success: false,
+      messages: expect.arrayContaining([notAllowed]),
+      started: 0,
+      running: [],
+    });
+  });
+
+  test("the flags of the process don't count", async () => {
+    const program = `const before = pids().length;\ndone({ ...(await build(true)), started: pids().length - before });`;
+    const result = await run({ mapper: `${recordsPid} serve();` }, program, {}, ["--check", "--runExternalCode"]);
+    expect(result).toEqual({
+      success: false,
+      messages: expect.arrayContaining([notAllowed]),
+      started: 0,
+      running: [],
+    });
+  });
+
+  test.each([`"true"`, "1", "null", "{}"])("check: { runExternalCode: %s } throws", async value => {
+    const program = `done(await build({ runExternalCode: ${value} }).catch(error => [error.name, error.message, pids()]));`;
+    expect(await run({ mapper: `${recordsPid} serve();` }, program)).toEqual([
+      "TypeError",
+      expect.stringContaining("runExternalCode"),
+      [],
+    ]);
+  });
+
+  test("two builds at the same time", async () => {
+    const program = `
+const builds = await Promise.all([build({ runExternalCode: true }), build({ runExternalCode: true })]);
+done({ builds: builds.map(it => [it.success, it.messages]), started: pids().length, running: pids().filter(isRunning) });`;
+    expect(await run({ mapper: `${recordsPid} serve();` }, program)).toEqual({
+      builds: [
+        [true, []],
+        [true, []],
+      ],
+      started: 2,
+      running: [],
+    });
+  });
+
+  test("a process that exits during a build takes the mapper with it", async () => {
+    const mapper = `serve({ transform: () => (fs.writeFileSync(__dirname + "/working.txt", ""), SKIP) });`;
+    const program = `
+const exit = why => (done(why), process.exit(0));
+build({ runExternalCode: true }).then(() => exit("the build has settled"));
+const wait = () => (fs.existsSync("node_modules/m/working.txt") ? exit("the mapper is working") : setImmediate(wait));
+wait();`;
+    // The mapper has the standard error of the process, so this only returns once both have exited.
+    expect(await run({ mapper }, program)).toBe("the mapper is working");
+  });
+
+  // A leak would add at least one per build. The garbage collector and the JIT start a few threads when they see fit.
+  test.skipIf(!isLinux)("fifty builds in one process leave no file descriptor and no thread behind", async () => {
+    const program = `
+const count = () => ({ files: fs.readdirSync("/proc/self/fd").length, threads: fs.readdirSync("/proc/self/task").length });
+let early;
+for (let i = 1; i <= 50; i++) {
+  const { success, messages } = await build({ runExternalCode: true });
+  if (!success) throw new Error("build " + i + " failed: " + messages.join(", "));
+  if (i === 5) early = count();
+}
+done({ early, late: count(), started: pids().length, running: pids().filter(isRunning) });`;
+    const { early, late, started, running } = await run({ mapper: `${recordsPid} serve();` }, program);
+    expect({ started, running }).toEqual({ started: 50, running: [] });
+    expect(late.files - early.files).toBeLessThan(45);
+    expect(late.threads - early.threads).toBeLessThan(45);
   });
 });
 

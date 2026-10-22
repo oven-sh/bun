@@ -1554,13 +1554,6 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
     ) -> crate::Error {
         self.dir_read_failure = None;
-        // The log looks the specifier up in the text, which does not have
-        // the bytes of one that is not UTF-8.
-        let specifier = if strings::is_valid_utf8(import_path) {
-            import_path
-        } else {
-            b""
-        };
         self.log_mut().add_resolve_error(
             None,
             bun_ast::Range::NONE,
@@ -1570,7 +1563,7 @@ impl<'a> Resolver<'a> {
                 bstr::BStr::new(failure.err.name()),
                 bstr::BStr::new(import_path)
             ),
-            specifier,
+            import_path,
             kind,
             bun_ast::Error::ModuleNotFound,
         );
@@ -4284,11 +4277,15 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(true, path)
     }
 
-    /// For a caller outside the resolver. Such a caller takes the listing of
-    /// the directory with no check (`DirInfo::get_entries_const`), so a
-    /// directory that a walk only passed through (`DirInfo::was_probed`) is
-    /// read here, and `Err` is also a read that still fails.
     pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
+        self.dir_info_cached_maybe_log(false, path)
+    }
+
+    /// `read_dir_info` for a caller that goes through every name of the
+    /// directory with no check (`DirInfo::get_entries_const`). A directory
+    /// that a walk only passed through (`DirInfo::was_probed`) has no
+    /// listing, so it is read here, and `Err` is also a read that still fails.
+    pub fn read_dir_info_listed(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         let dir_info = self.dir_info_cached_maybe_log(false, path)?;
         if let Some(dir_info) = dir_info
             && dir_info.was_probed()
@@ -4298,9 +4295,10 @@ impl<'a> Resolver<'a> {
         Ok(dir_info)
     }
 
-    /// Like `readDirInfo`, but returns `null` instead of throwing an error.
+    /// `read_dir_info_listed`, with `None` for an error. Its callers go
+    /// through the names of a directory tree.
     pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-        self.read_dir_info(path).ok().flatten()
+        self.read_dir_info_listed(path).ok().flatten()
     }
 
     /// The first directory from `dir_info` up that a walk only passed

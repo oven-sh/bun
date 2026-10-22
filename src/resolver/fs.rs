@@ -394,21 +394,21 @@ pub struct DirEntry {
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
-    /// The generation that read this listing, or `NEVER_READ`.
-    generation: i32,
+    /// One more than the generation that read this listing, or `NEVER_READ`.
+    generation: Generation,
     pub data: dir_entry::EntryMap,
 }
 
 impl DirEntry {
-    /// The generation of a directory that has no listing. It is older than
-    /// every generation, so each reader reads the directory first.
-    const NEVER_READ: i32 = -1;
+    /// The place of a listing that no read has filled. Every generation
+    /// takes it for stale, so each reader reads the directory first.
+    const NEVER_READ: Generation = 0;
 
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
-            generation: i32::from(generation),
+            generation: generation.saturating_add(1),
             fd: Fd::INVALID,
         }
     }
@@ -423,9 +423,11 @@ impl DirEntry {
         }
     }
 
+    /// Was this read by a generation before `generation`, or never? One
+    /// compare of 16 bits, as for the generation itself.
     #[inline]
     pub(crate) fn is_older_than(&self, generation: Generation) -> bool {
-        self.generation < i32::from(generation)
+        self.generation <= generation
     }
 
     /// Is this the place of a listing that no read has filled

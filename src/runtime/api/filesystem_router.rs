@@ -123,7 +123,7 @@ fn load_router(
     }
 
     let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
-    let root_dir_info = match resolver.read_dir_info(&config.dir) {
+    let root_dir_info = match resolver.read_dir_info_listed(&config.dir) {
         Ok(Some(info)) => info,
         Ok(None) => return Ok(None),
         Err(_) => {

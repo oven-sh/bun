@@ -23,7 +23,7 @@ impl Rule for NoWith {
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if stmt.as_with().is_some() {
             let start = stmt.span().start;
-            // Before ESLint 10 it is the whole statement.
+            // Before ESLint 10 it's the whole statement.
             let end = if cx.language().eslint_major < 10 { stmt.span().end } else { start + "with".len() as u32 };
             cx.report(Span::new(start, end), UNEXPECTED_WITH);
         }

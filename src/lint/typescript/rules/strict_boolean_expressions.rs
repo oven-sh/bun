@@ -188,7 +188,7 @@ const TRUTHY_STRING: VariantTypes = 1 << 10;
 #[derive(Copy, Clone)]
 struct Suggestion {
     message: Message,
-    /// `node: node.parent, innerNode: node`: the `!` around the node is replaced too.
+    /// `node: node.parent, innerNode: node`, which also replaces the `!` around the node.
     replaces_negation: bool,
     before: &'static str,
     after: &'static str,
@@ -278,7 +278,7 @@ fn is_logical_negation_expression(node: Node) -> bool {
 }
 
 fn is_array_length_expression(node: Expr) -> bool {
-    // All of an optional chain is a `ChainExpression`, not a `MemberExpression`.
+    // A whole optional chain is a `ChainExpression`, not a `MemberExpression`.
     if node.is_chain_root() {
         return false;
     }
@@ -300,7 +300,7 @@ fn is_branded_boolean(ty: Type) -> bool {
             .any(|it| it.has_flags(TypeFlags::BOOLEAN.union(TypeFlags::BOOLEAN_LITERAL)))
 }
 
-/// Its type is `boolean`, `true` or `false`, whatever its operands are.
+/// True if the type is `boolean`, `true` or `false` regardless of the operands.
 fn is_always_boolean(node: Expr) -> bool {
     match node.kind() {
         ExprKind::True | ExprKind::False => true,
@@ -322,8 +322,8 @@ fn is_always_boolean(node: Expr) -> bool {
     }
 }
 
-/// Whether what listens for the parent of the logical expression `node` traverses `node`. Upstream
-/// finds it among its `traversedNodes` then, as a parent comes before its children.
+/// True if the listener for the logical expression `node`'s parent already traverses `node`. Upstream then finds `node`
+/// in its `traversedNodes`, because a parent is visited before its children.
 fn is_traversed_from_parent(node: Expr) -> bool {
     if node.with_jsdoc_cast() != node {
         return false;
@@ -333,7 +333,7 @@ fn is_traversed_from_parent(node: Expr) -> bool {
             ExprKind::Cond { test, .. } => test == node,
             ExprKind::Unary { op, .. } => op == UnOp::Not,
             ExprKind::Binary { op, .. } => matches!(op, BinOp::And | BinOp::Or),
-            // Every argument that is a logical expression, asserted or not.
+            // Every argument that's a logical expression, asserted or not.
             ExprKind::Call(call) => call.callee() != node,
             _ => false,
         },
@@ -453,7 +453,7 @@ struct TypeInfo {
     is_enum: bool,
 }
 
-/// tsgolint's `analyzeTypePart`. Whether a bigint is truthy decides nothing in `checkCondition`.
+/// tsgolint's `analyzeTypePart`. `checkCondition` doesn't depend on whether a bigint is truthy.
 fn analyze_type_part(ty: Type) -> TypeInfo {
     let flags = ty.flags();
     let (mut is_truthy, mut is_enum) = (false, false);
@@ -531,7 +531,7 @@ fn analyze_type_parts<'a>(types: impl Iterator<Item = Type<'a>>) -> TypeInfo {
             met_not_truthy = !part.is_truthy;
         }
     }
-    // Nullish parts alone are nullish, no parts at all are mixed.
+    // Only nullish parts means nullish. No parts at all means mixed.
     let variant = variant.unwrap_or(match is_nullable {
         true => TypeVariant::Nullish,
         false => TypeVariant::Mixed,
@@ -734,7 +734,7 @@ impl StrictBooleanExpressions {
                 unless(self.allow_nullable_object, ConditionError::NullableObject)
             }
             TypeVariant::Object => Some(ConditionError::Object),
-            // An enum beside other types is reported only where it can be nullish.
+            // An enum mixed with other types is only reported if it can be nullish.
             TypeVariant::Mixed if !info.is_enum => Some(ConditionError::Other),
             TypeVariant::Mixed if info.is_nullable => {
                 unless(self.allow_nullable_enum, ConditionError::NullableEnum)
@@ -765,13 +765,13 @@ impl StrictBooleanExpressions {
         }
     }
 
-    /// The operands of a logical expression are traversed in turn. Anything else is checked, unless
-    /// it is not a condition: then it is there for its side effects only.
+    /// Traverses the operands of a logical expression. Checks anything else, unless it isn't a condition and is only
+    /// evaluated for its side effects.
     fn traverse_node<'a>(&self, node: Expr<'a>, is_condition: bool, cx: &Cx<'a, Self>) {
         self.traverse(node.with_jsdoc_cast(), is_condition, cx);
     }
 
-    /// `node`: not what is around it, if that is a JSDoc cast.
+    /// `node` must already be inside its JSDoc cast, if it has one.
     fn traverse<'a>(&self, node: Expr<'a>, is_condition: bool, cx: &Cx<'a, Self>) {
         let mut pending: SmallVec<[(Expr<'a>, bool); 8]> = SmallVec::new();
         pending.push((node, is_condition));
@@ -792,7 +792,7 @@ impl StrictBooleanExpressions {
         }
     }
 
-    /// Reports a predicate of an array method that does not return a boolean value.
+    /// Reports an array method predicate that doesn't return a boolean.
     fn check_array_method_call_predicate<'a>(&self, predicate_node: Expr<'a>, cx: &Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
         let function = predicate_node.as_fn();
@@ -832,13 +832,13 @@ impl StrictBooleanExpressions {
             return;
         };
 
-        // oxlint points at the call.
-        let place = match predicate_node.parent() {
+        // oxlint reports the call.
+        let report_span = match predicate_node.parent() {
             Node::Expr(call) if cx.language().is_oxlint => call.span(),
             _ => predicate_node.span(),
         };
         let mut report = cx
-            .report(place, report_type.message())
+            .report(report_span, report_type.message())
             .data("context", "array predicate return type");
         if let Some(function) = function {
             if let FnBody::Expr(body) = function.body() {
@@ -876,8 +876,8 @@ impl StrictBooleanExpressions {
 const CONDITIONS: On = On::new()
     .exprs(&[ExprTag::Cond, ExprTag::Unary, ExprTag::Binary])
     .stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For])
-    // As nodes, which come last: oxlint reports a predicate at its call, after what the call is
-    // as a condition.
+    // Calls are listened to as nodes, which run last, because oxlint reports a predicate at its call, after any report
+    // about the call as a condition.
     .nodes(NodeTags::new().exprs(&[ExprTag::Call]));
 
 impl Rule for StrictBooleanExpressions {
@@ -923,7 +923,7 @@ impl Rule for StrictBooleanExpressions {
                 op: UnOp::Not,
                 operand,
             } => self.traverse_node(operand, true, cx),
-            // On its own a logical expression is control flow, and no condition itself.
+            // A logical expression on its own is control flow, not a condition.
             ExprKind::Binary { .. } => {
                 if ast_utils::is_logical_expression(node) && !is_traversed_from_parent(node) {
                     self.traverse(node, false, cx);

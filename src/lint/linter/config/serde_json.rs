@@ -1,10 +1,10 @@
-//! What oxlint says about a configuration file that is no JSON. It takes out the comments with `json-strip-comments` and has
-//! `serde_json` read the rest: the words and the places are theirs.
+//! oxlint's errors for a config file that isn't JSON. It strips the comments with `json-strip-comments` and parses the
+//! rest with `serde_json`, so the messages and positions are theirs.
 
 use bun_core::strings;
 
-/// What `json_strip_comments::strip` leaves: a blank for each byte of a comment, but for the line break that ends one, and for a
-/// comma before a `}` or a `]`. `None`: a `/` starts no comment.
+/// The output of `json_strip_comments::strip`: every byte of a comment becomes a space, except the line break that ends
+/// one, and so does a comma before a `}` or a `]`. `None` if a `/` doesn't start a comment.
 fn without_comments(text: &[u8]) -> Option<Vec<u8>> {
     enum State {
         Top,
@@ -12,13 +12,13 @@ fn without_comments(text: &[u8]) -> Option<Vec<u8>> {
         Escape,
         Slash,
         Block,
-        /// After a `*` in one.
+        /// After a `*` in a block comment.
         BlockEnd,
         Line,
     }
     let mut out = text.to_vec();
     let mut state = State::Top;
-    // The comma after which there were only blanks and comments.
+    // The last comma, if only whitespace and comments have followed it.
     let mut comma = None;
     for (at, &byte) in text.iter().enumerate() {
         let is_in_comment = !matches!(state, State::Top | State::String | State::Escape);
@@ -60,7 +60,7 @@ fn without_comments(text: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// What is wrong, and how much of the text was read.
+/// The error, and how much of the text was read.
 type Failure = (&'static str, usize);
 
 const EOF_IN_VALUE: &str = "EOF while parsing a value";
@@ -70,7 +70,7 @@ const INVALID_NUMBER: &str = "invalid number";
 const NO_KEY: &str = "key must be a string";
 const LONE_SURROGATE: &str = "lone leading surrogate in hex escape";
 
-/// `serde_json::Deserializer`, as far as it refuses.
+/// `serde_json::Deserializer`, reduced to the parts that reject input.
 struct Reader<'t> {
     text: &'t [u8],
     at: usize,
@@ -88,17 +88,17 @@ impl Reader<'_> {
         Some(byte)
     }
 
-    /// About what is next.
+    /// An error about the next byte.
     fn peek_error<T>(&self, why: &'static str) -> Result<T, Failure> {
         Err((why, self.text.len().min(self.at + 1)))
     }
 
-    /// About what was read last.
+    /// An error about the last byte read.
     fn error<T>(&self, why: &'static str) -> Result<T, Failure> {
         Err((why, self.at))
     }
 
-    /// What is next after the white space.
+    /// Skips whitespace and returns the next byte.
     fn parse_whitespace(&mut self) -> Option<u8> {
         while matches!(self.peek(), Some(b' ' | b'\n' | b'\t' | b'\r')) {
             self.at += 1;
@@ -140,7 +140,7 @@ impl Reader<'_> {
         }
     }
 
-    /// After its first letter.
+    /// `rest` is the keyword without its first letter, which the caller has already matched.
     fn ident(&mut self, rest: &[u8]) -> Result<(), Failure> {
         self.at += 1;
         for &expected in rest {
@@ -153,7 +153,7 @@ impl Reader<'_> {
         Ok(())
     }
 
-    /// How many there are.
+    /// Skips digits and returns how many there were.
     fn digits(&mut self) -> usize {
         let start = self.at;
         while self.peek().is_some_and(|it| it.is_ascii_digit()) {
@@ -162,7 +162,7 @@ impl Reader<'_> {
         self.at - start
     }
 
-    /// After its sign.
+    /// Starts after the sign.
     fn number(&mut self) -> Result<(), Failure> {
         let start = self.at;
         match self.next() {
@@ -194,8 +194,8 @@ impl Reader<'_> {
                 Some(_) => _ = self.digits(),
             }
         }
-        let written = self.text.get(start..self.at).unwrap_or_default();
-        let number = std::str::from_utf8(written)
+        let number_text = self.text.get(start..self.at).unwrap_or_default();
+        let number = std::str::from_utf8(number_text)
             .ok()
             .and_then(|it| it.parse::<f64>().ok());
         match number {
@@ -204,7 +204,7 @@ impl Reader<'_> {
         }
     }
 
-    /// After the quote.
+    /// Starts after the quote.
     fn string(&mut self) -> Result<(), Failure> {
         loop {
             match self.next() {
@@ -220,7 +220,7 @@ impl Reader<'_> {
         }
     }
 
-    /// After the backslash.
+    /// Starts after the backslash.
     fn escape(&mut self) -> Result<(), Failure> {
         match self.next() {
             None => self.error(EOF_IN_STRING),
@@ -263,7 +263,7 @@ impl Reader<'_> {
         }
     }
 
-    /// After the `[`.
+    /// Starts after the `[`.
     fn list(&mut self) -> Result<(), Failure> {
         let mut is_first = true;
         loop {
@@ -289,7 +289,7 @@ impl Reader<'_> {
         }
     }
 
-    /// After the `{`.
+    /// Starts after the `{`.
     fn map(&mut self) -> Result<(), Failure> {
         let mut is_first = true;
         loop {
@@ -325,7 +325,8 @@ impl Reader<'_> {
     }
 }
 
-/// The JSON in `text`, which the file at `path` has. `Err`: what oxlint refuses the file with, because there is none for it.
+/// Returns the JSON in `text`, the contents of the file at `path`. `Err` holds oxlint's error for a file that it can't
+/// parse.
 pub fn json_for_oxlint(path: &[u8], text: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
     if std::str::from_utf8(text).is_err() {
         let why = br#" with error Custom { kind: InvalidData, error: "stream did not contain valid UTF-8" }"#;
@@ -352,7 +353,14 @@ pub fn json_for_oxlint(path: &[u8], text: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
     let before = text.get(..end).unwrap_or_default();
     let line_start = strings::last_index_of_char(before, b'\n').map_or(0, |it| it + 1);
     let line = 1 + strings::count_char(before, b'\n');
-    let place = format!(" at line {line} column {}", end - line_start);
+    let position_text = format!(" at line {line} column {}", end - line_start);
     let start: &[u8] = b"Failed to parse oxlint config ";
-    Err([start, path, b".\n", why.as_bytes(), place.as_bytes()].concat())
+    Err([
+        start,
+        path,
+        b".\n",
+        why.as_bytes(),
+        position_text.as_bytes(),
+    ]
+    .concat())
 }

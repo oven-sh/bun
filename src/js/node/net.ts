@@ -420,6 +420,14 @@ function failWriteWith(self, er, callback) {
     }
   }
 }
+// No drain comes from a handle that has closed. Node cancels the write that waits for one after 'error' and before 'close'.
+function cancelPendingWriteNT(self) {
+  const callback = self[kwriteCallback];
+  if (!callback || !self[kclosed]) return;
+  self._pendingData = self[kwriteCallback] = null;
+  const reason = self.encrypted ? "Canceled because of SSL destruction" : undefined;
+  callback(new ErrnoException(uv().UV_ECANCELED, "write", reason));
+}
 // Node's errnoException(status, 'write') for the negative errno $write returns.
 function writeErrnoException(negErrno) {
   let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
@@ -2572,9 +2580,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     }
     callback(err);
     closeOwedRaw(this, upgraded);
+    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
   } else {
     callback(err);
     closeOwedRaw(this, upgraded);
+    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
     const transport = transportToDestroy(this);
     if (transport !== undefined) abortTransport(transport);
     if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
@@ -4549,18 +4559,24 @@ function closeSocketHandle(self, handle, isException, isCleanupPending = false) 
   // The owner of a wrapped socket destroyed it: the TLS socket goes first, so the close of their fd is nothing to report.
   handle[kAdoptedTLSRaw]?.destroy();
   handle.close(onSocketHandleClosed);
-  setImmediate(() => {
-    $debug("emit close", isCleanupPending);
-    self.emit("close", isException);
-    if (isCleanupPending) {
-      // self._handle may have been detached or replaced since.
-      handle.onread = noop;
-      if (self._handle === handle) {
-        self._handle = null;
-        self._sockname = null;
-      }
-    }
-  });
+  // Arguments instead of a closure, so no scope keeps the closed handle alive.
+  if (isCleanupPending) setImmediate(emitCloseAndDetachHandle, self, isException, handle);
+  else setImmediate(emitClose, self, isException);
+}
+
+function emitClose(self, isException) {
+  $debug("emit close");
+  self.emit("close", isException);
+}
+
+function emitCloseAndDetachHandle(self, isException, handle) {
+  emitClose(self, isException);
+  // self._handle may have been detached or replaced since.
+  handle.onread = noop;
+  if (self._handle === handle) {
+    self._handle = null;
+    self._sockname = null;
+  }
 }
 
 // Reformat a native listen error to Node's "listen <CODE>: <description> <addr>"

@@ -26,7 +26,7 @@ fn has_decimal_escape(text: &[u8]) -> bool {
     false
 }
 
-/// `escape`: the `\8` or the `\9`. `follows_null_escape`: a `\0` is directly before it.
+/// `escape` is the `\8` or `\9`. `follows_null_escape` is true if a `\0` comes right before it.
 fn report(escape: Span, follows_null_escape: bool, cx: &Cx<'_, NoNonoctalDecimalEscape>) {
     let original = cx.slice(escape);
     let digit = cx.slice(escape.shrink(1, 0));
@@ -62,7 +62,7 @@ fn report(escape: Span, follows_null_escape: bool, cx: &Cx<'_, NoNonoctalDecimal
     );
 }
 
-/// `literal`: a string with its quotes.
+/// `literal` is a string including its quotes.
 fn check(literal: Span, cx: &Cx<'_, NoNonoctalDecimalEscape>) {
     let raw = cx.slice(literal);
     let (mut at, mut follows_null_escape) = (0, false);
@@ -77,7 +77,7 @@ fn check(literal: Span, cx: &Cx<'_, NoNonoctalDecimalEscape>) {
                 report(Span::new(start, start + 2), follows_null_escape, cx);
                 follows_null_escape = false;
             }
-            // oxlint reads no further than a line that is continued.
+            // oxlint stops at a line continuation.
             Some(b'\n') if cx.language().is_oxlint => return,
             escaped => follows_null_escape = escaped == Some(&b'0'),
         }
@@ -90,7 +90,7 @@ impl Rule for NoNonoctalDecimalEscape {
         .has_suggestions()
         .recommended();
     const ON: On = On::new().exprs(&[ExprTag::String]).finish();
-    /// Where the strings with such an escape start that are expressions.
+    /// Start offsets of the strings with such an escape that are expressions.
     type State<'a> = Vec<u32>;
 
     fn new(_: &Options) -> Self {
@@ -113,7 +113,7 @@ impl Rule for NoNonoctalDecimalEscape {
         }
     }
 
-    // The strings that are not expressions: keys, module specifiers, literal types.
+    // Checks the strings that aren't expressions: keys, module specifiers, literal types.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         cx.state.sort_unstable();
         for token in cx.file().tokens() {

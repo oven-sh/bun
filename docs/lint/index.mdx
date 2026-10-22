@@ -5,6 +5,10 @@ description: "Bun's fast, built-in linter for JavaScript, TypeScript, and JSX"
 
 import Lint from "/snippets/cli/lint.mdx";
 
+<Note>
+  `bun lint` is only in [canary builds](/installation#canary-builds) of Bun. Run `bun upgrade --canary` to get one.
+</Note>
+
 Bun ships with a fast, built-in linter. There's nothing to install and nothing to configure.
 
 - 1,000+ rules from ESLint, typescript-eslint, React, import, unicorn, jsx-a11y, Jest, Vitest, and more
@@ -169,6 +173,8 @@ Use `*` as the rule name to turn off every rule of a plugin. A setting for a sin
 [lint]
 ignorePatterns = ["vendor/", "**/*.gen.ts"]
 ```
+
+The patterns use `.gitignore` syntax and are relative to `bunfig.toml`. With an `eslint.config.*` file they're [ESLint `ignores`](/runtime/bunfig#lint-ignorepatterns) instead.
 
 ## ES modules and CommonJS
 

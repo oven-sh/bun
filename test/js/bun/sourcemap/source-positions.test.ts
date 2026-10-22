@@ -369,10 +369,8 @@ describe("bun test --coverage", () => {
         ).toFixed(2),
         ranges.join(","),
       ];
-      const got = row
-        ?.split("|")
-        .slice(1)
-        .map(cell => cell.trim());
+      const cells = row?.split("|").map(cell => cell.trim());
+      const got = cells && [cells[1], cells[2], cells[4]];
       if (!Bun.deepEquals(got, want)) wrong[file] = { got, want };
     }
     expect(wrong).toEqual({});

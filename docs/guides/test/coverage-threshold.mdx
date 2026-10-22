@@ -15,13 +15,13 @@ test.test.ts:
 ✓ math > add [0.71ms]
 ✓ math > multiply [0.03ms]
 ✓ random [0.13ms]
--------------|---------|---------|-------------------
-File         | % Funcs | % Lines | Uncovered Line #s
--------------|---------|---------|-------------------
-All files    |   50.00 |   66.67 |
- math.ts     |   50.00 |   66.67 |
- random.ts   |   50.00 |   66.67 |
--------------|---------|---------|-------------------
+-------------|---------|---------|------------|-------------------
+File         | % Funcs | % Lines | % Branches | Uncovered Line #s
+-------------|---------|---------|------------|-------------------
+All files    |   50.00 |   66.67 |     100.00 |
+ math.ts     |   50.00 |   66.67 |     100.00 |
+ random.ts   |   50.00 |   66.67 |     100.00 |
+-------------|---------|---------|------------|-------------------
 
  3 pass
  0 fail
@@ -54,12 +54,12 @@ $ echo $?
 
 ---
 
-You can set different thresholds for line-level and function-level coverage.
+You can set different thresholds for line-level, function-level and branch-level coverage. Branch coverage is only checked when you set `branches`.
 
 ```toml bunfig.toml icon="settings"
 [test]
-# to set different thresholds for lines and functions
-coverageThreshold = { lines = 0.5, functions = 0.7 }
+# to set different thresholds for lines, functions and branches
+coverageThreshold = { lines = 0.5, functions = 0.7, branches = 0.6 }
 ```
 
 ---

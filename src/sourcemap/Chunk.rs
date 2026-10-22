@@ -4,8 +4,9 @@ use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
 
 use crate::{
-    InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
-    internal_source_map, line_offset_table, line_offset_table::LineOffsetTableColumns as _,
+    InternalSourceMap, LineColumnOffset, LineOffsetTable, Ordinal, SourceMapState,
+    append_mapping_to_buffer, internal_source_map, internal_source_map::MarkKind,
+    line_offset_table, line_offset_table::LineOffsetTableColumns as _,
 };
 
 #[derive(Clone)]
@@ -623,6 +624,29 @@ impl NewBuilder<'_, VLQSourceMap> {
         }
     }
 
+    /// Marks the end of `output`, where what is at `loc` is about to be printed.
+    pub fn mark_branch(&mut self, kind: MarkKind, decision: u32, loc: Loc, output: &[u8]) {
+        if self.source_map.ctx.internal.is_none() {
+            return;
+        }
+        let Some((original_line, original_column)) = self.original_line_and_column(loc) else {
+            return;
+        };
+        self.update_generated_line_and_column(output);
+        let generated_column = self.generated_column.max(0);
+        if let Some(internal) = &mut self.source_map.ctx.internal {
+            internal.mark_branch(
+                kind,
+                decision,
+                generated_column,
+                LineColumnOffset {
+                    lines: Ordinal(original_line.max(0)),
+                    columns: Ordinal(original_column.max(0)),
+                },
+            );
+        }
+    }
+
     #[inline(never)]
     pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
         if
@@ -636,6 +660,43 @@ impl NewBuilder<'_, VLQSourceMap> {
 
         self.prev_loc = loc;
 
+        let Some((original_line, original_column)) = self.original_line_and_column(loc) else {
+            return;
+        };
+
+        self.update_generated_line_and_column(output);
+
+        // If this line doesn't start with a mapping and we're about to add a mapping
+        // that's not at the start, insert a mapping first so the line starts with one.
+        if self.cover_lines_without_mappings
+            && !self.line_starts_with_mapping
+            && self.generated_column > 0
+            && self.has_prev_state
+        {
+            self.append_mapping_without_remapping(SourceMapState {
+                generated_line: self.prev_state.generated_line,
+                generated_column: 0,
+                source_index: self.prev_state.source_index,
+                original_line: self.prev_state.original_line,
+                original_column: self.prev_state.original_column,
+            });
+        }
+
+        self.append_mapping(SourceMapState {
+            generated_line: self.prev_state.generated_line,
+            generated_column: self.generated_column.max(0),
+            source_index: self.prev_state.source_index,
+            original_line: original_line.max(0),
+            original_column: original_column.max(0),
+        });
+
+        // This line now has a mapping on it, so don't insert another one
+        self.line_starts_with_mapping = true;
+    }
+
+    /// `None`: the source has no lines.
+    #[inline(always)]
+    fn original_line_and_column(&mut self, loc: Loc) -> Option<(i32, i32)> {
         if let LineOffsetTables::Deferred {
             contents,
             approximate_line_count,
@@ -660,7 +721,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         // import foo from "./foo.png";
         //
         if list_len == 0 {
-            return;
+            return None;
         }
 
         if self.line_offset_table_byte_offset_list.len() != list_len {
@@ -700,34 +761,7 @@ impl NewBuilder<'_, VLQSourceMap> {
             }
         }
 
-        self.update_generated_line_and_column(output);
-
-        // If this line doesn't start with a mapping and we're about to add a mapping
-        // that's not at the start, insert a mapping first so the line starts with one.
-        if self.cover_lines_without_mappings
-            && !self.line_starts_with_mapping
-            && self.generated_column > 0
-            && self.has_prev_state
-        {
-            self.append_mapping_without_remapping(SourceMapState {
-                generated_line: self.prev_state.generated_line,
-                generated_column: 0,
-                source_index: self.prev_state.source_index,
-                original_line: self.prev_state.original_line,
-                original_column: self.prev_state.original_column,
-            });
-        }
-
-        self.append_mapping(SourceMapState {
-            generated_line: self.prev_state.generated_line,
-            generated_column: self.generated_column.max(0),
-            source_index: self.prev_state.source_index,
-            original_line: original_line.max(0),
-            original_column: original_column.max(0),
-        });
-
-        // This line now has a mapping on it, so don't insert another one
-        self.line_starts_with_mapping = true;
+        Some((original_line, original_column))
     }
 }
 

@@ -52,7 +52,7 @@ export const cases: Record<string, Case> = {
  4|function add(n: number) {
  4|  total += n;
  -|}
- 1|for (let i = 0; i < 3; i++) {
+ 4|for (let i = 0; i < 3; i++) {
  3|  add(i);
  -|}
  1|add(1);
@@ -230,7 +230,7 @@ export const cases: Record<string, Case> = {
  2|for (const item of list) ({
  2|  two: item.two,
  2|}).two;
- 1|for (const item of list) {
+ 2|for (const item of list) {
  2|  twice(item.one ?? 0);
  -|}
  1|function early() {
@@ -381,7 +381,7 @@ export const cases: Record<string, Case> = {
     functions: "1/1",
     lines: `
  3|function f() {}
- 1|for (let i = 0; i < 3; i++) {
+ 4|for (let i = 0; i < 3; i++) {
  3|  if (i > 5)
  0|    break;
  3|  if (i === 1)
@@ -414,7 +414,7 @@ export const cases: Record<string, Case> = {
     lines: `
  9|function g() {}
  1|let n = 0;
- 1|for (const key in { a: 1, b: 2, c: 3 }) {
+ 3|for (const key in { a: 1, b: 2, c: 3 }) {
  3|  n++;
  -|}
  1|g();
@@ -422,11 +422,11 @@ export const cases: Record<string, Case> = {
  0|  n++;
  -|}
  1|g();
- 1|for (const value of [1, 2]) {
+ 2|for (const value of [1, 2]) {
  2|  n++;
  -|}
  1|g();
- 1|while (n > 3) {
+ 3|while (n > 3) {
  2|  n--;
  -|}
  1|g();
@@ -434,8 +434,8 @@ export const cases: Record<string, Case> = {
  0|  n--;
  -|}
  1|g();
- 1|outer: for (let i = 0; i < 2; i++) {
- 2|  for (let j = 0; j < 3; j++) {
+ 3|outer: for (let i = 0; i < 2; i++) {
+ 4|  for (let j = 0; j < 3; j++) {
  4|    if (j === 1) {
  2|      continue outer;
  -|    }
@@ -453,6 +453,63 @@ export const cases: Record<string, Case> = {
  1|first([1]);
  1|first([1]);
  1|first([]);
+`,
+  },
+  // Each part of the head of a loop has its own count, and so has the test of a `case` that is not a constant or a name.
+  "heads.ts": {
+    functions: "1/1",
+    lines: `
+11|function f() {
+11|  return true;
+ -|}
+ 1|let i = 0;
+ 1|while (
+ 4|  i < 3 &&
+ 3|  f()
+ -|) {
+ 3|  i++;
+ -|}
+ 1|for (
+ 1|  i = 0;
+ 4|  i < 3;
+ 3|  i++
+ -|) {
+ 3|  f();
+ -|}
+ 1|for (
+ 1|  i = 0;
+ 1|  i < 3;
+ 0|  i++
+ -|) {
+ 1|  break;
+ -|}
+ 1|for (const
+ 2|  item
+ 1|  of [1, 2]
+ -|) {
+ 2|  f();
+ -|}
+ 1|for (const
+ 0|  item
+ 1|  of []
+ -|) {
+ 0|  f();
+ -|}
+ 1|for (const
+ 2|  key
+ 1|  in { a: 1, b: 2 }
+ -|) {
+ 2|  f();
+ -|}
+ 1|switch (i as number) {
+ 1|  case f() &&
+ 1|    9:
+ 0|    f();
+ 1|  case i + 1:
+ 0|    f();
+ 0|  case 7:
+ 0|    f();
+ -|}
 `,
   },
   // What is after a statement that control flow left did not run.
@@ -652,7 +709,7 @@ export const cases: Record<string, Case> = {
  1|  throws();
  1|} catch {}
  1|function continues() {
- 1|  for (let i = 0; i < 3; i++) {
+ 4|  for (let i = 0; i < 3; i++) {
  3|    try {
  3|      continue;
  3|    } finally {
@@ -827,7 +884,7 @@ export const cases: Record<string, Case> = {
  2|  node = node.next;
  -|}
  1|switch (2 as number) {
- 0|  case node?.next: at();
+ 1|  case node?.next: at();
  -|}
 `,
   },

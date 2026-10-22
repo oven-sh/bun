@@ -1115,7 +1115,7 @@ f();
 `,
       "a continue that is last": `
 function f() {
-  for (let i = 0; i < 2; i++) «2:{
+  for (let i = 0;«3: i < 2»;«2: i++») «2:{
     continue;
   }»
   g();
@@ -1125,7 +1125,7 @@ f();
 `,
       "a loop that is not entered": `
 function f() {
-  for (let i = 0; i < 0; i++) «0:{
+  for (let i = 0; i < 0;«0: i++») «0:{
     g();
   }»
 }
@@ -1135,7 +1135,7 @@ f();
       // Node has the last two as one range.
       "after an if that continues": `
 function f() {
-  for (let i = 0; i < 2; i++) «2:{
+  for (let i = 0;«3: i < 2»;«2: i++») «2:{
     if (i) «1:{
       continue;
     }»«1:
@@ -1159,7 +1159,7 @@ f();
 `,
       "for in": `
 function f() {
-  for (const x in {}) «0:{
+  for (const «0:x »in {}) «0:{
     g();
   }»
   g();

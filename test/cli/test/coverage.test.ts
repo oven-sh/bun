@@ -177,13 +177,13 @@ test("should call both functions", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call both functions
----------------|---------|---------|-------------------
-File           | % Funcs | % Lines | Uncovered Line #s
----------------|---------|---------|-------------------
-All files      |  100.00 |  100.00 |
- include-me.ts |  100.00 |  100.00 | 
- test.test.ts  |  100.00 |  100.00 | 
----------------|---------|---------|-------------------
+---------------|---------|---------|------------|-------------------
+File           | % Funcs | % Lines | % Branches | Uncovered Line #s
+---------------|---------|---------|------------|-------------------
+All files      |  100.00 |  100.00 |     100.00 |
+ include-me.ts |  100.00 |  100.00 |     100.00 | 
+ test.test.ts  |  100.00 |  100.00 |     100.00 | 
+---------------|---------|---------|------------|-------------------
 
  1 pass
  0 fail
@@ -242,13 +242,13 @@ test("should call only some functions", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call only some functions
----------------|---------|---------|-------------------
-File           | % Funcs | % Lines | Uncovered Line #s
----------------|---------|---------|-------------------
-All files      |   75.00 |   75.00 |
- include-me.ts |   50.00 |   50.00 | 6-7
- test.test.ts  |  100.00 |  100.00 | 
----------------|---------|---------|-------------------
+---------------|---------|---------|------------|-------------------
+File           | % Funcs | % Lines | % Branches | Uncovered Line #s
+---------------|---------|---------|------------|-------------------
+All files      |   75.00 |   75.00 |     100.00 |
+ include-me.ts |   50.00 |   50.00 |     100.00 | 6-7
+ test.test.ts  |  100.00 |  100.00 |     100.00 | 
+---------------|---------|---------|------------|-------------------
 
  1 pass
  0 fail
@@ -307,13 +307,13 @@ test("should call all functions", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call all functions
---------------|---------|---------|-------------------
-File          | % Funcs | % Lines | Uncovered Line #s
---------------|---------|---------|-------------------
-All files     |  100.00 |  100.00 |
- src/main.ts  |  100.00 |  100.00 | 
- test.test.ts |  100.00 |  100.00 | 
---------------|---------|---------|-------------------
+--------------|---------|---------|------------|-------------------
+File          | % Funcs | % Lines | % Branches | Uncovered Line #s
+--------------|---------|---------|------------|-------------------
+All files     |  100.00 |  100.00 |     100.00 |
+ src/main.ts  |  100.00 |  100.00 |     100.00 | 
+ test.test.ts |  100.00 |  100.00 |     100.00 | 
+--------------|---------|---------|------------|-------------------
 
  1 pass
  0 fail
@@ -376,13 +376,13 @@ test("should call all functions", () => {
 (pass) should call all functions
 
 src/feature.spec.ts:
-----------------|---------|---------|-------------------
-File            | % Funcs | % Lines | Uncovered Line #s
-----------------|---------|---------|-------------------
-All files       |  100.00 |  100.00 |
- main.test.ts   |  100.00 |  100.00 | 
- src/feature.ts |  100.00 |  100.00 | 
-----------------|---------|---------|-------------------
+----------------|---------|---------|------------|-------------------
+File            | % Funcs | % Lines | % Branches | Uncovered Line #s
+----------------|---------|---------|------------|-------------------
+All files       |  100.00 |  100.00 |     100.00 |
+ main.test.ts   |  100.00 |  100.00 |     100.00 | 
+ src/feature.ts |  100.00 |  100.00 |     100.00 | 
+----------------|---------|---------|------------|-------------------
 
  1 pass
  0 fail
@@ -438,6 +438,8 @@ test("should call both functions", () => {
 SF:include-me.ts
 FNF:1
 FNH:1
+BRF:0
+BRH:0
 DA:2,1
 DA:3,1
 LF:2
@@ -447,6 +449,8 @@ TN:
 SF:test.test.ts
 FNF:1
 FNH:1
+BRF:0
+BRH:0
 DA:2,1
 DA:3,1
 DA:4,1
@@ -576,13 +580,13 @@ test("should call function", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call function
----------------|---------|---------|-------------------
-File           | % Funcs | % Lines | Uncovered Line #s
----------------|---------|---------|-------------------
-All files      |  100.00 |  100.00 |
- include-me.ts |  100.00 |  100.00 | 
- test.test.ts  |  100.00 |  100.00 | 
----------------|---------|---------|-------------------
+---------------|---------|---------|------------|-------------------
+File           | % Funcs | % Lines | % Branches | Uncovered Line #s
+---------------|---------|---------|------------|-------------------
+All files      |  100.00 |  100.00 |     100.00 |
+ include-me.ts |  100.00 |  100.00 |     100.00 | 
+ test.test.ts  |  100.00 |  100.00 |     100.00 | 
+---------------|---------|---------|------------|-------------------
 
  1 pass
  0 fail
@@ -629,11 +633,11 @@ test("should call function", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call function
------------|---------|---------|-------------------
-File       | % Funcs | % Lines | Uncovered Line #s
------------|---------|---------|-------------------
-All files  |    0.00 |    0.00 |
------------|---------|---------|-------------------
+-----------|---------|---------|------------|-------------------
+File       | % Funcs | % Lines | % Branches | Uncovered Line #s
+-----------|---------|---------|------------|-------------------
+All files  |    0.00 |    0.00 |       0.00 |
+-----------|---------|---------|------------|-------------------
 
  1 pass
  0 fail
@@ -691,7 +695,7 @@ test("only imports the function", () => {
   expect(record).not.toContain("DA:5,");
   expect(record).toMatch(/LF:4\nLH:4\n/);
 
-  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +100\.00 +\| +\n/);
   expect(exitCode).toBe(0);
 });
 
@@ -744,7 +748,7 @@ test("calls second", () => {
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("2 pass");
-  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +100\.00 +\| +\n/);
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
@@ -1010,7 +1014,7 @@ test("b", () => {
 `,
   };
 
-  type Row = { functions: string; lines: string; uncovered: string };
+  type Row = { functions: string; lines: string; branches: string; uncovered: string };
   async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
     using dir = tempDir("cov-loaded-twice", fixture);
     await using proc = Bun.spawn({
@@ -1024,8 +1028,8 @@ test("b", () => {
     if (exitCode !== 0) throw new Error(stderr);
     const rows: Record<string, Row> = {};
     for (const line of stderr.split("\n")) {
-      const [file, functions, lines, uncovered] = line.split("|").map(column => column.trim());
-      if (uncovered !== undefined) rows[file] = { functions, lines, uncovered };
+      const [file, functions, lines, branches, uncovered] = line.split("|").map(column => column.trim());
+      if (uncovered !== undefined) rows[file] = { functions, lines, branches, uncovered };
     }
     const lcov: Record<string, string> = {};
     for (const record of readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").split(
@@ -1048,7 +1052,7 @@ test("b", () => {
     ]);
   });
 
-  const fullyCovered: Row = { functions: "100.00", lines: "100.00", uncovered: "" };
+  const fullyCovered: Row = { functions: "100.00", lines: "100.00", branches: "100.00", uncovered: "" };
 
   describe.each([
     ["by the host and by a Bun.ModuleGraph", "host-and-graph.ts"],
@@ -1077,6 +1081,7 @@ test("b", () => {
     expect(loaded.rows["functions.ts"]).toEqual({
       functions: "66.67",
       lines: expect.any(String),
+      branches: "100.00",
       uncovered: expect.stringMatching(/^[789](-[89])?$/),
     });
   });
@@ -1103,8 +1108,8 @@ test("b", () => {
 
   test("bun:jsc codeCoverageForFile()", () => {
     expect(JSON.parse(loaded.stdout.split("\n").find(line => line.startsWith("{"))!)).toEqual({
-      hostAlone: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +\d+\.\d+ \| \d/),
-      both: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +100\.00 \| $/),
+      hostAlone: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +\d+\.\d+ \| +50\.00 \| \d/),
+      both: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +100\.00 \| +100\.00 \| $/),
     });
   });
 });
@@ -1219,6 +1224,296 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
   },
 );
 
+describe("branches", () => {
+  // After `//` are the branches of each decision that starts on the line, in the order of the
+  // decisions, and how often each was taken. The last of `[1,2]` is the one without code of its own,
+  // but for `if` with `else`, `?:` and a `switch` with `default`.
+  // Laid out as the printer prints it, so that the lines are the same with coverageIgnoreSourcemaps.
+  const lib = `const Kind = { A: 1 };
+export function decisions(v, o, list) {
+  let r = v ? 1 : 2; // [2,1]
+  if (v) { // [2,1]
+    r = 1;
+  }
+  if (v) // [2,1]
+    r = 1;
+  else if (o) // [0,1]
+    r = 2;
+  else
+    r = 3;
+  r = v && o; // [2,1]
+  r = v || o; // [1,2]
+  r = o ?? v; // [1,2]
+  r = v && o || list; // [1,2] [2,1]
+  r = o?.a; // [2,1]
+  r = o?.a?.b; // [2,1] [1,1]
+  r = o?.a?.b.c(v && 1); // [2,1] [1,1] [1,0]
+  r = o?.["a"]; // [2,1]
+  r = o?.f?.(); // [2,1] [0,2]
+  r = v ? () => 1 : () => 2; // [2,1]
+  r = v || (() => 1); // [1,2]
+  r ||= v; // [0,3]
+  r &&= o; // [3,0]
+  r ??= v; // [1,2]
+  const { a = 1, b: { c = 2 } = {} } = o ?? {}; // [1,2] [3,0] [3,0] [1,2]
+  const [d = 3] = list; // [1,2]
+  [r = 4] = list; // [1,2]
+  ({ r = 5, a: r = 6 } = o ?? {}); // [3,0] [1,2] [1,2]
+  return r;
+}
+export function defaults(a = 1, { b = 2 } = {}, [c = 3] = []) { // [1,1] [2,0] [2,0] [2,0] [2,0]
+  return (d = a) => d; // [0,0]
+}
+export function loops(n, list) {
+  let i = 0;
+  while (i < n && list) // [3,1]
+    i++;
+  for (i = 0; i < n || !list; i += list.step ?? 1) // [1,3] [3,0]
+    list;
+  do
+    i--;
+  while (i > 0 && list); // [2,1]
+  for (const [a = 1] of list) // [1,2]
+    list;
+  for (const { b = 2 } of list) // [3,0]
+    list;
+  for ([i = 3] of list) // [1,2]
+    list;
+  for ({ i = 4 } of list) // [3,0]
+    list;
+  for ((list.t ?? list).k in { a: 1, b: 2 }) // [2,0]
+    list;
+}
+export function switches(v, o) {
+  switch (v) { // [1,1,2]
+    case 1:
+      break;
+    case 2:
+      break;
+  }
+  switch (v) { // [1,3]
+    case 1:
+      break;
+    default:
+  }
+  switch (v) { // [1,1,0,2]
+    case 1:
+    case 2: {
+      break;
+    }
+    case 3:
+  }
+  switch (v) { // [1,2]
+    case 1:
+      Kind.last = v;
+    case 2:
+  }
+  switch (v) { // [1,0,0,0,3]
+    case Kind.A:
+      return;
+    case o && o.a: // [2,1]
+      break;
+    case o?.a: // [2,1]
+      break;
+    case (o ??= {}): // [1,2]
+  }
+}
+
+export class Fields {
+  a = Fields.none ?? 1; // [2,0]
+  static b = Fields.none || 2; // [1,0]
+  #c = Fields.none?.c; // [0,2]
+}
+export function never(v) {
+  return v ? 1 : v && 2; // [0,0] [0,0]
+}
+`;
+  const test_ = `
+    import { test } from "bun:test";
+    import { decisions, defaults, loops, switches, Fields } from "./lib.js";
+    test("lib", () => {
+      decisions(1, { a: { b: { c() {} } } }, [1]);
+      decisions(2, { a: null }, []);
+      decisions(0, null, [0]);
+      defaults();
+      defaults(0);
+      loops(3, [[], [1], [2]]);
+      switches(1, { a: 7 });
+      switches(2, { a: 7 });
+      switches(9, { a: 7 });
+      switches(9, null);
+      new Fields();
+      new Fields();
+    });
+  `;
+  /** `[line, [hits of each branch]]` of each decision. */
+  const expected = lib
+    .split("\n")
+    .flatMap((text, i) =>
+      [...(text.split(" // ")[1] ?? "").matchAll(/\[([\d,]+)\]/g)].map(m => [i + 1, m[1].split(",").map(Number)]),
+    );
+  function branchesOf(dir: string, file: string) {
+    const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+    const record = lcov.split("end_of_record").find(r => r.includes(file + "\n"));
+    expect(record).toBeDefined();
+    const decisions = new Map<string, [number, number[]]>();
+    for (const [, line, decision, branch, hits] of record!.matchAll(/^BRDA:(\d+),(\d+),(\d+),(\d+)$/gm)) {
+      if (!decisions.has(decision)) decisions.set(decision, [Number(line), []]);
+      decisions.get(decision)![1][Number(branch)] = Number(hits);
+    }
+    return { record: record!, decisions: [...decisions.values()] };
+  }
+
+  test.concurrent.each(["transpiled", "// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
+    "each way of each decision has its count: %s",
+    async mode => {
+      using dir = tempDir("cov-branches", {
+        "lib.test.ts": test_,
+        ...(mode === "// @bun"
+          ? { "lib.js": "// @bun\n" + lib }
+          : mode === "// @bun with a source map"
+            ? { "src/lib.js": lib }
+            : mode === "coverageIgnoreSourcemaps"
+              ? { "lib.js": lib, "bunfig.toml": "[test]\ncoverageIgnoreSourcemaps = true\n" }
+              : { "lib.js": lib }),
+      });
+      if (mode === "// @bun with a source map") {
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "./src/lib.js", "--target=bun", "--sourcemap=linked", "--outdir=."],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "inherit",
+        });
+        expect(await build.exited).toBe(0);
+      }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+
+      const { record, decisions } = branchesOf(String(dir), "lib.js");
+      const above = mode === "// @bun" ? 1 : 0;
+      expect(decisions).toEqual(expected.map(([line, hits]) => [(line as number) + above, hits]));
+      const all = expected.flatMap(([, hits]) => hits as number[]);
+      expect(record).toContain(`BRF:${all.length}\nBRH:${all.filter(hits => hits > 0).length}\n`);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("what TypeScript and JSX turn into has no branches", async () => {
+    using dir = tempDir("cov-branches-ts", {
+      "lib.tsx": `enum Color { Red, Green = "g" }
+export namespace Outer { export const a = Color.Red; export namespace Inner { export const b = 2; } }
+function decorate(value: any, context: any) { return value; }
+class Base { x = 1; static s = 2; constructor(public q: number, readonly r?: number) {} }
+@decorate class Derived extends Base { @decorate m() { return this.x; } accessor a = 1; y?: number = 4; }
+export async function dispose() { using a = { [Symbol.dispose]() {} }; await using b = { async [Symbol.asyncDispose]() {} }; }
+export function element(props: any) { return <div a={props.a} {...props}>{props.c}<></></div>; }
+export function* generator() { yield 1; yield* [2]; }
+export async function each(list: any) { for await (const x of list) { new Derived(x); } }
+export function leave() { try { return 1; } catch { return 2; } finally { Outer.a; } }
+export function loop(n: number) { for (let i = 0; i < n; i++) {} while (n-- > 0) {} do {} while (n++ < 0); for (const k in {}) {} }
+`,
+      "node_modules/react/package.json": `{ "name": "react", "version": "0.0.0" }`,
+      "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = () => ({}); export const Fragment = 1;`,
+      "lib.test.ts": `
+        import { test } from "bun:test";
+        import * as lib from "./lib.tsx";
+        test("lib", async () => { await lib.dispose(); await lib.each([1]); lib.element({}); lib.leave(); lib.loop(1); });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+    const { record, decisions } = branchesOf(String(dir), "lib.tsx");
+    expect(decisions).toEqual([]);
+    expect(record).toContain("BRF:0\nBRH:0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  const half = {
+    "lib.ts": `export const pick = (v: number) => (v ? 1 : 2);\n`,
+    "lib.test.ts": `
+      import { test } from "bun:test";
+      import { pick } from "./lib.ts";
+      test("pick", () => { pick(1); });
+    `,
+  };
+  test.concurrent.each([
+    ["coverageThreshold = 0.9", 0],
+    ["coverageThreshold = { lines = 0.9 }", 0],
+    ["coverageThreshold = { branches = 0.5 }", 0],
+    ["coverageThreshold = { branches = 0.6 }", 1],
+  ])("%s and half of the branches exits with %d", async (threshold, expectedExitCode) => {
+    using dir = tempDir("cov-branches-threshold", {
+      ...half,
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n${threshold}\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("File       | % Funcs | % Lines | % Branches | Uncovered Line #s\n");
+    expect(stderr).toContain("All files  |  100.00 |  100.00 |      50.00 |\n");
+    expect(stderr).toContain(" lib.ts    |  100.00 |  100.00 |      50.00 | \n");
+    expect(exitCode).toBe(expectedExitCode);
+  });
+
+  test("--parallel adds up what each worker took", async () => {
+    // Each test file waits at import time until the other has started, so the
+    // two can only make progress in two different workers.
+    const rendezvous = (me: string, other: string) => `
+await Bun.write("${me}.started", "");
+for (const deadline = Date.now() + 60_000; !(await Bun.file("${other}.started").exists()); ) {
+  if (Date.now() > deadline) throw new Error("${other} never started in another worker");
+  await Bun.sleep(5);
+}
+`;
+    using dir = tempDir("cov-branches-parallel", {
+      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { branches = 1.0 }\n`,
+      "lib.ts": `export const pick = (v: number) => (v ? 1 : 2);\nexport const both = (v: number) => v && 1;\n`,
+      "first.test.ts": `${rendezvous("first", "second")}
+import { test } from "bun:test";
+import { both, pick } from "./lib.ts";
+test("first", () => { pick(1); both(1); both(0); });
+`,
+      "second.test.ts": `${rendezvous("second", "first")}
+import { test } from "bun:test";
+import { both, pick } from "./lib.ts";
+test("second", () => { pick(0); pick(0); both(1); });
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--parallel=2"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toMatch(/ lib\.ts +\| +100\.00 +\| +100\.00 +\| +100\.00 +\| +\n/);
+    expect(branchesOf(String(dir), "lib.ts").decisions).toEqual([
+      [1, [1, 2]],
+      [2, [2, 1]],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("the braces of an object are listed when the file comes from the transpiler cache", async () => {
   using dir = tempDir("cov-transpiler-cache", {
     // The cache leaves out a file of less than 4 KB.
@@ -1227,6 +1522,7 @@ test("the braces of an object are listed when the file comes from the transpiler
     one: 1,
   },
 ];
+export const first = list[0] ?? null;
 // ${Buffer.alloc(4096, "-")}
 `,
     "lib.test.ts": `
@@ -1261,6 +1557,7 @@ test("list", () => { Object(list); });
   expect(entries).not.toBeEmpty();
   expect(printed.record).toContain("DA:2,1\n");
   expect(printed.record).toContain("DA:4,1\n");
+  expect(printed.record).toContain("BRDA:6,1,0,0\nBRDA:6,1,1,1\n");
   expect(await run()).toEqual(printed);
   expect(written()).toEqual(entries);
   expect(printed.exitCode).toBe(0);

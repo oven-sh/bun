@@ -291,10 +291,10 @@ Specify the coverage threshold as a single number or as an object with per-metri
 coverageThreshold = 0.8
 
 # Detailed thresholds
-coverageThreshold = { lines = 0.9, functions = 0.8 }
+coverageThreshold = { lines = 0.9, functions = 0.8, branches = 0.7 }
 ```
 
-Setting a threshold makes `bun test` exit with code 1 when coverage is enabled and any file's line or function coverage is below it. Bun accepts the `statements` key but does not currently enforce it. The check applies with any coverage reporter.
+Setting a threshold makes `bun test` exit with code 1 when coverage is enabled and any file's line or function coverage is below it. Branch coverage is only checked when you set `branches`. Bun accepts the `statements` key but does not currently enforce it. The check applies with any coverage reporter.
 
 #### Threshold Examples
 
@@ -306,7 +306,8 @@ coverageThreshold = 0.9
 # Different requirements for different metrics
 coverageThreshold = {
   lines = 0.85,      # 85% line coverage
-  functions = 0.90   # 90% function coverage
+  functions = 0.90,  # 90% function coverage
+  branches = 0.75    # 75% branch coverage
 }
 ```
 

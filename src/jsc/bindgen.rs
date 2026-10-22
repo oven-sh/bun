@@ -651,13 +651,15 @@ pub unsafe trait JsPayload: Sized + 'static {
     #[doc(hidden)]
     const PAYLOAD_OFFSET: usize;
     /// # Safety
-    /// `structure` is null, for the class's own, or a Structure of this class. The new cell owns `payload`.
+    /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
     #[doc(hidden)]
-    unsafe fn create_cell(
-        global: *mut JSGlobalObject,
-        structure: *mut c_void,
-        payload: Self,
-    ) -> NonNull<c_void>;
+    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
+    /// With `estimatedSize`, the extra memory to report to the GC for a new object.
+    #[doc(hidden)]
+    #[inline(always)]
+    fn extra_memory_size(&self) -> Option<usize> {
+        None
+    }
 
     /// A new JS object that owns `self`.
     #[inline]
@@ -799,8 +801,20 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         structure: *mut c_void,
         payload: T,
     ) -> Self {
-        // SAFETY: forwarded.
-        unsafe { Self::from_extern(T::create_cell(heap.global_ptr(), structure, payload), heap) }
+        // SAFETY: nothing runs between the allocation and the write, which cannot panic.
+        unsafe {
+            let this = Self::from_extern(T::create_cell(heap.global_ptr(), structure), heap);
+            this.payload().write(payload);
+            // Marking threads read such a payload, so a fence follows the write.
+            if let Some(size) = (*this.payload()).extra_memory_size() {
+                extern_types::Bun__Bindgen__notifyInitialized(
+                    heap.global_ptr(),
+                    this.0.as_ptr(),
+                    size,
+                );
+            }
+            this
+        }
     }
 
     /// # Safety

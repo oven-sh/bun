@@ -178,6 +178,11 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         class_index: u32,
     ) -> JSValue;
+    pub(super) fn Bun__Bindgen__notifyInitialized(
+        global: *mut JSGlobalObject,
+        cell: *mut c_void,
+        extra_memory_size: usize,
+    );
     pub(super) fn Bun__Bindgen__setInternalField(
         global: *mut JSGlobalObject,
         cell: *mut c_void,

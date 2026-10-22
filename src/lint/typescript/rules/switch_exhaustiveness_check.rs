@@ -12,10 +12,10 @@ use smallvec::SmallVec;
 pub struct SwitchExhaustivenessCheck {
     allow_default_case_for_exhaustive_switch: bool,
     consider_default_exhaustive_for_unions: bool,
-    /// `None`: `/^no default$/iu`
+    /// `None` means `/^no default$/iu`.
     default_case_comment_pattern: Option<Regex>,
-    /// The pattern without the `u` flag, if it is invalid with it: regexp2, which compiles it for
-    /// tsgolint, takes identity escapes as Annex B does.
+    /// The pattern without the `u` flag, if it's invalid with it. regexp2, which compiles it for tsgolint, accepts
+    /// identity escapes like Annex B.
     default_case_comment_pattern_annex_b: Option<Regex>,
     require_default_for_non_union: bool,
 }
@@ -33,7 +33,7 @@ const SWITCH_IS_NOT_EXHAUSTIVE: Message = Message::new(
 
 fn type_to_string(ty: Type, is_oxlint: bool) -> Vec<u8> {
     let mut flags = TypeFormatFlags::DEFAULT;
-    // tsgolint prints with the flags that `typeToString` has by default.
+    // tsgolint prints with `typeToString`'s default flags.
     if !is_oxlint {
         flags |= TypeFormatFlags::USE_FULLY_QUALIFIED_TYPE;
     }
@@ -46,15 +46,15 @@ fn is_type_literal_like_type(ty: Type) -> bool {
     )
 }
 
-/// `"foo" | "bar"` has only literal types. `"foo" | number` and `"foo" | (string & { bar: 1 })` have
-/// others, and a default case is never superfluous for them.
+/// `"foo" | "bar"` has only literal types. `"foo" | number` and `"foo" | (string & { bar: 1 })` have others, so a
+/// default case is never superfluous for them.
 fn does_type_contain_non_literal_type(ty: Type) -> bool {
     union_constituents(ty).iter().any(|ty| {
         intersection_constituents(ty).iter().all(|sub_type| !is_type_literal_like_type(sub_type))
     })
 }
 
-/// `case ..: { throw .. }` for the type, which is printed as `printed`.
+/// `case ..: { throw .. }` for the type, whose printed form is `printed`.
 fn missing_case(missing_branch_type: Type, printed: &[u8], symbol_name: Option<&[u8]>) -> Vec<u8> {
     let missing_branch_name = missing_branch_type.get_symbol().map(|it| it.escaped_name());
     let mut case_test = match missing_branch_type.has_flags(TypeFlags::ES_SYMBOL_LIKE) {
@@ -91,7 +91,7 @@ fn missing_case(missing_branch_type: Type, printed: &[u8], symbol_name: Option<&
     code
 }
 
-/// `default_case`: the range of the `default` clause, or of the comment that stands for one.
+/// `default_case` is the range of the `default` clause, or of the comment that replaces one.
 fn fix_switch<'a>(
     fixer: Fixer<'a>,
     node: Stmt<'a>,
@@ -103,7 +103,7 @@ fn fix_switch<'a>(
     };
     let file = fixer.file();
     let last_case = cases.last();
-    // Without cases, the indentation of the statement. The user is left to format it.
+    // Without cases, use the statement's indentation and leave the formatting to the user.
     let indented_as = match last_case {
         Some(last_case) => last_case.span().start,
         None => node.span().start,
@@ -143,7 +143,7 @@ fn fix_switch<'a>(
 }
 
 impl SwitchExhaustivenessCheck {
-    /// The comment after the last case that says that the default case is left out on purpose.
+    /// The comment after the last case that marks the default case as intentionally omitted.
     fn get_comment_default_case<'a>(
         &self,
         cases: List<'a, Case<'a>>,
@@ -151,7 +151,7 @@ impl SwitchExhaustivenessCheck {
     ) -> Option<Span> {
         let is_oxlint = file.language().is_oxlint;
         let mut comments = file.comments_after(cases.last()?);
-        // tsgolint takes the first comment that matches, typescript-eslint tests the last one.
+        // tsgolint uses the first comment that matches. typescript-eslint only tests the last one.
         let default_case_comment = match is_oxlint {
             true => comments.find(|&comment| self.is_default_case_comment(comment, is_oxlint)),
             false => comments
@@ -163,7 +163,7 @@ impl SwitchExhaustivenessCheck {
 
     fn is_default_case_comment(&self, comment: Token<'_>, is_oxlint: bool) -> bool {
         let value = comment.comment_value();
-        // tsgolint trims what `strings.TrimSpace` of Go trims.
+        // tsgolint trims what Go's `strings.TrimSpace` trims.
         let value = match is_oxlint {
             true => strings::trim_unicode_whitespace(value),
             false => strings::trim_js_whitespace(value),
@@ -196,8 +196,7 @@ impl SwitchExhaustivenessCheck {
         }
         let tests = cases.iter().filter_map(|switch_case| switch_case.test());
         let mut case_types: IdSet<Type<'a>> = IdSet::new();
-        // The "missing", the "optional" and the "undefined" type are different types, which all
-        // have `TypeFlags::UNDEFINED`.
+        // The "missing", "optional" and "undefined" types are different types that all have `TypeFlags::UNDEFINED`.
         let mut has_undefined_case = false;
         for case_type in tests.map(get_constrained_type_at_location) {
             has_undefined_case |= is_intrinsic_undefined_type(case_type);
@@ -243,7 +242,7 @@ impl SwitchExhaustivenessCheck {
                 .iter()
                 .map(|&it| (it, type_to_string(it, is_oxlint)))
                 .collect();
-            // tsgolint leaves them in the order of the union.
+            // tsgolint keeps the union's order.
             if !is_oxlint {
                 utils::sort::sort_by(&mut missing, |a, b| strings::locale_compare(&a.1, &b.1));
             }

@@ -15,7 +15,7 @@ const REDECLARED_BY_SYNTAX: Message = Message::new(
     "'{{id}}' is already defined by a variable declaration.",
 );
 
-/// The options, and which of the two rules it is.
+/// The options, shared by ESLint's rule and typescript-eslint's.
 #[derive(Copy, Clone)]
 pub struct Config {
     pub builtin_globals: bool,
@@ -30,7 +30,7 @@ enum DeclarationType {
     Comment,
 }
 
-/// What TypeScript merges declarations by.
+/// The declaration kinds that decide whether TypeScript merges declarations.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum MergeKind {
     Class,
@@ -52,7 +52,7 @@ fn merge_kind(declaration: Declaration) -> MergeKind {
     }
 }
 
-/// The range of the `Identifier` that ESLint has for the name. For oxlint the type annotation is not part of it.
+/// The range of ESLint's `Identifier` for the name. oxlint's range excludes the type annotation.
 fn identifier_span(declaration: Declaration) -> Option<Span> {
     match declaration {
         Declaration::Var(pat) | Declaration::Param(pat) if !pat.file().language().is_oxlint => {
@@ -62,8 +62,8 @@ fn identifier_span(declaration: Declaration) -> Option<Span> {
     }
 }
 
-/// Whether the rule looks at `scope`: the scopes of the file, of functions, blocks, loops and
-/// `switch` statements. ESLint's rule also looks at those of static blocks.
+/// True if the rule checks `scope`: file, function, block, loop and `switch` scopes. ESLint's rule also checks static
+/// block scopes.
 fn is_checked(scope: Scope, config: Config) -> bool {
     match scope.kind() {
         ScopeKind::Global | ScopeKind::Module | ScopeKind::Block | ScopeKind::For | ScopeKind::Switch => true,
@@ -77,9 +77,9 @@ fn is_checked(scope: Scope, config: Config) -> bool {
 }
 
 fn add_identifiers<'a>(config: Config, symbol: Symbol<'a>, into: &mut Vec<(DeclarationType, Span)>) {
-    // For oxlint the declarations that TypeScript merges are declarations like the others, in the order of the source.
+    // oxlint treats declarations that TypeScript merges like any others, in source order.
     let is_oxlint = symbol.file().language().is_oxlint;
-    // Of what redeclares a global oxlint reports the overloads too.
+    // oxlint also reports the overloads of a function that redeclares a global.
     let redeclares_global = is_oxlint && into.first().is_some_and(|it| it.0 == DeclarationType::Builtin);
     let mut add = |declarations: &mut dyn Iterator<Item = Declaration<'a>>| {
         let known = into.len();
@@ -107,7 +107,7 @@ fn add_identifiers<'a>(config: Config, symbol: Symbol<'a>, into: &mut Vec<(Decla
                 it == main || it == MergeKind::Module || merges_with_interfaces && it == MergeKind::Interface
             };
             if kinds().all(merges) {
-                // One is a safe declaration merging.
+                // Exactly one `main` declaration merges safely.
                 if kinds().filter(|it| *it == main).count() != 1 {
                     add(&mut identifiers().filter(|it| merge_kind(*it) == main));
                 }
@@ -127,7 +127,7 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
         _ => REDECLARED_BY_SYNTAX,
     };
     let is_oxlint = cx.language().is_oxlint;
-    // oxlint points at the declaration before, but for what redeclares a global.
+    // oxlint points at the previous declaration, except when a global is redeclared.
     let is_before = is_oxlint && first != DeclarationType::Builtin;
     for (&(_, previous), &(declaration_type, span)) in declarations.iter().zip(extra_declarations) {
         let message = if declaration_type == first { REDECLARED } else { detail };
@@ -144,16 +144,16 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
     }
 }
 
-/// For [`Rule::start`]: whether what is declared once can redeclare a global variable.
+/// For [`Rule::start`]: true if a single declaration can redeclare a global variable.
 pub fn can_redeclare_globals<'a>(config: Config, file: &'a File<'a>) -> bool {
     match file.language().is_oxlint {
-        // For oxlint, outside of a module whatever has the name of a global redeclares it, in whatever scope.
+        // For oxlint, outside a module, anything named like a global redeclares it, in any scope.
         true => config.builtin_globals && utils::oxlint::source_type(file) != SourceType::Module,
         false => file.scope().symbols().len() != 0,
     }
 }
 
-/// For [`Rule::symbol`]. The state: [`can_redeclare_globals`].
+/// For [`Rule::symbol`]. The state is the result of [`can_redeclare_globals`].
 #[inline]
 pub fn check_symbol<'a, R: Rule<State<'a> = bool>>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a, R>) {
     if symbol.declaration_count() > 1 || cx.state {
@@ -166,25 +166,24 @@ fn check_declarations<'a, R: Rule<State<'a> = bool>>(config: Config, symbol: Sym
     let is_oxlint = cx.language().is_oxlint;
     let scope = symbol.scope();
     let is_global = scope.kind() == ScopeKind::Global;
-    // oxlint looks at all scopes.
+    // oxlint checks every scope.
     if !is_oxlint && (count < 2 && !is_global || !is_checked(scope, config)) {
         return;
     }
-    // With `globalReturn` a module has two scopes of the whole file under the global one: that of a function and, in
-    // it, the module's. Both rules look at the first of them only.
+    // With `globalReturn`, a module has two file-wide scopes under the global one: a function scope and, inside it, the
+    // module scope. Both rules check only the function scope.
     if !is_oxlint && scope.kind() == ScopeKind::Module && cx.language().global_return {
         return;
     }
     let name = symbol.name().bytes();
     let global = match is_oxlint {
         true if cx.state => {
-            // Not what an `env` defines.
-            let is_asked = ast_utils::is_builtin_global_of_oxlint(name) || cx.language().is_written_global(name);
-            if is_asked { cx.file().global(name) } else { None }
+            // Globals that an `env` defines don't count.
+            let counts_as_global = ast_utils::is_builtin_global_of_oxlint(name) || cx.language().is_enabled_own_global(name);
+            if counts_as_global { cx.file().global(name) } else { None }
         }
         true => None,
-        // In a script, what the file declares at the top level and what is defined otherwise are the
-        // same variable.
+        // In a script, a top-level declaration and a configured global with the same name are the same variable.
         false if is_global => cx.file().global(name),
         false => None,
     };
@@ -208,8 +207,7 @@ fn check_declarations<'a, R: Rule<State<'a> = bool>>(config: Config, symbol: Sym
     report(cx, name, &declarations);
 }
 
-/// For [`Rule::finish`]: the variables that `/* global */` comments define and the file does
-/// not declare.
+/// For [`Rule::finish`]: checks the variables that `/* global */` comments define and the file doesn't declare.
 pub fn check_globals_in_comments<'a, R: Rule>(config: Config, cx: &Cx<'a, R>) {
     let file = cx.file();
     for it in file.globals_in_comments() {

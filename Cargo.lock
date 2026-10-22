@@ -155,14 +155,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_api"
-version = "0.0.0"
-dependencies = [
- "bun_alloc",
- "bun_options_types",
-]
-
-[[package]]
 name = "bun_ast"
 version = "0.0.0"
 dependencies = [
@@ -307,7 +299,6 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
- "bun_api",
  "bun_ast",
  "bun_bundler",
  "bun_clap",
@@ -322,7 +313,6 @@ dependencies = [
  "bun_standalone_graph",
  "bun_sys",
  "enum-map",
- "scopeguard",
  "thiserror",
 ]
 
@@ -582,6 +572,7 @@ dependencies = [
  "bun_md",
  "bun_parsers",
  "bun_sema",
+ "bun_semver",
  "bun_threading",
  "rustc-hash",
  "smallvec",
@@ -670,6 +661,7 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
+ "bun_errno",
  "bun_highway",
  "bun_http",
  "bun_http_types",
@@ -707,7 +699,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_alloc",
- "bun_api",
  "bun_ast",
  "bun_base64",
  "bun_collections",
@@ -715,6 +706,7 @@ dependencies = [
  "bun_dotenv",
  "bun_install_types",
  "bun_js_parser",
+ "bun_options_types",
  "bun_parsers",
  "bun_url",
  "strum",
@@ -782,7 +774,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_alloc",
- "bun_api",
  "bun_ast",
  "bun_core",
  "bun_dotenv",
@@ -790,6 +781,7 @@ dependencies = [
  "bun_install",
  "bun_js_parser_jsc",
  "bun_jsc",
+ "bun_options_types",
  "bun_paths",
  "bun_sys",
  "scopeguard",
@@ -1051,6 +1043,8 @@ dependencies = [
  "bun_lint_eslint",
  "bun_lint_graph",
  "bun_lint_jest",
+ "bun_lint_json",
+ "bun_lint_markdown",
  "bun_lint_plugins",
  "bun_lint_react",
  "bun_lint_typescript",
@@ -1102,6 +1096,27 @@ dependencies = [
  "bun_lint_oxlint",
  "rustc-hash",
  "smallvec",
+]
+
+[[package]]
+name = "bun_lint_json"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_lint",
+ "bun_parsers",
+ "rustc-hash",
+]
+
+[[package]]
+name = "bun_lint_markdown"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_format",
+ "bun_lint",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -1282,7 +1297,6 @@ name = "bun_patch"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_collections",
  "bun_core",
  "bun_errno",
  "bun_event_loop",
@@ -1290,7 +1304,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_which",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -1642,11 +1655,9 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_js_parser",
- "bun_paths",
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
- "bun_sema_parser",
  "bun_sys",
  "bun_threading",
  "libc",
@@ -1742,6 +1753,8 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_io",
+ "bun_js_parser",
+ "bun_js_printer",
  "bun_jsc",
  "bun_options_types",
  "bun_paths",
@@ -1802,7 +1815,6 @@ dependencies = [
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
- "scopeguard",
  "strum",
  "thiserror",
 ]

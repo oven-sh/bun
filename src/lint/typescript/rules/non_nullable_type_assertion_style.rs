@@ -70,12 +70,13 @@ impl Rule for NonNullableTypeAssertionStyle {
         }
         cx.report(node, PREFER_NON_NULL_ASSERTION).fix(|fixer| {
             let precedence = get_operator_precedence(ts_syntax_kind(expr), SyntaxKind::Unknown, false);
-            // tsgolint 7.0 leaves the parentheses of `(a) as B`, and the `<B>` of `<B>a`: it only changes what follows the operand.
+            // tsgolint 7.0 keeps the parentheses of `(a) as B` and the `<B>` of `<B>a`, because it only changes what
+            // follows the operand.
             if fixer.file().language().is_oxlint {
                 let file = fixer.file();
                 let outer = expr.outer_span();
                 let end = node.span().end.max(outer.end);
-                // `a as B===c` is not to become `a!===c`, which is `a !== =c`.
+                // `a as B===c` must not become `a!===c`, which parses as `a !== =c`.
                 let next = end;
                 let after: &[u8] = match file.slice(Span::new(next, next.saturating_add(1))) == b"=" {
                     true => b"! ",

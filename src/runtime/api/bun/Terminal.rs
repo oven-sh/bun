@@ -159,7 +159,15 @@ pub(crate) struct Terminal {
     /// going raw never makes another terminal's setRawMode a no-op.
     #[cfg(unix)]
     tty_state: Cell<bun_core::tty::State>,
+
+    /// Armed while open, for a terminal that script of a `Bun.ModuleGraph` opened: it closes with the graph.
+    abort_handle: jsc::AbortHandle,
 }
+
+jsc::impl_abort_handle_owner!(Terminal, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live; the wrapper's ref outlasts the close.
+    unsafe { (*this).close_without_callbacks() }
+});
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
@@ -404,6 +412,7 @@ impl Terminal {
     /// Internal initialization - shared by constructor and createFromSpawn
     fn init_terminal(
         global_object: &JSGlobalObject,
+        context: &jsc::ScriptExecutionContext,
         options: &Options,
         // If provided, use this JSValue; otherwise create one via toJS
         existing_js_value: Option<JSValue>,
@@ -441,6 +450,7 @@ impl Terminal {
             writer_has_buffered: Cell::new(false),
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
+            abort_handle: jsc::AbortHandle::for_owner::<Terminal>(),
         }));
         let parent_ptr = terminal;
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
@@ -540,6 +550,11 @@ impl Terminal {
             js::gc::set(js::GcValue::Drain, this_value, global_object, cb);
         }
 
+        if let Some(context) = global_object.bun_vm().as_graph_context(context) {
+            // SAFETY: heap-allocated above; leaves its context in `close_internal`.
+            unsafe { jsc::AbortHandle::arm_owner(parent_ptr, context) };
+        }
+
         Ok(CreateResult {
             // SAFETY: `parent_ptr` is the live `heap::into_raw` pointer above.
             terminal: unsafe { bun_ptr::BackRef::from_raw_mut(parent_ptr) },
@@ -579,7 +594,8 @@ impl Terminal {
 
         let options = Options::parse_from_js(global_object, js_options)?;
 
-        match Self::init_terminal(global_object, &options, Some(this_value)) {
+        let context = global_object.bun_vm().context_of_caller(callframe);
+        match Self::init_terminal(global_object, context, &options, Some(this_value)) {
             Ok(result) => {
                 // Hand the intrusive ref to the JS wrapper as m_ctx; finalize()
                 // releases it via deref_().
@@ -607,10 +623,10 @@ impl Terminal {
     /// Returns the Terminal and its JS wrapper value
     /// The slave_fd should be used for the subprocess's stdin/stdout/stderr
     pub(crate) fn create_from_spawn(
-        global_object: &JSGlobalObject,
+        cx: &jsc::JsThread<'_>,
         options: &Options,
     ) -> Result<CreateResult, InitError> {
-        Self::init_terminal(global_object, options, None)
+        Self::init_terminal(cx.global(), cx.context(), options, None)
     }
 
     /// Get the slave fd for subprocess to use
@@ -633,10 +649,13 @@ impl Terminal {
     }
 
     /// Spawn-side error-path teardown for a terminal created via
-    /// `create_from_spawn` whose subprocess never started. Downgrades the
-    /// JSRef so the wrapper is GC-eligible, marks `finalized` so
-    /// `on_reader_done` skips the JS exit callback, and runs `close_internal`.
+    /// `create_from_spawn` whose subprocess never started.
     pub(crate) fn abandon_from_spawn(&self) {
+        self.close_without_callbacks();
+    }
+
+    /// No callback follows (on Windows the reader drains on after `close_internal`), and the wrapper may be collected.
+    fn close_without_callbacks(&self) {
         self.this_value.with_mut(|v| v.downgrade());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
@@ -1695,13 +1714,7 @@ impl Terminal {
         global_object: &JSGlobalObject,
         _f: &CallFrame,
     ) -> JsResult<JSValue> {
-        // After dispose the caller must not see further data/exit callbacks.
-        // closeInternal on Windows leaves the reader draining off-thread, so
-        // suppress callbacks and downgrade the JSRef so the wrapper is
-        // GC-eligible once the caller's reference is dropped.
-        self.this_value.with_mut(|v| v.downgrade());
-        self.update_flags(|f| f.insert(Flags::FINALIZED));
-        self.close_internal();
+        self.close_without_callbacks();
         Ok(jsc::JSPromise::resolved_promise_value(
             global_object,
             JSValue::UNDEFINED,
@@ -1713,6 +1726,7 @@ impl Terminal {
             return;
         }
         self.update_flags(|f| f.insert(Flags::CLOSED));
+        self.abort_handle.leave();
 
         // Close writer (closes write_fd). R-2: `with_mut` borrow is held across
         // the synchronous `on_writer_close` parent callback, but that callback

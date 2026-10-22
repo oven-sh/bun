@@ -426,4 +426,70 @@ describe("Bun.markdown buffer input", () => {
     input.buffer.transfer();
     expect((input.buffer as ArrayBuffer).detached).toBe(true);
   });
+
+  // A pin prevents a detach but not a shrink, and `resize()` unmaps the trimmed pages.
+  describe("survives a resizable input that shrinks during the call", () => {
+    const source = "# Hello\n\nworld **bold**\n";
+
+    function resizableInput() {
+      const bytes = new TextEncoder().encode(source);
+      const buffer = new ArrayBuffer(bytes.length, { maxByteLength: bytes.length });
+      const view = new Uint8Array(buffer);
+      view.set(bytes);
+      return { buffer, view };
+    }
+
+    test("html", () => {
+      const { buffer, view } = resizableInput();
+      const options = {
+        get autolinks() {
+          buffer.resize(0);
+          return true;
+        },
+      };
+      expect(Markdown.html(view, options)).toBe(Markdown.html(source, { autolinks: true }));
+      expect(buffer.byteLength).toBe(0);
+    });
+
+    test("ansi", () => {
+      const { buffer, view } = resizableInput();
+      const theme = {
+        get colors() {
+          buffer.resize(0);
+          return false;
+        },
+      };
+      expect(Markdown.ansi(view, theme)).toBe(Markdown.ansi(source, { colors: false }));
+      expect(buffer.byteLength).toBe(0);
+    });
+
+    test("render", () => {
+      const { buffer, view } = resizableInput();
+      const result = Markdown.render(view, {
+        heading: (children: string) => {
+          buffer.resize(0);
+          return `<h1>${children}</h1>`;
+        },
+        paragraph: (children: string) => `<p>${children}</p>`,
+        strong: (children: string) => `<b>${children}</b>`,
+      });
+      expect(result).toBe("<h1>Hello</h1><p>world <b>bold</b></p>");
+      expect(buffer.byteLength).toBe(0);
+    });
+
+    test("react", () => {
+      const { buffer, view } = resizableInput();
+      const options = {
+        reactVersion: 18,
+        get autolinks() {
+          buffer.resize(0);
+          return true;
+        },
+      };
+      expect(Markdown.react(view, undefined, options)).toEqual(
+        Markdown.react(source, undefined, { reactVersion: 18, autolinks: true }),
+      );
+      expect(buffer.byteLength).toBe(0);
+    });
+  });
 });

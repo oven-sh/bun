@@ -325,6 +325,9 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
+  // The one of `hardeningFlags` (flags.ts) rustc has and does not already do:
+  // its stack probes are inline on this target with or without this.
+  if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
   // sits on one core while the rest idle. With this, independent compiler
@@ -417,7 +420,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     rustflags.push("--cfg=socket_fault_injection");
   }
   // `bun_disallow_code_generation_from_strings`: `bun_core::code_generation_from_strings()` is the
-  // constant `Disallowed` (BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1 on the C++ side, which then
+  // constant `Strict` (BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1 on the C++ side, which then
   // does not import the Rust symbol).
   rustflags.push("--check-cfg=cfg(bun_disallow_code_generation_from_strings)");
   if (!cfg.codeGenerationFromStrings) {

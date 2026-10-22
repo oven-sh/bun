@@ -760,6 +760,7 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
+                skip_symlinks: false,
             },
         ) {
             Ok(c) => c,
@@ -1014,12 +1015,12 @@ pub(crate) struct FilesContext {
 }
 
 impl FilesContext {
-    fn clone_error_string(archive: &libarchive::lib::Archive) -> Option<CString> {
+    fn read_error(archive: &libarchive::lib::Archive) -> FilesResult {
         let err_str = archive.error_string();
-        if err_str.is_empty() {
-            return None;
+        match CString::new(err_str) {
+            Ok(err) if !err_str.is_empty() => FilesResult::LibarchiveErr(err),
+            _ => FilesResult::Err(FilesError::ReadError),
         }
-        CString::new(err_str).ok()
     }
 
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
@@ -1028,19 +1029,20 @@ impl FilesContext {
         configure_archive_reader(&archive);
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            // SAFETY: `archive` is the live `read_new()` handle opened above.
-            return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                FilesResult::LibarchiveErr(err)
-            } else {
-                FilesResult::Err(FilesError::ReadError)
-            });
+            return Ok(Self::read_error(&archive));
         }
 
         let mut entries: FileEntryList = Vec::new();
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
-        while archive.read_next_header(&mut entry).succeeded() {
+        loop {
+            match archive.read_next_header(&mut entry) {
+                lib::Result::Eof => break,
+                lib::Result::Retry => continue,
+                lib::Result::Failed | lib::Result::Fatal => return Ok(Self::read_error(&archive)),
+                lib::Result::Ok | lib::Result::Warn => {}
+            }
             let entry_ref = lib::Entry::opaque_ref(entry);
             if entry_ref.filetype() != FILETYPE_REGULAR {
                 continue;
@@ -1065,33 +1067,10 @@ impl FilesContext {
             let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
             let mtime: i64 = entry_ref.mtime();
 
-            // Read data incrementally so untrusted entry sizes don't drive allocation.
             let mut data: Vec<u8> = Vec::new();
-            while data.len() < size {
-                let to_read = (size - data.len()).min(64 * 1024);
-                data.try_reserve(to_read)
-                    .map_err(|_| bun_alloc::AllocError)?;
-                // SAFETY: `archive_read_data` only stores into the slice; the written prefix is committed below.
-                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut data)[..to_read] };
-                let read = archive.read_data(dest);
-                if read < 0 {
-                    // Read error.
-                    // NOTE: both `data` and `entries` drop automatically here.
-                    // SAFETY: `archive` is the live `read_new()` handle opened above.
-                    return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                        FilesResult::LibarchiveErr(err)
-                    } else {
-                        FilesResult::Err(FilesError::ReadError)
-                    });
-                }
-                if read == 0 {
-                    break;
-                }
-                let bytes_read = usize::try_from(read).expect("int cast");
-                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
-                unsafe { bun_core::vec::commit_spare(&mut data, bytes_read) };
+            if !archive.read_data_to_vec(size, &mut data)? {
+                return Ok(Self::read_error(&archive));
             }
-            // errdefer free(data) — handled by Drop
 
             let path_copy: Box<[u8]> = Box::from(pathname);
             // errdefer free(path_copy) — handled by Drop
@@ -1334,11 +1313,15 @@ fn extract_to_disk_filtered(
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
-    // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
-    let buf = unsafe { stack_buf.as_bytes_mut() };
+    let mut write_strategy = lib::WriteStrategy::default();
 
-    while archive.read_next_header(&mut entry).succeeded() {
+    loop {
+        match archive.read_next_header(&mut entry) {
+            lib::Result::Eof => break,
+            lib::Result::Retry => continue,
+            lib::Result::Failed | lib::Result::Fatal => return Err(crate::Error::ReadError),
+            lib::Result::Ok | lib::Result::Warn => {}
+        }
         let entry_ref = lib::Entry::opaque_ref(entry);
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
@@ -1422,48 +1405,16 @@ fn extract_to_disk_filtered(
                     Err(_) => continue,
                 };
 
-                let mut write_success = true;
-                if size > 0 {
-                    // Read archive data and write to file
-                    let mut remaining = size;
-                    while remaining > 0 {
-                        let to_read = remaining.min(buf.len());
-                        let read = archive.read_data(&mut buf[..to_read]);
-                        if read <= 0 {
-                            write_success = false;
-                            break;
-                        }
-                        let bytes_read: usize = usize::try_from(read).expect("int cast");
-                        // Write all bytes, handling partial writes
-                        let mut written: usize = 0;
-                        while written < bytes_read {
-                            let w = match bun_sys::write(file_fd, &buf[written..bytes_read]) {
-                                Ok(w) => w,
-                                Err(_) => {
-                                    write_success = false;
-                                    break;
-                                }
-                            };
-                            if w == 0 {
-                                write_success = false;
-                                break;
-                            }
-                            written += w;
-                        }
-                        if !write_success {
-                            break;
-                        }
-                        remaining -= bytes_read;
-                    }
-                }
+                let write_success = size == 0
+                    || archive.read_data_into_fd(file_fd, &mut write_strategy) == lib::Result::Ok;
                 let _ = file_fd.close();
 
-                if write_success {
-                    count += 1;
-                } else {
+                if !write_success {
                     // Remove partial file on failure
                     let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                    return Err(crate::Error::ReadError);
                 }
+                count += 1;
             }
             bun_sys::FileKind::SymLink => {
                 let link_target_z = entry_ref.symlink();

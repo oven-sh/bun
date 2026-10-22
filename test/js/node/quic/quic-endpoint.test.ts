@@ -5,8 +5,9 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
+import dc from "node:diagnostics_channel";
 import { readFileSync } from "node:fs";
-import { BlockList } from "node:net";
+import { BlockList, SocketAddress } from "node:net";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOptions } from "node:quic";
 
@@ -402,4 +403,259 @@ describe("endpoint.close() with an unsent stateless reset", () => {
     // LeakSanitizer needs more than the default 5 s on a debug build.
     60_000,
   );
+});
+
+// Every address a session hands to JS is a net.SocketAddress, from the moment
+// JS holds the session. Node's Session::Config takes both addresses
+// (node/src/quic/session.h), and `session.path` keeps what it reads first.
+describe("session addresses", () => {
+  const sniOpt = { "*": { keys: [key], certs: [cert] } };
+  const tp = { maxIdleTimeout: 1 };
+  const plain = (addr: unknown) => {
+    const { address, port, family } = (addr ?? {}) as Partial<SocketAddress>;
+    return { isSocketAddress: addr instanceof SocketAddress, address, port, family };
+  };
+  const both = (path: any) => ({ local: plain(path?.local), remote: plain(path?.remote) });
+  // "closed" when the session ends first, so a missing event shows in the diff and not as a timeout.
+  const orClosed = <T>(event: Promise<T>, session: { closed: Promise<unknown> }) =>
+    Promise.race([
+      event,
+      session.closed.then(
+        () => "closed" as const,
+        () => "closed" as const,
+      ),
+    ]);
+
+  test("a server session has both in onsession, before the handshake", async () => {
+    const seen = Promise.withResolvers<unknown>();
+    await using server = await listen(
+      (s: any) => {
+        const early = s.path;
+        const atOnsession = both(early);
+        s.opened.then(() => seen.resolve({ atOnsession, cached: s.path === early }), seen.reject);
+        s.closed.catch(() => {});
+      },
+      { sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+    );
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      endpoint,
+      alpn: "quic-test",
+      verifyPeer: "manual",
+      transportParams: tp,
+    } as SessionOptions);
+    await client.opened;
+    const expected = { local: plain(server.address), remote: plain(endpoint.address) };
+    const result = await orClosed(seen.promise, client);
+    client.close();
+
+    expect(result).toEqual({ atOnsession: expected, cached: true });
+  });
+
+  // Publishing the message reads session.path, so a subscriber alone decides
+  // what the application's later reads return.
+  test("quic.session.created.server carries the peer's address and leaves session.path right", async () => {
+    const published = Promise.withResolvers<unknown>();
+    const onCreated = (msg: any) => published.resolve(plain(msg.address));
+    dc.subscribe("quic.session.created.server", onCreated);
+    try {
+      const seen = Promise.withResolvers<unknown>();
+      await using server = await listen(
+        (s: any) => {
+          s.opened.then(() => seen.resolve(both(s.path)), seen.reject);
+          s.closed.catch(() => {});
+        },
+        { sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+      );
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(server.address!, {
+        endpoint,
+        alpn: "quic-test",
+        verifyPeer: "manual",
+        transportParams: tp,
+      } as SessionOptions);
+      await client.opened;
+      const local = plain(server.address);
+      const remote = plain(endpoint.address);
+      const result = {
+        published: await orClosed(published.promise, client),
+        path: await orClosed(seen.promise, client),
+      };
+      client.close();
+
+      expect(result).toEqual({ published: remote, path: { local, remote } });
+    } finally {
+      dc.unsubscribe("quic.session.created.server", onCreated);
+    }
+  });
+
+  // Node 26.3.0, which this port follows, announces a session before its
+  // handshake. Later Node does not surface a failed handshake (nodejs/node#64132).
+  test("a server session whose handshake fails has both in onerror", async () => {
+    const seen = Promise.withResolvers<unknown>();
+    let expected: unknown;
+    {
+      await using server = await listen(
+        (s: any) => {
+          s.onerror = () => seen.resolve({ destroyed: s.destroyed, ...both(s.path) });
+          s.opened.then(
+            () => seen.resolve("opened"),
+            () => {},
+          );
+          s.closed.catch(() => {});
+        },
+        { sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+      );
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(server.address!, {
+        endpoint,
+        alpn: "not-offered",
+        verifyPeer: "manual",
+        transportParams: tp,
+        onerror() {},
+      } as SessionOptions);
+      const closed = client.closed.catch(() => "rejected");
+      expected = { destroyed: false, local: plain(server.address), remote: plain(endpoint.address) };
+      await expect(client.opened).rejects.toThrow(expect.objectContaining({ code: "ERR_QUIC_TRANSPORT_ERROR" }));
+      expect(await closed).toBe("rejected");
+    }
+    // Both endpoints are closed, so every server session has ended.
+    seen.resolve("no server session reported an error");
+
+    expect(await seen.promise).toEqual(expected);
+  });
+
+  // A resumed connection whose first request is queued before its first flush
+  // sends the 0-RTT packet ahead of the Initial. Nothing announces that session
+  // at the first packet: it is created when the handshake completes, with the
+  // conn's own peer address.
+  test("a server session for a resumed 0-RTT connection has both in onsession", async () => {
+    const sessions: unknown[] = [];
+    const resumedSeen = Promise.withResolvers<void>();
+    await using server = await listen(
+      (s: any) => {
+        sessions.push(both(s.path));
+        s.onstream = (st: any) => st.closed.catch(() => {});
+        s.closed.catch(() => {});
+        if (sessions.length === 2) resumedSeen.resolve();
+      },
+      {
+        sni: sniOpt,
+        transportParams: tp,
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" });
+          this.writer.endSync();
+        },
+      },
+    );
+    await using endpoint = new QuicEndpoint();
+    const options = { endpoint, servername: "localhost", verifyPeer: "manual", transportParams: tp };
+    const ticket = Promise.withResolvers<unknown>();
+    const first = await connect(server.address!, { ...options, onsessionticket: ticket.resolve } as SessionOptions);
+    await first.opened;
+    const sessionTicket = await orClosed(ticket.promise, first);
+    first.close();
+
+    const resumed = await connect(server.address!, { ...options, sessionTicket } as SessionOptions);
+    // No flush has happened since connect(), so this leaves as 0-RTT.
+    const request = await resumed.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders() {},
+    });
+    request.closed.catch(() => {});
+    const expected = { local: plain(server.address), remote: plain(endpoint.address) };
+    const announced = await orClosed(resumedSeen.promise, resumed);
+    const { earlyDataAccepted } = await resumed.opened;
+    resumed.close();
+
+    expect({ announced, earlyDataAccepted, resumed: sessions[1] }).toEqual({
+      announced: undefined,
+      earlyDataAccepted: true,
+      resumed: expected,
+    });
+  });
+
+  test("a client session has both as soon as connect() returns", async () => {
+    await using server = await listen((s: any) => s.closed.catch(() => {}), {
+      sni: sniOpt,
+      alpn: ["quic-test"],
+      transportParams: tp,
+    });
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      endpoint,
+      alpn: "quic-test",
+      verifyPeer: "manual",
+      transportParams: tp,
+    } as SessionOptions);
+    const atConnect = both(client.path);
+    await client.opened;
+    client.close();
+
+    expect(atConnect).toEqual({ local: plain(endpoint.address), remote: plain(server.address) });
+  });
+
+  // A version the server does not speak makes connect() send a bare probe with
+  // no lsquic conn behind the session.
+  test("a version negotiation probe session has both", async () => {
+    await using server = await listen((s: any) => s.closed.catch(() => {}), {
+      sni: sniOpt,
+      alpn: ["quic-test"],
+      transportParams: tp,
+    });
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      endpoint,
+      alpn: "quic-test",
+      verifyPeer: "manual",
+      transportParams: tp,
+      version: 0x1a1a1a1a,
+      onversionnegotiation() {},
+      onerror() {},
+    } as SessionOptions);
+    const atConnect = both(client.path);
+    const expected = { local: plain(endpoint.address), remote: plain(server.address) };
+    await expect(client.closed).rejects.toThrow(
+      expect.objectContaining({ code: "ERR_QUIC_VERSION_NEGOTIATION_ERROR" }),
+    );
+
+    expect(atConnect).toEqual(expected);
+  });
+
+  // Node's Session::EmitNewToken passes remote_address() (node/src/quic/session.cc).
+  test("onnewtoken and quic.session.new.token get the server's address", async () => {
+    const published = Promise.withResolvers<unknown>();
+    const onToken = (msg: any) => published.resolve(plain(msg.address));
+    dc.subscribe("quic.session.new.token", onToken);
+    try {
+      const delivered = Promise.withResolvers<unknown>();
+      await using server = await listen((s: any) => s.closed.catch(() => {}), {
+        sni: sniOpt,
+        alpn: ["quic-test"],
+        transportParams: tp,
+      });
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(server.address!, {
+        endpoint,
+        alpn: "quic-test",
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: tp,
+        onnewtoken(token: Buffer, address: unknown) {
+          delivered.resolve({ tokenBytes: token.length > 0, address: plain(address) });
+        },
+      } as SessionOptions);
+      await client.opened;
+      const address = plain(server.address);
+      const result = {
+        delivered: await orClosed(delivered.promise, client),
+        published: await orClosed(published.promise, client),
+      };
+      client.close();
+
+      expect(result).toEqual({ delivered: { tokenBytes: true, address }, published: address });
+    } finally {
+      dc.unsubscribe("quic.session.new.token", onToken);
+    }
+  });
 });

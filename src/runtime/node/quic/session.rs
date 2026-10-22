@@ -2,7 +2,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::ptr::{null, null_mut};
+use core::ptr::null_mut;
 use std::collections::VecDeque;
 
 use bun_jsc::bun_string_jsc;
@@ -372,8 +372,8 @@ pub(crate) struct QuicSession {
     endpoint: Cell<*mut QuicEndpoint>,
     endpoint_js: JsCell<Option<Strong>>,
     is_server: Cell<bool>,
-    local_addr: Cell<StoredAddr>,
-    pub(super) remote_addr: Cell<StoredAddr>,
+    local_addr: StoredAddr,
+    remote_addr: StoredAddr,
     /// Borrowed views into JSC-owned ArrayBuffers (see endpoint.rs `state`).
     state: Cell<*mut SessionState>,
     stats: Cell<*mut u64>,
@@ -420,15 +420,20 @@ pub(crate) struct QuicSession {
 }
 
 impl QuicSession {
-    fn new(global: &JSGlobalObject, vtable: *const lsquic::NqVtable) -> Self {
+    fn new(
+        global: &JSGlobalObject,
+        vtable: *const lsquic::NqVtable,
+        local_addr: StoredAddr,
+        remote_addr: StoredAddr,
+    ) -> Self {
         Self {
             vtable,
             conn: Cell::new(null_mut()),
             endpoint: Cell::new(null_mut()),
             endpoint_js: JsCell::new(None),
             is_server: Cell::new(false),
-            local_addr: Cell::new(StoredAddr::default()),
-            remote_addr: Cell::new(StoredAddr::default()),
+            local_addr,
+            remote_addr,
             state: Cell::new(null_mut()),
             stats: Cell::new(null_mut()),
             events: JsCell::new(Vec::new()),
@@ -469,16 +474,22 @@ impl QuicSession {
         }
     }
 
+    /// Both addresses are set here, as node's `Session::Config` sets them
+    /// (node/src/quic/session.h): JS reads `session.path` from `onsession`,
+    /// which for a server runs before lsquic has a conn to ask.
     pub(super) fn create(
         global: &JSGlobalObject,
         vtable: *const lsquic::NqVtable,
-        endpoint: *mut QuicEndpoint,
+        endpoint: &QuicEndpoint,
         endpoint_handle: JSValue,
         conn: *mut lsquic::lsquic_conn,
         is_server: bool,
         application: Application,
+        remote: StoredAddr,
     ) -> JsResult<(*mut QuicSession, JSValue)> {
-        let raw = bun_core::heap::into_raw(Box::new(Self::new(global, vtable)));
+        let local = endpoint.local_addr();
+        debug_assert!(local.decode().is_some() && remote.decode().is_some());
+        let raw = bun_core::heap::into_raw(Box::new(Self::new(global, vtable, local, remote)));
         let handle = crate::generated_classes::js_QuicSession::to_js(raw, global);
 
         let state_ptr = alloc_exposed_array_buffer(
@@ -526,16 +537,13 @@ impl QuicSession {
         )]
         this.stats.set(stats_ptr.cast::<u64>());
         this.conn.set(conn);
-        this.endpoint.set(endpoint);
+        this.endpoint.set(core::ptr::from_ref(endpoint).cast_mut());
         this.endpoint_js
             .set(Some(Strong::create(endpoint_handle, global)));
         this.is_server.set(is_server);
         this.this_value.with_mut(|r| r.set_strong(handle, global));
         this.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
         let _ = this.vtable;
-        if !conn.is_null() {
-            this.cache_sockaddrs(conn);
-        }
         Ok((raw, handle))
     }
 
@@ -551,32 +559,12 @@ impl QuicSession {
                 self.push_event(SessionEvent::Keylog(line));
             }
         }
-        self.cache_sockaddrs(conn);
         if self.close_when_bound.get() {
             // Carry the user's {type, code, reason} through rather than
             // sending a bare close.
             if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
                 self.apply_graceful_close(app, code, reason);
             }
-        }
-    }
-
-    pub(super) fn cache_sockaddrs(&self, conn: *mut lsquic::lsquic_conn) {
-        let mut local: *const c_void = null();
-        let mut peer: *const c_void = null();
-        // SAFETY: `conn` is live; out-params point at stack slots.
-        if unsafe {
-            lsquic::lsquic_conn_get_sockaddr(
-                conn,
-                core::ptr::from_mut(&mut local),
-                core::ptr::from_mut(&mut peer),
-            )
-        } == 0
-        {
-            self.local_addr
-                .set(StoredAddr::from_raw(local.cast(), SOCKADDR_IN6_LEN));
-            self.remote_addr
-                .set(StoredAddr::from_raw(peer.cast(), SOCKADDR_IN6_LEN));
         }
     }
 
@@ -1090,7 +1078,7 @@ impl QuicSession {
                         cb,
                         global,
                         self.handle(),
-                        &[buf],
+                        &[buf, self.remote_addr.to_js_socket_address(global)],
                     );
                 }
             }
@@ -1865,14 +1853,14 @@ impl QuicSession {
         global: &JSGlobalObject,
         _f: &CallFrame,
     ) -> JsResult<JSValue> {
-        Ok(self.remote_addr.get().to_js_socket_address(global))
+        Ok(self.remote_addr.to_js_socket_address(global))
     }
     pub(crate) fn get_local_address(
         &self,
         global: &JSGlobalObject,
         _f: &CallFrame,
     ) -> JsResult<JSValue> {
-        Ok(self.local_addr.get().to_js_socket_address(global))
+        Ok(self.local_addr.to_js_socket_address(global))
     }
     fn parse_close_options(
         &self,

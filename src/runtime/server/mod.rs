@@ -268,7 +268,10 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// graceful-stop promise open ([`NewServer::is_closed`]).
     pub(crate) active_connection_count: core::cell::Cell<u32>,
     /// The node:http tunnels in `active_connection_count` that are at read EOF and have nothing left to send.
+    /// Also the connections whose reads a parked request paused.
     pub(crate) idle_tunnel_count: core::cell::Cell<u32>,
+    /// The node:http requests in `pending_requests` that are parked (`NodeHTTPResponse::update_parked`).
+    pub(crate) parked_request_count: core::cell::Cell<u32>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
     /// `Cell` because the open/close accounting arrives through shared
@@ -528,8 +531,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 3 => {
                     this.note_tunnel_idle(false);
                     // With a listener open, the loop ref is the user's to drop (`server.unref()`).
-                    if !this.has_listener() {
-                        // SAFETY: `this` is not used again, and a tunnel write never runs inside `app.close()`.
+                    if !this.has_listener() && !this.deinit_running.get() {
+                        // SAFETY: `this` is not used again, and `deinit_running` rules out an outer `&mut self` (the `app.close()` drain).
                         unsafe { &mut *user_data.cast::<Self>() }.ref_();
                     }
                     return;
@@ -1615,6 +1618,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         });
     }
 
+    pub(crate) fn note_request_parked(&self, parked: bool) {
+        let count = self.parked_request_count.get();
+        self.parked_request_count
+            .set(if parked { count + 1 } else { count - 1 });
+    }
+
     /// An idle tunnel is open but, like a libuv handle at EOF with no write pending, does not hold the loop.
     fn has_loop_holding_connections(&self) -> bool {
         self.active_connection_count.get() > self.idle_tunnel_count.get()
@@ -1643,18 +1652,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// What the `stop()` promise (node:http: 'close') and the loop unref wait for. A connection counts from accept, before its TLS handshake completes.
+    /// A parked request only waits for its connection, so the connection alone decides.
     pub(crate) fn is_closed(&self) -> bool {
-        self.pending_requests.get() == 0
+        self.pending_requests.get() == self.parked_request_count.get() as usize
             && !self.has_listener()
             && !self.has_active_web_sockets()
             && !self.has_loop_holding_connections()
     }
 
-    /// Nothing is left that can dispatch a handler: [`Self::is_closed`] and
-    /// no open HTTP connection. The wrapper may only go `Weak` from here on
-    /// (see [`Self::js_value_for_dispatch`]).
+    /// Nothing is left that can dispatch a handler: [`Self::is_closed`], no
+    /// parked request and no open HTTP connection. The wrapper may only go
+    /// `Weak` from here on (see [`Self::js_value_for_dispatch`]).
     pub(crate) fn is_drained(&self) -> bool {
-        self.is_closed() && !self.has_active_connections()
+        self.is_closed() && self.pending_requests.get() == 0 && !self.has_active_connections()
     }
 
     pub(crate) fn has_listener(&self) -> bool {
@@ -2202,6 +2212,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             pending_requests: core::cell::Cell::new(0),
             active_connection_count: core::cell::Cell::new(0),
             idle_tunnel_count: core::cell::Cell::new(0),
+            parked_request_count: core::cell::Cell::new(0),
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
@@ -4100,6 +4111,10 @@ impl AnyServer {
 
     pub(crate) fn on_request_complete(&mut self) {
         any_server_dispatch_mut!(self, |s| s.on_request_complete())
+    }
+
+    pub(crate) fn note_request_parked(&self, parked: bool) {
+        any_server_dispatch!(self, |s| s.note_request_parked(parked))
     }
 
     pub(crate) fn on_static_request_complete(&mut self) {

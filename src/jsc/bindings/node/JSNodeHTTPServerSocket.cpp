@@ -20,6 +20,7 @@ extern "C" void Bun__NodeHTTPResponse_grantConnection(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
+extern "C" void Bun__NodeHTTPResponse_updateParked(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
 extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
@@ -623,6 +624,19 @@ extern "C" void Bun__NodeHTTP__onReadsPaused(int ssl, us_socket_t* socket)
     }
 }
 
+/* NodeHTTPResponse::update_parked: the reads are paused and nothing is left to send. */
+extern "C" void Bun__NodeHTTP__onRequestParked(int ssl, us_socket_t* socket)
+{
+    if (!socket || us_socket_is_closed(socket)) {
+        return;
+    }
+    if (ssl) {
+        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(true);
+    } else {
+        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(true);
+    }
+}
+
 template<bool SSL>
 static bool notifyWhenNodeHttpReadParsed(us_socket_t* socket)
 {
@@ -882,16 +896,29 @@ extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* sock
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
 }
 
+template<bool SSL>
+static void updateTunnelIdleImpl(us_socket_t* socket, bool sent, bool readEnded)
+{
+    sent = sent && reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained();
+    /* Only a tunnel at read EOF becomes idle here. The connection of a parked request gets no drain call: a raw write that leaves bytes ends its idle state. */
+    if (readEnded || !sent) {
+        reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->setNodeHttpTunnelIdle(sent);
+    }
+}
+
 void JSNodeHTTPServerSocket::updateTunnelIdle()
 {
-    if (!tunnelReadEnded || upgraded || isClosed()) {
+    if (upgraded || isClosed()) {
         return;
     }
     const bool sent = streamBuffer.bufferedSize() == 0;
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
+        updateTunnelIdleImpl<true>(socket, sent, tunnelReadEnded);
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
+        updateTunnelIdleImpl<false>(socket, sent, tunnelReadEnded);
+    }
+    if (auto* res = currentResponse()) {
+        Bun__NodeHTTPResponse_updateParked(res->wrapped());
     }
 }
 

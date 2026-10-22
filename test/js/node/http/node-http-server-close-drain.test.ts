@@ -3,8 +3,9 @@ import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { join } from "node:path";
 import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
@@ -804,6 +805,122 @@ test("an upgraded socket whose request body never ended does not hold the proces
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "end\n", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+// The server is node-http-server-close-paused-upload-fixture.js in its own process. This process is the client: it sends
+// half of a 2 MiB body, reads nothing until the server prints "close()" or "unref()", and stays connected. With
+// `killAfterBody`, it ends the server when it has that many bytes behind the response head.
+async function runPausedUpload(
+  shape: string,
+  protocol: "http" | "https",
+  framing: "Content-Length" | "chunked",
+  killAfterBody?: number,
+) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-http-server-close-paused-upload-fixture.js"), shape, protocol],
+    env: { ...bunEnv, TLS_KEY: tlsCert.key, TLS_CERT: tlsCert.cert },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stderr = proc.stderr.text();
+  const half = Buffer.alloc(1024 * 1024, "a");
+  const chunked = framing === "chunked";
+  const writeHalf = (client: Socket) => {
+    if (chunked) client.write(half.length.toString(16) + "\r\n");
+    client.write(half);
+    if (chunked) client.write("\r\n");
+  };
+  const decoder = new TextDecoder();
+  let bodyLength = 0;
+  let stdout = "";
+  let client: Socket | undefined;
+  let reading = false;
+  let sentAll = false;
+  try {
+    for await (const bytes of proc.stdout) {
+      stdout += decoder.decode(bytes, { stream: true });
+      if (!client && stdout.includes("\n")) {
+        const port = parseInt(stdout);
+        client =
+          protocol === "https"
+            ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+            : connect(port, "127.0.0.1");
+        // The server process exits with this connection open.
+        client.on("error", () => {});
+        client.write(
+          `POST / HTTP/1.1\r\nHost: x\r\n${chunked ? "Transfer-Encoding: chunked" : `Content-Length: ${half.length * 2}`}\r\n\r\n`,
+        );
+        writeHalf(client);
+      }
+      if (!reading && /^(close|unref)\(\)$/m.test(stdout)) {
+        reading = true;
+        client!.on("data", chunk => {
+          // The head comes in one piece, ahead of everything else.
+          bodyLength += bodyLength === 0 ? chunk.length - chunk.indexOf("\r\n\r\n") - 4 : chunk.length;
+          if (bodyLength === killAfterBody) proc.kill();
+        });
+      }
+      if (!sentAll && stdout.includes("half\n")) {
+        sentAll = true;
+        writeHalf(client!);
+        if (chunked) client!.write("0\r\n\r\n");
+      }
+      if (stdout.includes("end ")) client!.destroy();
+    }
+    return {
+      stdout: stdout.slice(stdout.indexOf("\n") + 1),
+      stderr: await stderr,
+      exitCode: await proc.exited,
+      signalCode: proc.signalCode,
+      bodyLength,
+    };
+  } finally {
+    client?.destroy();
+  }
+}
+
+// In Node a connection that stopped reading and has nothing left to write is an inactive libuv handle. It stays open and
+// 'close' waits for it, but it does not hold the process. The expected output is that of Node v20.20.0 and v22.22.0.
+const plain = ["http", "Content-Length"] as const;
+const tlsChunked = ["https", "chunked"] as const;
+test.concurrent.each(
+  (
+    [
+      ["response, stop, close()", "close()\n", plain, tlsChunked, ["http", "chunked"], ["https", "Content-Length"]],
+      ["stop, response, close()", "close()\n", tlsChunked],
+      ["close(), response, stop", "close()\n", plain],
+      // Winsock can take the whole response in one send(). Nothing drains then, and "finish" comes first.
+      ["stop, close(), response drains", "close()\nfinish\n", ...(isWindows ? [] : [plain, tlsChunked])],
+      ["response, stop, unref()", "unref()\n", tlsChunked],
+      ["response, stop, the request is destroyed, close()", "close()\n", plain],
+      // It holds the process again when it reads again.
+      ["reads start again after close()", "close()\nhalf\nend 2097152\nclosed\n", plain, tlsChunked],
+      ["reads start again after unref()", "unref()\nhalf\nend 2097152\n", tlsChunked],
+      ["closeAllConnections() after close()", "close()\nclosed\n", plain],
+    ] as const
+  ).flatMap(([shape, expected, ...variants]) => variants.map(variant => [shape, ...variant, expected] as const)),
+)(
+  "a paused upload behind a sent response does not hold the process: %s (%s, %s)",
+  async (shape, protocol, framing, expected) => {
+    const { bodyLength, ...result } = await runPausedUpload(shape, protocol, framing);
+    expect(result).toEqual({ stdout: expected, stderr: "", exitCode: 0, signalCode: null });
+  },
+);
+
+// Bytes that are left to send do hold the process. Not on Windows: Winsock can take all of them in one send().
+test.skipIf(isWindows).concurrent.each([
+  ["response, stop, raw write, close()", "close()\n"],
+  ["response, raw write, stop, close()", "close()\n"],
+  ["response, stop, raw write, unref()", "unref()\n"],
+  ["response, raw write, stop, unref()", "unref()\n"],
+  ["response, stop, the request is destroyed, raw write, close()", "close()\n"],
+])("bytes written to the socket of a paused upload are sent before the process ends: %s", async (shape, stdout) => {
+  const bodyLength = "ok".length + 16 * 1024 * 1024;
+  expect(await runPausedUpload(shape, "http", "Content-Length", bodyLength)).toMatchObject({
+    stdout,
+    stderr: "",
+    bodyLength,
+  });
 });
 
 test("closeAllConnections() on a listening server destroys the connections and keeps the listener", async () => {

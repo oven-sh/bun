@@ -2036,7 +2036,8 @@ test.concurrent("bun add reports a duplicate workspace name at its position in t
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await Promise.all([
-    write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+    // With a glob, the order that the directory lists the members in decides which one gets the error.
+    write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/pkg1", "packages/pkg2"] })),
     // `name` is after `dependencies`, so the new dependency moves it in the copy that has the edit.
     write(
       join(packageDir, "packages", "pkg1", "package.json"),

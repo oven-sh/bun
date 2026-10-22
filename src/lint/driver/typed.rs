@@ -30,7 +30,7 @@ use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{inside, is_same_path, to_file_name_lower_case};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, Provided, as_read, from_native, is_bundled, to_native};
-use bun_sema_driver::{Category, Diagnostic, Libs, RejectedProgram, WithoutInclude};
+use bun_sema_driver::{Category, Diagnostic, Libs, RejectedProgram, Rejects, WithoutInclude};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
@@ -505,7 +505,10 @@ fn check_and_lint_in(
             project_is_fallback: matches!(project, Project::Including(_)),
             memory: environment.memory,
             shares_every_file: true,
-            rejects_broken_configurations: matches!(project, Project::Including(_)),
+            rejects_broken_configurations: match project {
+                Project::Including(_) => Rejects::Everything,
+                Project::Nearest | Project::This(_) => Rejects::Nothing,
+            },
             // typescript-eslint uses the project's own compiler. tsgolint bundles its own library files.
             prefers_project_typescript_libs: matches!(project, Project::Nearest),
             ..Default::default()

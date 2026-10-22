@@ -64,7 +64,7 @@ test.skipIf(!isLinux).concurrent.each([
       return 0;
     }
   };
-  while (workersRunning() < 2 && proc.exitCode === null) await Bun.sleep(10);
+  while (workersRunning() < 2 && proc.exitCode === null && proc.signalCode === null) await Bun.sleep(10);
   expect(workersRunning()).toBe(2);
   await waitForCoordinatorToPark(proc.pid);
 
@@ -89,7 +89,11 @@ test.skipIf(!isLinux).concurrent.each([
 
 // A test spawns this. It is in the worker's process group, which the coordinator signals, and it
 // logs its own SIGTERM: orphaned by then, a zombie would still answer kill(pid, 0).
-const spawnedByTest = `trap 'echo terminated >> "$LOG"; exit 0' TERM; echo spawned >> "$LOG"; while :; do sleep 60; done`;
+//
+// The sleep is in the background and the shell is in `wait`, which a trapped signal ends at
+// once. A shell runs a trap only after its foreground command: a SIGTERM that arrives while
+// the shell starts a foreground `sleep 60` would be logged 60 s later.
+const spawnedByTest = `trap 'echo terminated >> "$LOG"; kill $!; exit 0' TERM; echo spawned >> "$LOG"; while :; do sleep 60 & wait $!; done`;
 const slowTestThatSpawns = `
   import { test } from "bun:test";
   import { appendFileSync } from "fs";

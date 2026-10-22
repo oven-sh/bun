@@ -340,6 +340,16 @@ impl PendingValue {
         false
     }
 
+    /// The form-data encoding of the Blob behind this body's stream, which is the type [`Self::to_any_blob`] lifts back out.
+    fn form_data_encoding_behind_stream(&self) -> Option<bun_core::form_data::Encoding> {
+        let stream = ReadableStream::from_js_direct(self.readable.get()?.value)?;
+        let webcore::readable_stream::Source::Blob(loader) = stream.ptr else {
+            return None;
+        };
+        // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive. Read-only.
+        bun_core::form_data::Encoding::get(unsafe { &*loader }.content_type.as_slice())
+    }
+
     fn to_any_blob_allow_promise(&mut self) -> Option<AnyBlob> {
         let global = self.global();
         let mut stream = self.readable.get()?;
@@ -2033,6 +2043,25 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         result
     }
 
+    /// The encoding `formData()` parses with. Without a `Content-Type` header the Blob behind an unread `.body` stream decides, as it does after a lift.
+    fn form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+        if let Some(encoder) = self.get_form_data_encoding()? {
+            return Ok(Some(encoder));
+        }
+        let Value::Locked(locked) = self.get_body_value() else {
+            return Ok(None);
+        };
+        if let Some(headers) = BodyMixin::get_fetch_headers(self) {
+            let headers = bun_opaque::opaque_deref_mut(headers.as_ptr());
+            if headers.fast_get(HTTPHeaderName::ContentType).is_some() {
+                return Ok(None);
+            }
+        }
+        Ok(locked
+            .form_data_encoding_behind_stream()
+            .map(bun_core::form_data::AsyncFormData::init))
+    }
+
     fn get_form_data(
         &self,
         global_object: &JSGlobalObject,
@@ -2052,8 +2081,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(rejected) = handle_body_stream_unusable(&readable, global_object) {
                     return Ok(rejected);
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
             }
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
@@ -2062,12 +2089,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
             }
         }
 
-        let Some(encoder) = self.get_form_data_encoding()? else {
+        // Decided before the lift below, which spends an unread `.body` stream. Fetch reads the body first, Bun leaves a body that is not form data as it is.
+        let Some(encoder) = self.form_data_encoding()? else {
             // TODO: catch specific errors from getFormDataEncoding
             return Ok(global_object
                 .err(
@@ -2080,6 +2106,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         };
 
         let value = self.get_body_value();
+        if matches!(value, Value::Locked(_)) {
+            value.to_blob_if_possible();
+        }
         if let Value::Locked(_locked) = value {
             let owned_readable = self.get_body_readable_stream();
             // reshaped for borrowck — re-borrow after self method call.

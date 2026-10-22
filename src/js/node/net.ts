@@ -353,6 +353,7 @@ const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
 const kRejectedWrite = Symbol("kRejectedWrite");
+const kCanceledWrite = Symbol("kCanceledWrite");
 const kSocketClass = Symbol("kSocketClass");
 
 // A completed write whose status is a negative errno: Node hands it to the write
@@ -451,6 +452,30 @@ function endNT(self, socket, callback) {
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
+}
+// destroy() cancels the write that the handle holds, and the one that waits for the TLS handle. Not a write that waits for 'connect' (its 'close' listener fails it), and not one that the TLS engine rejected (failRejectedWrite gives it that error).
+function cancelHeldWrite(self) {
+  const callback = self[kwriteCallback];
+  if (!callback || self[kRejectedWrite] !== undefined) return false;
+  if (self._pendingData != null && self.listenerCount(kUpgradeAttached) === 0) return false;
+  self[kwriteCallback] = null;
+  self[kCanceledWrite] = callback;
+  return true;
+}
+// uv_close() fails a queued write with UV_ECANCELED: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L464
+function settleCanceledWrite(self, err?) {
+  const callback = self[kCanceledWrite];
+  if (!callback) return;
+  self[kCanceledWrite] = undefined;
+  // Node's TLSWrap holds a write until the handshake is done, and names itself when it cancels one.
+  const heldByTLS = self.encrypted && !self._secureEstablished;
+  callback(
+    err ??
+      new ErrnoException(uv().UV_ECANCELED, "write", heldByTLS ? "Canceled because of SSL destruction" : undefined),
+  );
+}
+function rethrowUncaught(err) {
+  throw err;
 }
 // Shared-fd TLS pair teardown: mirrors node's close ordering, where the
 // close-callbacks phase runs after the check phase (lib/net.js close path in
@@ -986,7 +1011,8 @@ function unrefAfterDrain(self, handle) {
 }
 
 function finishSocketEnd(self) {
-  if (self[kended]) return;
+  // A destroyed stream gets no EOF: destroy() emits 'close' only, never 'end'.
+  if (self[kended] || self.destroyed) return;
   self[kended] = true;
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
   self.push(null);
@@ -1085,6 +1111,8 @@ function SocketEmitEndNT(self, _err?) {
     // no further events. What a finished exchange left unread is still the
     // reader's: its 'end' closes the socket.
     self.destroy();
+    // The write that this quiet close cancels keeps the error of the close.
+    settleCanceledWrite(self, _err);
   }
   // A write that was waiting on the native drain can never complete once the
   // socket is gone - fail it so 'finish'/destroy are not stuck behind it.
@@ -2303,6 +2331,14 @@ Socket.prototype[kCloseRawConnection] = function () {
 
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
+  // The cancel belongs to the connection that destroy() gave up, not to this one (see connectError). Node reports a throw of its callback after connect() has returned.
+  if (this[kCanceledWrite]) {
+    try {
+      settleCanceledWrite(this);
+    } catch (e) {
+      process.nextTick(rethrowUncaught, e);
+    }
+  }
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
@@ -2478,6 +2514,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  // Before anything closes the handle: the native close handler fails a write it still finds with ERR_SOCKET_CLOSED.
+  const canceled = cancelHeldWrite(this);
+  // Node completes it when the handle closes: behind 'error' and all that its listeners queued, ahead of 'close'. Completed at once, it reaches node:http ahead of 'error', and a request that was reset emits 'finish'.
+  if (canceled) setImmediate(settleCanceledWrite, this);
+
   const upgraded = this[kupgraded];
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
@@ -2560,7 +2601,9 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
     const transport = transportToDestroy(this);
     if (transport !== undefined) abortTransport(transport);
+    // A canceled write has its own immediate, and 'close' stays behind it.
     if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
+    else if (canceled) setImmediate(emitCloseNT, this, err ? true : false);
     else process.nextTick(emitCloseNT, this, err ? true : false);
   }
 

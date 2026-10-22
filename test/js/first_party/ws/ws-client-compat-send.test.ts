@@ -1,6 +1,6 @@
 // Tests send(), ping() and pong() on a `ws` client against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir, tls } from "harness";
+import { isLinux, isWindows, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import { openAsBlob } from "node:fs";
@@ -838,8 +838,9 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       );
     });
 
-    // With npm ws on Bun, node:net drops the callbacks of queued writes when the peer resets the connection.
-    test.skipIf(!builtin).each([
+    // With npm ws, the callbacks come from node:net. It fails them where the peer's reset reaches it as a read
+    // error, which is only known on Linux.
+    test.skipIf(!builtin && !isLinux).each([
       { transport: "native", options: {} },
       { transport: "stream", options: { family: 4 } },
     ])(

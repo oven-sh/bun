@@ -1961,7 +1961,7 @@ const clientHandlers: ClientHandlers = {
 
     this[kWriteCallback] = undefined;
 
-    // node:net on Bun drops the callbacks of queued writes when the peer resets the connection, so keep them here too.
+    // node:net on Bun does not fail the callbacks of queued writes on every platform when the peer resets the connection (#43381), so keep them here too.
     // emitClose() fails the ones that are left.
     const callbacks = (this[kCallbacks] ??= []);
 

@@ -1,6 +1,6 @@
 //! The formatter: prints the syntax of a file the way Prettier does.
 //!
-//! See `CLAUDE.md` in this directory.
+//! See `AGENTS.md` in this directory.
 //!
 //! The intermediate representation and the printer (`ir/`) come from [Biome](https://github.com/biomejs/biome) by way
 //! of `oxc_formatter_core`, and the rules for JavaScript and TypeScript (`js/`) are a port of

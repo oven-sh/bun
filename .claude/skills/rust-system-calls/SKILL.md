@@ -93,4 +93,4 @@ let file = File::openat(Fd::cwd(), joined, O::RDONLY, 0)?;
 - **Don't allocate `PathBuffer` on the stack** in hot paths — use `path_buffer_pool::get()`.
 - **Don't forget `Drop`** alone closes a `File` — never `file.fd().close()` while the `File` is still live (double close).
 
-See `src/CLAUDE.md` for the full `bun_core`/`bun_sys` reference.
+See `src/AGENTS.md` for the full `bun_core`/`bun_sys` reference.

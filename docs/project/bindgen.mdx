@@ -280,7 +280,7 @@ and ASCII and is a transcoded copy otherwise.
 `b.string` shares the JS string's storage. As an argument it is a `&bun_core::String`, which a
 body that keeps it clones. Inside `.optional`, a union or an array, and as the value of a setter,
 it is held by value. The string belongs to the
-JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
+JS thread: see "Cross-thread string hazards" in `src/AGENTS.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
 
 `b.classRef("TCPSocket")` is a `&'a` of the struct that class wraps, `crate::generated_classes::TCPSocket`.

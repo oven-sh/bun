@@ -33,7 +33,7 @@ pub(crate) use write;
 /// fits on the line up to its first line break, or else the last.
 ///
 /// Every variant is formatted, so what they have in common should be `memoized()`. Comments can
-/// only be written once: see `src/format/CLAUDE.md`.
+/// only be written once: see `src/format/AGENTS.md`.
 macro_rules! best_fitting {
     ($least_expanded:expr, $($tail:expr),+ $(,)?) => {
         $crate::ir::builders::BestFitting::new(&[&$least_expanded, $(&$tail),+])

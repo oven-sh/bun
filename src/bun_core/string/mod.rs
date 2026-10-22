@@ -1030,7 +1030,7 @@ impl Default for String {
 // `EncodedSlice` slice / static / dead sentinel). All non-WTF tags are trivially
 // `Send + Sync` (no interior mutability, no refcount). A `WTF::StringImpl`'s
 // refcount is atomic; the hazards are per-thread atom tables and the lazily
-// computed hash/flags (see "Cross-thread string hazards" in `src/CLAUDE.md`).
+// computed hash/flags (see "Cross-thread string hazards" in `src/AGENTS.md`).
 //
 // We keep the blanket impls to match the C++ `BunString`
 // FFI contract (the type must round-trip by value through `extern "C"` and sit

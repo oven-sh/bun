@@ -1,5 +1,5 @@
 /**
- * Where a build's time went: `bun scripts/build.ts --timings` (design: the "Timings" section of CLAUDE.md). The
+ * Where a build's time went: `bun scripts/build.ts --timings` (design: the "Timings" section of AGENTS.md). The
  * report for the terminal, and the same as a chart (`chartHtml`).
  *
  * Nothing is measured for this. Every build already records what the report needs:

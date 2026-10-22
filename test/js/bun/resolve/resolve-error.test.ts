@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
 import path from "node:path";
 
 describe("ResolveMessage", () => {
@@ -502,11 +502,9 @@ describe.concurrent("Bun.resolve() rejections are tracked", () => {
 //
 // Skipped on Windows: collectContinuously is several times slower under
 // Windows + ASAN in CI, and the fixed C++ path is not platform-specific.
-it.skipIf(isWindows)(
-  "Bun.resolve() rejection survives a GC stack-trace finalizer",
-  async () => {
-    using dir = tempDir("bun-resolve-rejection-gc", {
-      "fixture.mjs": `
+it("Bun.resolve() rejection survives a GC stack-trace finalizer", async () => {
+  using dir = tempDir("bun-resolve-rejection-gc", {
+    "fixture.mjs": `
         const keep = [];
         let rejections = 0;
         for (let i = 0; i < 20000; i++) {
@@ -519,20 +517,18 @@ it.skipIf(isWindows)(
         }
         console.log("ok rejections=" + rejections);
       `,
-    });
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.mjs"],
-      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok rejections=20000", exitCode: 0 });
-    void stderr;
-  },
-  // 20000 awaited rejections under collectContinuously on a debug+ASAN build
-  // take well over the default 5s.
-  120_000,
-);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok rejections=20000", exitCode: 0 });
+  void stderr;
+}, // 20000 awaited rejections under collectContinuously on a debug+ASAN build
+// take well over the default 5s.
+120_000);

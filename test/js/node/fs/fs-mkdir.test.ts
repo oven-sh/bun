@@ -113,7 +113,7 @@ describe("fs.mkdirSync", () => {
     expect(fs.existsSync(pathname)).toBe(true);
   });
 
-  it.skipIf(isWindows)("creates a directory honoring mode bits above 0o777", () => {
+  it("creates a directory honoring mode bits above 0o777", () => {
     const pathname = path.join(tmpdir, nextdir());
 
     fs.mkdirSync(pathname, { mode: 0o1777 });

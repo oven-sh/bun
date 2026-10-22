@@ -8,7 +8,6 @@ import {
   bunRun,
   tls as COMMON_CERT_,
   isASAN,
-  isWindows,
   nodeExe,
   rejectUnauthorizedScope,
   tempDir,
@@ -5553,7 +5552,7 @@ describe("tls.connect() attaches onConnectEnd to 'end' exactly once", () => {
     });
   });
 
-  it.skipIf(process.platform === "win32")("tls.connect({ path })", async () => {
+  it("tls.connect({ path })", async () => {
     using dir = tempDir("tls-connect-path", {});
     const path = join(String(dir), "tls.sock");
     await withTLSServer({ path }, async () => {
@@ -6551,39 +6550,36 @@ describe("large writes and reads of a TLS socket over a Duplex", () => {
   });
 
   // process.cpuUsage() advances in ticks of about 15.6 ms on Windows.
-  it.skipIf(isWindows)(
-    "one large chunk from the Duplex costs the CPU time of the same bytes in small chunks",
-    async () => {
-      const payload = Buffer.alloc(8 * 1024 * 1024, pattern);
-      const { pair, hold } = holdingPair();
-      using _ = pair;
-      const { client, clientSide } = pair;
-      await once(client, "secureConnect");
+  it("one large chunk from the Duplex costs the CPU time of the same bytes in small chunks", async () => {
+    const payload = Buffer.alloc(8 * 1024 * 1024, pattern);
+    const { pair, hold } = holdingPair();
+    using _ = pair;
+    const { client, clientSide } = pair;
+    await once(client, "secureConnect");
 
-      async function cpuTimeToReceive(pieceSize: number) {
-        const ciphertext = await seal(pair, hold, payload);
-        const received = receive(client, payload.length);
-        const before = process.cpuUsage();
-        for (let offset = 0; offset < ciphertext.length; offset += pieceSize) {
-          clientSide.push(ciphertext.subarray(offset, offset + pieceSize));
-        }
-        const plaintext = await received;
-        const { user, system } = process.cpuUsage(before);
-        expect(plaintext.equals(payload)).toBe(true);
-        return user + system;
+    async function cpuTimeToReceive(pieceSize: number) {
+      const ciphertext = await seal(pair, hold, payload);
+      const received = receive(client, payload.length);
+      const before = process.cpuUsage();
+      for (let offset = 0; offset < ciphertext.length; offset += pieceSize) {
+        clientSide.push(ciphertext.subarray(offset, offset + pieceSize));
       }
+      const plaintext = await received;
+      const { user, system } = process.cpuUsage(before);
+      expect(plaintext.equals(payload)).toBe(true);
+      return user + system;
+    }
 
-      // The best of two interleaved runs each, so that a busy machine does not decide the ratio.
-      let small = Infinity;
-      let large = Infinity;
-      for (let run = 0; run < 2; run++) {
-        small = Math.min(small, await cpuTimeToReceive(64 * 1024));
-        large = Math.min(large, await cpuTimeToReceive(Infinity));
-      }
-      // About 1 when the cost is linear in the chunk, 16 and up when it is quadratic.
-      expect(large / small).toBeLessThan(4);
-    },
-  );
+    // The best of two interleaved runs each, so that a busy machine does not decide the ratio.
+    let small = Infinity;
+    let large = Infinity;
+    for (let run = 0; run < 2; run++) {
+      small = Math.min(small, await cpuTimeToReceive(64 * 1024));
+      large = Math.min(large, await cpuTimeToReceive(Infinity));
+    }
+    // About 1 when the cost is linear in the chunk, 16 and up when it is quadratic.
+    expect(large / small).toBeLessThan(4);
+  });
 
   it("writes made from 'data' and from the write() of the Duplex keep both streams in order", async () => {
     const fromServer = Buffer.alloc(320 * 1024, pattern);

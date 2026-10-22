@@ -609,7 +609,7 @@ describe("bun", () => {
     { signal: constants.signals.SIGUSR1, label: "SIGUSR1" },
     ...(isLinux ? [{ signal: 40, label: "UNKNOWN" }] : []),
   ];
-  test.skipIf(isWindows).each(signaled)("exit code of a script killed by signal $signal", ({ signal, label }) => {
+  test.each(signaled)("exit code of a script killed by signal $signal", ({ signal, label }) => {
     using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({ name: "dep0", scripts: { script: `kill -${signal} $$` } }),
@@ -755,7 +755,7 @@ describe("bun", () => {
   });
 
   // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
-  test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
+  test("terminal output reports how long a successful script took", () => {
     using dir = tempDir("filter-done-in", {
       packages: {
         dep0: {
@@ -850,7 +850,7 @@ describe("bun", () => {
 
 describe("selectors", () => {
   // A Windows command line is too short for a path longer than the path buffer.
-  test.skipIf(isWindows)("rejects a path longer than the path buffer", () => {
+  test("rejects a path longer than the path buffer", () => {
     const long = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
     runInCwdFailure(graph_root, long, "present", /error: --filter "\.\/a.*" path is too long/);
   });
@@ -1448,7 +1448,7 @@ describe("output timing", () => {
 
   // On abort (here: SIGINT), exit alone finishes a script; waiting for pipe
   // EOF would hang on the detached child that still holds go's stdout.
-  test.skipIf(isWindows)("SIGINT does not wait for a child holding the script's pipes", async () => {
+  test("SIGINT does not wait for a child holding the script's pipes", async () => {
     using dir = tempDir("filter-abort-late", {
       "package.json": JSON.stringify({
         name: "ws-abort",
@@ -1565,14 +1565,14 @@ describe("auto-discovered bunfig.toml [run] section", () => {
 
   // Elision only happens on a terminal. On POSIX FORCE_COLOR=1 turns the
   // terminal renderer on for a pipe; on Windows it stays off (see runElideLinesTest).
-  test.skipIf(isWindows)("[run] elide-lines enables elision for --filter", () => {
+  test("[run] elide-lines enables elision for --filter", () => {
     using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 15\n");
     const r = run(String(dir), ["run", "--filter", "dep0", "lines"], { FORCE_COLOR: "1", NO_COLOR: "0" });
     expect(r.stdout).toMatch(/\[5 lines elided\]/);
     expect(r.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", () => {
+  test("--elide-lines on the CLI wins over [run] elide-lines", () => {
     using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 15\n");
     const r = run(String(dir), ["run", "--elide-lines", "0", "--filter", "dep0", "lines"], {
       FORCE_COLOR: "1",
@@ -1617,7 +1617,7 @@ test.concurrent.each([
 });
 
 // Windows paths can't be as long as MAX_PATH_BYTES.
-describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buffer", () => {
+describe.concurrent("workspace paths longer than the path buffer", () => {
   const workspace = {
     "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     "packages/ok/package.json": JSON.stringify({ name: "ok", scripts: { present: "echo ok-ran" } }),

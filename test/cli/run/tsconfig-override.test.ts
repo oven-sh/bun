@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
 describe("bun run --tsconfig-override", () => {
@@ -322,7 +322,7 @@ describe("bun run --tsconfig-override", () => {
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
         // Windows leaves the verdict on a path this long to the file system.
-        if (!isWindows) expect(stderr).toContain(`Cannot read file "${path.resolve(tsconfigArg)}": ENAMETOOLONG`);
+        expect(stderr).toContain(`Cannot read file "${path.resolve(tsconfigArg)}": ENAMETOOLONG`);
         expect(stdout).toBe("ran\n");
         expect(proc.signalCode).toBeNull();
         expect(exitCode).toBe(0);

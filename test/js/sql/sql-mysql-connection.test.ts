@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, describeWithContainer, isLinux } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import {
@@ -1088,7 +1088,7 @@ describe("scripted server", () => {
     }
   });
 
-  test.skipIf(isWindows)("a unix socket that is not there rejects with its path", async () => {
+  test("a unix socket that is not there rejects with its path", async () => {
     const path = "/nonexistent/dir/mysql.sock";
     await using sql = new SQL({ adapter: "mysql", path, username: "root", database: "db", max: 1 });
     const err: any = await sql`SELECT 1`.catch(err => err);

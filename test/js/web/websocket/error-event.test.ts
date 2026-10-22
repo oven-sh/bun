@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir, tls } from "harness";
+import { tempDir, tls } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -95,7 +95,7 @@ describe.concurrent("connection fails before open", () => {
   });
 
   // The native connect() fails synchronously here, before the constructor returns.
-  test.skipIf(isWindows)("missing unix socket fires the same events as connection refused", async () => {
+  test("missing unix socket fires the same events as connection refused", async () => {
     using dir = tempDir("ws-missing-unix-socket", {});
     expect(await recordEvents(new WebSocket(`ws+unix://${join(String(dir), "missing.sock")}`))).toEqual([
       "readyState 0",

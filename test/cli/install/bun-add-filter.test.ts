@@ -1,7 +1,7 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, exists, mkdir, readdir, rm } from "fs/promises";
-import { bunEnv, bunExe, isRoot, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isRoot, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 
@@ -2322,22 +2322,19 @@ test.concurrent(
 );
 
 // Windows is left out: its path buffer holds more than any path the OS accepts.
-test.concurrent.skipIf(isWindows)(
-  "a local path longer than the path buffer is rejected before anything is written",
-  async () => {
-    const dir = await makeMonorepo();
-    const before = await allPackageJsonTexts(dir);
+test.concurrent("a local path longer than the path buffer is rejected before anything is written", async () => {
+  const dir = await makeMonorepo();
+  const before = await allPackageJsonTexts(dir);
 
-    const path = "./" + Buffer.alloc(4200, "a").toString();
-    const { stderr, exitCode } = await run(["add", path, "--filter", "api"], dir);
-    expect(stderr).toBe(`error: Dependency "${path}" has an unsafe folder path\n`);
-    expect(exitCode).toBe(1);
+  const path = "./" + Buffer.alloc(4200, "a").toString();
+  const { stderr, exitCode } = await run(["add", path, "--filter", "api"], dir);
+  expect(stderr).toBe(`error: Dependency "${path}" has an unsafe folder path\n`);
+  expect(exitCode).toBe(1);
 
-    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
-    expect(await exists(join(dir, "bun.lock"))).toBeFalse();
-    expect(await exists(join(dir, "node_modules"))).toBeFalse();
-  },
-);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  expect(await exists(join(dir, "bun.lock"))).toBeFalse();
+  expect(await exists(join(dir, "node_modules"))).toBeFalse();
+});
 
 test.concurrent("an absolute local path is written verbatim into every target", async () => {
   const dir = await makeMonorepo();
@@ -2408,7 +2405,7 @@ test.concurrent("remove --filter --dry-run touches nothing", async () => {
   expect(await exists(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
 });
 
-test.concurrent.skipIf(isWindows || isRoot)(
+test.concurrent.skipIf(isRoot)(
   "an unwritable target is reported by name, the rest is still written, exit code 1",
   async () => {
     const dir = await makeMonorepo();

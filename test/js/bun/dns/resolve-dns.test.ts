@@ -183,7 +183,7 @@ describe("dns", () => {
   // a libc getaddrinfo is still on the work pool, the Resolver is dropped
   // with that slot still occupied. HiveArray used to skip Drop on its slots,
   // so the hostname Box leaked. Only observable via LSan, so ASAN-only.
-  test.skipIf(!isASAN || isWindows)(
+  test.skipIf(!isASAN)(
     "pending-cache hostname is freed when VM tears down mid-lookup",
     async () => {
       await using proc = Bun.spawn({

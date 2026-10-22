@@ -88,7 +88,7 @@ describe("ReadStream.prototype.setRawMode", () => {
   // able to restore the terminal out from under the stream that raw'd it.
   // Bun used to keep one process-wide mode + termios snapshot, which turned
   // `setRawMode(false)` on a never-raw stream into a real tcsetattr.
-  test.skipIf(isWindows)("a second ReadStream's setRawMode does not disturb process.stdin", async () => {
+  test("a second ReadStream's setRawMode does not disturb process.stdin", async () => {
     const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
     const ECHO = 0x8;
 
@@ -201,7 +201,7 @@ describe("WriteStream end()", () => {
   // Windows: a write to an inherited stdout pipe blocks until the reader
   // drains it (every write() returns true), so the child never reaches end()
   // while the parent waits, and there is no backlog to flush.
-  it.skipIf(isWindows)("fires the callback after the backlog is flushed", async () => {
+  it("fires the callback after the backlog is flushed", async () => {
     const child = spawn(
       bunExe(),
       [
@@ -318,13 +318,13 @@ describe("WriteStream.prototype.getColorDepth", () => {
     [{ COLORTERM: "ansi256" }, 4],
   ];
 
-  it.skipIf(isWindows)("matches Node across the TERM/COLORTERM/CI env matrix", () => {
+  it("matches Node across the TERM/COLORTERM/CI env matrix", () => {
     const results = cases.map(([env, expected]) => ({ env, expected, actual: getColorDepth(env) }));
     expect(results.filter(r => r.actual !== r.expected)).toEqual([]);
   });
 
   // Bun recognizes these truecolor terminals on top of Node's list.
-  it.skipIf(isWindows)("reports 24-bit color for ghostty and WezTerm", () => {
+  it("reports 24-bit color for ghostty and WezTerm", () => {
     expect(getColorDepth({ TERM_PROGRAM: "ghostty" })).toBe(24);
     expect(getColorDepth({ TERM_PROGRAM: "WezTerm" })).toBe(24);
   });

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
@@ -9,7 +9,7 @@ import source from "./uv-stub-stuff/uv_impl.c";
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 
 // We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+describe("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";

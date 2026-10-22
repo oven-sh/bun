@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 // Regression test: Bun used to call shutdown(SHUT_WR) on the parent's read end
 // of a SOCK_STREAM socketpair used for subprocess stdout. This sent a FIN to
@@ -42,7 +42,7 @@ test.concurrent("subprocess stdout pipe stays writable after idle delay", async 
 // Skip on Windows: Python's asyncio connect_write_pipe uses
 // CreateIoCompletionPort internally, which doesn't work with
 // subprocess pipe handles on Windows (OSError: [WinError 6]).
-test.concurrent.skipIf(isWindows)("subprocess stdout pipe works with Python asyncio connect_write_pipe", async () => {
+test.concurrent("subprocess stdout pipe works with Python asyncio connect_write_pipe", async () => {
   // This is the exact scenario from the bug report: Python's asyncio
   // connect_write_pipe registers stdout with epoll for read-readiness
   // monitoring. If shutdown(SHUT_WR) was called on the parent's end,

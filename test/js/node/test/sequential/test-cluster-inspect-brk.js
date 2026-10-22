@@ -1,7 +1,5 @@
 'use strict';
 const common = require('../common');
-if (common.isWindows)
-  common.skip('extra stdio pipes (stdio beyond the IPC channel) are not supported on Windows');
 common.skipIfInspectorDisabled();
 
 // A test to ensure that cluster properly interoperates with the

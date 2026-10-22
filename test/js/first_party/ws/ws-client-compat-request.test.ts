@@ -1,7 +1,7 @@
 // Tests the `http.ClientRequest` that a `ws` client passes to `finishRequest` and to 'unexpected-response' listeners,
 // and how calling end(), destroy() or abort() on it affects the socket. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir, tls } from "harness";
+import { tempDir, tls } from "harness";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import {
@@ -131,7 +131,7 @@ describe.each(implementations)("ws client handshake request ($name)", ({ ws: imp
       expect(client.peer.connections).toHaveLength(1);
     });
 
-    test.skipIf(isWindows)("a deferred req.end() works over a unix socket", async () => {
+    test("a deferred req.end() works over a unix socket", async () => {
       using dir = tempDir("ws-finish-request", {});
       await using client = await connectClient(
         implementation,

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "path";
 
 // A worker's shutdown used to drain its concurrent queue and only then mark
@@ -10,7 +10,7 @@ import { join } from "path";
 // essentially never hit it; CI's release-asan lane does (see
 // test/js/node/test/parallel/test-worker-stdio-flush.js). This runs the
 // worker-stdio-on-exit scenario under LSan as a guard on the asan lane.
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "cross-thread MessagePort post during worker shutdown does not leak a ConcurrentTask",
   async () => {
     await using proc = Bun.spawn({

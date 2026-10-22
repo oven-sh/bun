@@ -2,7 +2,7 @@
 // HTTP thread from buffering the entire response in memory.
 import { S3Client } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, isDebug, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { statSync } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -354,7 +354,7 @@ const STALL_NO_CONSUMER = /* js */ `
 
 for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind[]) {
   describe.concurrent(`fetch() ${kind} receive backpressure`, () => {
-    const skip = kind === "h3" && isWindows;
+    const skip = false;
 
     const scripts =
       kind === "h1-gzip"

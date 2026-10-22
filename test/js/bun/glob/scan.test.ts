@@ -514,7 +514,7 @@ test("broken symlinks", async () => {
 });
 
 // This is consistent with fast-glob's behavior
-test.skipIf(process.platform == "win32")("error broken symlinks", async () => {
+test("error broken symlinks", async () => {
   const glob = new Glob("**/*");
   let err: Error | undefined = undefined;
   try {
@@ -620,7 +620,7 @@ describe("literal fast path", async () => {
 
   // The fast path stats the literal in each matched directory. Mode 444 fails that stat.
   // Root ignores the mode bits, and chmod on Windows cannot make a directory unsearchable.
-  test.skipIf(isWindows || isRoot)("a failed stat reports the path from cwd", () => {
+  test.skipIf(isRoot)("a failed stat reports the path from cwd", () => {
     using dir = tempDir("glob-scan-literal-fast-path-eacces", { "packages/a/package.json": "hi" });
     const unsearchable = path.join(String(dir), "packages", "a");
     fs.chmodSync(unsearchable, 0o444);
@@ -870,7 +870,7 @@ describe("glob.scan wildcard fast path", async () => {
 // ComponentSet (AutoBitSet) stores up to 127 indices inline, then spills to
 // heap. Verify patterns past that threshold still match correctly.
 // Skipped on Windows: 130 levels × 2 chars + tmpdir prefix exceeds MAX_PATH (260).
-test.skipIf(process.platform === "win32")("patterns with many components", () => {
+test("patterns with many components", () => {
   const depth = 130;
   const files: Record<string, string> = {};
   const parts: string[] = [];

@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, githubTarball, isWindows, runBunInstall, tempDir } from "harness";
+import { bunEnv, bunExe, githubTarball, runBunInstall, tempDir } from "harness";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1353,7 +1353,7 @@ describe.concurrent("where the scanner is looked up", () => {
     expect(await install(files)).toEqual({ ran: "a-scanner", exitCode: 0 });
   });
 
-  it.skipIf(isWindows)("a file with a quote in its name", async () => {
+  it("a file with a quote in its name", async () => {
     const files = { "project/bunfig.toml": bunfig('./s"q.ts'), 'project/s"q.ts': scannerOf("the project") };
     expect(await install(files)).toEqual({ ran: "the project", exitCode: 0 });
   });

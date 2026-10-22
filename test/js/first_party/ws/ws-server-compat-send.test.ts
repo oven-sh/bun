@@ -1,6 +1,6 @@
 // Tests send(), ping() and pong() on a `ws` server socket, using a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certificate, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tls as certificate, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
@@ -502,7 +502,7 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
   });
 
   // On loopback, Winsock accepts the whole write, so there's never any backpressure.
-  describe.skipIf(isWindows)("when the peer stops reading", () => {
+  describe("when the peer stops reading", () => {
     // A peer can send unlimited pings, so queued pongs from a ping flood must not exhaust the server's memory.
     // RFC 6455 5.5.3 allows answering only the most recent ping. npm ws queues a pong for every ping.
     test.skipIf(!builtin).each([

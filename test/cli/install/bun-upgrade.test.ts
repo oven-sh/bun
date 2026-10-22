@@ -427,12 +427,10 @@ it.concurrent("recreates the staging directory in the temp dir instead of reusin
   // download (bun.zip) again.
   expect(readdirSync(join(stagingRootPath, "9.9.9"))).toEqual([]);
 
-  if (!isWindows) {
-    // The staging directory must be freshly created with no group/other
-    // access. The planted one was created with the default mode, so a reused
-    // directory fails here.
-    expect(statSync(join(stagingRootPath, "9.9.9")).mode & 0o077).toBe(0);
-  }
+  // The staging directory must be freshly created with no group/other
+  // access. The planted one was created with the default mode, so a reused
+  // directory fails here.
+  expect(statSync(join(stagingRootPath, "9.9.9")).mode & 0o077).toBe(0);
 
   // The bogus archive must not be installed; the upgrade fails cleanly.
   expect(exitCode).toBe(1);

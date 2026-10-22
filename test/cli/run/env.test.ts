@@ -781,7 +781,7 @@ describe.concurrent(".env that is not a regular file", () => {
   // The resolver's directory listing drops a FIFO entry, so the loader only
   // sees one through a symlink. Without O_NONBLOCK the open blocks until a
   // writer appears.
-  test.skipIf(isWindows)("FIFO behind a symlink", async () => {
+  test("FIFO behind a symlink", async () => {
     using dir = tempDir("dotenv-fifo", files);
     mkfifo(path.join(String(dir), "fifo"));
     fs.symlinkSync("fifo", path.join(String(dir), ".env"));
@@ -796,7 +796,7 @@ describe.concurrent(".env that is not a regular file", () => {
     expect(script.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("unix socket behind a symlink", async () => {
+  test("unix socket behind a symlink", async () => {
     using dir = tempDir("dotenv-sock", files);
     using listener = Bun.listen({
       unix: path.join(String(dir), "sock"),
@@ -842,7 +842,7 @@ describe.concurrent("--env-file that is not a regular file", () => {
 
   // `sh` makes a real pipe. `Bun.spawn({ stdin: "pipe" })` is a socket pair,
   // which `/dev/stdin` cannot reopen on Linux.
-  test.skipIf(isWindows)("a pipe through /dev/stdin", async () => {
+  test("a pipe through /dev/stdin", async () => {
     using dir = tempDir("dotenv-arg-stdin", files);
 
     const script = await run(String(dir), [
@@ -856,7 +856,7 @@ describe.concurrent("--env-file that is not a regular file", () => {
     expect(script.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a pipe in a comma list, and the process env still wins", async () => {
+  test("a pipe in a comma list, and the process env still wins", async () => {
     using dir = tempDir("dotenv-arg-stdin-list", files);
 
     const script = await run(
@@ -874,7 +874,7 @@ describe.concurrent("--env-file that is not a regular file", () => {
     expect(script.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("process substitution", async () => {
+  test("process substitution", async () => {
     using dir = tempDir("dotenv-arg-procsub", files);
 
     const script = await run(String(dir), ["bash", "-c", '"$0" --env-file=<(echo BUNTEST_SUBST=1) index.ts', bunExe()]);
@@ -885,7 +885,7 @@ describe.concurrent("--env-file that is not a regular file", () => {
 
   // The writer blocks in open(2) until bun opens the FIFO for reading, and bun
   // blocks in open(2) until a writer arrives. Either order works, as with `cat`.
-  test.skipIf(isWindows)("a FIFO", async () => {
+  test("a FIFO", async () => {
     using dir = tempDir("dotenv-arg-fifo", files);
     mkfifo(path.join(String(dir), "fifo"));
     await using writer = Bun.spawn({
@@ -1141,7 +1141,7 @@ test("NODE_ENV default is not propogated in bun run", () => {
 });
 
 for (const shell of ["system", "bun"]) {
-  const isWindowsCMD = isWindows && shell === "system";
+  const isWindowsCMD = false;
 
   const env = {
     ENV_FILE_NAME: "N/A",
@@ -1359,7 +1359,7 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
 // loader's whole-file read used to `reserve_exact` it and abort the process in
 // `handle_alloc_error` before any user code ran. It must surface as a
 // recoverable error. ASAN-only: ASAN rejects the 1 TiB request deterministically.
-test.skipIf(!isASAN || isWindows)(".env with a huge lying st_size does not abort the process", async () => {
+test.skipIf(!isASAN)(".env with a huge lying st_size does not abort the process", async () => {
   await using dir = tempDir("dotenv-huge-sparse", {
     ".env": "",
     "app.js": `console.log("reached user code");`,

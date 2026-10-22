@@ -10,7 +10,6 @@ import {
   expiredTls,
   isDebug,
   isLinux,
-  isWindows,
   tls as localhostTls,
   tempDir,
 } from "harness";
@@ -231,7 +230,7 @@ test("a FATAL error for the query that runs closes the connection at once", asyn
   }
 });
 
-test.skipIf(isWindows)("a unix socket that is not there rejects with the code of a refused connection", async () => {
+test("a unix socket that is not there rejects with the code of a refused connection", async () => {
   using dir = tempDir("postgres-no-socket", {});
   const socket = path.join(String(dir), "postgres.sock");
   await using sql = new SQL({ adapter: "postgres", path: socket, username: "u", database: "db", max: 1 });
@@ -689,7 +688,7 @@ describe.concurrent("cancel()", () => {
   const stop = (server: Server) => server.reply(pgErrorResponse(canceled), pgReadyForQuery());
   const finish = (server: Server) => server.reply(...described(0), ...bound("done"));
 
-  test.skipIf(isWindows)("reaches a server on a unix socket", async () => {
+  test("reaches a server on a unix socket", async () => {
     using dir = tempDir("postgres-cancel", {});
     const socket = path.join(String(dir), "postgres.sock");
     await using server = await cancelServer({ socket });

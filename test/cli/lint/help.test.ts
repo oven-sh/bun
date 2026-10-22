@@ -491,7 +491,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
       },
     );
 
-    test.skipIf(isWindows)("`..` after a symlink resolves to the directory that contains the symlink", async () => {
+    test("`..` after a symlink resolves to the directory that contains the symlink", async () => {
       const files = { "project/package.json": script["package.json"], "else/where/deep/b.ts": source };
       const before = (dir: string) => symlinkSync("../else/where/deep", join(dir, "project/link"));
       expect(await whatRan(files, ["--cwd=link/..", command], "project", { before })).toBe("the script");
@@ -629,7 +629,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
       expect(await whatRan({}, [command], ".", { before })).toBe("the script");
     });
 
-    describe.skipIf(isWindows)("a package.json that isn't a readable file", () => {
+    describe("a package.json that isn't a readable file", () => {
       const root = { "package.json": `{ "scripts": { "${command}": "echo the script" } }` };
       const link = (to: string) => (dir: string) => symlinkSync(to, join(dir, "sub/package.json"));
       const pipe = (dir: string) => expect(Bun.spawnSync(["mkfifo", join(dir, "sub/package.json")]).exitCode).toBe(0);
@@ -685,7 +685,7 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
     });
   });
 
-  test.skipIf(isWindows)("a backslash in a directory name isn't a separator", async () => {
+  test("a backslash in a directory name isn't a separator", async () => {
     const { stdout, exitCode } = await bun(
       { "a\\b/package.json": script["package.json"] },
       [command, "--help"],
@@ -697,7 +697,7 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
 
   // Skipped for `bun check`. Like TypeScript, it treats a backslash as a separator everywhere, so it can't find files
   // in a directory like this.
-  describe.skipIf(isWindows || command === "check")("a backslash in a directory name with --cwd", () => {
+  describe.skipIf(command === "check")("a backslash in a directory name with --cwd", () => {
     // The directory that `a\b` would resolve to if the backslash were a separator.
     const other = { "a/b/other.ts": source, "a/b/sub/other.ts": source };
 
@@ -724,13 +724,13 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
     expect(await whatRan(files, args, "apps/web", { from: "." })).toBe("the command");
   });
 
-  test.skipIf(isWindows || command === "check")("in `a\\b`, --cwd=missing doesn't resolve to a/b/missing", async () => {
+  test.skipIf(command === "check")("in `a\\b`, --cwd=missing doesn't resolve to a/b/missing", async () => {
     const result = await bun({ "a/b/missing/a.ts": source }, ["--cwd=missing", command, ...flags, "a.ts"], "a\\b");
     expect(result.stderr).toContain('Could not change directory to "missing"');
     expect(result.exitCode).toBe(1);
   });
 
-  test.skipIf(isWindows)("an absolute --cwd works when the working directory was deleted", async () => {
+  test("an absolute --cwd works when the working directory was deleted", async () => {
     using dir = tempDir("bun-no-script", { "project/a.ts": source, "deleted/a.ts": "" });
     const args = [`--cwd=${join(String(dir), "project")}`, command, ...flags, "a.ts"];
     await using proc = Bun.spawn({
@@ -744,7 +744,7 @@ STARTED=1 exec "${bunExe()}" ${again.join(" ")}
     expect(exitCode).toBe(1);
   });
 
-  test.skipIf(isWindows)("an absolute --cwd can contain `//`, `.` and `..`", async () => {
+  test("an absolute --cwd can contain `//`, `.` and `..`", async () => {
     using dir = tempDir("bun-no-script", { "project/a.ts": source });
     const cwd = `/..//${String(dir).slice(1)}/./missing/../project//`;
     await using proc = Bun.spawn({

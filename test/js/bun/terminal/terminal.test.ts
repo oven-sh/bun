@@ -298,7 +298,7 @@ describe("Bun.Terminal", () => {
     // The mode and the saved termios used to be one process-wide pair, so once
     // any terminal was raw, setRawMode(true) on a second one returned success
     // without ever touching that terminal's own PTY.
-    test.skipIf(isWindows)("each terminal keeps its own raw mode", async () => {
+    test("each terminal keeps its own raw mode", async () => {
       const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
       const ECHO = 0x8;
       const isRaw = (terminal: Bun.Terminal) => (terminal.localFlags & (ICANON | ECHO)) === 0;
@@ -324,15 +324,13 @@ describe("Bun.Terminal", () => {
     // write() on a full PTY holds that lock until the master's owner (the
     // very JS thread calling setRawMode) reads the master, freezing the
     // whole runtime.
-    test.skipIf(isWindows)(
-      "does not deadlock while the child is blocked writing to a full PTY",
-      async () => {
-        using dir = tempDir("terminal-setrawmode-deadlock", {});
-        const pidFile = join(String(dir), "child.pid");
-        // The child floods the PTY and blocks in write(). The sync spin keeps
-        // the event loop from reading the master, so the PTY buffer is still
-        // full (and the child still blocked) when setRawMode runs.
-        const script = `
+    test("does not deadlock while the child is blocked writing to a full PTY", async () => {
+      using dir = tempDir("terminal-setrawmode-deadlock", {});
+      const pidFile = join(String(dir), "child.pid");
+      // The child floods the PTY and blocks in write(). The sync spin keeps
+      // the event loop from reading the master, so the PTY buffer is still
+      // full (and the child still blocked) when setRawMode runs.
+      const script = `
           const fs = require("node:fs");
           const proc = Bun.spawn(["head", "-c", "200000", "/dev/zero"], {
             terminal: { cols: 80, rows: 24, data() {} },
@@ -346,44 +344,42 @@ describe("Bun.Terminal", () => {
           await proc.exited;
           process.exit(0);
         `;
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", script],
-          env: { ...bunEnv, PID_FILE: pidFile },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, PID_FILE: pidFile },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-        // Watchdog, not a wait-for-time: on a broken build the spawned bun
-        // never exits on its own, and SIGKILL alone cannot reap it (the
-        // kernel retries the blocked termios ioctl with the signal pending
-        // until the PTY child dies). Kill the child's process group first to
-        // release the ioctl so the process can actually die.
-        let setRawModeDeadlocked = false;
-        const watchdog = setTimeout(() => {
-          setRawModeDeadlocked = true;
-          try {
-            const childPid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-            if (childPid > 0) {
-              // The PTY child is a session leader (setsid), so its pid is its
-              // process group id: kill the whole group.
-              process.kill(-childPid, "SIGKILL");
-            }
-          } catch {}
-          proc.kill("SIGKILL");
-        }, 10_000);
+      // Watchdog, not a wait-for-time: on a broken build the spawned bun
+      // never exits on its own, and SIGKILL alone cannot reap it (the
+      // kernel retries the blocked termios ioctl with the signal pending
+      // until the PTY child dies). Kill the child's process group first to
+      // release the ioctl so the process can actually die.
+      let setRawModeDeadlocked = false;
+      const watchdog = setTimeout(() => {
+        setRawModeDeadlocked = true;
+        try {
+          const childPid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+          if (childPid > 0) {
+            // The PTY child is a session leader (setsid), so its pid is its
+            // process group id: kill the whole group.
+            process.kill(-childPid, "SIGKILL");
+          }
+        } catch {}
+        proc.kill("SIGKILL");
+      }, 10_000);
 
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]).finally(() => clearTimeout(watchdog));
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]).finally(() => clearTimeout(watchdog));
 
-        expect(setRawModeDeadlocked).toBe(false);
-        expect(stdout).toBe("RETURNED\n");
-        expect(exitCode).toBe(0);
-      },
-      20_000,
-    );
+      expect(setRawModeDeadlocked).toBe(false);
+      expect(stdout).toBe("RETURNED\n");
+      expect(exitCode).toBe(0);
+    }, 20_000);
   });
 
   describe("termios flags", () => {
@@ -474,7 +470,7 @@ describe("Bun.Terminal", () => {
       expect(terminal.inputFlags).toBe(0);
     });
 
-    test.skipIf(isWindows)("NaN clamps to tcflag_t max, same as Infinity", async () => {
+    test("NaN clamps to tcflag_t max, same as Infinity", async () => {
       // Assigning NaN must clamp to the same value as Infinity (tcflag_t::MAX),
       // matching the reference `@max(0, @min(num, max))` semantics. The kernel
       // may mask some bits per field, so compare NaN against Infinity rather
@@ -563,7 +559,7 @@ describe("Bun.Terminal", () => {
 
   // ConPTY has no line discipline echo without a child process, so termios-echo
   // tests are POSIX-only.
-  describe.concurrent.todoIf(isWindows)("data callback", () => {
+  describe.concurrent("data callback", () => {
     test("receives echoed output", async () => {
       const received: Uint8Array[] = [];
 
@@ -1038,7 +1034,7 @@ describe("Bun.Terminal", () => {
   });
 
   describe("ANSI escape sequences", () => {
-    test.todoIf(isWindows)("can write ANSI color codes", async () => {
+    test("can write ANSI color codes", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -1091,7 +1087,7 @@ describe("Bun.Terminal", () => {
       expect(written).toBe(6);
     });
 
-    test.todoIf(isWindows)("can receive binary data in callback", async () => {
+    test("can receive binary data in callback", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -1207,7 +1203,7 @@ describe("Bun.Terminal", () => {
   });
 
   describe("edge cases", () => {
-    test.todoIf(isWindows)("handles Unicode characters", async () => {
+    test("handles Unicode characters", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -1510,7 +1506,7 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   // later poll tick. POSIX-only assertions: on Windows EOF arrives
   // asynchronously once conhost self-exits, so the exit callback may not have
   // fired by the time child.exited resolves.
-  test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
+  test("process exits after subprocess with inline terminal (no terminal.close)", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1643,7 +1639,7 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   // If it got that far before the parent's kqueue watch (ESRCH), the parent used to block in wait4() on the
   // thread that reads the pty, forever. The worker and the garbage slow the parent down into that window.
   const limit = isDebug || isASAN ? 60_000 : 20_000;
-  test.skipIf(isWindows)(
+  test(
     "a pty child that exits before the parent watches it is still reaped",
     async () => {
       using dir = tempDir("pty-early-exit", {

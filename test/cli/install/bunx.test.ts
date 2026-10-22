@@ -384,7 +384,7 @@ it.concurrent("should choose the tagged versions instead of the PATH versions wh
     "bunx-decoy-bin",
     isWindows ? { "semver.cmd": "@echo semver from PATH\r\n" } : { "semver": '#!/bin/sh\necho "semver from PATH"\n' },
   );
-  if (!isWindows) chmodSync(join(String(decoyBinDir), "semver"), 0o755);
+  chmodSync(join(String(decoyBinDir), "semver"), 0o755);
 
   const processes = semverVersions.map(version => {
     return spawn({
@@ -1656,7 +1656,7 @@ it.concurrent.skipIf(!isWindows)("completions: writes bunx.cmd (not bunx.exe) wh
 // directory where other users can create files, which the temp directory is.
 // `.bunx-<uid>` is the trust boundary: a directory of this user with mode 0700.
 // Windows keeps %TEMP%\bunx-<uid>-<package>@<version>: %TEMP% is per user.
-describe.skipIf(isWindows)("cache directory", () => {
+describe("cache directory", () => {
   const uid = process.getuid?.() ?? 0;
   const ran = "tool 1.1.0 with dep 1.0.0\n";
   const bunxEntries = (dir: string) =>
@@ -2115,7 +2115,7 @@ describe("a cached tree", () => {
     });
 
     // On Windows the entry in .bin is a shim that exists on its own.
-    it.concurrent.skipIf(isWindows)("relinks a tree whose bin file is missing", async () => {
+    it.concurrent("relinks a tree whose bin file is missing", async () => {
       using registry = await localRegistry(...toolWithDep());
       using box = sandbox(registry);
       expect(await box.run([spec])).toMatchObject({ stdout: ran, exitCode: 0 });
@@ -2447,7 +2447,7 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
   });
 
   // Like on a file system without locks.
-  it.concurrent.skipIf(isWindows)("runs without the lock when it cannot be taken", async () => {
+  it.concurrent("runs without the lock when it cannot be taken", async () => {
     using registry = await localRegistry(...toolWithDep());
     using box = sandbox(registry);
     mkdirSync(box.tree("tool@latest") + ".lock", { recursive: true });
@@ -2488,7 +2488,7 @@ describe("a package in node_modules", () => {
     });
   });
 
-  it.concurrent.skipIf(isWindows)("a command in node_modules/.bin that cannot run is not downloaded", async () => {
+  it.concurrent("a command in node_modules/.bin that cannot run is not downloaded", async () => {
     using registry = await localRegistry(fixturePackage("gen", "1.0.0", "gen"));
     using box = sandbox(registry);
     addLocalBin(box.cwd, "gen", `console.log("mine");`);
@@ -2503,7 +2503,7 @@ describe("a package in node_modules", () => {
   });
 
   // The project has the package, so bunx runs that copy or says why it cannot. It does not download another one.
-  describe.skipIf(isWindows)("a bin that cannot run", () => {
+  describe("a bin that cannot run", () => {
     type Entry = "linked" | "removed" | "dangling" | "no .bin";
     /** Takes the execute bit from the bin of `name`, and puts its entry in node_modules/.bin into the state `entry`. */
     function takeExecuteBit(cwd: string, name: string, bin: string, entry: Entry) {
@@ -2766,7 +2766,7 @@ describe("a package in node_modules", () => {
 
   // Of two packages with one bin name, one gets the entry in .bin. The install makes the file of the other
   // executable too. On Windows the entry is a shim that does not say whose it is, and bunx starts it.
-  it.concurrent.todoIf(isWindows)("after an install, the package that did not get the entry in .bin", async () => {
+  it.concurrent("after an install, the package that did not get the entry in .bin", async () => {
     using registry = await localRegistry(
       fixturePackage("aaa-first", "1.0.0", "tool"),
       fixturePackage("zzz-last", "1.0.0", "tool", echoBin("zzz-last 1.0.0")),
@@ -2794,7 +2794,7 @@ describe("a package in node_modules", () => {
   });
 
   // The file is not there when the bins are linked. The install makes it executable after the script.
-  it.concurrent.todoIf(isWindows)(
+  it.concurrent(
     "after an install, a package without the entry in .bin whose install script writes the bin",
     async () => {
       const gen = (version: string): FixturePackage => ({
@@ -2828,7 +2828,7 @@ describe("a package in node_modules", () => {
     },
   );
 
-  it.concurrent.todoIf(isWindows)("after an install, a workspace package whose bin name a dependency has", async () => {
+  it.concurrent("after an install, a workspace package whose bin name a dependency has", async () => {
     using registry = await localRegistry(
       fixturePackage("aaa-first", "1.0.0", "tool"),
       fixturePackage("mycli", "9.9.9", "tool"),
@@ -2999,7 +2999,7 @@ describe("a package in node_modules", () => {
   });
 
   // On Windows the entry is no link, so it does not say whose it is.
-  it.concurrent.skipIf(isWindows).each([[["@corp/tool"]], [["-p", "@corp/tool", "tool"]]])(
+  it.concurrent.each([[["@corp/tool"]], [["-p", "@corp/tool", "tool"]]])(
     "bunx %j runs the bin of that package where another one has the entry in .bin",
     async args => {
       using box = sandbox();
@@ -3091,7 +3091,7 @@ describe("flags", () => {
     const expected = { stdout: `local ${flags}\n`, stderr: "", exitCode: 0, requests: [] };
 
     expect(await box.run([...flags.split(" "), "local-tool", ...flags.split(" ")])).toEqual(expected);
-    if (isWindows) return;
+
     symlinkSync(bunExe(), join(box.dir, isDebug ? "bun-debug" : "bun"));
     const env = { ...box.env, PATH: box.dir + delimiter + box.env.PATH };
     expect(await box.run(["run", "--silent", "tool"], { env, bunx: [bunExe()] })).toEqual(expected);
@@ -3182,23 +3182,20 @@ describe("flags", () => {
   });
 
   // BUN_OPTIONS is for every command.
-  it.concurrent.skipIf(isWindows)(
-    "flags in BUN_OPTIONS that bunx doesn't know are skipped, including their values",
-    async () => {
-      using registry = await localRegistry();
-      using box = sandbox(registry);
-      addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
-      symlinkSync(bunExe(), join(box.dir, "bunx"));
+  it.concurrent("flags in BUN_OPTIONS that bunx doesn't know are skipped, including their values", async () => {
+    using registry = await localRegistry();
+    using box = sandbox(registry);
+    addLocalBin(box.cwd, "local-tool", `console.log("local", ...process.argv.slice(2));`);
+    symlinkSync(bunExe(), join(box.dir, "bunx"));
 
-      const env = { ...box.env, BUN_OPTIONS: "--smol --preload ./preloaded.ts" };
-      expect(await box.run(["local-tool", "--nope"], { env, bunx: [join(box.dir, "bunx")] })).toEqual({
-        stdout: "local --nope\n",
-        stderr: "",
-        exitCode: 0,
-        requests: [],
-      });
-    },
-  );
+    const env = { ...box.env, BUN_OPTIONS: "--smol --preload ./preloaded.ts" };
+    expect(await box.run(["local-tool", "--nope"], { env, bunx: [join(box.dir, "bunx")] })).toEqual({
+      stdout: "local --nope\n",
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
 
   it.concurrent.each(["--help", "-h"])("%s prints the flags", async flag => {
     using box = sandbox();
@@ -3509,7 +3506,7 @@ describe("paths that do not fit in the path buffer", () => {
   // The install cache is so deep that <tree>/node_modules/<package>/package.json, which bunx reads for the
   // name of the bin, ends right at the size of the buffer, while <tree>/node_modules/.bin/<bin> always fits.
   // One byte under, it fits together with its NUL. On Windows no existing directory overflows the buffer.
-  it.concurrent.skipIf(isWindows).each([
+  it.concurrent.each([
     ["one byte under the size of the path buffer", -1],
     ["exactly the size of the path buffer", 0],
     ["64 bytes over the size of the path buffer", 64],

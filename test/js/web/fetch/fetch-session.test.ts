@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isIPv6, tempDir, tls as tlsCert } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -291,7 +291,7 @@ describe("Bun.FetchSession", () => {
     expect(await outcome({ session: trusting, tls: { serverName: "localhost" } })).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
   });
 
-  test.skipIf(isWindows)("unix comes from the session", async () => {
+  test("unix comes from the session", async () => {
     using dir = tempDir("fetch-session-unix", {});
     const path = join(String(dir), "session.sock");
     using server = Bun.serve({ unix: path, fetch: req => new Response(new URL(req.url).pathname) });
@@ -299,7 +299,7 @@ describe("Bun.FetchSession", () => {
     expect(await (await fetch("http://anything.invalid/over-unix", { session })).text()).toBe("/over-unix");
   });
 
-  test.skipIf(isWindows)("a request's unix or proxy replaces the other one named by the session", async () => {
+  test("a request's unix or proxy replaces the other one named by the session", async () => {
     using dir = tempDir("fetch-session-unix-proxy", {});
     const path = join(String(dir), "session.sock");
     using overUnix = Bun.serve({ unix: path, fetch: req => new Response("unix " + req.url) });
@@ -529,7 +529,7 @@ describe("proxy policy", () => {
   });
 
   // fetch.preconnect() is a no-op on Windows.
-  test.concurrent.todoIf(isWindows)("fetch.preconnect does not dial an origin the environment proxies", async () => {
+  test.concurrent("fetch.preconnect does not dial an origin the environment proxies", async () => {
     using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
     // The origin lives in the subprocess, which has to see its connections.
     const result = await run(

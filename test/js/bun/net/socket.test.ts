@@ -57,37 +57,34 @@ describe.concurrent("socket", () => {
     data.mockClear();
   });
 
-  it.skipIf(isWindows)(
-    "should not crash when a socket from a file descriptor is already closed after opening",
-    async () => {
-      const [server, client] = createSocketPair();
-      const open = jest.fn();
-      const close = jest.fn();
-      const data = jest.fn();
-      closeSync(client);
-      {
-        const socket = await Bun.connect({
-          fd: server,
-          socket: {
-            open,
-            close,
-            data,
-          },
-        } as any);
-        Bun.gc(true);
-        await Bun.sleep(10);
-        Bun.gc(true);
-      }
+  it("should not crash when a socket from a file descriptor is already closed after opening", async () => {
+    const [server, client] = createSocketPair();
+    const open = jest.fn();
+    const close = jest.fn();
+    const data = jest.fn();
+    closeSync(client);
+    {
+      const socket = await Bun.connect({
+        fd: server,
+        socket: {
+          open,
+          close,
+          data,
+        },
+      } as any);
+      Bun.gc(true);
       await Bun.sleep(10);
+      Bun.gc(true);
+    }
+    await Bun.sleep(10);
 
-      expect(open).toHaveBeenCalledTimes(1);
-      expect(close).toHaveBeenCalledTimes(1);
-      expect(data).toHaveBeenCalledTimes(0);
-      open.mockClear();
-      close.mockClear();
-      data.mockClear();
-    },
-  );
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(data).toHaveBeenCalledTimes(0);
+    open.mockClear();
+    close.mockClear();
+    data.mockClear();
+  });
 
   it("should coerce '0' to 0", async () => {
     const listener = Bun.listen({
@@ -362,7 +359,7 @@ describe.concurrent("socket", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 
-  it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
+  it("kqueue should not dispatch spurious drain events on readable", async () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 
@@ -504,7 +501,7 @@ describe.concurrent("socket", () => {
     expect(opened).toBe(true);
   });
 
-  it.skipIf(isWindows)("should not leak file descriptors when connecting", async () => {
+  it("should not leak file descriptors when connecting", async () => {
     expect(await bunRun(fileURLToPath(new URL("./socket-leak-fixture.js", import.meta.url)))).toSpawn();
   });
 
@@ -985,7 +982,7 @@ console.log("completed", done, "cycles without crashing");
   }, 30_000); // subprocess + debug/ASAN startup is slow
 });
 
-it.skipIf(isWindows)("should not crash when a socket from a file descriptor is closed after opening", async () => {
+it("should not crash when a socket from a file descriptor is closed after opening", async () => {
   const [server, client] = createSocketPair();
   const open = jest.fn();
   const close = jest.fn();
@@ -2707,7 +2704,7 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
 
 // initialDelay is ms; TCP_KEEPIDLE is seconds. 0 = enable SO_KEEPALIVE and
 // leave the kernel-default idle. Verified via getsockopt(2) on the live fd.
-it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 0 as success", async () => {
+it.concurrent("setKeepAlive converts ms to seconds and treats 0 as success", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -3764,54 +3761,48 @@ Reo=
       };
     }
 
-    it.skipIf(isWindows)(
-      "verifies the server certificate against localhost over a unix socket when no serverName is given",
-      async () => {
-        using t = await connectOverUnix("uds-tls-identity-reject", { ca: CA1_CRT });
-        expect(await t.handshake.promise).toEqual({
-          authorizedArg: false,
-          authorizedGetter: false,
-          callbackError: AGENT1_LOCALHOST_MISMATCH,
-          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-          getterError: AGENT1_LOCALHOST_MISMATCH,
-          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-        });
-        await t.closed.promise;
-        expect(t.received).toEqual([]);
-        expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    it("verifies the server certificate against localhost over a unix socket when no serverName is given", async () => {
+      using t = await connectOverUnix("uds-tls-identity-reject", { ca: CA1_CRT });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: false,
+        authorizedGetter: false,
+        callbackError: AGENT1_LOCALHOST_MISMATCH,
+        callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        getterError: AGENT1_LOCALHOST_MISMATCH,
+        getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+      });
+      await t.closed.promise;
+      expect(t.received).toEqual([]);
+      expect((t.client.getAuthorizationError() as any)?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
 
-        using ok = await connectOverUnix("uds-tls-identity-match", { ca: CA1_CRT, serverName: "agent1" });
-        expect(await ok.handshake.promise).toEqual({
-          authorizedArg: true,
-          authorizedGetter: true,
-          callbackError: null,
-          callbackCode: null,
-          getterError: null,
-          getterCode: null,
-        });
-        ok.client.write("ping");
-        await ok.echoed.promise;
-        expect(ok.received.join("")).toBe("hello-from-server\nping");
-      },
-    );
+      using ok = await connectOverUnix("uds-tls-identity-match", { ca: CA1_CRT, serverName: "agent1" });
+      expect(await ok.handshake.promise).toEqual({
+        authorizedArg: true,
+        authorizedGetter: true,
+        callbackError: null,
+        callbackCode: null,
+        getterError: null,
+        getterCode: null,
+      });
+      ok.client.write("ping");
+      await ok.echoed.promise;
+      expect(ok.received.join("")).toBe("hello-from-server\nping");
+    });
 
-    it.skipIf(isWindows)(
-      "reports authorized=false over a unix socket with rejectUnauthorized: false when the certificate does not name localhost",
-      async () => {
-        using t = await connectOverUnix("uds-tls-identity-keep", { ca: CA1_CRT, rejectUnauthorized: false });
-        expect(await t.handshake.promise).toEqual({
-          authorizedArg: false,
-          authorizedGetter: false,
-          callbackError: AGENT1_LOCALHOST_MISMATCH,
-          callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-          getterError: AGENT1_LOCALHOST_MISMATCH,
-          getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
-        });
-        t.client.write("ping");
-        await t.echoed.promise;
-        expect(t.received.join("")).toBe("hello-from-server\nping");
-      },
-    );
+    it("reports authorized=false over a unix socket with rejectUnauthorized: false when the certificate does not name localhost", async () => {
+      using t = await connectOverUnix("uds-tls-identity-keep", { ca: CA1_CRT, rejectUnauthorized: false });
+      expect(await t.handshake.promise).toEqual({
+        authorizedArg: false,
+        authorizedGetter: false,
+        callbackError: AGENT1_LOCALHOST_MISMATCH,
+        callbackCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+        getterError: AGENT1_LOCALHOST_MISMATCH,
+        getterCode: "ERR_TLS_CERT_ALTNAME_INVALID",
+      });
+      t.client.write("ping");
+      await t.echoed.promise;
+      expect(t.received.join("")).toBe("hello-from-server\nping");
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/33754
@@ -5042,7 +5033,7 @@ describe("shutdown(true)", () => {
       for (const allowHalfOpen of [false, true]) {
         const socket = `${role === "accepted" ? "an accepted" : "a connected"}${secure ? " TLS" : ""} socket`;
 
-        it.skipIf(secure && isWindows)(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
+        it(`${socket} with allowHalfOpen: ${allowHalfOpen}`, async () => {
           expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: true })).toEqual(
             isWindows
               ? { calls: ["write 2", "write 2", "close"], peerGot: "W1W2" }
@@ -5053,15 +5044,12 @@ describe("shutdown(true)", () => {
         });
 
         if (!secure) continue;
-        it.skipIf(isWindows)(
-          `${socket} with allowHalfOpen: ${allowHalfOpen}, before its handshake completes`,
-          async () => {
-            expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: false })).toEqual({
-              calls: ["write 0", "handshake false ECONNRESET", "close"],
-              peerGot: "",
-            });
-          },
-        );
+        it(`${socket} with allowHalfOpen: ${allowHalfOpen}, before its handshake completes`, async () => {
+          expect(await callsAfterShutdown({ role, allowHalfOpen, secure, handshakeDone: false })).toEqual({
+            calls: ["write 0", "handshake false ECONNRESET", "close"],
+            peerGot: "",
+          });
+        });
       }
     }
   }
@@ -5681,9 +5669,8 @@ const sendBuffer = 1024 * 1024;
 
 // setSocketOptions does nothing on Windows, where a readable event is at most two reads anyway.
 it.skipIf(
-  isWindows ||
-    (isLinux &&
-      (linuxSocketBufferLimit("rmem_max") < receiveBuffer / 2 || linuxSocketBufferLimit("wmem_max") < sendBuffer)),
+  isLinux &&
+    (linuxSocketBufferLimit("rmem_max") < receiveBuffer / 2 || linuxSocketBufferLimit("wmem_max") < sendBuffer),
 )("a socket with more full reads queued than one readable event takes lets the loop turn", async () => {
   const fullRead = 512 * 1024;
   const payload = Buffer.alloc(14 * fullRead);

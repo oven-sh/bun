@@ -451,10 +451,10 @@ test.concurrent.each([
   const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
 
   // One save can start the process twice on Windows, and each start prints its own port.
-  if (!isWindows) {
-    expect(await get(url, "/missing")).toBe("200 1");
-    return;
-  }
+
+  expect(await get(url, "/missing")).toBe("200 1");
+  return;
+
   const deadline = Date.now() + 10_000;
   let response = "";
   while (response !== "200 1" && Date.now() < deadline) {
@@ -465,7 +465,7 @@ test.concurrent.each([
 });
 
 // Creating a symlink on Windows needs a privilege that CI does not have.
-test.concurrent.skipIf(isWindows)("bun bake serves pages that are symlinks or in a symlinked folder", async () => {
+test.concurrent("bun bake serves pages that are symlinks or in a symlinked folder", async () => {
   using dir = tempDir("bake-command-symlink", {
     "shared/page.html": `<!doctype html><html><body><h1>Shared</h1></body></html>`,
     "shared/docs/intro.html": `<!doctype html><html><body><h1>Intro</h1></body></html>`,
@@ -617,7 +617,7 @@ test.concurrent("bun bake accepts a frozen export of app/server.ts", async () =>
 });
 
 // Bun.serve's `unix` option takes a socket path, which this test only makes on POSIX.
-test.concurrent.skipIf(isWindows)("bun bake keeps a unix socket from the export of app/server.ts", async () => {
+test.concurrent("bun bake keeps a unix socket from the export of app/server.ts", async () => {
   using dir = tempDir("bake-command-unix", {});
   const socket = join(String(dir), "s.sock");
   await Bun.write(
@@ -794,7 +794,7 @@ test.concurrent("bun bake runs the SIGTERM handlers before it starts again for b
 
 // On a terminal, `bun bake` adds its own SIGTERM listener, which exits. Bun.spawn's `terminal` is
 // POSIX only.
-test.concurrent.skipIf(isWindows)(
+test.concurrent(
   "on a terminal, bun bake runs every SIGTERM listener before it starts again for bake.config.ts",
   async () => {
     const server = (version: string) => `
@@ -864,35 +864,32 @@ test.concurrent("bun bake exits when a start for a bake.config.ts change finds a
 });
 
 // Windows has no SIGUSR2.
-test.concurrent.skipIf(isWindows)(
-  "bun --watch-kill-signal ... bake --check sends that signal before a restart",
-  async () => {
-    using dir = tempDir("bake-command-kill-signal", {
-      "tsconfig.json": checkedTsconfig,
-      "app/server.ts": `
+test.concurrent("bun --watch-kill-signal ... bake --check sends that signal before a restart", async () => {
+  using dir = tempDir("bake-command-kill-signal", {
+    "tsconfig.json": checkedTsconfig,
+    "app/server.ts": `
       declare const Response: any;
       declare const process: any;
       declare const console: any;
       process.on("SIGUSR2", () => console.log("SIGUSR2 before restart"));
       export default { fetch: () => new Response("v1") };
     `,
-    });
+  });
 
-    // `--check` starts the process again after a change, which sends the signal: SIGTERM without the flag.
-    await using proc = spawnBake(String(dir), ["--watch-kill-signal", "SIGUSR2", "bake", "--check", "--port=0"]);
-    const output = collectOutput(proc);
-    await output.waitFor(/url: /);
+  // `--check` starts the process again after a change, which sends the signal: SIGTERM without the flag.
+  await using proc = spawnBake(String(dir), ["--watch-kill-signal", "SIGUSR2", "bake", "--check", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/url: /);
 
-    await Bun.write(
-      join(String(dir), "app/server.ts"),
-      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
-    );
-    await output.waitFor(/SIGUSR2 before restart/);
-  },
-);
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+  );
+  await output.waitFor(/SIGUSR2 before restart/);
+});
 
 // Windows has no SIGUSR2.
-test.concurrent.skipIf(isWindows)(
+test.concurrent(
   "bun --watch-kill-signal ... bake sends that signal before it starts again for bake.config.ts",
   async () => {
     using dir = tempDir("bake-command-kill-signal-config", {
@@ -978,38 +975,35 @@ test.concurrent("bun bake reads a bake.config.ts whose default export is a promi
 
 // On Windows, a manager process starts each restart with its own environment, so a restart cannot
 // tell it is one, and exits on this error as at the first start.
-test.concurrent.skipIf(isWindows)(
-  "bun bake --check waits for a fix when a restart finds a page it cannot serve",
-  async () => {
-    using dir = tempDir("bake-command-check-restart-error", {
-      "tsconfig.json": checkedTsconfig,
-      "app/pages/index.html": page,
-      "app/server.ts": `declare const Response: any;\nexport default { fetch: () => new Response("v1") };\n`,
-    });
+test.concurrent("bun bake --check waits for a fix when a restart finds a page it cannot serve", async () => {
+  using dir = tempDir("bake-command-check-restart-error", {
+    "tsconfig.json": checkedTsconfig,
+    "app/pages/index.html": page,
+    "app/server.ts": `declare const Response: any;\nexport default { fetch: () => new Response("v1") };\n`,
+  });
 
-    await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
-    const output = collectOutput(proc);
-    await output.waitFor(/url: /);
+  await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/url: /);
 
-    // `--check` starts the process again on a change: the error must not end the session.
-    const slug = join(String(dir), "app/pages/[slug].html");
-    await Bun.write(slug, page);
-    await Bun.write(
-      join(String(dir), "app/server.ts"),
-      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
-    );
-    await output.waitFor(/a page cannot have/);
+  // `--check` starts the process again on a change: the error must not end the session.
+  const slug = join(String(dir), "app/pages/[slug].html");
+  await Bun.write(slug, page);
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+  );
+  await output.waitFor(/a page cannot have/);
 
-    rmSync(slug);
-    await Bun.write(
-      join(String(dir), "app/server.ts"),
-      `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
-    );
-    const [, url] = await output.waitFor(/a page cannot have[\s\S]*url: (http:\/\/\S+)/);
+  rmSync(slug);
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
+  );
+  const [, url] = await output.waitFor(/a page cannot have[\s\S]*url: (http:\/\/\S+)/);
 
-    expect(await get(url, "/missing")).toBe("200 v3");
-  },
-);
+  expect(await get(url, "/missing")).toBe("200 v3");
+});
 
 test.concurrent.each([
   { name: "nothing to serve", files: { "README.md": "" }, error: "Nothing to serve in" },
@@ -1031,36 +1025,33 @@ test.concurrent.each([
 });
 
 // On Windows, a restart cannot tell it is one, as above.
-test.concurrent.skipIf(isWindows)(
-  "bun bake --check waits on a restart error also when the first start had a type error",
-  async () => {
-    using dir = tempDir("bake-command-check-typeerror-restart", {
-      "tsconfig.json": checkedTsconfig,
-      "app/pages/[slug].html": page,
-      "app/server.ts": `declare const Response: any;\nconst n: number = "x";\nexport default { fetch: () => new Response("v1") };\n`,
-    });
+test.concurrent("bun bake --check waits on a restart error also when the first start had a type error", async () => {
+  using dir = tempDir("bake-command-check-typeerror-restart", {
+    "tsconfig.json": checkedTsconfig,
+    "app/pages/[slug].html": page,
+    "app/server.ts": `declare const Response: any;\nconst n: number = "x";\nexport default { fetch: () => new Response("v1") };\n`,
+  });
 
-    await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
-    const output = collectOutput(proc);
-    await output.waitFor(/TS2322/);
+  await using proc = spawnBake(String(dir), ["bake", "--check", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/TS2322/);
 
-    // The fix restarts the process, which then finds the page it cannot serve: it must wait.
-    await Bun.write(
-      join(String(dir), "app/server.ts"),
-      `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
-    );
-    await output.waitFor(/a page cannot have/);
+  // The fix restarts the process, which then finds the page it cannot serve: it must wait.
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `declare const Response: any;\nexport default { fetch: () => new Response("v2") };\n`,
+  );
+  await output.waitFor(/a page cannot have/);
 
-    rmSync(join(String(dir), "app/pages/[slug].html"));
-    await Bun.write(
-      join(String(dir), "app/server.ts"),
-      `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
-    );
-    const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
+  rmSync(join(String(dir), "app/pages/[slug].html"));
+  await Bun.write(
+    join(String(dir), "app/server.ts"),
+    `declare const Response: any;\nexport default { fetch: () => new Response("v3") };\n`,
+  );
+  const [, url] = await output.waitFor(/url: (http:\/\/\S+)/);
 
-    expect(await get(url, "/missing")).toBe("200 v3");
-  },
-);
+  expect(await get(url, "/missing")).toBe("200 v3");
+});
 
 /** Links the React of the test suite into a project in `dir`. A junction needs no privilege on Windows. */
 function linkReact(dir: string) {

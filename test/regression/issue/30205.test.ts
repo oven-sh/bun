@@ -19,7 +19,7 @@
 
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -32,7 +32,7 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   beforeAll(() => {
     // Only the two --isolate/--parallel finalizer tests load the addon, and
     // both are skipped on Windows; don't pay for node-gyp there.
-    if (isWindows) return;
+
     if (existsSync(addon)) return;
     const install = spawnSync({
       cmd: [bunExe(), "install"],
@@ -79,7 +79,7 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   // collectContinuously is prohibitively slow under Windows CI (same as the
   // 29519 regression test); the swap/finalizer path being exercised is
   // platform-agnostic, so POSIX coverage is sufficient.
-  test.skipIf(isWindows).concurrent(
+  test.concurrent(
     "--isolate: deferred napi finalizers from the previous global don't write to its dead cell",
     async () => {
       using dir = tempDir("isolate-napi-uaf", makeFixtures(8));
@@ -107,7 +107,7 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
     120_000,
   );
 
-  test.skipIf(isWindows).concurrent(
+  test.concurrent(
     "--parallel: same scenario via the worker path",
     async () => {
       using dir = tempDir("parallel-napi-uaf", makeFixtures(8));
@@ -139,35 +139,31 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   // no process.kill() signals, and the panic-signal classification is
   // POSIX-specific anyway (Windows abort() surfaces as exit code 3 and
   // falls into the non-panic branch below).
-  test.skipIf(isWindows)(
-    "--parallel: worker killed by a fatal signal aborts the run instead of retrying",
-    async () => {
-      using dir = tempDir("parallel-panic-no-retry", {
-        "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
-        "boom.test.js": `import {test} from "bun:test"; test("boom",()=>process.kill(process.pid, "SIGABRT"));`,
-      });
-      // CI lanes with coredump-upload flag any new core file in coresDir as a
-      // test failure — including the one the worker deliberately produces
-      // here. ulimit -c 0 on the coordinator is inherited by the workers;
-      // the test is POSIX-only so /bin/sh is available.
-      await using proc = Bun.spawn({
-        cmd: ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", bunExe(), "test", "--parallel=2", "."],
-        env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // No "⟳ … retrying" line; instead the coordinator reports the crash,
-      // names the signal, and aborts remaining work.
-      expect(stderr).not.toContain("retrying");
-      expect(stderr).toContain("worker crashed: SIGABRT");
-      expect(stderr).toMatch(/a test worker process crashed with SIGABRT while running .*boom\.test\.js/);
-      expect(stderr).toContain("Aborting");
-      expect(exitCode).not.toBe(0);
-    },
-    60_000,
-  );
+  test("--parallel: worker killed by a fatal signal aborts the run instead of retrying", async () => {
+    using dir = tempDir("parallel-panic-no-retry", {
+      "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
+      "boom.test.js": `import {test} from "bun:test"; test("boom",()=>process.kill(process.pid, "SIGABRT"));`,
+    });
+    // CI lanes with coredump-upload flag any new core file in coresDir as a
+    // test failure — including the one the worker deliberately produces
+    // here. ulimit -c 0 on the coordinator is inherited by the workers;
+    // the test is POSIX-only so /bin/sh is available.
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", bunExe(), "test", "--parallel=2", "."],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // No "⟳ … retrying" line; instead the coordinator reports the crash,
+    // names the signal, and aborts remaining work.
+    expect(stderr).not.toContain("retrying");
+    expect(stderr).toContain("worker crashed: SIGABRT");
+    expect(stderr).toMatch(/a test worker process crashed with SIGABRT while running .*boom\.test\.js/);
+    expect(stderr).toContain("Aborting");
+    expect(exitCode).not.toBe(0);
+  }, 60_000);
 
   // process.exit() is a deliberate user action, not a Bun bug. The file is
   // marked failed (not retried) and the run continues so the other files'

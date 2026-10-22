@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 const pagesDir = join(import.meta.dir, "../../../docs/lint/rules");
@@ -222,7 +222,7 @@ describe.concurrent("--rules", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("groups rules by plugin and adds descriptions in a terminal", async () => {
+  test("groups rules by plugin and adds descriptions in a terminal", async () => {
     const [{ output, exitCode }, rules] = await Promise.all([lintInTerminal(["--rules"]), listRules()]);
     const lines = output.split("\n");
     const count = (scope: string) => rules.filter(it => it.scope === scope).length;
@@ -374,7 +374,7 @@ describe.concurrent("--explain", () => {
     expect(Bun.stripANSI(colored.stdout)).toContain("no-var");
   });
 
-  test.skipIf(isWindows)("the URL is a hyperlink in a terminal", async () => {
+  test("the URL is a hyperlink in a terminal", async () => {
     const { output, exitCode } = await lintInTerminal(["--explain", "no-var"], { NO_COLOR: undefined });
     expect(output).toContain(`\x1b]8;;${base}eslint/no-var\x1b\\`);
     expect(exitCode).toBe(0);

@@ -2,7 +2,7 @@ import { beforeAll, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-test.skipIf(isWindows)("verify that we can call sigint 4096 times", () => {
+test("verify that we can call sigint 4096 times", () => {
   using dir = tempDir("ctrlc", {
     "index.js": /*js*/ `
       let count = 0;
@@ -45,7 +45,7 @@ test.skipIf(isWindows)("verify that we can call sigint 4096 times", () => {
   expect(result.signalCode).toBeUndefined();
 });
 
-test.skipIf(isWindows)("verify that we forward SIGINT from parent to child in bun run", () => {
+test("verify that we forward SIGINT from parent to child in bun run", () => {
   using dir = tempDir("ctrlc", {
     "index.js": `
       let count = 0;

@@ -309,7 +309,7 @@ describe.concurrent("bunshell cp src/dest validation", () => {
   });
 
   // Directory symlinks need extra privileges on Windows.
-  test.skipIf(isWindows)("cp -R dir link-to-dir fails", async () => {
+  test("cp -R dir link-to-dir fails", async () => {
     using dir = tempDir("cp-self", tree);
     symlinkSync("d", join(String(dir), "link"));
     expect(await cp(String(dir), "cp -R d link")).toEqual({
@@ -326,7 +326,7 @@ describe.concurrent("bunshell cp src/dest validation", () => {
   });
 
   // The path is too long for macOS (PATH_MAX is 1024), and Windows fails to create it.
-  test.skipIf(isMacOS || isWindows)("copies a very deep tree", async () => {
+  test.skipIf(isMacOS)("copies a very deep tree", async () => {
     const depth = 800;
     using dir = tempDir("cp-self", {});
     const levels = [""];

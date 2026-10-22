@@ -3452,7 +3452,7 @@ describe.concurrent.each(["tcp", "tls"])(
 
     // Windows takes the whole raw write of a plain TCP socket at once, so the first request is
     // not queued there. Over TLS it is queued, so that transport covers Windows.
-    test.skipIf(isWindows && transport === "tcp").each(Object.keys(expected))(
+    test.each(Object.keys(expected))(
       "%s",
       async mode => {
         await using proc = Bun.spawn({
@@ -6007,7 +6007,7 @@ describe("HTTP server transport shutdown", () => {
       await once(client, "connect");
       client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
       expect(await writeReturned.promise).toBe(false);
-      if (!isWindows) expect(callbackCalled).toBe(false);
+      expect(callbackCalled).toBe(false);
       client.resume();
       await closed.promise;
       expect(await callback.promise).toBeUndefined();
@@ -6049,7 +6049,7 @@ describe("HTTP server transport shutdown", () => {
       expect(await writeReturned.promise).toBe(false);
       // Windows 11 takes the whole body at once. The write is then complete before the reset, and its callback has run.
       const completedBeforeReset = callbackErrors.length > 0;
-      if (!isWindows) expect(completedBeforeReset).toBe(false);
+      expect(completedBeforeReset).toBe(false);
       client.resetAndDestroy();
       await responseClosed.promise;
       await new Promise<void>(resolve => setImmediate(resolve));

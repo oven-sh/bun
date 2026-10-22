@@ -222,32 +222,29 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(process.platform === "win32")(
-    "compile cache persists modules loaded after a non-fatal self-kill",
-    async () => {
-      // A self-directed signal that proves non-fatal (SIGWINCH is ignored by
-      // default) must not latch the exit-time persist: modules loaded after
-      // the kill still reach the cache when the process really exits.
-      using dir = tempDir("compile-cache-selfkill", {
-        "late.js": "module.exports = 42;",
-        "main.js": `process.kill(process.pid, "SIGWINCH");
+  test("compile cache persists modules loaded after a non-fatal self-kill", async () => {
+    // A self-directed signal that proves non-fatal (SIGWINCH is ignored by
+    // default) must not latch the exit-time persist: modules loaded after
+    // the kill still reach the cache when the process really exits.
+    using dir = tempDir("compile-cache-selfkill", {
+      "late.js": "module.exports = 42;",
+      "main.js": `process.kill(process.pid, "SIGWINCH");
 console.log("survived", require("./late.js"));`,
-      });
-      const cacheDir = path.join(String(dir), "cc");
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "main.js"],
-        env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout.trim()).toBe("survived 42");
-      expect(exitCode).toBe(0);
-      // Both main.js and late.js are cached; pre-fix only main.js was.
-      const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
-      expect(files.length).toBe(2);
-    },
-  );
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("survived 42");
+    expect(exitCode).toBe(0);
+    // Both main.js and late.js are cached; pre-fix only main.js was.
+    const files = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })];
+    expect(files.length).toBe(2);
+  });
 
   test.skipIf(!isWindows)("enableCompileCache default dir prefers TEMP over TMP like os.tmpdir", async () => {
     using dir = tempDir("compile-cache-tmporder", {});
@@ -326,7 +323,7 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("compile cache entries are created 0600 like Node", async () => {
+  test("compile cache entries are created 0600 like Node", async () => {
     // Entries hold the module's post-transpile source, and the default cache
     // location is a world-readable tmpdir; Node creates entry files 0600.
     using dir = tempDir("compile-cache-mode", {
@@ -377,15 +374,13 @@ console.log("survived", require("./late.js"));`,
     })());
   }
 
-  test.skipIf(isWindows)(
-    "enableCompileCache only uses a cache directory owned by the current user and not writable by others",
-    async () => {
-      using dir = tempDir("compile-cache-owner", {});
-      const base = path.join(String(dir), "cc");
-      const leaf = path.join(base, await compileCacheTag());
-      fs.mkdirSync(leaf, { recursive: true });
-      fs.chmodSync(leaf, 0o777);
-      const code = `
+  test("enableCompileCache only uses a cache directory owned by the current user and not writable by others", async () => {
+    using dir = tempDir("compile-cache-owner", {});
+    const base = path.join(String(dir), "cc");
+    const leaf = path.join(base, await compileCacheTag());
+    fs.mkdirSync(leaf, { recursive: true });
+    fs.chmodSync(leaf, 0o777);
+    const code = `
         const fs = require("fs");
         const Module = require("module");
         const first = Module.enableCompileCache({ directory: ${JSON.stringify(base)} });
@@ -393,28 +388,26 @@ console.log("survived", require("./late.js"));`,
         const second = Module.enableCompileCache({ directory: ${JSON.stringify(base)} });
         process.stdout.write(JSON.stringify({ first, second, dir: Module.getCompileCacheDir() }));
       `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", code],
-        env: compileCacheEnv,
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout, stderr).toStartWith("{");
-      const { FAILED, ENABLED } = Module.constants.compileCacheStatus;
-      expect(JSON.parse(stdout)).toEqual({
-        first: {
-          status: FAILED,
-          message:
-            "Cannot use cache directory: it must be owned by the current user and not be group- or world-writable",
-        },
-        second: { status: ENABLED, directory: base },
-        dir: leaf,
-      });
-      expect(exitCode).toBe(0);
-    },
-  );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: compileCacheEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout, stderr).toStartWith("{");
+    const { FAILED, ENABLED } = Module.constants.compileCacheStatus;
+    expect(JSON.parse(stdout)).toEqual({
+      first: {
+        status: FAILED,
+        message: "Cannot use cache directory: it must be owned by the current user and not be group- or world-writable",
+      },
+      second: { status: ENABLED, directory: base },
+      dir: leaf,
+    });
+    expect(exitCode).toBe(0);
+  });
 
-  test.skipIf(isWindows)("enableCompileCache does not follow a symlink at the cache directory leaf", async () => {
+  test("enableCompileCache does not follow a symlink at the cache directory leaf", async () => {
     using dir = tempDir("compile-cache-symlink-leaf", {});
     const base = path.join(String(dir), "cc");
     const target = path.join(String(dir), "elsewhere");

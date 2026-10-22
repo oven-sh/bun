@@ -356,7 +356,7 @@ describe("hostile header dimensions", () => {
   });
 
   test("path source: non-regular file rejects with ENODEV (no infinite read / FIFO park)", async () => {
-    if (process.platform === "win32") return; // NUL behaves differently
+    // NUL behaves differently
     // /dev/null is a char device everywhere; the fstat S_ISREG guard must
     // refuse it before readToEnd loops.
     await expect(new Bun.Image("/dev/null").metadata()).rejects.toThrow(/ENODEV|not a/i);

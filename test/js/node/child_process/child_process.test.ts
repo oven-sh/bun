@@ -5,7 +5,6 @@ import {
   bunEnv,
   bunExe,
   isLinux,
-  isPosix,
   isRoot,
   isWindows,
   nodeExe,
@@ -191,7 +190,7 @@ describe("fork() IPC", () => {
   // libuv maps an inherited stdio slot the parent has closed to /dev/null. Registering a plain
   // inherit instead captured whichever fd was created next: the ipc socketpair's parent end, which the
   // child then held open as its stdin, so the parent's disconnect() never reached it.
-  it.skipIf(isWindows)("inherits a closed stdin as /dev/null, so disconnect() still reaches the child", async () => {
+  it("inherits a closed stdin as /dev/null, so disconnect() still reaches the child", async () => {
     const dir = tmpdirSync();
     await write(
       path.join(dir, "parent.js"),
@@ -566,7 +565,7 @@ describe("spawn()", () => {
       expect(child.stderr).not.toBeNull();
     });
 
-    it.skipIf(isWindows)("accepts another subprocess's stdin as a stdio target", async () => {
+    it("accepts another subprocess's stdin as a stdio target", async () => {
       // (cat [p1] ; cat [p2]) | cat [p3]
       let p1, p2;
       const p3 = spawn("cat", { stdio: ["pipe", "pipe", "inherit"] });
@@ -709,7 +708,7 @@ describe("spawn()", () => {
       });
 
       // Windows cannot give a child a socket as stdio: node throws ENOTSUP, Bun throws EBADF.
-      it.skipIf(isWindows)("accepts a net.Socket", async () => {
+      it("accepts a net.Socket", async () => {
         using ends = await bothEnds(net.createServer(), port => net.connect(port, "127.0.0.1"));
         const closed = ends.sockets.map(socket =>
           once(spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [socket, "ignore", "inherit"] }), "close"),
@@ -722,59 +721,56 @@ describe("spawn()", () => {
     });
   });
 
-  it.skipIf(isWindows)(
-    "stdin write failure (EPIPE) emits 'error' and destroys even with a write callback",
-    async () => {
-      // Child closes its own stdin fd, signals ready on stdout, then stays alive.
-      const child = spawn(
-        bunExe(),
-        ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
-        { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
-      );
-      try {
-        await new Promise<void>((resolve, reject) => {
-          child.on("error", reject);
-          child.on("exit", () => reject(new Error("child exited before ready")));
-          child.stdout!.once("data", () => resolve());
-        });
-        child.removeAllListeners("error");
-        child.removeAllListeners("exit");
+  it("stdin write failure (EPIPE) emits 'error' and destroys even with a write callback", async () => {
+    // Child closes its own stdin fd, signals ready on stdout, then stays alive.
+    const child = spawn(
+      bunExe(),
+      ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
+    );
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("exit", () => reject(new Error("child exited before ready")));
+        child.stdout!.once("data", () => resolve());
+      });
+      child.removeAllListeners("error");
+      child.removeAllListeners("exit");
 
-        const errEv = Promise.withResolvers<any>();
-        const cb1 = Promise.withResolvers<any>();
-        child.stdin!.on("error", e => errEv.resolve(e));
-        child.stdin!.write(Buffer.alloc(65536, 0x41), e => cb1.resolve(e));
+      const errEv = Promise.withResolvers<any>();
+      const cb1 = Promise.withResolvers<any>();
+      child.stdin!.on("error", e => errEv.resolve(e));
+      child.stdin!.write(Buffer.alloc(65536, 0x41), e => cb1.resolve(e));
 
-        const [cb1Err, errEvErr] = await Promise.all([cb1.promise, errEv.promise]);
+      const [cb1Err, errEvErr] = await Promise.all([cb1.promise, errEv.promise]);
 
-        // Node names the syscall "write" even though the stdio pipe is a
-        // socketpair underneath.
-        expect({
-          cb1: cb1Err?.code,
-          errEv: errEvErr?.code,
-          syscall: errEvErr?.syscall,
-          destroyed: child.stdin!.destroyed,
-          writable: child.stdin!.writable,
-        }).toEqual({
-          cb1: "EPIPE",
-          errEv: "EPIPE",
-          syscall: "write",
-          destroyed: true,
-          writable: false,
-        });
+      // Node names the syscall "write" even though the stdio pipe is a
+      // socketpair underneath.
+      expect({
+        cb1: cb1Err?.code,
+        errEv: errEvErr?.code,
+        syscall: errEvErr?.syscall,
+        destroyed: child.stdin!.destroyed,
+        writable: child.stdin!.writable,
+      }).toEqual({
+        cb1: "EPIPE",
+        errEv: "EPIPE",
+        syscall: "write",
+        destroyed: true,
+        writable: false,
+      });
 
-        const cb2 = Promise.withResolvers<any>();
-        const r2 = child.stdin!.write("more-bytes", e => cb2.resolve(e));
-        const cb2Err = await cb2.promise;
+      const cb2 = Promise.withResolvers<any>();
+      const r2 = child.stdin!.write("more-bytes", e => cb2.resolve(e));
+      const cb2Err = await cb2.promise;
 
-        expect({ r2, cb2: cb2Err?.code }).toEqual({ r2: false, cb2: "ERR_STREAM_DESTROYED" });
-      } finally {
-        child.kill("SIGKILL");
-      }
-    },
-  );
+      expect({ r2, cb2: cb2Err?.code }).toEqual({ r2: false, cb2: "ERR_STREAM_DESTROYED" });
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
 
-  it.skipIf(isWindows)("stdin write to a child that exits before draining it fails with EPIPE", async () => {
+  it("stdin write to a child that exits before draining it fails with EPIPE", async () => {
     // The child exits with most of the 16 MiB (more than any socket buffer
     // holds) unread. Whether the kernel fails the next send or the exit handler
     // settles the pending write first, the stream reports EPIPE from "write".
@@ -860,7 +856,7 @@ describe("spawnSync()", () => {
     expect(detachedPgid).not.toBe(parentPgid);
   });
 
-  it.skipIf(isWindows)("drains piped stdio to EOF after the direct child exits", () => {
+  it("drains piped stdio to EOF after the direct child exits", () => {
     // Node.js documents spawnSync as not returning until the child process has
     // fully closed, i.e. every pipe has been read to EOF even when a grandchild
     // that inherited the pipe is still writing after the direct child exited.
@@ -995,7 +991,7 @@ it("it accepts stdio passthrough", async () => {
   }
 }, 30_000);
 
-it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
+it("spawnSync correctly reports signal codes", () => {
   const trapCode = `
     process.kill(process.pid, "SIGTRAP");
   `;
@@ -1014,7 +1010,7 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
 // OS's name for the number the child died from, as in node.
 const platformSignals = (["SIGUSR1", "SIGUSR2", "SIGSTKFLT"] as const).filter(name => name in os.constants.signals);
 
-describe.skipIf(!isPosix)("exit signals are named with the OS's own numbering", () => {
+describe("exit signals are named with the OS's own numbering", () => {
   it.concurrent.each(platformSignals)("child.kill(%s) exits with that signal", async name => {
     const child = spawn("sleep", ["1000"], { stdio: "ignore" });
     try {
@@ -1086,7 +1082,7 @@ it("spawnSync(does-not-exist)", () => {
 // run that produced no output. The spawn must fail with EBADF, matching
 // node. On other POSIX platforms the child-side dup2 of an fd that is not
 // open fails with EBADF, so the observable behavior is the same.
-it.if(!isWindows)("spawn with an fd number at Darwin OPEN_MAX in stdio reports EBADF", () => {
+it("spawn with an fd number at Darwin OPEN_MAX in stdio reports EBADF", () => {
   // Precondition: fd 10240 is not open in this process, so the fd is
   // invalid on every platform (on Darwin it is invalid by number alone).
   expect(() => fs.fstatSync(10240)).toThrow();
@@ -1180,7 +1176,7 @@ it.if(isLinux)("spawn still works with more than 10240 fds open", async () => {
 // GC'd, finalize_streams does not close the fd a second time (EBADF, or
 // worse, closing a reused fd number). Before the fix, Fd::close()'s
 // debug_assert!(err.is_none()) panicked under debug_assertions builds.
-it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () => {
+it("extra stdio pipes are not double-closed on GC", async () => {
   // Run in a subprocess so GC/finalize timing is isolated from the test
   // runner's own state, and so the assert abort surfaces as a non-zero
   // exit rather than taking the whole test runner down.
@@ -1286,7 +1282,7 @@ it.if(isWindows)("extra stdio 'pipe' sockets deliver data and GC of the ChildPro
 // For fd 0-2, "ignore" opens /dev/null. For fd >= 3, Node leaves the fd
 // closed; Bun used to open /dev/null on the slot, so children probing
 // "is fd N open?" observed a different answer than under Node.
-it.if(!isWindows)("stdio[i] = 'ignore' for i >= 3 leaves the fd closed in the child", async () => {
+it("stdio[i] = 'ignore' for i >= 3 leaves the fd closed in the child", async () => {
   // Portable open/closed probe via shell redirection: redirecting a closed
   // fd fails with EBADF. Uses "true" (not ":") because redirection errors on
   // POSIX special built-ins abort the shell.
@@ -1325,7 +1321,7 @@ describe("uid/gid options", () => {
   // 65534 is "nobody" on every Linux distro and on macOS.
   const NOBODY = 65534;
 
-  it.skipIf(isWindows || !isRoot)("spawnSync applies uid/gid and drops supplementary groups", () => {
+  it.skipIf(!isRoot)("spawnSync applies uid/gid and drops supplementary groups", () => {
     const both = spawnSync("id", [], { uid: NOBODY, gid: NOBODY, encoding: "utf8" });
     expect(both.error).toBeUndefined();
     expect(both.stdout).toContain(`uid=${NOBODY}`);
@@ -1343,7 +1339,7 @@ describe("uid/gid options", () => {
     expect(gidOnly.stdout).toContain(`gid=${NOBODY}`);
   });
 
-  it.skipIf(isWindows || !isRoot)("spawn applies uid/gid (async)", async () => {
+  it.skipIf(!isRoot)("spawn applies uid/gid (async)", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<{ out: string; code: number | null }>();
     const child = spawn("id", ["-u"], { uid: NOBODY, gid: NOBODY });
     let out = "";
@@ -1355,7 +1351,7 @@ describe("uid/gid options", () => {
     expect(code).toBe(0);
   });
 
-  it.skipIf(isWindows || isRoot)("spawn with a uid the process cannot set throws EPERM synchronously", () => {
+  it.skipIf(isRoot)("spawn with a uid the process cannot set throws EPERM synchronously", () => {
     // Node defers only EACCES/EAGAIN/EMFILE/ENFILE/ENOENT to the 'error'
     // event; EPERM is thrown synchronously from spawn().
     let thrown: any;
@@ -1375,7 +1371,7 @@ describe("uid/gid options", () => {
     expect(r.stdout == null).toBe(true);
   });
 
-  it.skipIf(isWindows || !isRoot)("spawn reports EPERM after dropping privileges", async () => {
+  it.skipIf(!isRoot)("spawn reports EPERM after dropping privileges", async () => {
     const fixture = `const cp = require("node:child_process");
 let thrown = null;
 try { cp.spawn("id", [], { uid: 0 }); } catch (e) { thrown = e; }
@@ -1426,7 +1422,7 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 // 'exit' fired the autoResume path discarded the entire buffered output, so a
 // late reader received 0 bytes. With kernel backpressure the child blocks at
 // the pipe buffer until JS starts reading, matching Node.
-describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
+describe("stdout pipe backpressure", () => {
   it("blocks the child until a reader attaches and delivers every byte", async () => {
     const SIZE = 1024 * 1024;
     const c = spawn("sh", ["-c", `head -c ${SIZE} /dev/zero`], {
@@ -1474,7 +1470,7 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
 
 // The stderr pipe closes without any data before JS touches child.stderr, so the exit path creates its stream
 // without a native handle.
-it.skipIf(!isPosix)("emits 'close' when an unread stdio pipe closed without any data", async () => {
+it("emits 'close' when an unread stdio pipe closed without any data", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1708,7 +1704,7 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
 // 256 KiB scratch, so it is flushed to JS from the middle of the outer loop,
 // and the 'data' handler does not return until the tail and EOF are in the
 // socket. The tail is bigger than the 64 KiB pull buffer.
-describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
+describe("child.stdout pull nested in a 'data' event", () => {
   it("delivers a tail read to EOF that does not fit the pull buffer", async () => {
     const HEAD = 136 * 1024;
     const TAIL = 96 * 1024;

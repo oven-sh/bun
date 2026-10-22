@@ -4,11 +4,11 @@
 // have their disposition changed, so libc returns `EINVAL` there — that
 // must not reach `std.posix.sigaction`'s `else => unreachable`.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isLinux, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibc, isLinux, tempDir } from "harness";
 import { constants } from "os";
 import { join } from "path";
 
-test.skipIf(!isPosix)("bun run propagates SIGKILL from a child without hitting unreachable", async () => {
+test("bun run propagates SIGKILL from a child without hitting unreachable", async () => {
   using dir = tempDir("run-sigkill", {
     "package.json": JSON.stringify({
       name: "t",
@@ -48,7 +48,7 @@ const signaled: [number, string][] = [
       ] as [number, string][])
     : []),
 ];
-test.skipIf(!isPosix).each(signaled)("bun run reports and re-raises signal %d", async (signal, message) => {
+test.each(signaled)("bun run reports and re-raises signal %d", async (signal, message) => {
   using dir = tempDir("run-signaled-script", {
     "package.json": JSON.stringify({ name: "t", scripts: { go: `kill -${signal} $$` } }),
   });

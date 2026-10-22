@@ -6,7 +6,7 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
@@ -581,7 +581,7 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
 });
 
 // In a URL, the "%de" in "50%deposit.ts" escapes the byte 0xDE, which isn't valid UTF-8. Windows decodes it to U+FFFD.
-test.concurrent.skipIf(isWindows)("supports module names with a % that isn't a valid UTF-8 escape", async () => {
+test.concurrent("supports module names with a % that isn't a valid UTF-8 escape", async () => {
   using dir = tempDir("mock-module-percent", {
     "real%deposit.ts": `export default "the real file";`,
     "percent.test.ts": `

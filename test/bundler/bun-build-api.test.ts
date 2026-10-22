@@ -517,7 +517,7 @@ describe("Bun.build", () => {
     });
   });
 
-  test.skipIf(isWindows)("fails the build when the bundler thread can't start", async () => {
+  test("fails the build when the bundler thread can't start", async () => {
     const script = `
       const fs = require("fs");
       const fds = [];
@@ -1061,14 +1061,12 @@ describe("Bun.build", () => {
   // descriptor in the resolver. A second in-process Bun.build() used to reuse a
   // descriptor the first build had already closed, failing with EBADF. The test
   // host must also import the package so its fd is cached before the builds run.
-  test.concurrent.skipIf(isWindows)(
-    "repeated in-process builds of a symlinked package do not reuse a closed fd",
-    async () => {
-      using dir = tempDir("build-symlink-fd-cache", {
-        "vendor/pkg/package.json": `{"name":"pkg","version":"1.0.0","type":"module","exports":"./index.js"}`,
-        "vendor/pkg/index.js": `export const value = 1;\n`,
-        "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
-        "repro.test.ts": `
+  test.concurrent("repeated in-process builds of a symlinked package do not reuse a closed fd", async () => {
+    using dir = tempDir("build-symlink-fd-cache", {
+      "vendor/pkg/package.json": `{"name":"pkg","version":"1.0.0","type":"module","exports":"./index.js"}`,
+      "vendor/pkg/index.js": `export const value = 1;\n`,
+      "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
+      "repro.test.ts": `
         import { it } from "bun:test";
         import { value } from "pkg";
         void value;
@@ -1082,22 +1080,21 @@ describe("Bun.build", () => {
           console.log("ALL_BUILDS_OK");
         });
       `,
-      });
-      mkdirSync(join(String(dir), "node_modules"), { recursive: true });
-      symlinkSync("../vendor/pkg", join(String(dir), "node_modules", "pkg"));
+    });
+    mkdirSync(join(String(dir), "node_modules"), { recursive: true });
+    symlinkSync("../vendor/pkg", join(String(dir), "node_modules", "pkg"));
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "repro.test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout + stderr).toContain("ALL_BUILDS_OK");
-      expect(exitCode).toBe(0);
-    },
-  );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "repro.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain("ALL_BUILDS_OK");
+    expect(exitCode).toBe(0);
+  });
 
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({
@@ -2541,14 +2538,12 @@ test("sourcemap sourcesContent is valid JSON when source contains C0 control cha
 // Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
 // own tasks, so any unrelated pool work extended the build by its full duration — a
 // node:fs read parked on a FIFO nobody writes made every later build hang forever.
-test.skipIf(isWindows)(
-  "Bun.build does not wait for unrelated thread-pool work",
-  async () => {
-    using dir = tempDir("build-pool-wait", {
-      "a.ts": `import { b } from "./b"; import "./s.css"; console.log(b);`,
-      "b.ts": `export const b = 1;`,
-      "s.css": `body { color: red }`,
-      "run.js": `
+test("Bun.build does not wait for unrelated thread-pool work", async () => {
+  using dir = tempDir("build-pool-wait", {
+    "a.ts": `import { b } from "./b"; import "./s.css"; console.log(b);`,
+    "b.ts": `export const b = 1;`,
+    "s.css": `body { color: red }`,
+    "run.js": `
       const { join } = require("path");
       const dir = process.argv[2];
       const fs = require("fs");
@@ -2585,21 +2580,19 @@ test.skipIf(isWindows)(
       console.log(readDone, readErr ? readErr.code : "ok");
       process.exit(0);
     `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run.js", String(dir)],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toStartWith("second build took ");
-    expect(stdout).toBe("true true false\ntrue ok\n");
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js", String(dir)],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toStartWith("second build took ");
+  expect(stdout).toBe("true true false\ntrue ok\n");
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 describe.concurrent("Bun.build with a path longer than the path buffer", () => {
   const components = Math.ceil((MAX_PATH_BYTES * 1.25) / 201);

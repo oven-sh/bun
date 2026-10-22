@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "path";
 
 // Terminating a worker while a Bun.$ command's external subprocess is still
@@ -46,7 +46,7 @@ async function runTerminateScenario(workerSource: string, extraEnv: Record<strin
 // binary, so the failure mode needs far more than the default timeout.
 const LEAK_TEST_TIMEOUT = 90_000;
 
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "worker.terminate() with a live Bun.$ subprocess does not leak its pipe readers",
   async () => {
     await runTerminateScenario(`
@@ -64,7 +64,7 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "worker.terminate() with a live Bun.$ subprocess does not leak a pending buffer-stdin writer",
   async () => {
     // Stdin is far larger than the pipe capacity and the child never reads
@@ -84,7 +84,7 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "worker.terminate() with a live Bun.$ pipeline does not leak either subprocess",
   async () => {
     // Two live externals in one pipeline: exercises the finalizer walk over
@@ -103,7 +103,7 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "worker.terminate() with a live Bun.$ file redirect does not leak the redirection fd",
   async () => {
     // `> out.txt` opens a CowFd on the Cmd that only Cmd::deinit releases.
@@ -121,7 +121,7 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "worker.terminate() with a live Bun.$ arraybuffer redirect does not leak the pinned buffer",
   async () => {
     await runTerminateScenario(`
@@ -139,7 +139,7 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "worker.terminate() with a live Bun.$ arraybuffer redirect does not unpin a finalized ArrayBuffer",
   async () => {
     // During lastChanceToFinalize the JSC::ArrayBuffer impls are already
@@ -165,7 +165,7 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "worker.terminate() while a failed Bun.$ pipeline winds down does not leak or crash",
   async () => {
     // The second member throws a JS error as soon as it starts. The shell

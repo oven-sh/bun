@@ -2146,7 +2146,7 @@ describe.concurrent("bun-install", () => {
   // buffer (4096 bytes on Linux, 1024 on macOS), so aliases a few bytes short of it used to crash
   // the install right there. A name over 255 bytes no longer gets that far: it is refused when it is read.
   // On Windows the buffer is far larger than any path the OS accepts.
-  describe.concurrent.skipIf(isWindows)("dependency alias that fills the path buffer", () => {
+  describe.concurrent("dependency alias that fills the path buffer", () => {
     const alias = Buffer.alloc((isLinux ? 4096 : 1024) - 6, "a").toString();
 
     async function installIntoExistingNodeModules(cwd: string) {
@@ -13730,7 +13730,7 @@ it.concurrent("does not install transitive file: dependencies with overlong fold
 // against the buffer when package.json is parsed, but the appended bytes were not, so a
 // folder path within 13 bytes of the buffer size aborted the install. Windows' buffer is
 // larger than any path the OS accepts, so the boundary cannot be reached there.
-describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path is around the path buffer size", () => {
+describe.concurrent("file: dependency whose package.json path is around the path buffer size", () => {
   const PATH_BUFFER_BYTES = isLinux ? 4096 : 1024;
 
   // A relative path of exactly `bytes` bytes made of one letter directory names, so that a
@@ -16065,7 +16065,7 @@ it.concurrent(doesNotCreateCacheEntryOutside, async () => {
 // collide under the seed-0 std.Wyhash that keys the folder-resolution dedupe
 // map must each resolve to their own package, not share one identity.
 // https://github.com/oven-sh/bun/issues/32741
-it.concurrent.skipIf(isWindows)("file: deps with colliding abs-path hashes resolve to distinct packages", async () => {
+it.concurrent("file: deps with colliding abs-path hashes resolve to distinct packages", async () => {
   using dir = tempDir("folder-resolution-collision", {
     "package.json": JSON.stringify({ name: "victim", version: "0.0.0" }),
   });
@@ -16119,7 +16119,7 @@ it.concurrent.skipIf(isWindows)("file: deps with colliding abs-path hashes resol
 });
 
 // The lockfile interns every string over 8 bytes in a pool keyed by Wyhash11(0, bytes).
-it.concurrent.skipIf(isWindows)("two specifiers whose hashes collide stay two strings", async () => {
+it.concurrent("two specifiers whose hashes collide stay two strings", async () => {
   const specA = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePaaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
   const specB = "./t/m3daaaaaaaaaaaaaaaaaaaaaaaaa.7aQs_ePbaaaaaaaw9Aaaaaaaaaaaaaa.tgz";
   expect(specA).not.toBe(specB);
@@ -16650,7 +16650,7 @@ describe.concurrent("progress bar with a long name", () => {
 // `--cwd` is staged in a PATH_MAX-sized buffer (4096 bytes on Linux and Android, 1024 on macOS and
 // the BSDs) before chdir. Values that did not leave room for the NUL terminator used to abort the
 // process; the buffer on Windows (~96 KiB) is larger than any command line, so only POSIX is affected.
-describe.concurrent.skipIf(isWindows)("--cwd that does not fit the path buffer", () => {
+describe.concurrent("--cwd that does not fit the path buffer", () => {
   const PATH_MAX = isLinux || isAndroid ? 4096 : 1024;
   const name = (length: number) => Buffer.alloc(length, "a").toString();
 

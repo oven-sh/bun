@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDirWithFiles } from "harness";
 import { closeSync, openSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -1188,7 +1188,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
   });
 
   // The same store kind reached by path: stat says it is not a regular file.
-  test.skipIf(isWindows)("a body over a FIFO opened by path is still teed", async () => {
+  test("a body over a FIFO opened by path is still teed", async () => {
     const fifo = join(tempDirWithFiles("body-clone-fifo", {}), "body.fifo");
     expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
     await using writer = Bun.spawn({
@@ -1200,7 +1200,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     expect(await writer.exited).toBe(0);
   });
 
-  test.skipIf(isWindows)("a body over a FIFO given by path as the Blob itself is teed, not duped", async () => {
+  test("a body over a FIFO given by path as the Blob itself is teed, not duped", async () => {
     const fifo = join(tempDirWithFiles("body-clone-fifo-blob", {}), "body.fifo");
     expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
     await using writer = Bun.spawn({
@@ -1336,7 +1336,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       }).toEqual({ fresh: ["EISDIR", "EISDIR"], sizeRead: ["EISDIR", "EISDIR"] });
     });
 
-    test.skipIf(isWindows)("a directory by file descriptor", async () => {
+    test("a directory by file descriptor", async () => {
       const fd = openSync(directory(), "r");
       try {
         expect({
@@ -1348,7 +1348,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       }
     });
 
-    test.skipIf(isWindows)("a file descriptor that is not open", async () => {
+    test("a file descriptor that is not open", async () => {
       expect(await codes(Bun.file(1_000_000))).toEqual(["EBADF", "EBADF"]);
     });
   });

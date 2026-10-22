@@ -63,7 +63,7 @@ test.skipIf(!isWindows)("translateNtStatusToE maps delete-related NTSTATUS codes
   expect(translateNtStatusToE(0xcfffffff)).toBe("EUNKNOWN");
 });
 
-test.skipIf(isWindows)("translateNtStatusToE is a no-op off Windows", () => {
+test("translateNtStatusToE is a no-op off Windows", () => {
   expect(typeof translateNtStatusToE).toBe("function");
   expect(translateNtStatusToE(0xc0000121)).toBeUndefined();
 });

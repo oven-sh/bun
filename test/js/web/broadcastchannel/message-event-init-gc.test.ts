@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Regression test for a data race in MessageEvent between the mutator thread
 // (initMessageEvent() reassigning m_data) and the GC marker thread
@@ -20,7 +20,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 //
 // collectContinuously is prohibitively slow on Windows CI; the m_data race is
 // platform-agnostic C++ so POSIX coverage is sufficient.
-test.skipIf(isWindows)(
+test(
   "MessageEvent.initMessageEvent does not race GC visitor on m_data",
   async () => {
     const script = /* js */ `

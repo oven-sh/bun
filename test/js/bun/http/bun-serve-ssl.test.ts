@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, expiredTls, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, expiredTls, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
@@ -623,17 +623,15 @@ test("keyFile/certFile/caFile/dhParamsFile reject a path with a NUL byte instead
 });
 
 // `linkdir/..` is `other`, where the key of the certificate is. Resolved as text it is the directory of another key.
-test.skipIf(isWindows).each(["relative", "absolute"])(
-  "keyFile reaches `..` through a symlink (%s path)",
-  async kind => {
-    using dir = tempDir("bun-serve-ssl-symlink", {
-      "cert.pem": tlsCert.cert,
-      "key.pem": expiredTls.key,
-      "other/key.pem": tlsCert.key,
-      "other/sub/.keep": "",
-    });
-    symlinkSync(join(String(dir), "other", "sub"), join(String(dir), "linkdir"));
-    const script = `
+test.each(["relative", "absolute"])("keyFile reaches `..` through a symlink (%s path)", async kind => {
+  using dir = tempDir("bun-serve-ssl-symlink", {
+    "cert.pem": tlsCert.cert,
+    "key.pem": expiredTls.key,
+    "other/key.pem": tlsCert.key,
+    "other/sub/.keep": "",
+  });
+  symlinkSync(join(String(dir), "other", "sub"), join(String(dir), "linkdir"));
+  const script = `
     using server = Bun.serve({
       port: 0,
       tls: { keyFile: process.argv[1] + "linkdir/../key.pem", certFile: "./cert.pem" },
@@ -641,19 +639,18 @@ test.skipIf(isWindows).each(["relative", "absolute"])(
     });
     console.log(await fetch(server.url, { tls: { caFile: "cert.pem" } }).then(res => res.text()));
   `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script, kind === "absolute" ? String(dir) + "/" : ""],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "served\n", stderr: "", exitCode: 0 });
-  },
-);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script, kind === "absolute" ? String(dir) + "/" : ""],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "served\n", stderr: "", exitCode: 0 });
+});
 
-test.skipIf(isWindows)("a keyFile with a trailing slash is not the file without it", () => {
+test("a keyFile with a trailing slash is not the file without it", () => {
   using dir = tempDir("bun-serve-ssl-slash", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert });
   const certFile = join(String(dir), "cert.pem");
   expect(() =>

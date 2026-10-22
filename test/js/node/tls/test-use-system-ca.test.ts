@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { X509Certificate } from "node:crypto";
 import { closeSync, constants, existsSync, openSync, readFileSync, symlinkSync, writeSync } from "node:fs";
@@ -318,7 +318,7 @@ describe.concurrent.skipIf(!isLinux)("SSL_CERT_FILE that can be read only once",
 // The default store also trusts what X509_STORE_set_default_paths would: $SSL_CERT_FILE (else /etc/ssl/cert.pem) and
 // the $SSL_CERT_DIR (else /etc/ssl/certs) hash directory. The file is read lazily and deduplicated against the bundled
 // roots, so these pin that the same certificates are still trusted.
-describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
+describe("default store and OpenSSL's default paths", () => {
   const keys = join(import.meta.dir, "../test/fixtures/keys");
   const ca1 = readFileSync(join(keys, "ca1-cert.pem"), "utf8");
 

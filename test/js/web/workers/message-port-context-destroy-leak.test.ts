@@ -12,14 +12,12 @@ import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 // per-thread mimalloc arenas stay committed), so the allocator residue from
 // 11 workers alone exceeds the threshold regardless of whether ports leak.
 // The fix is platform-agnostic C++; Linux/macOS coverage is sufficient.
-test.skipIf(isWindows)(
-  "MessagePort self-ref is released when the owning context is destroyed",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+test("MessagePort self-ref is released when the owning context is destroyed", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
         const rss = process.memoryUsage.rss;
         const workerBody = ${JSON.stringify(`
           const keep = [];
@@ -65,20 +63,18 @@ test.skipIf(isWindows)(
         }
         console.log("PASS delta=" + deltaMB.toFixed(2) + "MB");
       `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toContain("PASS");
-    expect(exitCode).toBe(0);
-  },
-  120_000,
-);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("PASS");
+  expect(exitCode).toBe(0);
+}, 120_000);
 
 // Once the wrapper and the peer are collected, .ref()'s self-reference is the last reference to
 // the native port, and close() drops it partway through.

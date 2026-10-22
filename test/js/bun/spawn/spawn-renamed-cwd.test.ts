@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/33819
 // Spawning without an explicit `cwd` must inherit the parent's working
 // directory instead of chdir'ing to a stored path string, which is stale
 // after the cwd directory is renamed.
-test.skipIf(isWindows)("spawn without explicit cwd works after the parent's cwd is renamed", async () => {
+test("spawn without explicit cwd works after the parent's cwd is renamed", async () => {
   using dir = tempDir("spawn-renamed-cwd", {
     "fixture.ts": `
       import { mkdirSync, renameSync, realpathSync } from "fs";
@@ -52,7 +52,7 @@ test.skipIf(isWindows)("spawn without explicit cwd works after the parent's cwd 
 });
 
 // An explicit `cwd` option must still chdir the child.
-test.skipIf(isWindows)("spawn with explicit cwd still changes the child's directory", async () => {
+test("spawn with explicit cwd still changes the child's directory", async () => {
   using dir = tempDir("spawn-explicit-cwd", { "sub/.keep": "" });
   const sub = join(String(dir), "sub");
 

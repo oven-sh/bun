@@ -486,7 +486,7 @@ describe.concurrent("bun check", () => {
   });
 
   // A dedicated thread draws the progress line, and only when a person is at a terminal.
-  test.skipIf(isWindows || !hasTerminal)("shows progress in a terminal", async () => {
+  test.skipIf(!hasTerminal)("shows progress in a terminal", async () => {
     using dir = project({ "index.ts": `const wrong: string = 1;\n` });
     let output = "";
     await using proc = spawn({
@@ -2911,7 +2911,7 @@ export const a: number[] = [file, one, two];
     });
 
     // Opening such a pipe blocks until a writer opens it. package.json is opened to look for a "check" script.
-    test.skipIf(isWindows)("doesn't hang when package.json is a symlink to a named pipe with no writer", async () => {
+    test("doesn't hang when package.json is a symlink to a named pipe with no writer", async () => {
       using dir = project({ "a.ts": `export {};\n` });
       expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe")]).exitCode).toBe(0);
       symlinkSync("pipe", join(String(dir), "package.json"));
@@ -3035,7 +3035,7 @@ export const a: number[] = [file, one, two];
       expect(exitCode).toBe(1);
     });
 
-    test.skipIf(process.platform === "win32")("ignores a named pipe in the project directory", async () => {
+    test("ignores a named pipe in the project directory", async () => {
       using dir = project({ "a.ts": `export const a: string = 1;\n` });
       // Reading a pipe without a writer blocks forever.
       expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe.ts")]).exitCode).toBe(0);
@@ -22829,7 +22829,7 @@ user${i}.ts(10,22): error TS2322: Type 'A' is not assignable to type 'never'.`,
     });
 
     // Root can read every file.
-    const canReadEverything = isWindows || isRoot;
+    const canReadEverything = isRoot;
     test.skipIf(canReadEverything)("reports TS5083 for a source file that can't be read", async () => {
       using dir = project({ "a.ts": `import "./secret";\n`, "secret.ts": `export {};\n` });
       chmodSync(join(String(dir), "secret.ts"), 0o000);
@@ -24228,28 +24228,25 @@ describe.concurrent("--check", () => {
   });
 
   // The path is compared as `bun run` spells it.
-  test.skipIf(isWindows)(
-    "`bun check` type checks in a `check` script started by a Bun that sets only BUN_INTERNAL_CHECK_SCRIPTS",
-    async () => {
-      using dir = project({
-        "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
-        "tsconfig.json": tsconfig,
-        "a.ts": `export const a: number = "1";\n`,
-      });
-      const cwd = String(dir);
-      const results = await Promise.all([
-        run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `${Buffer.byteLength(cwd)}:${cwd}` }),
-        // Another package's path.
-        run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `2:/x` }),
-      ]);
-      expect(
-        results.map(it => [it.stdout.includes("TS2322"), it.stdout.includes("the script ran"), it.exitCode]),
-      ).toEqual([
-        [true, false, 1],
-        [false, true, 0],
-      ]);
-    },
-  );
+  test("`bun check` type checks in a `check` script started by a Bun that sets only BUN_INTERNAL_CHECK_SCRIPTS", async () => {
+    using dir = project({
+      "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
+      "tsconfig.json": tsconfig,
+      "a.ts": `export const a: number = "1";\n`,
+    });
+    const cwd = String(dir);
+    const results = await Promise.all([
+      run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `${Buffer.byteLength(cwd)}:${cwd}` }),
+      // Another package's path.
+      run(cwd, ["check", "--pretty", "false"], { BUN_INTERNAL_CHECK_SCRIPTS: `2:/x` }),
+    ]);
+    expect(
+      results.map(it => [it.stdout.includes("TS2322"), it.stdout.includes("the script ran"), it.exitCode]),
+    ).toEqual([
+      [true, false, 1],
+      [false, true, 0],
+    ]);
+  });
 
   test("--check with --filter, --parallel or --sequential checks the project before the scripts", async () => {
     using dir = project({
@@ -24315,7 +24312,7 @@ describe.concurrent("--check", () => {
   });
 
   // These draw the same progress line as `bun check`, on a dedicated thread, and the process keeps running afterwards.
-  describe.skipIf(isWindows || !hasTerminal)("in a terminal", () => {
+  describe.skipIf(!hasTerminal)("in a terminal", () => {
     const files = (n: string) => ({
       "package.json": JSON.stringify({ scripts: { hello: "echo ran 1" } }),
       "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
@@ -24406,7 +24403,7 @@ describe.concurrent("--check", () => {
     ["a shell script", ["--check", "./tool.sh"]],
   ])("bun --check with %s", (_, cmd) => {
     // On Windows it would have to be a real executable, because `bun` doesn't start batch files.
-    test.skipIf(isWindows && cmd.includes("tool"))("type checks the project first", async () => {
+    test("type checks the project first", async () => {
       const files = { "tool.sh": `echo ran\n`, "node_modules/.bin/tool": `#!/bin/sh\necho ran\n` };
       using good = project({ ...files, "a.ts": `export const a: number = 1;\n` });
       using bad = project({ ...files, "a.ts": `export const a: number = "1";\n` });

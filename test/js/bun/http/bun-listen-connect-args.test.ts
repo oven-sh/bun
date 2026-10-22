@@ -1,7 +1,7 @@
 import { describe, test } from "bun:test";
-import { cwdScope, isWindows, tempDir } from "harness";
+import { cwdScope, tempDir } from "harness";
 
-describe.if(!isWindows)("unix socket", () => {
+describe("unix socket", () => {
   test("valid", () => {
     using server = Bun.listen({
       unix: Math.random().toString(32).slice(2, 15) + ".sock",

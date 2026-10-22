@@ -4,12 +4,10 @@ import {
   bunExe,
   gc,
   getMaxFD,
-  isBroken,
   isDebug,
   isGlibc,
   isIntelMacOS,
   isLinux,
-  isPosix,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -113,7 +111,7 @@ it("fs.statSync keeps a Uint8Array path's ArrayBuffer attached while reading opt
   expect(arrayBuffer.detached).toBe(true);
 });
 
-it.skipIf(isWindows)("fs.chmodSync applies mode bits above 0o777", () => {
+it("fs.chmodSync applies mode bits above 0o777", () => {
   using dir = tempDir("fs-chmod-special-bits", {});
   const dirPath = join(String(dir), "subdir");
   mkdirSync(dirPath);
@@ -437,10 +435,8 @@ describe("FileHandle", () => {
   // Node.js closes a FileHandle's fd in its native finalizer and raises
   // ERR_INVALID_STATE (DEP0137 end-of-life) when the handle is collected
   // without close(). Bun must reclaim the fd and surface the same diagnostic.
-  it.concurrent.skipIf(isWindows)(
-    "FileHandle collected without close() closes the fd and raises ERR_INVALID_STATE",
-    async () => {
-      const fixture = /* js */ `
+  it.concurrent("FileHandle collected without close() closes the fd and raises ERR_INVALID_STATE", async () => {
+    const fixture = /* js */ `
         const fsp = require("node:fs/promises");
         const fs = require("node:fs");
         const os = require("node:os");
@@ -485,26 +481,25 @@ describe("FileHandle", () => {
           fs.rmSync(dir, { recursive: true, force: true });
         })();
       `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ result: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
-        result: {
-          leakedAfterGC: 0,
-          diagCount: 50,
-          sampleCode: "ERR_INVALID_STATE",
-          sampleHasFd: true,
-          falsePositives: 0,
-        },
-        stderr: expect.not.stringContaining("error"),
-        exitCode: 0,
-      });
-    },
-  );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      result: {
+        leakedAfterGC: 0,
+        diagCount: 50,
+        sampleCode: "ERR_INVALID_STATE",
+        sampleHasFd: true,
+        falsePositives: 0,
+      },
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
+  });
 });
 
 it("fdatasyncSync", () => {
@@ -1811,21 +1806,19 @@ it("readdir with { encoding: 'buffer' } returns Buffer entries", async () => {
 // then freeing it again in entries.deinit()). A self-referential symlink makes
 // the recursive walk fail with ELOOP after entries have been collected, exercising
 // that cleanup path.
-it.skipIf(isWindows)(
-  "readdirSync({encoding: 'buffer', recursive: true}) frees entries safely when a subdir fails to open",
-  async () => {
-    using dir = tempDir("readdir-buffer-error", {
-      "a.txt": "a",
-      "b.txt": "b",
-      "c.txt": "c",
-    });
-    fs.symlinkSync("loop", join(String(dir), "loop"));
+it("readdirSync({encoding: 'buffer', recursive: true}) frees entries safely when a subdir fails to open", async () => {
+  using dir = tempDir("readdir-buffer-error", {
+    "a.txt": "a",
+    "b.txt": "b",
+    "c.txt": "c",
+  });
+  fs.symlinkSync("loop", join(String(dir), "loop"));
 
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
           const fs = require("fs");
           let code;
           for (let i = 0; i < 2; i++) {
@@ -1838,22 +1831,21 @@ it.skipIf(isWindows)(
           }
           console.log(code);
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
-  },
-);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
+});
 
 // The per-task pending_err mutex was acquired via `lock()` (returns `()`) instead of
 // `lock_guard()`, so it was never released: the next failing subtask on the same worker
 // panicked "Deadlock detected" (debug) or blocked forever and the promise never settled.
-it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple subtasks fail", async () => {
+it("promises.readdir({recursive: true}) settles when multiple subtasks fail", async () => {
   using dir = tempDir("readdir-recursive-multi-error", {
     "keep.txt": "x",
   });
@@ -1896,23 +1888,21 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
 // directory it found and only settled once that frontier drained. Two symlinks
 // back to the root make the frontier 2^41 directories (the kernel follows 40
 // symlinks before ELOOP), so the promise and the callback never settled.
-it.skipIf(isWindows)(
-  "readdir({recursive: true}) settles with the first error while symlink loops are still being walked",
-  async () => {
-    using dir = tempDir("readdir-recursive-loop", {
-      "a/b/keep.txt": "x",
-    });
-    const root = String(dir);
-    // Opening this one with O_DIRECTORY fails with ELOOP at once.
-    fs.symlinkSync(join(root, "bad"), join(root, "bad"));
-    fs.symlinkSync(".", join(root, "loop1"));
-    fs.symlinkSync(".", join(root, "loop2"));
+it("readdir({recursive: true}) settles with the first error while symlink loops are still being walked", async () => {
+  using dir = tempDir("readdir-recursive-loop", {
+    "a/b/keep.txt": "x",
+  });
+  const root = String(dir);
+  // Opening this one with O_DIRECTORY fails with ELOOP at once.
+  fs.symlinkSync(join(root, "bad"), join(root, "bad"));
+  fs.symlinkSync(".", join(root, "loop1"));
+  fs.symlinkSync(".", join(root, "loop2"));
 
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
           const fs = require("fs");
           const root = ${JSON.stringify(root)};
           const viaPromise = await fs.promises.readdir(root, { recursive: true }).then(
@@ -1924,22 +1914,21 @@ it.skipIf(isWindows)(
           fs.readdir(root, { recursive: true }, (e, r) => resolve(e ? "rejected " + e.code : "resolved " + r.length));
           console.log("callback", await promise);
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-      timeout: 10_000,
-    });
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    timeout: 10_000,
+  });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "promise rejected ELOOP\ncallback rejected ELOOP",
-      exitCode: 0,
-      signalCode: null,
-    });
-  },
-);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "promise rejected ELOOP\ncallback rejected ELOOP",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
 
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
@@ -2764,7 +2753,7 @@ describe("readFileSync", () => {
     expect(text).toBe("File read successfully");
   });
 
-  it.skipIf(isWindows)("works with special posix files in the filesystem", () => {
+  it("works with special posix files in the filesystem", () => {
     const text = readFileSync("/dev/null", "utf8");
     gc();
     expect(text).toBe("");
@@ -3250,7 +3239,7 @@ it("symlink", () => {
   expect(realpathSync(actual)).toBe(realpathSync(import.meta.path));
 });
 
-it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
+it("realpathSync doesn't block on FIFO", () => {
   const path = join(tmpdirSync(), "test-fs-fifo-block.fifo");
   mkfifo(path, 0o666);
   realpathSync(path);
@@ -3260,7 +3249,7 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
 // Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
 // a /dev/fd fallback for environments where /proc is broken (FreeBSD
 // Linuxulator) or absent (minimal containers).
-it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
+it("realpathSync resolves root, regular files, and symlinks", () => {
   expect(realpathSync("/")).toBe("/");
 
   const self = realpathSync(import.meta.path);
@@ -3273,7 +3262,7 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
-it.if(isPosix)("realpath reads its path the way Node does", async () => {
+it("realpath reads its path the way Node does", async () => {
   using dir = tempDir("fs-realpath-path", {
     "file": "",
     "y": "",
@@ -3433,7 +3422,7 @@ it("promises.realpath is realpath.native", async () => {
 // non-Windows target Bun ships, fd→path resolution is implemented — there is
 // no platform that falls through to ENOSYS. realpathSync on POSIX is
 // open() → getFdPath(fd), so an ENOSYS here means the per-OS arm is missing.
-it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX target — never ENOSYS", () => {
+it("realpathSync (getFdPath) is implemented on every POSIX target — never ENOSYS", () => {
   using dir = tempDir("fs-getfdpath-platform-arm", { "probe.txt": "x" });
   const probe = join(String(dir), "probe.txt");
 
@@ -3499,7 +3488,7 @@ describe("readlink encoding option", () => {
 // stack PathBuffer in that case. We can't create a >= PATH_MAX target on a
 // normal filesystem, but we can exercise the longest-possible target to make
 // sure the bounds check in sys.readlink doesn't fire early.
-it.skipIf(isWindows)("readlink with PATH_MAX-1 target", () => {
+it("readlink with PATH_MAX-1 target", () => {
   const dir = tmpdirSync();
   // Find the longest target the local filesystem will accept for symlink(2).
   // On Linux this is 4095, on macOS 1023. Bun's own path validation silently
@@ -4483,7 +4472,7 @@ describe("fs.ReadStream", () => {
 });
 
 describe("createWriteStream", () => {
-  it.todoIf(isBroken && isWindows)("simple write stream finishes", async () => {
+  it("simple write stream finishes", async () => {
     const streamPath = join(tmpdirSync(), "create-write-stream.txt");
     const { promise: done, resolve, reject } = Promise.withResolvers();
 
@@ -5367,7 +5356,7 @@ describe("utimesSync", () => {
   });
 
   // TODO: make this work on Windows
-  it.skipIf(isWindows)("works after 2038", () => {
+  it("works after 2038", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
     const prevStats = fs.statSync(tmp);
@@ -5400,7 +5389,7 @@ describe("utimesSync", () => {
   });
 
   // Windows wraps pre-epoch times through u32, matching Node (see Stat.rs)
-  it.skipIf(isWindows)("sets pre-epoch times from negative fractional string timestamps", () => {
+  it("sets pre-epoch times from negative fractional string timestamps", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
 
@@ -5649,7 +5638,7 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
 
   // A full non-blocking FIFO makes the first write fail with EAGAIN. The wrapper
   // drains the FIFO before writeAll sees the error, so the retry succeeds.
-  it.skipIf(isWindows)("fs.WriteStream retries an EAGAIN write with the same buffer", async () => {
+  it("fs.WriteStream retries an EAGAIN write with the same buffer", async () => {
     using dir = tempDir("fs-write-stream-eagain", {});
     const path = join(String(dir), "fifo");
     mkfifo(path, 0o666);
@@ -5898,7 +5887,7 @@ it("new Stats", () => {
 
 // On Windows, Node.js deliberately reinterprets stat times via `unsigned long` (see
 // libuv Y2038 note), so pre-epoch semantics there are not "negative ns".
-it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestamps", () => {
+it("BigIntStats *Ns fields are negative for pre-epoch timestamps", () => {
   using dir = tempDir("bigintstats-pre-epoch", { "f.txt": "x" });
   const f = join(String(dir), "f.txt");
 
@@ -5933,7 +5922,7 @@ it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestam
   expect(st2.atimeNs / 1_000_000n).toBe(st2.atimeMs);
 });
 
-it.skipIf(isWindows)("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
+it("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
   using dir = tempDir("bigintstats-far-future", { "f.txt": "x" });
   const f = join(String(dir), "f.txt");
 
@@ -6296,39 +6285,35 @@ it("fs.statfsSync should work", () => {
   // back as 0 and the remaining fields were shifted. Any real filesystem
   // has a positive block size and at least one block — asserting that here
   // catches the misaligned-struct case without depending on absolute values.
-  if (isPosix) {
-    expect(stats.bsize).toBeGreaterThan(0);
-    expect(stats.blocks).toBeGreaterThan(0);
-  }
+
+  expect(stats.bsize).toBeGreaterThan(0);
+  expect(stats.blocks).toBeGreaterThan(0);
 
   const bigIntStats = statfsSync(import.meta.path, { bigint: true });
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
     expect(bigIntStats).toHaveProperty(k);
     expect(bigIntStats[k]).toBeTypeOf("bigint");
   });
-  if (isPosix) {
-    expect(bigIntStats.bsize > 0n).toBe(true);
-    expect(bigIntStats.blocks > 0n).toBe(true);
-  }
+
+  expect(bigIntStats.bsize > 0n).toBe(true);
+  expect(bigIntStats.blocks > 0n).toBe(true);
 });
 
 it("fs.promises.statfs should work", async () => {
   const stats = await fs.promises.statfs(import.meta.path);
   expect(stats).toBeDefined();
   // See "fs.statfsSync should work" above — same regression gate for #31133.
-  if (isPosix) {
-    expect(stats.bsize).toBeGreaterThan(0);
-    expect(stats.blocks).toBeGreaterThan(0);
-  }
+
+  expect(stats.bsize).toBeGreaterThan(0);
+  expect(stats.blocks).toBeGreaterThan(0);
 });
 
 it("fs.promises.statfs should work with bigint", async () => {
   const stats = await fs.promises.statfs(import.meta.path, { bigint: true });
   expect(stats).toBeDefined();
-  if (isPosix) {
-    expect(stats.bsize > 0n).toBe(true);
-    expect(stats.blocks > 0n).toBe(true);
-  }
+
+  expect(stats.bsize > 0n).toBe(true);
+  expect(stats.blocks > 0n).toBe(true);
 });
 
 it("fs.statfs (callback) should work with bigint", async () => {
@@ -6344,10 +6329,9 @@ it("fs.statfs (callback) should work with bigint", async () => {
     expect(stats[k]).toBeTypeOf("bigint");
   }
   // See "fs.statfsSync should work" above — same regression gate for #31133.
-  if (isPosix) {
-    expect(stats.bsize > 0n).toBe(true);
-    expect(stats.blocks > 0n).toBe(true);
-  }
+
+  expect(stats.bsize > 0n).toBe(true);
+  expect(stats.blocks > 0n).toBe(true);
 });
 
 // Regression for oven-sh/bun#31510: the non-bigint statfs path stored block
@@ -6861,7 +6845,7 @@ describe("synchronous I/O string flags", () => {
   });
 });
 
-describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", () => {
+describe("readFileSync on a FIFO larger than the stat size", () => {
   it("does not balloon the read buffer", async () => {
     using dir = tempDir("fs-readfile-fifo", {});
     await using proc = Bun.spawn({
@@ -7098,18 +7082,16 @@ it("fs.promises.stat reads a Buffer path captured at call time when its resizabl
 
 // The reader drains the fifo one pipe buffer at a time, so the pool thread is still inside `write(2)`
 // when the memory grows and frees its old block.
-it.skipIf(isWindows)(
-  "fs.write sends the bytes the caller passed when a WebAssembly.Memory grows mid-write",
-  async () => {
-    using dir = tempDir("fs-write-wasm", {});
-    const fifoPath = join(String(dir), "w.fifo");
-    mkfifo(fifoPath);
+it("fs.write sends the bytes the caller passed when a WebAssembly.Memory grows mid-write", async () => {
+  using dir = tempDir("fs-write-wasm", {});
+  const fifoPath = join(String(dir), "w.fifo");
+  mkfifo(fifoPath);
 
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
         import fs from "node:fs";
         const PAGES = 16; // 1 MB, which is 16 pipe buffers
         const TOTAL = PAGES * 65536;
@@ -7150,21 +7132,20 @@ it.skipIf(isWindows)(
         console.log(JSON.stringify({ drained, foreignChunks, written: await written.promise }));
         process.exit(0);
       `,
-      ],
-      // Without fast memory, `grow()` moves the block on every platform.
-      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", FIFO_PATH: fifoPath },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    ],
+    // Without fast memory, `grow()` moves the block on every platform.
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", FIFO_PATH: fifoPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(JSON.stringify({ drained: 1048576, foreignChunks: 0, written: 1048576 }));
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  },
-);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(JSON.stringify({ drained: 1048576, foreignChunks: 0, written: 1048576 }));
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
 
-it.skipIf(isWindows)("async fs.readv and fs.writev stay off a WebAssembly.Memory block that grow() freed", async () => {
+it("async fs.readv and fs.writev stay off a WebAssembly.Memory block that grow() freed", async () => {
   using dir = tempDir("fs-vector-wasm", {});
   const fifoPath = join(String(dir), "v.fifo");
   mkfifo(fifoPath);
@@ -7315,7 +7296,7 @@ it("sync fs calls read a Buffer path captured at call time when an option getter
   expect(exitCode).toBe(0);
 });
 
-it.if(isPosix)("realpath reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
+it("realpath reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
   using dir = tempDir("fs-realpath-too-long", {});
 
   // Each relative path is within the per-argument limit and only its absolute
@@ -7420,7 +7401,7 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
 });
 
 describe("fs.close on stdio descriptors", () => {
-  it.skipIf(isWindows)("closeSync(2) actually closes fd 2 and allows redirect", async () => {
+  it("closeSync(2) actually closes fd 2 and allows redirect", async () => {
     using dir = tempDir("fs-close-stdio", {
       "redirect-fixture.mjs": `
         import fs from "node:fs";
@@ -7452,7 +7433,7 @@ describe("fs.close on stdio descriptors", () => {
 
   // On Windows, libuv's fs__close no-ops for fd <= 2 (as does Node), so the
   // descriptor is never really closed and the second close cannot raise EBADF.
-  it.skipIf(isWindows)("closeSync throws EBADF on a double close of fd 2", async () => {
+  it("closeSync throws EBADF on a double close of fd 2", async () => {
     using dir = tempDir("fs-close-stdio-dbl", {
       "double-close-fixture.mjs": `
         import fs from "node:fs";
@@ -7665,7 +7646,7 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
 
   it.each(cases)("%s", async (_name, start) => {
     using dir = tempDir("fs-callback-order", { "file.txt": "hello", "empty": {} });
-    if (!isWindows) symlinkSync(join(String(dir), "file.txt"), join(String(dir), "symlink"));
+    symlinkSync(join(String(dir), "file.txt"), join(String(dir), "symlink"));
     await tickQueueExists();
 
     const { promise, resolve } = Promise.withResolvers<string[]>();
@@ -7871,7 +7852,7 @@ describe("fs.Utf8Stream", () => {
   });
 });
 
-describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows during the read", () => {
+describe("fs.read into a view over a WebAssembly.Memory that grows during the read", () => {
   // The fifo is empty, so the pool thread waits in read(2) until the memory has grown.
   async function run(view: string, env: Record<string, string>, result = "view") {
     using dir = tempDir("fs-read-wasm-grow", {

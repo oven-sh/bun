@@ -1,6 +1,6 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, statSync } from "node:fs";
 import path from "path";
 
@@ -450,7 +450,7 @@ describe.concurrent("Bun REPL", () => {
     });
 
     // Windows path buffers are large enough for this name.
-    test.skipIf(isWindows)(".load with a filename longer than PATH_MAX shows ENAMETOOLONG", async () => {
+    test(".load with a filename longer than PATH_MAX shows ENAMETOOLONG", async () => {
       const long = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";
       const { outputs, stderr, exitCode } = await runRepl([`.load ${long}`, "1 + 1", ".exit"]);
       expect(outputs).toEqual([expect.stringMatching(/^ENAMETOOLONG: /), "2"]);
@@ -1036,7 +1036,7 @@ describe.concurrent("Bun REPL", () => {
 });
 
 // Interactive terminal-based REPL tests. Each test drives its own pty, so they run concurrently.
-describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
+describe.concurrent("Bun REPL (Terminal)", () => {
   test("shows welcome message and prompt", async () => {
     await withTerminalRepl(async ({ allOutput }) => {
       const output = allOutput();
@@ -1833,7 +1833,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
 
 // History file written on REPL exit must be owner-only (0600), since it can
 // contain pasted credentials. See src/runtime/cli/repl.rs History::save.
-describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
+describe.concurrent("REPL history file permissions", () => {
   const secret = 'const dbUrl = "postgres://user:hunter2@db.internal/prod"';
 
   test("persists history readable only by the owner", async () => {

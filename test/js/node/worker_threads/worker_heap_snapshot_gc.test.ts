@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isIntelMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isIntelMacOS } from "harness";
 import { join } from "node:path";
 
 // The getHeapSnapshot() round-trip must never let the worker thread touch
@@ -19,7 +19,7 @@ import { join } from "node:path";
 // stdio path adds per-spawn overhead that a 15x300-snapshot stress exceeds on
 // those builders. The race it guards is platform-agnostic and still covered on
 // Linux and Apple-Silicon macOS.
-test.skipIf(isWindows || isIntelMacOS)(
+test.skipIf(isIntelMacOS)(
   "worker.getHeapSnapshot() does not race the parent VM's Strong Handles list under GC",
   async () => {
     const slow = isDebug || isASAN;

@@ -100,7 +100,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
   // Ctrl-D is EOF only on a POSIX tty; the Windows console has no equivalent
   // key that ends a cooked-mode read.
-  test.skipIf(isWindows)("bun init exits quietly on Ctrl-D at a text prompt", async () => {
+  test("bun init exits quietly on Ctrl-D at a text prompt", async () => {
     await using temp = tempDir("bun-init-ctrl-d", {});
 
     const decoder = new TextDecoder();
@@ -550,31 +550,27 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     180_000,
   );
 
-  test.skipIf(isWindows)(
-    "`bun fmt --check` passes on the generated CLAUDE.md",
-    async () => {
-      await using temp = tempDir("bun-init-claude-md", { "bin/claude": "#!/bin/sh\n" });
-      fs.chmodSync(path.join(temp, "bin/claude"), 0o755);
-      await using init = Bun.spawn({
-        cmd: [bunExe(), "init", "-y", "app"],
-        cwd: temp,
-        stdio: ["ignore", "ignore", "inherit"],
-        env: { ...bunEnv, PATH: `${path.join(temp, "bin")}:${bunEnv.PATH}`, CURSOR_AGENT_RULE_DISABLED: "1" },
-      });
-      expect(await init.exited).toBe(0);
-      expect(fs.readFileSync(path.join(temp, "app/CLAUDE.md"), "utf8")).toStartWith("Default to using Bun");
+  test("`bun fmt --check` passes on the generated CLAUDE.md", async () => {
+    await using temp = tempDir("bun-init-claude-md", { "bin/claude": "#!/bin/sh\n" });
+    fs.chmodSync(path.join(temp, "bin/claude"), 0o755);
+    await using init = Bun.spawn({
+      cmd: [bunExe(), "init", "-y", "app"],
+      cwd: temp,
+      stdio: ["ignore", "ignore", "inherit"],
+      env: { ...bunEnv, PATH: `${path.join(temp, "bin")}:${bunEnv.PATH}`, CURSOR_AGENT_RULE_DISABLED: "1" },
+    });
+    expect(await init.exited).toBe(0);
+    expect(fs.readFileSync(path.join(temp, "app/CLAUDE.md"), "utf8")).toStartWith("Default to using Bun");
 
-      await using format = Bun.spawn({
-        cmd: [bunExe(), "fmt", "--check", "CLAUDE.md"],
-        cwd: path.join(temp, "app"),
-        stdio: ["ignore", "pipe", "pipe"],
-        env: bunEnv,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([format.stdout.text(), format.stderr.text(), format.exited]);
-      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-    },
-    30_000,
-  );
+    await using format = Bun.spawn({
+      cmd: [bunExe(), "fmt", "--check", "CLAUDE.md"],
+      cwd: path.join(temp, "app"),
+      stdio: ["ignore", "pipe", "pipe"],
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([format.stdout.text(), format.stderr.text(), format.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  }, 30_000);
 
   test("nested `bun install` output is inherited", async () => {
     // `bun init` spawns `bun install` via spawn_sync_inherit. The child must

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
@@ -710,7 +710,7 @@ test.each([
       socket.write(restOfFirst + "GET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
       // Winsock can take the whole first response in one send(). Nothing drains then, and the second request is not queued.
       const queued = await secondDispatched.promise;
-      if (!isWindows) expect(queued).toBe(true);
+      expect(queued).toBe(true);
 
       let received = 0;
       let tail = "";

@@ -5,7 +5,7 @@ import url from "node:url";
 
 describe("url.pathToFileURL", () => {
   // TODO: Fix these asserts on Windows.
-  test.skipIf(isWindows)("dangling slashes and percent sign", () => {
+  test("dangling slashes and percent sign", () => {
     {
       const fileURL = url.pathToFileURL("test/").href;
       assert.ok(fileURL.startsWith("file:///"));

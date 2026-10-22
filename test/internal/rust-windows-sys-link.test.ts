@@ -11,7 +11,6 @@
 // zero dependencies, so linking completes in well under a second on a warm tree.
 import { which } from "bun";
 import { expect, test } from "bun:test";
-import { isWindows } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -26,19 +25,16 @@ const workspaceResolvable =
   existsSync(join(repoRoot, "vendor", "rust-argon2", "Cargo.toml")) &&
   existsSync(join(repoRoot, "build", "debug", "codegen", "build_options.rs"));
 
-test.skipIf(isWindows || !cargo || !workspaceResolvable)(
-  "cargo test -p bun_windows_sys links on non-Windows hosts",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [cargo!, "test", "--locked", "-p", "bun_windows_sys", "--no-run", "--quiet"],
-      cwd: repoRoot,
-      env: { ...process.env, CARGO_TERM_COLOR: "never" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+test.skipIf(!cargo || !workspaceResolvable)("cargo test -p bun_windows_sys links on non-Windows hosts", async () => {
+  await using proc = Bun.spawn({
+    cmd: [cargo!, "test", "--locked", "-p", "bun_windows_sys", "--no-run", "--quiet"],
+    cwd: repoRoot,
+    env: { ...process.env, CARGO_TERM_COLOR: "never" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("unable to find library");
-    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-  },
-);
+  expect(stderr).not.toContain("unable to find library");
+  expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+});

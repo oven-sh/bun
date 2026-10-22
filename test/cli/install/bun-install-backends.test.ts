@@ -161,7 +161,7 @@ function projectWithLocalPackage(name: string) {
   return { dir, projectDir: String(dir), packageDir: join(String(dir), "pkg") };
 }
 
-describe.skipIf(isWindows)("install backends on POSIX", () => {
+describe("install backends on POSIX", () => {
   // The copyfile backend only materializes files (parents are created on
   // demand), the others also create the package's directories.
   const directoryBackends = ["hardlink", "symlink", ...(isMacOS ? ["clonefile_each_dir"] : [])];

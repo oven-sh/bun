@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isRoot, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isDebug, isRoot, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { chmodSync, existsSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -1105,7 +1105,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
   });
 
   // ConPTY rewrites the process's output.
-  test.skipIf(isWindows)("NO_COLOR on a terminal: the plain patch, with control characters drawn", async () => {
+  test("NO_COLOR on a terminal: the plain patch, with control characters drawn", async () => {
     const added = `exports.b = 2; //${ESC}[2K${ESC}[1A ${CSI_C1}31m ${RLO}\x7f\b `;
     using dir = tempDir("pm-diff-plain-tty", {
       "a/index.js": "exports.a = 1;\n",
@@ -1488,47 +1488,44 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(process.platform === "win32")(
-    "mode changes: newly executable files are shown and called out",
-    async () => {
-      using dir = tempDir("pm-diff-mode", {
-        "a/run.sh": "#!/bin/sh\necho hi\n",
-        "b/run.sh": "#!/bin/sh\necho hi\n",
-        "b/install.js": "console.log(1)\n",
+  test("mode changes: newly executable files are shown and called out", async () => {
+    using dir = tempDir("pm-diff-mode", {
+      "a/run.sh": "#!/bin/sh\necho hi\n",
+      "b/run.sh": "#!/bin/sh\necho hi\n",
+      "b/install.js": "console.log(1)\n",
+    });
+    chmodSync(join(String(dir), "a/run.sh"), 0o644);
+    chmodSync(join(String(dir), "b/run.sh"), 0o755);
+    chmodSync(join(String(dir), "b/install.js"), 0o755);
+    const run = async (env: Record<string, string | undefined>) => {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), "pm", "diff", "./a", "./b"],
+        cwd: String(dir),
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      chmodSync(join(String(dir), "a/run.sh"), 0o644);
-      chmodSync(join(String(dir), "b/run.sh"), 0o755);
-      chmodSync(join(String(dir), "b/install.js"), 0o755);
-      const run = async (env: Record<string, string | undefined>) => {
-        await using p = Bun.spawn({
-          cmd: [bunExe(), "pm", "diff", "./a", "./b"],
-          cwd: String(dir),
-          env: { ...bunEnv, ...env },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, , exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-        return { stdout, exitCode };
-      };
-      const tty = await run({ NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120" });
-      const text = tty.stdout.replace(/\x1b\[[0-9;]*[mK]/g, "");
-      expect(text).toMatch(/\nrun\.sh ─+ mode 644 → 755\n/);
-      expect(text).toMatch(/\ninstall\.js ─+ executable 755 new \+1\n/);
-      expect(text).toContain("▲ now executable: run.sh (644 → 755)\n");
-      expect(text).toContain("▲ new executable file install.js (755)\n");
-      expect(tty.exitCode).toBe(0);
-      // Patch mode spells it the way git does.
-      const plain = await run({ NO_COLOR: "1" });
-      expect(plain.stdout).toContain("diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n");
-      expect(plain.stdout).toContain("diff --git a/install.js b/install.js\nnew file mode 100755\n");
-      expect(plain.exitCode).toBe(0);
-    },
-  );
+      const [stdout, , exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      return { stdout, exitCode };
+    };
+    const tty = await run({ NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120" });
+    const text = tty.stdout.replace(/\x1b\[[0-9;]*[mK]/g, "");
+    expect(text).toMatch(/\nrun\.sh ─+ mode 644 → 755\n/);
+    expect(text).toMatch(/\ninstall\.js ─+ executable 755 new \+1\n/);
+    expect(text).toContain("▲ now executable: run.sh (644 → 755)\n");
+    expect(text).toContain("▲ new executable file install.js (755)\n");
+    expect(tty.exitCode).toBe(0);
+    // Patch mode spells it the way git does.
+    const plain = await run({ NO_COLOR: "1" });
+    expect(plain.stdout).toContain("diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n");
+    expect(plain.stdout).toContain("diff --git a/install.js b/install.js\nnew file mode 100755\n");
+    expect(plain.exitCode).toBe(0);
+  });
 
   test("the piped patch applies with git: empty files, permission changes, file names that need quotes", async () => {
     const names = ["plain.txt", "with space.txt", "dir with space/x.txt", "é.txt"];
     // This isn't valid in a Windows file name.
-    if (!isWindows) names.push("t\tab.txt", 'q"uote.txt', "back\\slash.txt", "new\nline.txt");
+    names.push("t\tab.txt", 'q"uote.txt', "back\\slash.txt", "new\nline.txt");
     const a: Record<string, string> = {
       "grow.txt": "",
       "shrink.txt": "one\n",
@@ -1611,45 +1608,42 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     );
   });
 
-  test.skipIf(process.platform === "win32")(
-    "folders: symlinked files are read through, symlinked folders skipped, unreadable files are an error",
-    async () => {
-      using dir = tempDir("pm-diff-links", {
-        "a/index.js": "module.exports = 1;\n",
-        "b/real/index.js": "module.exports = 2;\n",
-        "c/index.js": "module.exports = 3;\n",
-        "c/secret.js": "nope\n",
+  test("folders: symlinked files are read through, symlinked folders skipped, unreadable files are an error", async () => {
+    using dir = tempDir("pm-diff-links", {
+      "a/index.js": "module.exports = 1;\n",
+      "b/real/index.js": "module.exports = 2;\n",
+      "c/index.js": "module.exports = 3;\n",
+      "c/secret.js": "nope\n",
+    });
+    symlinkSync("real/index.js", join(String(dir), "b/index.js"));
+    symlinkSync("..", join(String(dir), "b/loop"));
+    symlinkSync("does-not-exist.js", join(String(dir), "b/dangling.js"));
+    const run = async (args: string[]) => {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), "pm", "diff", ...args, "--name-only"],
+        cwd: String(dir),
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      symlinkSync("real/index.js", join(String(dir), "b/index.js"));
-      symlinkSync("..", join(String(dir), "b/loop"));
-      symlinkSync("does-not-exist.js", join(String(dir), "b/dangling.js"));
-      const run = async (args: string[]) => {
-        await using p = Bun.spawn({
-          cmd: [bunExe(), "pm", "diff", ...args, "--name-only"],
-          cwd: String(dir),
-          env: { ...bunEnv, NO_COLOR: "1" },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-        return { stdout, stderr, exitCode };
-      };
-      const linked = await run(["./a", "./b"]);
-      expect(linked.stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js", "A real/index.js"]);
-      expect(linked.exitCode).toBe(0);
-      chmodSync(join(String(dir), "c/secret.js"), 0o000);
-      try {
-        const denied = await run(["./a", "./c"]);
-        // root reads anything; everyone else must get a loud failure, not a diff with a hole in it.
-        if (!isRoot) {
-          expect(denied.stderr).toContain("secret.js");
-          expect(denied.exitCode).toBe(1);
-        }
-      } finally {
-        chmodSync(join(String(dir), "c/secret.js"), 0o644);
+      const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const linked = await run(["./a", "./b"]);
+    expect(linked.stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js", "A real/index.js"]);
+    expect(linked.exitCode).toBe(0);
+    chmodSync(join(String(dir), "c/secret.js"), 0o000);
+    try {
+      const denied = await run(["./a", "./c"]);
+      // root reads anything; everyone else must get a loud failure, not a diff with a hole in it.
+      if (!isRoot) {
+        expect(denied.stderr).toContain("secret.js");
+        expect(denied.exitCode).toBe(1);
       }
-    },
-  );
+    } finally {
+      chmodSync(join(String(dir), "c/secret.js"), 0o644);
+    }
+  });
 
   test("tarball shapes: .tar, a root folder not called package/, ~/ paths, and `./x.tar 1.0.1`", async () => {
     using dir = tempDir("pm-diff-tars", {});

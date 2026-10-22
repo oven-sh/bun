@@ -25,6 +25,6 @@ test.skipIf(!isWindows)("translateUVErrorToE falls back to UNKNOWN for unmapped 
   expect(translateUVErrorToE(-2147483648)).toBe("EUNKNOWN"); // INT_MIN: wrapping negation, no overflow
 });
 
-test.skipIf(isWindows)("translateUVErrorToE is a no-op off Windows", () => {
+test("translateUVErrorToE is a no-op off Windows", () => {
   expect(translateUVErrorToE(-4058)).toBeUndefined();
 });

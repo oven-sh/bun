@@ -23,7 +23,7 @@ const cc = Bun.which("clang") || Bun.which("gcc") || Bun.which("cc");
 // Skip on Windows for now — the repro uses clang/gcc to build a shared lib.
 // The fix is platform-independent (same stub in Rust ran for .dll too) but
 // building a .dll on Windows CI would need a different toolchain wrapper.
-test.skipIf(isWindows || !cc)(
+test.skipIf(!cc)(
   'bun:ffi dlopen() works on an embedded `with { type: "file" }` shared library after `bun build --compile`',
   async () => {
     // `bun build --compile` reads + rewrites the entire executable (~100 MB

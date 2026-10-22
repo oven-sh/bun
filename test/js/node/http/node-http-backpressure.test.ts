@@ -953,28 +953,25 @@ describe("backpressure", () => {
     // keepAliveTimeout (5 seconds by default) to fetch the body. Not on
     // Windows: a body that the kernel took whole is a finished response, so
     // the timer legitimately starts before the client reads.
-    (process.platform === "win32" ? it.skip : it)(
-      "the keep-alive timer starts once the body is out, not while a slow reader still fetches it",
-      async () => {
-        const handled = Promise.withResolvers<void>();
-        await using server = createServer(false, (req, res) => {
-          writeBody(res);
-          handled.resolve();
-        });
-        server.keepAliveTimeout = 1;
-        (server as http.Server & { keepAliveTimeoutBuffer: number }).keepAliveTimeoutBuffer = 0;
-        await once(server.listen(0, "127.0.0.1"), "listening");
-        const port = (server.address() as AddressInfo).port;
-        using client = pausedClient(port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-        await Promise.race([handled.promise, client.done]);
-        await ping(port);
-        client.resume();
-        // The server closes the idle connection right after the response.
-        const { bytes, ended } = await client.done;
-        expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
-        expect(ended).toBe(true);
-      },
-    );
+    it("the keep-alive timer starts once the body is out, not while a slow reader still fetches it", async () => {
+      const handled = Promise.withResolvers<void>();
+      await using server = createServer(false, (req, res) => {
+        writeBody(res);
+        handled.resolve();
+      });
+      server.keepAliveTimeout = 1;
+      (server as http.Server & { keepAliveTimeoutBuffer: number }).keepAliveTimeoutBuffer = 0;
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+      using client = pausedClient(port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await Promise.race([handled.promise, client.done]);
+      await ping(port);
+      client.resume();
+      // The server closes the idle connection right after the response.
+      const { bytes, ended } = await client.done;
+      expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
+      expect(ended).toBe(true);
+    });
 
     it("the unwritten part of the body keeps the process alive", async () => {
       // The child has nothing but the in-flight body left to do once its

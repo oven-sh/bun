@@ -201,7 +201,7 @@ test.concurrent.skipIf(!isSupported)(
 // Linux this is covered by Bun setting linux_pdeathsig on every spawn when
 // no-orphans mode is enabled (prctl in the vfork child before exec). On macOS
 // it's covered by the libproc descendant walk in the exit handler.
-test.concurrent.skipIf(!isPosix)(
+test.concurrent(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: non-Bun grandchildren are reaped when bun dies with its parent",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun.js");
@@ -219,7 +219,7 @@ test.concurrent.skipIf(!isPosix)(
 // Same as above but the grandchild is spawned with uid/gid. The credential
 // change clears the pdeathsig the spawn armed (prctl(2)), so this proves it
 // gets re-armed after setgid/setuid. Needs root to setuid.
-test.concurrent.skipIf(!isPosix || !isRoot)(
+test.concurrent.skipIf(!isRoot)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with uid/gid is reaped",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun-uid.js");
@@ -266,7 +266,7 @@ describe.concurrent.each([
   { via: "--no-orphans", argv: ["--no-orphans"], bunfig: false, env: {} },
   { via: "bunfig [run] noOrphans = true", argv: [], bunfig: true, env: {} },
 ])("clean exit reaps descendants", ({ via, argv, bunfig, env: extraEnv }) => {
-  test.concurrent.skipIf(!isPosix)(via, async () => {
+  test.concurrent(via, async () => {
     using dir = tempDir("no-orphans-clean-exit", {
       ...(bunfig && { "bunfig.toml": "[run]\nnoOrphans = true\n" }),
       "grandchild.js": `process.stdout.write("r"); setInterval(()=>{}, 1000);`,
@@ -331,7 +331,7 @@ describe.concurrent.each([
     },
   },
 ])("bun run --no-orphans $label: supervisor SIGKILLed", ({ runArgs, files }) => {
-  test.concurrent.skipIf(!isPosix)("bun run and the script exit", async () => {
+  test.concurrent("bun run and the script exit", async () => {
     using dir = tempDir("no-orphans-run", files as DirectoryTree);
     const env: NodeJS.Dict<string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
@@ -387,7 +387,7 @@ describe.concurrent.each([
 // Linux: PR_SET_CHILD_SUBREAPER claims the orphan, procfs walk finds it.
 // macOS: NoOrphansTracker's p_puniqueid spawn-graph finds it.
 const hasPerl = Bun.which("perl") != null;
-test.concurrent.skipIf(!isPosix || !hasPerl)(
+test.concurrent.skipIf(!hasPerl)(
   "bun run --no-orphans: perl setsid+double-fork daemon (no Bun in chain) is reaped",
   async () => {
     using dir = tempDir("no-orphans-perl", {
@@ -582,7 +582,7 @@ test.concurrent.skipIf(!isLinux || !hasPerl)(
 // the grandchild on its own clean exit. Uses a non-Bun grandchild so the test
 // doesn't depend on env-var inheritance — proves the descendant walk runs from
 // the `bun run` process itself.
-test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reaps descendants", async () => {
+test.concurrent("bun run --no-orphans <script>: clean exit reaps descendants", async () => {
   using dir = tempDir("no-orphans-run", {
     "package.json": JSON.stringify({
       name: "no-orphans-run",
@@ -793,7 +793,7 @@ test.concurrent.skipIf(!isLinux)(
 //      itself stopped.
 //   3. After perl `fg`s it (tcsetpgrp + SIGCONT), the script's SIGCONT
 //      handler fires — `onChildStopped` SIGCONT'd the whole script pgroup.
-test.concurrent.skipIf(!isPosix || !hasPerl)(
+test.concurrent.skipIf(!hasPerl)(
   "bun run --no-orphans on a TTY: Ctrl-Z stop observed by outer shell's waitpid(WUNTRACED), fg resumes script",
   async () => {
     // perl in the dev script so `getpgrp()` is trivially available; `$SIG{CONT}`
@@ -920,7 +920,7 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 // Same perl-shell/pty rig as above, but perl never hands bun the foreground
 // (the `&` shape). After the script announces READY, perl re-reads
 // `tcgetpgrp(0)` and reports whether it's still perl's own pgroup.
-test.concurrent.skipIf(!isPosix || !hasPerl)(
+test.concurrent.skipIf(!hasPerl)(
   "bun run --no-orphans backgrounded on a TTY does not steal the foreground pgroup",
   async () => {
     using dir = tempDir("no-orphans-tty-bg", {

@@ -1,6 +1,6 @@
 // Tests the `ws` client's constructor and opening handshake against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir, tls } from "harness";
+import { tempDir, tls } from "harness";
 import crypto from "node:crypto";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
@@ -1068,7 +1068,7 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
     });
   });
 
-  describe.skipIf(isWindows)("ws+unix:", () => {
+  describe("ws+unix:", () => {
     test.each([
       { label: "socket:path", suffix: ":/foo?bar=bar", requestLine: "GET /foo?bar=bar HTTP/1.1" },
       { label: "socket path only", suffix: "", requestLine: "GET / HTTP/1.1" },

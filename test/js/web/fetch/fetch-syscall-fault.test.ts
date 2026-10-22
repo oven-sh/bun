@@ -1,8 +1,8 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs } from "harness";
 
-const skip = !fault.available() || isWindows;
+const skip = !fault.available();
 
 afterEach(() => fault.clear());
 

@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun } from "harness";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -391,24 +391,20 @@ describe("symbol-keyed methods", () => {
 
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {
   // TODO(@190n) #17901 did not fix this for Windows
-  it.todoIf(isWindows && mode == "with")(
-    "has reasonable performance when nested",
-    async () => {
-      const process = Bun.spawn({
-        cmd: [bunExe(), path.join(__dirname, "setImmediate-fixture.ts"), mode + "-interval"],
-        stdout: "pipe",
-        env: bunEnv,
-      });
+  it("has reasonable performance when nested", async () => {
+    const process = Bun.spawn({
+      cmd: [bunExe(), path.join(__dirname, "setImmediate-fixture.ts"), mode + "-interval"],
+      stdout: "pipe",
+      env: bunEnv,
+    });
 
-      await process.exited;
-      const out = await process.stdout.text();
-      expect(process.exitCode).toBe(0);
-      // if this fails, there will be a nicer error than printing out the entire string
-      expect((out.match(/\n/g) ?? []).length).toBe(5000);
-      expect(out).toBe("callback\n".repeat(5000));
-    },
-    5000,
-  );
+    await process.exited;
+    const out = await process.stdout.text();
+    expect(process.exitCode).toBe(0);
+    // if this fails, there will be a nicer error than printing out the entire string
+    expect((out.match(/\n/g) ?? []).length).toBe(5000);
+    expect(out).toBe("callback\n".repeat(5000));
+  }, 5000);
 });
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {

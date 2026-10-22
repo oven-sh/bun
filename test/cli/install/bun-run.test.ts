@@ -127,7 +127,7 @@ describe.concurrent("bun run", () => {
           expect(exitCode).toBe(1);
         });
 
-        it.skipIf(isWindows)("exit code message works above 128", async () => {
+        it("exit code message works above 128", async () => {
           using dir = tempDir("bun-run-exitcode", {});
           await using proc = Bun.spawn({
             cmd: [bunExe(), "run", "bash", "-c", "ulimit -c 0; exit 200"],
@@ -145,7 +145,7 @@ describe.concurrent("bun run", () => {
 
         describe.each(["--silent", "not silent"])("%s", silentOption => {
           const silent = silentOption === "--silent";
-          it.skipIf(isWindows)("exit signal works", async () => {
+          it("exit signal works", async () => {
             using dir = tempDir("bun-run-signal", {});
             {
               await using proc = Bun.spawn({
@@ -379,7 +379,7 @@ describe.concurrent("bun run", () => {
 
         expect(stderr).toContain(`Could not change directory to "${cwdArg}"`);
         // Windows leaves the verdict on a path this long to SetCurrentDirectoryW.
-        if (!isWindows) expect(stderr).toContain("ENAMETOOLONG");
+        expect(stderr).toContain("ENAMETOOLONG");
         expect(stdout).toBe("");
         expect(proc.signalCode).toBeNull();
         expect(exitCode).toBe(1);
@@ -772,7 +772,7 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    it.skipIf(isWindows)("doesn't change an `npm run` that's only quoted text", async () => {
+    it("doesn't change an `npm run` that's only quoted text", async () => {
       const { dir, stdout, exitCode } = await runStart("echo 'step: npm run build -w app' && echo 'ok; done'");
       using _ = dir;
       expect(stdout).toContain("-w app");
@@ -1265,7 +1265,7 @@ describe.concurrent("bun run", () => {
   // `<BUN_NODE_DIR>/bun` — exactly the shim it was about to rewrite. The symlink
   // becomes self-referencing and `/usr/bin/env node` fails with ELOOP
   // ("Too many levels of symbolic links").
-  it.skipIf(isWindows)("nested --bun does not create a self-referencing node/bun shim", async () => {
+  it("nested --bun does not create a self-referencing node/bun shim", async () => {
     // Reproduce the reporter's exact invocation: `bun run --bun bun run --bun <binScript>`
     // where:
     // - the literal "bun" must be resolved via PATH so the inner process's
@@ -1556,7 +1556,7 @@ describe.concurrent("bun run", () => {
   // https://github.com/oven-sh/bun/issues/7504: `/tmp/bun-node-<sha>` was one directory for
   // all users. The first user to run `--bun` owned it (mode 0700), and every other user's
   // `--bun` silently got the real `node`.
-  it.skipIf(isWindows)("--bun creates a per-user node shim directory", async () => {
+  it("--bun creates a per-user node shim directory", async () => {
     using dir = tempDir("bun-run-node-shim-uid", {
       "package.json": JSON.stringify({
         name: "shim-uid",

@@ -513,10 +513,9 @@ for (const linker of ["hoisted", "isolated"] as const) {
 
       // The global bin directory can be a folder like ~/.local/bin, where a dead link may belong to another tool.
       const foreign = isWindows ? [] : ["foreign-absolute", "foreign-relative"];
-      if (!isWindows) {
-        symlinkSync(join(String(dir), "gone", "cli.js"), join(globalBin, "foreign-absolute"));
-        symlinkSync(join("..", "gone", "cli.js"), join(globalBin, "foreign-relative"));
-      }
+
+      symlinkSync(join(String(dir), "gone", "cli.js"), join(globalBin, "foreign-absolute"));
+      symlinkSync(join("..", "gone", "cli.js"), join(globalBin, "foreign-relative"));
 
       const { stderr, exitCode } = await runGlobal("remove", "what-bin");
       expect(stderr).not.toContain("error:");
@@ -725,7 +724,7 @@ it.concurrent("bun r is an alias of bun remove", async () => {
 });
 
 // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-it.serial.skipIf(isWindows)("bun remove that cannot save bun.lock leaves node_modules as it was", async () => {
+it.serial("bun remove that cannot save bun.lock leaves node_modules as it was", async () => {
   const pkg = JSON.stringify({ name: "root", dependencies: { foo: "file:./foo", bar: "file:./bar" } });
   using dir = tempDir("bun-remove-lockfile-not-saved", { ...local("foo"), ...local("bar"), "package.json": pkg });
   expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });

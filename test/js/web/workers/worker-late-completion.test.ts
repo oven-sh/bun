@@ -312,7 +312,7 @@ test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a
 // A `Bun.file()` / `Bun.stdin` read of a pipe or tty that has no data yet
 // parks on the io loop instead of blocking a pool thread, so terminate() can
 // and does cancel it: the worker goes away promptly and the read never settles.
-describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", () => {
+describe("terminate() cancels a read parked on the io loop", () => {
   test.concurrent.each([
     ["Bun.stdin.text()", [`Bun.stdin.text()`]],
     ["Bun.file(fifo).text()", [`Bun.file(workerData).text()`]],
@@ -371,7 +371,7 @@ describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", (
 // a FIFO nobody has written to yet (node:fs reads that way), so its duration is
 // entirely the test's to decide — no timing thresholds. Debug builds also name
 // what the wait is waiting for.
-describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled", () => {
+describe("terminate() waits for work that cannot be cancelled", () => {
   test("a pool thread parked in read() holds the worker's teardown until it returns", async () => {
     using dir = tempDir("worker-terminate-waits", {});
     const fifo = path.join(String(dir), "fifo");
@@ -459,7 +459,7 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
 
 // The upload has a ref on the fetch. Destroying the heap drops it for a JS-pumped body, but the stop phase has to
 // drop it for a body streamed from a native source. Otherwise LeakSanitizer reports the leaked request.
-describe.skipIf(!isASAN || isWindows)("terminating a worker while a request body is still uploading", () => {
+describe.skipIf(!isASAN)("terminating a worker while a request body is still uploading", () => {
   const host = (body: string, fifo: string) => `
     const { Worker } = require("node:worker_threads");
     const fs = require("node:fs");

@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
-import { isWindows } from "harness";
 import net from "node:net";
 
 // https://github.com/oven-sh/bun/issues/39846
 // Windows cannot recover the tail: AFD discards the receive queue on a reset, and node loses it there too.
-test.skipIf(isWindows)("fetch: response tail received before a reset is delivered, not discarded", async () => {
+test("fetch: response tail received before a reset is delivered, not discarded", async () => {
   for (let i = 0; i < 2; i++) {
     let conn: net.Socket | undefined;
     const server = net.createServer(c => {

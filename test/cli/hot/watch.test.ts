@@ -1,10 +1,10 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, forEachLine, tempDir } from "harness";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-describe.todoIf(isBroken && isWindows)("--watch works", async () => {
+describe("--watch works", async () => {
   for (const watchedFile of ["entry.js", "tmp.js"]) {
     test(`with ${watchedFile}`, async () => {
       await using tmpdir_ = tempDir("watch-fixture", {

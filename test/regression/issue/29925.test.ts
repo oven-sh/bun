@@ -16,11 +16,11 @@
 // `redis-server` so the gate runs it without docker.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isWindows, randomPort } from "harness";
+import { bunEnv, randomPort } from "harness";
 
 const REDIS_SERVER = Bun.which("redis-server");
 const REDIS_CLI = Bun.which("redis-cli");
-const redisAvailable = !isWindows && !!REDIS_SERVER && !!REDIS_CLI;
+const redisAvailable = !!REDIS_SERVER && !!REDIS_CLI;
 
 async function spawnRedis(): Promise<{ port: number; stop: () => void }> {
   const port = randomPort();

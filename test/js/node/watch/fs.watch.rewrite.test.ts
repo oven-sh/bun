@@ -7,7 +7,7 @@
 // and dedupes by (realpath, recursive). These tests pin behaviour the old design
 // couldn't provide.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isFreeBSD, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isFreeBSD, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -172,7 +172,7 @@ test.skipIf(isFreeBSD)("closing an inner watch does not break an overlapping rec
 // must work even on a completely cold VM that never touched the transpiler. Run a
 // child process that does nothing but fs.watch to prove there's no hidden ordering
 // dependency on the module-graph watcher.
-test.skipIf(isWindows)("fs.watch works without any module-graph watcher state", async () => {
+test("fs.watch works without any module-graph watcher state", async () => {
   using dir = tempDir("fs-watch-cold-vm", {
     "watched.txt": "init",
     "main.js": `

@@ -5,7 +5,7 @@
 // null (or garbage, depending on build mode) and the DevServer is never told that
 // plugin loading finished, so the request it deferred to `next_bundle` waits forever.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -444,7 +444,7 @@ test.concurrent("releases a framework request that the client aborts while it wa
 });
 
 // Windows refuses to rename over a file that the watcher has open.
-test.skipIf(isWindows)("responds to a framework request queued behind the reload that bundles its page", async () => {
+test("responds to a framework request queued behind the reload that bundles its page", async () => {
   using dir = tempDir("serve-plugins-devserver-queued-framework", {
     "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
     "plugin.ts": `

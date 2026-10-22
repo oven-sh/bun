@@ -20,23 +20,21 @@
 // the program still runs to completion with correct output.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // collectContinuously is very slow on Windows in CI and the code path is
 // identical across platforms; skip there (same rationale as issue 29519).
-test.skipIf(isWindows)(
-  "JSCommonJSModule m_children mutation under concurrent GC",
-  async () => {
-    const files: Record<string, string> = {
-      "c.cjs": `module.exports = 1;\n`,
-      "p.cjs": `
+test("JSCommonJSModule m_children mutation under concurrent GC", async () => {
+  const files: Record<string, string> = {
+    "c.cjs": `module.exports = 1;\n`,
+    "p.cjs": `
         // ~12 reallocations of this module's m_children backing buffer.
         for (let i = 0; i < 4000; i++) require("./c.cjs");
         // setterChildren: locks, clears the native Vector, stores the JS value.
         module.children = module.children;
         module.exports = module.children.length;
       `,
-      "entry.cjs": `
+    "entry.cjs": `
         require("./c.cjs");
         const pPath = require.resolve("./p.cjs");
         let n = 0;
@@ -49,30 +47,28 @@ test.skipIf(isWindows)(
         if (module.children.length < 2) throw new Error("children missing");
         console.log("ok " + n);
       `,
-    };
+  };
 
-    using dir = tempDir("cjs-children-concurrent-gc", files);
+  using dir = tempDir("cjs-children-concurrent-gc", files);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "entry.cjs"],
-      env: {
-        ...bunEnv,
-        BUN_JSC_collectContinuously: "1",
-      },
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.cjs"],
+    env: {
+      ...bunEnv,
+      BUN_JSC_collectContinuously: "1",
+    },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Assert output before exit code so a failure shows the actual crash
-    // text. Debug/ASAN builds print a harmless "WARNING: ASAN interferes
-    // with JSC signal handlers" banner on stderr, so only surface stderr
-    // when the process failed.
-    expect(stdout.trim()).toBe("ok 1");
-    if (exitCode !== 0) expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+  // Assert output before exit code so a failure shows the actual crash
+  // text. Debug/ASAN builds print a harmless "WARNING: ASAN interferes
+  // with JSC signal handlers" banner on stderr, so only surface stderr
+  // when the process failed.
+  expect(stdout.trim()).toBe("ok 1");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 60_000);

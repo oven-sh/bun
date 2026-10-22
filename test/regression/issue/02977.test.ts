@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 // https://github.com/oven-sh/bun/issues/2977
-test.if(isPosix)("bun completions handles BrokenPipe gracefully", async () => {
+test("bun completions handles BrokenPipe gracefully", async () => {
   // Simulate piping to a command that closes stdin immediately (like `true`)
   // This tests that bun completions doesn't crash with BrokenPipe error
   await using proc = Bun.spawn({

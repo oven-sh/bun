@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // Run `sh -c <cmd>` inside a fresh PTY session and return the child's output
@@ -30,7 +30,7 @@ async function runInPty(shellCmd: string, cwd: string): Promise<{ lines: string[
 }
 
 // Skip on Windows as it doesn't have /dev/tty
-test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive session", async () => {
+test("can reopen /dev/tty after stdin EOF for interactive session", async () => {
   // This test ensures that Bun can reopen /dev/tty after stdin reaches EOF,
   // which is needed for tools like Claude Code that read piped input then
   // switch to interactive mode.
@@ -94,7 +94,7 @@ test.skipIf(isWindows)("can reopen /dev/tty after stdin EOF for interactive sess
 });
 
 // Skip on Windows as it doesn't have /dev/tty
-test.skipIf(isWindows)("TTY ReadStream should not set position for character devices", async () => {
+test("TTY ReadStream should not set position for character devices", async () => {
   // This test ensures that when creating a ReadStream with an fd (like for TTY),
   // the position remains undefined so that fs.read uses read() syscall instead
   // of pread() which would fail with ESPIPE on character devices.

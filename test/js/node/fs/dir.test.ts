@@ -186,7 +186,7 @@ describe("opendirSync string encoding shorthand", () => {
   // On Windows the native readdir always emits UTF-8 names (a pre-existing
   // gap: fs.readdirSync ignores the encoding option there too), so the
   // byte-reinterpretation is only observable on POSIX.
-  it.skipIf(process.platform === "win32")("applies the encoding to entry names", () => {
+  it("applies the encoding to entry names", () => {
     const dirname = path.join(os.tmpdir(), "opendir-enc-" + String(Math.random() * 100).substring(0, 6));
     fs.mkdirSync(dirname);
     // latin1 makes the shorthand observable: the utf8 bytes of the name are

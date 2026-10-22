@@ -1,6 +1,6 @@
 // EventEmitter and EventTarget behavior of a `ws` client, tested against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { errorMonitor, EventEmitter, on, once } from "node:events";
 import net from "node:net";
@@ -816,7 +816,7 @@ describe.each(implementations)("ws client events ($name)", ({ ws: implementation
       scriptTimeout,
     );
 
-    test.concurrent.skipIf(isWindows)(
+    test.concurrent(
       "a unix socket that doesn't exist",
       async () => {
         using dir = tempDir("ws-events", {});

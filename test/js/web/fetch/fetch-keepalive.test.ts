@@ -638,7 +638,7 @@ const earlyReplyCases: [
   ],
 ];
 for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
-  test.concurrent.skipIf(isWindows && !onWindows)(`a connection answered early (${label}) is not pooled`, async () => {
+  test.concurrent(`a connection answered early (${label}) is not pooled`, async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -836,7 +836,7 @@ test.concurrent.each(
   expect({ result, exitCode }).toEqual({ result: { misattributed: [] }, exitCode: 0 });
 });
 
-test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connection", async () => {
+test("a full keep-alive pool evicts the longest-idle connection", async () => {
   function makeServer() {
     let connections = 0;
     const srv = createServer(sock => {

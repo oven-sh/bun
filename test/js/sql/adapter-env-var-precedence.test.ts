@@ -1,6 +1,6 @@
 import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { tempDir } from "harness";
 
 declare module "bun" {
   namespace SQL {
@@ -884,7 +884,7 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.port).toBe(3306);
     });
 
-    test.skipIf(isWindows)("postgres URL with a host uses the pathname as the database name, not a socket path", () => {
+    test("postgres URL with a host uses the pathname as the database name, not a socket path", () => {
       using dir = tempDir("sql-url-pathname-pg", { placeholder: "" });
       const options = new SQL(`postgres://user:pass@dbhost:5432${dir}`);
       expect(options.options.adapter).toBe("postgres");
@@ -894,7 +894,7 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.path).toBeUndefined();
     });
 
-    test.skipIf(isWindows)("mysql URL with a host uses the pathname as the database name, not a socket path", () => {
+    test("mysql URL with a host uses the pathname as the database name, not a socket path", () => {
       using dir = tempDir("sql-url-pathname-mysql", { placeholder: "" });
       const options = new SQL(`mysql://user:pass@dbhost:3306${dir}`);
       expect(options.options.adapter).toBe("mysql");
@@ -1534,17 +1534,14 @@ describe("SQL adapter environment variable precedence", () => {
       });
     });
 
-    test.skipIf(isWindows).each(adapters)(
-      "%s: the pathname of any other URL is the database, whatever is on the disk",
-      adapter => {
-        using dir = tempDir("sql-url-pathname", { placeholder: "" });
-        const { options } = new SQL(`${adapter}://${dir}`);
-        expect(options).toMatchObject({ adapter, hostname: "localhost", database: String(dir).slice(1) });
-        expect(options.path).toBeUndefined();
-      },
-    );
+    test.each(adapters)("%s: the pathname of any other URL is the database, whatever is on the disk", adapter => {
+      using dir = tempDir("sql-url-pathname", { placeholder: "" });
+      const { options } = new SQL(`${adapter}://${dir}`);
+      expect(options).toMatchObject({ adapter, hostname: "localhost", database: String(dir).slice(1) });
+      expect(options.path).toBeUndefined();
+    });
 
-    test.skipIf(isWindows)("postgres: a directory gets the name of the socket file, with the resolved port", () => {
+    test("postgres: a directory gets the name of the socket file, with the resolved port", () => {
       using dir = tempDir("sql-pg-socket-dir", { "custom.sock": "" });
       expect(new SQL({ path: String(dir) }).options.path).toBe(`${dir}/.s.PGSQL.5432`);
       expect(new SQL({ path: String(dir), port: 5433 }).options.path).toBe(`${dir}/.s.PGSQL.5433`);

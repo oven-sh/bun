@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
@@ -16,7 +16,7 @@ const all_symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 const symbols_to_test = isASAN ? all_symbols_to_test.filter((_, i) => i % 6 === 0) : all_symbols_to_test;
 
 // We use libuv on Windows
-describe.if(!isWindows)("uv stubs", () => {
+describe("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";

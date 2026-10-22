@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "path";
 
 test("dev server html route: non-GET/HEAD requests complete without hanging", async () => {
@@ -49,7 +49,7 @@ test("dev server html route: non-GET/HEAD requests complete without hanging", as
 // the now-exiting event loop never ran. The html_bundle::Route.server
 // back-pointer makes the orphaned Box a pointer cycle, so LSan reports every
 // interior allocation as an indirect leak. Only observable via LeakSanitizer.
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "stopped Bun.serve with a static route is freed at VM teardown",
   async () => {
     await using dir = tempDir("serve-static-route-teardown-leak", {
@@ -101,7 +101,7 @@ test.skipIf(!isASAN || isWindows)(
 // loop and orphan the socket, so the synchronous deinit path above is gated
 // on TERMINATED (set only by an abrupt stop or an app.close() that already
 // drained the group).
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "gracefully-stopped Bun.serve does not orphan a keep-alive socket at VM teardown",
   async () => {
     await using proc = Bun.spawn({

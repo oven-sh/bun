@@ -40,15 +40,12 @@ it("process", () => {
 
   // process.title defaults to argv[0] as invoked, matching Node
   // (uv_get_process_title semantics), so it is the executable path here.
-  if (!isNode && process.platform !== "win32" && typeof process.title !== "string")
-    throw new Error("process.title is not a string");
-  if (!isNode && process.platform !== "win32" && process.title.length === 0) throw new Error("process.title is empty");
+  if (!isNode && typeof process.title !== "string") throw new Error("process.title is not a string");
+  if (!isNode && process.title.length === 0) throw new Error("process.title is empty");
 
-  if (process.platform !== "win32" && typeof process.env.USER !== "string")
-    throw new Error("process.env is not an object");
+  if (typeof process.env.USER !== "string") throw new Error("process.env is not an object");
 
-  if (process.platform !== "win32" && process.env.USER.length === 0)
-    throw new Error("process.env is missing a USER property");
+  if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
 
   if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32")
     throw new Error("process.platform is invalid");
@@ -270,7 +267,7 @@ it("process.env.TZ writes inside a worker do not change the main thread's timezo
   });
 });
 
-it.skipIf(isWindows)("process.env keeps Node's EnvSetter semantics inside a snapshot-env worker", async () => {
+it("process.env keeps Node's EnvSetter semantics inside a snapshot-env worker", async () => {
   // new Worker(file, { env: {...} }) seeds process.env from a snapshot dict;
   // writes inside the worker must still coerce to string, reject symbol keys,
   // and reject accessor descriptors like Node's EnvSetter/EnvDefiner (Node
@@ -1474,7 +1471,7 @@ describe.concurrent(() => {
     });
 
     // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
-    it.skipIf(process.platform === "win32")("works with diff", () => {
+    it("works with diff", () => {
       const init = process.cpuUsage();
       init.system = 0;
       init.user = 0;
@@ -1483,7 +1480,7 @@ describe.concurrent(() => {
       expect(delta.system).toBeGreaterThanOrEqual(0);
     });
 
-    it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
+    it("works with diff of different structure", () => {
       const init = {
         system: 0,
         user: 0,
@@ -1614,7 +1611,7 @@ describe.concurrent(() => {
 
   describe("signal", () => {
     const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
-    it.skipIf(isWindows)("simple case works", async () => {
+    it("simple case works", async () => {
       await using child = Bun.spawn({
         cmd: [bunExe(), fixture, "SIGUSR1"],
         env: bunEnv,
@@ -1624,7 +1621,7 @@ describe.concurrent(() => {
       expect(await child.exited).toBe(0);
       expect(await new Response(child.stdout).text()).toBe("PASS\n");
     });
-    it.skipIf(isWindows)("process.emit will call signal events", async () => {
+    it("process.emit will call signal events", async () => {
       await using child = Bun.spawn({
         cmd: [bunExe(), fixture, "SIGUSR2"],
         env: bunEnv,
@@ -2744,7 +2741,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", async () => {
+  it("zeroExitWithUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {
@@ -2765,7 +2762,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("changeCodeInUncaughtHandler", async () => {
+  it("changeCodeInUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {
@@ -3389,7 +3386,7 @@ it("_rawDebug never throws when fd 2 is closed", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows || isRoot)("process.initgroups passes an unknown string user straight to initgroups(3)", () => {
+it.skipIf(isRoot)("process.initgroups passes an unknown string user straight to initgroups(3)", () => {
   // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
   // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
   let err;
@@ -3402,7 +3399,7 @@ it.skipIf(isWindows || isRoot)("process.initgroups passes an unknown string user
   expect(err?.syscall).toBe("initgroups");
 });
 
-it.skipIf(isWindows)("process.initgroups pre-resolves a numeric uid through passwd", () => {
+it("process.initgroups pre-resolves a numeric uid through passwd", () => {
   // Numeric users go through getpwuid_r first, so an unknown uid surfaces
   // ERR_UNKNOWN_CREDENTIAL before the privileged initgroups(3) call — runs
   // fine as non-root.

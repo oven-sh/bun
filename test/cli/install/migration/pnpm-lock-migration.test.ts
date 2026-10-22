@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunExe, bunEnv as harnessEnv, isRoot, isWindows, tempDir } from "harness";
+import { bunExe, bunEnv as harnessEnv, isRoot, tempDir } from "harness";
 import { join } from "path";
 import { startNpmjs } from "./migration-harness";
 
@@ -811,7 +811,7 @@ importers:
   });
 
   // A 0444 package.json does not stop root from writing it, and the mode bits mean something else on Windows.
-  test.skipIf(isWindows || isRoot).each([
+  test.skipIf(isRoot).each([
     ["without a lockfile", {}],
     [
       "while migrating pnpm-lock.yaml",

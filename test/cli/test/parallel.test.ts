@@ -134,7 +134,7 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
 // macOS, where 31 used to be read with Linux numbering as SIGSYS, a crash
 // signal that aborted the whole run. Neither signal is a crash.
 const deathSignal = isLinux ? "SIGSTKFLT" : "SIGUSR2";
-test.skipIf(isWindows)(`--parallel labels a worker killed by ${deathSignal} with that name`, async () => {
+test(`--parallel labels a worker killed by ${deathSignal} with that name`, async () => {
   using dir = tempDir("parallel-signal-name", {
     "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
     "die.test.js": `
@@ -293,7 +293,7 @@ test(
 // is_panic_status. (On Windows a crash caught by Bun's crash handler exits
 // with code 3, indistinguishable from process.exit(3); the Windows
 // classification below works on raw NTSTATUS exit codes instead.)
-test.skipIf(isWindows)(
+test(
   "--parallel --bail: a worker panic still prints the panic banner and stops sibling workers",
   async () => {
     using dir = tempDir("parallel-bail-panic", {
@@ -368,7 +368,7 @@ test.skipIf(!isWindows)(
 // POSIX twin of the NTSTATUS test: fastfail resets the SIGABRT disposition
 // and raises it, so the worker dies by the raw signal with no crash-handler
 // banner, and the fatal-signal classification aborts the run.
-test.skipIf(isWindows)(
+test(
   "--parallel: a worker dying of a raw SIGABRT (fastfail) aborts the run",
   async () => {
     using dir = tempDir("parallel-fastfail-posix", {
@@ -1268,7 +1268,7 @@ test("--parallel: workers get the --env-file values and skip the default .env", 
 // in open(2), since no writer is left. That environment also carries
 // BUN_OPTIONS, which a worker splices into its own argv.
 for (const route of ["argv", "BUN_OPTIONS"] as const) {
-  test.skipIf(isWindows)(`--parallel: the coordinator reads a FIFO --env-file once (${route})`, async () => {
+  test(`--parallel: the coordinator reads a FIFO --env-file once (${route})`, async () => {
     const fixture = `import {test,expect} from "bun:test"; test("env", () => { expect(process.env.BUNTEST_FIFO).toBe("1"); expect(process.env.BUNTEST_DOTENV).toBeUndefined(); });`;
     using dir = tempDir("parallel-env-file-fifo", {
       "a.test.js": fixture,
@@ -1413,7 +1413,7 @@ test("--parallel: SIGTERM on coordinator kills workers and their grandchildren",
   expect(outstanding).toEqual([]);
 }, 15000);
 
-test.skipIf(isWindows).each([
+test.each([
   ["SIGTERM", 143],
   ["SIGINT", 130],
 ] as const)("--parallel: %s on the coordinator exits with %d", async (signal, code) => {
@@ -1453,16 +1453,14 @@ test.skipIf(isWindows).each([
   expect(exitCode).toBe(code);
 });
 
-test.skipIf(isWindows)(
-  "--parallel: a worker that dies mid-file takes the processes its test spawned with it",
-  async () => {
-    // The grandchild is orphaned when the worker dies, so a zombie could still
-    // answer kill(pid, 0). It records its own termination instead. A shell
-    // keeps its startup out of the timing; the trap is armed before the pid
-    // is logged. It blocks in `wait`, which a trapped signal interrupts: a
-    // foreground `sleep` would put the trap off until it ends.
-    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; sleep 60 & echo grandchild=$$ >> "$PIDS"; wait`;
-    const crasher = (how: string) => `
+test("--parallel: a worker that dies mid-file takes the processes its test spawned with it", async () => {
+  // The grandchild is orphaned when the worker dies, so a zombie could still
+  // answer kill(pid, 0). It records its own termination instead. A shell
+  // keeps its startup out of the timing; the trap is armed before the pid
+  // is logged. It blocks in `wait`, which a trapped signal interrupts: a
+  // foreground `sleep` would put the trap off until it ends.
+  const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; sleep 60 & echo grandchild=$$ >> "$PIDS"; wait`;
+  const crasher = (how: string) => `
     import { test } from "bun:test";
     test("spawn then die", async () => {
       const child = Bun.spawn({
@@ -1479,53 +1477,52 @@ test.skipIf(isWindows)(
       ${how};
     });
   `;
-    using dir = tempDir("parallel-crash-grandchildren", {
-      "a.test.ts": crasher(`process.kill(process.pid, "SIGKILL")`),
-      "b.test.ts": crasher(`process.exit(0)`),
-      "c.test.ts": `import { test } from "bun:test"; test("ok", () => {});`,
-    });
-    const pids = String(dir) + "/pids.txt";
-    // The ASAN lanes run every test with no-orphans on. That makes the kernel
-    // SIGKILL the grandchild when the worker dies, before the coordinator's
-    // SIGTERM (the path under test) can reach it.
-    const env: Record<string, string | undefined> = { ...bunEnv, PIDS: pids };
-    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+  using dir = tempDir("parallel-crash-grandchildren", {
+    "a.test.ts": crasher(`process.kill(process.pid, "SIGKILL")`),
+    "b.test.ts": crasher(`process.exit(0)`),
+    "c.test.ts": `import { test } from "bun:test"; test("ok", () => {});`,
+  });
+  const pids = String(dir) + "/pids.txt";
+  // The ASAN lanes run every test with no-orphans on. That makes the kernel
+  // SIGKILL the grandchild when the worker dies, before the coordinator's
+  // SIGTERM (the path under test) can reach it.
+  const env: Record<string, string | undefined> = { ...bunEnv, PIDS: pids };
+  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
-      env,
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
+    env,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    const read = async (re: RegExp) => [...(await Bun.file(pids).text()).matchAll(re)].map(m => Number(m[1]));
-    const grandchildren = await read(/^grandchild=(\d+)$/gm);
-    let terminated: number[] = [];
-    try {
-      // The coordinator signals the group when it reaps the worker. The
-      // grandchildren need a moment to handle SIGTERM and log it.
-      for (let i = 0; i < 120; i++) {
-        terminated = await read(/^terminated=(\d+)$/gm);
-        if (terminated.length >= grandchildren.length) break;
-        await Bun.sleep(25);
-      }
-    } finally {
-      // Clean up survivors so a failing run does not leak processes.
-      for (const pid of grandchildren)
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {}
+  const read = async (re: RegExp) => [...(await Bun.file(pids).text()).matchAll(re)].map(m => Number(m[1]));
+  const grandchildren = await read(/^grandchild=(\d+)$/gm);
+  let terminated: number[] = [];
+  try {
+    // The coordinator signals the group when it reaps the worker. The
+    // grandchildren need a moment to handle SIGTERM and log it.
+    for (let i = 0; i < 120; i++) {
+      terminated = await read(/^terminated=(\d+)$/gm);
+      if (terminated.length >= grandchildren.length) break;
+      await Bun.sleep(25);
     }
+  } finally {
+    // Clean up survivors so a failing run does not leak processes.
+    for (const pid of grandchildren)
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+  }
 
-    expect(stderr).toContain("worker crashed");
-    expect(stderr).toContain(" 2 fail");
-    expect(grandchildren).toHaveLength(2);
-    expect(terminated.sort()).toEqual(grandchildren.sort());
-    expect(exitCode).toBe(1);
-  },
-);
+  expect(stderr).toContain("worker crashed");
+  expect(stderr).toContain(" 2 fail");
+  expect(grandchildren).toHaveLength(2);
+  expect(terminated.sort()).toEqual(grandchildren.sort());
+  expect(exitCode).toBe(1);
+});
 
 test("--parallel --no-isolate: a worker keeps one global and module registry across its files", async () => {
   const files: Record<string, string> = {

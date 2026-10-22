@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, type DirectoryTree, isLinux, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -281,7 +281,7 @@ for (const [name, copy] of impls) {
       expect(fs.readFileSync(copiedLink, "utf8")).toBe("a");
     });
 
-    test.skipIf(isWindows)("recursive - file and directory modes are preserved into a fresh destination", async () => {
+    test("recursive - file and directory modes are preserved into a fresh destination", async () => {
       await using basename = tempDir("cp", {
         "from/d/f.txt": "x",
       });
@@ -301,7 +301,7 @@ for (const [name, copy] of impls) {
       });
     });
 
-    test.skipIf(isWindows)("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
+    test("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",
       });
@@ -522,7 +522,7 @@ test.skipIf(!isWindows)("cpSync recursive copies a directory symlink to a UNC ta
 // On Windows the OS path buffer is 32768 wide chars, which is impractical to exceed
 // with on-disk directories, so this test targets POSIX where MAX_PATH_BYTES is small
 // enough to reach via relative mkdir + chdir.
-describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
+describe.each(["cp", "cpSync"] as const)(
   "fs.%s recursive returns ENAMETOOLONG instead of overflowing path buffer",
   which => {
     test(which, async () => {
@@ -604,23 +604,21 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
 // file so that its SingleTask fails with EISDIR. This works even when running
 // as root. On macOS the pre-existing dst/ makes clonefile() fail with EEXIST
 // and fall through to the per-file SingleTask path being tested.
-test.skipIf(!isPosix)(
-  "fs.promises.cp recursive does not free parent task while subtasks are in flight after an error",
-  async () => {
-    const files: DirectoryTree = {};
-    // Enough siblings so several SingleTasks are running on the thread pool
-    // when the failing one errors.
-    for (let i = 0; i < 32; i++) files[`src/f${i}.txt`] = "x";
-    files["src/000-bad.txt"] = "x";
-    // The destination for 000-bad.txt is a directory → copying into it fails.
-    files["dst/000-bad.txt"] = { ".keep": "" };
-    using dir = tempDir("cp-uaf", files);
-    const base = String(dir);
+test("fs.promises.cp recursive does not free parent task while subtasks are in flight after an error", async () => {
+  const files: DirectoryTree = {};
+  // Enough siblings so several SingleTasks are running on the thread pool
+  // when the failing one errors.
+  for (let i = 0; i < 32; i++) files[`src/f${i}.txt`] = "x";
+  files["src/000-bad.txt"] = "x";
+  // The destination for 000-bad.txt is a directory → copying into it fails.
+  files["dst/000-bad.txt"] = { ".keep": "" };
+  using dir = tempDir("cp-uaf", files);
+  const base = String(dir);
 
-    // Run the copy in a subprocess: before the fix this is a
-    // heap-use-after-free that ASAN aborts on. The subprocess loops to make
-    // the race reliable. It must reject with EISDIR each iteration and exit 0.
-    const script = `
+  // Run the copy in a subprocess: before the fix this is a
+  // heap-use-after-free that ASAN aborts on. The subprocess loops to make
+  // the race reliable. It must reject with EISDIR each iteration and exit 0.
+  const script = `
       const fs = require("fs");
       const path = require("path");
       const base = ${JSON.stringify(base)};
@@ -642,18 +640,17 @@ test.skipIf(!isPosix)(
         console.log("ok");
       })();
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("ok");
-    expect(exitCode).toBe(0);
-  },
-);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});
 
 test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the source file's mode", async () => {
   using dir = tempDir("cp-dest-mode", {});

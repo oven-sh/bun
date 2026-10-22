@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // Every workload below is time-bounded for 100ms. On Windows JSC's
@@ -130,7 +130,7 @@ describe.concurrent("--cpu-prof", () => {
   // POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024);
   // 2500 + 2500 exercises the combined bound with components that fit
   // individually on Linux.
-  test.skipIf(isWindows).each([
+  test.each([
     ["--cpu-prof-dir", ["--cpu-prof-dir", Buffer.alloc(5000, "d").toString()]],
     ["--cpu-prof-name", ["--cpu-prof-name", Buffer.alloc(5000, "n").toString()]],
     [
@@ -446,7 +446,7 @@ describe.concurrent("--cpu-prof", () => {
   });
 
   // "%80" decodes to a byte that isn't valid UTF-8. Windows decodes it to U+FFFD.
-  test.skipIf(isWindows)("--cpu-prof-md prints a source's URL when the URL can't be converted to a path", async () => {
+  test("--cpu-prof-md prints a source's URL when the URL can't be converted to a path", async () => {
     using dir = tempDir("cpu-prof-md-source-url", {
       "test.js": `
         const loop = require("node:vm").runInThisContext(

@@ -11,7 +11,7 @@
 
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -26,7 +26,7 @@ function countOpenFds(): number {
 
 // Windows has no /proc/self/fd equivalent; the observable leak is
 // POSIX-specific anyway (libuv pipe close on Windows is async regardless).
-test.skipIf(!isPosix)("stdin: 'pipe' fd is closed on child exit without reading .stdin", async () => {
+test("stdin: 'pipe' fd is closed on child exit without reading .stdin", async () => {
   const N = 100;
 
   // Warm up: spawn once so any lazily-opened runtime fds (signalfd, etc.)
@@ -112,7 +112,7 @@ test("reading .stdin does not leak a native FileSink per spawn", async () => {
 // the two owners it is the shell's stranded writers that LSan reports (it still
 // finds the address of a stranded Bun.spawn one somewhere); the Bun.spawn
 // scenarios run the same teardown under ASAN all the same.
-test.skipIf(!isASAN || isWindows)(
+test.skipIf(!isASAN)(
   "Buffer stdin does not leak its native writer when the child closes stdin or drains it",
   async () => {
     using cwd = tempDir("stdin-buffer-writer-leak", {});
@@ -139,7 +139,7 @@ test.skipIf(!isASAN || isWindows)(
 
 // Reading `.stdin` after the child has already exited should still return
 // the FileSink (not `undefined`) — the fix must not regress this.
-test.skipIf(!isPosix)("reading .stdin after child exit still returns a FileSink", async () => {
+test("reading .stdin after child exit still returns a FileSink", async () => {
   const p = Bun.spawn({ cmd: ["true"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
   await p.exited;
   const stdin = p.stdin;

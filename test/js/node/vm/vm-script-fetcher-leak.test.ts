@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunRun, expectMaxObjectTypeCount, isWindows } from "harness";
+import { bunRun, expectMaxObjectTypeCount } from "harness";
 import { join } from "node:path";
 import vm from "node:vm";
 
@@ -126,15 +126,13 @@ describe("node:vm importModuleDynamically lifetime", () => {
   });
 
   // collectContinuously is very slow under Windows + ASAN in CI (see sourcetextmodule-link-gc.test.ts).
-  test.concurrent
-    .skipIf(isWindows)
-    .each([
-      "alive-hostFunction",
-      "alive-compiledBeforeRun",
-      "alive-runInContext",
-      "alive-compileFunction",
-      "alive-module",
-    ])("%s while collecting continuously", async scenario => {
+  test.concurrent.each([
+    "alive-hostFunction",
+    "alive-compiledBeforeRun",
+    "alive-runInContext",
+    "alive-compileFunction",
+    "alive-module",
+  ])("%s while collecting continuously", async scenario => {
     const result = await bunRun([fixture, scenario], { BUN_JSC_collectContinuously: "1" });
     expect(result).toSpawn(JSON.stringify(expected[scenario]));
   });

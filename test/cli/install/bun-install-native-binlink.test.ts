@@ -120,7 +120,7 @@ describe.concurrent("native binlink optimization", () => {
 
     // bunx takes the bin of a package from that package's own package.json. Here the entry in `.bin` leads into
     // the platform package, and the file of the main package keeps the mode of its tarball.
-    test.skipIf(isWindows)(`bunx runs the platform-specific bin with linker ${linker}`, async () => {
+    test(`bunx runs the platform-specific bin with linker ${linker}`, async () => {
       let env = { ...bunEnv };
       const { packageDir, packageJson } = await verdaccio.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
@@ -277,7 +277,7 @@ describe.concurrent("native binlink optimization", () => {
   }
 
   // The link leaves node_modules, so its text depends on where node_modules really is.
-  test.skipIf(isWindows)("in a workspace whose node_modules is a link to another folder", async () => {
+  test("in a workspace whose node_modules is a link to another folder", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir();
     const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
     const app = join(packageDir, "packages", "app");
@@ -757,65 +757,62 @@ describe.concurrent("native binlink altpath", () => {
 // touching the target file (no chmod, no shebang rewrite), so the attack this
 // guards against can't occur there, and the resolved-containment check in
 // `link_bin_or_create_shim` is `#[cfg(not(windows))]` accordingly.
-test.skipIf(isWindows)(
-  "skips bin entries whose target resolves outside the package directory and keeps outside files untouched",
-  async () => {
-    const secretContents = "#!/usr/bin/env node\r\nconsole.log('outside file');\n";
-    using dir = tempDir("binlink-resolved-target", {
-      "package.json": JSON.stringify({
-        name: "binlink-containment-app",
-        version: "1.0.0",
-        workspaces: ["packages/*"],
-        dependencies: {
-          "resolved-escape-pkg": "workspace:*",
-          "contained-bin-pkg": "workspace:*",
-        },
-      }),
-      "outside/secret.txt": secretContents,
-      "packages/resolved-escape-pkg/package.json": JSON.stringify({
-        name: "resolved-escape-pkg",
-        version: "1.0.0",
-        bin: { "escape-cmd": "./payload/secret.txt" },
-      }),
-      "packages/contained-bin-pkg/package.json": JSON.stringify({
-        name: "contained-bin-pkg",
-        version: "1.0.0",
-        bin: { "contained-cmd": "bin/run.js" },
-      }),
-      "packages/contained-bin-pkg/bin/run.js": '#!/usr/bin/env node\nconsole.log("contained-cmd ok");\n',
-    });
+test("skips bin entries whose target resolves outside the package directory and keeps outside files untouched", async () => {
+  const secretContents = "#!/usr/bin/env node\r\nconsole.log('outside file');\n";
+  using dir = tempDir("binlink-resolved-target", {
+    "package.json": JSON.stringify({
+      name: "binlink-containment-app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: {
+        "resolved-escape-pkg": "workspace:*",
+        "contained-bin-pkg": "workspace:*",
+      },
+    }),
+    "outside/secret.txt": secretContents,
+    "packages/resolved-escape-pkg/package.json": JSON.stringify({
+      name: "resolved-escape-pkg",
+      version: "1.0.0",
+      bin: { "escape-cmd": "./payload/secret.txt" },
+    }),
+    "packages/contained-bin-pkg/package.json": JSON.stringify({
+      name: "contained-bin-pkg",
+      version: "1.0.0",
+      bin: { "contained-cmd": "bin/run.js" },
+    }),
+    "packages/contained-bin-pkg/bin/run.js": '#!/usr/bin/env node\nconsole.log("contained-cmd ok");\n',
+  });
 
-    const root = String(dir);
-    const secretPath = join(root, "outside", "secret.txt");
-    // A mode without any execute bits, so a chmod performed by bin linking is observable.
-    chmodSync(secretPath, 0o600);
-    // In-package path component that resolves to a directory outside the package.
-    symlinkSync(join(root, "outside"), join(root, "packages", "resolved-escape-pkg", "payload"));
+  const root = String(dir);
+  const secretPath = join(root, "outside", "secret.txt");
+  // A mode without any execute bits, so a chmod performed by bin linking is observable.
+  chmodSync(secretPath, 0o600);
+  // In-package path component that resolves to a directory outside the package.
+  symlinkSync(join(root, "outside"), join(root, "packages", "resolved-escape-pkg", "payload"));
 
-    await using install = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: root,
-      stdout: "ignore",
-      stdin: "ignore",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-    const [installStderr, installExit] = await Promise.all([install.stderr.text(), install.exited]);
-    expect(installStderr).not.toContain("error:");
-    expect(installExit).toBe(0);
+  await using install = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: root,
+    stdout: "ignore",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [installStderr, installExit] = await Promise.all([install.stderr.text(), install.exited]);
+  expect(installStderr).not.toContain("error:");
+  expect(installExit).toBe(0);
 
-    // The file outside the package keeps its mode and contents.
-    expect(statSync(secretPath).mode & 0o777).toBe(0o600);
-    expect(readFileSync(secretPath, "utf8")).toBe(secretContents);
+  // The file outside the package keeps its mode and contents.
+  expect(statSync(secretPath).mode & 0o777).toBe(0o600);
+  expect(readFileSync(secretPath, "utf8")).toBe(secretContents);
 
-    // No `.bin` entry was created for the bin whose resolved target leaves the package.
-    expect(existsSync(join(root, "node_modules", ".bin", "escape-cmd"))).toBeFalse();
+  // No `.bin` entry was created for the bin whose resolved target leaves the package.
+  expect(existsSync(join(root, "node_modules", ".bin", "escape-cmd"))).toBeFalse();
 
-    // The workspace bin that resolves inside its package is still linked and made executable,
-    // even though node_modules/<name> is a symlink into packages/.
-    const containedBin = join(root, "node_modules", ".bin", "contained-cmd");
-    expect(existsSync(containedBin)).toBeTrue();
-    expect(realpathSync(containedBin)).toBe(realpathSync(join(root, "packages", "contained-bin-pkg", "bin", "run.js")));
-    expect(statSync(join(root, "packages", "contained-bin-pkg", "bin", "run.js")).mode & 0o111).not.toBe(0);
-  },
-);
+  // The workspace bin that resolves inside its package is still linked and made executable,
+  // even though node_modules/<name> is a symlink into packages/.
+  const containedBin = join(root, "node_modules", ".bin", "contained-cmd");
+  expect(existsSync(containedBin)).toBeTrue();
+  expect(realpathSync(containedBin)).toBe(realpathSync(join(root, "packages", "contained-bin-pkg", "bin", "run.js")));
+  expect(statSync(join(root, "packages", "contained-bin-pkg", "bin", "run.js")).mode & 0o111).not.toBe(0);
+});

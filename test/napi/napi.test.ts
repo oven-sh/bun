@@ -529,21 +529,17 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
 
     // The JS thread parks without heap access during an idle collection, so its end phase runs on the collector thread.
-    it.skipIf(isWindows)(
-      "an idle collection on the collector thread runs the finalizers on the JS thread",
-      async () => {
-        const result = await runOn(bunExe(), "test_external_buffer_finalized_by_idle_collection", [], {
-          BUN_IDLE_GC_SECONDS: "1",
-          BUN_GC_TIMER_DISABLE: undefined,
-          BUN_GC_TIMER_INTERVAL: undefined,
-          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
-        } as any);
-        expect(result).toStartWith(
-          "experimental: finalized=true finalizedOffThread=0\ndeferred: finalized=true finalizedOffThread=0\n",
-        );
-      },
-      30_000,
-    );
+    it("an idle collection on the collector thread runs the finalizers on the JS thread", async () => {
+      const result = await runOn(bunExe(), "test_external_buffer_finalized_by_idle_collection", [], {
+        BUN_IDLE_GC_SECONDS: "1",
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+        BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+      } as any);
+      expect(result).toStartWith(
+        "experimental: finalized=true finalizedOffThread=0\ndeferred: finalized=true finalizedOffThread=0\n",
+      );
+    }, 30_000);
 
     it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
       const result = await checkSameOutput("test_external_buffer_worker_exit", []);
@@ -2022,7 +2018,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   // BUN_JSC_slowPathAllocsBetweenGCs collects every few slow-path allocations. maxBuffer is the last option
   // Bun.spawnSync reads, so the collection that follows the drop runs once it is past them. Bun.gc() leaves every free
   // list empty, so what it allocates from there on takes the slow path, whatever ran before.
-  it.skipIf(isWindows)("async work queued by a finalizer during Bun.spawnSync keeps the event loop alive", async () => {
+  it("async work queued by a finalizer during Bun.spawnSync keeps the event loop alive", async () => {
     const code = `
       const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_queue_async_work_in_finalizer_experimental.node"))});
       // In a frame of its own: an object left in a register of this one would outlive the drop.
@@ -2063,10 +2059,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
   // The other way around: the ref a finalizer gave up was taken off the loop being waited on, so the thread's loop
   // kept it and the process never exited.
-  it.skipIf(isWindows)(
-    "a threadsafe function unref'd by a finalizer during Bun.spawnSync lets go of the event loop",
-    async () => {
-      const code = `
+  it("a threadsafe function unref'd by a finalizer during Bun.spawnSync lets go of the event loop", async () => {
+    const code = `
       const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_queue_async_work_in_finalizer_experimental.node"))});
       (() => { globalThis.held = Array.from({ length: 3 }, () => addon.makeThreadsafeFunction()); })();
       let finalizedBeforeDrop;
@@ -2082,20 +2076,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       });
       console.log(JSON.stringify({ finalizedBeforeDrop, finalizedDuringCall: addon.finalized() }));
     `;
-      await using proc = spawn({
-        cmd: [bunExe(), "-e", code],
-        env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: JSON.stringify({ finalizedBeforeDrop: 0, finalizedDuringCall: 3 }),
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-  );
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ finalizedBeforeDrop: 0, finalizedDuringCall: 3 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC
@@ -2110,58 +2103,51 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(result).toContain("Test completed:");
   }, 10_000);
 
-  it.todoIf(
-    // The test does not properly avoid the non-zero exit code on Windows.
-    isWindows,
-  )(
-    "napi_reference_unref is blocked from finalizers in experimental modules",
-    async () => {
-      // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
-      // The process should crash/abort when this is attempted
-      // This matches Node.js behavior for experimental modules
+  it("napi_reference_unref is blocked from finalizers in experimental modules", async () => {
+    // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
+    // The process should crash/abort when this is attempted
+    // This matches Node.js behavior for experimental modules
 
-      // Note: Node.js may not enforce this check for manually-registered experimental modules
-      // (ones that set nm_version to NAPI_VERSION_EXPERIMENTAL manually)
-      // But Bun should still enforce it for safety
+    // Note: Node.js may not enforce this check for manually-registered experimental modules
+    // (ones that set nm_version to NAPI_VERSION_EXPERIMENTAL manually)
+    // But Bun should still enforce it for safety
 
-      // Test with Bun - should crash
-      // Use the wrapper script that kills the process after seeing the crash messages
-      // to avoid hanging on llvm-symbolizer
-      const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
-      const bunProc = spawn({
-        cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
-        env: {
-          ...rest,
-          BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
-          // Override ASAN_OPTIONS to disable coredump and symbolization for this specific test
-          // Otherwise ASAN will hang trying to create a core dump or symbolize
-          ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    // Test with Bun - should crash
+    // Use the wrapper script that kills the process after seeing the crash messages
+    // to avoid hanging on llvm-symbolizer
+    const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
+    const bunProc = spawn({
+      cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
+      env: {
+        ...rest,
+        BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
+        // Override ASAN_OPTIONS to disable coredump and symbolization for this specific test
+        // Otherwise ASAN will hang trying to create a core dump or symbolize
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [bunStdout, bunStderr, bunExitCode] = await Promise.all([
-        bunProc.stdout.text(),
-        bunProc.stderr.text(),
-        bunProc.exited,
-      ]);
+    const [bunStdout, bunStderr, bunExitCode] = await Promise.all([
+      bunProc.stdout.text(),
+      bunProc.stderr.text(),
+      bunProc.exited,
+    ]);
 
-      // The wrapper script should exit with 0 if the test passed
-      expect(bunExitCode).toBe(0);
-      expect(bunStdout + bunStderr).toContain("Loading experimental module");
-      expect(bunStdout + bunStderr).toContain("Created");
-      expect(bunStderr).toContain("FATAL ERROR");
-      expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
+    // The wrapper script should exit with 0 if the test passed
+    expect(bunExitCode).toBe(0);
+    expect(bunStdout + bunStderr).toContain("Loading experimental module");
+    expect(bunStdout + bunStderr).toContain("Created");
+    expect(bunStderr).toContain("FATAL ERROR");
+    expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
 
-      // The marker must NOT have actually been printed. Only check stdout: the
-      // fixture prints the marker via console.log (stdout), while stderr contains
-      // the debug-build panic report whose "Args:" line echoes the full -e script
-      // source, including the literal "ERROR: Did not crash! Test failed!".
-      expect(bunStdout).not.toContain("ERROR: Did not crash");
-    },
-    25_000,
-  );
+    // The marker must NOT have actually been printed. Only check stdout: the
+    // fixture prints the marker via console.log (stdout), while stderr contains
+    // the debug-build panic report whose "Args:" line echoes the full -e script
+    // source, including the literal "ERROR: Did not crash! Test failed!".
+    expect(bunStdout).not.toContain("ERROR: Did not crash");
+  }, 25_000);
 
   // Off Windows these fixtures are ordinary addons, so this only checks that they load.
   describe("an addon that imports node.exe without win_delay_load_hook", () => {

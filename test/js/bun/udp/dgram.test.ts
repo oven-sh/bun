@@ -239,7 +239,7 @@ describe("unref()", () => {
 });
 
 // Cluster-shared dgram descriptors are POSIX-only (Windows reports ENOTSUP).
-describe.skipIf(isWindows)("cluster", () => {
+describe("cluster", () => {
   // The shared wrap's close(cb) must invoke cb (Node's HandleWrap contract) or
   // cluster's disconnect refcount never reaches zero and the worker hangs.
   test("worker.disconnect() with a shared socket lets the worker exit", async () => {
@@ -374,7 +374,7 @@ test("_createSocketHandle() without an address or port returns an unbound handle
   handle.close();
 });
 
-test.skipIf(isWindows)("_createSocketHandle() binds and reports the descriptor", () => {
+test("_createSocketHandle() binds and reports the descriptor", () => {
   const { _createSocketHandle, UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   const handle = _createSocketHandle("127.0.0.1", 0, "udp4");
 
@@ -383,7 +383,7 @@ test.skipIf(isWindows)("_createSocketHandle() binds and reports the descriptor",
   handle.close();
 });
 
-test.skipIf(isWindows)("_createSocketHandle() returns a negative errno when the bind fails", () => {
+test("_createSocketHandle() returns a negative errno when the bind fails", () => {
   const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   // Not a numeric literal: the wrap binds through inet_pton, so this is EINVAL.
   const err = _createSocketHandle("localhost", 0, "udp4");
@@ -393,7 +393,7 @@ test.skipIf(isWindows)("_createSocketHandle() returns a negative errno when the 
 
 // The duplicate-adoption guard must trip synchronously: libuv reports EEXIST
 // from the second uv_udp_open() of the same descriptor even in the same tick.
-test.skipIf(isWindows)("bind({ fd }) rejects a same-tick duplicate adoption", async () => {
+test("bind({ fd }) rejects a same-tick duplicate adoption", async () => {
   const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
   expect(typeof wrap).not.toBe("number");
@@ -412,7 +412,7 @@ test.skipIf(isWindows)("bind({ fd }) rejects a same-tick duplicate adoption", as
 
 // The same guard lives in the native layer so `Bun.udpSocket({ fd })` cannot
 // adopt (and later double-close) a descriptor a live socket already owns.
-test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket already adopted", async () => {
+test("Bun.udpSocket({ fd }) rejects a descriptor a live socket already adopted", async () => {
   const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
   const socket = createSocket("udp4");
@@ -440,7 +440,7 @@ test("setBroadcast()/setMulticastLoopback() before bind() throw EBADF", () => {
 
 // An oversized datagram fails send(2) with EMSGSIZE; on the connected path no
 // address/port is known, so the error must match Node's bare `send <code>`.
-test.skipIf(isWindows)("connected send() failure reports Node's error shape", async () => {
+test("connected send() failure reports Node's error shape", async () => {
   const receiver = createSocket("udp4");
   const { promise: receiverBound, resolve: onReceiverBound } = Promise.withResolvers<void>();
   receiver.bind(0, "127.0.0.1", onReceiverBound);
@@ -500,7 +500,7 @@ test("connect() with a custom lookup that yields a name that cannot be a hostnam
 // Every send callback must fire with (null, byteLength) — never (null, 0) or
 // EAGAIN — even if the kernel refuses some writes (they queue and drain like
 // libuv's uv_udp_try_send → uv_udp_send fallback).
-test.skipIf(isWindows)("send() reports (null, byteLength) for every callback under a burst", async () => {
+test("send() reports (null, byteLength) for every callback under a burst", async () => {
   const receiver = createSocket("udp4");
   await new Promise<void>(resolve => receiver.bind(0, "127.0.0.1", resolve));
   const port = receiver.address().port;
@@ -568,59 +568,56 @@ function hasIPv6Loopback() {
 
 // rinfo.family reflects the packet's sockaddr, not the constructor's `type`:
 // a `udp4` socket adopting an IPv6 fd receives IPv6-tagged rinfo.
-test.skipIf(isWindows || !hasIPv6Loopback())(
-  "rinfo.family follows the packet's sockaddr, not the socket type",
-  async () => {
-    const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
-    const wrap = new UDP();
-    expect(wrap.bind6("::1", 0, 0)).toBe(0);
+test.skipIf(!hasIPv6Loopback())("rinfo.family follows the packet's sockaddr, not the socket type", async () => {
+  const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const wrap = new UDP();
+  expect(wrap.bind6("::1", 0, 0)).toBe(0);
 
-    const socket = createSocket("udp4");
-    const sender = createSocket("udp6");
-    try {
-      const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
-      const { promise: got, resolve: onMessage, reject: onSocketError } = Promise.withResolvers<any>();
-      // Route every failure into whichever promise is outstanding so a lost
-      // datagram surfaces as an error rather than a test-timeout hang.
-      socket.on("error", err => {
-        onListenError(err);
-        onSocketError(err);
-      });
-      sender.on("error", onSocketError);
-      socket.on("listening", onListening);
-      socket.on("message", (_data, rinfo) => onMessage(rinfo));
+  const socket = createSocket("udp4");
+  const sender = createSocket("udp6");
+  try {
+    const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
+    const { promise: got, resolve: onMessage, reject: onSocketError } = Promise.withResolvers<any>();
+    // Route every failure into whichever promise is outstanding so a lost
+    // datagram surfaces as an error rather than a test-timeout hang.
+    socket.on("error", err => {
+      onListenError(err);
+      onSocketError(err);
+    });
+    sender.on("error", onSocketError);
+    socket.on("listening", onListening);
+    socket.on("message", (_data, rinfo) => onMessage(rinfo));
 
-      socket.bind({ fd: wrap.fd });
-      await listening;
+    socket.bind({ fd: wrap.fd });
+    await listening;
 
-      const port = socket.address().port;
-      let rinfo: any;
-      let sendErr: unknown;
-      // Retry so a single dropped loopback datagram surfaces as a bounded
-      // failure instead of the file-level test timeout.
-      for (let i = 0; i < 50 && rinfo === undefined; i++) {
-        await new Promise<void>((resolve, reject) =>
-          sender.send("hi", port, "::1", err => (err ? reject(err) : resolve())),
-        ).catch(e => (sendErr ??= e));
-        rinfo = await Promise.race([got, Bun.sleep(100)]);
-      }
-      if (rinfo === undefined) {
-        throw new Error(`no datagram received on adopted fd (port=${port} sendErr=${sendErr ?? "(none)"})`);
-      }
-
-      expect(rinfo.family).toBe("IPv6");
-      expect(rinfo.address).toBe("::1");
-    } finally {
-      sender.close();
-      socket.close();
-      wrap.close();
+    const port = socket.address().port;
+    let rinfo: any;
+    let sendErr: unknown;
+    // Retry so a single dropped loopback datagram surfaces as a bounded
+    // failure instead of the file-level test timeout.
+    for (let i = 0; i < 50 && rinfo === undefined; i++) {
+      await new Promise<void>((resolve, reject) =>
+        sender.send("hi", port, "::1", err => (err ? reject(err) : resolve())),
+      ).catch(e => (sendErr ??= e));
+      rinfo = await Promise.race([got, Bun.sleep(100)]);
     }
-  },
-);
+    if (rinfo === undefined) {
+      throw new Error(`no datagram received on adopted fd (port=${port} sendErr=${sendErr ?? "(none)"})`);
+    }
+
+    expect(rinfo.family).toBe("IPv6");
+    expect(rinfo.address).toBe("::1");
+  } finally {
+    sender.close();
+    socket.close();
+    wrap.close();
+  }
+});
 
 // Adopting an unbound descriptor: the kernel auto-binds on the first sendto(),
 // and address() must return that ephemeral port (Node calls getsockname fresh).
-test.skipIf(isWindows)("bind({ fd }) with an unbound descriptor reports the auto-bound port after send()", async () => {
+test("bind({ fd }) with an unbound descriptor reports the auto-bound port after send()", async () => {
   const { newRawSocketFd, closeRawFd } = require("bun:internal-for-testing").dgramInternals;
   const fd = newRawSocketFd(false, false);
   expect(fd).toBeGreaterThan(0);
@@ -680,7 +677,7 @@ test("addMembership() with a non-IP address carries .errno", () => {
 
 // Adopting a bound fd sets SO_REUSEADDR (like libuv's uv_udp_open), so a
 // second reuseAddr socket can bind the same port.
-test.skipIf(isWindows)("adopting a bound fd sets SO_REUSEADDR like uv_udp_open", async () => {
+test("adopting a bound fd sets SO_REUSEADDR like uv_udp_open", async () => {
   const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   const wrap = new UDP();
   expect(wrap.bind("127.0.0.1", 0, 0)).toBe(0);
@@ -874,7 +871,7 @@ const icmpBindModes = {
   },
 };
 for (const [kind, bind] of Object.entries(icmpBindModes)) {
-  test.skipIf(isWindows)(`${kind} socket emits the ICMP error instead of silently dying`, async () => {
+  test(`${kind} socket emits the ICMP error instead of silently dying`, async () => {
     const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
     const deadPort = await getDeadPort();
 

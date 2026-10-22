@@ -4,7 +4,7 @@ import { chmodSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
-test.skipIf(isWindows)("spawn uses PATH from env if present", async () => {
+test("spawn uses PATH from env if present", async () => {
   const tmpDir = await tempDirWithFiles("spawn-path", {
     "test-script": `#!/usr/bin/env bash
 echo "hello from script"`,
@@ -45,7 +45,7 @@ test.skipIf(!isWindows)("spawn uses the PATH that env spells `Path`", async () =
 
 // Node's execvp walks PATH after the child's chdir, so a relative PATH entry
 // like `.` or `node_modules/.bin` refers to the child's cwd, not the parent's.
-describe.skipIf(isWindows)("spawn resolves relative PATH entries against the cwd option", () => {
+describe("spawn resolves relative PATH entries against the cwd option", () => {
   function makeDir() {
     const dir = tempDir("spawn-relpath", {
       "sub/tool.sh": "#!/bin/sh\necho RAN\n",

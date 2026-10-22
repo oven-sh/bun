@@ -7,7 +7,6 @@ import {
   bunExe,
   bunEnv as env,
   hostedGitRepository,
-  isWindows,
   readdirSorted,
   tempDir,
   tmpdirSync,
@@ -617,7 +616,7 @@ it("should reject positionals longer than 2048 bytes without stack overflow", as
 });
 
 // PATH_MAX is 4096 on Linux and 1024 on macOS. Windows' path buffer is larger than any command line.
-it.skipIf(isWindows)("should fail with ENAMETOOLONG for a local tarball path longer than PATH_MAX", async () => {
+it("should fail with ENAMETOOLONG for a local tarball path longer than PATH_MAX", async () => {
   const package_json = JSON.stringify({ name: "foo", version: "0.0.1" });
   using dir = tempDir("bun-add-long-tarball-path", { "package.json": package_json });
   const tarball = `./${Buffer.alloc(5000, "a").toString()}.tgz`;
@@ -3042,7 +3041,7 @@ describe("a relative local path typed from a directory below package.json", () =
   });
 
   // A Windows command line cannot carry a path longer than the path buffer.
-  it.skipIf(isWindows)("a path that does not fit a path buffer once joined with the cwd is an error", async () => {
+  it("a path that does not fit a path buffer once joined with the cwd is an error", async () => {
     const cwd = await makeNestedCwd();
     const typed = "./" + Buffer.alloc(6000, "a").toString();
 
@@ -3052,7 +3051,7 @@ describe("a relative local path typed from a directory below package.json", () =
     expect(exitCode).toBe(1);
   });
 
-  it.skipIf(isWindows)("a path whose re-spelled form does not fit a path buffer is an error", async () => {
+  it("a path whose re-spelled form does not fit a path buffer is an error", async () => {
     const app = join(package_dir, "a", "b", "c", "d", "e", "f");
     const cwd = join(app, "src");
     await mkdir(cwd, { recursive: true });

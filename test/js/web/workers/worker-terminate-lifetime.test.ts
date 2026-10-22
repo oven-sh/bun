@@ -801,7 +801,7 @@ test.skipIf(!isDebug && !isASAN)(
 
 // The same task, queued by a first command whose dial failed outright (a unix
 // socket path nobody listens on), with the command itself still queued behind it.
-test.skipIf((!isDebug && !isASAN) || isWindows)(
+test.skipIf(!isDebug && !isASAN)(
   "process.exit() with a redis client's deferred close and a queued command releases both cleanly",
   () => exitRightAfterConnecting("new Bun.RedisClient('redis+unix:///nonexistent/redis.sock').ping()"),
   timeout,

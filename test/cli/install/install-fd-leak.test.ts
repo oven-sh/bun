@@ -1,7 +1,7 @@
 import { Archive, spawn } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, isMacOS, isWindows, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, readdirSorted, tempDir } from "harness";
 import { join } from "path";
 
 // Installing a package with many files must not exhaust the file-descriptor
@@ -16,7 +16,7 @@ const LINKERS = ["isolated", "hoisted"] as const;
 const BACKENDS = (["copyfile", "hardlink"] as string[]).concat(isMacOS ? (["clonefile"] as const) : []);
 
 // `ulimit` isn't available on Windows; skip the matrix there.
-describe.skipIf(isWindows)("install does not leak file descriptors", () => {
+describe("install does not leak file descriptors", () => {
   let tgz: string;
 
   beforeAll(async () => {

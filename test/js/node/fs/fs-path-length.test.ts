@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
+import { isLinux, isMacOS, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 // Path validation must account for the actual UTF-8 byte length of strings,
 // not just the number of characters (UTF-16 code units), since multi-byte
 // characters expand when encoded as UTF-8.
-describe.if(isPosix)("path length validation with multi-byte characters", () => {
+describe("path length validation with multi-byte characters", () => {
   // U+4E00 (一) is a CJK character that is 3 bytes in UTF-8 (0xE4 0xB8 0x80).
   // 2000 such characters = 2000 UTF-16 code units but 6000 UTF-8 bytes,
   // which exceeds the 4096-byte PathBuffer.

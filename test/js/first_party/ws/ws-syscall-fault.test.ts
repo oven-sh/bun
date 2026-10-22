@@ -1,10 +1,10 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
 
-const skip = !fault.available() || isWindows;
+const skip = !fault.available();
 
 // Bun's 'ws' module runs on the native WebSocket client and server sockets.
 // These tests check its events ('message', 'error', 'close') under transport

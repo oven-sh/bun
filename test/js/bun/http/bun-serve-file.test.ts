@@ -1162,7 +1162,7 @@ for (const [source, then] of [
   ["fd", "disconnect"],
   ["path", "resume"],
 ] as const) {
-  test.concurrent.skipIf(isWindows)(
+  test.concurrent(
     `pollable Bun.file(${source}) response stops reading while the client does not read, then ${then === "resume" ? "resumes when the client reads" : "survives the disconnect"}`,
     async () => {
       using dir = tempDir("serve-fifo-backpressure", {
@@ -1303,7 +1303,7 @@ process.exit(0);
 // body bytes on the wire past the declared length; on a keep-alive connection
 // those bytes land where the client parses the next response's status line
 // (RFC 9112 6.3). The response must be chunk-framed instead.
-test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not Content-Length: 0", async () => {
+test("Response(Bun.file(FIFO)) frames the body as chunked, not Content-Length: 0", async () => {
   using dir = tempDir("serve-fifo-framing", {});
   const fifoPath = join(String(dir), "body.fifo");
   mkfifo(fifoPath);
@@ -1943,7 +1943,7 @@ async function abortAfterResponseHead(port: number) {
   client.terminate();
 }
 
-test.skipIf(isWindows)("aborted Response(Bun.file(FIFO)) without a writer closes its fd", async () => {
+test("aborted Response(Bun.file(FIFO)) without a writer closes its fd", async () => {
   using dir = tempDir("serve-fifo-abort-leak", {});
   const fifoPath = join(String(dir), "unwritten.fifo");
   mkfifo(fifoPath);
@@ -1963,7 +1963,7 @@ test.skipIf(isWindows)("aborted Response(Bun.file(FIFO)) without a writer closes
   expect(countFds()).toBeLessThanOrEqual(baseline + 4);
 });
 
-test.skipIf(isWindows)("the next response can read a FIFO fd after an aborted Response(Bun.file(fd))", async () => {
+test("the next response can read a FIFO fd after an aborted Response(Bun.file(fd))", async () => {
   using dir = tempDir("serve-fifo-fd-abort", {});
   const fifoPath = join(String(dir), "fd.fifo");
   mkfifo(fifoPath);
@@ -1991,7 +1991,7 @@ test.skipIf(isWindows)("the next response can read a FIFO fd after an aborted Re
   }
 });
 
-test.concurrent.skipIf(isWindows)(
+test.concurrent(
   "a handler that answers with Bun.file(FIFO) while its request body fails on maxRequestBodySize",
   async () => {
     using dir = tempDir("serve-fifo-body-limit", {

@@ -396,7 +396,7 @@ describe.concurrent("git", () => {
   });
 
   // The stub `git` logs the files each call sees. POSIX-only: it is a shell script.
-  it.skipIf(!isPosix)("runs every git command before the first task", async () => {
+  it("runs every git command before the first task", async () => {
     using dir = tempDir("create-git-order", {
       ...localdep,
       "bin/git": `#!/bin/sh\necho "$1" $(LC_ALL=C ls -A) >> "$GIT_LOG"\n`,
@@ -463,7 +463,7 @@ describe.concurrent("git", () => {
   });
 
   // With nothing to install, git's outcome was stored without the `!`.
-  it.skipIf(!isPosix)("reports the git repository when there is nothing to install", async () => {
+  it("reports the git repository when there is nothing to install", async () => {
     using dir = tempDir("create-git-no-deps", {
       "bin/git": "#!/bin/sh\nexit 0\n",
       "empty/.keep": "",
@@ -846,7 +846,7 @@ describe.concurrent("template given as a path", () => {
   });
 
   // A path on Windows holds more than a command line.
-  it.skipIf(!isPosix).each(["", "a/", "a@", "@a/", "./"])(
+  it.each(["", "a/", "a@", "@a/", "./"])(
     "refuses a template name longer than a path: %p and 5000 bytes",
     async prefix => {
       using dir = tempDir("create-long-template-name", { "home/.keep": "", "proj/keep.js": "mine" });
@@ -1416,7 +1416,7 @@ describe.concurrent("bun-create tasks", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(!isPosix)("do not look for a bare command in the destination", async () => {
+  it("do not look for a bare command in the destination", async () => {
     const { exitCode, written } = await createFrom(
       { "bun-create": { postinstall: "local-task first" } },
       { "local-task": stubs["bin/create-task"] },
@@ -1427,7 +1427,7 @@ describe.concurrent("bun-create tasks", () => {
   });
 
   // The script needs its shebang to be started, so POSIX only.
-  it.skipIf(!isPosix)("run a path relative to the destination", async () => {
+  it("run a path relative to the destination", async () => {
     const { err, exitCode, written } = await createFrom(
       { "bun-create": { postinstall: "./setup.sh first second" } },
       { "setup.sh": stubs["bin/create-task"] },
@@ -1486,7 +1486,7 @@ describe.each([
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(!isPosix)("in the name of a file that is in the way", async () => {
+  it("in the name of a file that is in the way", async () => {
     using dir = tempDir("create-conflict", {
       "bun-create/tpl/package.json": JSON.stringify({ name: "tpl" }),
       [`bun-create/tpl/a${raw}b.js`]: "template",

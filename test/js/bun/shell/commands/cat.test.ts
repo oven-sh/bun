@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isWindows, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, libcPathForDlopen, tempDir } from "harness";
 import { closeSync, openSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
@@ -64,7 +64,7 @@ describe.concurrent("cat (builtin) sharing one stdin reader", () => {
 
 describe.concurrent("cat (builtin) after a read error", () => {
   // A directory opens but cannot be read. Linux reports that while the read starts.
-  test.skipIf(isWindows).each([
+  test.each([
     ["cat . || echo failed", false, "failed\n"],
     ["true | cat . || echo failed", true, "failed\n"],
     ["cat . | cat . || echo failed", false, "failed\n"],
@@ -96,7 +96,7 @@ describe.concurrent("cat (builtin) after a read error", () => {
   });
 });
 
-test.skipIf(isWindows)("cat (builtin) stops reading while nothing takes its output", async () => {
+test("cat (builtin) stops reading while nothing takes its output", async () => {
   using dir = tempDir("shell-cat-backpressure", {});
   const release = join(String(dir), "release");
   expect(await Bun.spawn(["mkfifo", release]).exited).toBe(0);

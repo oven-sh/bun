@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -23,13 +23,11 @@ import { join } from "node:path";
 // and the wrapper becomes collectable (no leak).
 //
 // Windows uses libuv for pipe I/O; the from_pipe path under test is POSIX.
-test.skipIf(isWindows)(
-  "subprocess stdout FileReader is pinned while its pipe poll is live, then collectable after EOF",
-  async () => {
-    using dir = tempDir("fr-gc-uaf", {});
-    const started = join(String(dir), "started");
+test("subprocess stdout FileReader is pinned while its pipe poll is live, then collectable after EOF", async () => {
+  using dir = tempDir("fr-gc-uaf", {});
+  const started = join(String(dir), "started");
 
-    const script = /* js */ `
+  const script = /* js */ `
       const { heapStats } = require("bun:jsc");
       const { readdirSync } = require("node:fs");
       const ITERS = 4;
@@ -113,65 +111,63 @@ test.skipIf(isWindows)(
       }));
     `;
 
-    let stdout = "",
-      stderr = "",
-      exitCode: number | null = null;
-    try {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--smol", "-e", script],
-        // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which
-        // kills a detached grandchild the moment its intermediate parent exits
-        // (PR_SET_CHILD_SUBREAPER). This test needs that grandchild to outlive
-        // its parent and hold the pipe open; orphan cleanup is handled
-        // explicitly instead (the fixture kills by pid, the finally below
-        // reaps survivors).
-        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+  let stdout = "",
+    stderr = "",
+    exitCode: number | null = null;
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", script],
+      // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which
+      // kills a detached grandchild the moment its intermediate parent exits
+      // (PR_SET_CHILD_SUBREAPER). This test needs that grandchild to outlive
+      // its parent and hold the pipe open; orphan cleanup is handled
+      // explicitly instead (the fixture kills by pid, the finally below
+      // reaps survivors).
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    } finally {
-      // Always reap any detached grandchildren so nothing outlives the test
-      // even if the fixture crashed before killing them itself.
-      for (const pid of (() => {
-        try {
-          return readdirSync(started);
-        } catch {
-          return [];
-        }
-      })()) {
-        try {
-          process.kill(Number(pid), "SIGKILL");
-        } catch {}
+    [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  } finally {
+    // Always reap any detached grandchildren so nothing outlives the test
+    // even if the fixture crashed before killing them itself.
+    for (const pid of (() => {
+      try {
+        return readdirSync(started);
+      } catch {
+        return [];
       }
+    })()) {
+      try {
+        process.kill(Number(pid), "SIGKILL");
+      } catch {}
     }
+  }
 
-    let result: { iters: number; duringLivePipe: number; afterEof: number };
-    try {
-      result = JSON.parse(stdout.trim());
-    } catch {
-      throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
-    }
-    const { iters, duringLivePipe, afterEof } = result;
-    // Invariant: every FileReader whose pipe poll is still armed must be
-    // pinned by its own Strong ref. Before the fix they were swept here
-    // (duringLivePipe ~ 0), which is exactly the UAF precondition. The full
-    // result object carries base/afterSpawn/streams for CI diagnostics.
-    if (duringLivePipe < iters) {
-      expect({ duringLivePipe, ...(result as object), stderr }).toEqual<unknown>({
-        duringLivePipe: `>= ${iters}`,
-      });
-    }
-    expect(duringLivePipe).toBeGreaterThanOrEqual(iters);
-    // Once the pipe reaches EOF the ref is released and the wrappers become
-    // collectable. One may survive via a conservatively-rooted final
-    // Subprocess (same caveat as spawn-ipc-gc.test.ts).
-    expect(afterEof).toBeLessThanOrEqual(1);
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+  let result: { iters: number; duringLivePipe: number; afterEof: number };
+  try {
+    result = JSON.parse(stdout.trim());
+  } catch {
+    throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+  }
+  const { iters, duringLivePipe, afterEof } = result;
+  // Invariant: every FileReader whose pipe poll is still armed must be
+  // pinned by its own Strong ref. Before the fix they were swept here
+  // (duringLivePipe ~ 0), which is exactly the UAF precondition. The full
+  // result object carries base/afterSpawn/streams for CI diagnostics.
+  if (duringLivePipe < iters) {
+    expect({ duringLivePipe, ...(result as object), stderr }).toEqual<unknown>({
+      duringLivePipe: `>= ${iters}`,
+    });
+  }
+  expect(duringLivePipe).toBeGreaterThanOrEqual(iters);
+  // Once the pipe reaches EOF the ref is released and the wrappers become
+  // collectable. One may survive via a conservatively-rooted final
+  // Subprocess (same caveat as spawn-ipc-gc.test.ts).
+  expect(afterEof).toBeLessThanOrEqual(1);
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 // Asserts the on_reader_done lifetime invariant: the source must stay
 // Strong-protected across the user JS its p.run() drains, because the rest
@@ -179,10 +175,8 @@ test.skipIf(isWindows)(
 // protectedBefore >= 1 proves the handler ran inside that window (the
 // across-read ref, released only at on_reader_done's tail, is still held);
 // protectedAfter / aliveAfter >= 1 is the invariant. POSIX-only (libuv).
-test.skipIf(isWindows)(
-  "resolving the pending read from FileReader::on_reader_done keeps the source pinned through its own tail",
-  async () => {
-    const script = /* js */ `
+test("resolving the pending read from FileReader::on_reader_done keeps the source pinned through its own tail", async () => {
+  const script = /* js */ `
       const { heapStats } = require("bun:jsc");
       const prot = () =>
         heapStats().protectedObjectTypeCounts.FileInternalReadableStreamSource ?? 0;
@@ -234,39 +228,38 @@ test.skipIf(isWindows)(
       console.log(JSON.stringify(await globalThis.__done.promise));
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    let result: {
-      done: boolean;
-      len: number;
-      protectedBefore: number;
-      protectedAfter: number;
-      aliveAfter: number;
-    };
-    try {
-      result = JSON.parse(stdout.trim());
-    } catch {
-      throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
-    }
-    // Precondition: the pull was resolved by on_reader_done ({done: true}, no
-    // bytes), not by on_read_chunk delivering data.
-    expect({ done: result.done, len: result.len }).toEqual({ done: true, len: 0 });
-    // Precondition: the handler ran inside on_reader_done, before its tail
-    // released the across-read ref; the wrapper is still Strong there.
-    expect(result.protectedBefore).toBeGreaterThanOrEqual(1);
-    // Invariant: nothing reachable from that JS may downgrade or free the
-    // source while on_reader_done still has reads of `self` ahead of it.
-    expect(result.protectedAfter).toBeGreaterThanOrEqual(1);
-    expect(result.aliveAfter).toBeGreaterThanOrEqual(1);
-    expect(exitCode).toBe(0);
-  },
-);
+  let result: {
+    done: boolean;
+    len: number;
+    protectedBefore: number;
+    protectedAfter: number;
+    aliveAfter: number;
+  };
+  try {
+    result = JSON.parse(stdout.trim());
+  } catch {
+    throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+  }
+  // Precondition: the pull was resolved by on_reader_done ({done: true}, no
+  // bytes), not by on_read_chunk delivering data.
+  expect({ done: result.done, len: result.len }).toEqual({ done: true, len: 0 });
+  // Precondition: the handler ran inside on_reader_done, before its tail
+  // released the across-read ref; the wrapper is still Strong there.
+  expect(result.protectedBefore).toBeGreaterThanOrEqual(1);
+  // Invariant: nothing reachable from that JS may downgrade or free the
+  // source while on_reader_done still has reads of `self` ahead of it.
+  expect(result.protectedAfter).toBeGreaterThanOrEqual(1);
+  expect(result.aliveAfter).toBeGreaterThanOrEqual(1);
+  expect(exitCode).toBe(0);
+});
 
 // Asserts the lifetime invariant rather than racing for the crash: the actual
 // free needs a GC to land inside the microtask drain, which conservative stack
@@ -274,14 +267,12 @@ test.skipIf(isWindows)(
 // Strong-protected right after a re-entrant reader.cancel(), because
 // on_read_chunk's own pin keeps it above the downgrade-at-one threshold.
 // Windows uses libuv for pipe I/O; the read_with_fn path under test is POSIX.
-test.skipIf(isWindows)(
-  "re-entrant cancel inside a subprocess stdout read keeps the FileReader pinned for the rest of the dispatch",
-  async () => {
-    using dir = tempDir("fr-cancel-uaf", {});
-    const flag = join(String(dir), "go");
-    const pidFile = join(String(dir), "gcpid");
+test("re-entrant cancel inside a subprocess stdout read keeps the FileReader pinned for the rest of the dispatch", async () => {
+  using dir = tempDir("fr-cancel-uaf", {});
+  const flag = join(String(dir), "go");
+  const pidFile = join(String(dir), "gcpid");
 
-    const script = /* js */ `
+  const script = /* js */ `
       const { heapStats } = require("bun:jsc");
       const fs = require("node:fs");
       const FLAG = ${JSON.stringify(flag)};
@@ -346,49 +337,47 @@ test.skipIf(isWindows)(
       try { process.kill(Number(fs.readFileSync(PIDFILE, "utf8").trim()), "SIGKILL"); } catch {}
     `;
 
-    let stdout = "",
-      stderr = "",
-      exitCode: number | null = null;
+  let stdout = "",
+    stderr = "",
+    exitCode: number | null = null;
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", script],
+      // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which
+      // kills a detached grandchild the moment its intermediate parent
+      // exits. This test needs it to outlive sh and keep the pipe's write
+      // end open; cleanup is explicit (the fixture and the finally below).
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  } finally {
+    // Always reap the detached grandchild; the fixture's own kill is
+    // skipped if it crashes first.
     try {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--smol", "-e", script],
-        // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which
-        // kills a detached grandchild the moment its intermediate parent
-        // exits. This test needs it to outlive sh and keep the pipe's write
-        // end open; cleanup is explicit (the fixture and the finally below).
-        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    } finally {
-      // Always reap the detached grandchild; the fixture's own kill is
-      // skipped if it crashes first.
-      try {
-        process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL");
-      } catch {}
-    }
+      process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL");
+    } catch {}
+  }
 
-    let result: { chunkLen: number; protectedBefore: number; protectedAfter: number };
-    try {
-      result = JSON.parse(stdout.trim());
-    } catch {
-      throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
-    }
-    // Precondition: a non-empty chunk was flushed, so on_read_chunk's p.run()
-    // ran with read_with_fn still on the stack. The kernel socketpair buffer
-    // decides which of read_with_fn's two flush sites fires (the 128 KiB
-    // mid-loop flush on Linux; the retry flush on macOS, whose default is a
-    // few KiB), and the pin under test guards both identically, so the chunk
-    // size is deliberately not pinned to a platform-specific buffer size.
-    expect(result.chunkLen).toBeGreaterThan(0);
-    // Precondition: the from_pipe pin made the wrapper Strong before cancel.
-    expect(result.protectedBefore).toBeGreaterThanOrEqual(1);
-    // Invariant: the re-entrant cancel must not downgrade the wrapper while
-    // read_with_fn is still on the stack. Before the fix, protectedAfter is 0
-    // here, and a GC in this window frees the box read_with_fn is using.
-    expect(result.protectedAfter).toBeGreaterThanOrEqual(1);
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  let result: { chunkLen: number; protectedBefore: number; protectedAfter: number };
+  try {
+    result = JSON.parse(stdout.trim());
+  } catch {
+    throw new Error(`fixture did not emit JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+  }
+  // Precondition: a non-empty chunk was flushed, so on_read_chunk's p.run()
+  // ran with read_with_fn still on the stack. The kernel socketpair buffer
+  // decides which of read_with_fn's two flush sites fires (the 128 KiB
+  // mid-loop flush on Linux; the retry flush on macOS, whose default is a
+  // few KiB), and the pin under test guards both identically, so the chunk
+  // size is deliberately not pinned to a platform-specific buffer size.
+  expect(result.chunkLen).toBeGreaterThan(0);
+  // Precondition: the from_pipe pin made the wrapper Strong before cancel.
+  expect(result.protectedBefore).toBeGreaterThanOrEqual(1);
+  // Invariant: the re-entrant cancel must not downgrade the wrapper while
+  // read_with_fn is still on the stack. Before the fix, protectedAfter is 0
+  // here, and a GC in this window frees the box read_with_fn is using.
+  expect(result.protectedAfter).toBeGreaterThanOrEqual(1);
+  expect(exitCode).toBe(0);
+}, 30_000);

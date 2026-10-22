@@ -6,7 +6,7 @@
  * says it is; an edge takes the files of the tools it runs as inputs.
  */
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { chmodSync, existsSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -20,7 +20,7 @@ import { type IdentifiedTool, toolIdentity, toolIdentityFile, writeToolIdentitie
 const tool = (...lines: string[]) => `#!/bin/sh\n${lines.map(l => `echo '${l}'`).join("\n")}\n`;
 
 // The stand-ins are shell scripts; on Windows a tool has to be an .exe.
-test.skipIf(isWindows)("a tool's identity is the line of its --version output that carries the version", () => {
+test("a tool's identity is the line of its --version output that carries the version", () => {
   using dir = tempDir("tool-identity-line", {
     "clang": tool(
       "clang version 23.1.1 (https://github.com/llvm/llvm-project 6dfe1677ab8d)",
@@ -40,7 +40,7 @@ test.skipIf(isWindows)("a tool's identity is the line of its --version output th
   expect(() => toolIdentity(join(String(dir), "missing"))).toThrow("Cannot tell which");
 });
 
-test.skipIf(isWindows)("a file changes when its tool's path resolves to another tool, and only then", () => {
+test("a file changes when its tool's path resolves to another tool, and only then", () => {
   using dir = tempDir("tool-identity", {
     "v21/clang": tool("clang version 21.1.8 (https://github.com/llvm/llvm-project 2078da43e25a)"),
     "v23/clang": tool("clang version 23.1.1 (https://github.com/llvm/llvm-project 6dfe1677ab8d)"),
@@ -131,7 +131,7 @@ test("an edge takes the identity of the tools it runs, and of no other", () => {
 
 // On a Buildkite agent the tools have to be exactly the ones scripts/build/ci-images/spec.ts pins. Each case is a
 // process of its own: BUN_TOOLCHAIN_LLVM is read when tools.ts loads, and the check compares the running Node.js.
-test.skipIf(isWindows).concurrent.each([
+test.concurrent.each([
   { clang: pins.llvm.version, env: {}, says: "accepted" },
   { clang: "23.1.2", env: {}, says: `clang is 23.1.2, and scripts/build/ci-images/spec.ts pins ${pins.llvm.version}` },
   {

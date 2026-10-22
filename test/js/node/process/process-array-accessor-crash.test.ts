@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
 
-describe.skipIf(isWindows)("process.setgroups", () => {
+describe("process.setgroups", () => {
   test("does not crash when array has an accessor property", () => {
     const groups = [1, 2, 3];
     Object.defineProperty(groups, 1, {

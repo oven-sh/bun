@@ -1324,7 +1324,7 @@ describe.concurrent("auto-install throws when it can't do something instead of e
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  describe.serial.skipIf(isWindows)("a cache directory that is read-only", () => {
+  describe.serial("a cache directory that is read-only", () => {
     async function run(dir: string) {
       using unprivileged = unprivilegedSpawnOptions(dir);
       await using proc = Bun.spawn({
@@ -2555,7 +2555,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files, { cwd: "elsewhere", args: ["../app/src/deep/index.js"] })).toEqual(refused(configured));
   });
 
-  test.serial.skipIf(isWindows).each([
+  test.serial.each([
     [".npmrc", "a folder of the project", { cwd: "app/src" }],
     [".npmrc", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
     ["bunfig.toml", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
@@ -2578,7 +2578,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files)).toEqual(refused(unreadable));
   });
 
-  test.serial.skipIf(isWindows).each([
+  test.serial.each([
     ["the user's bunfig", "home/.bunfig.toml"],
     ["the user's .npmrc", "home/.npmrc"],
     ["the project's .npmrc", "app/.npmrc"],
@@ -3161,7 +3161,7 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
   });
 
   // `app/packages/member` is a link to `outside/up/member`, and bun is started in it by that name.
-  describe.skipIf(isWindows)("a member that is a link to a folder outside the workspace root", () => {
+  describe("a member that is a link to a folder outside the workspace root", () => {
     const scanner = `[install.security]\nscanner = "./scanner.ts"\n`;
     const created = ["app", "cache", "home", "outside"];
     const inLinkedMember = (files: (r: Registries) => Files) =>
@@ -3396,7 +3396,7 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
 
   // Opening a FIFO for reading blocks until a writer shows up, which never
   // happens. The timeout only turns that hang into a failure.
-  cell.skipIf(isWindows)("no .npmrc is opened when node_modules has the package", async () => {
+  cell("no .npmrc is opened when node_modules has the package", async () => {
     const result = await autoInstall({
       args: ["x.mjs"],
       files: () => ({ ...inNodeModules, "app/x.mjs": importIt }),

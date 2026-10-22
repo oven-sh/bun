@@ -6,7 +6,7 @@
  * a response file of its own. These check what the link edge and that file say; no compiler or ninja runs.
  */
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -62,7 +62,7 @@ describe.each([
   ["a cross-linked macOS target", macosCross],
 ])("an lld link (%s)", (_, target) => {
   // build.ninja spells paths with the host's separator; the expectations in this file are written with `/`.
-  test.skipIf(isWindows)("takes the lazy objects as a --start-lib group in a response file of its own", () => {
+  test("takes the lazy objects as a --start-lib group in a response file of its own", () => {
     using dir = tempDir("build-link-lazy", {});
     const edge = emitLink(target, String(dir));
     // Not in $in: `@$out.rsp` would hand them to the linker as plain objects.
@@ -74,7 +74,7 @@ describe.each([
   });
 });
 
-test.skipIf(isWindows)("lld-link gets the group through clang-cl as a linker input", () => {
+test("lld-link gets the group through clang-cl as a linker input", () => {
   using dir = tempDir("build-link-lazy", {});
   const edge = emitLink(windows, String(dir));
   expect(edge.explicit).toEqual(["obj/bun.o", "cache/libWTF.a"]);
@@ -82,7 +82,7 @@ test.skipIf(isWindows)("lld-link gets the group through clang-cl as a linker inp
   expect(edge.group).toBe("/start-lib\nobj/dep/used.o\nobj/dep/unused.o\n/end-lib\n");
 });
 
-test.skipIf(isWindows)("Apple's ld has no such group: a native macOS link takes them as plain objects", () => {
+test("Apple's ld has no such group: a native macOS link takes them as plain objects", () => {
   using dir = tempDir("build-link-lazy", {});
   const edge = emitLink(macosNative, String(dir));
   expect(edge.explicit).toEqual(["obj/bun.o", "obj/dep/used.o", "obj/dep/unused.o", "cache/libWTF.a"]);

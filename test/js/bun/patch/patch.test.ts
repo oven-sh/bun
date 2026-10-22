@@ -189,7 +189,7 @@ describe("apply", () => {
 
     // The header mode belongs to the file; directories the patch has to create
     // must be traversable regardless, or the file cannot be created inside them.
-    test.if(process.platform !== "win32")("creates missing parent directories traversable", async () => {
+    test("creates missing parent directories traversable", async () => {
       await using tempdir = tempDir("patch-test", { "a/.keep": "" });
       const afolder = join(tempdir, "a");
 
@@ -340,7 +340,7 @@ describe("apply", () => {
 
   describe("mode change", () => {
     // chmod doesn't do anything on windows so skiip
-    test.if(process.platform !== "win32")("simple", async () => {
+    test("simple", async () => {
       const files = {
         "a/hi.txt": "hello!",
         "b/hi.txt": "hi!",
@@ -384,9 +384,8 @@ describe("apply", () => {
     const tree = (await fs.readdir(afolder, { recursive: true })).map(path => path.replaceAll("\\", "/")).sort();
     expect(tree).toEqual(["plan", "plan b", "plan b/empty.js", "plan b/run.sh", "plan b/todo.js"]);
     expect(await fs.readFile(join(afolder, "plan b", "todo.js"), "utf8")).toBe("new file\n");
-    if (process.platform !== "win32") {
-      expect((await fs.stat(join(afolder, "plan b", "run.sh"))).mode & 0o777).toBe(0o755);
-    }
+
+    expect((await fs.stat(join(afolder, "plan b", "run.sh"))).mode & 0o777).toBe(0o755);
   });
 
   describe("patch", () => {
@@ -1124,7 +1123,7 @@ describe("apply", () => {
       ["a new file in a directory the patch creates", creation("newdir/new.txt"), "newdir/new.txt"],
     ];
 
-    describe.if(process.platform !== "win32")("symlinks", () => {
+    describe("symlinks", () => {
       async function link(root: string) {
         await fs.symlink(join(root, "outside.txt"), join(root, "pkg", "link"));
         await fs.symlink(join(root, "outside"), join(root, "pkg", "evildir"));
@@ -1267,7 +1266,7 @@ describe("apply", () => {
     // `O_RDONLY` on a FIFO without `O_NONBLOCK` blocks until a writer appears, so
     // the target open must use `O_NONBLOCK` for the `!ISREG` check to ever run.
     // Run in a child process: the unfixed failure mode is an indefinite hang.
-    test.if(process.platform !== "win32")("a mode change of a FIFO is rejected instead of hanging", async () => {
+    test("a mode change of a FIFO is rejected instead of hanging", async () => {
       using dir = tempDir("patch-fifo", { "pkg/.keep": "" });
       const pkgDir = join(String(dir), "pkg");
       await $`mkfifo ${join(pkgDir, "pipe")}`;
@@ -1336,7 +1335,7 @@ describe("makeDiff", () => {
   });
 
   // The old folder is a git checkout in the cache, the new one a copy of it that left the links out.
-  test.skipIf(process.platform === "win32")("leaves out the symlinks that only the old folder has", async () => {
+  test("leaves out the symlinks that only the old folder has", async () => {
     await using tempdir = tempDir("patch-make-diff-links", {
       "a/a.txt": "one\n",
       "a/m.txt": "one\n",

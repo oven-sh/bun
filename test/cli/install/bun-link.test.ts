@@ -848,13 +848,13 @@ it("a link: dependency whose link is in place is not linked again", async () => 
   expect(exitCode).toBe(0);
   // A hard link of the symlink keeps its inode number from being used for a new one. On macOS
   // link() follows the symlink, and APFS gives no number out twice.
-  if (!isWindows && !isMacOS) await fsLink(link, join(String(dir), "pin"));
+  if (!isMacOS) await fsLink(link, join(String(dir), "pin"));
   const before = (await lstat(link)).ino;
 
   ({ stdout, exitCode } = await bun(app, "install", "--linker=hoisted"));
   expect(stdout).toContain("(no changes)");
   expect(exitCode).toBe(0);
-  if (!isWindows) expect((await lstat(link)).ino).toBe(before);
+  expect((await lstat(link)).ino).toBe(before);
 
   // The same name and version registered from another directory: the link has to move.
   expect((await bun(join(String(dir), "other"), "link")).exitCode).toBe(0);
@@ -1026,7 +1026,7 @@ describe("global bin dir", () => {
       "elsewhere.txt": "",
     });
     const binDir = join(String(bunInstall), "bin");
-    if (!isWindows) await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
+    await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
     // Bins are linked in map order: the taken names first, then the free one.
     using pkg = tempDir(
       "link-pkg",
@@ -1040,7 +1040,7 @@ describe("global bin dir", () => {
     expect(await readFile(join(binDir, binEntry("bun")), "utf8")).toBe("the bun binary");
     if (isWindows) expect(await exists(join(binDir, "bun.bunx"))).toBeFalse();
     expect(await readFile(join(binDir, binEntry("adir"), "inner.txt"), "utf8")).toBe("keep");
-    if (!isWindows) expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
+    expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
     expect(exitCode).toBe(1);
   });
 
@@ -1063,7 +1063,7 @@ describe("global bin dir", () => {
     // The name is no longer the first package's to remove.
     result = await run("unlink", String(first), String(bunInstall));
     expect(result.out).toContain('success: unlinked package "first-owner"');
-    if (!isWindows) expect(bin).toBeValidBin(linkTarget("second-owner", "cli.js"));
+    expect(bin).toBeValidBin(linkTarget("second-owner", "cli.js"));
     expect(result.exitCode).toBe(0);
   });
 
@@ -1126,7 +1126,7 @@ describe("global bin dir", () => {
     await writeFile(join(binDir, binEntry("bun")), "the bun binary");
     await mkdir(join(binDir, binEntry("adir")));
     await writeFile(join(binDir, binEntry("adir"), "inner.txt"), "keep");
-    if (!isWindows) await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
+    await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
     await writeFile(
       join(String(pkg), "package.json"),
       pkgFiles("own-bin", { "own-bin": "cli.js", bun: "cli.js", adir: "cli.js", foreign: "cli.js" })["package.json"],
@@ -1139,7 +1139,7 @@ describe("global bin dir", () => {
     if (isWindows) expect(await exists(join(binDir, "own-bin.bunx"))).toBeFalse();
     expect(await readFile(join(binDir, binEntry("bun")), "utf8")).toBe("the bun binary");
     expect(await readFile(join(binDir, binEntry("adir"), "inner.txt"), "utf8")).toBe("keep");
-    if (!isWindows) expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
+    expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
     expect(result.exitCode).toBe(0);
   });
 });

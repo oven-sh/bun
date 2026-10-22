@@ -535,7 +535,7 @@ describe("fs.watch", () => {
   // on windows 0o200 will be readable (match nodejs behavior)
   // Root has CAP_DAC_OVERRIDE, so the chmod 0o200 below never yields the
   // EACCES these two tests expect; they only make sense as a non-root user.
-  test.skipIf(isWindows || isRoot)("should throw if no permission to watch the directory", async () => {
+  test.skipIf(isRoot)("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
     fs.chmodSync(filepath, 0o200);
@@ -551,7 +551,7 @@ describe("fs.watch", () => {
     }
   });
 
-  test.skipIf(isWindows || isRoot)("should throw if no permission to watch the file", async () => {
+  test.skipIf(isRoot)("should throw if no permission to watch the file", async () => {
     const filepath = path.join(testDir, "permission-file.txt");
 
     fs.writeFileSync(filepath, "hello.txt");

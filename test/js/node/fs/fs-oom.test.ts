@@ -1,7 +1,7 @@
 import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { afterAll, describe, expect, test } from "bun:test";
 import { closeSync, readFileSync, truncateSync, writeFileSync, writeSync } from "fs";
-import { bunEnv, bunExe, isASAN, isLinux, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import os from "node:os";
 import { join } from "path";
 
@@ -16,20 +16,19 @@ afterAll(() => {
 });
 
 // /dev/zero reports a size of 0. So we need a separate test for reDgular files that are huge.
-if (isPosix) {
-  test("fs.readFileSync(/dev/zero) should throw an OOM without crashing the process.", () => {
-    expect(() => readFileSync("/dev/zero")).toThrow("ENOMEM: not enough memory, read '/dev/zero'");
-    Bun.gc(true);
-  });
 
-  test.each(["utf8", "ucs2", "latin1", "hex", "base64", "base64url"] as const)(
-    "fs.readFileSync(/dev/zero, '%s') should throw an OOM without crashing the process.",
-    encoding => {
-      expect(() => readFileSync("/dev/zero", encoding)).toThrow("ENOMEM: not enough memory, read '/dev/zero'");
-      Bun.gc(true);
-    },
-  );
-}
+test("fs.readFileSync(/dev/zero) should throw an OOM without crashing the process.", () => {
+  expect(() => readFileSync("/dev/zero")).toThrow("ENOMEM: not enough memory, read '/dev/zero'");
+  Bun.gc(true);
+});
+
+test.each(["utf8", "ucs2", "latin1", "hex", "base64", "base64url"] as const)(
+  "fs.readFileSync(/dev/zero, '%s') should throw an OOM without crashing the process.",
+  encoding => {
+    expect(() => readFileSync("/dev/zero", encoding)).toThrow("ENOMEM: not enough memory, read '/dev/zero'");
+    Bun.gc(true);
+  },
+);
 
 // memfd is linux only.
 if (isLinux) {

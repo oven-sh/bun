@@ -1,6 +1,6 @@
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isIPv6, isWindows, tls as localhostTls, tempDir } from "harness";
+import { isIPv6, tls as localhostTls, tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -244,7 +244,7 @@ describe("RedisClient TLS hostname verification", () => {
     });
   });
 
-  test.skipIf(isWindows)("skips hostname verification for redis+tls+unix:// sockets", async () => {
+  test("skips hostname verification for redis+tls+unix:// sockets", async () => {
     // Unix-domain sockets have no hostname; a CA-trusted cert for the wrong
     // CN must still be accepted as long as the chain validates.
     await withUnixServer({ key: serverKey, cert: serverCert }, async socketPath => {
@@ -335,7 +335,7 @@ describe("RedisClient tls.serverName", () => {
     });
   });
 
-  test.skipIf(isWindows)("a unix socket has the name serverName gives it", async () => {
+  test("a unix socket has the name serverName gives it", async () => {
     await withUnixServer({ key: serverKey, cert: serverCert }, async (socketPath, server) => {
       const servernames = recordServernames(server);
       expect(await ping(`redis+tls+unix://${socketPath}`, { ca, serverName: "agent1" })).toBe("PONG");

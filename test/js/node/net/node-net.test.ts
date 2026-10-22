@@ -1235,19 +1235,17 @@ it.if(isWindows)("should not leak when connect({path}) fails asynchronously whil
 // On Windows, unix paths route through the named-pipe codepath which reports
 // failure asynchronously; this test targets the synchronous-failure branch in
 // Listener.connectInner.
-it.skipIf(isWindows)(
-  "should not leak when connect({path}) fails synchronously on a reused handle",
-  async () => {
-    // node:net creates a detached native socket (`_handle`) and passes it as
-    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
-    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
-    // synchronously while the socket is still `.detached`, so
-    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
-    // fire — the ref taken here must be released by the caller for reused
-    // sockets too, not only freshly-allocated ones. Without that, every
-    // failed reconnect leaks one native TCPSocket struct + its connection
-    // string.
-    const script = `
+it("should not leak when connect({path}) fails synchronously on a reused handle", async () => {
+  // node:net creates a detached native socket (`_handle`) and passes it as
+  // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
+  // before `doConnect`. A nonexistent unix path makes `doConnect` throw
+  // synchronously while the socket is still `.detached`, so
+  // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
+  // fire — the ref taken here must be released by the caller for reused
+  // sockets too, not only freshly-allocated ones. Without that, every
+  // failed reconnect leaks one native TCPSocket struct + its connection
+  // string.
+  const script = `
       const net = require("node:net");
       const { heapStats } = require("bun:jsc");
       const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
@@ -1289,23 +1287,21 @@ it.skipIf(isWindows)(
       const after = pageCount();
       console.log(JSON.stringify({ before, after, delta: after - before }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref: +25 pages (release) / +163 (debug+ASAN).
-    // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
-    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
-    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+  // Without the balancing deref: +25 pages (release) / +163 (debug+ASAN).
+  // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
+  // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
+  expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
+  expect(exitCode).toBe(0);
+}, 60_000);
 
 // node only reaches readStart() from _read(), and read(0) never calls _read once
 // the readable side has ended, so a `readable: false` client leaves the peer's
@@ -1442,7 +1438,7 @@ describe("Socket fd adoption", () => {
     }
   }
 
-  it.skipIf(isWindows)("writes synchronously to an adopted pipe fd and closes it (> 2) on destroy", async () => {
+  it("writes synchronously to an adopted pipe fd and closes it (> 2) on destroy", async () => {
     const { rfd, wfd } = openFifo("adopted.fifo");
     try {
       const socket = new Socket({ fd: wfd, readable: false, writable: true });
@@ -1488,7 +1484,7 @@ describe("Socket fd adoption", () => {
   // false, writable: true })). The readable side must start out finished without
   // an 'end' event; emitting one let allowHalfOpen=false end the writable side,
   // destroy the socket and close the fd one tick after construction.
-  it.skipIf(isWindows)("readable: false leaves the writable side and the adopted fd open", async () => {
+  it("readable: false leaves the writable side and the adopted fd open", async () => {
     const { rfd, wfd } = openFifo("write-only.fifo");
     try {
       const socket = new Socket({ fd: wfd, readable: false, writable: true });
@@ -1571,7 +1567,7 @@ describe("Socket fd adoption", () => {
 
   // node's _writeGeneric restarts the idle timer before every write; the
   // synchronous fd write path has no handle doing that for it.
-  it.skipIf(isWindows)("writes to an adopted fd restart the setTimeout() idle timer", async () => {
+  it("writes to an adopted fd restart the setTimeout() idle timer", async () => {
     const { rfd, wfd } = openFifo("timeout.fifo");
     const socket = new Socket({ fd: wfd, readable: false, writable: true });
     try {
@@ -2909,7 +2905,7 @@ it("onread: a swallowed throw does not drop the rest of the current native read"
 
 // On Windows the native layer does not report fatal send errors yet (the WSA
 // error translation is a follow-up), so the write error never surfaces there.
-it.skipIf(isWindows)("a write after the peer reset the connection fails with a write error", async () => {
+it("a write after the peer reset the connection fails with a write error", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   // resetAndDestroy() sends an RST (not a FIN); allowHalfOpen keeps the client's
   // writable side open like Node, so the failure must surface from the write
@@ -3013,7 +3009,7 @@ describe("a write that fails at once", () => {
   // The peer dies and the client writes in the same tick, so the event loop
   // gets no chance to report the dead peer as a read error first.
   // Windows: a path listens on a named pipe, which has its own write path.
-  it.skipIf(isWindows)("returns false from write() on a unix socket whose peer closed", async () => {
+  it("returns false from write() on a unix socket whose peer closed", async () => {
     using pair = await connectedPair({ path: join(socket_domain, "write-epipe.sock") });
     // A unix socket learns that its peer is gone inside the peer's close(2).
     pair.peer.destroy();
@@ -3069,7 +3065,7 @@ describe("a write that fails at once", () => {
 // to call bind() bare here and fail with EADDRINUSE, which made
 // sequential/test-net-localport.js order-dependent in CI. Windows is skipped
 // because libuv intentionally does not set SO_REUSEADDR there.
-it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TIME_WAIT sockets", async () => {
+it("connect({ localPort }) succeeds when the local port has TIME_WAIT sockets", async () => {
   // Reserve a port and release it so nothing else is listening on it.
   const probe = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -3130,7 +3126,7 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
 // https://github.com/oven-sh/bun/issues/32087
 // The writev fast path is `#[cfg(unix)]`, and on Windows the amount a send
 // accepts is machine dependent, so the buffered precondition cannot be built there.
-describe.skipIf(isWindows)("socket write while data is buffered natively", () => {
+describe("socket write while data is buffered natively", () => {
   // Counts received bytes per fill value. STALL_ON_ACCEPT=1 blocks the loop on
   // accept so the kernel buffers stay full while the client writes.
   const serverFixture = /* js */ `
@@ -3400,7 +3396,7 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
 describe("net.Server.listen({ fd })", () => {
   // node's createServerHandle only accepts TCP / pipe descriptors and reports anything else as EINVAL;
   // the raw listen(2) failure for a datagram socket is EOPNOTSUPP.
-  it.skipIf(isWindows)("reports a datagram descriptor as EINVAL, like node", async () => {
+  it("reports a datagram descriptor as EINVAL, like node", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -3493,7 +3489,7 @@ describe.concurrent("uncaughtException from socket listeners", () => {
 
 // There is nothing to half-close yet. shutdown() used to mark the native socket as one that had
 // opened, so closing it raised a connection's events ('end') and the attempt never failed.
-it.skipIf(isWindows || isMusl)("closing a handle that was shut down while connecting fails its attempt", async () => {
+it.skipIf(isMusl)("closing a handle that was shut down while connecting fails its attempt", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -3536,7 +3532,7 @@ it.skipIf(isWindows || isMusl)("closing a handle that was shut down while connec
 
 // Closing the connecting handle completes its request with ECANCELED. That belongs to the connect
 // that was given up, not to the one that follows.
-it.skipIf(isWindows || isMusl).each([
+it.skipIf(isMusl).each([
   ["an address", `{ host: "127.0.0.1" }`, "connect,data"],
   [
     "several addresses",

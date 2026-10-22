@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "path";
-import { bunEnv, bunExe, fakeNodeRun, isMacOS, isWindows, tempDir } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, isMacOS, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -32,7 +32,7 @@ describe("fake node cli", () => {
     expect(fakeNodeRun(temp, "run").stdout).toBe("pass");
   });
   // A Windows command line is too short for a path longer than the path buffer.
-  test.skipIf(isWindows)("reports module not found for a relative script path longer than PATH_MAX", () => {
+  test("reports module not found for a relative script path longer than PATH_MAX", () => {
     const long = Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";
     using temp = tempDir("fake-node-long", {});
     const { exitCode, stdout, stderr } = Bun.spawnSync({

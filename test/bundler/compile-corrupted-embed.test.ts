@@ -168,9 +168,8 @@ test.skipIf(isMacOS)(
     expect(await run(exe)).toEqual({ stdout: "hello from standalone\n", stderr: "", exitCode: 0 });
 
     await expectGracefulFallback(corruptedCopy(exe, "length", isWindows ? peStompLength : elfStompLength));
-    if (!isWindows) {
-      await expectGracefulFallback(corruptedCopy(exe, "vaddr", path => elfStompVaddr(path, 0x4141414141414141n)));
-    }
+
+    await expectGracefulFallback(corruptedCopy(exe, "vaddr", path => elfStompVaddr(path, 0x4141414141414141n)));
   },
   TIMEOUT,
 );

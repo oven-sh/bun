@@ -825,7 +825,7 @@ console.log(JSON.stringify(results));`,
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows).concurrent.each(["postgres", "mysql"] as const)(
+test.concurrent.each(["postgres", "mysql"] as const)(
   "%s: a unix socket that is not there fails the connection, and TCP is not dialed",
   async adapter => {
     let tcpConnections = 0;

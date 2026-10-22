@@ -12,7 +12,7 @@
  * runs a pre-flight.
  */
 import { afterEach, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { tempDir } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -29,7 +29,7 @@ afterEach(() => {
   }
 });
 
-test.skipIf(isWindows)("the configure-time rustc probe pins the rustup proxy to the pinned channel", () => {
+test("the configure-time rustc probe pins the rustup proxy to the pinned channel", () => {
   using dir = tempDir("build-rustc-probe", {
     "bin/rustc": ({ root }) =>
       [

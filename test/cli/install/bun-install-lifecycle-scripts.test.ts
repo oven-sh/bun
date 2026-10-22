@@ -2140,7 +2140,7 @@ describe("the trusted set", () => {
 
   // Nobody trusts `payload`, and it has no script. Its `bin` has the name of a command that `native`, which is trusted,
   // runs.
-  describe.skipIf(isWindows)("a bin of another package does not replace a command inside a trusted script", () => {
+  describe("a bin of another package does not replace a command inside a trusted script", () => {
     const files = (script: "preinstall" | "postinstall", trusted: boolean) => ({
       "package.json": {
         name: "foo",
@@ -2510,20 +2510,17 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("a bin whose file a s
       tool: { bin: { tool: "dist/tool" }, scripts: { postinstall: build }, files },
     });
     await expectLinked(ctx, { dependencies: { "a-tool": "1.0.0", tool: "1.0.0" }, trustedDependencies: ["tool"] });
-    if (!isWindows) expect(readlinkSync(ctx.installed(".bin", "tool"))).toBe(join("..", "a-tool", "cli.js"));
+    expect(readlinkSync(ctx.installed(".bin", "tool"))).toBe(join("..", "a-tool", "cli.js"));
   });
 
   // The file of the bin is in the tarball, so nothing is left to link after the script.
-  test.skipIf(isWindows || linker === "isolated")(
-    "a program that a script writes in place of its link is kept",
-    async () => {
-      using ctx = await setupScriptPackages(linker, {
-        tool: { bin: { tool: "cli.js" }, scripts: { postinstall: "rm ../.bin/tool && cp cli.js ../.bin/tool" }, files },
-      });
-      await expectLinked(ctx, { dependencies: { tool: "1.0.0" }, trustedDependencies: ["tool"] });
-      expect(lstatSync(ctx.installed(".bin", "tool")).isFile()).toBe(true);
-    },
-  );
+  test.skipIf(linker === "isolated")("a program that a script writes in place of its link is kept", async () => {
+    using ctx = await setupScriptPackages(linker, {
+      tool: { bin: { tool: "cli.js" }, scripts: { postinstall: "rm ../.bin/tool && cp cli.js ../.bin/tool" }, files },
+    });
+    await expectLinked(ctx, { dependencies: { tool: "1.0.0" }, trustedDependencies: ["tool"] });
+    expect(lstatSync(ctx.installed(".bin", "tool")).isFile()).toBe(true);
+  });
 });
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("bun add --trust (%s)", linker => {
@@ -2844,7 +2841,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("default node-gyp scr
 describe.concurrent.each(["hoisted", "isolated"] as const)("scripts that run at the same time (%s)", linker => {
   const names = ["a", "b", "c", "d"];
 
-  test.skipIf(isWindows).each([
+  test.each([
     { title: "--concurrent-scripts=1", bunfig: "", args: ["--concurrent-scripts=1"], limit: 1 },
     { title: "--concurrent-scripts=2", bunfig: "", args: ["--concurrent-scripts=2"], limit: 2 },
     { title: "concurrentScripts = 1", bunfig: "concurrentScripts = 1\n", args: [], limit: 1 },
@@ -2940,69 +2937,65 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("scripts that run at 
     30_000,
   );
 
-  test.skipIf(isWindows)(
-    "a script that ends makes room for the next one while another keeps running",
-    async () => {
-      using ctx = await setupScriptPackages(
-        linker,
-        Object.fromEntries(
-          names.map(name => [
-            name,
-            { scripts: { postinstall: `echo ${name} >> "$STARTED" && read line < "$GATES/${name}"` } },
-          ]),
-        ),
-      );
-      await writeFile(
-        ctx.packageJson,
-        JSON.stringify({
-          name: "foo",
-          dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
-          trustedDependencies: names,
-        }),
-      );
-      expect((await ctx.bun("install", "--lockfile-only")).exitCode).toBe(0);
+  test("a script that ends makes room for the next one while another keeps running", async () => {
+    using ctx = await setupScriptPackages(
+      linker,
+      Object.fromEntries(
+        names.map(name => [
+          name,
+          { scripts: { postinstall: `echo ${name} >> "$STARTED" && read line < "$GATES/${name}"` } },
+        ]),
+      ),
+    );
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+        trustedDependencies: names,
+      }),
+    );
+    expect((await ctx.bun("install", "--lockfile-only")).exitCode).toBe(0);
 
-      const gates = join(ctx.packageDir, "gates");
-      await mkdir(gates);
-      expect(Bun.spawnSync({ cmd: ["mkfifo", ...names.map(name => join(gates, name))] }).exitCode).toBe(0);
-      const pipes = new Map(
-        names.map(name => [name, openSync(join(gates, name), fsConstants.O_RDWR | fsConstants.O_NONBLOCK)]),
-      );
-      const log = join(ctx.packageDir, "started.txt");
-      const started = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
+    const gates = join(ctx.packageDir, "gates");
+    await mkdir(gates);
+    expect(Bun.spawnSync({ cmd: ["mkfifo", ...names.map(name => join(gates, name))] }).exitCode).toBe(0);
+    const pipes = new Map(
+      names.map(name => [name, openSync(join(gates, name), fsConstants.O_RDWR | fsConstants.O_NONBLOCK)]),
+    );
+    const log = join(ctx.packageDir, "started.txt");
+    const started = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
 
-      await using proc = spawn({
-        cmd: [bunExe(), "install", "--concurrent-scripts=2"],
-        cwd: ctx.packageDir,
-        env: { ...ctx.env, STARTED: log, GATES: gates },
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      try {
-        // The first one keeps running to the end, so each of the others has to start while it runs.
-        for (let count = 2; count <= names.length; count++) {
-          while (started().length < count) {
-            if (proc.exitCode !== null) throw new Error(`bun install exited with ${proc.exitCode}`);
-            await Bun.sleep(1);
-          }
-          expect(started()).toHaveLength(count);
-          writeSync(pipes.get(started()[count - 1])!, "\n");
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--concurrent-scripts=2"],
+      cwd: ctx.packageDir,
+      env: { ...ctx.env, STARTED: log, GATES: gates },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    try {
+      // The first one keeps running to the end, so each of the others has to start while it runs.
+      for (let count = 2; count <= names.length; count++) {
+        while (started().length < count) {
+          if (proc.exitCode !== null) throw new Error(`bun install exited with ${proc.exitCode}`);
+          await Bun.sleep(1);
         }
-        writeSync(pipes.get(started()[0])!, "\n");
-        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        expect(err).not.toContain("error:");
-        expect(exitCode).toBe(0);
-      } finally {
-        rmSync(gates, { recursive: true, force: true });
-        for (const pipe of pipes.values()) {
-          writeSync(pipe, "\n");
-          closeSync(pipe);
-        }
+        expect(started()).toHaveLength(count);
+        writeSync(pipes.get(started()[count - 1])!, "\n");
       }
-    },
-    10_000,
-  );
+      writeSync(pipes.get(started()[0])!, "\n");
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(gates, { recursive: true, force: true });
+      for (const pipe of pipes.values()) {
+        writeSync(pipe, "\n");
+        closeSync(pipe);
+      }
+    }
+  }, 10_000);
 
   test("packages that a later install trusts, one script at a time", async () => {
     using ctx = await setupScriptPackages(
@@ -3073,7 +3066,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
 
   // One at a time, so that the third script to start is the one that fails. Two have finished and aren't run again, and
   // one hasn't started.
-  test.skipIf(isWindows).each([
+  test.each([
     { title: "preinstall", script: "preinstall", args: [] },
     { title: "install", script: "install", args: [] },
     { title: "postinstall", script: "postinstall", args: [] },
@@ -3103,7 +3096,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     expect(await install("third.txt", 100, ...args)).toEqual({ errors: [], ran: [], exitCode: 0 });
   });
 
-  test.skipIf(isWindows)("all at the same time: every script runs in the end", async () => {
+  test("all at the same time: every script runs in the end", async () => {
     const { ctx, install } = await setup("postinstall");
     using _ = ctx;
 
@@ -3116,7 +3109,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
 
   // bun looks for the shell once. The first script removes it, whichever script that is and
   // however far the other packages are, so the second one has nothing to start with.
-  test.skipIf(isWindows)("a script that cannot be started", async () => {
+  test("a script that cannot be started", async () => {
     const waiting = ["v", "w", "x", "y", "z"];
     using ctx = await setupScriptPackages(
       linker,
@@ -3166,7 +3159,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
 
   // The root's `dep` is a different package. With the hoisted linker, each parent has its own copy, and the first one
   // fails before the walk reaches the last.
-  test.skipIf(isWindows)("copies that the failed install hadn't reached", async () => {
+  test("copies that the failed install hadn't reached", async () => {
     const parents = Array.from({ length: 40 }, (_, i) => `parent-${i}`);
     using ctx = await setupScriptPackages(linker, {
       scripted: { scripts: { postinstall: `echo ran >> "$RUNS" && test -z "$FAIL"` } },
@@ -7041,31 +7034,28 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           ] as [number, string][])
         : []),
     ];
-    test.skipIf(isWindows).each(signaled)(
-      "a postinstall killed by signal %d is reported and re-raised",
-      async (signal, message) => {
-        using ctx = await setupTest();
-        const { packageDir, packageJson, env } = ctx;
-        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+    test.each(signaled)("a postinstall killed by signal %d is reported and re-raised", async (signal, message) => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-        await writeFile(
-          packageJson,
-          JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: `kill -${signal} $$` } }),
-        );
+      await writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: `kill -${signal} $$` } }),
+      );
 
-        await using proc = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: packageDir,
-          stdout: "pipe",
-          stderr: "pipe",
-          env: testEnv,
-        });
-        const [, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+      const [, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-        expect(err).toContain(message);
-        expect(exited).toBe(128 + signal);
-      },
-    );
+      expect(err).toContain(message);
+      expect(exited).toBe(128 + signal);
+    });
   });
 
   describe.concurrent("stdout/stderr is inherited from root scripts during install", async () => {

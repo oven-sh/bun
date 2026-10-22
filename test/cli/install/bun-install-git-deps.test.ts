@@ -675,7 +675,7 @@ function expectOneStoreEntry(project: string, aliases: string[]) {
 // folder taken moves it away (`move_to_cache_directory` in extract_tarball.rs) while another one is still reading its
 // package.json. Occasionally that one creates a package with no name and no dependencies.
 for (const linker of ["isolated", "hoisted"] as const) {
-  test.concurrent.skipIf(isWindows)(
+  test.concurrent(
     `${linker} linker installs github: refs that point to one commit as one package`,
     async () => {
       using dir = tempDir(`github-one-commit-${linker}`, {});
@@ -739,7 +739,7 @@ for (const linker of ["isolated", "hoisted"] as const) {
 
 // The same for a repository whose package.json has no name, or that has no package.json. The package is named after the
 // repository, for every ref.
-test.concurrent.skipIf(isWindows).each([
+test.concurrent.each([
   ["a package.json without a name", { "package.json": JSON.stringify({ version: "1.0.0" }) }],
   ["no package.json", {}],
 ])(
@@ -1642,7 +1642,7 @@ test.concurrent(
 // that finishes second finds the other's clone already in the cache. It used to swap in its own clone and delete the
 // other one, which the first install still had open. The first install's checkout then failed with "fatal: repository
 // '<cache>/.<id>.tmp (deleted)' does not exist". The same applies to the checkout folder.
-test.concurrent.skipIf(isWindows)(
+test.concurrent(
   "an install keeps the git cache folders that another install published first",
   async () => {
     using dir = tempDir("git-dep-publish-race", {});
@@ -2299,7 +2299,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
 
   // `git checkout` fails for a repository that holds a path the platform
   // cannot create. Here a wrapper around git fails it once `fail-checkout` exists.
-  test.concurrent.skipIf(isWindows)(
+  test.concurrent(
     `${linker} linker checks out again for a locked dependency after the checkout failed for another one`,
     async () => {
       using dir = tempDir(`git-dep-${linker}-failed-checkout`, {});
@@ -2572,7 +2572,7 @@ test.concurrent("a GIT_SSH_COMMAND in the project's .env does not replace the us
   expect(exitCode).toBe(1);
 });
 
-test.concurrent.skipIf(isWindows)("a PATH in the project's .env does not choose the git of the install", async () => {
+test.concurrent("a PATH in the project's .env does not choose the git of the install", async () => {
   using dir = tempDir("git-dep-dotenv-path", {});
   const root = String(dir);
   const ran = join(root, "ran");
@@ -2658,7 +2658,7 @@ async function failingGitCalls(dependency: string) {
 }
 
 // The install tries the https form of a clone URL, then the ssh form.
-test.concurrent.skipIf(isWindows).each([
+test.concurrent.each([
   // #36931: a URL that parses is passed on as it is. The port used to become a
   // path segment (`ssh://git@localhost/52626/...`).
   ["git+ssh://git@localhost:52626/user/repo.git#v1.0.0", "git@localhost:52626/user/repo.git"],
@@ -2826,7 +2826,7 @@ test.concurrent.each([
 });
 
 // It's neither a URL nor an scp-style path, so git would read it as a directory in the project and clone that.
-test.concurrent.skipIf(isWindows)("does not hand a bare word to git clone", async () => {
+test.concurrent("does not hand a bare word to git clone", async () => {
   const { calls, stderr, exitCode } = await failingGitCalls("git+:latest");
   expect(calls).toEqual([]);
   // It's a git dependency, so the registry wasn't asked for a `git+:latest` tag.
@@ -2917,25 +2917,23 @@ test.concurrent("bun install <git url> sorts the workspace dependency by its res
 // one of the git processes instead of stopping the install, and concurrent
 // clones raced on the forwarder's process-wide state. On Linux the git
 // processes now carry PR_SET_PDEATHSIG, so they die with bun.
-test.concurrent.skipIf(isWindows)(
-  "SIGINT during git clones stops the install and is not forwarded to git",
-  async () => {
-    using dir = tempDir("git-dep-sigint", {});
-    const root = String(dir);
-    const bin = join(root, "bin");
-    mkdirSync(bin);
-    const running = join(root, "git-running");
-    const exited = join(root, "git-exited");
-    const gotSigint = join(root, "git-got-sigint");
-    const lineCount = (file: string) => (existsSync(file) ? readFileSync(file, "utf8").split("\n").length - 1 : 0);
-    // A fake git. Each process appends a line to `running` when it starts, to
-    // `exited` when it ends, and blocks until the test deletes `running`. A
-    // SIGINT that bun forwards to one of them is recorded in `gotSigint`, which
-    // makes every other fake git (the concurrent clone, the retry over ssh)
-    // exit at once. The `git config` that comes before the first clone is not one of them.
-    writeFileSync(
-      join(bin, "git"),
-      `#!/bin/sh
+test.concurrent("SIGINT during git clones stops the install and is not forwarded to git", async () => {
+  using dir = tempDir("git-dep-sigint", {});
+  const root = String(dir);
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  const running = join(root, "git-running");
+  const exited = join(root, "git-exited");
+  const gotSigint = join(root, "git-got-sigint");
+  const lineCount = (file: string) => (existsSync(file) ? readFileSync(file, "utf8").split("\n").length - 1 : 0);
+  // A fake git. Each process appends a line to `running` when it starts, to
+  // `exited` when it ends, and blocks until the test deletes `running`. A
+  // SIGINT that bun forwards to one of them is recorded in `gotSigint`, which
+  // makes every other fake git (the concurrent clone, the retry over ssh)
+  // exit at once. The `git config` that comes before the first clone is not one of them.
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
 [ "$6" = config ] && exit 1
 trap 'echo $$ >> ${quote(exited)}' EXIT
 trap ': > ${quote(gotSigint)}; exit 130' INT
@@ -2944,68 +2942,67 @@ i=0
 while [ -e ${quote(running)} ] && [ ! -e ${quote(gotSigint)} ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done
 exit 1
 `,
-      { mode: 0o755 },
-    );
-    // two repositories, so two clones run at the same time
-    const project = writeProject(root, {
-      [nameOf("a")]: "git+https://localhost/scope/pkg-a.git",
-      [nameOf("b")]: "git+https://localhost/scope/pkg-b.git",
-    });
-    const env: typeof gitEnv = { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(root, "cache"), PATH: `${bin}:${gitEnv.PATH}` };
-    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: project,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const stdout = proc.stdout.text();
-    const stderr = proc.stderr.text();
-    try {
-      const deadline = Date.now() + 20_000;
-      while (lineCount(running) < 2) {
-        if (proc.exitCode !== null || proc.signalCode !== null) {
-          throw new Error(`install exited before it ran git:\n${await stderr}`);
+    { mode: 0o755 },
+  );
+  // two repositories, so two clones run at the same time
+  const project = writeProject(root, {
+    [nameOf("a")]: "git+https://localhost/scope/pkg-a.git",
+    [nameOf("b")]: "git+https://localhost/scope/pkg-b.git",
+  });
+  const env: typeof gitEnv = { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(root, "cache"), PATH: `${bin}:${gitEnv.PATH}` };
+  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: project,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = proc.stdout.text();
+  const stderr = proc.stderr.text();
+  try {
+    const deadline = Date.now() + 20_000;
+    while (lineCount(running) < 2) {
+      if (proc.exitCode !== null || proc.signalCode !== null) {
+        throw new Error(`install exited before it ran git:\n${await stderr}`);
+      }
+      if (Date.now() > deadline) throw new Error(`install ran ${lineCount(running)} of 2 clones`);
+      await Bun.sleep(10);
+    }
+    proc.kill("SIGINT");
+    await Promise.all([stdout, stderr, proc.exited]);
+    // Read the marker only once every fake git is gone, so that a trap that
+    // fires after bun exited still counts.
+    const gone = Date.now() + 10_000;
+    const pids = readFileSync(running, "utf8").trim().split("\n").map(Number);
+    if (isLinux) {
+      // The kernel kills them together with bun (PR_SET_PDEATHSIG). `running` still exists.
+      const alive = (pid: number) => {
+        try {
+          return !readFileSync(`/proc/${pid}/status`, "utf8").includes("State:\tZ");
+        } catch {
+          return false;
         }
-        if (Date.now() > deadline) throw new Error(`install ran ${lineCount(running)} of 2 clones`);
+      };
+      while (pids.some(alive)) {
+        if (Date.now() > gone) throw new Error(`fake gits outlived bun: ${pids.filter(alive)}`);
         await Bun.sleep(10);
       }
-      proc.kill("SIGINT");
-      await Promise.all([stdout, stderr, proc.exited]);
-      // Read the marker only once every fake git is gone, so that a trap that
-      // fires after bun exited still counts.
-      const gone = Date.now() + 10_000;
-      const pids = readFileSync(running, "utf8").trim().split("\n").map(Number);
-      if (isLinux) {
-        // The kernel kills them together with bun (PR_SET_PDEATHSIG). `running` still exists.
-        const alive = (pid: number) => {
-          try {
-            return !readFileSync(`/proc/${pid}/status`, "utf8").includes("State:\tZ");
-          } catch {
-            return false;
-          }
-        };
-        while (pids.some(alive)) {
-          if (Date.now() > gone) throw new Error(`fake gits outlived bun: ${pids.filter(alive)}`);
-          await Bun.sleep(10);
-        }
-      } else {
-        rmSync(running, { force: true });
-        while (lineCount(exited) < pids.length) {
-          if (Date.now() > gone) throw new Error(`${lineCount(exited)} of ${pids.length} fake gits exited`);
-          await Bun.sleep(10);
-        }
-      }
-      expect({ signalCode: proc.signalCode, gitGotSigint: existsSync(gotSigint) }).toEqual({
-        signalCode: "SIGINT",
-        gitGotSigint: false,
-      });
-    } finally {
+    } else {
       rmSync(running, { force: true });
+      while (lineCount(exited) < pids.length) {
+        if (Date.now() > gone) throw new Error(`${lineCount(exited)} of ${pids.length} fake gits exited`);
+        await Bun.sleep(10);
+      }
     }
-  },
-);
+    expect({ signalCode: proc.signalCode, gitGotSigint: existsSync(gotSigint) }).toEqual({
+      signalCode: "SIGINT",
+      gitGotSigint: false,
+    });
+  } finally {
+    rmSync(running, { force: true });
+  }
+});
 
 // bun.lock resolves an optional git dependency, the cache is cold, and the
 // repository is gone. The install phase failed for it with either linker. An
@@ -3495,7 +3492,7 @@ test.concurrent("bun update moves a git dependency without a committish to the n
 });
 
 // Ubuntu 22.04 has git 2.34, Debian 11 has 2.30.
-test.concurrent.skipIf(isWindows)("clones with a git older than 2.39, which refuses --bare with --origin", async () => {
+test.concurrent("clones with a git older than 2.39, which refuses --bare with --origin", async () => {
   using dir = tempDir("git-dep-old-git", {
     "bin/git": `#!/bin/sh
 for arg in "$@"; do
@@ -3783,7 +3780,7 @@ test.concurrent("installs that refresh one cached repository at the same time al
 });
 
 // The same without relying on timing: while the first `git fetch` runs, another git holds the lock on the branch.
-test.concurrent.skipIf(isWindows)("runs git fetch once more when it could not write a ref", async () => {
+test.concurrent("runs git fetch once more when it could not write a ref", async () => {
   using dir = tempDir("git-dep-refresh-locked", {});
   const root = String(dir);
   const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
@@ -3932,7 +3929,7 @@ test.concurrent("a git dependency with a submodule, under the user's own setting
 });
 
 // How git fails when it can't use the clone depends on its version.
-test.concurrent.skipIf(isWindows)("clones again after a git fetch that did not fail at the remote", async () => {
+test.concurrent("clones again after a git fetch that did not fail at the remote", async () => {
   using dir = tempDir("git-dep-fetch-exit-code", {});
   const root = String(dir);
   const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
@@ -3974,7 +3971,7 @@ type Places = { clone: string; other: string; kept: string; command: string };
 // since git 2.45
 const usageOfInit = Bun.spawnSync({ cmd: ["git", "init", "-h"], env: gitEnv });
 const gitKnowsReftable = `${usageOfInit.stdout}${usageOfInit.stderr}`.includes("--ref-format");
-test.concurrent.skipIf(isWindows).each<{ what: string; change(at: Places): void }>([
+test.concurrent.each<{ what: string; change(at: Places): void }>([
   {
     what: "is a link",
     change({ clone, other }) {
@@ -4146,7 +4143,7 @@ test.concurrent.each([
   await install();
 
   // A checkout that an older version left in the cache is created again.
-  if (isWindows) return;
+
   const checkout = join(cache, `@G@${branchCommits(bare).main}`);
   symlinkSync(join(root, target), join(checkout, "package.json"));
   rmSync(join(project, "node_modules"), { recursive: true });
@@ -4183,7 +4180,7 @@ test.concurrent("a package.json that is a link to a file of the repository is a 
   await install();
 
   // A checkout that an older version left in the cache is created again.
-  if (isWindows) return;
+
   rmSync(cached);
   symlinkSync("real/manifest.json", cached);
   rmSync(join(project, "node_modules"), { recursive: true });
@@ -4333,7 +4330,7 @@ test.concurrent("a git dependency keeps its executable files and the folder of a
   expect(exitCode).toBe(0);
 });
 
-test.concurrent.skipIf(isWindows)("reports the required git version when git has no `restore` command", async () => {
+test.concurrent("reports the required git version when git has no `restore` command", async () => {
   const notACommand = "git: 'restore' is not a git command. See 'git --help'.";
   using dir = tempDir("git-dep-old-git", {
     "bin/git": `#!/bin/sh
@@ -4371,7 +4368,7 @@ test.concurrent("two commits of one repository in one install", async () => {
 // The https form of an ssh URL is tried first. A host answers "not found" for a private
 // repository to a login without access, so that answer does not end the search. What git
 // said of a form that failed is of interest only if no form works.
-test.concurrent.skipIf(isWindows).each([
+test.concurrent.each([
   { status: 404, body: "Repository not found.", sshWorks: true },
   { status: 403, body: "Forbidden", sshWorks: true },
   { status: 404, body: "Repository not found.", sshWorks: false },
@@ -4474,7 +4471,7 @@ test.concurrent("every git starts with the same settings, spelled for the platfo
   expect(started[0][4]).toBe(`--git-dir=${nullDevice}`);
 });
 
-test.concurrent.skipIf(isWindows)("asks git for the user's own commands once, before the first clone", async () => {
+test.concurrent("asks git for the user's own commands once, before the first clone", async () => {
   using dir = tempDir("git-dep-config-once", { "bin/git": `#!/bin/sh\necho "$5 $6 $7" >> "$GIT_CALLS"\nexit 1\n` });
   const root = String(dir);
   chmodSync(join(root, "bin", "git"), 0o755);
@@ -4527,7 +4524,7 @@ type Place = { where: string; files?: Record<string, string>; env?: Record<strin
 
 // `GIT_SSH_COMMAND`, which the install sets to accept the key of a new host, outranks every
 // other way to name an ssh command. So it is set only if the user has named none.
-test.concurrent.skipIf(isWindows).each<Place>([
+test.concurrent.each<Place>([
   { where: "~/.gitconfig", files: { "home/.gitconfig": mySshCommand } },
   { where: "~/.gitconfig, under [Core]", files: { "home/.gitconfig": "[Core]\n\tsshCommand = ROOT/mine\n" } },
   { where: "~/.gitconfig, in one line", files: { "home/.gitconfig": "[core] sshCommand = ROOT/mine\n" } },
@@ -4549,7 +4546,7 @@ test.concurrent.skipIf(isWindows).each<Place>([
 });
 
 // No clone reads the config of the repository it is started in.
-test.concurrent.skipIf(isWindows).each<Place>([
+test.concurrent.each<Place>([
   { where: "nowhere" },
   {
     where: "only in the repository of the project",
@@ -4566,7 +4563,7 @@ test.concurrent.skipIf(isWindows).each<Place>([
   expect(ran.filter(line => !line.startsWith("ssh -oStrictHostKeyChecking=accept-new "))).toEqual([]);
 });
 
-test.concurrent.skipIf(isWindows)("git runs the user's own core.askPass from ~/.config/git/config", async () => {
+test.concurrent("git runs the user's own core.askPass from ~/.config/git/config", async () => {
   await using server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -4582,13 +4579,11 @@ test.concurrent.skipIf(isWindows)("git runs the user's own core.askPass from ~/.
 // dependency spell the same repository in two ways. A cold-cache install from the lockfile with the isolated linker
 // cloned it under both spellings and never finished. The ssh replacement runs the command on this machine.
 for (const user of ["git", "alice"]) {
-  test
-    .skipIf(isWindows)
-    .concurrent(
-      `a cold-cache install from bun.lock clones an scp-form dependency (${user}@host:path) once`,
-      async () => {
-        using dir = tempDir("git-dep-scp", {
-          "ssh.sh": `#!/bin/sh
+  test.concurrent(
+    `a cold-cache install from bun.lock clones an scp-form dependency (${user}@host:path) once`,
+    async () => {
+      using dir = tempDir("git-dep-scp", {
+        "ssh.sh": `#!/bin/sh
 echo "$*" >> "$(dirname "$0")/ssh.log"
 while [ $# -gt 1 ]; do
   case "$1" in
@@ -4600,29 +4595,29 @@ done
 shift
 exec sh -c "$1"
 `,
-        });
-        const root = String(dir);
-        chmodSync(join(root, "ssh.sh"), 0o755);
-        const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
-        await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
-        const project = writeProject(root, { dep: `${user}@localhost:${bare}` });
-        const env = { GIT_SSH_COMMAND: join(root, "ssh.sh"), GIT_TERMINAL_PROMPT: "0" };
+      });
+      const root = String(dir);
+      chmodSync(join(root, "ssh.sh"), 0o755);
+      const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+      await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+      const project = writeProject(root, { dep: `${user}@localhost:${bare}` });
+      const env = { GIT_SSH_COMMAND: join(root, "ssh.sh"), GIT_TERMINAL_PROMPT: "0" };
 
-        expect((await runInstall(project, join(root, "cache-1"), env, "--linker=isolated")).exitCode).toBe(0);
-        const lockfile = readFileSync(join(project, "bun.lock"), "utf8");
-        expect(lockfile).toContain(`"dep@git+ssh://${user}@localhost:`);
+      expect((await runInstall(project, join(root, "cache-1"), env, "--linker=isolated")).exitCode).toBe(0);
+      const lockfile = readFileSync(join(project, "bun.lock"), "utf8");
+      expect(lockfile).toContain(`"dep@git+ssh://${user}@localhost:`);
 
-        rmSync(join(project, "node_modules"), { recursive: true });
-        rmSync(join(root, "ssh.log"));
-        const { exitCode } = await runInstall(project, join(root, "cache-2"), env, "--linker=isolated");
-        expect(await installedVersionOf(project, "dep")).toBe("main");
-        expect(
-          readFileSync(join(root, "ssh.log"), "utf8")
-            .split("\n")
-            .filter(line => line.includes("git-upload-pack")),
-        ).toHaveLength(1);
-        expect(readFileSync(join(project, "bun.lock"), "utf8")).toBe(lockfile);
-        expect(exitCode).toBe(0);
-      },
-    );
+      rmSync(join(project, "node_modules"), { recursive: true });
+      rmSync(join(root, "ssh.log"));
+      const { exitCode } = await runInstall(project, join(root, "cache-2"), env, "--linker=isolated");
+      expect(await installedVersionOf(project, "dep")).toBe("main");
+      expect(
+        readFileSync(join(root, "ssh.log"), "utf8")
+          .split("\n")
+          .filter(line => line.includes("git-upload-pack")),
+      ).toHaveLength(1);
+      expect(readFileSync(join(project, "bun.lock"), "utf8")).toBe(lockfile);
+      expect(exitCode).toBe(0);
+    },
+  );
 }

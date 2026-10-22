@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
   readdirSync,
@@ -34,39 +34,35 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
 }
 
 for (const dir of ["dir", "©️"]) {
-  it.todoIf(isBroken && isWindows)(
-    `should watch files${dir === "dir" ? "" : " (non-ascii path)"}`,
-    async () => {
-      const cwd = join(tmpdirSync(), dir);
-      const path = join(cwd, "watchee.js");
+  it(`should watch files${dir === "dir" ? "" : " (non-ascii path)"}`, async () => {
+    const cwd = join(tmpdirSync(), dir);
+    const path = join(cwd, "watchee.js");
 
-      const updateFile = async (i: number) => {
-        await Bun.write(path, `console.log(${i}, __dirname);`);
-      };
+    const updateFile = async (i: number) => {
+      await Bun.write(path, `console.log(${i}, __dirname);`);
+    };
 
-      let i = 0;
+    let i = 0;
+    await updateFile(i);
+    await Bun.sleep(1000);
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "watchee.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    for await (const line of watchee.stdout as ReadableStream<Uint8Array>) {
+      if (i == 10) break;
+      var str = new TextDecoder().decode(line);
+      expect(str).toContain(`${i} ${cwd}`);
+      i++;
       await updateFile(i);
-      await Bun.sleep(1000);
-      watchee = spawn({
-        cwd,
-        cmd: [bunExe(), "--watch", "watchee.js"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
-
-      for await (const line of watchee.stdout as ReadableStream<Uint8Array>) {
-        if (i == 10) break;
-        var str = new TextDecoder().decode(line);
-        expect(str).toContain(`${i} ${cwd}`);
-        i++;
-        await updateFile(i);
-      }
-      rmSync(path);
-    },
-    10000,
-  );
+    }
+    rmSync(path);
+  }, 10000);
 }
 
 afterEach(async () => {
@@ -81,11 +77,9 @@ afterEach(async () => {
   }
 });
 
-it.skipIf(isWindows)(
-  "process.exit() in a watch kill-signal handler never returns to JS",
-  async () => {
-    using dir = tempDir("watch-exit-in-sigterm", {
-      "exiter.js": `process.on("SIGTERM", () => {
+it("process.exit() in a watch kill-signal handler never returns to JS", async () => {
+  using dir = tempDir("watch-exit-in-sigterm", {
+    "exiter.js": `process.on("SIGTERM", () => {
   process.exit(0);
   require("fs").writeFileSync("should-not-write.txt", "hello");
 });
@@ -95,48 +89,46 @@ process.on("SIGTERM", () => {
 console.log("started");
 setInterval(() => {}, 1000);
 `,
-    });
-    const cwd = String(dir);
-    const path = join(cwd, "exiter.js");
-    watchee = spawn({
-      cwd,
-      cmd: [bunExe(), "--watch", "exiter.js"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-      stdin: "ignore",
-    });
-    let starts = 0;
-    let touched = false;
-    const decoder = new TextDecoder();
-    await (async () => {
-      // Output written before this reader attaches waits in the kernel pipe
-      // buffer, so no start can be missed. Lines are reassembled across chunk
-      // boundaries before matching.
-      let buffered = "";
-      for await (const chunk of watchee.stdout as ReadableStream<Uint8Array>) {
-        buffered += decoder.decode(chunk);
-        let newline;
-        while ((newline = buffered.indexOf("\n")) !== -1) {
-          const line = buffered.slice(0, newline);
-          buffered = buffered.slice(newline + 1);
-          if (line.includes("started") && ++starts === 2) return;
-          if (starts === 1 && !touched) {
-            touched = true;
-            // First boot seen: touch the file to trigger the kill-signal reload.
-            await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
-          }
+  });
+  const cwd = String(dir);
+  const path = join(cwd, "exiter.js");
+  watchee = spawn({
+    cwd,
+    cmd: [bunExe(), "--watch", "exiter.js"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  let starts = 0;
+  let touched = false;
+  const decoder = new TextDecoder();
+  await (async () => {
+    // Output written before this reader attaches waits in the kernel pipe
+    // buffer, so no start can be missed. Lines are reassembled across chunk
+    // boundaries before matching.
+    let buffered = "";
+    for await (const chunk of watchee.stdout as ReadableStream<Uint8Array>) {
+      buffered += decoder.decode(chunk);
+      let newline;
+      while ((newline = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
+        if (line.includes("started") && ++starts === 2) return;
+        if (starts === 1 && !touched) {
+          touched = true;
+          // First boot seen: touch the file to trigger the kill-signal reload.
+          await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
         }
       }
-      // The child exiting before the reload start is a failure of the watch
-      // path itself; without this the absent-file expects below pass vacuously.
-      throw new Error(`watchee stdout ended after ${starts} start(s); expected 2`);
-    })();
-    expect(await Bun.file(join(cwd, "should-not-write.txt")).exists()).toBe(false);
-    expect(await Bun.file(join(cwd, "second-listener-ran.txt")).exists()).toBe(false);
-  },
-  10000,
-);
+    }
+    // The child exiting before the reload start is a failure of the watch
+    // path itself; without this the absent-file expects below pass vacuously.
+    throw new Error(`watchee stdout ended after ${starts} start(s); expected 2`);
+  })();
+  expect(await Bun.file(join(cwd, "should-not-write.txt")).exists()).toBe(false);
+  expect(await Bun.file(join(cwd, "second-listener-ran.txt")).exists()).toBe(false);
+}, 10000);
 
 // While one thread is inside execve(2), Linux fails every clone(CLONE_FS) in
 // the process with EAGAIN until the exec has killed the other threads
@@ -303,7 +295,7 @@ int inotify_init1(int flags) {
   });
 });
 
-it.skipIf(isWindows)("--watch reports an error when its executable was deleted", async () => {
+it("--watch reports an error when its executable was deleted", async () => {
   using dir = tempDir("watch-exe-removed", {
     "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
   });
@@ -541,38 +533,34 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
 // NODE_CHANNEL_FD survives in environ across execve; the fd it names must
 // survive too, so the reloaded image re-attaches to a live socket instead
 // of a closed one and the parent keeps receiving 'message' events.
-it.skipIf(isWindows)(
-  "IPC to the parent survives a --watch reload",
-  async () => {
-    using dir = tempDir("watch-ipc-reload", {
-      "app.js": `process.send?.("iter first"); setInterval(() => {}, 1000);`,
-    });
+it("IPC to the parent survives a --watch reload", async () => {
+  using dir = tempDir("watch-ipc-reload", {
+    "app.js": `process.send?.("iter first"); setInterval(() => {}, 1000);`,
+  });
 
-    const messages: string[] = [];
-    watchee = spawn({
-      cmd: [bunExe(), "--watch", "app.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-      ipc(message) {
-        messages.push(String(message));
-      },
-    });
+  const messages: string[] = [];
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "app.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+    ipc(message) {
+      messages.push(String(message));
+    },
+  });
 
-    const deadline = Date.now() + 20000;
-    while (!messages.includes("iter first") && Date.now() < deadline) await Bun.sleep(10);
-    expect(messages).toContain("iter first");
+  const deadline = Date.now() + 20000;
+  while (!messages.includes("iter first") && Date.now() < deadline) await Bun.sleep(10);
+  expect(messages).toContain("iter first");
 
-    await Bun.write(join(String(dir), "app.js"), `process.send?.("iter second");`);
-    while (!messages.includes("iter second") && Date.now() < deadline) await Bun.sleep(10);
-    expect(messages).toContain("iter second");
+  await Bun.write(join(String(dir), "app.js"), `process.send?.("iter second");`);
+  while (!messages.includes("iter second") && Date.now() < deadline) await Bun.sleep(10);
+  expect(messages).toContain("iter second");
 
-    watchee.kill("SIGKILL");
-    await watchee.exited;
-  },
-  30000,
-);
+  watchee.kill("SIGKILL");
+  await watchee.exited;
+}, 30000);
 
 // The files and directories a process holds open, as (fd, path) pairs. Linux
 // reads /proc, macOS asks lsof (the kernel has no per-process fd listing
@@ -615,7 +603,7 @@ for (const [mode, args] of [
   ["--hot", ["--hot", "--no-clear-screen", "main.ts"]],
   ["test --watch", ["test", "--watch", "main.test.ts"]],
 ] as const) {
-  it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+  it.skipIf(isMacOS && !Bun.which("lsof"))(
     `${mode} holds no file descriptors for paths under node_modules`,
     async () => {
       using dir = tempDir("watch-node-modules-fds", {
@@ -698,34 +686,31 @@ async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[
 
 // The leak as the issue reports it: the count of fds on the project directory
 // after two reloads must equal the count after the first start.
-it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
-  "--watch reload does not leak the watched directory fd",
-  async () => {
-    using dir = tempDir("watch-cloexec-reload", watchCloexecFiles);
-    const cwd = realpathSync(String(dir));
-    watchee = spawn({
-      cwd,
-      cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-      stdin: "ignore",
-    });
-    const out = stdoutWaiter(watchee);
-    await out.waitFor("started 1");
-    const before = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
+it.skipIf(isMacOS && !Bun.which("lsof"))("--watch reload does not leak the watched directory fd", async () => {
+  using dir = tempDir("watch-cloexec-reload", watchCloexecFiles);
+  const cwd = realpathSync(String(dir));
+  watchee = spawn({
+    cwd,
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const out = stdoutWaiter(watchee);
+  await out.waitFor("started 1");
+  const before = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
 
-    for (let i = 2; i <= 3; i++) {
-      await Bun.write(join(cwd, "dep.ts"), `export const x = ${i};`);
-      await out.waitFor(`started ${i}`);
-    }
-    const after = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
-    out.release();
+  for (let i = 2; i <= 3; i++) {
+    await Bun.write(join(cwd, "dep.ts"), `export const x = ${i};`);
+    await out.waitFor(`started ${i}`);
+  }
+  const after = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
+  out.release();
 
-    expect(before).toBe(1);
-    expect(after).toBe(before);
-  },
-);
+  expect(before).toBe(1);
+  expect(after).toBe(before);
+});
 
 // The flag itself. Linux hides the leak behind its close_range() sweep, so
 // this reads O_CLOEXEC from /proc for every fd the watcher holds instead of

@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
 // These tests exercise posix path resolution with long CWDs. On Windows CI the
 // profile binary isn't always available, and the bug is posix-specific anyway.
-const testFn = isWindows ? test.skip : test;
+const testFn = test;
 
 // macOS PATH_MAX is 1024, so CWD must stay under that. We use ~800 byte CWDs
 // and long relative paths to exceed PATH_SIZE thresholds.

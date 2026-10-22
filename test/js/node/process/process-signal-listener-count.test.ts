@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 // When multiple listeners are registered for the same signal, removing one
 // listener must NOT uninstall the underlying OS signal handler while other
 // listeners remain.
-test.skipIf(isWindows)("removing one of multiple signal listeners keeps the handler installed", async () => {
+test("removing one of multiple signal listeners keeps the handler installed", async () => {
   const script = /*js*/ `
     const { promise, resolve } = Promise.withResolvers();
 
@@ -60,7 +60,7 @@ done"
 
 // Verify that removing ALL listeners does properly uninstall the handler,
 // so the process dies with the default signal behavior.
-test.skipIf(isWindows)("removing all signal listeners uninstalls the handler (default signal behavior)", async () => {
+test("removing all signal listeners uninstalls the handler (default signal behavior)", async () => {
   const script = /*js*/ `
     function handlerA() {}
     function handlerB() {}
@@ -99,7 +99,7 @@ test.skipIf(isWindows)("removing all signal listeners uninstalls the handler (de
 });
 
 // Like node:events, every on() / once() call adds a registration, also for a function that is already registered.
-test.skipIf(isWindows)("removing one registration of a function keeps its other registrations", async () => {
+test("removing one registration of a function keeps its other registrations", async () => {
   const script = /*js*/ `
     const { promise, resolve } = Promise.withResolvers();
     let calls = 0;
@@ -141,7 +141,7 @@ done"
 });
 
 // Re-adding a listener after all were removed should reinstall the handler.
-test.skipIf(isWindows)("re-adding a listener after removing all reinstalls the handler", async () => {
+test("re-adding a listener after removing all reinstalls the handler", async () => {
   const script = /*js*/ `
     const { promise, resolve } = Promise.withResolvers();
 
@@ -180,7 +180,7 @@ done"
 // SIGIOT is an alias for SIGABRT. Node starts one watcher per event name, so one signal runs the listeners
 // for both names, and the OS handler is only removed once both names have no listeners.
 // On Windows, no signal number has two names.
-describe.concurrent.skipIf(isWindows)("SIGABRT and SIGIOT", () => {
+describe.concurrent("SIGABRT and SIGIOT", () => {
   // The child adds a listener for each of `events` and sends `sent` to itself.
   // It prints every listener call as [event, name argument, number argument].
   // It also adds a listener for `removed` and removes it before sending the signal.

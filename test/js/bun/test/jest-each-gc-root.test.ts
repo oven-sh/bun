@@ -9,7 +9,7 @@
 // useZombieMode scribbles 0xbadbeef0 over swept cells so the dangling access
 // manifests as a hard crash / wrong-type error instead of a heisenbug.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const fixture = `
 import { test, describe, expect } from "bun:test";
@@ -96,7 +96,7 @@ test("test.each/describe.each table array is a GC root", async () => {
     ...bunEnv,
     BUN_JSC_useZombieMode: "1",
   };
-  if (!isWindows) gcEnv.BUN_JSC_collectContinuously = "1";
+  gcEnv.BUN_JSC_collectContinuously = "1";
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "each-gc.test.ts"],

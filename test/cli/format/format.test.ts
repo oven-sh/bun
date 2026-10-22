@@ -467,7 +467,7 @@ describe.concurrent("bun fmt", () => {
     });
 
     // With `ulimit -f 16` a write fails with EFBIG once it's 8 KB into a file, much like on a full disk.
-    test.skipIf(isWindows)("keeps its old text when writing it in place fails partway", async () => {
+    test("keeps its old text when writing it in place fails partway", async () => {
       const text = `{${Array.from({ length: 3000 }, (_, i) => `"k${i}":   [1,2,3]`).join(",")}}\n`;
       using dir = tempDir("bun-format", { "a.json": text });
       linkSync(join(String(dir), "a.json"), join(String(dir), "other-name.txt"));
@@ -479,7 +479,7 @@ describe.concurrent("bun fmt", () => {
     });
 
     // A new file would get fewer permission bits, unless the process's umask is 0.
-    test.skipIf(isWindows)("keeps its mode regardless of the umask", async () => {
+    test("keeps its mode regardless of the umask", async () => {
       using dir = tempDir("bun-format", { "a.js": ugly, "b.js": ugly });
       chmodSync(join(String(dir), "a.js"), 0o664);
       chmodSync(join(String(dir), "b.js"), 0o777);
@@ -522,19 +522,16 @@ describe.concurrent("bun fmt", () => {
     });
 
     // A file name can have at most 255 bytes. On Windows the path would also be too long.
-    test.skipIf(isWindows)(
-      "can have the longest possible name, and is still replaced rather than written in place",
-      async () => {
-        const name = `${Buffer.alloc(252, "a")}.ts`;
-        using dir = tempDir("bun-format", { [name]: ugly });
-        const before = statSync(join(String(dir), name)).ino;
-        const { exitCode } = await write(String(dir), []);
-        expect(read(String(dir), name)).toBe(formatted);
-        expect(statSync(join(String(dir), name)).ino).not.toBe(before);
-        expect(readdirSync(String(dir))).toEqual([name]);
-        expect(exitCode).toBe(0);
-      },
-    );
+    test("can have the longest possible name, and is still replaced rather than written in place", async () => {
+      const name = `${Buffer.alloc(252, "a")}.ts`;
+      using dir = tempDir("bun-format", { [name]: ugly });
+      const before = statSync(join(String(dir), name)).ino;
+      const { exitCode } = await write(String(dir), []);
+      expect(read(String(dir), name)).toBe(formatted);
+      expect(statSync(join(String(dir), name)).ino).not.toBe(before);
+      expect(readdirSync(String(dir))).toEqual([name]);
+      expect(exitCode).toBe(0);
+    });
 
     // For example in a container with a user's project mounted into it.
     test.skipIf(!isRoot)("keeps its owner if root formats it", async () => {
@@ -552,7 +549,7 @@ describe.concurrent("bun fmt", () => {
     });
 
     // Prettier doesn't need write access to the directory.
-    test.skipIf(isWindows || isRoot)("can be in a read-only directory", async () => {
+    test.skipIf(isRoot)("can be in a read-only directory", async () => {
       using dir = tempDir("bun-format", { "src/a.js": ugly });
       chmodSync(join(String(dir), "src"), 0o555);
       try {
@@ -5731,15 +5728,12 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
-  test.skipIf(isWindows)(
-    "/dev/null works as an ignore file without patterns and as a configuration without options",
-    async () => {
-      const files = { ".prettierignore": "a.js\n", ".prettierrc": `{ "semi": false }\n`, "a.js": formatted };
-      expect(await different(files, ["."])).toEqual([]);
-      expect(await different(files, ["--ignore-path", "/dev/null", "."])).toEqual(["a.js"]);
-      expect(await different(files, ["--ignore-path", "/dev/null", "--config", "/dev/null", "."])).toEqual([]);
-    },
-  );
+  test("/dev/null works as an ignore file without patterns and as a configuration without options", async () => {
+    const files = { ".prettierignore": "a.js\n", ".prettierrc": `{ "semi": false }\n`, "a.js": formatted };
+    expect(await different(files, ["."])).toEqual([]);
+    expect(await different(files, ["--ignore-path", "/dev/null", "."])).toEqual(["a.js"]);
+    expect(await different(files, ["--ignore-path", "/dev/null", "--config", "/dev/null", "."])).toEqual([]);
+  });
 
   // This means "never break a line". Prettier accepts every integer from 0 up, and Infinity.
   test.each([
@@ -6122,7 +6116,7 @@ exports.format = async text => "by Prettier";
   );
 
   // Same as Prettier 3.9.9 and oxfmt 0.72, which load a configuration in Node. On Windows it still runs.
-  test.skipIf(isWindows).each(["prettier.config.mjs", "oxfmt.config.ts"])(
+  test.each(["prettier.config.mjs", "oxfmt.config.ts"])(
     "a `preload` in bunfig.toml doesn't run before %s",
     async name => {
       const files = {
@@ -6162,15 +6156,13 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a named pipe whose name ends in .js is skipped, like in Prettier", async () => {
+  test("a named pipe whose name ends in .js is skipped, like in Prettier", async () => {
     const before = (dir: string) => expect(Bun.spawnSync(["mkfifo", join(dir, "pipe.js")]).exitCode).toBe(0);
     expect(await different({ "a.js": ugly }, [], { before })).toEqual(["a.js"]);
   });
 
   // Opening a pipe like this blocks until a writer opens it.
-  test
-    .skipIf(isWindows)
-    .each([".gitignore", ".git/info/exclude", ".prettierignore", ".editorconfig", ".prettierrc", "package.json"])(
+  test.each([".gitignore", ".git/info/exclude", ".prettierignore", ".editorconfig", ".prettierrc", "package.json"])(
     "doesn't hang when %s is a link to a named pipe without a writer",
     async name => {
       const before = (dir: string) => {
@@ -6182,7 +6174,7 @@ exports.format = async text => "by Prettier";
     },
   );
 
-  test.skipIf(isWindows).each([
+  test.each([
     ["writes to it is read", "echo a.js", "b.js\n"],
     ["closes it without writing is read as an empty file", ":", "a.js\nb.js\n"],
   ])("a pipe whose writer %s", async (_, writer, expected) => {
@@ -6200,7 +6192,7 @@ exports.format = async text => "by Prettier";
     expect(exitCode).toBe(1);
   });
 
-  describe.skipIf(isWindows)("a named pipe passed to a flag", () => {
+  describe("a named pipe passed to a flag", () => {
     const makePipes = (dir: string) =>
       expect(Bun.spawnSync(["mkfifo", join(dir, "pipe"), join(dir, "pipe.json")]).exitCode).toBe(0);
 
@@ -6634,7 +6626,7 @@ exports.format = async text => "by Prettier";
     // A case's guard used to be printed without a stack check, so the stack overflowed at depths between the printer's
     // limit and the parser's. The threads that format files have stack to spare, so this uses the main thread with half
     // of its usual stack.
-    test.skipIf(isWindows || isDebug || isASAN).concurrent.each([4_500, 4_612, 4_728, 4_846, 4_967, 5_091])(
+    test.skipIf(isDebug || isASAN).concurrent.each([4_500, 4_612, 4_728, 4_846, 4_967, 5_091])(
       "Flow's match with %d nested guards, on a 4 MB stack",
       async depth => {
         using dir = tempDir("bun-format-small-stack", {});
@@ -8278,7 +8270,7 @@ try {
         expect(inNested.files).toEqual(after(null, 0, 4));
       });
 
-      test.skipIf(isWindows)("/dev/null", async () => {
+      test("/dev/null", async () => {
         const files = { ".prettierrc.mjs": program(8), "a.js": code(0) };
         const result = await format(files, ["--config=/dev/null", "."], { reads: ["evaluated", "a.js"] });
         expect(result.files).toEqual({ "evaluated": null, "a.js": code(2) });
@@ -9080,7 +9072,6 @@ try {
 
     // Some sandboxes have no pseudo-terminals.
     const hasTerminal = (() => {
-      if (isWindows) return false;
       try {
         new Bun.Terminal({}).close();
         return true;
@@ -10136,7 +10127,7 @@ describe.concurrent("other things named fmt in the project", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a package's executable wins over the formatter, and nothing is rewritten", async () => {
+  test("a package's executable wins over the formatter, and nothing is rewritten", async () => {
     const files = { "node_modules/.bin/fmt": "#!/bin/sh\necho the executable\n", "a.js": ugly };
     const result = await format(files, [], {
       reads: ["a.js"],

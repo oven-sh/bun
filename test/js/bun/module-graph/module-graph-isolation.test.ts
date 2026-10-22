@@ -3577,7 +3577,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
     expect(control.exitCode).toBe(0);
   });
-  test.skipIf(isWindows)("the stdio pipes of the children node:child_process spawned for it are closed", async () => {
+  test("the stdio pipes of the children node:child_process spawned for it are closed", async () => {
     expect(await runsFixture("pipes-of-a-disposed-graph.mjs")).toEqual({
       stdout: `{"opened":true,"leftOpen":0}`,
       exitCode: 0,
@@ -3666,15 +3666,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("a global agent the host put in place of node's is what a graph's requests without an agent go through", async () => {
     expect(await runsFixture("host-replaced-the-global-agent.mjs")).toEqual({ stdout: `{"status":200}`, exitCode: 0 });
   });
-  test.skipIf(isWindows)(
-    "a child its leftover script spawns and writes to is not started: nothing fails, in it or in the host",
-    async () => {
-      expect(await runsFixture("spawns-after-it-was-disposed.mjs")).toEqual({
-        stdout: `{"hostStillRuns":true}`,
-        exitCode: 0,
-      });
-    },
-  );
+  test("a child its leftover script spawns and writes to is not started: nothing fails, in it or in the host", async () => {
+    expect(await runsFixture("spawns-after-it-was-disposed.mjs")).toEqual({
+      stdout: `{"hostStillRuns":true}`,
+      exitCode: 0,
+    });
+  });
   test("a server it was disposed in the turn it listened is not announced to it: its listen callback cannot fail the host", async () => {
     expect(await runsFixture("disposed-in-the-turn-it-listens.mjs")).toEqual({ stdout: `{"heard":[]}`, exitCode: 0 });
   });
@@ -3748,7 +3745,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "collected", exitCode: 0 });
   });
-  test.skipIf(isWindows)("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
+  test("file sinks, a child and a TLS handshake it left half done are dropped with it", async () => {
     expect(await runsFixture("disposed-with-things-half-done.mjs")).toEqual({
       stdout: `{"fileSinks":0,"childHeard":[],"tls":{"writes":[],"heard":[]}}`,
       exitCode: 0,
@@ -3813,15 +3810,12 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   // A descriptor script holds (in a FileHandle, in a node:fs stream) is its script's to manage: dispose() does not
   // close it. A tenant closes what it opened when the host asks it to, and is disposed of after.
-  test.skipIf(isWindows)(
-    "FileHandles and node:fs streams it closed before it was disposed leave nothing open",
-    async () => {
-      expect(await runsFixture("closes-its-files-before-it-is-disposed.mjs")).toEqual({
-        stdout: `{"open":26,"leftOpen":0,"theHostsReferences":[true,true]}`,
-        exitCode: 0,
-      });
-    },
-  );
+  test("FileHandles and node:fs streams it closed before it was disposed leave nothing open", async () => {
+    expect(await runsFixture("closes-its-files-before-it-is-disposed.mjs")).toEqual({
+      stdout: `{"open":26,"leftOpen":0,"theHostsReferences":[true,true]}`,
+      exitCode: 0,
+    });
+  });
   // An in-process Bun.cron() job re-arms itself after every tick and keeps the loop alive, like a setInterval().
   test("a Bun.cron() job it scheduled is stopped: the process ends by itself", async () => {
     expect(await runsFixture("cron-job-of-a-disposed-graph.mjs")).toEqual({

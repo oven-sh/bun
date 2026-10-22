@@ -709,7 +709,7 @@ describe("Bun.Archive", () => {
     });
 
     // `bun install` skips the symlink entries of a GitHub tarball; that is an option of its own calls.
-    test.skipIf(isWindows)("creates symlink entries", async () => {
+    test("creates symlink entries", async () => {
       using dir = tempDir("archive-extract-symlink", {});
 
       const symlinkEntry = (name: string, target: string): Buffer => {
@@ -1526,7 +1526,7 @@ describe("Bun.Archive", () => {
     // The next two tests put raw non-ASCII bytes in a plain-ustar name field.
     // Every modern tar emits a pax `path=` record for such names instead, and
     // on Windows only that (wide-string) form is recoverable byte-exact.
-    test.skipIf(isWindows)("files() keys distinct non-ASCII ustar entry names without colliding them", async () => {
+    test("files() keys distinct non-ASCII ustar entry names without colliding them", async () => {
       // A lossy pathname conversion collapses both names onto the same key
       // (the empty string) and one entry silently overwrites the other.
       const tar = buildTarball([
@@ -1546,7 +1546,7 @@ describe("Bun.Archive", () => {
       expect(await Bun.file(join(String(dir), "café.txt")).text()).toBe("cafe");
     });
 
-    test.skipIf(isWindows)("files() keys an entry whose name is not even valid UTF-8", async () => {
+    test("files() keys an entry whose name is not even valid UTF-8", async () => {
       // "foo\xff\xfe.txt": 0xFF and 0xFE are never valid UTF-8, so libarchive
       // hands the raw header bytes back verbatim. They must not collapse onto
       // an empty Map key.
@@ -2034,7 +2034,7 @@ describe("Bun.Archive", () => {
     // A sparse map can put a chunk where the file system cannot seek: ext4
     // stops at 16 TiB. The child runs with a file size limit, so a build that
     // writes zeros up to the offset stops at the limit and not at a full disk.
-    test.skipIf(isWindows)("extract() writes nothing to reach an offset the file system cannot seek to", async () => {
+    test("extract() writes nothing to reach an offset the file system cannot seek to", async () => {
       const offset = 17 * 2 ** 40;
       using dir = tempDir("sparse-far-offset", {
         "far.tar": Buffer.concat([
@@ -2073,7 +2073,7 @@ describe("Bun.Archive", () => {
   // a file. The write loop then went on with `write()` at the start of the
   // file: the file was cut, its first bytes were those of the refused block,
   // and extract() resolved.
-  test.skipIf(isWindows)("extract() rejects when the file system refuses a write in the middle of a file", async () => {
+  test("extract() rejects when the file system refuses a write in the middle of a file", async () => {
     // 6,000,000 bytes where no file can grow past 4 MiB. Gzip, so that the
     // member arrives in many blocks: the first ones fit.
     const data = randomBytes(6_000_000);

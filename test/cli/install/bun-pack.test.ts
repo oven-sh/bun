@@ -127,7 +127,7 @@ test.concurrent("the archive is not padded to a full tar record", async () => {
 
 // pack only reads package.json, so a file that is readable but not writable (a read-only
 // checkout, a file owned by another user) must not stop it.
-test.concurrent.skipIf(isWindows)("read-only package.json", async () => {
+test.concurrent("read-only package.json", async () => {
   using dir = tempDir("pack-read-only", {
     "package.json": JSON.stringify({ name: "pack-read-only", version: "1.2.3" }),
     "index.js": "console.log('hello ./index.js')",
@@ -559,7 +559,7 @@ describe.concurrent("flags", () => {
   // The destination directory ends `headroom` bytes short of the path buffer, so it still fits,
   // but the longer "/<name>-<version>.tgz" appended to it does not. Windows command lines cannot
   // carry an argument anywhere near its path buffer size.
-  test.skipIf(isWindows)("--destination with no room left for the tarball name", async () => {
+  test("--destination with no room left for the tarball name", async () => {
     const pathMax = isLinux ? 4096 : 1024;
     const headroom = 100;
     const name = `pack-dest-too-long-${Buffer.alloc(2 * headroom, "n").toString()}`;
@@ -624,7 +624,7 @@ describe.concurrent("flags", () => {
   // The destination used to be opened a second time to hash it, which on a FIFO waits for another writer forever.
   // This end is open before pack starts and the tarball fits the pipe's buffer, so nothing here can block;
   // a pack that does is killed by `timeout`.
-  test.skipIf(isWindows)("--filename can be a FIFO", async () => {
+  test("--filename can be a FIFO", async () => {
     using dir = tempDir("pack-fifo", {
       "package.json": JSON.stringify({ name: "pack-fifo", version: "1.1.1" }),
       "index.js": indexJs,
@@ -690,7 +690,7 @@ describe.concurrent("flags", () => {
   });
 
   // On Windows the path buffer is larger than any command line, so the overflow cannot be reached there.
-  describe.skipIf(isWindows)("--destination longer than the path buffer", () => {
+  describe("--destination longer than the path buffer", () => {
     const longName = Buffer.alloc(MAX_PATH_BYTES + 1, "d").toString();
     const packageJson = JSON.stringify({ name: "pack-long-dest", version: "1.0.0" });
     const expectedError = `error: archive destination name too long: "${longName}"\n`;
@@ -1031,7 +1031,7 @@ describe.concurrent("flags", () => {
     });
 
     // PATH_MAX is 4096 on Linux and 1024 on macOS. Windows' path buffer is larger than any command line.
-    describe.skipIf(isWindows)("--filename longer than PATH_MAX", () => {
+    describe("--filename longer than PATH_MAX", () => {
       const longName = Buffer.alloc(5000, "f").toString();
       const packageJson = JSON.stringify({ name: "pack-cwd-long-filename", version: "1.0.0" });
 
@@ -1061,7 +1061,7 @@ describe.concurrent("flags", () => {
 // ./*.tgz` to pick up. `ulimit -f 0` (RLIMIT_FSIZE) makes every write to the tarball fail with
 // EFBIG, which unlike a permission based setup also works when the tests run as root; setting it
 // needs a POSIX shell.
-describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
+describe("a failed pack leaves no tarball behind", () => {
   const packageJson = JSON.stringify({ name: "pack-failed", version: "1.0.0" });
 
   async function packExpectingFailure(cwd: string, { fileSizeLimit }: { fileSizeLimit: boolean }, ...args: string[]) {
@@ -1243,7 +1243,7 @@ describe.concurrent("something already exists at the tarball's destination", () 
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  test.serial.skipIf(isWindows)("a writable file in a read-only folder", async () => {
+  test.serial("a writable file in a read-only folder", async () => {
     using dir = tempDir("pack-over-locked", { ...files, "pkg/out/pack-over-1.0.0.tgz": "an earlier tarball" });
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     await chmod(join(dir, "pkg", "out"), 0o555);
@@ -1266,7 +1266,7 @@ describe.concurrent("something already exists at the tarball's destination", () 
     }
   });
 
-  test.skipIf(isWindows)("a file keeps its mode", async () => {
+  test("a file keeps its mode", async () => {
     using dir = tempDir("pack-over-mode", { ...files, "pkg/pack-over-1.0.0.tgz": "an earlier tarball" });
     const tarball = join(dir, "pkg", "pack-over-1.0.0.tgz");
     await chmod(tarball, 0o600);
@@ -2984,7 +2984,7 @@ describe.concurrent("bundledDependencies", () => {
 
   // The isolated linker's layout: node_modules has links into a store, where a package's dependencies are links next to
   // it. `y` goes next to `x`, unless the packed package has its own `y` that it doesn't bundle.
-  test.skipIf(isWindows).each([
+  test.each([
     { name: "x", own: {}, y: "node_modules/y" },
     { name: "@s/x", own: {}, y: "node_modules/y" },
     { name: "x", own: { y: "2.0.0" }, y: "node_modules/x/node_modules/y" },
@@ -3028,7 +3028,7 @@ describe.concurrent("bundledDependencies", () => {
   });
 
   // Like npm: a link to a folder that is no installed copy is packed by that folder's own rules.
-  test.skipIf(isWindows).each([
+  test.each([
     ["", "project"],
     [", also below a folder named node_modules", "node_modules/project"],
   ])("a bundled workspace is packed with its own files and .npmignore%s", async (_, project) => {
@@ -3416,7 +3416,7 @@ describe.concurrent("bundledDependencies", () => {
   });
 
   // The layout of pnpm and of the isolated linker: each package is next to links to its dependencies.
-  describe.skipIf(isWindows)("two versions of two packages that depend on each other", () => {
+  describe("two versions of two packages that depend on each other", () => {
     async function packLinked(graph: Record<string, Record<string, string>>) {
       const tree: Record<string, string> = {
         "package.json": JSON.stringify({
@@ -3501,7 +3501,7 @@ describe.concurrent("bundledDependencies", () => {
     ]);
   });
 
-  test.skipIf(isWindows)("bundled dependencies that link to each other end the lookup", async () => {
+  test("bundled dependencies that link to each other end the lookup", async () => {
     using dir = tempDir("pack-bundled-dep-cycle", {
       "package.json": JSON.stringify({
         name: "pack-bundled-dep-cycle",
@@ -3537,7 +3537,7 @@ describe.concurrent("bundledDependencies", () => {
   });
 
   // This is what `bun install` creates for a workspace that's a dependency.
-  test.skipIf(isWindows)("a scoped bundled dependency that is a link is followed", async () => {
+  test("a scoped bundled dependency that is a link is followed", async () => {
     using dir = tempDir("pack-bundled-dep-scoped-link", {
       "package.json": JSON.stringify({
         name: "pack-bundled-dep-scoped-link",
@@ -3561,7 +3561,7 @@ describe.concurrent("bundledDependencies", () => {
   });
 
   // The lookup used to keep every directory it found open.
-  test.skipIf(isWindows)("more dependencies than file descriptors", async () => {
+  test("more dependencies than file descriptors", async () => {
     const names = Array.from({ length: 299 }, (_, i) => `d${i}`);
     using dir = tempDir("pack-bundled-dep-emfile", {
       "package.json": JSON.stringify({
@@ -5196,7 +5196,7 @@ describe.concurrent("bins", () => {
 
 // `chmod 000` keeps the user that packs out of one entry that the scan looks for. The entry is
 // there, so the scan must not continue as if it was not.
-describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened", () => {
+describe.concurrent("an entry that exists but can't be opened", () => {
   // Runs `bun ...cmd` in `cwd` while `locked` has no permission bits. Restores them so that the tree can be removed.
   async function runWithout(dir: string, locked: string, cmd: string[], cwd: string = dir) {
     using unprivileged = unprivilegedSpawnOptions(dir);
@@ -5925,7 +5925,7 @@ describe.concurrent.each([
 ])("%s is printed spelled out", (_, raw, spelled) => {
   const unprintable = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
 
-  test.skipIf(isWindows)("in a file name", async () => {
+  test("in a file name", async () => {
     using dir = tempDir("pack-file-name", {
       "package.json": JSON.stringify({ name: "pack-file-name", version: "1.0.0" }),
       [`a${raw}b.js`]: "x",

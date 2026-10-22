@@ -7,7 +7,7 @@ describe.concurrent("process.execve", () => {
     expect(typeof process.execve).toBe("function");
   });
 
-  test.skipIf(isWindows)("replaces the current process image", async () => {
+  test("replaces the current process image", async () => {
     using dir = tempDir("process-execve", {
       "index.js": `
         if (process.argv[2] === "replaced") {
@@ -42,7 +42,7 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("throws ERR_WORKER_UNSUPPORTED_OPERATION in a worker", async () => {
+  test("throws ERR_WORKER_UNSUPPORTED_OPERATION in a worker", async () => {
     using dir = tempDir("process-execve-worker", {
       "index.js": `
         const { Worker, isMainThread, parentPort } = require("worker_threads");
@@ -82,7 +82,7 @@ describe.concurrent("process.execve", () => {
 
   // https://github.com/nodejs/node/pull/62878: a failed execve(2) throws an
   // ErrnoException back to JS instead of printing to stderr and aborting.
-  test.skipIf(isWindows)("throws ENOENT when the path does not exist", async () => {
+  test("throws ENOENT when the path does not exist", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -131,7 +131,7 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a caught failure leaves the process able to execve again", async () => {
+  test("a caught failure leaves the process able to execve again", async () => {
     using dir = tempDir("process-execve-retry", {
       "index.js": `
         if (process.argv[2] === "replaced") {
@@ -217,7 +217,7 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("closes listening sockets in the replacement process", async () => {
+  test("closes listening sockets in the replacement process", async () => {
     using dir = tempDir("process-execve-socket", {
       "index.js": `
         const { createServer } = require("net");
@@ -258,7 +258,7 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("accepts an omitted args parameter", async () => {
+  test("accepts an omitted args parameter", async () => {
     // Node declares execve(execPath, args = [], env = process.env): a
     // one-argument call is valid and must reach execve (failing with ENOENT
     // here, not ERR_INVALID_ARG_TYPE).
@@ -277,7 +277,7 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test.skipIf(isWindows)("inherits process.env when env is omitted", async () => {
+  test("inherits process.env when env is omitted", async () => {
     // Node declares execve(execPath, args = [], env = process.env): the
     // current environment is the default, not an empty one.
     await using proc = Bun.spawn({
@@ -296,7 +296,7 @@ describe.concurrent("process.execve", () => {
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "yes-inherited", exitCode: 0 });
   });
 
-  test.skipIf(isWindows)("inherits process.env when env is omitted with an empty TZ in the OS env", async () => {
+  test("inherits process.env when env is omitted with an empty TZ in the OS env", async () => {
     // The TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH
     // accessors read back undefined for an empty value; the execve env loop
     // must skip those rather than rejecting the defaulted process.env with
@@ -322,7 +322,7 @@ describe.concurrent("process.execve", () => {
     });
   });
 
-  test.skipIf(isWindows)("validates arguments", async () => {
+  test("validates arguments", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

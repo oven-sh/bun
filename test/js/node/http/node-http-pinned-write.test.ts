@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
@@ -33,87 +33,84 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   // payload in one nonblocking send(), so the pinned-tail state is never
   // reached on Windows (the bytes go straight to the kernel instead). The
   // correctness tests below still cover the write path there.
-  test.skipIf(isWindows)(
-    "an ArrayBuffer-backed buffer is pinned while the write is pending, then released on drain",
-    async () => {
-      const payload = makeArrayBufferBackedPayload(CHUNK_SIZE);
-      const expectedHash = sha1(payload);
+  test("an ArrayBuffer-backed buffer is pinned while the write is pending, then released on drain", async () => {
+    const payload = makeArrayBufferBackedPayload(CHUNK_SIZE);
+    const expectedHash = sha1(payload);
 
-      let detachedWhilePending: boolean | undefined;
-      let detachedAfterDrain: boolean | undefined;
-      let copyByteLength: number | undefined;
-      let originalByteLength: number | undefined;
-      let handlerError: unknown;
-      const serverReady = Promise.withResolvers<void>();
+    let detachedWhilePending: boolean | undefined;
+    let detachedAfterDrain: boolean | undefined;
+    let copyByteLength: number | undefined;
+    let originalByteLength: number | undefined;
+    let handlerError: unknown;
+    const serverReady = Promise.withResolvers<void>();
 
-      await using server = http.createServer(async (req, res) => {
-        try {
-          res.writeHead(200, {
-            "Content-Type": "application/octet-stream",
-            "Content-Length": String(CHUNK_SIZE),
-          });
-          // The client is a paused net.Socket so the kernel send buffer fills
-          // and write() reports native backpressure on every platform (Windows
-          // loopback can otherwise absorb the whole payload in one send()).
-          res.write(payload);
+    await using server = http.createServer(async (req, res) => {
+      try {
+        res.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(CHUNK_SIZE),
+        });
+        // The client is a paused net.Socket so the kernel send buffer fills
+        // and write() reports native backpressure on every platform (Windows
+        // loopback can otherwise absorb the whole payload in one send()).
+        res.write(payload);
 
-          // While the tail is in-flight, the underlying ArrayBuffer is pinned so a
-          // transfer() copies instead of detaching. Without the pin the server
-          // would serve garbage for the bytes still to be written.
-          const copy = payload.buffer.transfer();
-          detachedWhilePending = payload.buffer.detached;
-          copyByteLength = copy.byteLength;
-          originalByteLength = payload.buffer.byteLength;
-          serverReady.resolve();
+        // While the tail is in-flight, the underlying ArrayBuffer is pinned so a
+        // transfer() copies instead of detaching. Without the pin the server
+        // would serve garbage for the bytes still to be written.
+        const copy = payload.buffer.transfer();
+        detachedWhilePending = payload.buffer.detached;
+        copyByteLength = copy.byteLength;
+        originalByteLength = payload.buffer.byteLength;
+        serverReady.resolve();
 
-          await once(res, "drain");
+        await once(res, "drain");
 
-          // After the tail has flushed the pin is released and transfer() detaches.
-          payload.buffer.transfer();
-          detachedAfterDrain = payload.buffer.detached;
+        // After the tail has flushed the pin is released and transfer() detaches.
+        payload.buffer.transfer();
+        detachedAfterDrain = payload.buffer.detached;
 
-          res.end();
-        } catch (e) {
-          handlerError = e;
-          serverReady.resolve();
-          res.destroy();
-        }
-      });
-      await once(server.listen(0), "listening");
-      const port = (server.address() as AddressInfo).port;
+        res.end();
+      } catch (e) {
+        handlerError = e;
+        serverReady.resolve();
+        res.destroy();
+      }
+    });
+    await once(server.listen(0), "listening");
+    const port = (server.address() as AddressInfo).port;
 
-      const socket = net.connect(port, "127.0.0.1");
-      await once(socket, "connect");
-      socket.pause();
-      socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
-      await serverReady.promise;
+    const socket = net.connect(port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.pause();
+    socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    await serverReady.promise;
 
-      // Now drain the client side and verify the body.
-      const chunks: Buffer[] = [];
-      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
-      const closed = once(socket, "close");
-      socket.resume();
-      await closed;
-      const received = Buffer.concat(chunks);
+    // Now drain the client side and verify the body.
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const closed = once(socket, "close");
+    socket.resume();
+    await closed;
+    const received = Buffer.concat(chunks);
 
-      expect(handlerError).toBeUndefined();
-      const headerEnd = received.indexOf("\r\n\r\n");
-      expect(headerEnd).toBeGreaterThan(0);
-      const body = received.subarray(headerEnd + 4);
-      expect(body.length).toBe(CHUNK_SIZE);
-      expect(sha1(body)).toBe(expectedHash);
-      expect(copyByteLength).toBe(originalByteLength);
-      expect(detachedWhilePending).toBe(false);
-      expect(detachedAfterDrain).toBe(true);
-    },
-  );
+    expect(handlerError).toBeUndefined();
+    const headerEnd = received.indexOf("\r\n\r\n");
+    expect(headerEnd).toBeGreaterThan(0);
+    const body = received.subarray(headerEnd + 4);
+    expect(body.length).toBe(CHUNK_SIZE);
+    expect(sha1(body)).toBe(expectedHash);
+    expect(copyByteLength).toBe(originalByteLength);
+    expect(detachedWhilePending).toBe(false);
+    expect(detachedAfterDrain).toBe(true);
+  });
 
   // A plain Buffer has no ArrayBuffer until `.buffer` is touched, and the
   // pending write holds it without materializing one (doing so registers the
   // bytes with the GC a second time). transfer() mid-write therefore detaches,
   // as in Node, but it moves the storage rather than freeing it, so the bytes
   // still to be written reach the client intact.
-  test.skipIf(isWindows)("a plain Buffer transferred while its write is pending still arrives intact", async () => {
+  test("a plain Buffer transferred while its write is pending still arrives intact", async () => {
     const payload = makePayload(CHUNK_SIZE);
     const expectedHash = sha1(payload);
     let detachedWhilePending: boolean | undefined;
@@ -358,7 +355,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     server.close();
   `;
 
-  test.skipIf(isWindows)("a resizable ArrayBuffer is copied into backpressure, not held by reference", async () => {
+  test("a resizable ArrayBuffer is copied into backpressure, not held by reference", async () => {
     // resize() mprotect()s trimmed pages PROT_NONE and pin() doesn't block
     // it, so a retained raw slice faults on spill / EFAULT-spins on drain.
     // Run in a child so the crash is observed as exit != 0.
@@ -378,7 +375,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("resizing a resizable ArrayBuffer after write() does not wedge drain", async () => {
+  test("resizing a resizable ArrayBuffer after write() does not wedge drain", async () => {
     // Drain path: send() on PROT_NONE pages returns EFAULT -> 0 consumed ->
     // onWritable re-arms forever. `await using` kills the child on timeout.
     await using proc = Bun.spawn({
@@ -458,28 +455,24 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     server.close();
   `;
 
-  test.skipIf(isWindows)(
-    "write() copies a WebAssembly.Memory's bytes, so growing the memory afterwards doesn't corrupt the body",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", wasmMemoryChild],
-        // Without fast memory, `grow()` moves the block on every platform. With system malloc, the freed block
-        // is unmapped.
-        env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+  test("write() copies a WebAssembly.Memory's bytes, so growing the memory afterwards doesn't corrupt the body", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", wasmMemoryChild],
+      // Without fast memory, `grow()` moves the block on every platform. With system malloc, the freed block
+      // is unmapped.
+      env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr }).toEqual({
-        stdout: JSON.stringify({ detachedAfterGrow: true, bodyLength: WASM_PAGES * 64 * 1024, bodyMatches: true }),
-        stderr: expect.any(String),
-      });
-      expect(exitCode).toBe(0);
-    },
-    // Sending 32 MB on a debug build can exceed the default 5 s timeout.
-    30_000,
-  );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ detachedAfterGrow: true, bodyLength: WASM_PAGES * 64 * 1024, bodyMatches: true }),
+      stderr: expect.any(String),
+    });
+    expect(exitCode).toBe(0);
+  }, // Sending 32 MB on a debug build can exceed the default 5 s timeout.
+  30_000);
 
   test("a second write before drain releases the pin on the first buffer", async () => {
     let detachedAfterSecondWrite: boolean | undefined;

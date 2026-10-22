@@ -181,7 +181,7 @@ describe("udpSocket()", () => {
     }
   });
 
-  test.skipIf(isWindows).each(["127.1", "0x7f000001", "2130706433"])(
+  test.each(["127.1", "0x7f000001", "2130706433"])(
     "send() takes %j for 127.0.0.1, as getaddrinfo() does",
     async address => {
       const { promise: received, resolve: onData } = Promise.withResolvers<string>();

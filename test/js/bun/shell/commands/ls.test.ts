@@ -69,7 +69,7 @@ describe.concurrent("bunshell ls", () => {
   });
 
   describe("recursive", () => {
-    test.if(isPosix)("node_modules", async () => {
+    test("node_modules", async () => {
       const allNodeModuleFiles = await nodeModulesSetup;
       const s = await Bun.$`ls -RA .`.quiet().throws(true).cwd(node_modules_tempdir).text();
       const lines = sortedLsOutput(s);
@@ -189,7 +189,7 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
-    test.if(isPosix)("filename with special characters", async () => {
+    test("filename with special characters", async () => {
       await using tempdir = tempDir("ls-special", {});
       await $`touch "file-with-!@#$%^&*()"`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls`
@@ -301,7 +301,7 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
-    test.if(isPosix && !isRoot)("permission denied directory", async () => {
+    test.if(!isRoot)("permission denied directory", async () => {
       await using tempdir = tempDir("ls-permission", {});
       await $`mkdir restricted; chmod 000 restricted; ln -s restricted link-to-restricted`
         .quiet()
@@ -323,7 +323,7 @@ describe.concurrent("bunshell ls", () => {
       await $`chmod 755 restricted`.quiet().throws(true).cwd(tempdir); // cleanup
     });
 
-    test.if(isPosix && !isRoot)("permission denied directory recursive", async () => {
+    test.if(!isRoot)("permission denied directory recursive", async () => {
       await using tempdir = tempDir("ls-permission-recursive", {});
       // Create 3-level deep directory structure with 3+ items per level
       await $`mkdir -p level1/level2/level3; 
@@ -349,7 +349,7 @@ describe.concurrent("bunshell ls", () => {
 
     // A dangling symlink named on the command line is listed by name, like
     // GNU and BSD ls. Only `ls` of a nonexistent path is an error.
-    test.if(isPosix)("broken symlink file", async () => {
+    test("broken symlink file", async () => {
       await using tempdir = tempDir("ls-broken-symlink", {});
       await $`touch will-remove; ln -s will-remove broken-link; rm will-remove`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls broken-link`
@@ -370,7 +370,7 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
-    test.if(isPosix)("broken symlink directory", async () => {
+    test("broken symlink directory", async () => {
       await using tempdir = tempDir("ls-broken-symlink", {});
       await $`mkdir will-remove; ln -s will-remove broken-link; rm -rf will-remove`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls broken-link`
@@ -381,7 +381,7 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
-    test.if(isPosix)("symlink loop", async () => {
+    test("symlink loop", async () => {
       await using tempdir = tempDir("ls-symlink-loop", {});
       await $`ln -s loop loop`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls loop`.exitCode(0).stdout("loop\n").stderr("").setTempdir(tempdir).run();
@@ -461,7 +461,7 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
-    test.if(isPosix)("broken symlink directory recursive", async () => {
+    test("broken symlink directory recursive", async () => {
       await using tempdir = tempDir("ls-broken-symlink", {});
       console.log("TEMPDIR", tempdir);
       await $`mkdir foo; cd foo; touch a b c; mkdir will-remove; ln -s will-remove broken-link; rm -rf will-remove`

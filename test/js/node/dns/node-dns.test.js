@@ -101,7 +101,7 @@ test("dns.resolveSrv (_test._tcp.invalid.localhost)", () => {
 // resolvers (dnsmasq, mDNSResponder, older BIND, various corporate forwarders)
 // still compress them. c-ares 1.34.8 started rejecting these responses with
 // EBADRESP; make sure we keep accepting them.
-test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", async () => {
+test("dns.resolveSrv accepts compressed target in RDATA", async () => {
   const socket = dgram.createSocket("udp4");
   try {
     socket.on("message", (query, rinfo) => {
@@ -247,7 +247,7 @@ test("dns.resolveCaa (caa.socketify.dev)", () => {
   return promise;
 });
 
-test.skipIf(isWindows)("dns.Resolver#resolveCaa keeps a numeric CAA tag reachable by index", async () => {
+test("dns.Resolver#resolveCaa keeps a numeric CAA tag reachable by index", async () => {
   const socket = dgram.createSocket("udp4");
   try {
     socket.on("message", (query, rinfo) => {

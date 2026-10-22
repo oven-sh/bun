@@ -20,7 +20,6 @@ import {
   bunEnv,
   bunExe,
   isDebug,
-  isFlaky,
   isLinux,
   isMacOS,
   isRoot,
@@ -488,7 +487,7 @@ describe.concurrent("certificate authority", () => {
   // Linux, 1024 on macOS). A joined path that fits reaches the HTTP thread, which reports it in
   // full. One that does not fit is reported under the name the user gave. Windows is left out: its
   // buffer holds more than any path the OS accepts.
-  describe.skipIf(isWindows)("relative cafile near the path buffer length", () => {
+  describe("relative cafile near the path buffer length", () => {
     const maxPathBytes = isLinux ? 4096 : 1024;
 
     // `cafile` brings `<packageDir>/<cafile>` to `maxPathBytes + delta` bytes.
@@ -3978,7 +3977,7 @@ describe.concurrent("binaries", () => {
   }
 
   // https://github.com/oven-sh/bun/issues/14736
-  test.skipIf(isWindows)("reinstall keeps an already-correct .bin link untouched on a read-only tree", async () => {
+  test("reinstall keeps an already-correct .bin link untouched on a read-only tree", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "what-bin": "1.0.0" } }));
 
@@ -4005,7 +4004,7 @@ describe.concurrent("binaries", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a stale link, a file and a directory in .bin are replaced", async () => {
+  test("a stale link, a file and a directory in .bin are replaced", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     const binDir = join(packageDir, "node_modules", ".bin");
     await Promise.all([
@@ -4071,7 +4070,7 @@ describe.concurrent("binaries", () => {
         write(join(binDir, binEntry("map-bin-1"), "inner.txt"), "keep"),
         write(join(packageDir, "elsewhere.txt"), ""),
       ]);
-      if (!isWindows) await symlink(join(packageDir, "elsewhere.txt"), join(binDir, "dep-with-file-bin"));
+      await symlink(join(packageDir, "elsewhere.txt"), join(binDir, "dep-with-file-bin"));
 
       const { err, exitCode } = await runGlobal(
         packageDir,
@@ -4083,11 +4082,11 @@ describe.concurrent("binaries", () => {
       );
       expect(err).toContain("failed to link what-bin: EEXIST");
       expect(err).toContain("failed to link dep-with-map-bins: EEXIST");
-      if (!isWindows) expect(err).toContain("failed to link dep-with-file-bin: EEXIST");
+      expect(err).toContain("failed to link dep-with-file-bin: EEXIST");
 
       expect(await file(join(binDir, binEntry("what-bin"))).text()).toBe("not a bin of what-bin");
       expect(await file(join(binDir, binEntry("map-bin-1"), "inner.txt")).text()).toBe("keep");
-      if (!isWindows) expect(await readlink(join(binDir, "dep-with-file-bin"))).toBe(join(packageDir, "elsewhere.txt"));
+      expect(await readlink(join(binDir, "dep-with-file-bin"))).toBe(join(packageDir, "elsewhere.txt"));
       if (isWindows) expect(await exists(join(binDir, "what-bin.bunx"))).toBeFalse();
       // The refused bin does not take the package's other bin down.
       expect(join(binDir, "map-bin-2")).toBeValidBin(linkTarget("dep-with-map-bins", "map-bin-2"));
@@ -4226,7 +4225,7 @@ describe.concurrent("binaries", () => {
   // linked, and that has to fail the install with `--silent` too. Root ignores the mode of a
   // directory, so as root the install runs without that capability.
   const setpriv = isRoot ? Bun.which("setpriv") : null;
-  describe.skipIf(isWindows || (isRoot && !setpriv))("a link at `.bin` that cannot be removed", () => {
+  describe.skipIf(isRoot && !setpriv)("a link at `.bin` that cannot be removed", () => {
     test.each([
       ["bun install", []],
       ["bun install --silent", ["--silent"]],
@@ -5084,7 +5083,7 @@ describe.concurrent("binaries", () => {
   // `<node_modules>/.bin/` into two path buffers of MAX_PATH_BYTES (4096 bytes on Linux, 1024 on
   // macOS). A project deep enough for one of them not to fit has to fail like a bin name that does
   // not fit. Windows is left out: its buffer holds more than any path the OS accepts.
-  describe.skipIf(isWindows)("directories longer than the path buffer", () => {
+  describe("directories longer than the path buffer", () => {
     const maxPathBytes = isLinux ? 4096 : 1024;
 
     // Writes `<dir>/<name>`, a package whose bin is named after it.
@@ -5440,7 +5439,7 @@ describe.concurrent("binaries", () => {
 
     // The entries of a bin directory are joined onto the directory's path as
     // well, and so is the temporary file used to rewrite a CRLF shebang.
-    test.skipIf(isWindows)("entries of a directories.bin close to the path limit", async () => {
+    test("entries of a directories.bin close to the path limit", async () => {
       const { packageDir, install, createBinChain } = await setupLongBinTest();
       // Most of the depth goes into the project directory: the `.bin` links are
       // relative, so everything below the package ends up in the link targets,
@@ -5486,7 +5485,7 @@ describe.concurrent("binaries", () => {
     // The link itself is relative to the bin directory. A global bin directory
     // on another branch of the tree contributes one `..` per component, so the
     // link target can be longer than the target's absolute path.
-    test.skipIf(isWindows)("bun link with a link target longer than the path buffer", async () => {
+    test("bun link with a link target longer than the path buffer", async () => {
       const { packageDir, env, run, createBinChain } = await setupLongBinTest();
       // As in the previous test, most of the depth has to sit above everything
       // that ends up in a link target that is meant to be created (XFS), so it
@@ -5853,38 +5852,36 @@ describe.concurrent("binaries", () => {
       ...claim(dir, name),
       [`${dir}/claim.js`]: "#!/usr/bin/env node\r\n",
     });
-    test
-      .skipIf(isWindows)
-      .each<[title: string, linker: string, files: Record<string, object | string>, loser: string]>([
-        [
-          "a workspace package",
-          "hoisted",
-          {
-            "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: direct },
-            ...claimWithCRLF("packages/aaa", "aaa"),
-          },
-          "packages/aaa/claim.js",
-        ],
-        [
-          "a file: directory",
-          "hoisted",
-          {
-            "package.json": { name: "foo", dependencies: { ...direct, aaa: "file:./aaa" } },
-            ...claimWithCRLF("aaa", "aaa"),
-          },
-          "node_modules/aaa/claim.js",
-        ],
-        [
-          "a workspace package in a member's .bin",
-          "isolated",
-          {
-            "package.json": { name: "foo", workspaces: ["packages/*"] },
-            "packages/app/package.json": { name: "app", dependencies: { ...direct, aaa: "workspace:*" } },
-            ...claimWithCRLF("packages/aaa", "aaa"),
-          },
-          "packages/aaa/claim.js",
-        ],
-      ])("the file of %s that does not get it is made executable (%s)", async (_, linker, files, loser) => {
+    test.each<[title: string, linker: string, files: Record<string, object | string>, loser: string]>([
+      [
+        "a workspace package",
+        "hoisted",
+        {
+          "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: direct },
+          ...claimWithCRLF("packages/aaa", "aaa"),
+        },
+        "packages/aaa/claim.js",
+      ],
+      [
+        "a file: directory",
+        "hoisted",
+        {
+          "package.json": { name: "foo", dependencies: { ...direct, aaa: "file:./aaa" } },
+          ...claimWithCRLF("aaa", "aaa"),
+        },
+        "node_modules/aaa/claim.js",
+      ],
+      [
+        "a workspace package in a member's .bin",
+        "isolated",
+        {
+          "package.json": { name: "foo", workspaces: ["packages/*"] },
+          "packages/app/package.json": { name: "app", dependencies: { ...direct, aaa: "workspace:*" } },
+          ...claimWithCRLF("packages/aaa", "aaa"),
+        },
+        "packages/aaa/claim.js",
+      ],
+    ])("the file of %s that does not get it is made executable (%s)", async (_, linker, files, loser) => {
       const { packageDir, env } = await setupTest();
       await Promise.all(
         Object.entries(files).map(([path, content]) =>
@@ -7862,7 +7859,7 @@ describe.concurrent("hoisting", async () => {
     });
   });
 
-  test.serial.todoIf(isFlaky && isWindows)("text lockfile is hoisted", async () => {
+  test.serial("text lockfile is hoisted", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     // Each dependency depends on 'hoist-lockfile-shared'.
     // 1 - "*"
@@ -13889,7 +13886,7 @@ describe("global bin links when the package dir is inside the bin dir", () => {
     expect(await exited).toBe(0);
   });
 
-  test.skipIf(isWindows)("the bins are symlinks relative to the bin dir", async () => {
+  test("the bins are symlinks relative to the bin dir", async () => {
     expect(await readlink(join(binDir, "bin-bun"))).toBe(join("global", "node_modules", "bunx-bins", "bin-bun.ts"));
     expect(await exists(join(binDir, "bin-bun"))).toBe(true);
   });

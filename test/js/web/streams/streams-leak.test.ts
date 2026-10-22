@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, rss, tempDir } from "harness";
 
 test("native ReadableStream reuses the pull buffer across small reads", async () => {
   // #getInternalBuffer used to rotate to a fresh autoAllocateChunkSize
@@ -74,7 +74,7 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
 // took a Strong on its own JS wrapper for every lazy-opened file and only
 // released it at EOF/error, so an abandoned reader's wrapper was a GC root
 // forever and its finalizer (which closes the fd) never ran.
-test.skipIf(isWindows)("abandoned Bun.file().stream() reader does not leak its fd after GC", async () => {
+test("abandoned Bun.file().stream() reader does not leak its fd after GC", async () => {
   using dir = tempDir("file-stream-fd-leak", {
     "big.bin": Buffer.alloc(1 << 20, 7),
   });
@@ -114,61 +114,58 @@ test.skipIf(isWindows)("abandoned Bun.file().stream() reader does not leak its f
 const BYTES_TO_WRITE = 500_000;
 
 // https://github.com/oven-sh/bun/issues/12198
-test.skipIf(isWindows)(
-  "Absolute memory usage remains relatively constant when reading and writing to a pipe",
-  async () => {
-    async function write(bytes: number) {
-      const buf = Buffer.alloc(bytes, "foo");
-      await cat.stdin.write(buf);
-    }
-    async function read(bytes: number) {
-      let i = 0;
-      while (true) {
-        const { value } = await r.read();
-        i += value?.length ?? 0;
-        if (i >= bytes) {
-          return;
-        }
+test("Absolute memory usage remains relatively constant when reading and writing to a pipe", async () => {
+  async function write(bytes: number) {
+    const buf = Buffer.alloc(bytes, "foo");
+    await cat.stdin.write(buf);
+  }
+  async function read(bytes: number) {
+    let i = 0;
+    while (true) {
+      const { value } = await r.read();
+      i += value?.length ?? 0;
+      if (i >= bytes) {
+        return;
       }
     }
+  }
 
-    async function readAndWrite(bytes = BYTES_TO_WRITE) {
-      await Promise.all([write(bytes), read(bytes)]);
-    }
+  async function readAndWrite(bytes = BYTES_TO_WRITE) {
+    await Promise.all([write(bytes), read(bytes)]);
+  }
 
-    await using cat = Bun.spawn(["cat"], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const r = cat.stdout.getReader() as any;
+  await using cat = Bun.spawn(["cat"], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const r = cat.stdout.getReader() as any;
 
-    const rounds = 5000;
+  const rounds = 5000;
 
-    for (let i = 0; i < rounds; i++) {
-      await readAndWrite(BYTES_TO_WRITE);
-    }
-    Bun.gc(true);
-    const before = rss();
+  for (let i = 0; i < rounds; i++) {
+    await readAndWrite(BYTES_TO_WRITE);
+  }
+  Bun.gc(true);
+  const before = rss();
 
-    for (let i = 0; i < rounds; i++) {
-      await readAndWrite();
-    }
-    Bun.gc(true);
-    const after = rss();
+  for (let i = 0; i < rounds; i++) {
+    await readAndWrite();
+  }
+  Bun.gc(true);
+  const after = rss();
 
-    for (let i = 0; i < rounds; i++) {
-      await readAndWrite();
-    }
-    Bun.gc(true);
-    const after2 = rss();
-    console.log({ after, after2 });
-    console.log(require("bun:jsc").heapStats());
-    console.log("RSS delta", ((after - before) | 0) / 1024 / 1024);
-    console.log("RSS total", (after / 1024 / 1024) | 0, "MB");
-    // ASAN's quarantine + shadow memory raise the absolute RSS floor and slow
-    // recycling of freed allocations; widen both bounds under bun-asan.
-    expect(after).toBeLessThan((isASAN ? 700 : 250) * 1024 * 1024);
-    expect(after).toBeLessThan(before * (isASAN ? 3 : 1.5));
-  },
-);
+  for (let i = 0; i < rounds; i++) {
+    await readAndWrite();
+  }
+  Bun.gc(true);
+  const after2 = rss();
+  console.log({ after, after2 });
+  console.log(require("bun:jsc").heapStats());
+  console.log("RSS delta", ((after - before) | 0) / 1024 / 1024);
+  console.log("RSS total", (after / 1024 / 1024) | 0, "MB");
+  // ASAN's quarantine + shadow memory raise the absolute RSS floor and slow
+  // recycling of freed allocations; widen both bounds under bun-asan.
+  expect(after).toBeLessThan((isASAN ? 700 : 250) * 1024 * 1024);
+  expect(after).toBeLessThan(before * (isASAN ? 3 : 1.5));
+});

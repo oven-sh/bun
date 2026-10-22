@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 // Helper: spawn bun with multi-run flags, returns { stdout, stderr, exitCode }
@@ -1009,7 +1009,7 @@ describe.concurrent("timing edge cases", () => {
 
   // Same shape, sh syntax: "orphan": "sleep 30 & echo ..." must not block
   // --parallel completion until the backgrounded sleep exits.
-  test.skipIf(isWindows)("a backgrounded helper does not block --parallel completion", async () => {
+  test("a backgrounded helper does not block --parallel completion", async () => {
     using dir = tempDir("mr-bg-helper", {
       "package.json": JSON.stringify({
         scripts: {
@@ -1294,7 +1294,7 @@ describe("abort: failure kills long-running processes", () => {
     expect(elapsed).toBeLessThan(15000);
   });
 
-  test.skipIf(isWindows)("parallel: signaled process shows Signaled message", async () => {
+  test("parallel: signaled process shows Signaled message", async () => {
     using dir = tempDir("mr-abort-signal", {
       "package.json": JSON.stringify({
         scripts: {

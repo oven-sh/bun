@@ -6,7 +6,6 @@ import {
   bunExe,
   DirectoryTree,
   isRoot,
-  isWindows,
   normalizeBunSnapshot as normalizeBunSnapshot_,
   runBunInstall,
   tempDir,
@@ -470,7 +469,7 @@ diff --git a/package.json b/package.json
   // The new directories used to get the file's mode (0644), which only root can enter
   // (CAP_DAC_OVERRIDE), so as root the install runs without that capability.
   const setpriv = isRoot ? Bun.which("setpriv") : null;
-  test.skipIf(isWindows || (isRoot && !setpriv))(
+  test.skipIf(isRoot && !setpriv)(
     "should apply a patch that adds a file in a directory the package does not have",
     async () => {
       await using project = createProject("patch-new-dir", {
@@ -1315,9 +1314,9 @@ describe("patchedDependencies path longer than the path buffer", () => {
 
     // The path is handed to the OS as is. POSIX rejects anything longer than
     // PATH_MAX with ENAMETOOLONG; Windows may report it as missing instead.
-    if (!isWindows) {
-      expect(stderr).toContain("error: failed to read patch file: ENAMETOOLONG: ");
-    }
+
+    expect(stderr).toContain("error: failed to read patch file: ENAMETOOLONG: ");
+
     expect(stderr).toContain(`${longName}.patch`);
     expect(exitCode).toBe(1);
   });

@@ -1,6 +1,6 @@
 // Tests for `bun lint --init` and `bun fmt --init`.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
@@ -153,7 +153,7 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     expect(readFileSync(join(String(dir), "bunfig.toml"), "utf8")).toBe("a = 1\nb = \n");
   });
 
-  const cannotBeKeptFromWriting = isWindows || process.getuid?.() === 0;
+  const cannotBeKeptFromWriting = process.getuid?.() === 0;
 
   test.skipIf(cannotBeKeptFromWriting)("a read-only bunfig.toml is an error", async () => {
     using dir = tempDir("bun-init-section", { "bunfig.toml": "a = 1\n" });
@@ -203,7 +203,7 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     }
   });
 
-  describe.skipIf(isWindows)("a bunfig.toml that is a symlink", () => {
+  describe("a bunfig.toml that is a symlink", () => {
     const project = { "project/.git/HEAD": "ref: refs/heads/main\n", "project/a.js": "a;\n" };
 
     test("isn't written if it points outside the repository", async () => {

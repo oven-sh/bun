@@ -1,16 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  bunRun,
-  isIPv6,
-  isLinux,
-  isWindows,
-  joinP,
-  tempDir,
-  tempDirWithFiles,
-  tls as tlsCerts,
-} from "harness";
+import { bunEnv, bunExe, bunRun, isIPv6, isLinux, joinP, tempDir, tempDirWithFiles, tls as tlsCerts } from "harness";
 import net from "node:net";
 
 test.concurrent("cloneable and transferable equals", async () => {
@@ -243,7 +232,7 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("port: -1");
 });
 
-test.skipIf(isWindows)("SCHED_NONE pipe listen unlinks the socket file when the last worker leaves", async () => {
+test("SCHED_NONE pipe listen unlinks the socket file when the last worker leaves", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -274,7 +263,7 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("exists after exit: false");
 });
 
-test.skipIf(isWindows)("round-robin pipe listen applies readableAll/writableAll to the socket file", async () => {
+test("round-robin pipe listen applies readableAll/writableAll to the socket file", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -305,7 +294,7 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("worker exit: 0");
 });
 
-test.skipIf(isWindows)("round-robin accepted sockets honor allowHalfOpen after the client's FIN", async () => {
+test("round-robin accepted sockets honor allowHalfOpen after the client's FIN", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -493,7 +482,7 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("SCHED_NONE: a worker listening on a unix path reports it from address()", async () => {
+test("SCHED_NONE: a worker listening on a unix path reports it from address()", async () => {
   using dir = tempDir("cluster-shared-unix-address", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -684,7 +673,7 @@ test.each(["net", "http"])("cluster 'listening' reports the address a %s server 
   const dir = tempDirWithFiles("cluster-listening", { "fixture.js": listeningPayloadFixture });
   const targets: ({ host: string | null } | { path: string })[] = [{ host: "127.0.0.1" }, { host: null }];
   if (isIPv6()) targets.push({ host: "::1" });
-  if (!isWindows) targets.push({ path: joinP(dir, `${moduleName}.sock`) });
+  targets.push({ path: joinP(dir, `${moduleName}.sock`) });
 
   const { stdout } = await bunRun(joinP(dir, "fixture.js"), { MODULE: moduleName, TARGETS: JSON.stringify(targets) });
   const payloads = JSON.parse(stdout);
@@ -935,11 +924,9 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
 }, 30_000);
 
-test.skipIf(isWindows)(
-  "SCHED_NONE listen({fd:2}) fails EINVAL like node and does not close the primary's stderr",
-  async () => {
-    const dir = tempDirWithFiles("bun-test", {
-      "main.ts": `
+test("SCHED_NONE listen({fd:2}) fails EINVAL like node and does not close the primary's stderr", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -969,14 +956,13 @@ if (cluster.isPrimary) {
   server.listen({ fd: 2 });
 }
 `,
-    });
-    const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-    expect(stdout).toContain("worker error code: EINVAL");
-    expect(stdout).toContain("stderr open: true");
-  },
-);
+  });
+  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("worker error code: EINVAL");
+  expect(stdout).toContain("stderr open: true");
+});
 
-test.skipIf(isWindows)("dgram bind({ fd }) on a stream socket doesn't close the primary's server", async () => {
+test("dgram bind({ fd }) on a stream socket doesn't close the primary's server", async () => {
   using dir = tempDir("cluster-dgram-stream-fd", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -1024,7 +1010,7 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("dgram worker releases a shared fd it failed to adopt", async () => {
+test("dgram worker releases a shared fd it failed to adopt", async () => {
   using dir = tempDir("cluster-dgram-adopt-fail", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -1078,7 +1064,7 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("a second listen({ fd }) on an fd that a handle already owns fails with EEXIST", async () => {
+test("a second listen({ fd }) on an fd that a handle already owns fails with EEXIST", async () => {
   using dir = tempDir("cluster-fd-held", {
     "main.ts": `
 const cluster = require("node:cluster");
@@ -1126,11 +1112,9 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)(
-  "round-robin: RST-while-queued handle is dropped, not shipped stale",
-  async () => {
-    using dir = tempDir("cluster-rst-queued", {
-      "main.ts": `
+test("round-robin: RST-while-queued handle is dropped, not shipped stale", async () => {
+  using dir = tempDir("cluster-rst-queued", {
+    "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
@@ -1165,20 +1149,18 @@ if (cluster.isPrimary) {
   server.listen(0, "127.0.0.1");
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "worker got: REAL", stderr: expect.any(String) });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "worker got: REAL", stderr: expect.any(String) });
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 test("round-robin worker closes a server.blockList peer silently, like node", async () => {
   using dir = tempDir("cluster-blocklist", {
@@ -1388,11 +1370,9 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 }, 30_000);
 
-test.skipIf(isWindows)(
-  "worker death mid-handoff redistributes the connection to another worker",
-  async () => {
-    using dir = tempDir("cluster-mid-handoff", {
-      "main.ts": `const cluster = require("node:cluster");
+test("worker death mid-handoff redistributes the connection to another worker", async () => {
+  using dir = tempDir("cluster-mid-handoff", {
+    "main.ts": `const cluster = require("node:cluster");
 const net = require("node:net");
 if (cluster.isPrimary) {
   // One shared round-robin handle on a pre-picked port. "die" registers first, so the first connection
@@ -1423,20 +1403,18 @@ if (cluster.isPrimary) {
   server.listen(+process.env.PORT, "127.0.0.1");
 }
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "live got: hi", stderr: expect.any(String) });
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "live got: hi", stderr: expect.any(String) });
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 test("round-robin newconn reaches the worker's internalMessage listener via the handle slot", async () => {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49

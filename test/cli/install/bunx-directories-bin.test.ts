@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,7 +17,7 @@ async function run(cwd: string, args: string[], env: Record<string, string>) {
 }
 
 // The bins are shell scripts, which the bin links cannot run on Windows.
-test.concurrent.skipIf(isWindows)("bunx runs the bin of a directories.bin package", async () => {
+test.concurrent("bunx runs the bin of a directories.bin package", async () => {
   using dir = tempDir("bunx-directories-bin", {
     "package.json": JSON.stringify({ name: "app", dependencies: { tool: "file:./tool" } }),
     "tool/package.json": JSON.stringify({ name: "tool", version: "1.0.0", directories: { bin: "bins" } }),
@@ -49,7 +49,7 @@ const rejected: [label: string, value: (dir: string) => string, picked: string][
 ];
 
 for (const [label, value, picked] of rejected) {
-  test.concurrent.skipIf(isWindows)(`bunx ignores a directories.bin that is ${label}`, async () => {
+  test.concurrent(`bunx ignores a directories.bin that is ${label}`, async () => {
     using dir = tempDir("bunx-directories-bin-rejected", {
       "package.json": JSON.stringify({ name: "app", dependencies: { tool: "file:./tool" } }),
       "tool/package.json": "",

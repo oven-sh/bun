@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isRoot, isWindows, tempDir } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -58,11 +58,11 @@ describe("spawnSync", () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-memfd-fixture.ts"))).toSpawn();
   });
 
-  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", async () => {
+  it("should use spawnSync optimizations when possible", async () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-counters-fixture.ts"))).toSpawn();
   });
 
-  describe.skipIf(!isPosix)("drains piped stdio to EOF after the direct child exits", () => {
+  describe("drains piped stdio to EOF after the direct child exits", () => {
     // Grandchild inherits the pipe and writes after the direct child has exited.
     const sh = (fd: number) => [
       "/bin/sh",
@@ -125,7 +125,7 @@ describe("spawnSync", () => {
 // same path. Each case makes the child hold 4 GiB of zeros (the read buffer
 // doubles to 8 GiB on the way), so the cases run one at a time, in a child
 // process, with a long timeout, and only on machines with room.
-describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("spawnSync output at the Buffer length limit", () => {
+describe.skipIf(totalmem() < 16 * 1024 ** 3)("spawnSync output at the Buffer length limit", () => {
   async function captureZeros(size: number) {
     await using proc = Bun.spawn({
       cmd: [
@@ -231,7 +231,7 @@ describe("uid/gid", () => {
     expect(() => Bun.spawnSync({ cmd: [bunExe()], env: bunEnv, gid: 1.5 })).toThrow();
   });
 
-  it.if(isPosix && isRoot)("applies uid/gid and drops supplementary groups", () => {
+  it.if(isRoot)("applies uid/gid and drops supplementary groups", () => {
     const result = Bun.spawnSync({ cmd: ["id"], uid: 65534, gid: 65534 });
     const out = result.stdout.toString();
     expect(out).toContain("uid=65534");
@@ -265,7 +265,7 @@ describe("uid/gid", () => {
     });
   });
 
-  it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {
+  it.if(!isRoot)("throws EPERM for a uid the process cannot set", () => {
     let thrown: any;
     try {
       Bun.spawnSync({ cmd: ["id"], uid: 0 });

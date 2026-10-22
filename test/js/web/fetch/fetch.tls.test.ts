@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, nodeExe, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
@@ -527,14 +527,14 @@ describe.concurrent("fetch-tls", () => {
             // Same port + SSLConfig, different connect hostname: no resumption.
             hostIsolation: [false, false],
           });
-          if (!isWindows) {
-            expect({ unix: r.unix, unixPathIsolation: r.unixPathIsolation }).toEqual({
-              // Second fresh connect over the same socket path resumes.
-              unix: [false, true],
-              // Same URL + SSLConfig, different socket path: no resumption.
-              unixPathIsolation: { b: [false], c: [false] },
-            });
-          }
+
+          expect({ unix: r.unix, unixPathIsolation: r.unixPathIsolation }).toEqual({
+            // Second fresh connect over the same socket path resumes.
+            unix: [false, true],
+            // Same URL + SSLConfig, different socket path: no resumption.
+            unixPathIsolation: { b: [false], c: [false] },
+          });
+
           // A handshake rejected by checkServerIdentity (trusted chain, wrong
           // SAN) must not seed the cache. The fixture asserts each fetch
           // rejects with ERR_TLS_CERT_ALTNAME_INVALID; the client may RST
@@ -1652,7 +1652,7 @@ describe.concurrent("fetch-tls", () => {
   });
 
   // Windows drops what the client has yet to read when the reset arrives.
-  it.skipIf(isWindows)("reads a response that the server sent before it reset the upload", async () => {
+  it("reads a response that the server sent before it reset the upload", async () => {
     const server = tls.createServer(validTls, socket => {
       socket.on("error", () => {});
       socket.once("data", () => {

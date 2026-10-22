@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { exec } from "node:child_process";
 
 test.concurrent("pipe does the right thing", async () => {
@@ -478,7 +478,7 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
 // pipe into an internal buffer. The kernel pipe buffer filling up is the
 // backpressure signal; these tests feed far more than that and check the
 // child's resident set does not grow to match.
-describe.skipIf(isWindows)("pipe backpressure", () => {
+describe("pipe backpressure", () => {
   const feedMB = 40;
   // With no backpressure the child buffers the whole feed (Vec growth roughly
   // doubles that in RSS). With backpressure only the highwater mark plus the

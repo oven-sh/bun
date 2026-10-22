@@ -196,7 +196,7 @@ describe("Intl.Collator", () => {
 // from these variables, so every value, parseable or not, must give the en-US
 // output. On Windows neither holds: ICU reads the system locale and JSC reports
 // the UI language of the machine.
-describe.skipIf(isWindows).concurrent("locale variables in the environment", () => {
+describe.concurrent("locale variables in the environment", () => {
   const script = `console.log(JSON.stringify([
     new Date(0).toString(),
     "a".localeCompare("b"),

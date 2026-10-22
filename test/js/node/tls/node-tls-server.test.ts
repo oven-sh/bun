@@ -3523,7 +3523,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     // The data queued ahead of the reset was read off the socket before it closed
     // (kept in the paused stream's buffer), not discarded with the fd. Windows
     // discards the receive queue on a reset.
-    if (!isWindows) expect(t.socket.bytesRead).toBe(64 * 1024);
+    expect(t.socket.bytesRead).toBe(64 * 1024);
   });
 
   it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {
@@ -3537,7 +3537,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
     // Windows discards the receive queue on a reset. Linux and macOS keep it, and
     // like node, the data is delivered before the error.
-    if (!isWindows) expect(t.bytesRead()).toBeGreaterThan(0);
+    expect(t.bytesRead()).toBeGreaterThan(0);
   });
 });
 
@@ -5215,7 +5215,7 @@ describe("a send that the kernel rejects", () => {
   });
 
   // At the reset of the client, Windows drops what is still unread in the kernel.
-  it.skipIf(isWindows)("leaves a reader that stopped for backpressure the time to go on", async () => {
+  it("leaves a reader that stopped for backpressure the time to go on", async () => {
     const sent = 70000 + 16385;
     const outcome = Promise.withResolvers<number>();
     await using server: Server = createServer(COMMON_CERT, socket => {

@@ -1,18 +1,6 @@
 import { bytecodeOrderNames } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  isArm64,
-  isASAN,
-  isDebug,
-  isLinux,
-  isMacOS,
-  isMusl,
-  isPosix,
-  isWindows,
-  tempDir,
-} from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isDebug, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   closeSync,
@@ -757,49 +745,45 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       // An executable for Windows has its chunks at B:/~BUN/root/. This bun stands in for the Windows one (its builtins
       // section is what the internal modules are named from), so the program cannot be put in it: the build fails
       // there, after the link wrote what it calls the code. (On Windows that build is the round trips above.)
-      test.skipIf(isWindows)(
-        "a build for Windows calls the code what a build for this platform calls it",
-        async () => {
-          using dir = tempDir("build-compile-bytecode-order-windows", twoEntryPoints);
-          await record(String(dir), twoEntryPointArgs, "5\n");
-          const namesOfBuild = async (target: string[], outfile: string, root: string) => {
-            const build = await buildIn(
-              String(dir),
-              [...twoEntryPointArgs, ...target, "--bytecode-order=app.order"],
-              outfile,
-              {
-                BUN_BYTECODE_ORDER_NAMES_OUT: join(String(dir), outfile + ".names"),
-              },
-            );
-            // Without where the chunks are, the executable's name, and the hash of a chunk's contents (the paths it
-            // imports chunks by are part of those).
-            const names = Object.entries(namesIn(String(dir), outfile + ".names"))
-              .map(([path, names]) => [
-                path
-                  .replace(root, "")
-                  .replace(outfile, "<entry>")
-                  .replace(/-[a-z0-9]{8}\.js$/, ".js"),
-                names,
-              ])
-              .sort();
-            expect(new Set(names.map(([path]) => path)).size).toBe(names.length);
-            return { build, names };
-          };
-          const here = await namesOfBuild([], "thisplatform", "/$bunfs/root/");
-          expect(here.build).toEqual({ stderr: "", exitCode: 0 });
-          const windows = await namesOfBuild(
-            ["--target=bun-windows-x64", `--compile-executable-path=${bunExe()}`],
-            "windows.exe",
-            "B:/~BUN/root/",
+      test("a build for Windows calls the code what a build for this platform calls it", async () => {
+        using dir = tempDir("build-compile-bytecode-order-windows", twoEntryPoints);
+        await record(String(dir), twoEntryPointArgs, "5\n");
+        const namesOfBuild = async (target: string[], outfile: string, root: string) => {
+          const build = await buildIn(
+            String(dir),
+            [...twoEntryPointArgs, ...target, "--bytecode-order=app.order"],
+            outfile,
+            {
+              BUN_BYTECODE_ORDER_NAMES_OUT: join(String(dir), outfile + ".names"),
+            },
           );
-          expect(windows.build.stderr).toContain("failed to write compiled executable");
-          expect(windows.build.stderr).not.toContain("names");
-          // The three chunks, and node:fs with the internal modules it needs.
-          expect(here.names.length).toBeGreaterThan(3);
-          expect(windows.names).toEqual(here.names);
-        },
-        60_000,
-      );
+          // Without where the chunks are, the executable's name, and the hash of a chunk's contents (the paths it
+          // imports chunks by are part of those).
+          const names = Object.entries(namesIn(String(dir), outfile + ".names"))
+            .map(([path, names]) => [
+              path
+                .replace(root, "")
+                .replace(outfile, "<entry>")
+                .replace(/-[a-z0-9]{8}\.js$/, ".js"),
+              names,
+            ])
+            .sort();
+          expect(new Set(names.map(([path]) => path)).size).toBe(names.length);
+          return { build, names };
+        };
+        const here = await namesOfBuild([], "thisplatform", "/$bunfs/root/");
+        expect(here.build).toEqual({ stderr: "", exitCode: 0 });
+        const windows = await namesOfBuild(
+          ["--target=bun-windows-x64", `--compile-executable-path=${bunExe()}`],
+          "windows.exe",
+          "B:/~BUN/root/",
+        );
+        expect(windows.build.stderr).toContain("failed to write compiled executable");
+        expect(windows.build.stderr).not.toContain("names");
+        // The three chunks, and node:fs with the internal modules it needs.
+        expect(here.names.length).toBeGreaterThan(3);
+        expect(windows.names).toEqual(here.names);
+      }, 60_000);
 
       // The runtime runs a module from its source when the bytecode it has is not for that source. Such a run did not
       // see what the module's code does: the recording says nothing about it, not that it did not run.
@@ -1561,28 +1545,24 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       }, 60_000);
 
       // The file is read once, front to back.
-      test.skipIf(!isPosix)(
-        "an order file that is a pipe",
-        async () => {
-          const { plain, order } = shared;
-          const piped = await compile(exe("piped"), ["--bytecode-order=/dev/stdin"], {}, order);
-          expect(piped.stderr).not.toContain("bytecode order file");
-          expect(piped.exitCode).toBe(0);
-          expect(hasLinkedPayload(exe("piped"))).toBe(true);
-          expect(await run(exe("piped"), recordedArgv)).toEqual(plain);
-          expect(await stats(exe("piped"), recordedArgv)).toMatchObject({
-            hot: expect.any(Number),
-            unknown: 0,
-            cold: 0,
-          });
-        },
-        60_000,
-      );
+      test("an order file that is a pipe", async () => {
+        const { plain, order } = shared;
+        const piped = await compile(exe("piped"), ["--bytecode-order=/dev/stdin"], {}, order);
+        expect(piped.stderr).not.toContain("bytecode order file");
+        expect(piped.exitCode).toBe(0);
+        expect(hasLinkedPayload(exe("piped"))).toBe(true);
+        expect(await run(exe("piped"), recordedArgv)).toEqual(plain);
+        expect(await stats(exe("piped"), recordedArgv)).toMatchObject({
+          hot: expect.any(Number),
+          unknown: 0,
+          cold: 0,
+        });
+      }, 60_000);
     });
 
     // process.kill(process.pid, signal) with no handler ends the process without the usual exit: the recording is written
     // before the signal is sent, like the profiles and the compile cache.
-    describe.skipIf(isWindows)("a process that sends itself a fatal signal still writes the order file", () => {
+    describe("a process that sends itself a fatal signal still writes the order file", () => {
       let selfKillDir: ReturnType<typeof tempDir> | undefined;
       let built: string;
       afterAll(() => selfKillDir?.[Symbol.dispose]());
@@ -2769,44 +2749,40 @@ if (process.platform === "android") {
 // removed AFTER the process starts, which `Bun.spawn`'s `cwd` can't do, so a
 // shell wrapper `cd`s in, `rmdir`s, then execs the binary (how a user hits it).
 describe("compiled binary in a deleted cwd", () => {
-  test.if(isPosix)(
-    "exits cleanly instead of crashing",
-    async () => {
-      using dir = tempDir("build-compile-deleted-cwd", {
-        "app.js": `console.log("should-not-run");`,
-      });
-      const outfile = join(String(dir), "app");
+  test("exits cleanly instead of crashing", async () => {
+    using dir = tempDir("build-compile-deleted-cwd", {
+      "app.js": `console.log("should-not-run");`,
+    });
+    const outfile = join(String(dir), "app");
 
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-      expect(buildStderr).not.toContain("error:");
-      expect(buildExit).toBe(0);
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExit).toBe(0);
 
-      // A fresh directory to stand in and delete — NOT `dir`, which holds the
-      // compiled binary we still need to exec.
-      using cwdDir = tempDir("build-compile-gone-cwd", {});
-      const gone = String(cwdDir);
+    // A fresh directory to stand in and delete — NOT `dir`, which holds the
+    // compiled binary we still need to exec.
+    using cwdDir = tempDir("build-compile-gone-cwd", {});
+    const gone = String(cwdDir);
 
-      await using proc = Bun.spawn({
-        cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${outfile}"`],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${outfile}"`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toBe("");
-      expect(stderr).toContain("The current working directory was deleted");
-      expect(exitCode).toBe(1);
-    },
-    60_000,
-  );
+    expect(stdout).toBe("");
+    expect(stderr).toContain("The current working directory was deleted");
+    expect(exitCode).toBe(1);
+  }, 60_000);
 });
 
 // Every region of the embedded module graph (file contents, names, bytecode, the

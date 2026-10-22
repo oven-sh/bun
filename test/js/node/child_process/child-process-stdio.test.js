@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -168,7 +168,7 @@ describe("child.stdin", () => {
   });
 });
 
-describe.skipIf(!isPosix)("stdio handed to the child", () => {
+describe("stdio handed to the child", () => {
   // Prints whether O_NONBLOCK is set on each fd number given in argv.
   const probe = join(import.meta.dir, "..", "..", "bun", "spawn", "fixtures", "fd-nonblock-probe.js");
 

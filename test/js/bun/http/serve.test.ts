@@ -15,7 +15,6 @@ import {
   isIPv4,
   isIPv6,
   isLinux,
-  isPosix,
   isWindows,
   libcPathForDlopen,
   MAX_PATH_BYTES,
@@ -2948,7 +2947,7 @@ describe("server.requestIP", () => {
     });
   });
 
-  it.if(isPosix)("server.requestIP (unix)", async () => {
+  it("server.requestIP (unix)", async () => {
     const unix = join(tmpdirSync(), "serve.sock");
     using server = Bun.serve({
       unix,
@@ -3962,7 +3961,7 @@ it("only serves /bun:info to loopback clients in development mode", async () => 
   expect(externalRes.status).toBe(200);
 });
 
-it.if(isPosix)("serves /bun:info over a unix socket in development mode", async () => {
+it("serves /bun:info over a unix socket in development mode", async () => {
   using dir = tempDir("info", {});
   const unix = join(String(dir), "bun-info.sock");
   using server = Bun.serve({
@@ -5301,7 +5300,7 @@ describe("requests pipelined in one read", () => {
 
   // On Windows the exit resets the connection (the client reads ECONNRESET), and
   // the reset can discard what the client has not read yet.
-  it.skipIf(isWindows)("delivers the completed responses when a later handler ends the process", async () => {
+  it("delivers the completed responses when a later handler ends the process", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -5437,7 +5436,7 @@ describe("requests pipelined in one read", () => {
   });
 
   // Skipped on Windows for the same reason as the test above that ends the process.
-  it.skipIf(isWindows)("delivers a response when the JavaScript that runs after it ends the process", async () => {
+  it("delivers a response when the JavaScript that runs after it ends the process", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `${trailingWork("process.exit(0);")} console.log(server.port);`],
       env: bunEnv,

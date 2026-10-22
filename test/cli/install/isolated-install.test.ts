@@ -620,7 +620,7 @@ test.concurrent("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
-test.concurrent.skipIf(isWindows)("a backslash in the name of a file or a directory of a package is kept", async () => {
+test.concurrent("a backslash in the name of a file or a directory of a package is kept", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await Promise.all([
@@ -1040,7 +1040,7 @@ test.concurrent(
 );
 
 // symlinkSync needs Developer Mode or elevation on Windows.
-describe.skipIf(isWindows).each(["isolated", "hoisted"] as const)("links in a file: folder (%s)", linker => {
+describe.each(["isolated", "hoisted"] as const)("links in a file: folder (%s)", linker => {
   const files = {
     "package.json": JSON.stringify({ name: "folder-links", dependencies: { lib: "file:./vendor/lib" } }),
     "shared/tsconfig.base.json": JSON.stringify({ shared: true }),
@@ -1260,96 +1260,90 @@ describe.each(["isolated", "hoisted"] as const)("bin target modes with the %s li
     ["077", 0o700],
     ["002", 0o775],
   ])("umask %s", (umask, expectedMode) => {
-    test.concurrent.skipIf(isWindows)(
-      "are 0o777 & ~umask, and an install that changes nothing writes nothing",
-      async () => {
-        const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
-        const workspaceBin = join(packageDir, "packages", "tool", "cli.js");
-        const binDir = join(packageDir, "node_modules", ".bin");
-        const links = ["tool", "dep", "tb", "what-bin"].map(name => join(binDir, name));
-        // A cache that the tests share hardlinks one inode of the tarball's bin into each of them.
-        const env = installEnv(packageDir);
+    test.concurrent("are 0o777 & ~umask, and an install that changes nothing writes nothing", async () => {
+      const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+      const workspaceBin = join(packageDir, "packages", "tool", "cli.js");
+      const binDir = join(packageDir, "node_modules", ".bin");
+      const links = ["tool", "dep", "tb", "what-bin"].map(name => join(binDir, name));
+      // A cache that the tests share hardlinks one inode of the tarball's bin into each of them.
+      const env = installEnv(packageDir);
 
-        await Promise.all([
-          write(
-            packageJson,
-            JSON.stringify({
-              name: "umask-root",
-              workspaces: ["packages/*"],
-              dependencies: {
-                tool: "workspace:*",
-                dep: "file:./dep",
-                tb: "file:./tb-1.0.0.tgz",
-                "what-bin": "1.0.0",
-              },
-            }),
-          ),
-          write(
-            join(packageDir, "packages", "tool", "package.json"),
-            JSON.stringify({ name: "tool", version: "1.0.0", bin: { tool: "./cli.js" } }),
-          ),
-          write(workspaceBin, "#!/usr/bin/env node\nconsole.log(1)\n"),
-          write(
-            join(packageDir, "dep", "package.json"),
-            JSON.stringify({ name: "dep", version: "1.0.0", bin: "d.js" }),
-          ),
-          write(join(packageDir, "dep", "d.js"), "#!/bin/sh\necho d\n"),
-          Bun.Archive.write(
-            join(packageDir, "tb-1.0.0.tgz"),
-            {
-              "package/package.json": JSON.stringify({ name: "tb", version: "1.0.0", bin: "t.js" }),
-              "package/t.js": "#!/bin/sh\necho t\n",
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "umask-root",
+            workspaces: ["packages/*"],
+            dependencies: {
+              tool: "workspace:*",
+              dep: "file:./dep",
+              tb: "file:./tb-1.0.0.tgz",
+              "what-bin": "1.0.0",
             },
-            { compress: "gzip" },
-          ),
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "tool", "package.json"),
+          JSON.stringify({ name: "tool", version: "1.0.0", bin: { tool: "./cli.js" } }),
+        ),
+        write(workspaceBin, "#!/usr/bin/env node\nconsole.log(1)\n"),
+        write(join(packageDir, "dep", "package.json"), JSON.stringify({ name: "dep", version: "1.0.0", bin: "d.js" })),
+        write(join(packageDir, "dep", "d.js"), "#!/bin/sh\necho d\n"),
+        Bun.Archive.write(
+          join(packageDir, "tb-1.0.0.tgz"),
+          {
+            "package/package.json": JSON.stringify({ name: "tb", version: "1.0.0", bin: "t.js" }),
+            "package/t.js": "#!/bin/sh\necho t\n",
+          },
+          { compress: "gzip" },
+        ),
+      ]);
+      await Promise.all([chmod(workspaceBin, 0o644), chmod(join(packageDir, "dep", "d.js"), 0o644)]);
+
+      const want = expectedMode.toString(8);
+      async function installAndExpectModes() {
+        await using proc = spawn({
+          cmd: ["sh", "-c", `umask ${umask} && exec "$0" install`, bunExe()],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect([workspaceBin, ...links].map(path => (statSync(path).mode & 0o777).toString(8))).toEqual([
+          want,
+          want,
+          want,
+          want,
+          want,
         ]);
-        await Promise.all([chmod(workspaceBin, 0o644), chmod(join(packageDir, "dep", "d.js"), 0o644)]);
+        expect(exitCode).toBe(0);
+      }
 
-        const want = expectedMode.toString(8);
-        async function installAndExpectModes() {
-          await using proc = spawn({
-            cmd: ["sh", "-c", `umask ${umask} && exec "$0" install`, bunExe()],
-            cwd: packageDir,
-            env,
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stderr).not.toContain("error:");
-          expect([workspaceBin, ...links].map(path => (statSync(path).mode & 0o777).toString(8))).toEqual([
-            want,
-            want,
-            want,
-            want,
-            want,
-          ]);
-          expect(exitCode).toBe(0);
-        }
+      await installAndExpectModes();
 
+      // A link that is removed and made again loses its mtime. A chmod, even to the mode the file
+      // has, moves its ctime, which has the resolution of the kernel's clock tick: wait one out.
+      // The folder and the local tarball will not do: a run can install those again.
+      const unchanged = [workspaceBin, realpathSync(join(binDir, "what-bin"))];
+      const ctimes = () => unchanged.map(path => statSync(path, { bigint: true }).ctimeNs);
+      for (const link of links) lutimesSync(link, 1, 1);
+      const before = ctimes();
+      const probe = join(packageDir, "ctime-probe");
+      await write(probe, "");
+      do chmodSync(probe, 0o600);
+      while (before.some(ctime => statSync(probe, { bigint: true }).ctimeNs <= ctime));
+      await installAndExpectModes();
+      expect(links.map(link => lstatSync(link).mtimeMs)).toEqual([1000, 1000, 1000, 1000]);
+      expect(ctimes()).toEqual(before);
+
+      // It isn't executable. The isolated linker of older versions left files like this behind.
+      for (const mode of [0o644, 0o777]) {
+        await Promise.all(links.map(link => chmod(realpathSync(link), mode)));
         await installAndExpectModes();
-
-        // A link that is removed and made again loses its mtime. A chmod, even to the mode the file
-        // has, moves its ctime, which has the resolution of the kernel's clock tick: wait one out.
-        // The folder and the local tarball will not do: a run can install those again.
-        const unchanged = [workspaceBin, realpathSync(join(binDir, "what-bin"))];
-        const ctimes = () => unchanged.map(path => statSync(path, { bigint: true }).ctimeNs);
-        for (const link of links) lutimesSync(link, 1, 1);
-        const before = ctimes();
-        const probe = join(packageDir, "ctime-probe");
-        await write(probe, "");
-        do chmodSync(probe, 0o600);
-        while (before.some(ctime => statSync(probe, { bigint: true }).ctimeNs <= ctime));
-        await installAndExpectModes();
-        expect(links.map(link => lstatSync(link).mtimeMs)).toEqual([1000, 1000, 1000, 1000]);
-        expect(ctimes()).toEqual(before);
-
-        // It isn't executable. The isolated linker of older versions left files like this behind.
-        for (const mode of [0o644, 0o777]) {
-          await Promise.all(links.map(link => chmod(realpathSync(link), mode)));
-          await installAndExpectModes();
-        }
-      },
-    );
+      }
+    });
   });
 });
 
@@ -2258,10 +2252,9 @@ describe.concurrent("lifecycle scripts of workspace members", () => {
       await runBunInstall(installEnv(packageDir), packageDir);
 
       expect(await bins()).toEqual({ root: names, member: names, registryPackage: names });
-      if (!isWindows) {
-        // The script writes the file without the execute bit. The linker sets the bit when it links the bin.
-        expect(statSync(join(packageDir, "packages", "no-deps", "dist", "no-deps-cli")).mode & 0o100).toBe(0o100);
-      }
+
+      // The script writes the file without the execute bit. The linker sets the bit when it links the bin.
+      expect(statSync(join(packageDir, "packages", "no-deps", "dist", "no-deps-cli")).mode & 0o100).toBe(0o100);
 
       await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
 
@@ -5983,7 +5976,7 @@ describe.concurrent("bin links of a failed optional dependency (hoisted)", () =>
   });
 
   // Here, the `.bin` of w2 is a link to the root's `.bin`, which has the link of the root's q.
-  test.concurrent.skipIf(isWindows)("nothing is removed through a `.bin` that is a link", async () => {
+  test.concurrent("nothing is removed through a `.bin` that is a link", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -7047,7 +7040,7 @@ describe.concurrent("package trees deeper than the path buffer", () => {
 
   // On Windows the buffer holds as much as the filesystem does, so no tree that exists overflows it
   // with a store-relative path; the last test overflows with the absolute path instead.
-  describe.skipIf(isWindows)("a folder dependency", () => {
+  describe("a folder dependency", () => {
     test("fails with ENAMETOOLONG when a directory does not fit", async () => {
       using dir = projectWithDeepFolderDependency("isolated-deep-dir", chainDirs(PATH_BUFFER_LEN + 256));
       expectPackageFailure(await bunInstall(String(dir)), "pkg");
@@ -7074,7 +7067,7 @@ describe.concurrent("package trees deeper than the path buffer", () => {
   });
 
   // Folder dependencies are always hardlinked; --backend selects how packages from the cache are linked.
-  describe.skipIf(isWindows)("a cached package", () => {
+  describe("a cached package", () => {
     test.each(["hardlink", "copyfile"])("fails with ENAMETOOLONG and leaves nothing (%s)", async backend => {
       const { dir, cachedPackage, entryNodeModules } = await projectWithCachedPackage(`isolated-cached-${backend}`);
       using _ = dir;
@@ -7509,7 +7502,7 @@ describe.concurrent("global virtual store", () => {
     expect(await readdirSorted(dirname(gvsTarget))).toEqual([basename(gvsTarget)]);
   });
 
-  test.skipIf(isWindows)("--force replaces an entry atomically, so it's never missing", async () => {
+  test("--force replaces an entry atomically, so it's never missing", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
     await write(
       packageJson,

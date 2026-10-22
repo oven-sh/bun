@@ -78,7 +78,6 @@ bun_core::declare_scope!(cache, visible);
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 44: A `with` body keeps a read of a module-level `var` that it declares again.
-/// Older entries can drop it.
 const EXPECTED_VERSION: u32 = 44;
 
 /// Source files smaller than this are not written to / read from the on-disk

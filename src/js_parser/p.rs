@@ -3435,23 +3435,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
-    /// A top-level `var exports` or `var module` of a CommonJS file is the wrapper's
-    /// argument (`declare_common_js_symbol`). The parser rewrites uses of that symbol,
-    /// which is wrong for a block that stores its own value under the name.
+    /// A top-level `var` of this name is the CommonJS wrapper's argument, whose uses are rewritten.
     fn is_commonjs_wrapper_argument(&self, name: &[u8]) -> bool {
         !self.has_es_module_syntax && (name == b"exports" || name == b"module")
     }
 
-    /// Module code rejects `function f() {}` beside `var f`, so a bundle of such a
-    /// file loads only while tree shaking drops the pair. The file keeps its block
-    /// symbols, which keep no declaration alive. Bun reads a CommonJS bundle that
-    /// has no CommonJS syntax as module code too.
+    /// Module code rejects `function f() {}` beside `var f`: such a bundle loads only while tree shaking drops the pair.
     #[cold]
     #[inline(never)]
     fn keep_block_symbols_beside_function_merged_with_var(&mut self) {
         let removed = core::mem::take(&mut self.redeclared_var_members);
         if !self.has_top_level_function_merged_with_var
             || !self.options.bundle
+            // Bun reads a CommonJS bundle that has no CommonJS syntax as module code.
             || !matches!(
                 self.options.output_format,
                 options::Format::Esm | options::Format::Cjs
@@ -3485,9 +3481,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // scope is arena-owned and valid for the parser 'a lifetime; the visit
         // pass is single-threaded so no aliasing `&mut` is outstanding. Read the
         // immutable bits (kind/parent/strict_mode/members snapshot) up front; the
-        // only later accesses are the `scope.generated` push and the removal of
-        // a merged `var` from `scope.members` (DerefMut, after the shared borrow
-        // is dropped) and the post-loop `children` walk.
+        // only later access is a write to `scope` in the loop (DerefMut, after the
+        // shared borrow is dropped) and the post-loop `children` walk.
         let scope_ref = &*scope;
         if !scope_ref.kind_stops_hoisting() {
             let arena = self.arena;
@@ -3509,9 +3504,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     v
                 };
                 // `scope_ref` (shared borrow of the `StoreRef` local) must end
-                // before the `DerefMut` writes to `scope.generated` and
-                // `scope.members` inside the loop; NLL drops it at last use
-                // (the snapshot block above).
+                // before the `DerefMut` writes to `scope` inside the
+                // loop; NLL drops it at last use (the snapshot block above).
                 'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
                     let mut symbol_idx = value.ref_.inner_index() as usize;
 
@@ -3668,8 +3662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         existing_idx
                                     };
                                     self.symbols[root].set_redeclared_in_nested_scope(true);
-                                    // Tree shaking looks a use up by its own symbol, so the block resolves the name
-                                    // to this one. esbuild keeps the member, and drops the first statement above.
+                                    // The block then resolves the name to the symbol that tree shaking looks up.
                                     if _scope_ptr == self.module_scope
                                         && !self.is_commonjs_wrapper_argument(name)
                                     {

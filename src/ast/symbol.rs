@@ -132,8 +132,7 @@ bitflags::bitflags! {
         /// A call of this function declaration or lifted export ignores `this`.
         const CALL_IGNORES_THIS = 1 << 7;
 
-        /// A nested scope declares this `var` again, and that declaration can
-        /// assign it. Set on the root of the link chain.
+        /// A nested scope declares this `var` again and can assign it. On the root of the link chain.
         const REDECLARED_IN_NESTED_SCOPE = 1 << 9;
     }
 }

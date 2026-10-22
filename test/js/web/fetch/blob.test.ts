@@ -618,6 +618,91 @@ describe("slice bounds are respected when streaming and serving", () => {
   });
 });
 
+// A slice made with a contentType is typed like a Blob made with the constructor's
+// `type` option. A registered MIME string ("image/png") is interned. Any other type
+// ("IMAGE/PNG", "application/x-foo") is a heap copy. A reader of the type must not
+// see which of the two it is.
+describe("the type of a Blob slice", () => {
+  // Each place that reads whether a caller gave a Blob its type. `null` is no
+  // Content-Type header. Each reader gets a Blob of its own from `make`.
+  async function seenBy(make: () => Blob | Promise<Blob>) {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/route": new Response(await make()) },
+      fetch: req => Response.json(req.headers.get("content-type")),
+    });
+    const received = async (response: Promise<Response>) => await (await response).json();
+    const route = await fetch(new URL("/route", server.url));
+    await route.arrayBuffer();
+    return {
+      type: (await make()).type,
+      fetchBody: await received(fetch(server.url, { method: "POST", body: await make() })),
+      fetchBodyWithOtherHeaders: await received(
+        fetch(server.url, { method: "POST", body: await make(), headers: { "x-other": "1" } }),
+      ),
+      requestBody: await received(fetch(new Request(server.url, { method: "POST", body: await make() }))),
+      staticRoute: route.headers.get("content-type"),
+      stream: (await new Response((await make()).stream()).blob()).type,
+      clone: await received(fetch(server.url, { method: "POST", body: structuredClone(await make()) })),
+      responseBlob: (await new Response(await make()).blob()).type,
+    };
+  }
+
+  // A multipart file with no Content-Type line. Its type comes from its name, not
+  // from a caller.
+  async function formDataFile() {
+    const body = '--x\r\nContent-Disposition: form-data; name="file"; filename="a.txt"\r\n\r\nabc\r\n--x--\r\n';
+    const headers = { "content-type": "multipart/form-data; boundary=x" };
+    return (await new Response(body, { headers }).formData()).get("file") as File;
+  }
+
+  test.each([
+    ["new Blob(parts).slice(0, 2, type)", (type: string) => new Blob(["abc"]).slice(0, 2, type)],
+    ["new Blob(parts).slice(type)", (type: string) => (new Blob(["ab"]) as Bun.BunFile).slice(type)],
+    ["new File(parts, name).slice(0, 2, type)", (type: string) => new File(["abc"], "a.bin").slice(0, 2, type)],
+    ["formData.get(name).slice(0, 2, type)", async (type: string) => (await formDataFile()).slice(0, 2, type)],
+  ])("%s is typed like new Blob(parts, { type })", async (_label, slice) => {
+    const sliced: Record<string, unknown> = {};
+    const constructed: Record<string, unknown> = {};
+    for (const type of ["image/png", "IMAGE/PNG", "application/x-foo"]) {
+      sliced[type] = await seenBy(() => slice(type));
+      constructed[type] = await seenBy(() => new Blob(["ab"], { type }));
+    }
+    expect(sliced).toEqual(constructed);
+    // Fetch sends the type of a Blob body as its Content-Type.
+    expect(sliced).toMatchObject({
+      "image/png": { type: "image/png", fetchBody: "image/png" },
+      "IMAGE/PNG": { type: "image/png", fetchBody: "image/png" },
+      "application/x-foo": { type: "application/x-foo", fetchBody: "application/x-foo" },
+    });
+  });
+
+  test("an empty slice is typed the same by both spellings of its contentType", async () => {
+    const interned = await seenBy(() => new Blob(["abc"]).slice(1, 1, "image/png"));
+    const heap = await seenBy(() => new Blob(["abc"]).slice(1, 1, "IMAGE/PNG"));
+    expect(interned).toEqual(heap);
+    expect(interned).toMatchObject({ type: "image/png", staticRoute: "image/png" });
+  });
+
+  test("a slice with no contentType keeps an interned parent type, and who gave it", async () => {
+    const ofConstructed = await seenBy(() => new Blob(["abc"], { type: "image/png" }).slice(0, 2));
+    const ofSlice = await seenBy(() => new Blob(["abcd"]).slice(0, 3, "image/png").slice(0, 2));
+    expect(ofSlice).toEqual(ofConstructed);
+    expect(ofSlice).toMatchObject({ type: "image/png", fetchBody: "image/png" });
+    // Nobody gave this file its type, and nobody gave its slice one.
+    expect(await seenBy(async () => (await formDataFile()).slice(0, 3))).toEqual(await seenBy(formDataFile));
+  });
+
+  test("the object URL of a slice typed application/json imports as JSON", async () => {
+    const url = URL.createObjectURL(new Blob(['{"a":1} and more']).slice(0, 7, "application/json"));
+    try {
+      expect((await import(url)).default).toEqual({ a: 1 });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  });
+});
+
 // A slice shares its parent's backing store. Once the parent and the slice
 // objects have been collected, a stream made from the slice holds the only
 // reference to that store, and the buffered consumers (Bun.readableStreamTo*,

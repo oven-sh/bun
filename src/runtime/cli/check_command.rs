@@ -199,7 +199,7 @@ pub(crate) fn is_allowed_to_run_code(args: &[&ZStr], passed_on: usize) -> bool {
 }
 
 /// `is_allowed_to_run_code`, for a command that takes `--check`.
-fn command_runs_external_code() -> bool {
+pub(crate) fn command_runs_external_code() -> bool {
     bun_options_types::context::try_get().is_some_and(|ctx| ctx.runs_external_code)
 }
 

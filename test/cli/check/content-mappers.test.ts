@@ -399,7 +399,7 @@ main.ts(2,7): error TS2345: Argument of type 'number' is not assignable to param
     const { stdout } = await check(dir, ["--runExternalCode"]);
     expect(stdout).toBe(errorsOfApp);
     const pid = Number(await Bun.file(join(String(dir), "node_modules/m/pid.txt")).text());
-    expect(() => process.kill(pid, 0)).toThrow();
+    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
   });
 
   test("a file larger than a pipe's buffer", async () => {
@@ -875,7 +875,7 @@ describe.concurrent("--check", () => {
         hasRun: false,
         exitCode: 1,
       });
-      expect(() => process.kill(pidsOf(dir)[0], 0)).toThrow();
+      expect(() => process.kill(pidsOf(dir)[0], 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
     });
 
     test.each([
@@ -989,6 +989,29 @@ child.on("exit", code => console.log("the child exited with", code));
     expect(pidsOf(dir)).toHaveLength(2);
   });
 
+  test("a process that the program forks doesn't get a flag that didn't count", async () => {
+    using dir = project({
+      mapper,
+      files: {
+        ...files,
+        "outer/tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+        "outer/parent.ts": `type Child = { on(event: "exit", listener: (code: number) => void): void };
+declare function require(name: "node:child_process"): { fork(path: string, options: { cwd: string }): Child };
+declare const console: { log(...values: unknown[]): void };
+declare const process: { execArgv: string[] };
+console.log("ran", ...process.execArgv);
+const child = require("node:child_process").fork("./main.ts", { cwd: ".." });
+child.on("exit", code => console.log("the child exited with", code));
+`,
+      },
+    });
+    const outer = { toString: () => join(String(dir), "outer") };
+    const { stdout, output } = await run(outer, ["--check", "parent.ts"], { BUN_OPTIONS: "--runExternalCode" });
+    expect(stdout).toBe("ran --check\nthe child exited with 1\n");
+    expect(output).toContain(notAllowed);
+    expect(pidsOf(dir)).toEqual([]);
+  });
+
   test.each(["--watch", "--hot"])(
     "bun %s --check --runExternalCode starts the mapper again for each check",
     async flag => {
@@ -1020,7 +1043,7 @@ child.on("exit", code => console.log("the child exited with", code));
       await until(/ran 1|error/);
       expect(output).toBe("ran 1\n");
       const [first] = pidsOf(dir);
-      expect(() => process.kill(first, 0)).toThrow();
+      expect(() => process.kill(first, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
       await Bun.write(join(String(dir), "App.vue"), wrong["App.vue"]);
       // A check can begin while the file is being written. The next one sees all of it.
       await until(/TS2322/);

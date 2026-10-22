@@ -555,7 +555,8 @@ impl FrameworkRouter {
             return Ok(());
         };
         let mut arena_state = Arena::new();
-        self.scan_inner(ty, r, &root_info, &mut arena_state, ctx)
+        let root = bun_resolver::fs::WalkRoot::new(root_info.abs_path);
+        self.scan_inner(ty, r, &root_info, &root.descent(), &mut arena_state, ctx)
     }
 
     fn scan_inner(
@@ -563,6 +564,7 @@ impl FrameworkRouter {
         t_index: TypeIndex,
         r: &mut Resolver,
         dir_info: &DirInfo,
+        walk: &bun_resolver::fs::Descent<'_>,
         arena_state: &mut Arena,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
@@ -625,10 +627,13 @@ impl FrameworkRouter {
                             }
                         }
 
+                        let Some(walk) = walk.enter(file) else {
+                            continue 'outer;
+                        };
                         if let Some(child_info) =
                             r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
                         {
-                            self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
+                            self.scan_inner(t_index, r, &child_info, &walk, arena_state, ctx)?;
                         }
                     }
                     bun_resolver::fs::EntryKind::File => {

@@ -118,6 +118,8 @@ pub struct EntryCache {
     /// don't make it bun.invalid_fd
     pub fd: Fd,
     pub(crate) kind: EntryKind,
+    /// The entry itself is a symbolic link, or a reparse point on Windows.
+    pub(crate) is_symlink: bool,
 }
 
 // `cache` / `need_stat` are lazily populated by `Entry::kind` /
@@ -255,6 +257,20 @@ impl Entry {
         self.cache().kind
     }
 
+    /// True if the entry itself is a symbolic link, or a reparse point on Windows.
+    /// [`Entry::kind`] finds that out, so read this after it.
+    #[inline]
+    pub(crate) fn is_symlink(&self) -> bool {
+        self.cache().is_symlink
+    }
+
+    /// The real path that [`Entry::kind`] stored for a link. Empty: not known.
+    fn link_target(&self) -> &'static [u8] {
+        // Another thread's resolver writes `cache.symlink` under this lock.
+        let _guard = self.mutex.lock_guard();
+        self.cache().symlink.as_bytes()
+    }
+
     ///
     /// # Safety
     /// `fs` must point to a live `EntryKindResolver` (the process-global
@@ -289,6 +305,246 @@ impl Entry {
         }
         self.cache().symlink.as_bytes()
     }
+}
+
+/// Where a depth-first walk over directory listings starts.
+pub struct WalkRoot<'a> {
+    dir: &'a [u8],
+    /// The real path of `dir`. Empty: not known.
+    real: core::cell::OnceCell<Box<[u8]>>,
+}
+
+impl<'a> WalkRoot<'a> {
+    /// `dir` is the directory as the walk names it.
+    pub fn new(dir: &'a [u8]) -> Self {
+        Self {
+            dir,
+            real: core::cell::OnceCell::new(),
+        }
+    }
+
+    /// The walk's position at the root.
+    pub fn descent(&self) -> Descent<'_> {
+        Descent {
+            root: self,
+            parent: None,
+            via: None,
+            link: b"",
+            behind_link: false,
+        }
+    }
+
+    /// Asks the file system on the first call. Only a walk that meets a link calls it.
+    fn real(&self) -> &[u8] {
+        self.real.get_or_init(|| {
+            #[cfg(not(windows))]
+            let opened = bun_sys::open_dir_at(Fd::cwd(), self.dir);
+            #[cfg(windows)]
+            let opened = bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::cwd(), self.dir);
+            let Ok(fd) = opened else {
+                return Box::default();
+            };
+            let dir = bun_sys::Dir::from_fd(fd);
+            let mut buf = bun_paths::path_buffer_pool::get();
+            // `RealFS::kind` names a link target with the same call, so both spell a directory alike.
+            dir.get_fd_path(&mut buf)
+                .map_or_else(|_| Box::default(), |real| Box::from(&*real))
+        })
+    }
+}
+
+/// A directory that a walk is inside, linked to the directory the walk entered it from.
+///
+/// A directory link can lead to a directory the walk is already inside, and a walk that
+/// follows it does not end. A walker asks [`Descent::enter`] before it reads a directory.
+pub struct Descent<'a> {
+    root: &'a WalkRoot<'a>,
+    parent: Option<&'a Descent<'a>>,
+    /// The entry that names this directory in `parent`. `None`: the root.
+    via: Option<&'a Entry>,
+    /// The real path of this directory when `via` is a link. Empty: `via` is not a link.
+    link: &'static [u8],
+    /// The walk entered this directory, or one above it, through a link.
+    behind_link: bool,
+}
+
+impl Descent<'_> {
+    /// The walk's position in `entry`, a directory of this one. `None`: `entry` leads to this
+    /// directory or to one above it, up to the root of the walk. Call [`Entry::kind`] first.
+    #[inline]
+    pub fn enter<'b>(&'b self, entry: &'b Entry) -> Option<Descent<'b>> {
+        if self.behind_link || entry.is_symlink() {
+            return self.enter_behind_link(entry);
+        }
+        // Plain directories below the root form a tree. None of them leads back up.
+        Some(Descent {
+            root: self.root,
+            parent: Some(self),
+            via: Some(entry),
+            link: b"",
+            behind_link: false,
+        })
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn enter_behind_link<'b>(&'b self, entry: &'b Entry) -> Option<Descent<'b>> {
+        debug!(
+            "enter_behind_link({}, {})",
+            bstr::BStr::new(entry.dir),
+            bstr::BStr::new(entry.base())
+        );
+        let link = if entry.is_symlink() {
+            entry.link_target()
+        } else {
+            b""
+        };
+        if entry.is_symlink() && link.is_empty() {
+            // Nothing says where this link leads, so nothing says that it does not lead back.
+            return None;
+        }
+        let child = Descent {
+            root: self.root,
+            parent: Some(self),
+            via: Some(entry),
+            link,
+            behind_link: true,
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let (real, mut inside): (&[u8], Option<&Descent<'_>>) = if link.is_empty() {
+            let Some(len) = child.write_real_path(&mut buf[..]) else {
+                // Too long to compare. The walk still ends: it cannot go on without a link,
+                // and every link is compared.
+                return Some(child);
+            };
+            // From the link that this directory is behind down to this directory, each real
+            // path is a prefix of the one of `entry`.
+            (&buf[..len], self.top().parent)
+        } else {
+            (link, Some(self))
+        };
+        while let Some(dir) = inside {
+            let top = dir.top();
+            if dir.any_has_real_path(top, real) {
+                return None;
+            }
+            inside = top.parent;
+        }
+        Some(child)
+    }
+
+    /// The nearest directory from this one up that the walk entered through a link, or the
+    /// root. A directory below it, down to this one, has its real path plus the names between.
+    fn top(&self) -> &Self {
+        let mut dir = self;
+        while let (true, Some(parent)) = (dir.link.is_empty(), dir.parent) {
+            dir = parent;
+        }
+        dir
+    }
+
+    /// The real path of this directory, which `top` returned. Empty: not known.
+    fn real_of_top(&self) -> &[u8] {
+        if self.parent.is_some() {
+            self.link
+        } else {
+            self.root.real()
+        }
+    }
+
+    fn name(&self) -> &[u8] {
+        self.via.map_or(b"", Entry::base)
+    }
+
+    /// True if `real` is the real path of a directory from `top` down to this one. `top` is
+    /// `self.top()`.
+    fn any_has_real_path(&self, top: &Self, real: &[u8]) -> bool {
+        let top_real = top.real_of_top();
+        if top_real.is_empty() {
+            return false;
+        }
+        // What is left must be the names from `top` down to one of the directories, each
+        // after a separator.
+        let Some(mut below) = trim_sep(real).strip_prefix(trim_sep(top_real)) else {
+            return false;
+        };
+        let mut len = 0;
+        let mut dir = self;
+        while !core::ptr::eq(dir, top) {
+            len += 1 + dir.name().len();
+            let Some(parent) = dir.parent else {
+                return false;
+            };
+            dir = parent;
+        }
+        // Only the directory whose names take as many bytes can be that one.
+        dir = self;
+        while len > below.len() {
+            len -= 1 + dir.name().len();
+            let Some(parent) = dir.parent else {
+                return false;
+            };
+            dir = parent;
+        }
+        if len != below.len() {
+            return false;
+        }
+        while !core::ptr::eq(dir, top) {
+            let Some(above) = below.strip_suffix(dir.name()) else {
+                return false;
+            };
+            let Some((sep, above)) = above.split_last() else {
+                return false;
+            };
+            let Some(parent) = dir.parent else {
+                return false;
+            };
+            if !bun_paths::is_sep_native(*sep) {
+                return false;
+            }
+            (dir, below) = (parent, above);
+        }
+        below.is_empty()
+    }
+
+    /// Writes the real path of this directory to `buf`, with no trailing separator, and returns
+    /// its length. `None`: it is not known, or it does not fit.
+    fn write_real_path(&self, buf: &mut [u8]) -> Option<usize> {
+        let top = self.top();
+        let top_real = top.real_of_top();
+        if top_real.is_empty() {
+            return None;
+        }
+        let top_real = trim_sep(top_real);
+        let mut end = top_real.len();
+        let mut dir = self;
+        while !core::ptr::eq(dir, top) {
+            end += 1 + dir.name().len();
+            dir = dir.parent?;
+        }
+        let path = buf.get_mut(..end)?;
+        let mut start = end;
+        dir = self;
+        while !core::ptr::eq(dir, top) {
+            let name = dir.name();
+            start -= name.len();
+            path[start..start + name.len()].copy_from_slice(name);
+            start -= 1;
+            path[start] = bun_paths::SEP;
+            dir = dir.parent?;
+        }
+        path[..start].copy_from_slice(top_real);
+        Some(end)
+    }
+}
+
+/// `path` without its trailing separators. A file system root gives an empty path.
+fn trim_sep(path: &[u8]) -> &[u8] {
+    let mut end = path.len();
+    while end > 0 && bun_paths::is_sep_native(path[end - 1]) {
+        end -= 1;
+    }
+    &path[..end]
 }
 
 // `entry` is a RAW `*mut Entry`. A safe
@@ -495,7 +751,9 @@ impl DirEntry {
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
-                            || Some(existing.cache().kind) != found_kind,
+                            || Some(existing.cache().kind) != found_kind
+                            // A plain entry took the name of a link: the cache holds the link's target.
+                            || existing.cache().is_symlink,
                         Ordering::Release,
                     );
                     break 'brk existing_ptr;
@@ -550,6 +808,7 @@ impl DirEntry {
                     // store an arbitrary kind
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
+                    is_symlink: false,
                 }));
                 addr_of_mut!((*p).abs_path).write(OnceLock::new());
                 p

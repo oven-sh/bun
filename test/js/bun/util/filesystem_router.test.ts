@@ -1510,3 +1510,367 @@ it(".query and .params support names that look like array indices", () => {
   expect(params).toEqual({ 0: "hello" });
   expect(params[0]).toBe("hello");
 });
+
+// Directory links. A route behind a link is named by the path of the link. The router does not
+// enter a link, or a directory behind a link, that leads back to a directory it is already inside.
+
+// `links` maps the path of a link to the path of its target. Both are relative to the tree.
+function linkedTree(files: string[], links: Record<string, string> = {}) {
+  const dir = tempDir("fsr-links", Object.fromEntries(files.map(file => [file, "export default 1;\n"])));
+  const root = String(dir);
+  const link = (at: string, target: string) => {
+    // A junction needs no privilege on Windows. Its target must be absolute.
+    fs.symlinkSync(path.join(root, target), path.join(root, at), "junction");
+  };
+  for (const [at, target] of Object.entries(links)) link(at, target);
+  return { root, pages: path.join(root, "pages"), link, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+}
+
+const routeNames = (router: FileSystemRouter) => Object.keys(router.routes).sort();
+
+it.each<{ name: string; files: string[]; links: Record<string, string>; routes: string[] }>([
+  // A link that leads back. A router that follows it lists each route again at every level, until
+  // the operating system refuses a path with so many links.
+  {
+    name: "a link to the routes directory",
+    files: ["pages/a.tsx"],
+    links: { "pages/self": "pages" },
+    routes: ["/a"],
+  },
+  {
+    name: "a link to the routes directory from below",
+    files: ["pages/a.tsx", "pages/sub/b.tsx"],
+    links: { "pages/sub/back": "pages" },
+    routes: ["/a", "/sub/b"],
+  },
+  {
+    name: "a link to a directory between the routes directory and the link",
+    files: ["pages/a.tsx", "pages/d/e/f.tsx"],
+    links: { "pages/d/e/back": "pages/d" },
+    routes: ["/a", "/d/e/f"],
+  },
+  {
+    name: "a link to the directory above the routes directory",
+    files: ["pages/a.tsx", "other/o.tsx"],
+    links: { "pages/up": "." },
+    routes: ["/a", "/up/other/o"],
+  },
+  {
+    name: "two directories that link to each other",
+    files: ["pages/a/p.tsx", "pages/b/q.tsx"],
+    links: { "pages/a/x": "pages/b", "pages/b/y": "pages/a" },
+    routes: ["/a/p", "/a/x/q", "/b/q", "/b/y/p"],
+  },
+  {
+    name: "a link to its own directory, behind a link",
+    files: ["pages/a.tsx", "outside/o.tsx"],
+    links: { "pages/shared": "outside", "outside/self": "outside" },
+    routes: ["/a", "/shared/o"],
+  },
+  {
+    name: "a link to a directory between a followed link and the link",
+    files: ["pages/a.tsx", "outside/d/e/f.tsx"],
+    links: { "pages/in": "outside", "outside/d/e/back": "outside/d" },
+    routes: ["/a", "/in/d/e/f"],
+  },
+  {
+    name: "a directory behind a link that is the target of a followed link",
+    files: ["pages/a.tsx", "outside/x/y.tsx", "outside/z.tsx"],
+    links: { "pages/in": "outside/x", "outside/x/up": "outside" },
+    routes: ["/a", "/in/up/z", "/in/y"],
+  },
+  {
+    name: "a directory two levels behind a link that is the target of a followed link",
+    files: ["pages/a.tsx", "outside/x/y/z.tsx", "outside/w.tsx"],
+    links: { "pages/in": "outside/x/y", "outside/x/y/up": "outside" },
+    routes: ["/a", "/in/up/w", "/in/z"],
+  },
+  // What stays: the router follows a link that does not lead back, and the path of the link is the name.
+  {
+    name: "a link beside its target",
+    files: ["pages/real/b.tsx"],
+    links: { "pages/alias": "pages/real" },
+    routes: ["/alias/b", "/real/b"],
+  },
+  {
+    name: "two links to one directory outside",
+    files: ["pages/a.tsx", "outside/c.tsx"],
+    links: { "pages/x": "outside", "pages/y": "outside" },
+    routes: ["/a", "/x/c", "/y/c"],
+  },
+  {
+    name: "a link behind a link",
+    files: ["pages/a.tsx", "one/b.tsx", "two/c.tsx"],
+    links: { "pages/l": "one", "one/m": "two" },
+    routes: ["/a", "/l/b", "/l/m/c"],
+  },
+  {
+    name: "links to directories whose names end like the names of the directories above the links",
+    files: ["pages/a/b/p.tsx", "pages/a-b/q.tsx", "pages/ab/r.tsx"],
+    links: { "pages/a/b/l": "pages/a-b", "pages/a/b/m": "pages/ab" },
+    routes: ["/a-b/q", "/a/b/l/q", "/a/b/m/r", "/a/b/p", "/ab/r"],
+  },
+])("directory links: $name", ({ files, links, routes }) => {
+  using tree = linkedTree(files, links);
+  const router = new FileSystemRouter({ dir: tree.pages, style: "nextjs" });
+  expect(routeNames(router)).toEqual(routes);
+  router.reload();
+  expect(routeNames(router)).toEqual(routes);
+});
+
+it("directory links: a link to the routes directory, which is behind a link", () => {
+  using tree = linkedTree(["real/one/pages/a.tsx"], { "via": "real", "real/one/pages/self": "real/one/pages" });
+  const names = (app: string) =>
+    routeNames(new FileSystemRouter({ dir: path.join(tree.root, "via", app, "pages"), style: "nextjs" }));
+  expect(names("one")).toEqual(["/a"]);
+
+  // The resolver has listed `via` by now, and that listing does not name `two`.
+  createTree(tree.root, ["real/two/pages/a.tsx"]);
+  tree.link("real/two/pages/self", "real/two/pages");
+  expect(names("two")).toEqual(["/a"]);
+});
+
+it("directory links: reload() passes over a link that leads back and follows a new link that does not", () => {
+  using tree = linkedTree(["pages/a.tsx", "outside/c.tsx"]);
+  const router = new FileSystemRouter({ dir: tree.pages, style: "nextjs" });
+  expect(routeNames(router)).toEqual(["/a"]);
+
+  tree.link("pages/self", "pages");
+  router.reload();
+  expect(routeNames(router)).toEqual(["/a"]);
+
+  tree.link("pages/x", "outside");
+  router.reload();
+  expect(routeNames(router)).toEqual(["/a", "/x/c"]);
+});
+
+it("directory links: reload() reads a name again after a link that led back is replaced", () => {
+  using tree = linkedTree(["pages/a.tsx", "pages/x/deep/one.tsx", "outside/deep/three.tsx"]);
+  const router = new FileSystemRouter({ dir: tree.pages, style: "nextjs" });
+  expect(routeNames(router)).toEqual(["/a", "/x/deep/one"]);
+  const replaceX = (make: () => void) => {
+    rmSync(path.join(tree.pages, "x"), { recursive: true, force: true });
+    make();
+    router.reload();
+    return routeNames(router);
+  };
+
+  expect(replaceX(() => tree.link("pages/x", "pages"))).toEqual(["/a"]);
+  expect(replaceX(() => createTree(tree.pages, ["x/deep/two.tsx"]))).toEqual(["/a", "/x/deep/two"]);
+  expect(replaceX(() => tree.link("pages/x", "pages"))).toEqual(["/a"]);
+  expect(replaceX(() => tree.link("pages/x", "outside"))).toEqual(["/a", "/x/deep/three"]);
+});
+
+it("directory links: reload() follows a link that now leads to another directory", () => {
+  using tree = linkedTree(["pages/a.tsx", "one/top.tsx", "one/l/inner.tsx", "two/two.tsx"], {
+    "two/l": "one",
+    "pages/alias": "one",
+  });
+  const router = new FileSystemRouter({ dir: tree.pages, style: "nextjs" });
+  expect(routeNames(router)).toEqual(["/a", "/alias/l/inner", "/alias/top"]);
+
+  rmSync(path.join(tree.pages, "alias"), { recursive: true, force: true });
+  tree.link("pages/alias", "two");
+  router.reload();
+  expect(routeNames(router)).toEqual(["/a", "/alias/l/l/inner", "/alias/l/top", "/alias/two"]);
+});
+
+// Prints the names of the routes after the constructor. With `later`, it then makes those links,
+// calls reload() and prints the names again.
+const linksFixture = /* ts */ `
+  import fs from "fs";
+  const [dir, later] = process.argv.slice(1);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  const names = [Object.keys(router.routes).sort()];
+  if (later) {
+    for (const [at, target] of JSON.parse(later)) fs.symlinkSync(target, at, "junction");
+    router.reload();
+    names.push(Object.keys(router.routes).sort());
+  }
+  console.log(JSON.stringify(names));
+`;
+
+async function routeNamesInChild(
+  dir: string,
+  { later, args = [], env = {} }: { later?: [at: string, target: string][]; args?: string[]; env?: object } = {},
+) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args, "-e", linksFixture, dir, ...(later ? [JSON.stringify(later)] : [])],
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+    // A router that follows two links back does not return. The child is killed before it uses up the memory.
+    timeout: 10_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { names: JSON.parse(stdout || "null"), stderr, exitCode, signalCode: proc.signalCode };
+}
+
+// With two links back, a router that follows them reads twice as many directories at each level.
+it.each([
+  { name: "the constructor", links: { "pages/x": "pages", "pages/y": "pages" }, later: {} },
+  { name: "reload()", links: {}, later: { "pages/x": "pages", "pages/y": "pages" } },
+  { name: "reload(), from a subdirectory", links: {}, later: { "pages/sub/x": "pages", "pages/sub/y": "pages" } },
+])(
+  "directory links: $name returns when two links lead back",
+  async ({ links, later }) => {
+    using tree = linkedTree(["pages/a.tsx", "pages/sub/b.tsx"], links);
+    const abs = (rel: string) => path.join(tree.root, rel);
+    expect(
+      await routeNamesInChild(tree.pages, {
+        later: Object.entries(later).map(([at, target]) => [abs(at), abs(target)]),
+      }),
+    ).toEqual({
+      names: [
+        ["/a", "/sub/b"],
+        ["/a", "/sub/b"],
+      ],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  // More than the time after which the child is killed.
+  30_000,
+);
+
+// These modes leave out the real paths that the resolver records for the directories behind a link.
+it.each([
+  { how: "--preserve-symlinks", args: ["--preserve-symlinks"], env: {} },
+  { how: "NODE_PRESERVE_SYMLINKS=1", args: [], env: { NODE_PRESERVE_SYMLINKS: "1" } },
+])("directory links: $how passes over the same links", async ({ args, env }) => {
+  const passed = { stderr: "", exitCode: 0, signalCode: null };
+  using tree = linkedTree(["pages/a.tsx", "other/o.tsx"], { "pages/up": "." });
+  expect(await routeNamesInChild(tree.pages, { later: [], args, env })).toEqual({
+    names: [
+      ["/a", "/up/other/o"],
+      ["/a", "/up/other/o"],
+    ],
+    ...passed,
+  });
+  // The routes directory is behind a link.
+  using linked = linkedTree(["real/pages/a.tsx"], { "via": "real", "real/pages/self": "real/pages" });
+  expect(await routeNamesInChild(path.join(linked.root, "via", "pages"), { args, env })).toEqual({
+    names: [["/a"]],
+    ...passed,
+  });
+});
+
+it("directory links: a directory that took the name of a link is read as a directory", async () => {
+  using tree = linkedTree(["pages/a.tsx"], { "pages/x": "pages" });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* ts */ `
+        import fs from "fs";
+        import path from "path";
+        const dir = process.argv[1];
+        const names = () => Object.keys(new Bun.FileSystemRouter({ dir, style: "nextjs" }).routes).sort();
+        const withLink = names();
+        fs.rmSync(path.join(dir, "x"), { recursive: true, force: true });
+        fs.mkdirSync(path.join(dir, "x"));
+        fs.writeFileSync(path.join(dir, "x", "b.tsx"), "export default 1;");
+        // A later build makes the bundler's resolver read the listing of the routes directory again.
+        // That read keeps the entry of "x". The router reads what the resolver has.
+        let withDirectory = names();
+        for (let builds = 0; builds < 10 && withDirectory.length === 1; builds++) {
+          await Bun.build({ entrypoints: [path.join(dir, "a.tsx")], target: "bun" });
+          withDirectory = names();
+        }
+        console.log(JSON.stringify([withLink, withDirectory]));
+      `,
+      tree.pages,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: '[["/a"],["/a","/x/b"]]\n',
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// Replay a failure with BUN_FSR_LINKS_SEED=<seed>.
+it("directory links: on random trees, the routes are those of a walk that asks the file system for every real path", async () => {
+  using dir = tempDir("fsr-links-random", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* ts */ `
+        import fs from "fs";
+        import path from "path";
+        const [top, seed] = process.argv.slice(1);
+        let state = Number(seed) >>> 0;
+        const int = n => {
+          state = (state + 0x6d2b79f5) | 0;
+          let t = Math.imul(state ^ (state >>> 15), 1 | state);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n);
+        };
+        // The names of the routes, from a walk that does not enter a directory whose real path is
+        // the real path of a directory it is inside.
+        function expected(pages) {
+          const names = [];
+          (function walk(dir, inside, name) {
+            for (const base of fs.readdirSync(dir)) {
+              const stat = fs.statSync(path.join(dir, base));
+              if (stat.isFile()) names.push(name + "/" + path.parse(base).name);
+              if (!stat.isDirectory()) continue;
+              const real = fs.realpathSync(path.join(dir, base));
+              if (!inside.includes(real)) walk(path.join(dir, base), [...inside, real], name + "/" + base);
+            }
+          })(pages, [fs.realpathSync(pages)], "");
+          return names.sort();
+        }
+        for (let tree = 0; tree < 30; tree++) {
+          const root = path.join(top, "t" + tree);
+          const dirs = ["pages", "out"];
+          for (let i = 2 + int(6); i > 0; i--) dirs.push(dirs[int(dirs.length)] + "/d" + dirs.length);
+          for (const dir of dirs) {
+            fs.mkdirSync(path.join(root, dir), { recursive: true });
+            fs.writeFileSync(path.join(root, dir, "f" + dirs.indexOf(dir) + ".tsx"), "");
+          }
+          // A link from any directory to any directory, or to the directory above them all.
+          const links = [];
+          for (let i = int(5); i > 0; i--) {
+            const link = [dirs[int(dirs.length)] + "/l" + i, [...dirs, "."][int(dirs.length + 1)]];
+            fs.symlinkSync(path.join(root, link[1]), path.join(root, link[0]), "junction");
+            links.push(link.join(" -> "));
+          }
+          const pages = path.join(root, "pages");
+          const router = new Bun.FileSystemRouter({ dir: pages, style: "nextjs" });
+          const built = Object.keys(router.routes).sort();
+          router.reload();
+          const found = { built, reloaded: Object.keys(router.routes).sort() };
+          const want = expected(pages);
+          if (JSON.stringify(found) !== JSON.stringify({ built: want, reloaded: want })) {
+            console.log(JSON.stringify({ tree, dirs, links, found, want }, null, 2));
+            process.exit(1);
+          }
+        }
+        console.log("the same");
+      `,
+      String(dir),
+      process.env.BUN_FSR_LINKS_SEED ?? "1",
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A router that follows links back does not return. The child is killed before it uses up the memory.
+    timeout: 20_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "the same\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+  // More than the time after which the child is killed.
+}, 40_000);

@@ -4,6 +4,7 @@ import { rmSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  isCanary,
   isWindows,
   spawnWithNonBlockingStdin,
   tempDir,
@@ -316,7 +317,8 @@ describe("echo | bun run -", () => {
 test.skipIf(isWindows).each([
   ["run -", "console.log('from ' + 'stdin');", "from stdin\n", 0],
   ["fmt --stdin-filepath x.ts", "const   a  =  1\n", "const a = 1;\n", 0],
-  ["lint --stdin", "debugger;\n", "no-debugger", 1],
+  // A release build has no `bun lint`.
+  ...(isCanary ? [["lint --stdin", "debugger;\n", "no-debugger", 1]] : []),
 ])("bun %s waits for its input on a non-blocking stdin", async (args, input, output, exitCode) => {
   using dir = tempDir("non-blocking-stdin", {});
   await using child = spawnWithNonBlockingStdin(["sh", "-c", `exec "$0" ${args} <&3`, bunExe()], { cwd: String(dir) });

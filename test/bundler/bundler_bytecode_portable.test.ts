@@ -382,19 +382,22 @@ function fingerprint(bytecode: Uint8Array, isPayload = true) {
   return { sha256: Bun.CryptoHasher.hash("sha256", copy, "hex"), bytes: copy.byteLength };
 }
 
+// node:vm prefixes the payload with an 8-byte checksum.
+const vmFingerprint = (cachedData: Uint8Array) => fingerprint(cachedData.subarray(8));
+
 describe("bytecode cache portability", () => {
   test("encoder output is identical on every platform", async () => {
     // The bundler builds are separate processes: start them all, then encode the in-process cases while they run.
     const bundled = Promise.all(bundlerBuilds.map(build));
     const outputs: Record<string, unknown> = {};
     // Program and module code blocks straight from the encoder, without the bundler in between.
-    outputs["vm.Script features.js"] = fingerprint(
+    outputs["vm.Script features.js"] = vmFingerprint(
       new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
     );
-    outputs["vm.Script shapes.js"] = fingerprint(
+    outputs["vm.Script shapes.js"] = vmFingerprint(
       new vm.Script(shapesSource(), { filename: "shapes.js", produceCachedData: true }).cachedData!,
     );
-    outputs["vm.Script records.js"] = fingerprint(
+    outputs["vm.Script records.js"] = vmFingerprint(
       new vm.Script(recordsSource, { filename: "records.js", produceCachedData: true }).cachedData!,
     );
     // A builtin (what `bun build --compile --bytecode` embeds for node:* / bun:* modules): @-intrinsics and the
@@ -403,26 +406,26 @@ describe("bytecode cache portability", () => {
     const builtin = internalModuleBytecode(builtinSource, "corpus:builtin");
     outputs["builtin corpus"] = fingerprint(builtin.bytecode);
     outputs["builtin corpus strings"] = fingerprint(builtin.strings, false); // the external string table --compile embeds beside it
-    outputs["vm.SourceTextModule module.js"] = fingerprint(
+    outputs["vm.SourceTextModule module.js"] = vmFingerprint(
       (new vm.SourceTextModule(moduleSource, { identifier: "module.js" }) as any).createCachedData(),
     );
-    outputs["vm.Script big.js"] = fingerprint(
+    outputs["vm.Script big.js"] = vmFingerprint(
       new vm.Script(bigSource(), { filename: "big.js", produceCachedData: true }).cachedData!,
     );
-    outputs["vm.Script source-forms.js"] = fingerprint(
+    outputs["vm.Script source-forms.js"] = vmFingerprint(
       new vm.Script(sourceFormsSource(), { filename: "source-forms.js", produceCachedData: true }).cachedData!,
     );
     const librarySource = (lib: string) => readFileSync(join(corpusDir, "../../node_modules", lib), "utf8");
-    outputs["vm.Script lodash.js"] = fingerprint(
+    outputs["vm.Script lodash.js"] = vmFingerprint(
       new vm.Script(librarySource("lodash/lodash.js"), { filename: "lodash.js", produceCachedData: true }).cachedData!,
     );
-    outputs["vm.Script typescript.js"] = fingerprint(
+    outputs["vm.Script typescript.js"] = vmFingerprint(
       new vm.Script(librarySource("typescript/lib/typescript.js"), {
         filename: "typescript.js",
         produceCachedData: true,
       }).cachedData!,
     );
-    outputs["vm.SourceTextModule acorn.mjs"] = fingerprint(
+    outputs["vm.SourceTextModule acorn.mjs"] = vmFingerprint(
       (
         new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }) as any
       ).createCachedData(),
@@ -430,7 +433,8 @@ describe("bytecode cache portability", () => {
     for (const [i, { name }] of bundlerBuilds.entries()) {
       const { js, jsc } = (await bundled)[i];
       // If `js` differs between platforms the bundler is at fault, not the bytecode format.
-      outputs[name] = { js: Bun.CryptoHasher.hash("sha256", js, "hex"), jsc: fingerprint(jsc) };
+      // The file ends with a 24-byte footer whose checksum covers cacheVersion, so hash only the payload.
+      outputs[name] = { js: Bun.CryptoHasher.hash("sha256", js, "hex"), jsc: fingerprint(jsc.subarray(0, -24)) };
     }
     expectOutputs(outputs);
   });

@@ -21,22 +21,22 @@ struct DetectedComponent<'a> {
     is_stateless: bool,
 }
 
-/// What is to be done when a node is left.
+/// Records what has to be undone when a node is exited.
 enum Entered<'a> {
     Other,
     Component,
-    /// A declarator that is a component.
+    /// A declarator that's a component.
     ComponentDeclarator,
-    /// Another declarator, with the `current_var_name` around it.
+    /// Any other declarator, with the enclosing `current_var_name`.
     Declarator(Option<Name<'a>>),
 }
 
-/// For oxlint, which goes by names and by JSX anywhere in a function, on a walk of its own.
+/// oxlint only. It detects components by name and by JSX anywhere in a function, in its own traversal.
 pub struct State<'a> {
     components: Vec<DetectedComponent<'a>>,
-    /// How many components are around. What is in a component is not one.
+    /// The number of enclosing components. Nothing inside a component counts as one.
     component_depth: u32,
-    /// The name for a `createReactClass(..)`.
+    /// The name to use for a `createReactClass(..)`.
     current_var_name: Option<Name<'a>>,
     entered: Vec<Entered<'a>>,
     functions_with_jsx: Option<FunctionsWithJsx<'a>>,
@@ -132,27 +132,27 @@ impl Rule for NoMultiComp {
 }
 
 impl NoMultiComp {
-    /// All but the first of what `Components.detect` finds.
+    /// Reports all but the first of the components that `Components.detect` finds.
     fn report_detected(&self, cx: &Cx<'_, Self>) {
         let mut components = Components::new(cx.file());
         components.finish();
         if components.length() <= 1 {
             return;
         }
-        let places = components.list().into_iter().filter_map(|id| {
+        let component_spans = components.list().into_iter().filter_map(|id| {
             let node = components.component(id).node;
             // upstream's `isIgnored`
             let is_ignored = self.ignore_stateless
                 && (matches!(node, Node::Func(_)) || components.is_pragma_component_wrapper(node));
             (!is_ignored).then(|| components.component(id).span())
         });
-        for place in places.skip(1) {
-            cx.report(place, ONLY_ONE_COMPONENT).at_the_end();
+        for component_span in component_spans.skip(1) {
+            cx.report(component_span, ONLY_ONE_COMPONENT).at_the_end();
         }
     }
 }
 
-/// Not the parameter of a `catch`.
+/// False for a `catch` parameter.
 fn is_variable_declarator(decl: VarDecl) -> bool {
     matches!(decl.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Var)
 }
@@ -166,12 +166,12 @@ impl<'a> State<'a> {
         self.functions_with_jsx.as_ref().is_some_and(|it| it.function_contains_jsx(func))
     }
 
-    /// Of a function or an arrow function that is not in parentheses.
+    /// For a function or arrow function that isn't parenthesized.
     fn expression_contains_jsx(&self, expr: Expr<'a>) -> bool {
         as_function_expression(expr).is_some_and(|it| self.function_contains_jsx(it))
     }
 
-    /// The component that `node` is, wherever it is.
+    /// Returns the component that `node` is, regardless of where it is.
     fn detect(&self, node: Node<'a>) -> Option<DetectedComponent<'a>> {
         let stateless = |name: Option<Name<'a>>, span: Span| Some(DetectedComponent { name, span, is_stateless: true });
         match node {
@@ -191,7 +191,7 @@ impl<'a> State<'a> {
                 let is_component_function =
                     |it: Expr<'a>| self.expression_contains_jsx(it) || is_function_returning_null(it);
                 let is_component = match init.kind() {
-                    // The parentheses around the whole do not count.
+                    // Parentheses around the whole initializer don't matter.
                     ExprKind::Fn(func) => self.function_contains_jsx(func) || is_returning_null(func),
                     // `(0, () => <div/>)`
                     ExprKind::Binary { op: BinOp::Comma, right, .. } => is_component_function(right),
@@ -245,7 +245,7 @@ impl<'a> State<'a> {
         }
     }
 
-    /// `memo(..)`, `forwardRef(..)` and the like around a function with JSX in it.
+    /// `memo(..)`, `forwardRef(..)` and the like around a function that contains JSX.
     fn is_hoc_component(&self, call: Call<'a>) -> bool {
         callee_name(call).is_some_and(|name| is_hoc_call(name.bytes(), self.component_wrapper_functions))
             && call
@@ -256,7 +256,7 @@ impl<'a> State<'a> {
     }
 }
 
-/// What the `return` statements that are directly in the body of `func` return.
+/// Returns what the `return` statements directly in `func`'s body return.
 fn returned_at_top_level(func: Func<'_>) -> impl Iterator<Item = Expr<'_>> {
     let statements = match func.body() {
         FnBody::Block(statements) => Some(statements),
@@ -268,7 +268,7 @@ fn returned_at_top_level(func: Func<'_>) -> impl Iterator<Item = Expr<'_>> {
     })
 }
 
-/// The function does nothing but render another component with its props: `(props, ref) => <A {...props} ref={ref} />`
+/// True if the function only renders another component with its own props: `(props, ref) => <A {...props} ref={ref} />`
 fn is_passthrough(func: Func) -> bool {
     match func.body() {
         FnBody::Expr(body) => is_simple_jsx_passthrough(body),

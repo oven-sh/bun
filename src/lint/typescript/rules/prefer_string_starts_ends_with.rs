@@ -51,7 +51,7 @@ fn static_value(node: Expr<'_>) -> Option<StaticValue<'_>> {
 
 fn is_string_type(node: Expr) -> bool {
     let object_type = node.ty();
-    // The name of no other type is `string`, and it need not be printed to tell.
+    // No other type is named `string`, so this avoids printing the names of the rest.
     let can_be_string = TypeFlags::STRING_LIKE
         | TypeFlags::TYPE_PARAMETER
         | TypeFlags::UNION
@@ -71,7 +71,7 @@ fn is_number(node: Expr, value: f64) -> bool {
     evaluated == Some(value)
 }
 
-/// Whether `node` is a string of one UTF-16 code unit.
+/// True if `node` is a string of one UTF-16 code unit.
 fn is_character(node: Expr) -> bool {
     if node.file().language().is_oxlint {
         return tsgolint_static_string(node, true).is_some_and(|it| strings::utf8_lossy_len_utf16(it) == 1);
@@ -87,11 +87,11 @@ fn is_negative(op: BinOp) -> bool {
     matches!(op, BinOp::NotEq | BinOp::NotEqEq)
 }
 
-/// How many variables are followed to their initializers: `const a = b, b = a` has no end.
+/// The maximum number of variables to follow to their initializers. `const a = b, b = a` would never end.
 const MAX_INITIALIZERS: usize = 8;
 
-/// What tsgolint evaluates in place of `node`, an identifier: the initializer of the variable, whatever else is
-/// assigned to it. `for_fix`: of a variable alone that nothing else is assigned to.
+/// The expression tsgolint evaluates instead of the identifier `node`: the variable's initializer, even if the variable
+/// is reassigned. With `for_fix`, only for a variable that's never reassigned.
 fn tsgolint_initializer<'a>(node: Expr<'a>, for_fix: bool) -> Option<Expr<'a>> {
     if for_fix && node.symbol().is_none_or(|it| it.has_modifying_references() || it.declaration_count() != 1) {
         return None;
@@ -102,7 +102,7 @@ fn tsgolint_initializer<'a>(node: Expr<'a>, for_fix: bool) -> Option<Expr<'a>> {
     }
 }
 
-/// tsgolint's `staticNumber`: a numeric literal, or one after `-`.
+/// tsgolint's `staticNumber`: a numeric literal, optionally after `-`.
 fn tsgolint_static_number(mut node: Expr) -> Option<f64> {
     let mut is_negated = false;
     while let ExprKind::Unary { op: UnOp::Minus, operand } = node.kind() {
@@ -111,7 +111,7 @@ fn tsgolint_static_number(mut node: Expr) -> Option<f64> {
     node.as_number().map(|it| if is_negated { -it } else { it })
 }
 
-/// tsgolint's `staticString`: a string, a template without substitutions, or a variable with one as its initializer.
+/// tsgolint's `staticString`: a string, a template without substitutions, or a variable initialized with one.
 fn tsgolint_static_string<'a>(mut node: Expr<'a>, for_fix: bool) -> Option<&'a [u8]> {
     for _ in 0..MAX_INITIALIZERS {
         match node.kind() {
@@ -124,14 +124,14 @@ fn tsgolint_static_string<'a>(mut node: Expr<'a>, for_fix: bool) -> Option<&'a [
     None
 }
 
-/// tsgolint's `getNullishKind`: `null`, and with `is_loose`, which is for `==` and `!=`, also `void` and whatever is
-/// named `undefined`. Or a variable with one of these as its initializer.
+/// tsgolint's `getNullishKind`: `null`, or a variable initialized with it. With `is_loose`, which is for `==` and `!=`,
+/// also `void` and anything named `undefined`.
 fn tsgolint_is_nullish(mut node: Expr, is_loose: bool, for_fix: bool) -> bool {
     for _ in 0..MAX_INITIALIZERS {
         match node.kind() {
             ExprKind::Null => return true,
             ExprKind::Unary { op: UnOp::Void, .. } => return is_loose,
-            // `for_fix`: not an `undefined` that the file declares, unless its type is `null` or `undefined`.
+            // With `for_fix`, not an `undefined` that the file declares, unless its type is `null` or `undefined`.
             ExprKind::Ident(name) if name.is("undefined") => {
                 return is_loose
                     && !(for_fix
@@ -148,8 +148,8 @@ fn tsgolint_is_nullish(mut node: Expr, is_loose: bool, for_fix: bool) -> bool {
     false
 }
 
-/// tsgolint's `getPropertyName`: the name as it is written, a private one with its `#`. Of a computed member the key
-/// that is a string or a template without substitutions.
+/// tsgolint's `getPropertyName`: the name's source text, including the `#` of a private name. For a computed member,
+/// the key if it's a string or a template without substitutions.
 fn tsgolint_property_name<'a>(node: Expr<'a>) -> Option<&'a [u8]> {
     match node.kind() {
         ExprKind::Dot { name, .. } => Some(name.bytes()),
@@ -162,16 +162,16 @@ fn tsgolint_property_name<'a>(node: Expr<'a>) -> Option<&'a [u8]> {
     }
 }
 
-/// tsgolint's `isSameTokens`: the same text without its white space, of which only that of ASCII is left out here.
-/// `for_fix`: and the same tokens, which `"a b"` and `"ab"` are not, nor `x as T` and `xasT`.
+/// tsgolint's `isSameTokens`: the same text ignoring whitespace. Only ASCII whitespace is ignored here. With `for_fix`
+/// the tokens have to be the same too, which `"a b"` and `"ab"` aren't, nor `x as T` and `xasT`.
 fn tsgolint_is_same_tokens<'a>(left: Expr<'a>, right: Expr<'a>, for_fix: bool) -> bool {
     let without_white_space = |text: &'a [u8]| text.iter().filter(|byte| !matches!(**byte, b'\t'..=b'\r' | b' '));
     without_white_space(left.text()).eq(without_white_space(right.text()))
         && (!for_fix || ast_utils::equal_tokens(left.file(), left, right))
 }
 
-/// tsgolint's `isLengthExpression`. A string is as long as Go has it: half a surrogate pair counts as three.
-/// `for_fix`: and as long as it is, and `foo?.length` is the length of a string alone.
+/// tsgolint's `isLengthExpression`. It measures a string the way Go does, so a lone surrogate counts as three. With
+/// `for_fix` the number also has to be the real length, and `foo?.length` only counts if `foo` is a string.
 fn tsgolint_is_length_expression<'a>(node: Expr<'a>, expected_object: Expr<'a>, for_fix: bool) -> bool {
     if let Some(object) = node.object()
         && tsgolint_property_name(node).is_some_and(|name| name == b"length")
@@ -189,8 +189,8 @@ fn tsgolint_is_length_expression<'a>(node: Expr<'a>, expected_object: Expr<'a>, 
     })
 }
 
-/// Whether `node` is the length of the string `expected_object_node`: its `length` property, or
-/// for a string that is known, the number. `for_fix`: not what tsgolint reports for its text alone.
+/// True if `node` is the length of the string `expected_object_node`: its `length` property or, for a string with a
+/// known value, the number. `for_fix` excludes what tsgolint only reports because the text matches.
 fn is_length_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>, for_fix: bool) -> bool {
     if node.file().language().is_oxlint {
         return tsgolint_is_length_expression(node, expected_object_node, for_fix);
@@ -208,7 +208,7 @@ fn is_length_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>, for_
         .is_some_and(|it| it.as_str().is_some_and(|it| evaluated_length == f64::from(strings::wtf8_len_utf16(it))))
 }
 
-/// Whether `node` is `-substring.length` or `parentString.length - substring.length`.
+/// True if `node` is `-substring.length` or `parentString.length - substring.length`.
 fn is_length_ahead_of_end<'a>(node: Expr<'a>, substring: Expr<'a>, parent_string: Expr<'a>, for_fix: bool) -> bool {
     match node.kind() {
         ExprKind::Unary { op: UnOp::Minus, operand } => is_length_expression(operand, substring, for_fix),
@@ -228,12 +228,12 @@ fn is_last_index_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>, 
     )
 }
 
-/// The `[foo]` of `obj[foo]`, the `.foo` of `(obj).foo`.
+/// The `[foo]` in `obj[foo]` or the `.foo` in `(obj).foo`.
 fn get_property_range<'a>(node: Expr<'a>, object: Expr<'a>) -> Span {
     Span::new(skip_trivia(node.file().text(), object.outer_span().end), node.span().end)
 }
 
-/// The string that `pattern` matches besides its `^` or `$`, if there is only one.
+/// Returns the only string that `pattern` matches apart from its `^` or `$`, if there's exactly one.
 fn parse_reg_exp_text(pattern: &[u8], unicode: bool) -> Option<Vec<u8>> {
     let mode = Mode {
         unicode,
@@ -265,9 +265,9 @@ fn parse_reg_exp_text(pattern: &[u8], unicode: bool) -> Option<Vec<u8>> {
     Some(string_from_code_points(chars.filter_map(value)))
 }
 
-/// Whether tsgolint's `parseRegExpText` can read `content`, a pattern without its `^` or `$`: it has no parser for
-/// regular expressions, and gives up at every character that can have a meaning, also where it has none.
-fn tsgolint_can_read(content: &[u8]) -> bool {
+/// True if tsgolint's `parseRegExpText` accepts `content`, a pattern without its `^` or `$`. It has no regular
+/// expression parser, so it gives up at every character that can be special, even where it isn't.
+fn tsgolint_accepts_pattern(content: &[u8]) -> bool {
     let mut is_escaped = false;
     for &byte in content {
         let not_read: &[u8] = if is_escaped { b"dDwWsSbBcxukpP123456789" } else { b".*+?|^$[](){}" };
@@ -279,8 +279,8 @@ fn tsgolint_can_read(content: &[u8]) -> bool {
     !is_escaped
 }
 
-/// What tsgolint's `parseRegExpText` reads in `content`, which `tsgolint_can_read` says it can read.
-fn tsgolint_text(content: &[u8]) -> Vec<u8> {
+/// The string tsgolint's `parseRegExpText` returns for `content`, which `tsgolint_accepts_pattern` has accepted.
+fn tsgolint_pattern_text(content: &[u8]) -> Vec<u8> {
     let mut text = Vec::with_capacity(content.len());
     let mut is_escaped = false;
     for &byte in content {
@@ -302,11 +302,11 @@ fn tsgolint_text(content: &[u8]) -> Vec<u8> {
     text
 }
 
-/// tsgolint's `parseRegExp`: a literal, `new RegExp` of one or two strings, or a variable with one of these as its
-/// initializer. `RegExp` is whatever has the name, and the pattern has a `$` at its end also after a `\`.
-/// `for_fix`: not a `RegExp` that the file declares.
+/// tsgolint's `parseRegExp`: a literal, `new RegExp` with one or two strings, or a variable initialized with one of
+/// these. It accepts anything named `RegExp`, and it counts a `$` at the end of the pattern even after a `\`. `for_fix`
+/// excludes a `RegExp` that the file declares.
 fn tsgolint_parse_reg_exp<'a>(mut node: Expr<'a>, for_fix: bool) -> Option<(Side, Vec<u8>)> {
-    // Here it does not skip parentheses.
+    // tsgolint doesn't skip parentheses here.
     let string_literal = |argument: Expr<'a>| argument.as_string().filter(|_| !argument.is_parenthesized());
     for _ in 0..MAX_INITIALIZERS {
         let (pattern, flags) = match node.kind() {
@@ -337,12 +337,12 @@ fn tsgolint_parse_reg_exp<'a>(mut node: Expr<'a>, for_fix: bool) -> Option<(Side
             (None, Some(content)) => (Side::End, content),
             _ => return None,
         };
-        return tsgolint_can_read(content).then(|| (side, tsgolint_text(content)));
+        return tsgolint_accepts_pattern(content).then(|| (side, tsgolint_pattern_text(content)));
     }
     None
 }
 
-/// What `node` matches, if it is a `RegExp` for a string at the start or at the end.
+/// Returns what `node` matches, if it's a `RegExp` for a string at the start or the end.
 fn parse_reg_exp(node: Expr) -> Option<(Side, Vec<u8>)> {
     if node.file().language().is_oxlint {
         return tsgolint_parse_reg_exp(node, false);
@@ -350,7 +350,7 @@ fn parse_reg_exp(node: Expr) -> Option<(Side, Vec<u8>)> {
     let evaluated = static_value(node)?;
     let (source, flags) = evaluated.as_regex()?;
     let is_starts_with = source.starts_with(b"^");
-    // A `$` after an even number of backslashes, and something before these.
+    // A `$` after an even number of backslashes, with something before them.
     let is_ends_with = source.strip_suffix(b"$").is_some_and(|before| {
         let backslashes = before.iter().rev().take_while(|byte| **byte == b'\\').count();
         backslashes % 2 == 0 && backslashes < before.len()
@@ -376,8 +376,8 @@ struct Comparison<'a> {
 }
 
 impl<'a> Comparison<'a> {
-    /// The operator and the right side. tsgolint and typescript-eslint take the `)` of `(foo.indexOf(bar)) === 0` with
-    /// them, and what is left cannot be parsed.
+    /// The span of the operator and the right side. tsgolint and typescript-eslint also remove the `)` of
+    /// `(foo.indexOf(bar)) === 0`, which leaves code that doesn't parse.
     fn after_left(self) -> Span {
         let left = match self.node.file().language().is_oxlint {
             true => self.left.outer_span(),
@@ -397,11 +397,11 @@ impl<'a> Comparison<'a> {
             fixes.push(fixer.insert_before(node, "!"));
         }
         if file.language().is_oxlint {
-            // `(a, b)` is one argument with its parentheses alone.
+            // `(a, b)` is only one argument if it keeps its parentheses.
             if matches!(self.right.kind(), ExprKind::Binary { op: BinOp::Comma, .. }) {
                 right = self.right.outer_span();
             }
-            // tsgolint takes the `)` of `(foo[0]) === 'a'` and of `(foo?.slice)(0, 3) === 'bar'` away with the rest.
+            // tsgolint also removes the `)` of `(foo[0]) === 'a'` and of `(foo?.slice)(0, 3) === 'bar'`.
             if self.left.is_parenthesized() || self.member.is_parenthesized() {
                 let call = [b"(".as_slice(), file.slice(right), b")".as_slice()].concat();
                 let end_of_left = self.left.span().end;
@@ -503,7 +503,7 @@ impl PreferStringStartsEndsWith {
         let is_oxlint = cx.language().is_oxlint;
         let is_loose = matches!(it.op, BinOp::EqEq | BinOp::NotEq);
         let is_nullish = match is_oxlint {
-            // What `match` gives is never `undefined`: tsgolint leaves `=== undefined`.
+            // `match` never returns `undefined`, so tsgolint skips `=== undefined`.
             true => tsgolint_is_nullish(it.right, is_loose, false),
             false => is_null(it.right),
         };
@@ -566,7 +566,7 @@ impl PreferStringStartsEndsWith {
             return;
         };
         cx.report(it.node, side.message()).fix(|fixer| {
-            // `==` converts what is not a string.
+            // `==` converts a right side that isn't a string.
             if matches!(it.op, BinOp::EqEq | BinOp::NotEq) && it.right.tag() != ExprTag::String {
                 return None;
             }
@@ -578,8 +578,8 @@ impl PreferStringStartsEndsWith {
             {
                 return None;
             }
-            // The code is likely a mistake if the lengths differ, or if it relies on `substring`
-            // taking a negative index for 0.
+            // The code is likely a mistake if the lengths differ, or if it relies on `substring` treating a negative
+            // index as 0.
             let is_valid = match side {
                 Side::Start => is_length_expression(args.get(1)?, it.right, true),
                 Side::End => match args.first()?.kind() {
@@ -602,7 +602,7 @@ impl PreferStringStartsEndsWith {
         };
         let (left, right) = (left.with_jsdoc_cast(), right.with_jsdoc_cast());
         let is_oxlint = cx.language().is_oxlint;
-        // A `LogicalExpression` or a `SequenceExpression`. tsgolint listens to the four equality operators alone.
+        // A `LogicalExpression` or a `SequenceExpression`. tsgolint only listens to the four equality operators.
         if matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma)
             || (is_oxlint && !is_equality_comparison(op))
         {
@@ -696,7 +696,7 @@ impl PreferStringStartsEndsWith {
                 return None;
             }
             let needs_paren = match arg_node.kind() {
-                // tsgolint has parentheses around `null`, and none around `a?.b`.
+                // tsgolint parenthesizes `null`, but not `a?.b`.
                 ExprKind::True | ExprKind::False | ExprKind::Null => is_oxlint,
                 ExprKind::String(_)
                 | ExprKind::Number(_)
@@ -709,7 +709,7 @@ impl PreferStringStartsEndsWith {
                 }
                 _ => true,
             };
-            // tsgolint leaves the `)` of `(a)` behind. Here both stay, and no more are needed.
+            // tsgolint leaves the `)` of `(a)` behind. Here both parentheses stay, so no new ones are needed.
             let needs_paren = needs_paren && !(is_oxlint && arg_node.is_parenthesized());
             let arg = if is_oxlint { arg_node.outer_span() } else { arg_node.span() };
             let mut fixes = vec![fixer.remove(Span::new(call_node.span().start, arg.start))];

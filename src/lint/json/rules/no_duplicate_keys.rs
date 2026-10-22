@@ -9,7 +9,7 @@ pub struct NoDuplicateKeys;
 const DUPLICATE_KEY: Message = Message::new("duplicateKey", "Duplicate key \"{{key}}\" found.");
 
 /// An object with at most this many members gets a linear search instead of a hash set.
-const FEW: usize = 16;
+const LINEAR_SEARCH_MAX: usize = 16;
 
 impl Rule for NoDuplicateKeys {
     const META: Meta = Meta::plugin(Plugin::Json, "no-duplicate-keys", Kind::Problem)
@@ -27,17 +27,17 @@ impl Rule for NoDuplicateKeys {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let mut first: Vec<&[u8]> = Vec::with_capacity(FEW);
+        let mut first: Vec<&[u8]> = Vec::with_capacity(LINEAR_SEARCH_MAX);
         let objects = cx.state.nodes();
         for object in objects.filter(|it| it.kind() == NodeKind::Object) {
             first.clear();
             let mut all: FxHashSet<&[u8]> = FxHashSet::default();
             for member in object.members() {
                 let key = member.key();
-                if first.len() == FEW && all.is_empty() {
+                if first.len() == LINEAR_SEARCH_MAX && all.is_empty() {
                     all.extend(&first);
                 }
-                let is_new = match first.len() < FEW {
+                let is_new = match first.len() < LINEAR_SEARCH_MAX {
                     true => !first.contains(&key),
                     false => all.insert(key),
                 };
@@ -45,7 +45,7 @@ impl Rule for NoDuplicateKeys {
                     cx.report(member.name, DUPLICATE_KEY)
                         .data("key", member.raw_key())
                         .listened_on(member);
-                } else if first.len() < FEW {
+                } else if first.len() < LINEAR_SEARCH_MAX {
                     first.push(key);
                 }
             }

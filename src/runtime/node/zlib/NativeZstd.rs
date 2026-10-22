@@ -49,6 +49,8 @@ mod _impl {
         pub write_in_progress: Cell<bool>,
         /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
         pub pinned_buffers: Cell<u8>,
+        /// Copy of the pending `write()`'s input, if a pin can't keep the input mapped.
+        pub input_copy: JsCell<crate::node::node_zlib_binding::InputCopy>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -115,6 +117,7 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
+                input_copy: JsCell::new(Default::default()),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by
@@ -644,29 +647,10 @@ mod _impl {
 
         pub(crate) fn close(&mut self) {
             // Idempotent: a handle that was never (successfully) initialized,
-            // or that was already closed, has no CCtx/DCtx to reset or free.
-            if self.state.is_none() {
-                self.mode = NodeMode::NONE;
-                return;
+            // or that was already closed, has no CCtx/DCtx to free.
+            if self.state.is_some() {
+                self.deinit_state();
             }
-            let _ = match self.mode {
-                // SAFETY: state is a valid CCtx/DCtx for this mode.
-                NodeMode::ZSTD_COMPRESS => unsafe {
-                    c::ZSTD_CCtx_reset(
-                        self.state_ptr().cast(),
-                        c::ZSTD_reset_session_and_parameters,
-                    )
-                },
-                // SAFETY: state is a valid DCtx set by init() for this mode.
-                NodeMode::ZSTD_DECOMPRESS => unsafe {
-                    c::ZSTD_DCtx_reset(
-                        self.state_ptr().cast(),
-                        c::ZSTD_reset_session_and_parameters,
-                    )
-                },
-                _ => unreachable!(),
-            };
-            self.deinit_state();
             self.mode = NodeMode::NONE;
         }
 

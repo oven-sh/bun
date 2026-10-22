@@ -1,4 +1,4 @@
-//! What the linter reports about a file: ESLint's `LintMessage`.
+//! The linter's reports about a file: ESLint's `LintMessage`.
 
 use crate::ast::File;
 use crate::context::Severity;
@@ -15,15 +15,14 @@ use std::sync::Arc;
 /// ESLint's `ruleId`.
 #[derive(Clone, Debug)]
 pub enum RuleId {
-    /// A rule that exists. It is written `no-debugger`, `@typescript-eslint/no-explicit-any`,
-    /// whatever alias the configuration or a comment uses.
+    /// A built-in rule. It's printed as `no-debugger` or `@typescript-eslint/no-explicit-any`, whatever alias the
+    /// config or a comment uses.
     Known(&'static Meta),
-    /// A rule of a JavaScript plugin.
     Js(Arc<js_plugin::Rule>),
-    /// One more instance of a rule that exists, under a name that the configuration gives it: `no-restricted-syntax/<name>`.
-    /// The rule, and all of the name.
+    /// An extra instance of a built-in rule, under a name from the config: `no-restricted-syntax/<name>`. Holds the
+    /// rule and the full name.
     Named(&'static Meta, Arc<[u8]>),
-    /// As a configuration or a comment names it.
+    /// The name as a config or a comment writes it.
     Unknown(Box<[u8]>),
 }
 
@@ -90,16 +89,16 @@ pub enum SuppressionKind {
     File,
 }
 
-/// Why a message is not shown: `{ kind, justification }`.
+/// Why a message isn't shown: `{ kind, justification }`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Suppression {
     pub kind: SuppressionKind,
-    /// What follows `--` in the `eslint-disable` comment.
+    /// The text after `--` in the `eslint-disable` comment.
     pub justification: Box<[u8]>,
 }
 
 impl Suppression {
-    /// By an `eslint-disable` comment.
+    /// Suppressed by an `eslint-disable` comment.
     pub fn directive(justification: &[u8]) -> Suppression {
         Suppression {
             kind: SuppressionKind::Directive,
@@ -107,7 +106,7 @@ impl Suppression {
         }
     }
 
-    /// By `eslint-suppressions.json`.
+    /// Suppressed by `eslint-suppressions.json`.
     pub fn file() -> Suppression {
         Suppression {
             kind: SuppressionKind::File,
@@ -119,19 +118,19 @@ impl Suppression {
 /// A suggestion's `data`, which ESLint passes through to its output.
 #[derive(Clone, Debug, Default)]
 pub enum Data {
-    /// The rule gave none.
+    /// The rule didn't pass any.
     #[default]
     None,
     /// Values for the placeholders in a built-in rule's message.
     Texts(Vec<(&'static str, Vec<u8>)>),
-    /// The `data` that a rule written in JavaScript gave, as JSON.
+    /// The `data` that a JavaScript rule passed, as JSON.
     Json(Vec<u8>),
 }
 
 /// An element of ESLint's `suggestions`.
 #[derive(Clone, Debug)]
 pub struct Suggestion {
-    /// Empty: the rule gave the description itself.
+    /// Empty if the rule wrote the description itself.
     pub message_id: Cow<'static, str>,
     /// `desc`
     pub message: Vec<u8>,
@@ -145,7 +144,7 @@ impl From<crate::context::Suggestion> for Suggestion {
         Suggestion {
             message_id: Cow::Borrowed(it.message_id),
             message: it.message,
-            // Where upstream writes `desc` itself, the built-in rule fills in a template of its own. That data isn't
+            // Where upstream writes `desc` itself, the built-in rule fills in its own template. That data isn't
             // upstream's, so drop it.
             data: match it.data.is_empty() || it.message_id.is_empty() {
                 true => Data::None,
@@ -174,48 +173,49 @@ impl From<js_plugin::Suggested> for Suggestion {
 /// ESLint's `LintMessage`, and with [`LintMessage::suppressions`] its `SuppressedLintMessage`.
 #[derive(Clone, Debug)]
 pub struct LintMessage {
-    /// `None`: it is from the linter itself.
+    /// `None` if it comes from the linter itself.
     pub rule_id: Option<RuleId>,
     /// Never [`Severity::Off`].
     pub severity: Severity,
     pub message: Vec<u8>,
-    /// `None`: it is from the linter itself. Empty: from a rule whose messages have no ids.
+    /// `None` if it comes from the linter itself. Empty if it comes from a rule whose messages have no ids.
     pub message_id: Option<Cow<'static, str>>,
-    /// From 1. 0 in a fatal message: it has no place, and ESLint has neither `line` nor `column`. A rule written in JavaScript
-    /// can give any number, which ESLint passes on. One below 0 is here as an `i32`: -1 is `u32::MAX`.
+    /// 1-based. 0 in a fatal message means it has no position, and ESLint has neither `line` nor `column`. A JavaScript
+    /// rule can pass any number, which ESLint passes through. A negative one is stored as an `i32`: -1 is `u32::MAX`.
     pub line: u32,
-    /// From 1, in UTF-16 code units. One below 0 is as in `line`.
+    /// 1-based, in UTF-16 code units. Negative values are stored as in `line`.
     pub column: u32,
-    /// `endLine` and `endColumn`. Those below 0 are as in `line`.
+    /// `endLine` and `endColumn`. Negative values are stored as in `line`.
     pub end: Option<(u32, u32)>,
-    /// The file is not linted because of it.
+    /// The file isn't linted because of it.
     pub is_fatal: bool,
     /// [`Report::claims`](crate::context::Report::claims). See [`LintMessage::hide_claimed`].
     pub claim: Option<crate::context::Claim>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
     pub suppressions: Vec<Suppression>,
-    /// Where the message starts and ends for the comments that disable rules, if that is another place than the one that is
-    /// shown: [`Report::comments_apply_at`](crate::context::Report::comments_apply_at). Only oxlint has such messages, and only
-    /// with a configuration of oxlint it counts.
+    /// The start and end that comments which disable rules see, if they differ from the position that's shown:
+    /// [`Report::comments_apply_at`](crate::context::Report::comments_apply_at). Only oxlint has such messages, and
+    /// it's only used with an oxlint config.
     pub comments_apply_at: Option<((u32, u32), (u32, u32))>,
     pub not_numbers: NotNumbers,
     pub details: Option<Box<Details>>,
     /// [`Diagnostic::constant_help`](crate::context::Diagnostic::constant_help)
     pub constant_help: Option<Help>,
-    /// For oxlint, which sorts nothing: it prints what its own rules report about a file in the order in which it runs them
-    /// (see `oxlint_order`), then what the rules of JavaScript plugins report, in the order in which they report it, then what
-    /// it says about comments. The how manyth of all that the message is, from 1. 0: it is of no rule, and comes first.
-    /// `u32::MAX`: about a comment.
+    /// For oxlint, which doesn't sort. It prints the reports of its own rules in the order it runs them (see
+    /// `oxlint_order`), then the reports of JavaScript plugin rules in the order they're made, then its messages about
+    /// comments. This is the message's 1-based position in that sequence. 0 means it doesn't come from a rule and is
+    /// printed first. `u32::MAX` means it's about a comment.
     pub reported: u32,
 }
 
 impl LintMessage {
-    /// Takes out of `messages` what a rule without types reports about a node that the rule with types of its
-    /// [pair](crate::rule_set::Pairs) reports too. What it would change goes to that report. Whether anything was taken out.
+    /// Removes from `messages` what a rule without types reports about a node that the typed rule of its
+    /// [pair](crate::rule_set::Pairs) also reports. Its fix and suggestions move to the typed rule's report. Returns
+    /// true if anything was removed.
     ///
-    /// It is the last step: `messages` are those that are shown, after the comments and the files that suppress, and after the
-    /// fixes. Up to here there are two reports, and all of that works as it does for two.
+    /// This is the last step: `messages` are the ones that are shown, after suppression by comments and files and after
+    /// the fixes. Until then there are two reports, and everything treats them as two.
     pub fn hide_claimed(messages: &mut Vec<LintMessage>) -> bool {
         let claims = messages
             .iter()
@@ -238,11 +238,15 @@ impl LintMessage {
             is_hidden[from] = true;
             let fix = messages[from].fix.take();
             let suggestions = std::mem::take(&mut messages[from].suggestions);
-            let shown = &mut messages[with_types[found].1];
-            shown.fix = shown.fix.take().or(fix);
+            let typed_report = &mut messages[with_types[found].1];
+            typed_report.fix = typed_report.fix.take().or(fix);
             for suggestion in suggestions {
-                if !shown.suggestions.iter().any(|it| it.fix == suggestion.fix) {
-                    shown.suggestions.push(suggestion);
+                if !typed_report
+                    .suggestions
+                    .iter()
+                    .any(|it| it.fix == suggestion.fix)
+                {
+                    typed_report.suggestions.push(suggestion);
                 }
             }
         }
@@ -252,52 +256,53 @@ impl LintMessage {
         messages.len() != before
     }
 
-    /// oxlint's `help`. Empty: there is none.
+    /// oxlint's `help`. Empty if there is none.
     pub fn help(&self) -> &str {
         self.text(Part::Help, |it| &it.help)
     }
 
-    /// What oxlint says at the place of the message. Empty: nothing.
+    /// oxlint's label at the message's position. Empty if there is none.
     pub fn first_label(&self) -> &str {
         self.text(Part::FirstLabel, |it| &it.first_label)
     }
 
-    /// oxlint's `note`. Empty: there is none.
+    /// oxlint's `note`. Empty if there is none.
     pub fn note(&self) -> &str {
         self.text(Part::Note, |it| &it.note)
     }
 
-    fn text(&self, part: Part, said: fn(&Details) -> &str) -> &str {
-        match self.details.as_deref().map(said) {
-            Some(said) if !said.is_empty() => said,
+    fn text(&self, part: Part, select_field: fn(&Details) -> &str) -> &str {
+        match self.details.as_deref().map(select_field) {
+            Some(selected) if !selected.is_empty() => selected,
             _ => self.constant_help.map_or("", |it| it.constant(part)),
         }
     }
 }
 
-/// Whether a rule written in JavaScript gave something other than a number for `line` or `column`. ESLint keeps such a report.
-/// The field is 0 then, which is what ESLint's `stylish` prints, and `null` in JSON.
+/// True where a JavaScript rule passed something other than a number for `line` or `column`. ESLint keeps such a
+/// report. The field is then 0, which is what ESLint's `stylish` prints, and `null` in JSON.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NotNumbers {
     pub line: bool,
     pub column: bool,
 }
 
-/// [`Details`](crate::context::Details) of a report, with lines and columns as the message has them.
+/// A report's [`Details`](crate::context::Details), with lines and columns like the message's.
 #[derive(Clone, Debug, Default)]
 pub struct Details {
     pub first_label: Cow<'static, str>,
-    /// Where each starts, where it ends, and what it says.
+    /// Each label's start, end and text.
     pub labels: Vec<((u32, u32), (u32, u32), Cow<'static, str>)>,
     pub help: Cow<'static, str>,
     pub note: Cow<'static, str>,
-    /// 1038: oxlint's `code` of the message, which is from no rule, is `TS(1038)`. 0: it has none.
+    /// 1038 means that oxlint's `code` for the message, which doesn't come from a rule, is `TS(1038)`. 0 means it has
+    /// none.
     pub typescript_code: u16,
 }
 
 impl Default for LintMessage {
-    /// An error of the linter itself, without a text and without a place. For `..LintMessage::default()`, with which code that
-    /// makes a message goes on compiling when there are more fields.
+    /// An error from the linter itself, with no text and no position. It's for `..LintMessage::default()`, so code that
+    /// builds a message keeps compiling when fields are added.
     fn default() -> LintMessage {
         LintMessage {
             rule_id: None,
@@ -321,7 +326,7 @@ impl Default for LintMessage {
     }
 }
 
-/// Converts offsets to what ESLint reports.
+/// Converts offsets to the positions ESLint reports.
 pub(crate) struct Locator<'a> {
     file: &'a File<'a>,
 }
@@ -331,20 +336,20 @@ impl<'a> Locator<'a> {
         Locator { file }
     }
 
-    /// The line, and the column from 1.
+    /// The line, and the 1-based column.
     pub(crate) fn position(&self, offset: u32) -> (u32, u32) {
         let at = self.file.position(offset);
         (at.line, at.column + 1)
     }
 
-    /// The same for the start and the end of `span`.
+    /// The same for `span`'s start and end.
     #[inline]
     pub(crate) fn positions(&self, span: Span) -> ((u32, u32), (u32, u32)) {
         let (start, end) = self.file.positions(span);
         ((start.line, start.column + 1), (end.line, end.column + 1))
     }
 
-    /// A message of the linter itself at `span`: `createLintingProblem`.
+    /// `createLintingProblem`: a message from the linter itself at `span`.
     pub(crate) fn problem(
         &self,
         span: Span,
@@ -385,14 +390,14 @@ pub fn write_json(out: &mut Vec<u8>, value: &Json) {
     });
 }
 
-/// [`write_json`] with another way to write numbers. It doesn't recurse, so it can write the options from a comment, which are
-/// nested as deep as the comment likes.
+/// [`write_json`] with a custom way to write numbers. It doesn't recurse, so it can write the options from a comment,
+/// which can be nested arbitrarily deep.
 pub(crate) fn write_json_with(
     out: &mut Vec<u8>,
     mut value: &Json,
     write_number: fn(&mut Vec<u8>, f64),
 ) {
-    // The arrays and objects around `value`, each with how many of its children are written.
+    // The arrays and objects around `value`, each with the number of its children already written.
     let mut open: Vec<(&Json, usize)> = Vec::new();
     loop {
         match value {
@@ -410,11 +415,11 @@ pub(crate) fn write_json_with(
             }
         }
         value = loop {
-            let Some((parent, written)) = open.last_mut() else {
+            let Some((parent, written_count)) = open.last_mut() else {
                 return;
             };
-            let at = *written;
-            *written += 1;
+            let at = *written_count;
+            *written_count += 1;
             let comma: &[u8] = if at > 0 { b"," } else { b"" };
             match parent {
                 Json::Array(items) => match items.get(at) {
@@ -488,7 +493,7 @@ pub(crate) fn write_js_string(out: &mut Vec<u8>, value: &Json) {
             out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value))
         }
         Json::String(value) => out.extend_from_slice(value),
-        // `Array.prototype.join` calls itself too, and throws where this stops.
+        // `Array.prototype.join` is recursive too, and throws where this stops.
         Json::Array(_) if !bun_core::StackCheck::init().is_safe_to_recurse() => {}
         Json::Array(items) => {
             for (i, item) in items.iter().enumerate() {
@@ -504,17 +509,17 @@ pub(crate) fn write_js_string(out: &mut Vec<u8>, value: &Json) {
     }
 }
 
-/// Converts offsets in bytes to offsets in UTF-16 code units, which is what ESLint's `range` is
-/// in. Fast if they are asked for in ascending order.
+/// Converts byte offsets to UTF-16 code unit offsets, which is what ESLint's `range` uses. Fast if the offsets are
+/// requested in ascending order.
 pub struct Utf16Offsets<'t> {
     text: &'t [u8],
     is_ascii: bool,
-    /// An offset in bytes and what it converts to.
+    /// A byte offset and what it converts to.
     last: (u32, u32),
 }
 
 impl<'t> Utf16Offsets<'t> {
-    /// A byte order mark at the start of `text` is not counted, as in ESLint: it is at -1.
+    /// A byte order mark at the start of `text` isn't counted, as in ESLint, where it's at -1.
     pub fn new(text: &'t [u8]) -> Self {
         Utf16Offsets {
             text,
@@ -535,7 +540,7 @@ impl<'t> Utf16Offsets<'t> {
         if offset < start {
             return -1;
         }
-        // What is beyond the text counts as it is.
+        // Offsets past the end of the text are carried over one to one.
         let beyond = offset.saturating_sub(self.text.len() as u32);
         let offset = offset - beyond;
         if offset < self.last.0 || self.last.0 < start {
@@ -561,7 +566,7 @@ fn write_fix(out: &mut Vec<u8>, fix: &Fix, offsets: &mut Utf16Offsets) {
     out.push(b'}');
 }
 
-/// Writes `,"data":{..}` if the rule gave any data.
+/// Writes `,"data":{..}` if the rule passed any data.
 fn write_data(out: &mut Vec<u8>, suggestion: &Suggestion) {
     let texts = match &suggestion.data {
         Data::None => return,
@@ -584,17 +589,17 @@ fn write_data(out: &mut Vec<u8>, suggestion: &Suggestion) {
 }
 
 impl LintMessage {
-    /// Sorts by line and column. Those at the same place keep their order. Most lists are in order already.
+    /// Sorts by line and column. The sort is stable. Most lists are already sorted.
     pub fn sort(messages: &mut [LintMessage]) {
-        let place = |it: &LintMessage| (it.line as i32, it.column as i32);
-        if !messages.is_sorted_by_key(place) {
-            crate::utils::sort::sort_by_key(messages, place);
+        let sort_key = |it: &LintMessage| (it.line as i32, it.column as i32);
+        if !messages.is_sorted_by_key(sort_key) {
+            crate::utils::sort::sort_by_key(messages, sort_key);
         }
     }
 
-    /// The line and column to go to. What a rule reports before the first line is at the start of the file, and what it reports
-    /// before the first column is at the start of the line.
-    pub fn place(&self) -> (u32, u32) {
+    /// The line and column to jump to. A report before the first line maps to the start of the file, and one before the
+    /// first column maps to the start of the line.
+    pub fn line_and_column(&self) -> (u32, u32) {
         let is_of_rule = !matches!(self.rule_id, None | Some(RuleId::Unknown(_)));
         match is_of_rule && self.line as i32 <= 0 {
             true => (1, 1),
@@ -602,17 +607,17 @@ impl LintMessage {
         }
     }
 
-    /// For where there's no ESLint to agree with, whose own formats print what the rule gave: it starts at
-    /// [`LintMessage::place`] in every format, and has no end before that.
-    pub(crate) fn stay_in_file(&mut self) {
+    /// Used where there's no ESLint to match. ESLint's own formats print whatever the rule passed. After this, the
+    /// message starts at [`LintMessage::line_and_column`] in every format and doesn't end before that.
+    pub(crate) fn clamp_to_file(&mut self) {
         let signed = |(line, column): (u32, u32)| (line as i32, column as i32);
-        let place = self.place();
-        (self.line, self.column) = place;
-        self.end = self.end.filter(|end| signed(*end) >= signed(place));
+        let clamped_start = self.line_and_column();
+        (self.line, self.column) = clamped_start;
+        self.end = self.end.filter(|end| signed(*end) >= signed(clamped_start));
         self.not_numbers = NotNumbers::default();
     }
 
-    /// As ESLint's `json` formatter prints it.
+    /// Writes it the way ESLint's `json` formatter does.
     pub fn write_json(&self, out: &mut Vec<u8>, offsets: &mut Utf16Offsets) {
         use std::io::Write;
         out.extend_from_slice(b"{\"ruleId\":");
@@ -620,7 +625,8 @@ impl LintMessage {
             Some(id) => json_stringify(&id.to_vec(), out),
             None => out.extend_from_slice(b"null"),
         }
-        // What the linter says itself, other than about a file that cannot be parsed, is made by another function of ESLint.
+        // ESLint builds the linter's own messages, other than parse errors, with a different function, which puts
+        // `severity` last.
         let is_severity_last = self.message_id.is_none() && (!self.is_fatal || self.end.is_some());
         if !is_severity_last {
             if self.is_fatal {
@@ -665,7 +671,7 @@ impl LintMessage {
                 if i > 0 {
                     out.push(b',');
                 }
-                // A rule that has no ids writes `desc` itself, first.
+                // A rule without ids writes `desc` itself, and it comes first.
                 if suggestion.message_id.is_empty() {
                     out.extend_from_slice(b"{\"desc\":");
                     json_stringify(&suggestion.message, out);

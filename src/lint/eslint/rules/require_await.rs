@@ -11,14 +11,14 @@ pub const REMOVE_ASYNC: Message = Message::new("removeAsync", "Remove 'async'.")
 pub struct State<'a> {
     /// The async functions that can be reported, in the order of [`File::funcs`].
     pub candidates: Vec<Func<'a>>,
-    /// For each of them, whether something is awaited directly in it.
+    /// For each candidate: true if something is awaited directly in it.
     pub has_await: Vec<bool>,
-    /// The function that a node is directly in.
+    /// Maps a node to its innermost enclosing function.
     functions: AncestorMemo<'a, Func<'a>>,
 }
 
 impl<'a> State<'a> {
-    /// `None`: the file has no async function with something in it.
+    /// Returns `None` if the file has no non-empty async function.
     pub fn new(file: &'a File<'a>, with_generators: bool) -> Option<State<'a>> {
         let is_candidate = |func: &Func| {
             func.is_async()
@@ -35,9 +35,9 @@ impl<'a> State<'a> {
     }
 }
 
-/// `node` awaits something: so does the function that it is directly in.
+/// `node` awaits something, so this marks its innermost enclosing function as having an `await`.
 #[inline(never)]
-pub fn mark_function_around<'a, R: Rule<State<'a> = State<'a>>>(
+pub fn mark_enclosing_function<'a, R: Rule<State<'a> = State<'a>>>(
     node: Node<'a>,
     cx: &mut Cx<'a, R>,
 ) {
@@ -57,7 +57,7 @@ pub fn mark_function_around<'a, R: Rule<State<'a> = State<'a>>>(
     }
 }
 
-/// The method that `func` is the value of, which is where its `async` is, or else the function.
+/// Returns the method that has `func` as its value, because that's where the `async` is, or else the function.
 pub fn node_with_async_keyword(func: Func<'_>) -> Node<'_> {
     match func.owner() {
         Node::Expr(e) => match e.parent() {
@@ -70,9 +70,9 @@ pub fn node_with_async_keyword(func: Func<'_>) -> Node<'_> {
     }
 }
 
-/// Where oxlint points: at the name of the function, or at the key of the property or the method that it is the value
-/// of if that is an identifier, and else at the function.
-fn oxlint_place<'a>(func: Func<'a>, file: &File<'a>) -> Span {
+/// Returns the span oxlint points at: the function's name, or the key of the property or method that has it as its
+/// value if that key is an identifier, or else the function.
+fn oxlint_report_span<'a>(func: Func<'a>, file: &File<'a>) -> Span {
     if func.is_arrow() {
         return func.estree_span();
     }
@@ -106,21 +106,21 @@ fn report<'a>(func: Func<'a>, cx: &Cx<'a, RequireAwait>) {
     if let Some(first) = name.first_mut() {
         first.make_ascii_uppercase();
     }
-    let place = match cx.language().is_oxlint {
-        true => oxlint_place(func, cx.file()),
+    let location = match cx.language().is_oxlint {
+        true => oxlint_report_span(func, cx.file()),
         false => ast_utils::get_function_head_loc(func),
     };
-    cx.report(place, MISSING_AWAIT)
+    cx.report(location, MISSING_AWAIT)
         .called_with(func)
         .unless_claimed(func)
         .data("name", name)
-        .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| {
+        .suggest_behavior_change(REMOVE_ASYNC, &[], |fixer| {
             let file = fixer.file();
             let node = node_with_async_keyword(func);
             let async_token = file.tokens_in(node).find(|token| token.is("async"))?;
             let after = file.tokens_after(async_token).with_comments().next()?;
             let next_token = file.token_after(async_token)?;
-            // Without the `async`, what follows could continue the line before.
+            // Without the `async`, the next token could continue the previous line.
             let adds_semicolon = (ast_utils::is_opening_paren_token(&next_token)
                 && ast_utils::is_start_of_expression_statement(node)
                 || matches!(node, Node::Member(_))
@@ -153,24 +153,24 @@ impl Rule for RequireAwait {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint's rule does not look into types, where oxc reads `{ [await (a)]: T }` as an `await`.
+        // oxlint's rule doesn't look into types, where oxc parses `{ [await (a)]: T }` as an `await`.
         let is_key_in_type = cx.language().is_oxlint
             && matches!(e.parent(), Node::Member(member) if !matches!(member.parent(), Node::Class(_)));
         if !is_key_in_type {
-            mark_function_around(e.into(), cx);
+            mark_enclosing_function(e.into(), cx);
         }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if statement.as_for_of().is_some_and(|(.., is_await)| is_await) {
-            mark_function_around(statement.into(), cx);
+            mark_enclosing_function(statement.into(), cx);
         }
     }
 
     #[inline]
     fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if declaration.var_kind() == VarKind::AwaitUsing {
-            mark_function_around(declaration.into(), cx);
+            mark_enclosing_function(declaration.into(), cx);
         }
     }
 

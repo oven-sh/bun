@@ -10,7 +10,7 @@ const SPACING_AFTER_PREV: Message =
 const SPACING_BEFORE_NEXT: Message =
     Message::new("spacingBeforeNext", "Ambiguous spacing before next element {{element}}");
 
-/// Without `br`: the white space around it does not show.
+/// `br` isn't included, because the whitespace around it isn't visible.
 const INLINE_ELEMENTS: [&str; 30] = [
     "a", "abbr", "acronym", "b", "bdo", "big", "button", "cite", "code", "dfn", "em", "i", "img", "input", "kbd",
     "label", "map", "object", "q", "samp", "script", "select", "small", "span", "strong", "sub", "sup", "textarea",
@@ -30,19 +30,19 @@ impl Rule for JsxChildElementSpacing {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
-        // Nothing is said but beside an inline element, and few elements have one.
+        // Fast path: only text next to an inline element is reported, and few elements have one as a child.
         if !jsx.children().iter().any(|it| inline_element(JsxChild::Expr(it)).is_some()) {
             return;
         }
         let (mut last_child, mut child): (Option<JsxChild<'a>>, Option<JsxChild<'a>>) = (None, None);
         for next_child in jsx.children_with_whitespace().map(Some).chain([None]) {
             if let Some(value) = child.and_then(|it| it.text_value(cx.file())) {
-                let around = (last_child.map(inline_element), next_child.map(inline_element));
-                if let (Some(Some((element, name))), None | Some(Some(_))) = around
+                let neighbors = (last_child.map(inline_element), next_child.map(inline_element));
+                if let (Some(Some((element, name))), None | Some(Some(_))) = neighbors
                     && is_text_following_element(&value)
                 {
                     cx.report_at(element.span().end, SPACING_AFTER_PREV).listened_on(e).data("element", name);
-                } else if let (None | Some(Some(_)), Some(Some((element, name)))) = around
+                } else if let (None | Some(Some(_)), Some(Some((element, name)))) = neighbors
                     && is_text_preceding_element(&value)
                 {
                     cx.report_at(element.span().start, SPACING_BEFORE_NEXT).listened_on(e).data("element", name);
@@ -53,7 +53,7 @@ impl Rule for JsxChildElementSpacing {
     }
 }
 
-/// The element and its `elementName`, if `isInlineElement`.
+/// Returns the element and its `elementName`, if `isInlineElement`.
 fn inline_element(child: JsxChild<'_>) -> Option<(Expr<'_>, Name<'_>)> {
     let JsxChild::Expr(e) = child else {
         return None;

@@ -27,54 +27,54 @@ fn is_class_component(node: Expr<'_>, pragmas: &Pragmas<'_>) -> bool {
     get_parent_es6_component(node, pragmas).is_some() || get_parent_es5_component(node, pragmas).is_some()
 }
 
-/// `"key" in parent && parent.key`, of the parent of the `FunctionExpression` `function`.
+/// `"key" in parent && parent.key`, for the parent of the `FunctionExpression` `function`.
 fn has_key<'a>(parent: Node<'a>, function: Node<'a>) -> bool {
     let is_function = |it| normalize(Node::Expr(it)) == function;
     match parent {
-        // The parent of a decorator is a `Decorator`.
+        // A decorator's parent is a `Decorator`.
         Node::Member(member) => !member.decorators().any(is_function),
         Node::Prop(_) => estree_type_name(parent) == "Property",
-        // The parent of a default is an `AssignmentPattern`.
+        // A default value's parent is an `AssignmentPattern`.
         Node::PatProp(property) => !property.default().is_some_and(is_function),
         _ => false,
     }
 }
 
-/// What is found first on the way up from a `this.state`.
+/// The first relevant ancestor of a `this.state`.
 #[derive(Copy, Clone)]
-enum Around<'a> {
-    /// A call of `this.setState`, in whose first argument it is.
+enum Enclosing<'a> {
+    /// A `this.setState` call that has it in its first argument.
     SetState,
-    /// A method, or a function that is the value of a property: `key.name`.
+    /// A method, or a function that's a property's value, with its `key.name`.
     Method(Option<&'a [u8]>),
-    /// A `VariableDeclarator`: `id.name`.
+    /// A `VariableDeclarator`, with its `id.name`.
     Variable(Option<&'a [u8]>),
 }
 
-impl<'a> Around<'a> {
-    /// Whether `current`, in which `child` is, is one of these.
-    fn of(child: Node<'a>, current: Node<'a>) -> Option<Around<'a>> {
+impl<'a> Enclosing<'a> {
+    /// Returns what `current`, the parent of `child`, is, if it's one of these.
+    fn from_ancestor(child: Node<'a>, current: Node<'a>) -> Option<Enclosing<'a>> {
         match current {
             Node::Expr(call) if is_set_state_call(call) => {
                 let first = call.as_call()?.args().first()?;
-                (normalize(Node::Expr(first)) == child).then_some(Around::SetState)
+                (normalize(Node::Expr(first)) == child).then_some(Enclosing::SetState)
             }
             Node::Member(_) if estree_type_name(current) == "MethodDefinition" => {
-                Some(Around::Method(get_property_name(current)))
+                Some(Enclosing::Method(get_property_name(current)))
             }
             Node::Func(_) if estree_type_name(current) == "FunctionExpression" => {
                 let parent = estree_parent(current);
-                has_key(parent, current).then(|| Around::Method(get_property_name(parent)))
+                has_key(parent, current).then(|| Enclosing::Method(get_property_name(parent)))
             }
             Node::VarDecl(declarator) if estree_type_name(current) == "VariableDeclarator" => {
-                Some(Around::Variable(declarator.pat().as_ident().map(Name::bytes)))
+                Some(Enclosing::Variable(declarator.pat().as_ident().map(Name::bytes)))
             }
             _ => None,
         }
     }
 }
 
-/// Where the first arguments of the calls of `this.setState` start, and where they end, each in order.
+/// The sorted starts and the sorted ends of the first arguments of all `this.setState` calls.
 #[derive(Default)]
 struct FirstArguments {
     starts: Vec<u32>,
@@ -82,17 +82,17 @@ struct FirstArguments {
 }
 
 impl FirstArguments {
-    /// In how many of them `offset` is. Two of them are apart, or one is in the other.
-    fn around(&self, offset: u32) -> usize {
+    /// Returns how many of them contain `offset`. Any two are either disjoint or nested.
+    fn count_containing(&self, offset: u32) -> usize {
         let started = self.starts.partition_point(|it| *it <= offset);
         started.saturating_sub(self.ends.partition_point(|it| *it <= offset))
     }
 }
 
-/// What changes `methods`, or asks it.
+/// Something that updates upstream's `methods` or looks a name up in it.
 #[derive(Copy, Clone)]
 enum Event<'a> {
-    /// A `this.state`, and the `methodName` that it is kept under.
+    /// A `this.state`, and the `methodName` it's stored under.
     State(Expr<'a>, Option<&'a [u8]>),
     Call(Expr<'a>),
 }
@@ -105,32 +105,33 @@ impl Event<'_> {
     }
 }
 
-/// An element of `vars` that has a `variableName`.
+/// An entry of `vars` that has a `variableName`.
 struct Variable<'a> {
     variable_name: &'a [u8],
-    /// The number of the scope.
+    /// The scope's id.
     scope: usize,
-    /// Where the node starts at which it is added.
+    /// The start of the node at which upstream adds it.
     since: u32,
     node: Span,
 }
 
 impl<'a> Variable<'a> {
-    /// Those of `vars`, which is in the order of the fields, with the name of `identifier`.
-    fn named<'v>(vars: &'v [Variable<'a>], identifier: Option<Name<'_>>) -> &'v [Variable<'a>] {
+    /// Returns the entries of `vars` with `identifier`'s name. `vars` is sorted by its fields in declaration order.
+    fn with_name<'v>(vars: &'v [Variable<'a>], identifier: Option<Name<'_>>) -> &'v [Variable<'a>] {
         let name = identifier.map_or(&[][..], Name::bytes);
         let rest = vars.get(vars.partition_point(|it| it.variable_name < name)..).unwrap_or_default();
         rest.get(..rest.partition_point(|it| it.variable_name == name)).unwrap_or_default()
     }
 
-    /// Those of `named` of the scope `scope` that are added before `offset`.
-    fn added_before<'v>(named: &'v [Variable<'a>], scope: usize, offset: u32) -> &'v [Variable<'a>] {
-        let rest = named.get(named.partition_point(|it| it.scope < scope)..).unwrap_or_default();
+    /// Returns the entries of `same_name_vars` in the scope `scope` that were added before `offset`.
+    fn added_before<'v>(same_name_vars: &'v [Variable<'a>], scope: usize, offset: u32) -> &'v [Variable<'a>] {
+        let rest = same_name_vars.get(same_name_vars.partition_point(|it| it.scope < scope)..).unwrap_or_default();
         rest.get(..rest.partition_point(|it| it.scope == scope && it.since < offset)).unwrap_or_default()
     }
 }
 
-/// Above the `BinaryExpression`s around an identifier: whether that is the `value` or the `object` of its parent.
+/// Skips the `BinaryExpression`s around an identifier, then returns whether the result is its parent's `value` or
+/// `object`.
 fn is_value_or_object<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool> {
     let current = current.as_expr();
     Some(match parent {
@@ -142,7 +143,7 @@ fn is_value_or_object<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool> {
         },
         Node::Prop(property) => property.value() == current && estree_type_name(parent) == "Property",
         Node::Member(member) => member.init() == current,
-        // The `object` of a `with` is in a scope of its own.
+        // A `with` statement's `object` is in a different scope.
         _ => false,
     })
 }
@@ -193,15 +194,15 @@ impl Rule for NoAccessStateInSetstate {
         sort::sort_unstable(&mut first_arguments.ends);
         let pragmas = Pragmas::new(file);
         let (mut events, mut vars) = (Vec::new(), Vec::new());
-        let mut around = AncestorMemo::default();
-        // The scopes say what is in a component: they are asked last.
+        let mut enclosing_memo = AncestorMemo::default();
+        // `is_class_component` needs the scopes, so it's checked last.
         for node in states {
-            match around.find_with(Node::Expr(node), estree_parent, Around::of) {
-                Some(Around::SetState) if is_class_component(node, &pragmas) => {
+            match enclosing_memo.find_with(Node::Expr(node), estree_parent, Enclosing::from_ancestor) {
+                Some(Enclosing::SetState) if is_class_component(node, &pragmas) => {
                     cx.report(node, USE_CALLBACK);
                 }
-                Some(Around::Method(method_name)) => events.push(Event::State(node, method_name)),
-                Some(Around::Variable(Some(variable_name))) if is_class_component(node, &pragmas) => {
+                Some(Enclosing::Method(method_name)) => events.push(Event::State(node, method_name)),
+                Some(Enclosing::Variable(Some(variable_name))) if is_class_component(node, &pragmas) => {
                     vars.push(Variable {
                         variable_name,
                         scope: Node::Expr(node).scope().id().idx(),
@@ -234,26 +235,26 @@ impl Rule for NoAccessStateInSetstate {
     }
 }
 
-/// `CallExpression`, for all calls, in the order of the source. `events`: what the `this.state` add to `methods`, if
-/// they are in a component.
+/// The `CallExpression` listener, for all calls in source order. `events`: what each `this.state` adds to `methods`, if
+/// it's in a component.
 fn follow_methods<'a>(
     mut events: Vec<Event<'a>>,
     first_arguments: &FirstArguments,
     pragmas: &Pragmas<'_>,
     cx: &Cx<'a, NoAccessStateInSetstate>,
 ) {
-    let is_in_set_state = |it: &Expr<'a>| first_arguments.around(it.span().start) > 0;
-    // Only such a call reports.
+    let is_in_set_state = |it: &Expr<'a>| first_arguments.count_containing(it.span().start) > 0;
+    // Only such a call can report.
     if !cx.file().exprs_of_kind(ExprTag::Call).any(|it| is_in_set_state(&it)) {
         return;
     }
     events.retain(|it| matches!(it, Event::State(node, _) if is_class_component(*node, pragmas)));
-    let is_asking =
+    let is_lookup =
         |it: &Expr<'a>| it.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident) || is_in_set_state(it);
-    events.extend(cx.file().exprs_of_kind(ExprTag::Call).filter(is_asking).map(Event::Call));
+    events.extend(cx.file().exprs_of_kind(ExprTag::Call).filter(is_lookup).map(Event::Call));
     sort::sort_by_key(&mut events, |it| (it.span().start, Reverse(it.span().end)));
     let mut methods: FxHashMap<Option<&'a [u8]>, Vec<Span>> = FxHashMap::default();
-    let mut method_around = AncestorMemo::default();
+    let mut enclosing_method = AncestorMemo::default();
     for event in events {
         let node = match event {
             Event::State(node, method_name) => {
@@ -271,7 +272,7 @@ fn follow_methods<'a>(
             continue;
         }
         if name.is_some()
-            && let Some(method_name) = method_around.find(Node::Expr(node), |_, current| {
+            && let Some(method_name) = enclosing_method.find(Node::Expr(node), |_, current| {
                 (matches!(current, Node::Member(_)) && estree_type_name(current) == "MethodDefinition")
                     .then(|| get_property_name(current))
             })
@@ -287,7 +288,7 @@ fn follow_methods<'a>(
     }
 }
 
-/// `Identifier`, for all that are in a first argument of `this.setState`.
+/// The `Identifier` listener, for every identifier in a first argument of `this.setState`.
 fn follow_vars<'a>(
     vars: &mut [Variable<'a>],
     first_arguments: &FirstArguments,
@@ -295,27 +296,28 @@ fn follow_vars<'a>(
 ) {
     sort::sort_by_key(vars, |it| (it.variable_name, it.scope, it.since));
     let vars = &*vars;
-    let report = |named: &[Variable<'a>], identifier: Node<'a>| {
+    let report = |same_name_vars: &[Variable<'a>], identifier: Node<'a>| {
         let start = identifier.span().start;
-        for variable in Variable::added_before(named, identifier.scope().id().idx(), start) {
-            for _ in 0..first_arguments.around(start) {
+        for variable in Variable::added_before(same_name_vars, identifier.scope().id().idx(), start) {
+            for _ in 0..first_arguments.count_containing(start) {
                 cx.report(variable.node, USE_CALLBACK);
             }
         }
     };
     let mut known = AncestorMemo::default();
     for node in cx.file().exprs_of_kind(ExprTag::Ident) {
-        if first_arguments.around(node.span().start) == 0 {
+        if first_arguments.count_containing(node.span().start) == 0 {
             continue;
         }
-        let named = Variable::named(vars, node.as_ident());
-        if !named.is_empty() && known.find(Node::Expr(node), is_value_or_object) == Some(true) {
-            report(named, Node::Expr(node));
+        let same_name_vars = Variable::with_name(vars, node.as_ident());
+        if !same_name_vars.is_empty() && known.find(Node::Expr(node), is_value_or_object) == Some(true) {
+            report(same_name_vars, Node::Expr(node));
         }
     }
-    // What a pattern binds is no expression. A parameter comes before all that is added in its scope.
+    // A pattern's bindings aren't expressions, so they're handled here. A parameter comes before anything added in its
+    // scope.
     for statement in cx.file().stmts_of_kind(StmtTag::Var) {
-        if first_arguments.around(statement.span().start) == 0 {
+        if first_arguments.count_containing(statement.span().start) == 0 {
             continue;
         }
         let StmtKind::Var(declarators) = statement.kind() else {
@@ -324,7 +326,7 @@ fn follow_vars<'a>(
         for declarator in declarators.iter() {
             declarator.pat().for_each_binding(&mut |name| {
                 if matches!(name.parent(), Node::PatProp(it) if it.default().is_none() && !it.is_rest()) {
-                    report(Variable::named(vars, name.as_ident()), Node::Pat(name));
+                    report(Variable::with_name(vars, name.as_ident()), Node::Pat(name));
                 }
             });
         }

@@ -913,6 +913,7 @@ impl InitCommand {
                             (b"name", fields.name.as_slice()),
                             (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
                             (b"entryPoint", fields.entry_point.as_slice()),
+                            (b"tools", Assets::README_TOOLS),
                         ],
                     );
                     // suppressed
@@ -965,6 +966,12 @@ impl Assets {
     pub(crate) const TSCONFIG_JSON: &'static [u8] = include_bytes!("init/tsconfig.default.json");
     pub(crate) const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
     pub(crate) const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
+    /// `{[tools]s}` in both.
+    const README_TOOLS: &'static [u8] = if CLI::lint_command::IS_ENABLED {
+        b"Run `bun lint` to find problems in the code and `bun fmt` to format it."
+    } else {
+        b"Run `bun fmt` to format the code."
+    };
 
     /// Create a new asset file, overriding anything that already exists. Known
     /// assets will have their contents pre-populated; otherwise the file will be empty.
@@ -1470,7 +1477,7 @@ impl Template {
             return false;
         };
         // SAFETY: FileSystem::instance() returns the process-global singleton.
-        let top_level_dir = Fs::FileSystem::get().top_level_dir;
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 
@@ -1647,6 +1654,7 @@ impl Template {
                     &[
                         (b"name", self.name()),
                         (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
+                        (b"tools", Assets::README_TOOLS),
                     ],
                 )
             } else {

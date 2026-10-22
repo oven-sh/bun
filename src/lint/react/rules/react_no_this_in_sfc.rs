@@ -18,14 +18,14 @@ const NO_THIS_IN_SFC: Message = Message::new("noThisInSFC", "Stateless functiona
 const OXLINT: Message = Message::new("", "Stateless functional components should not use `this`");
 
 pub struct State<'a> {
-    /// The function whose `this` it is, if it can be a component, and whether a member of a class is in between.
+    /// Caches the function that owns a `this`, if it can be a component, and whether a class member is in between.
     parent_component: AncestorWalk<'a, bool, Option<(Node<'a>, bool)>>,
     parent_class_component: AncestorMemo<'a, Node<'a>>,
     components: Components<'a>,
     enclosing_function: AncestorMemo<'a, Func<'a>>,
-    /// Whether a function, or one around it, [`can_be_component`].
+    /// Caches whether a function or one of its enclosing functions [`can_be_component`].
     is_in_candidate: IdMap<Func<'a>, bool>,
-    /// The `this.a` in a function that upstream can take for a component.
+    /// The `this.a` expressions inside a function that upstream may treat as a component.
     members: Queue<'a>,
 }
 
@@ -40,7 +40,7 @@ impl Rule for NoThisInSfc {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::This]);
-        // Which function is a component depends for upstream on what comes before it.
+        // For upstream, whether a function is a component depends on what comes before it.
         if file.language().is_oxlint { on } else { on.finish() }
     }
 
@@ -67,7 +67,7 @@ impl Rule for NoThisInSfc {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint has a node for the parentheses, and takes the `this` of `a[this]` too.
+        // oxlint's AST has a node for the parentheses, and it also accepts the `this` in `a[this]`.
         let is_object = if is_oxlint { !this.is_parenthesized() } else { member.object() == Some(this) };
         if !is_object || !ast_utils::is_member_expression(member) {
             return;
@@ -83,7 +83,8 @@ impl Rule for NoThisInSfc {
         }
         let node = Node::Expr(member);
         let mut current = cx.state.enclosing_function.find(node, |_, ancestor| ancestor.as_func());
-        // Many of them under many functions go up these once.
+        // Cache the result for every function passed, so many members under deeply nested functions only climb them
+        // once.
         let mut passed: SmallVec<[Func<'a>; 8]> = SmallVec::new();
         let is_in_candidate = loop {
             let Some(func) = current else { break false };
@@ -102,7 +103,7 @@ impl Rule for NoThisInSfc {
         }
     }
 
-    /// upstream's listener, in the order of ESLint's walk.
+    /// Runs upstream's listener in ESLint's traversal order.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         while let Some(event) = cx.state.members.pop_until(At::END) {
             let components = &mut cx.state.components;
@@ -115,7 +116,8 @@ impl Rule for NoThisInSfc {
     }
 }
 
-/// Whether upstream can take `func` for a component: it returns JSX or `null` and is not directly in a class member.
+/// True if upstream may treat `func` as a component, meaning it returns JSX or `null` and isn't directly in a class
+/// member.
 fn can_be_component<'a>(func: Func<'a>, components: &Components<'a>) -> bool {
     let node = Node::Func(func);
     ast_utils::is_function_with_body(func)
@@ -126,16 +128,16 @@ fn can_be_component<'a>(func: Func<'a>, components: &Components<'a>) -> bool {
 /// `node.parent.type === "Property"`
 fn is_in_property(node: Node<'_>) -> bool {
     match estree_parent(node) {
-        // A `ChainExpression` is around the whole of an optional chain.
+        // An optional chain is wrapped in a `ChainExpression`.
         _ if node.as_expr().is_some_and(Expr::is_chain_root) => false,
         Node::Prop(it) => it.kind() != PropKind::Spread && !it.is_jsx_attribute(),
-        // The default is in an `AssignmentPattern`.
-        Node::PatProp(it) => it.default().map(Node::Expr) != Some(node.as_written()),
+        // The default value is inside an `AssignmentPattern`.
+        Node::PatProp(it) => it.default().map(Node::Expr) != Some(node.owner_or_self()),
         _ => false,
     }
 }
 
-/// One step of the way up from a `this`. `is_in_nested_this_context`: a member of a class has been passed.
+/// One step up from a `this`. `is_in_nested_this_context`: a class member has been passed.
 fn get_parent_component<'a>(
     child: Node<'a>,
     ancestor: Node<'a>,
@@ -145,7 +147,7 @@ fn get_parent_component<'a>(
         Node::Func(func) if func.kind() == FnKind::StaticBlock => ControlFlow::Break(None),
         Node::Func(func) if as_function(ancestor).is_some() => match is_potential_react_component(func) {
             true => ControlFlow::Break(Some((ancestor, is_in_nested_this_context))),
-            // An arrow function has the `this` of what is around it.
+            // An arrow function uses the enclosing `this`.
             false if func.is_arrow() => ControlFlow::Continue(is_in_nested_this_context),
             false => ControlFlow::Break(None),
         },

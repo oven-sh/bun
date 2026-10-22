@@ -11,6 +11,7 @@ import {
   isLinux,
   isMacOS,
   isPosix,
+  isRoot,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -58,7 +59,7 @@ import fs, {
 } from "node:fs";
 import net from "node:net";
 import * as os from "node:os";
-import path, { dirname, relative, resolve } from "node:path";
+import path, { basename, dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
@@ -7071,13 +7072,13 @@ it.if(isPosix)("realpath resolves a unix socket and a file that cannot be opened
     await promise;
     expect(fs.lstatSync(sock).isSocket()).toBe(true);
 
+    // root can open a mode-0 file, so only the socket proves the fallback there.
+    const paths = isRoot ? [sock] : [sock, noread];
     for (const impl of [fs.realpathSync, fs.realpathSync.native]) {
-      expect(impl(sock)).toBe(join(realDir, "s"));
-      expect(impl(noread)).toBe(join(realDir, "noread.txt"));
+      for (const p of paths) expect(impl(p)).toBe(join(realDir, basename(p)));
     }
     for (const impl of [fs.promises.realpath, promisify(fs.realpath), promisify(fs.realpath.native)]) {
-      expect(await impl(sock)).toBe(join(realDir, "s"));
-      expect(await impl(noread)).toBe(join(realDir, "noread.txt"));
+      for (const p of paths) expect(await impl(p)).toBe(join(realDir, basename(p)));
     }
   } finally {
     server.close();

@@ -4,6 +4,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
+import { createSocket } from "node:dgram";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
@@ -620,3 +622,291 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// A client that resumes a session seals what it sends before its handshake is
+// done with the 0-RTT keys. lsquic gave each of those packets the Handshake
+// long-header type, and changed that to 0-RTT only where it wrote a STREAM or
+// DATAGRAM frame. A packet with only RESET_STREAM, STOP_SENDING, DATA_BLOCKED
+// or STREAM_DATA_BLOCKED kept the Handshake type: the server could not open
+// it, and the client sent it again in that form for the whole session.
+describe("frames a resumed client sends before its handshake is done", () => {
+  const alpn = "quic-test";
+  const encoder = new TextEncoder();
+  const sni = { "*": { keys: [key], certs: [cert] } };
+
+  // Resolves with the length of the first packet that matches, of the packets
+  // that the client sent before its handshake.
+  type Until = (match: (length: number) => boolean) => Promise<number>;
+
+  // The long-header type of each QUIC packet in a datagram (RFC 9000 section
+  // 17.2, and RFC 9369 section 3.2 for the type bits of version 2). `lengths`
+  // gets the Length field of each packet that is not an Initial packet.
+  function packetTypes(datagram: Buffer, lengths: number[]) {
+    const types: string[] = [];
+    let at = 0;
+    const varint = () => {
+      const length = 1 << (datagram[at] >> 6);
+      let value = datagram[at] & 0x3f;
+      for (let i = 1; i < length; i++) value = value * 256 + datagram[at + i];
+      at += length;
+      return value;
+    };
+    // A 1-RTT packet has a short header and ends the datagram.
+    while (at < datagram.length && datagram[at] & 0x80) {
+      const v2 = datagram.readUInt32BE(at + 1) === 0x6b3343cf;
+      const names = v2 ? ["Retry", "Initial", "0-RTT", "Handshake"] : ["Initial", "0-RTT", "Handshake", "Retry"];
+      const type = names[(datagram[at] >> 4) & 3];
+      types.push(type);
+      at += 5;
+      at += 1 + datagram[at]; // destination connection id
+      at += 1 + datagram[at]; // source connection id
+      if (type === "Initial") {
+        const token = varint();
+        at += token;
+      }
+      const length = varint(); // packet number and payload
+      if (type !== "Initial") lengths.push(length);
+      at += length;
+    }
+    return types;
+  }
+
+  async function readAll(stream: any) {
+    const chunks: Uint8Array[] = [];
+    for await (const batch of stream) chunks.push(...batch);
+    return Buffer.concat(chunks).toString();
+  }
+
+  const onEarlyStream = (use: (stream: any) => void) => async (client: any) => {
+    const stream = await client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    use(stream);
+  };
+
+  // Resumes a session with 0-RTT through a relay that holds the server's
+  // datagrams until `act` is done and the client has sent `packets` packets
+  // after its Initial: each of them leaves before the client can have
+  // Handshake keys. With `ticketParams` the session ticket comes from another
+  // server that has those transport parameters, so the server behind the
+  // relay rejects the 0-RTT. With `later` the client connects in a later turn
+  // of the event loop, outside the node:quic callback that gave the ticket,
+  // and each call sends its own packet. With `close` the client closes the
+  // session when its request has an answer. Returns the packet types from
+  // before the handshake, and what the server saw when it answered a request
+  // that the client sent after it.
+  async function beforeHandshake(
+    setup: { transportParams?: object; ticketParams?: object; packets?: number; later?: boolean; close?: boolean },
+    act: (client: any, until: Until) => unknown,
+  ) {
+    const { transportParams = {}, ticketParams, packets = 1 } = setup;
+    const events: string[] = [];
+    const onSession = (session: any) => {
+      session.onerror = () => {};
+      session.closed.catch(() => {});
+      session.ondatagram = (data: Uint8Array) => events.push(`datagram ${Buffer.from(data).toString("hex")}`);
+      session.onstream = async (stream: any) => {
+        const id = String(stream.id);
+        events.push(`stream ${id}`);
+        stream.closed.catch(() => {});
+        stream.onreset = (error: any) => {
+          events.push(`reset ${id} ${error.errorCode}`);
+          // Both halves of the stream are closed then, and the server gives
+          // the client the credit for another stream.
+          stream.writer.endSync();
+        };
+        if ((await readAll(stream).catch(() => "")) === "marker") {
+          stream.writer.writeSync(encoder.encode("marker"));
+          stream.writer.endSync();
+        }
+      };
+    };
+    const server = await listen(onSession, { sni, alpn: [alpn], transportParams });
+    const ticketServer = ticketParams
+      ? await listen(onSession, { sni, alpn: [alpn], transportParams: ticketParams })
+      : server;
+    const serverPort = server.address!.port;
+    const relay = createSocket("udp4");
+    let client: any;
+    try {
+      let clientPort = 0;
+      let held: Buffer[] | undefined = [];
+      const types: string[] = [];
+      const lengths: number[] = [];
+      let wake = () => {};
+      const until: Until = async match => {
+        while (!lengths.some(match)) await new Promise<void>(resolve => (wake = resolve));
+        return lengths.find(match)!;
+      };
+      const sent = Promise.withResolvers<void>();
+      sent.promise.catch(() => {});
+      relay.on("error", sent.reject);
+      relay.on("message", (datagram, from) => {
+        if (from.port === serverPort) {
+          if (held) held.push(datagram);
+          else relay.send(datagram, clientPort, "127.0.0.1");
+          return;
+        }
+        clientPort = from.port;
+        if (held) {
+          types.push(...packetTypes(datagram, lengths));
+          if (lengths.length >= packets) sent.resolve();
+          wake();
+        }
+        relay.send(datagram, serverPort, "127.0.0.1");
+      });
+      relay.bind(0, "127.0.0.1");
+      await once(relay, "listening");
+      const options = { alpn, servername: "localhost", verifyPeer: "manual", onerror() {} };
+
+      const ticket = Promise.withResolvers<any>();
+      const first = await connect(ticketServer.address!, {
+        ...options,
+        onsessionticket: (t: any) => ticket.resolve(t),
+      } as SessionOptions);
+      first.closed.catch(() => {});
+      await first.opened;
+      const sessionTicket = await ticket.promise;
+      first.destroy();
+      events.length = 0;
+      if (setup.later) await new Promise(resolve => setImmediate(resolve));
+
+      client = await connect(`127.0.0.1:${relay.address().port}`, { ...options, sessionTicket } as SessionOptions);
+      client.closed.then(() => sent.reject(new Error("the session closed before it sent the frame")), sent.reject);
+      await Promise.all([act(client, until), sent.promise]);
+      for (const datagram of held) relay.send(datagram, clientPort, "127.0.0.1");
+      held = undefined;
+      const { earlyDataAccepted } = await client.opened;
+
+      // The server answers this request after every packet that the client
+      // sent before it.
+      const marker = await client.createBidirectionalStream();
+      marker.closed.catch(() => {});
+      marker.writer.writeSync(encoder.encode("marker"));
+      marker.writer.endSync();
+      await readAll(marker);
+      if (setup.close) await client.close();
+
+      return {
+        earlyDataAccepted,
+        types: [...new Set(types)].sort(),
+        server: events.filter(event => event !== `stream ${marker.id}`),
+      };
+    } finally {
+      relay.close();
+      // A graceful close waits for the early stream, and that is the whole
+      // idle timeout when the server never saw its frame.
+      client?.destroy();
+      await server.destroy();
+      if (ticketServer !== server) await ticketServer.destroy();
+    }
+  }
+
+  const reset = onEarlyStream(stream => stream.resetStream(42n));
+  const stop = onEarlyStream(stream => stream.stopSending(42n));
+
+  test("resetStream() goes out in a 0-RTT packet and resets the server's stream", async () => {
+    expect(await beforeHandshake({}, reset)).toEqual({
+      earlyDataAccepted: true,
+      types: ["0-RTT", "Initial"],
+      server: ["stream 0", "reset 0 42"],
+    });
+  });
+
+  test("stopSending() goes out in a 0-RTT packet and shows the server the stream", async () => {
+    expect(await beforeHandshake({}, stop)).toEqual({
+      earlyDataAccepted: true,
+      types: ["0-RTT", "Initial"],
+      server: ["stream 0"],
+    });
+  });
+
+  // The write fills the connection's flow control window of 1000 bytes with
+  // one STREAM packet. The second packet is DATA_BLOCKED.
+  test("DATA_BLOCKED goes out in a 0-RTT packet", async () => {
+    const write = onEarlyStream(stream => stream.writer.writeSync(new Uint8Array(5000)));
+    expect(await beforeHandshake({ transportParams: { initialMaxData: 1000 }, packets: 2 }, write)).toEqual({
+      earlyDataAccepted: true,
+      types: ["0-RTT", "Initial"],
+      server: ["stream 0"],
+    });
+  });
+
+  // STREAM_DATA_BLOCKED (4 bytes) gets a packet of its own when the STREAM
+  // frame that reaches the stream's window leaves less room than that. The
+  // first stream shows how long a full packet is. The second stream sends a
+  // first chunk of a size that makes its next frame end 1 byte before the end
+  // of a full packet.
+  test("STREAM_DATA_BLOCKED in a packet of its own goes out in a 0-RTT packet", async () => {
+    const window = 1300;
+    const write = async (client: any, until: Until) => {
+      const first = await client.createBidirectionalStream();
+      first.closed.catch(() => {});
+      first.writer.writeSync(new Uint8Array(5000));
+      const full = await until(length => length > 1100);
+      const second = await client.createBidirectionalStream();
+      second.closed.catch(() => {});
+      // Around the data of the chunk: 1 byte of packet number, 1 each of frame
+      // type and stream id, 2 of length, and 16 of tag. The next frame has 2
+      // bytes of offset in addition.
+      const overhead = 1 + 1 + 1 + 2 + 16;
+      const chunk = window - (full - overhead) + 3;
+      second.writer.writeSync(new Uint8Array(chunk));
+      await until(length => length === chunk + overhead);
+      second.writer.writeSync(new Uint8Array(5000));
+      await until(length => length === 1 + 4 + 16);
+    };
+    expect(await beforeHandshake({ transportParams: { initialMaxStreamDataBidiRemote: window } }, write)).toEqual({
+      earlyDataAccepted: true,
+      types: ["0-RTT", "Initial"],
+      server: ["stream 0", "stream 4"],
+    });
+  });
+
+  // lsquic's DATAGRAM writer set this type itself before the type became the
+  // default, so this test also passes without the new default.
+  test("a datagram goes out in a 0-RTT packet", async () => {
+    const send = (client: any) => client.sendDatagram(new Uint8Array([0xca, 0xfe]));
+    expect(await beforeHandshake({}, send)).toEqual({
+      earlyDataAccepted: true,
+      types: ["0-RTT", "Initial"],
+      server: ["datagram cafe"],
+    });
+  });
+
+  // The two early streams use all of the server's stream credit. The server
+  // gives the credit for the later request only when the RESET_STREAM of an
+  // early stream has reached it.
+  test("a request gets an answer after the early streams used all the stream credit", async () => {
+    const resetTwo = async (client: any) => {
+      await reset(client);
+      await reset(client);
+    };
+    expect(await beforeHandshake({ transportParams: { initialMaxStreamsBidi: 2 } }, resetTwo)).toEqual({
+      earlyDataAccepted: true,
+      types: ["0-RTT", "Initial"],
+      server: ["stream 0", "reset 0 42", "stream 4", "reset 4 42"],
+    });
+  });
+
+  // A close() waits until the server has acknowledged the early RESET_STREAM.
+  // A server that cannot open the packet never does, and close() then lasts
+  // until the idle timeout ends the session. The client connects in a later
+  // turn of the event loop here, so the frame has a packet of its own.
+  test("close() does not wait for the idle timeout after an early resetStream()", async () => {
+    expect(await beforeHandshake({ later: true, close: true }, reset)).toEqual({
+      earlyDataAccepted: true,
+      types: ["0-RTT", "Initial"],
+      server: ["stream 0", "reset 0 42"],
+    });
+  });
+
+  // The server behind the relay has another stream limit than the server that
+  // gave the ticket, so it rejects the 0-RTT. What that server sees of the
+  // early stream is not part of this test: lsquic sends a rejected 0-RTT
+  // packet again as a 1-RTT packet, and Node discards the early streams.
+  test("a rejected 0-RTT leaves the session usable after an early resetStream()", async () => {
+    const setup = { ticketParams: { initialMaxStreamsBidi: 100 }, transportParams: { initialMaxStreamsBidi: 10 } };
+    const { earlyDataAccepted, types } = await beforeHandshake(setup, reset);
+    expect({ earlyDataAccepted, types }).toEqual({ earlyDataAccepted: false, types: ["0-RTT", "Initial"] });
+  });
+});

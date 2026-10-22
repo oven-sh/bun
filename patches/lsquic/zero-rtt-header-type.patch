@@ -1,0 +1,20 @@
+--- a/src/liblsquic/lsquic_packet_out.c
++++ b/src/liblsquic/lsquic_packet_out.c
+@@ -264,7 +264,16 @@
+                 packet_out->po_header_type = HETY_INITIAL;
+         }
+         else
+-            packet_out->po_header_type = HETY_HANDSHAKE;
++            /* bun: what keeps this default is a client's packet of the
++             * application packet number space before its handshake is done:
++             * send_ctl_allocate_packet() and the mini conn overwrite it for
++             * Initial and Handshake packets, and gQUIC is not compiled.  That
++             * packet is sealed with the 0-RTT keys, so its type is 0-RTT.
++             * Upstream writes HETY_HANDSHAKE and corrects it only where a
++             * STREAM frame is first written.  A packet with only RESET_STREAM,
++             * STOP_SENDING or a BLOCKED frame, and each packet made when
++             * lsquic resizes one, then has a header that no peer can open. */
++            packet_out->po_header_type = HETY_0RTT;
+     }
+     packet_out->po_path = path;
+ 

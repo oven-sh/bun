@@ -162,7 +162,6 @@ impl InputSourceMap {
                 vlq,
                 None,
                 section_sources_len,
-                i32::MAX as usize,
                 mapping::ParseOptions {
                     allow_names: false,
                     sort: true,

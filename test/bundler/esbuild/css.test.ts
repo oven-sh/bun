@@ -1276,6 +1276,33 @@ b {
     },
   });
 
+  itBundled("css/URLInEnvFallbackOfAtImportMediaQuery", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./b.css" (min-width: env(foo, url(sub/g.css)));
+        .c0 { color: blue }
+      `,
+      "/b.css": `.b1 { color: green }`,
+      "/sub/g.css": `.c0 { color: red }`,
+    },
+    backend: "cli",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe(`/* b.css */
+@media (min-width: env(foo, url(sub/g.css))) {
+  .b1 {
+    color: green;
+  }
+}
+
+/* entry.css */
+.c0 {
+  color: #00f;
+}
+`);
+    },
+  });
+
   itBundled("css/PackageURLsInCSS", {
     files: {
       "/entry.css": /* css */ `

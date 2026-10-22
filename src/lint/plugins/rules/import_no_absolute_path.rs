@@ -42,14 +42,15 @@ impl Rule for NoAbsolutePath {
     }
 }
 
-/// oxlint looks at `import` declarations and at calls, and takes parentheses for nodes.
+/// oxlint only checks `import` declarations and calls. Its AST keeps parentheses as nodes, so nothing parenthesized
+/// matches.
 fn is_seen_by_oxlint(importer: Node) -> bool {
     let is_plain = |e: Expr| !e.is_parenthesized();
     match importer {
         Node::Stmt(declaration) => declaration.tag() == StmtTag::Import,
         Node::Expr(e) => match (e.kind(), e.parent()) {
             (ExprKind::Call(call), _) => is_plain(call.callee()) && call.args().iter().all(is_plain),
-            // An element of the array of `define([..], f)`.
+            // An element of the array in `define([..], f)`.
             (ExprKind::String(_), Node::Expr(modules)) => {
                 let callee = modules.parent().as_expr().and_then(Expr::callee);
                 is_plain(e) && is_plain(modules) && callee.is_some_and(is_plain)
@@ -60,7 +61,7 @@ fn is_seen_by_oxlint(importer: Node) -> bool {
     }
 }
 
-/// The way from the directory of the file at `filename` to `specifier`, in quotes.
+/// Returns the relative path from `filename`'s directory to `specifier`, in quotes.
 #[cold]
 #[inline(never)]
 fn relative_path(filename: &[u8], specifier: &[u8]) -> Vec<u8> {

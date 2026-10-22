@@ -21,7 +21,7 @@ const NO_UNSAFE: Message = Message::new("", "Unsafe lifecycle method `{{method_n
 
 const DETAILS: &str = "See https://reactjs.org/blog/2018/03/27/update-on-async-rendering.html.";
 
-/// Also as private names: upstream goes by the `name` of a `PrivateIdentifier`, which is without the `#`.
+/// Private names are listed too, because upstream matches on a `PrivateIdentifier`'s `name`, which has no `#`.
 const UNSAFE_METHODS: [&str; 6] = [
     "UNSAFE_componentWillMount",
     "UNSAFE_componentWillReceiveProps",
@@ -44,7 +44,7 @@ pub struct State<'a> {
     parent_component: AncestorMemo<'a, Node<'a>>,
     in_es5_component: AncestorMemo<'a, ()>,
     pragmas: Pragmas<'a>,
-    /// Where the first property of a name is in a class or an object literal.
+    /// Span of the first property with a given name in a class or object literal.
     first: FxHashMap<(Node<'a>, &'a [u8]), Span>,
 }
 
@@ -64,7 +64,7 @@ impl Rule for NoUnsafe {
         {
             return None;
         }
-        // oxlint takes no `"detect"` and has no default. It looks for the aliases whatever the version is.
+        // oxlint doesn't accept `"detect"` and has no default version. It checks the aliases regardless of the version.
         let check_unsafe_prefix = match is_oxlint {
             true => supports_unsafe_lifecycle_prefix(file),
             false => get_react_version_from_context(file) >= (16, 3, 0),
@@ -79,7 +79,7 @@ impl Rule for NoUnsafe {
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint looks at methods only.
+        // oxlint only checks methods.
         if !cx.language().is_oxlint || as_method_definition(Node::Member(member)).is_some() {
             self.check(Node::Member(member), member.key(), cx);
         }
@@ -93,16 +93,16 @@ impl Rule for NoUnsafe {
 }
 
 impl NoUnsafe {
-    /// `property`: a member of a class or a property of an object literal.
+    /// `property` is a class member or an object literal property.
     fn check<'a>(&self, property: Node<'a>, key: Option<Key<'a>>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
-        // upstream goes by `key.name`: `[a]` and `#a` are `a`, and `"a"` has none.
+        // Upstream reads `key.name`, so `[a]` and `#a` are both `a`, and `"a"` has no name.
         let name = if is_oxlint { key.and_then(static_name).map(Name::bytes) } else { get_property_name(property) };
         let Some((method, new_method)) = name.and_then(|it| Some((it, self.new_method(it, cx)?))) else {
             return;
         };
         if is_oxlint {
-            // oxlint looks for the component anywhere around it, and points at the key.
+            // oxlint accepts a component anywhere up the tree, and reports at the key.
             let is_in_component = match property {
                 Node::Member(_) => get_parent_component(property, &mut cx.state.parent_component).is_some(),
                 _ => {
@@ -123,7 +123,7 @@ impl NoUnsafe {
         {
             return;
         }
-        // upstream reports each property of a name at the first one.
+        // Upstream reports every property with the same name at the first one.
         let property_node = *cx.state.first.entry((node, method)).or_insert_with(|| {
             let first = get_component_properties(node).into_iter().find(|it| it.name() == Some(method));
             first.map_or(property, Property::node).span()
@@ -134,7 +134,7 @@ impl NoUnsafe {
             .data("details", DETAILS);
     }
 
-    /// What is to be used in the place of the method `name`, if that is one that is looked for.
+    /// Returns the replacement for lifecycle method `name`, or `None` if the rule doesn't check `name`.
     fn new_method(&self, name: &[u8], cx: &Cx<'_, Self>) -> Option<&'static str> {
         let (alias, is_checked) = match name.strip_prefix(b"UNSAFE_") {
             Some(alias) => (alias, cx.state.check_unsafe_prefix),

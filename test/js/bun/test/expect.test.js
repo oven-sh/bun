@@ -141,6 +141,27 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  test("resolves and rejects call then() of a pending Promise subclass", async () => {
+    class Lazy extends Promise {
+      thenCalls = 0;
+      then(onFulfilled, onRejected) {
+        this.thenCalls++;
+        return super.then(onFulfilled, onRejected);
+      }
+    }
+    for (const outcome of ["resolves", "rejects"]) {
+      const { promise, resolve, reject } = Promise.withResolvers.call(Lazy);
+      setTimeout(outcome === "resolves" ? resolve : reject, 0, 1);
+      await expect(promise)[outcome].toBe(1);
+      expect(promise.thenCalls).toBe(1);
+    }
+
+    const { promise, resolve } = Promise.withResolvers.call(Lazy);
+    setTimeout(resolve, 0);
+    expect(() => promise).not.toThrow();
+    expect(promise.thenCalls).toBe(1);
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });
@@ -1072,6 +1093,58 @@ describe("expect()", () => {
       }).toThrow(err);
     }
   });
+
+  if (isBun) {
+    test(".not.toThrow(Class) reports a thrown string, symbol or BigInt that Symbol.hasInstance accepts", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        import { expect } from "bun:test";
+        class Anything {
+          static [Symbol.hasInstance]() {
+            return true;
+          }
+        }
+        const report = async run => {
+          try {
+            await run();
+            console.log("passed");
+          } catch (e) {
+            console.log(e.message.split("\\n").filter(Boolean).slice(1).join(" | "));
+          }
+        };
+        const thrower = thrown => () => {
+          throw thrown;
+        };
+        for (const thrown of ["boom", Symbol("boom"), 10n ** 30n, {}, { message: "an object" }, new TypeError("an error")]) {
+          await report(() => expect(thrower(thrown)).not.toThrow(Anything));
+        }
+        await report(() => expect(Promise.reject("boom")).rejects.not.toThrow(Anything));
+        await report(() => expect(thrower("boom")).not.toThrow(RangeError));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: [
+          'Expected constructor: not Anything | Received value: "boom"',
+          "Expected constructor: not Anything | Received value: Symbol(boom)",
+          "Expected constructor: not Anything | Received value: 1000000000000000000000000000000n",
+          "Expected constructor: not Anything | Received value: {}",
+          'Expected constructor: not Anything | Received message: "an object"',
+          'Expected constructor: not Anything | Received message: "an error"',
+          'Expected constructor: not Anything | Received value: "boom"',
+          "passed",
+          "",
+        ],
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  }
 
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");

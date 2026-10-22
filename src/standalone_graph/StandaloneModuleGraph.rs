@@ -633,19 +633,67 @@ mod elf {
         // `dlpi_addr` of the object containing BUN_COMPILED itself; for
         // non-PIE it is 0.
         // Format at target: [u64 payload_len][payload bytes]
-        // Synthesize a `*mut u8` directly so the provenance carries write
-        // permission for the in-place bytecode mutation done by JSC.
         let load_bias =
             bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
-        let target = (vaddr as usize).wrapping_add(load_bias) as *mut u8;
-        // SAFETY: target points to 8-byte little-endian length prefix.
+        let target = (vaddr as usize).wrapping_add(load_bias);
+        // A corrupt file can contain any vaddr and length, so check both against the PT_LOAD that maps `target`.
+        let segment_end = bun_sys::elf::find_loaded_module(target)?.segment_end;
+        let payload_capacity = (segment_end - target).checked_sub(8)?;
+        exit_if_page_is_past_eof(target);
+        // Synthesize a `*mut u8` directly so the provenance carries write
+        // permission for the in-place bytecode mutation done by JSC.
+        let target = target as *mut u8;
+        // SAFETY: the segment has at least 8 bytes at `target`.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
-        if payload_len < 8 {
+        if payload_len < 8 || payload_len > payload_capacity as u64 {
             return None;
         }
-        // SAFETY: payload_len bytes follow the 8-byte header at `target`.
-        Some((unsafe { target.add(8) }, payload_len as usize))
+        // SAFETY: the segment has at least `payload_len` bytes after the 8-byte header.
+        let payload = unsafe { target.add(8) };
+        // Truncation only removes the end of the file, so if the last page is present, the whole payload is.
+        exit_if_page_is_past_eof(payload as usize + payload_len as usize - 1);
+        Some((payload, payload_len as usize))
+    }
+
+    /// Exits with an error if the page at `addr` is past the end of a truncated executable.
+    ///
+    /// Linux maps a `PT_LOAD`'s full `p_filesz` without checking the file's length, so a truncated
+    /// executable still starts, and reading a page past the end of the file raises SIGBUS.
+    /// `MADV_POPULATE_READ` (Linux 5.14) faults the page in like a read, but fails with `EFAULT`
+    /// instead. Any other result, such as `EINVAL` from an older kernel, skips the check.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn exit_if_page_is_past_eof(addr: usize) {
+        let page_size = bun_alloc::page_size();
+        let page = (addr & !(page_size - 1)) as *mut core::ffi::c_void;
+        // SAFETY: `madvise` validates the range and doesn't read or write through it.
+        let rc = unsafe { libc::madvise(page, page_size, libc::MADV_POPULATE_READ) };
+        if rc != 0 && bun_sys::last_errno() == libc::EFAULT {
+            exit_truncated();
+        }
+    }
+
+    /// No-op, because FreeBSD's `execve` rejects a truncated executable.
+    #[cfg(target_os = "freebsd")]
+    fn exit_if_page_is_past_eof(_: usize) {}
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cold]
+    #[inline(never)]
+    fn exit_truncated() -> ! {
+        match bun_core::self_exe_path() {
+            Ok(exe) => bun_core::err_generic!(
+                "{} is truncated. Part of its embedded program is missing.",
+                bun_core::fmt::quote(exe.as_bytes())
+            ),
+            Err(_) => bun_core::err_generic!(
+                "This executable is truncated. Part of its embedded program is missing."
+            ),
+        }
+        bun_core::note!(
+            "The download or copy was probably interrupted. Download or install it again."
+        );
+        bun_core::Global::exit(1);
     }
 
     /// `MADV_WILLNEED` over `[lo, hi)`: queues page-cache readahead for the
@@ -839,8 +887,6 @@ impl LazySourceMap {
                 let ism = SourceMap::InternalSourceMap {
                     data: blob.as_ptr(),
                 };
-                // Note: `from_internal` fills `internal = Some(ism)` +
-                // `input_line_count = ism.input_line_count()` and defaults the rest.
                 let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
                 let source_files_count = serialized.source_files_count();
@@ -1000,10 +1046,6 @@ impl StandaloneModuleGraph {
         // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
         let modules_list_base = modules_list_bytes.as_ptr();
-
-        if offsets.entry_point_id as usize > modules_list_count {
-            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
-        }
 
         let read_u32 = |at: usize| -> u32 {
             debug_assert!(at + 4 <= raw_len);
@@ -1286,6 +1328,10 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
+        // `entry_point()` indexes `files`, which has one entry per name, not one per record.
+        if offsets.entry_point_id as usize >= module_count {
+            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
+        }
         modules.lock_pointers(); // make the pointers stable forever
 
         // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
@@ -1480,7 +1526,11 @@ pub(crate) fn to_bytes(
     let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
     for output_file in output_files {
-        string_builder.count_z(&output_file.dest_path);
+        // `module.name` is formatted through `BStr`, which expands each invalid UTF-8 byte to 3 bytes.
+        string_builder.fmt_count(format_args!(
+            "{}\0",
+            bstr::BStr::new(&output_file.dest_path)
+        ));
         string_builder.count_z(prefix);
         if let options::OutputFileValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
@@ -2772,7 +2822,17 @@ pub fn target_executable(
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
-        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
+        let dest_z =
+            match target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download) {
+                Ok(dest) => dest,
+                Err(_) => {
+                    return Err(CompileError::fmt(format_args!(
+                        "Cache directory path for '{}' is too long: {}",
+                        target,
+                        bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
+                    )));
+                }
+            };
 
         if needs_download {
             if let Err(e) = download_to_path(target, env, dest_z) {
@@ -3012,12 +3072,11 @@ pub fn to_executable(
     #[cfg(not(windows))]
     {
         let temp_posix = injected.temp_path;
-        let outfile_basename = bun_paths::basename(outfile);
-        let mut outfile_posix_buf = bun_paths::path_buffer_pool::get();
-        let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
+        // `resolve_path::z` returns "" for a name that's too long, which would make the rename fail with ENOENT.
+        let outfile_posix = bun_core::ZBox::from_bytes(bun_paths::basename(outfile));
 
         if let Err(e) =
-            bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, outfile_posix)
+            bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, &outfile_posix)
         {
             fd.close();
 
@@ -3476,7 +3535,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         return Err(crate::Error::InvalidSourceMap);
     }
 
-    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
+    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq)
         .map_err(|_| crate::Error::InvalidSourceMap)?;
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;

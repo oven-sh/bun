@@ -83,3 +83,41 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
   expect(stderr).toContain("4 fail");
   expect(exitCode).toBe(1);
 });
+
+test.concurrent("runs the next test after a retried test rejects with a value that throws when inspected", async () => {
+  using dir = tempDir("test-retry-inspect-throws", {
+    "retry.test.js": `
+      import { test, expect } from "bun:test";
+      import { inspect } from "node:util";
+
+      const doc = { [inspect.custom]() { throw new Error("inspect"); } };
+      let attempts = 0;
+
+      test("flaky", async () => {
+        if (attempts++ === 0) throw { status: 400, doc };
+      }, { retry: 2 });
+
+      test("must fail", () => {
+        console.log("must fail body ran");
+        expect(1).toBe(2);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "retry.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: stdout.split("\n").slice(1).join("\n"),
+    summary: stderr.match(/^ *\d+ (?:pass|fail)$/gm)?.map(line => line.trim()),
+    exitCode,
+  }).toEqual({
+    stdout: "must fail body ran\n",
+    summary: ["1 pass", "1 fail"],
+    exitCode: 1,
+  });
+});

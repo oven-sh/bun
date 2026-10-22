@@ -1,32 +1,33 @@
-//! The texts of oxlint for the rules that it shares with ESLint and typescript-eslint, which here are ports of the originals. With a
-//! configuration of oxlint a message has the text that oxlint gives it.
+//! oxlint's message texts for the rules it shares with ESLint and typescript-eslint. Our versions of those rules are
+//! ports of the originals, so with an oxlint config their messages are replaced by oxlint's wording.
 //!
-//! Made from what oxlint and `bun lint` report at the same places, for the cases of the test suites and for real code: an entry is the
-//! text of oxlint in which the values that the rule gives to [`Report::data`](crate::context::Report::data) are replaced by their
-//! names, if that makes the text of oxlint of all the pairs with that message id, letter for letter. A message that is not here keeps
-//! the text of the original.
+//! The table was built from what oxlint and `bun lint` report at the same positions, for the test suites' cases and for
+//! real code. An entry is oxlint's text with the values that the rule passes to
+//! [`Report::data`](crate::context::Report::data) replaced by their names. It's only included if that template
+//! reproduces oxlint's text exactly for every pair with that message id. A message that isn't listed keeps the
+//! original's text.
 
 use crate::rule::{Message, Meta, Plugin};
 use bun_wyhash::hash_const;
 use std::sync::OnceLock;
 
-/// What oxlint says in place of messages of the rule `meta`.
+/// oxlint's replacements for the messages of the rule `meta`.
 pub(crate) fn of_rule(meta: &Meta) -> [&'static [Message]; 2] {
     if !matches!(meta.plugin, Plugin::Eslint | Plugin::TypeScript) {
         return [&[], &[]];
     }
-    let [eslint, typescript] = of_name(meta);
+    let [eslint, typescript] = entries_for_name(meta);
     match meta.plugin {
         Plugin::Eslint => [eslint, &[]],
-        // oxlint has the rules that extend one of ESLint under the name of that one.
+        // oxlint lists a rule that extends an ESLint rule under the ESLint rule's name.
         _ => [typescript, eslint],
     }
 }
 
-/// What `MESSAGES` has for the name of `meta`, under `eslint` and under `typescript`.
-fn of_name(meta: &Meta) -> [&'static [Message]; 2] {
+/// The `MESSAGES` entries for `meta`'s name, under `eslint` and under `typescript`.
+fn entries_for_name(meta: &Meta) -> [&'static [Message]; 2] {
     type Named = (u32, &'static str, [&'static [Message]; 2]);
-    /// By the hash of the name, which is [`Meta::key`].
+    /// Sorted by the hash of the name, which is [`Meta::key`].
     static BY_KEY: OnceLock<Box<[Named]>> = OnceLock::new();
     let by_key = BY_KEY.get_or_init(|| {
         let mut all: Vec<Named> = Vec::new();
@@ -52,9 +53,9 @@ fn of_name(meta: &Meta) -> [&'static [Message]; 2] {
         .unwrap_or([&[], &[]])
 }
 
-/// `message` as oxlint says it. `said`: [`of_rule`].
-pub(crate) fn of(said: &[&'static [Message]; 2], message: Message) -> Message {
-    let mut all = said.iter().flat_map(|it| it.iter());
+/// oxlint's version of `message`. `replacements` comes from [`of_rule`].
+pub(crate) fn of(replacements: &[&'static [Message]; 2], message: Message) -> Message {
+    let mut all = replacements.iter().flat_map(|it| it.iter());
     all.find(|it| it.id == message.id)
         .copied()
         .unwrap_or(message)
@@ -64,7 +65,7 @@ const fn m(id: &'static str, text: &'static str) -> Message {
     Message::new(id, text)
 }
 
-/// Sorted by the plugin and the name, as oxlint calls them.
+/// Sorted by plugin and rule name, using oxlint's names.
 #[rustfmt::skip]
 static MESSAGES: &[(&str, &str, &[Message])] = &[
     ("eslint", "accessor-pairs", &[

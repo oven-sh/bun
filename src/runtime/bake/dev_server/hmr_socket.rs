@@ -440,7 +440,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         let _ = unsafe { (*this).active_websocket_connections.insert(dw, ()) };
         // SAFETY: `res` is live for this callback (see Note above); `on_open`
         // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
-        let _ = unsafe {
+        let socket = unsafe {
             (&mut *res).upgrade(
                 dw,
                 req.header(b"sec-websocket-key").unwrap_or(b""),
@@ -449,6 +449,13 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
                 Some(upgrade_ctx),
             )
         };
+        if socket.is_null() {
+            // The connection was already closed, so uWS never stored `dw` and `on_close` won't run.
+            // SAFETY: `this` is live (see above).
+            let _ = unsafe { (*this).active_websocket_connections.remove(&dw) };
+            // SAFETY: `dw` was allocated above and nothing else owns it.
+            drop(unsafe { bun_core::heap::take(dw) });
+        }
     }
 }
 

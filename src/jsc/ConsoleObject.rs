@@ -518,7 +518,7 @@ fn message_with_type_and_level_(
         // values (new String(...)) take a separate code path in the Formatter that
         // renders [String: "hello"] regardless of this flag — don't set it there
         // so the dedicated StringObject wrapper is preserved.
-        if print_length >= 1 && vals_slice[0].is_string() {
+        if print_length >= 1 && vals_slice[0].is_string_literal() {
             print_options.quote_strings = true;
         }
         if len >= 2 {

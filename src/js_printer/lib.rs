@@ -1643,7 +1643,7 @@ pub(crate) mod __gated_printer {
     pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
         p.slice()
     }
-    /// Whether the last of `stmts` leaves, so nothing after them runs. Looks at no other statement.
+    /// Whether the last of `stmts`, or of the block it is, leaves, so nothing after them runs.
     fn ends_in_jump(stmts: &[Stmt]) -> bool {
         match stmts.last().map(|stmt| &stmt.data) {
             Some(
@@ -2471,6 +2471,7 @@ pub(crate) mod __gated_printer {
                 .add_source_mapping(location, self.writer.slice());
         }
 
+        /// Marks go in the `InternalSourceMap`, which only an `ASCII_ONLY` print builds.
         #[inline(always)]
         fn code_coverage(&self) -> bool {
             GENERATE_SOURCE_MAP && ASCII_ONLY && self.options.code_coverage
@@ -2485,7 +2486,7 @@ pub(crate) mod __gated_printer {
                 .mark(MarkKind::ObjectBrace, 0, loc, self.writer.slice());
         }
 
-        /// Starts a decision at `loc`, which is about to be printed. Its branches start at `branches`.
+        /// Starts a decision at `loc`, which is about to be printed.
         #[inline]
         pub(crate) fn mark_decision(
             &mut self,
@@ -2496,7 +2497,7 @@ pub(crate) mod __gated_printer {
             self.mark_decision_at(self.writer.written(), kind, loc, branches)
         }
 
-        /// A decision that was just printed: marks its last character, a byte as the output is ASCII.
+        /// For what was just printed: marks its last character, one byte in `ASCII_ONLY` output.
         #[inline]
         pub(crate) fn mark_decision_after(
             &mut self,
@@ -2512,7 +2513,7 @@ pub(crate) mod __gated_printer {
             )
         }
 
-        /// Returns 0, which `mark_branch` ignores, for a decision that the source does not have.
+        /// Returns 0, which `mark_branch` ignores, for generated code: a branch is not after `loc`.
         #[inline]
         fn mark_decision_at(
             &mut self,
@@ -2521,6 +2522,7 @@ pub(crate) mod __gated_printer {
             loc: bun_ast::Loc,
             branches: &[bun_ast::Loc],
         ) -> u32 {
+            // After an overflow nothing is printed, and `mark` cannot go back before the last mark.
             if !self.code_coverage() || self.stack_overflowed {
                 return 0;
             }
@@ -2537,7 +2539,7 @@ pub(crate) mod __gated_printer {
             self.decision_count
         }
 
-        /// `loc`, which is about to be printed, starts a branch of `decision`.
+        /// What is about to be printed is a branch of `decision`. `loc` is in it.
         #[inline]
         pub(crate) fn mark_branch(&mut self, decision: u32, loc: bun_ast::Loc) {
             self.mark_branch_as(MarkKind::Branch, decision, loc);
@@ -2545,7 +2547,7 @@ pub(crate) mod __gated_printer {
 
         #[inline]
         pub(crate) fn mark_branch_as(&mut self, kind: MarkKind, decision: u32, loc: bun_ast::Loc) {
-            if !GENERATE_SOURCE_MAP || decision == 0 {
+            if !GENERATE_SOURCE_MAP || !ASCII_ONLY || decision == 0 {
                 return;
             }
             self.source_map_builder
@@ -2601,7 +2603,7 @@ pub(crate) mod __gated_printer {
             let Some((last, others)) = cases.split_last() else {
                 return 0;
             };
-            // JSC has one count for a clause, whether it matched or the clause above fell through to it.
+            // JSC has one count for a clause, whether it matched or the one above fell through.
             let has_implicit_branch = last.value.is_some()
                 && others.iter().all(|case| {
                     case.value.is_some()
@@ -5338,7 +5340,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// `target_loc`: what `initial` is the default of. `None` for a class field, which always runs it.
+        /// `target_loc`: what `initial` is the default of. `None` for a class field.
         pub(crate) fn print_initializer(
             &mut self,
             initial: Expr,

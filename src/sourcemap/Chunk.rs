@@ -632,14 +632,14 @@ impl NewBuilder<'_, VLQSourceMap> {
         // VLQ has nowhere to keep a mark.
         if let Some(internal) = &mut self.source_map.ctx.internal {
             let generated = LineColumnOffset {
-                lines: Ordinal(self.prev_state.generated_line),
-                columns: Ordinal(self.generated_column.max(0)),
+                lines: Ordinal::from_zero_based(self.prev_state.generated_line),
+                columns: Ordinal::from_zero_based(self.generated_column.max(0)),
             };
             internal.mark(Mark::new(kind, decision, generated, original));
         }
     }
 
-    /// `None`: the source has no lines.
+    /// `None`: there is no line offset table.
     #[inline(always)]
     fn original_position(&mut self, loc: Loc) -> Option<LineColumnOffset> {
         if let LineOffsetTables::Deferred {
@@ -707,8 +707,8 @@ impl NewBuilder<'_, VLQSourceMap> {
         }
 
         Some(LineColumnOffset {
-            lines: Ordinal(original_line.max(0)),
-            columns: Ordinal(original_column.max(0)),
+            lines: Ordinal::from_zero_based(original_line.max(0)),
+            columns: Ordinal::from_zero_based(original_column.max(0)),
         })
     }
 

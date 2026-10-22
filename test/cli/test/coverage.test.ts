@@ -1446,6 +1446,38 @@ export function never(v) {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent.each(["transpiled", "// @bun", "// @bun with a source map"] as const)(
+    "a pattern with a default is on its own line: %s",
+    async mode => {
+      const { record, above, exitCode } = await coverageOfLib(
+        mode,
+        `export function f(
+  never = () => {
+    return 1;
+  },
+  { b } = {},
+) {
+  return b;
+}
+`,
+        `
+          import { test } from "bun:test";
+          import { f } from "./lib.js";
+          test("lib", () => {
+            f(null);
+            f(null, { b: 2 });
+          });
+        `,
+      );
+      expect(decisionsOf(record)).toEqual([
+        [2 + above, [0, 2]],
+        [5 + above, [1, 1]],
+      ]);
+      expect(record).toContain(`DA:${3 + above},0\n`);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrent.each(["transpiled", "// @bun"] as const)(
     "an inlined const has the position of the name it replaces: %s",
     async mode => {
@@ -1486,6 +1518,7 @@ export function inlined(v, o, t = M) { // [3,0]
 
   test.concurrent("a file that is nested too deep is an error", async () => {
     // A debug build has depths that the parser takes and the printer does not. Which ones depends on the build.
+    // A build without one only has files that load and files that the parser rejects.
     const depths = [...Array.from({ length: 18 }, (_, i) => Math.round(100 * 1.25 ** i)), 102400];
     const nested = (depth: number) =>
       Buffer.alloc(depth * 10, "v && x?.b(").toString() + "x?.b" + Buffer.alloc(depth, ")").toString();
@@ -1518,9 +1551,11 @@ export function inlined(v, o, t = M) { // [3,0]
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("code generated for TypeScript and JSX syntax adds no branches", async () => {
-    using dir = tempDir("cov-branches-ts", {
-      "lib.tsx": `enum Color { Red, Green = "g" }
+  test.concurrent.each(["lib.tsx", "bundle.js"])(
+    "code that the transpiler generates adds no branches: %s",
+    async file => {
+      using dir = tempDir("cov-branches-ts", {
+        "lib.tsx": `enum Color { Red, Green = "g" }
 export namespace Outer { export const a = Color.Red; export namespace Inner { export const b = 2; } }
 function decorate(value: any, context: any) { return value; }
 class Base { x = 1; static s = 2; constructor(public q: number, readonly r?: number) {} }
@@ -1532,27 +1567,38 @@ export async function each(list: any) { for await (const x of list) { new Derive
 export function leave() { try { return 1; } catch { return 2; } finally { Outer.a; } }
 export function loop(n: number) { for (let i = 0; i < n; i++) {} while (n-- > 0) {} do {} while (n++ < 0); for (const k in {}) {} }
 `,
-      "node_modules/react/package.json": `{ "name": "react", "version": "0.0.0" }`,
-      "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = () => ({}); export const Fragment = 1;`,
-      "lib.test.ts": `
+        "node_modules/react/package.json": `{ "name": "react", "version": "0.0.0" }`,
+        "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = () => ({}); export const Fragment = 1;`,
+        "lib.test.ts": `
         import { test } from "bun:test";
-        import * as lib from "./lib.tsx";
+        import * as lib from "./${file}";
         test("lib", async () => { await lib.dispose(); await lib.each([1]); lib.element({}); lib.leave(); lib.loop(1); });
       `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "inherit",
-    });
-    const exitCode = await proc.exited;
-    const record = recordOf(String(dir), "lib.tsx");
-    expect(decisionsOf(record)).toEqual([]);
-    expect(record).toContain("BRF:0\nBRH:0\n");
-    expect(exitCode).toBe(0);
-  });
+      });
+      if (file === "bundle.js") {
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "./lib.tsx", "--target=bun", "--sourcemap=linked", "--outfile=bundle.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "inherit",
+        });
+        expect(await build.exited).toBe(0);
+      }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+      const record = recordOf(String(dir), file);
+      expect(decisionsOf(record)).toEqual([]);
+      expect(record).toContain("BRF:0\nBRH:0\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent.each([
     ["coverageThreshold = 0.9", 0],

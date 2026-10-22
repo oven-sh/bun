@@ -346,7 +346,7 @@ Wherever the code goes one of several ways, each way is a branch, whether or not
 In a `switch`, a `case` counts when it matches. The exception is a `case` that has statements and falls through to the next one, because it does not end in `break`, `continue`, `return` or `throw`:
 
 - The next `case` counts those runs too.
-- Bun reports no "no match" branch for that `switch`.
+- That `switch` has no branch for "no match".
 
 The body of a loop and a `catch` block are not branches. Line coverage shows whether they ran.
 

@@ -533,6 +533,15 @@ export const cases: Record<string, Case> = {
  3|    ;
  3|  for (const x of list)
  3|    ;
+ 3|  for (const k in list)
+ 3|    ;
+ 6|  for (let i = 0; i < v; i++)
+ 3|    ;
+ 3|  do
+ 3|    ;
+ 3|  while (r < 0);
+ 3|  label:
+ 3|    ;
  -|}
  0|export function never(v: number) {
  0|  if (v)

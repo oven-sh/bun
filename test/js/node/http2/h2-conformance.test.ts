@@ -2401,6 +2401,19 @@ describe("received field values (RFC 9113 §8.2.1, §8.3)", () => {
     },
   );
 
+  test("a :protocol with whitespace at an edge is valid without strictFieldWhitespaceValidation", async () => {
+    const settings = { enableConnectProtocol: true };
+    const connect = { ...request, ":method": "CONNECT" };
+    for (const value of [" websocket", "websocket ", "\twebsocket", "websocket\t"]) {
+      const fields = Object.entries({ ...connect, ":protocol": value });
+      expect([value, await sendRequest(fields, { settings })]).toEqual([value, refused]);
+      const loose = await sendRequest(fields, { settings, strictFieldWhitespaceValidation: false });
+      expect(loose.headers?.[":protocol"]).toBe(value);
+    }
+    const blank = Object.entries({ ...connect, ":protocol": " \t" });
+    expect(await sendRequest(blank, { settings, strictFieldWhitespaceValidation: false })).toEqual(refused);
+  });
+
   test.each([
     [":method", ["GE T", "G\tT", "G@T", "G(T", "G:T", "G\x01T", "G\x7fT", "G\xe9T"], ["get", "A-B", "!#$%&'*+.^_`|~"]],
     [

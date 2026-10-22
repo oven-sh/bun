@@ -319,6 +319,8 @@ pub(crate) struct Connection {
     /// session option; not a SETTINGS parameter). An empty DATA frame without END_STREAM counts
     /// as an invalid frame.
     pub max_invalid_frames: u32,
+    /// node's strictFieldWhitespaceValidation session option (not a SETTINGS parameter).
+    pub strict_field_whitespace: bool,
     /// The initial window size the peer has ACKed (RFC 9113 6.5.3): until our SETTINGS is ACKed,
     /// the peer may legitimately send according to the previous value - enforce the larger.
     acked_local_initial_window: u32,
@@ -393,6 +395,7 @@ impl Connection {
             frames_received: 0,
             frames_sent: 0,
             max_invalid_frames: 1000,
+            strict_field_whitespace: true,
             acked_local_initial_window: 65_535,
             enforced_max_header_list_size: local.max_header_list_size,
             pending_local_settings_acks: std::collections::VecDeque::new(),
@@ -1318,6 +1321,12 @@ impl Connection {
                             // malformed, so `:path: ""` never counts as a present :path (§8.3.1:
                             // `:path` "MUST NOT be empty" for http/https). JS drops a field with
                             // whitespace at an edge of its value, so it is not a present one either.
+                            // Without strictFieldWhitespaceValidation nghttp2 takes such a :protocol,
+                            // unless it is all whitespace.
+                            let edge_whitespace = has_edge_whitespace(value_b)
+                                && (self.strict_field_whitespace
+                                    || bit != pseudo::PROTOCOL
+                                    || value_b.iter().all(|c| matches!(c, b' ' | b'\t')));
                             if seen_regular
                                 || bit == pseudo::UNKNOWN
                                 || (seen_pseudo & bit) != 0
@@ -1325,7 +1334,7 @@ impl Connection {
                                 || protocol_disabled
                                 || is_trailer
                                 || value_b.is_empty()
-                                || has_edge_whitespace(value_b)
+                                || edge_whitespace
                                 || has_control_byte(value_b)
                                 || !pseudo::is_valid_value(bit, value_b)
                             {

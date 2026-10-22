@@ -71,6 +71,8 @@ describe("path.win32.matchesGlob(path, glob)", () => {
     ["foo\\bar\\baz", "foo/[bcr]ar/baz"],
     ["a\\x", "a/{**,b}/*"],
     ["a\\x\\", "a/{**,b}/*"],
+    ["a\\.\\b", "*{zz,[!x]}*/*"],
+    ["b\\..\\aa", "*[!x]*{zz,[!x]}*"],
   ])("path '%s' matches gattern '%s'", (pathname, glob) => {
     expect(path.win32.matchesGlob(pathname, glob)).toBeTrue();
   });

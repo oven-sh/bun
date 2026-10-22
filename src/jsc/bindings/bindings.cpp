@@ -706,6 +706,22 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
     return JSValue();
 }
 
+// Whether two arrays hold the same number of elements from `from` on, when the first one lacks `missing` elements before it.
+static NEVER_INLINE bool haveSameElementCount(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2, uint64_t from, uint64_t length, uint64_t missing)
+{
+    uint64_t count1 = 0;
+    uint64_t count2 = missing;
+    for (uint64_t i = from; i < length; i++) {
+        JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+        RETURN_IF_EXCEPTION(scope, false);
+        count1 += !left.isEmpty();
+        count2 += !right.isEmpty();
+    }
+    return count1 == count2;
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
 
@@ -731,14 +747,36 @@ static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
         || hasIndexedProperties(structure->indexingType());
 }
 
+// The named properties of an array, a typed array or a DataView live in its structure; `length` and the indices do not.
+static ALWAYS_INLINE bool hasNamedProperties(JSC::Structure* structure)
+{
+    return structure->outOfLineSize() != 0 || structure->inlineSize() != 0;
+}
+
+static ALWAYS_INLINE bool isFloatTypedArrayType(uint8_t type)
+{
+    return type == Float16ArrayType || type == Float32ArrayType || type == Float64ArrayType;
+}
+
+// Two objects of one structure without own properties have nothing left to compare.
+static ALWAYS_INLINE bool sameStructureWithoutOwnProperties(JSCell* c1, JSCell* c2)
+{
+    return c1->structureID() == c2->structureID() && !hasExtraOwnProperties(c1->structure());
+}
+
 // node compares the non-index own properties of typed arrays as well;
 // only the node entry point (checkPrototypes) pays for this.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2)
 {
     VM& vm = globalObject->vm();
-    JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    if (!hasNamedProperties(o1->structure()) && !hasNamedProperties(o2->structure())) {
+        return true;
+    }
+    // node's loose mode leaves symbol keys out (SKIP_SYMBOLS).
+    constexpr PropertyNameMode propertyNameMode = isStrict ? PropertyNameMode::StringsAndSymbols : PropertyNameMode::Strings;
+    JSC::PropertyNameArrayBuilder a1(vm, propertyNameMode, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder a2(vm, propertyNameMode, PrivateSymbolMode::Exclude);
     o1->getOwnNonIndexPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, false);
     o2->getOwnNonIndexPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
@@ -820,9 +858,134 @@ static bool isWellKnownConstructor(JSValue value)
         || info == WebCore::JSBufferConstructor::info();
 }
 
+// objectPrototypeToString is always inlined and large; the tag rule below shares this one copy.
+static NEVER_INLINE JSString* objectTagString(JSC::JSGlobalObject* globalObject, JSObject* object)
+{
+    return objectPrototypeToString(globalObject, object);
+}
+
+// node's hasUnequalTag (`rawTags`) and slowHasUnequalTag (lib/internal/util/comparisons.js).
+static NEVER_INLINE bool toStringTagsDiffer(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2, bool rawTags)
+{
+    VM& vm = globalObject->vm();
+    JSValue tag1 = o1->get(globalObject, vm.propertyNames->toStringTagSymbol);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue tag2 = o2->get(globalObject, vm.propertyNames->toStringTagSymbol);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (rawTags || (!tag1.isUndefined() && !tag2.isUndefined())) {
+        bool sameTag = JSC::JSValue::strictEqual(globalObject, tag1, tag2);
+        RETURN_IF_EXCEPTION(scope, false);
+        return !sameTag;
+    }
+    JSString* string1 = objectTagString(globalObject, o1);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSString* string2 = objectTagString(globalObject, o2);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (string1 == string2)
+        return false;
+    bool sameString = string1->equal(globalObject, string2);
+    RETURN_IF_EXCEPTION(scope, false);
+    return !sameString;
+}
+
+enum class ShownToStringTag : uint8_t {
+    None,
+    NonEnumerable,
+    Enumerable,
+};
+
+// The Symbol.toStringTag that `object` shows, own or inherited.
+static NEVER_INLINE ShownToStringTag shownToStringTag(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object)
+{
+    VM& vm = globalObject->vm();
+    JSObject* holder = object;
+    while (auto* proxy = dynamicDowncast<ProxyObject>(holder)) {
+        if (proxy->isRevoked())
+            break;
+        holder = proxy->target();
+    }
+    ShownToStringTag shown = ShownToStringTag::None;
+    {
+        PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool found = holder->getPropertySlot(globalObject, vm.propertyNames->toStringTagSymbol, slot);
+        RETURN_IF_EXCEPTION(scope, ShownToStringTag::None);
+        if (found)
+            shown = slot.attributes() & PropertyAttribute::DontEnum ? ShownToStringTag::NonEnumerable : ShownToStringTag::Enumerable;
+    }
+    if (object->type() != ProxyObjectType)
+        return shown;
+    // node reads the tag of a Proxy through its get trap. The target tells a tag of Bun's own from one the trap makes.
+    JSValue tag = object->get(globalObject, vm.propertyNames->toStringTagSymbol);
+    RETURN_IF_EXCEPTION(scope, ShownToStringTag::None);
+    if (tag.isUndefined())
+        return ShownToStringTag::None;
+    return shown == ShownToStringTag::None ? ShownToStringTag::Enumerable : shown;
+}
+
+// node compares type tags on every pair. Bun has non-enumerable tags that node lacks (#42558, #41389), so one against no tag is skipped.
+static NEVER_INLINE bool shownToStringTagsDiffer(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2, bool rawTags)
+{
+    // The kinds whose raw tags node compares have no tag of Bun's own.
+    if (!rawTags) {
+        auto shown1 = shownToStringTag(globalObject, scope, o1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (shown1 != ShownToStringTag::Enumerable) {
+            auto shown2 = shownToStringTag(globalObject, scope, o2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (shown2 != ShownToStringTag::Enumerable && (shown1 == ShownToStringTag::None || shown2 == ShownToStringTag::None))
+                return false;
+        }
+    }
+    return toStringTagsDiffer(globalObject, scope, o1, o2, rawTags);
+}
+
+// False when the structure of `object` holds every own symbol key and no Symbol.toStringTag.
+static ALWAYS_INLINE bool mayHoldToStringTag(VM& vm, JSObject* object, unsigned& attributes)
+{
+    auto type = object->type();
+    // An Error, an array and a RegExp keep `stack`, `length` and `lastIndex` outside the structure, and no symbol.
+    if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && type != ErrorInstanceType && type != ArrayType && type != DerivedArrayType && type != RegExpObjectType) {
+        attributes = static_cast<unsigned>(PropertyAttribute::Accessor);
+        return true;
+    }
+    return object->structure()->get(vm, vm.propertyNames->toStringTagSymbol, attributes) != invalidOffset;
+}
+
+// Two objects can show different tags through two prototypes, an own tag, or a getter on the prototype they share.
+static ALWAYS_INLINE bool mayShowDifferentToStringTags(JSC::JSGlobalObject* globalObject, JSObject* o1, JSObject* o2)
+{
+    VM& vm = globalObject->vm();
+    JSValue prototype = o1->getPrototypeDirect();
+    unsigned attributes;
+    if (prototype != o2->getPrototypeDirect() || mayHoldToStringTag(vm, o1, attributes) || mayHoldToStringTag(vm, o2, attributes))
+        return true;
+    // Object.prototype ends the walk: a tag there takes prototype pollution.
+    JSObject* objectPrototype = globalObject->objectPrototype();
+    while (prototype.isObject() && asObject(prototype) != objectPrototype) {
+        if (mayHoldToStringTag(vm, asObject(prototype), attributes))
+            return attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor);
+        prototype = asObject(prototype)->getPrototypeDirect();
+    }
+    return false;
+}
+
+static ALWAYS_INLINE bool comparesRawToStringTag(uint8_t type)
+{
+    return type == JSSetType || type == JSMapType || type == JSDateType || type == RegExpObjectType || type == ArrayBufferType;
+}
+
+static ALWAYS_INLINE bool isArgumentsType(uint8_t type)
+{
+    return type == DirectArgumentsType || type == ScopedArgumentsType || type == ClonedArgumentsType;
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
+    constexpr bool kNodeLoose = !isStrict && checkPrototypes;
+    // node's loose mode (assert.deepEqual) compares keys, holes and lengths as exactly as its strict mode.
+    constexpr bool kExactKeys = isStrict || kNodeLoose;
+
     VM& vm = globalObject->vm();
     if (!vm.isSafeToRecurse()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
@@ -868,8 +1031,26 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (v1.isEmpty() || v2.isEmpty())
         return v1.isEmpty() == v2.isEmpty();
 
-    if (v1.isPrimitive() || v2.isPrimitive())
-        return false;
+    if constexpr (checkPrototypes) {
+        // `typeof` sorts a callable with the non-objects. node compares two of them with `==` in loose mode only.
+        bool v1IsObject = v1.isObject() && !v1.isCallable();
+        bool v2IsObject = v2.isObject() && !v2.isCallable();
+        if (!v1IsObject || !v2IsObject) {
+            if constexpr (isStrict) {
+                return false;
+            } else {
+                if (v1IsObject || v2IsObject) {
+                    return false;
+                }
+                bool looselyEqual = JSC::JSValue::equal(globalObject, v1, v2);
+                RETURN_IF_EXCEPTION(scope, false);
+                return looselyEqual;
+            }
+        }
+    } else {
+        if (v1.isPrimitive() || v2.isPrimitive())
+            return false;
+    }
 
     RELEASE_ASSERT(v1.isCell());
     RELEASE_ASSERT(v2.isCell());
@@ -906,9 +1087,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     ASSERT(c1);
     ASSERT(c2);
 
-    // node's objectComparisonStart (lib/internal/util/comparisons.js): the constructor /
-    // [[Prototype]] rule in strict mode, then equal Object.prototype.toString tags in every mode.
-    if constexpr (checkPrototypes) {
+    // node's objectComparisonStart (lib/internal/util/comparisons.js): the constructor / [[Prototype]] rule, then equal Object.prototype.toString results. node also compares two tags that are no strings, which only the loose mode does (shownToStringTagsDiffer).
+    if constexpr (isStrict && checkPrototypes) {
         JSObject* protoCheck1 = v1.getObject();
         JSObject* protoCheck2 = v2.getObject();
         if (protoCheck1 && protoCheck2) {
@@ -967,22 +1147,79 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
-    std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
-    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    bool v1Array = false;
+    bool v2Array = false;
+    bool isPlainPair = false;
+    if constexpr (kNodeLoose) {
+        uint8_t c1Type = c1->type();
+        uint8_t c2Type = c2->type();
+        // Two plain objects are no arrays and take no special comparison.
+        isPlainPair = c1Type == FinalObjectType && c2Type == FinalObjectType;
+        bool rawTags = false;
+        if (!isPlainPair) {
+            v1Array = isArray(globalObject, v1);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (v1Array) {
+                v2Array = isArray(globalObject, v2);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            // node asks for the kind of the expected value before it reads a tag of these kinds.
+            rawTags = v1Array || comparesRawToStringTag(c1Type);
+            if (v1Array != v2Array || (!v1Array && rawTags && c1Type != c2Type)) {
+                return false;
+            }
+        }
+        // node compares the tags before the contents. An ArrayBuffer view compares its kind instead.
+        if (!isTypedArrayTypeIncludingDataView(static_cast<JSC::JSType>(c1Type)) && mayShowDifferentToStringTags(globalObject, v1.getObject(), v2.getObject())) {
+            bool tagsDiffer = shownToStringTagsDiffer(globalObject, scope, v1.getObject(), v2.getObject(), rawTags);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (tagsDiffer) {
+                return false;
+            }
+        }
+        // An arguments object has a type tag of its own ([object Arguments]).
+        if (c1Type != c2Type && isArgumentsType(c1Type) != isArgumentsType(c2Type)) {
+            return false;
+        }
+    }
+
+    if (!isPlainPair) {
+        std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+        bool swapOperands = true;
+        if constexpr (checkPrototypes) {
+            // node's Set, Map and Error comparisons take both operands at once.
+            uint8_t type = c1->type();
+            swapOperands = type != c2->type() || (type != JSSetType && type != JSMapType && type != ErrorInstanceType);
+        }
+        if (swapOperands) {
+            isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+        }
+    }
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
 
-    bool v1Array = isArray(globalObject, v1);
-    RETURN_IF_EXCEPTION(scope, false);
-    bool v2Array = isArray(globalObject, v2);
-    RETURN_IF_EXCEPTION(scope, false);
+    if constexpr (kNodeLoose) {
+        // node asks whether the expected value is an array after the comparisons above, unless the actual one is.
+        if (!v1Array && !isPlainPair) {
+            bool expectedIsArray = isArray(globalObject, v2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (expectedIsArray) {
+                return false;
+            }
+        }
+    } else {
+        v1Array = isArray(globalObject, v1);
+        RETURN_IF_EXCEPTION(scope, false);
+        v2Array = isArray(globalObject, v2);
+        RETURN_IF_EXCEPTION(scope, false);
 
-    if (v1Array != v2Array)
-        return false;
+        if (v1Array != v2Array)
+            return false;
+    }
 
     if (v1Array && v2Array && !(o1->isProxy() || o2->isProxy())) {
         JSC::JSArray* array1 = uncheckedDowncast<JSC::JSArray>(v1);
@@ -990,12 +1227,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         size_t array1Length = array1->length();
         size_t array2Length = array2->length();
-        if constexpr (isStrict) {
+        if constexpr (kExactKeys) {
             if (array1Length != array2Length) {
                 return false;
             }
         }
 
+        [[maybe_unused]] bool expectedIsSparse = false;
+        [[maybe_unused]] uint64_t holesOppositeNull = 0;
         uint64_t i = 0;
         for (; i < array1Length; i++) {
             JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
@@ -1003,7 +1242,27 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
             RETURN_IF_EXCEPTION(scope, false);
 
-            if constexpr (isStrict) {
+            if constexpr (kNodeLoose) {
+                if (right.isEmpty()) {
+                    if (!expectedIsSparse) {
+                        // node's sparseArrayEquiv: from the first expected hole on, the arrays need equal key counts, and only the expected elements compare.
+                        expectedIsSparse = true;
+                        bool sameCount = haveSameElementCount(globalObject, scope, o1, o2, i, array1Length, holesOppositeNull);
+                        RETURN_IF_EXCEPTION(scope, false);
+                        if (!sameCount) {
+                            return false;
+                        }
+                    }
+                    continue;
+                }
+                if (right.isNull() && !expectedIsSparse) {
+                    // node accepts every element, and a hole, against an expected null (objEquiv, nodejs/node#61587).
+                    holesOppositeNull += left.isEmpty();
+                    continue;
+                }
+            }
+
+            if constexpr (kExactKeys) {
                 if (left.isEmpty() && right.isEmpty()) {
                     continue;
                 }
@@ -1012,7 +1271,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            if constexpr (!isStrict) {
+            if constexpr (!kExactKeys) {
                 if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
                     continue;
                 }

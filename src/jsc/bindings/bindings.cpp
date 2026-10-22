@@ -1689,23 +1689,56 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
 }
 
 struct DeepEqualsMode {
-    bool isStrict;
+    // Keys, holes, lengths and classes compare exactly: every strict relation, and node's loose one.
+    bool exactKeys;
     bool enableAsymmetricMatchers;
     bool checkPrototypes;
     bool skipPrototypeIdentity;
+    // Float arrays compare by value, and node pairs a primitive Set or Map entry off under `==`.
+    bool looseValues;
     bool (*deepEquals)(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, bool);
     bool (*nonIndexOwnPropertiesEqual)(JSC::JSGlobalObject*, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, JSObject*, JSObject*);
 };
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 static constexpr DeepEqualsMode deepEqualsMode {
-    isStrict,
-    enableAsymmetricMatchers,
-    checkPrototypes,
-    skipPrototypeIdentity,
-    &Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>,
-    checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
+    .exactKeys = isStrict || checkPrototypes,
+    .enableAsymmetricMatchers = enableAsymmetricMatchers,
+    .checkPrototypes = checkPrototypes,
+    .skipPrototypeIdentity = skipPrototypeIdentity,
+    .looseValues = !isStrict,
+    .deepEquals = &Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>,
+    .nonIndexOwnPropertiesEqual = checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
+static_assert(deepEqualsMode<false, false, true, true>.exactKeys && deepEqualsMode<false, false, true, true>.looseValues);
+
+// node's isURL (lib/internal/url.js) and the `href` comparison after it, for the operand opposite a URL.
+static NEVER_INLINE bool looksLikeURLWithHref(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, const String& href)
+{
+    VM& vm = globalObject->vm();
+    // The loose mode lets an object without a type tag come this far.
+    auto shown = shownToStringTag(globalObject, scope, object);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (shown == ShownToStringTag::None)
+        return false;
+    JSValue objectHref = object->get(globalObject, Identifier::fromString(vm, "href"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    bool sameHref = JSC::JSValue::strictEqual(globalObject, objectHref, jsString(vm, href));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!sameHref)
+        return false;
+    JSValue protocol = object->get(globalObject, Identifier::fromString(vm, "protocol"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!protocol.toBoolean(globalObject))
+        return false;
+    for (ASCIILiteral name : { "auth"_s, "path"_s }) {
+        JSValue value = object->get(globalObject, Identifier::fromString(vm, name));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!value.isUndefined())
+            return false;
+    }
+    return true;
+}
 
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
 // and take the mode at runtime; only the dispatch and the plain-object tail in

@@ -519,10 +519,8 @@ pub(crate) fn package_after_clean(
     let old_buf = before_clean.buffers.string_bytes.as_slice();
     let new_res = cleaned.packages.items_resolution();
     let new_buf = cleaned.buffers.string_bytes.as_slice();
-    let entry =
-        (cleaned.package_index).get(&before_clean.packages.items_name_hash()[old_id as usize])?;
-    (entry.as_slice().iter().copied())
-        .find(|&id| new_res[id as usize].eql(old_res, new_buf, old_buf))
+    let named = cleaned.packages_named(before_clean.packages.items_name_hash()[old_id as usize]);
+    (named.iter().copied()).find(|&id| new_res[id as usize].eql(old_res, new_buf, old_buf))
 }
 
 /// Packages of `cleaned` that the `moved` edges of `before_clean` resolved to, for seeding the security scan.

@@ -949,7 +949,7 @@ describe("an entry is resolved again after other packages of the same install", 
       GIT_COMMITTER_NAME: "bun",
       GIT_COMMITTER_EMAIL: "bun@example.com",
     });
-    await git`git -c init.defaultBranch=main init --quiet && git add . && git commit --quiet -m 1.0.0 && git branch other`;
+    await git`git -c init.defaultBranch=main init --quiet && git add . && git -c commit.gpgsign=false commit --quiet -m 1.0.0 && git branch other`;
     commit = (await git`git rev-parse HEAD`.text()).trim();
     await publish(registry, [
       ...family("remote-dep", { dependencies: { "no-deps": tarball() } }),

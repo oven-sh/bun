@@ -2437,8 +2437,9 @@ fn rebind_to_cleaned_lockfile(manager: &mut PackageManager, before_first_clean: 
     }
     // The peer pass of the first pass is over.
     manager.look_ahead.in_peer_pass = false;
+    manager.peer_askers = None;
     // A clean has no mapping for rows, so the rows that the first pass left waiting are dropped.
-    while manager.peer_dependencies.read_item().is_some() {}
+    (manager.peer_dependencies).discard(manager.peer_dependencies.readable_length());
     for waiters in manager.task_queue.values_mut() {
         waiters.retain(|waiter| !matches!(waiter, TaskCallbackContext::Dependency(_)));
     }

@@ -18,7 +18,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
   path: string | null | undefined;
   _write: import("node:fs").WriteStream["_write"] | null;
   _writev: import("node:fs").WriteStream["_writev"] | null;
-  _writableState?: { ending: boolean; destroyed: boolean };
+  _writableState?: { ending: boolean; destroyed: boolean; finished: boolean };
   flags: string;
   mode: number;
   start: number;
@@ -504,7 +504,6 @@ writeStreamPrototype._construct = streamConstruct;
 // does. Writable alone would reject it, as node does for a net.Socket. A
 // prototype method, not an own property: pino's sonic-boom takes its fast
 // path only when `stream.write === stream.constructor.prototype.write`.
-const writablePrototypeWrite = Writable.prototype.write;
 writeStreamPrototype.write = function (this: FSStream, chunk, encoding, cb) {
   if (
     typeof chunk === "object" &&
@@ -515,7 +514,7 @@ writeStreamPrototype.write = function (this: FSStream, chunk, encoding, cb) {
   ) {
     chunk = new Uint8Array(chunk);
   }
-  return writablePrototypeWrite.$call(this, chunk, encoding, cb);
+  return Writable.prototype.write.$call(this, chunk, encoding, cb);
 };
 
 function writeAll(data, size, pos, cb, retries = 0) {
@@ -615,7 +614,12 @@ function underscoreWriteFast(this: FSStream, chunk: any, encoding: any, cb: any)
   }
 
   if ($isPromise(maybePromise)) {
-    maybePromise.then(() => cb(null), cb);
+    // Off the microtask: a throw from 'drain' or the write callback is then
+    // an uncaughtException, as in node, not an unhandledRejection.
+    maybePromise.then(
+      () => process.nextTick(cb, null),
+      err => process.nextTick(cb, err),
+    );
   } else {
     cb(null);
   }
@@ -633,16 +637,21 @@ function underscoreWritevFast(this: FSStream, data: any, cb: any) {
   underscoreWriteFast.$call(this, len === 1 ? chunks[0] : Buffer.concat(chunks), "buffer", cb);
 }
 
+// A flush failure reports on a later tick, as a failed shutdown does in node:
+// a destroy() made right after end() drops it.
 function finalFast(this: FSStream, cb: (err?: any) => void) {
   const fileSink = this[kWriteStreamFastPath]!;
   try {
     const maybePromise = fileSink.flush();
     if ($isPromise(maybePromise)) {
-      maybePromise.then(() => cb(null), cb);
+      maybePromise.then(
+        () => process.nextTick(cb, null),
+        err => process.nextTick(cb, err),
+      );
       return;
     }
   } catch (err) {
-    cb(err);
+    process.nextTick(cb, err);
     return;
   }
   cb(null);
@@ -676,9 +685,17 @@ writeStreamPrototype._writev = function (data, cb) {
 writeStreamPrototype._destroy = function (err, cb) {
   const sink = this[kWriteStreamFastPath];
   if (sink) {
-    const end = sink.end(err);
+    // Before 'finish' node drops this write error. After 'finish' it is the only report of a failed end().
+    const onEndFailure = this._writableState.finished ? cb : () => cb(err);
+    let end;
+    try {
+      end = sink.end(err);
+    } catch (e) {
+      onEndFailure(e);
+      return;
+    }
     if ($isPromise(end)) {
-      end.then(() => cb(err), cb);
+      end.then(() => cb(err), onEndFailure);
       return;
     }
   }
@@ -729,7 +746,9 @@ Object.defineProperty(writeStreamPrototype, "autoClose", {
 
 Object.defineProperty(writeStreamPrototype, "pending", {
   get() {
-    return this.fd === null;
+    if (this.fd !== null) return false;
+    // Over an open sink (child.stdin) there is nothing to open: pending only once destroyed, as in node.
+    return this[kWriteStreamFastPath] === undefined || this.destroyed;
   },
   configurable: true,
 });

@@ -236,6 +236,45 @@ describe("child.stdin", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The sink is open from the start: nothing to open, so no 'open' or 'ready', and pending only once destroyed.
+  it("is constructed and not pending when created, and emits neither 'open' nor 'ready'", async () => {
+    const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: ["pipe", "ignore", "ignore"] });
+    const stdin = child.stdin;
+    const atBirth = { constructed: stdin._writableState.constructed, pending: stdin.pending };
+    const events = [];
+    for (const name of ["open", "ready"]) stdin.on(name, () => events.push(name));
+    await once(child, "close");
+    expect({ atBirth, events, pendingOnceDestroyed: stdin.pending }).toEqual({
+      atBirth: { constructed: true, pending: false },
+      events: [],
+      pendingOnceDestroyed: true,
+    });
+  });
+
+  // The flush that destroy() makes fails with EPIPE. Node drops a write error on a stream destroyed before 'finish'.
+  it.skipIf(isWindows)("end(chunk) then destroy() to a child that closed its stdin reports no error", async () => {
+    const child = spawn(
+      bunExe(),
+      ["-e", `require("fs").closeSync(0); process.stdout.write("ready\\n"); setInterval(() => {}, 1e5);`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "inherit"] },
+    );
+    await once(child.stdout, "data");
+    const stdin = child.stdin;
+    const events = [];
+    const closed = Promise.withResolvers();
+    stdin.on("error", e => events.push("error:" + e.code));
+    stdin.on("close", () => {
+      events.push("close");
+      process.nextTick(closed.resolve);
+    });
+    stdin.end("hello");
+    stdin.destroy();
+    await closed.promise;
+    expect(events).toEqual(["close"]);
+    child.kill();
+    await once(child, "close");
+  });
+
   it("write() is inherited from the prototype", async () => {
     const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: ["pipe", "ignore", "ignore"] });
     expect({

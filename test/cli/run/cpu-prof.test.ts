@@ -444,4 +444,30 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // "%80" decodes to a byte that isn't valid UTF-8. Windows decodes it to U+FFFD.
+  test.skipIf(isWindows)("--cpu-prof-md prints a source's URL when the URL can't be converted to a path", async () => {
+    using dir = tempDir("cpu-prof-md-source-url", {
+      "test.js": `
+        const loop = require("node:vm").runInThisContext(
+          "(function loop() { const end = Date.now() + 300; let x = 0; while (Date.now() < end) { for (let i = 0; i < 1e4; i++) x += Math.sqrt(i); } return x; })",
+          { filename: "file:///%80.js" },
+        );
+        loop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof-md", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+    const mdFiles = readdirSync(String(dir)).filter(f => f.endsWith(".md") && f.startsWith("CPU."));
+    expect({ exitCode, profiles: mdFiles.length }).toEqual({ exitCode: 0, profiles: 1 });
+    expect(readFileSync(join(String(dir), mdFiles[0]), "utf-8")).toContain("| `loop` | `file:///%80.js");
+  });
 });

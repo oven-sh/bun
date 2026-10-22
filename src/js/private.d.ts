@@ -226,8 +226,6 @@ type RequireMap = Map<string, JSCommonJSModule>;
 interface JSCommonJSModule {
   /** The require cache the module reads and writes: the global one, or its Bun.ModuleGraph's. */
   readonly $requireMap: RequireMap;
-  $require(id: string, mod: any, args_count: number, args: Array): any;
-  $requireNativeModule(id: string): any;
   children: JSCommonJSModule[];
   exports: any;
   id: string;

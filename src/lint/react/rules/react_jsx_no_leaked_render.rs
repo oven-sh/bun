@@ -30,8 +30,8 @@ impl Rule for JsxNoLeakedRender {
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
-        let given = config.strings("validStrategies");
-        let strategies = if config.has("validStrategies") { &given[..] } else { &["ternary", "coerce"][..] };
+        let configured = config.strings("validStrategies");
+        let strategies = if config.has("validStrategies") { &configured[..] } else { &["ternary", "coerce"][..] };
         let strategy_of = |it: &&str| if *it == "coerce" { Strategy::Coerce } else { Strategy::Ternary };
         JsxNoLeakedRender {
             allows_ternary: strategies.contains(&"ternary"),
@@ -62,7 +62,7 @@ impl Rule for JsxNoLeakedRender {
 }
 
 impl JsxNoLeakedRender {
-    /// `ruleFixer`. Without a strategy upstream throws.
+    /// `ruleFixer`. Upstream throws if there's no strategy.
     fn fix<'a>(&self, fixer: Fixer<'a>, reported: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> Option<Fix> {
         let text = match self.fix_strategy? {
             Strategy::Coerce => coerced(reported, left, right)?,
@@ -104,7 +104,7 @@ fn check_conditional_expression<'a>(rule: &JsxNoLeakedRender, e: Expr<'a>, cx: &
     let ExprKind::Cond { test, yes, no } = e.kind() else {
         return;
     };
-    // `TERNARY_INVALID_ALTERNATE_VALUES`: `undefined` is also the `value` of what is no `Literal`.
+    // `TERNARY_INVALID_ALTERNATE_VALUES`. `undefined` is also the `value` of anything that isn't a `Literal`.
     let is_valid_alternate = match no.kind() {
         ExprKind::Jsx(jsx) => !jsx.is_fragment(),
         _ => ast_utils::is_literal(no) && !matches!(no.tag(), ExprTag::Null | ExprTag::False),
@@ -118,7 +118,7 @@ fn is_logical_expression(e: Expr) -> bool {
     matches!(e.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish))
 }
 
-/// The `argument` of a `UnaryExpression`.
+/// Returns a `UnaryExpression`'s `argument`.
 fn unary_argument(e: Expr<'_>) -> Option<Expr<'_>> {
     match e.kind() {
         ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => None,
@@ -155,7 +155,7 @@ fn extract_expression_between_logical_ands<'a>(mut e: Expr<'a>, all: &mut Vec<Ex
     }
 }
 
-/// It is a variable whose first declaration has `true` or `false` as its `init`.
+/// True if it's a variable whose first declaration has `true` or `false` as its `init`.
 fn is_declared_as_boolean(e: Expr) -> bool {
     let init = || match get_variable_from_context(Node::Expr(e), e.as_ident()?)?.declarations().next()?.node()? {
         Node::VarDecl(declaration) => declaration.init(),
@@ -164,9 +164,9 @@ fn is_declared_as_boolean(e: Expr) -> bool {
     matches!(init().map(Expr::tag), Some(ExprTag::True | ExprTag::False))
 }
 
-/// What the strategy `coerce` writes in place of `reported`.
+/// Returns the text that the `coerce` strategy replaces `reported` with.
 fn coerced<'a>(reported: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> Option<Vec<u8>> {
-    // The `no` of `left ? false : no`.
+    // The `no` in `left ? false : no`.
     let alternate_of_false = match reported.kind() {
         ExprKind::Cond { yes, no, .. } if yes.tag() == ExprTag::False => Some(no),
         _ => None,

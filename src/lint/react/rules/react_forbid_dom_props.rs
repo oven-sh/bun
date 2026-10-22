@@ -9,14 +9,14 @@ use bun_lint::rule::Plugin;
 struct ForbidPropOptions {
     prop_name: Box<[u8]>,
     disallowed_for: Option<Vec<Box<[u8]>>>,
-    /// Only oxlint has it.
+    /// oxlint only.
     disallowed_values: Option<Vec<Box<[u8]>>>,
     message: Option<Box<[u8]>>,
 }
 
 /// Disallow certain props on DOM Nodes.
 pub struct ForbidDomProps {
-    /// The last of a name counts.
+    /// If a name is repeated, the last entry counts.
     forbid: Vec<ForbidPropOptions>,
 }
 
@@ -68,12 +68,12 @@ impl Rule for ForbidDomProps {
             let Some(options) = self.forbid.iter().rev().find(|it| *it.prop_name == *prop_name) else {
                 continue;
             };
-            // oxlint takes an empty list for none.
+            // oxlint treats an empty list like a missing one.
             let disallowed_for = options.disallowed_for.as_deref().filter(|all| !is_oxlint || !all.is_empty());
             if disallowed_for.is_some_and(|all| !all.iter().any(|it| **it == *tag_name)) {
                 continue;
             }
-            // oxlint points at the name, and has texts of its own.
+            // oxlint reports the name, and has its own messages.
             if !is_oxlint {
                 match options.message.as_deref().filter(|it| !it.is_empty()) {
                     Some(message) => cx.report(attribute, CUSTOM).data("message", custom_message(message, prop_name)),
@@ -100,14 +100,14 @@ impl Rule for ForbidDomProps {
     }
 }
 
-/// The name of the element, if that is not a component.
+/// Returns the element's name, unless it's a component.
 fn dom_tag_name(jsx: Jsx<'_>, is_oxlint: bool) -> Option<&[u8]> {
     let name = match jsx.tag()?.tag() {
-        // oxlint has no name for it.
+        // oxlint has no name for `<this>`.
         ExprTag::This if !is_oxlint => b"this".as_slice(),
         _ => get_identifier_name(jsx)?.bytes(),
     };
-    // oxlint asks for a capital of ASCII.
+    // oxlint checks for an ASCII capital.
     if is_oxlint {
         return (!is_react_component_name(name)).then_some(name);
     }

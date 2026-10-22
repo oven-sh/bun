@@ -10,8 +10,8 @@ pub struct NoRegexSpaces;
 const MULTIPLE_SPACES: Message =
     Message::new("multipleSpaces", "Spaces are hard to count. Use {{{length}}}.");
 
-/// The first match of `/( {2,})(?: [+*{?]|[^+*{?]|$)/gu` at or after `from`: where the group
-/// starts, its length, and where to go on searching.
+/// Finds the first match of `/( {2,})(?: [+*{?]|[^+*{?]|$)/gu` at or after `from`. Returns the group's start, its
+/// length, and where to resume searching.
 fn next_spaces(pattern: &[u8], mut from: usize) -> Option<(usize, usize, usize)> {
     loop {
         let start = from + strings::index_of(pattern.get(from..)?, b"  ")?;
@@ -29,7 +29,7 @@ fn next_spaces(pattern: &[u8], mut from: usize) -> Option<(usize, usize, usize)>
     }
 }
 
-/// `raw`: the pattern as it is written in the source, from `raw_start`.
+/// `raw` is the pattern's source text, which starts at `raw_start`.
 fn check_regex<'a>(
     node_to_report: Expr<'a>,
     pattern: &'a [u8],
@@ -38,11 +38,11 @@ fn check_regex<'a>(
     flags: &[u8],
     cx: &mut Cx<'a, NoRegexSpaces>,
 ) {
-    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default())
+    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::from_flags(flags), regex::Options::default())
     else {
         return;
     };
-    // Where the character classes start, each with the greatest end of those up to it.
+    // The character classes sorted by start, each paired with the largest end so far.
     let mut character_classes: Option<Vec<(u32, u32)>> = None;
     let mut is_in_character_class = |index: u32| {
         let classes = character_classes.get_or_insert_with(|| {
@@ -124,11 +124,12 @@ fn check_function<'a>(_: &NoRegexSpaces, e: Expr<'a>, cx: &mut Cx<'a, NoRegexSpa
     check_regex(e, pattern.bytes(), raw, raw_span.start, flags, cx);
 }
 
-/// oxlint takes for a space whatever stands for one, and counts the bytes that they are written with. It passes over what is
-/// repeated, does not ask what `RegExp` is, and reads the pattern of a call without its flags. It points at the spaces.
+/// oxlint treats an escape that matches a space as a space too, and counts the bytes of the source text. It skips
+/// quantified spaces, doesn't check what `RegExp` refers to, and parses a call's pattern without its flags. It points
+/// at the spaces.
 fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoRegexSpaces>) {
     let pattern = match e.kind() {
-        ExprKind::Regex(literal) if has_double_space(literal.pattern()) => Pattern::of_literal(e),
+        ExprKind::Regex(literal) if has_double_space(literal.pattern()) => Pattern::from_literal(e),
         ExprKind::Call(call) | ExprKind::New(call) if get_inner_expression(call.callee()).is_ident("RegExp") => {
             let args = call.args();
             let may_be_flags = |it: Expr| match it.tag() {
@@ -148,18 +149,18 @@ fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoRegexSpaces>) {
     let Ok(ast) = regex::parse_pattern(pattern.text(), pattern.mode, regex::Options::default()) else {
         return;
     };
-    let is_passed_over = |it: regex::Node| matches!(it.ty(), NodeType::Quantifier | NodeType::CharacterClass);
+    let is_skipped = |it: regex::Node| matches!(it.ty(), NodeType::Quantifier | NodeType::CharacterClass);
     let mut found: Option<Span> = None;
     for node in ast.root().descendants() {
-        if node.character() != Some(u32::from(b' ')) || node.ancestors().any(is_passed_over) {
+        if node.character() != Some(u32::from(b' ')) || node.ancestors().any(is_skipped) {
             continue;
         }
-        let place = pattern.span(node.start(), node.end());
+        let space_span = pattern.span(node.start(), node.end());
         match &mut found {
-            Some(spaces) if spaces.end == place.start => spaces.end = place.end,
-            Some(spaces) if spaces.end - spaces.start == 1 => *spaces = place,
+            Some(spaces) if spaces.end == space_span.start => spaces.end = space_span.end,
+            Some(spaces) if spaces.end - spaces.start == 1 => *spaces = space_span,
             Some(_) => {}
-            None => found = Some(place),
+            None => found = Some(space_span),
         }
     }
     let Some((spaces, length)) = found.map(|it| (it, it.end - it.start)).filter(|it| it.1 > 1) else {

@@ -160,6 +160,14 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
 
+    // Everything below calls into simdutf, including the crash handler.
+    if !bun_simdutf_sys::simdutf::has_any_implementation() {
+        unsafe extern "C" {
+            safe fn bun_abort_missing_simd() -> !;
+        }
+        bun_abort_missing_simd();
+    }
+
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 

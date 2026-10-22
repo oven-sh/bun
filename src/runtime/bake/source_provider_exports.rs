@@ -146,6 +146,17 @@ pub(crate) fn add_bake_source_provider_source_map(
     );
 }
 
+// HOST_EXPORT(Bun__removeBakeSourceProviderSourceMap, c)
+pub(crate) fn remove_bake_source_provider_source_map(
+    vm: &mut VirtualMachine,
+    opaque_source_provider: *mut c_void,
+    specifier: &BunString,
+) {
+    let slice = specifier.to_utf8();
+    vm.source_mappings
+        .remove_source_provider(opaque_source_provider, slice.slice());
+}
+
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
 pub(crate) fn add_dev_server_source_provider(
     vm: &mut VirtualMachine,

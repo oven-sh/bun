@@ -4,9 +4,9 @@ use bun_lint::rule::Plugin;
 
 /// Enforce maximum of props on a single line in JSX
 pub struct JsxMaxPropsPerLine {
-    /// In a tag of one line. `None`: `Infinity`.
+    /// The limit in a single-line tag. `None`: `Infinity`.
     single: Option<usize>,
-    /// In a tag of several lines.
+    /// The limit in a multiline tag.
     multi: Option<usize>,
 }
 
@@ -19,7 +19,7 @@ impl Rule for JsxMaxPropsPerLine {
 
     fn new(options: &Options) -> Self {
         let configuration = options.object(0);
-        // With a number that is no integer upstream throws where it would report.
+        // With a non-integer upstream throws where it would otherwise report.
         let count = |it: Option<f64>| it.filter(|it| *it >= 1.0 && it.fract() == 0.0).map(|it| it as usize);
         if configuration.has("maximum") && configuration.number("maximum").is_none() {
             let maximum = configuration.object("maximum");
@@ -35,8 +35,8 @@ impl Rule for JsxMaxPropsPerLine {
             return;
         };
         let attributes = jsx.attrs();
-        let fits = |max: Option<usize>| max.is_none_or(|it| attributes.len() <= it);
-        if fits(self.single) && fits(self.multi) {
+        let is_within_limit = |max: Option<usize>| max.is_none_or(|it| attributes.len() <= it);
+        if is_within_limit(self.single) && is_within_limit(self.multi) {
             return;
         }
         let file = cx.file();
@@ -44,7 +44,7 @@ impl Rule for JsxMaxPropsPerLine {
         let Some(max) = (if is_single_line_tag { self.single } else { self.multi }) else {
             return;
         };
-        // `linePartitionedProps`, one after the other: where the line starts, and how many it has.
+        // `linePartitionedProps`, one line at a time: where the line starts and how many props it has.
         let mut rest = attributes.iter();
         let (mut line, mut count, mut last) = (rest, 0, None::<Prop<'a>>);
         loop {
@@ -63,7 +63,7 @@ impl Rule for JsxMaxPropsPerLine {
     }
 }
 
-/// The first `count` of `line` are the attributes of one line.
+/// The first `count` items of `line` are the attributes on one line.
 fn check_line<'a>(
     mut line: ListIter<'a, Prop<'a>>,
     count: usize,
@@ -77,7 +77,7 @@ fn check_line<'a>(
     let Some(prop) = line.nth(max) else {
         return;
     };
-    // `getPropName`: of `a:b` upstream takes the node `b` for the name.
+    // `getPropName`: for `a:b` upstream uses the node `b` as the name.
     let name = match prop.key().and_then(Key::name) {
         Some(name) if strings::contains_char(name.bytes(), b':') => &b"[object Object]"[..],
         Some(name) => name.bytes(),

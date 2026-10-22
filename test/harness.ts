@@ -1520,6 +1520,9 @@ class WriteBlockedError extends Error {
     this.name = "WriteBlockedError";
   }
 }
+// A write that blocks waits for the child to read. A write that does not block copies the chunk and makes one
+// syscall: about 1 ms for 1 MiB in a release build, 20 to 30 ms in a debug ASAN build.
+const writeBlockedLimitMs = isDebug ? 100 : 25;
 function failTestsOnBlockingWriteCall() {
   const prop = Object.getOwnPropertyDescriptor(child_process.ChildProcess.prototype, "stdin");
   const didAttachSymbol = Symbol("kDidAttach");
@@ -1546,7 +1549,7 @@ function failTestsOnBlockingWriteCall() {
           const start = performance.now();
           const rc = prop.value.apply(this, arguments);
           const end = performance.now();
-          if (end - start > 8) {
+          if (end - start > writeBlockedLimitMs) {
             const err = new WriteBlockedError(end - start);
             throw err;
           }

@@ -17,8 +17,8 @@ use crate::bin_real;
 use crate::cache_publish::{RenameError, RenameRetry};
 use crate::lockfile::package;
 use crate::package_install::{
-    BUN_TAG, Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
-    rename_staging_into_place,
+    BUN_TAG, LinkRefusal, Method as InstallMethod, Staging, StagingLock, StagingPath,
+    Summary as InstallSummary, link_refusal, rename_staging_into_place,
 };
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
@@ -1827,17 +1827,24 @@ impl<'a> Installer<'a> {
                         let Err(err) = hardlinker.link() else {
                             break 'backend Ok(());
                         };
-                        if needs_copy(&err) {
-                            backend = self.set_backend(InstallMethod::Copyfile);
-                            continue 'backend;
+                        match link_refusal(&err) {
+                            LinkRefusal::Fail => {
+                                print_link_error(
+                                    "hardlink package",
+                                    &err,
+                                    &bstr::BStr::new(subpath.slice()),
+                                    hardlinker.dest.slice(),
+                                );
+                                break 'backend Err(err);
+                            }
+                            LinkRefusal::CopyPackage => backend = InstallMethod::Copyfile,
+                            LinkRefusal::CopyEveryPackage => {
+                                backend = self.set_backend(InstallMethod::Copyfile);
+                            }
                         }
-                        print_link_error(
-                            "hardlink package",
-                            &err,
-                            &bstr::BStr::new(subpath.slice()),
-                            hardlinker.dest.slice(),
-                        );
-                        break 'backend Err(err);
+                        // The copy must not write into a file that is still a link to the cache.
+                        hardlinker.delete_dest();
+                        continue 'backend;
                     }
 
                     _ => {
@@ -3017,6 +3024,7 @@ pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
 }
 
 /// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+/// Not `link_refusal`: the copy of a `file:` folder opens the files already there (#45194).
 fn needs_copy(hardlink_err: &sys::Error) -> bool {
     matches!(
         hardlink_err.get_errno(),

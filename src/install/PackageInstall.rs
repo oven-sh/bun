@@ -317,6 +317,32 @@ impl PackageInstall<'_> {
     }
 }
 
+/// How the hardlink backend answers a link that the file system refused. Both linkers ask here.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkRefusal {
+    Fail,
+    /// A file is at the link limit of its file system. The next package can still link.
+    CopyPackage,
+    /// No link from the source to `node_modules` works. The next packages start with a copy.
+    CopyEveryPackage,
+}
+
+pub(crate) fn link_refusal(err: &sys::Error) -> LinkRefusal {
+    let errno = err.get_errno();
+    match errno {
+        sys::E::EMLINK => LinkRefusal::CopyPackage,
+        // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+        sys::E::EXDEV | sys::E::EACCES | sys::E::EPERM | sys::E::ENOSYS => {
+            LinkRefusal::CopyEveryPackage
+        }
+        // Darwin has two values here and Linux one, so a pattern cannot name both.
+        _ if errno == sys::E::ENOTSUP || errno == sys::E::EOPNOTSUPP => {
+            LinkRefusal::CopyEveryPackage
+        }
+        _ => LinkRefusal::Fail,
+    }
+}
+
 // ───────────────────────────── InstallDirState ─────────────────────────────
 
 /// What `init_install_dir` opens for one package install. `walker` owns the
@@ -1901,13 +1927,13 @@ impl PackageFiles<'_> {
                             )?;
                         }
                         EntryKind::File => {
-                            // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
                             fn map_linkat_err(err: sys::Error) -> crate::Error {
-                                match err.get_errno() {
-                                    sys::E::EXDEV | sys::E::EACCES | sys::E::EPERM => {
+                                match link_refusal(&err) {
+                                    LinkRefusal::CopyEveryPackage => {
                                         crate::Error::NotSameFileSystem
                                     }
-                                    _ => err.into(),
+                                    // `CopyPackage` stays `Sys(EMLINK)` for `link_files_into`.
+                                    LinkRefusal::CopyPackage | LinkRefusal::Fail => err.into(),
                                 }
                             }
 
@@ -2004,9 +2030,12 @@ impl PackageFiles<'_> {
 
         match result {
             Ok(()) => Ok(InstallResult::Success),
-            // `link_files_into` falls back to copyfile for this error.
+            // `link_files_into` falls back to copyfile for these errors.
             #[cfg(not(windows))]
-            Err(err @ crate::Error::NotSameFileSystem) => Err(err),
+            Err(
+                err @ (crate::Error::NotSameFileSystem
+                | crate::Error::Sys(bun_errno::SystemErrno::EMLINK)),
+            ) => Err(err),
             Err(err) => Ok(InstallResult::fail(err, Step::CopyingFiles)),
         }
     }
@@ -2662,6 +2691,11 @@ impl PackageFiles<'_> {
                 if !is_folder {
                     SUPPORTED_METHOD.store(Method::Copyfile as u8, Ordering::Relaxed);
                 }
+                self.install_with_copyfile(destination_dir, skip_dirs)
+            }
+            // `LinkRefusal::CopyPackage`: the backend stays as it is.
+            #[cfg(not(windows))]
+            Err(crate::Error::Sys(bun_errno::SystemErrno::EMLINK)) => {
                 self.install_with_copyfile(destination_dir, skip_dirs)
             }
             Err(err @ crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {

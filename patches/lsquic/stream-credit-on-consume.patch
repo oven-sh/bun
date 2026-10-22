@@ -77,7 +77,35 @@
  
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1524,6 +1524,42 @@
+@@ -1321,7 +1321,11 @@
+     /* Let user collect error: */
+     maybe_conn_to_tickable_if_writeable(stream, 0);
+ 
+-    lsquic_sfcw_consume_rem(&stream->fc);
++    /* bun: the read side stays open.  For lsquic_stream_credit_on_consume()
++     * this would count every byte received as consumed: a second window for
++     * the peer. */
++    if (!(stream->sm_dflags & SMDF_CREDIT_ON_CONSUME))
++        lsquic_sfcw_consume_rem(&stream->fc);
+     drop_buffered_data(stream);
+     maybe_elide_stream_frames(stream);
+ 
+@@ -1332,11 +1336,10 @@
+                                     && !(stream->sm_qflags & SMQF_SEND_RST))
+         stream_reset(stream, error_code, 0);
+ 
+-    if (stream->sm_qflags & (SMQF_SEND_WUF | SMQF_SEND_BLOCKED \
+-                             | SMQF_SEND_STOP_SENDING))
++    /* bun: not SMQF_SEND_WUF, see stream_reset() */
++    if (stream->sm_qflags & (SMQF_SEND_BLOCKED | SMQF_SEND_STOP_SENDING))
+     {
+-        stream->sm_qflags &= ~(SMQF_SEND_WUF | SMQF_SEND_BLOCKED \
+-                               | SMQF_SEND_STOP_SENDING);
++        stream->sm_qflags &= ~(SMQF_SEND_BLOCKED | SMQF_SEND_STOP_SENDING);
+         if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
+             TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream, next_send_stream);
+     }
+@@ -1524,6 +1527,42 @@
  }
  
  
@@ -120,7 +148,7 @@
  static ssize_t
  read_data_frames (struct lsquic_stream *stream, int do_filtering,
          size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)
-@@ -1567,6 +1603,11 @@
+@@ -1567,6 +1606,11 @@
                      stream->sm_sfi->sfi_decr_left(stream, nread);
                  data_frame->df_read_off += nread;
                  stream->read_offset += nread;
@@ -132,21 +160,19 @@
                  total_nread += nread;
                  short_read = nread < toread;
              }
-@@ -4509,9 +4550,14 @@
-      * emits both frames) must still reach the wire. */
-     const enum stream_q_flags had_ss =
-                             stream->sm_qflags & SMQF_SEND_STOP_SENDING;
-+    /* bun: nor may it take back a MAX_STREAM_DATA that lsquic_stream_credit()
-+     * queued.  The limit has moved already, so nothing would queue it again
-+     * and the peer would wait for it while the read side stays open. */
-+    const enum stream_q_flags had_wuf = stream->sm_qflags & SMQF_SEND_WUF;
-     if (!(stream->stream_flags & STREAM_RST_SENT)
-                                 && !(stream->sm_qflags & SMQF_SEND_RST))
-         stream_reset(stream, error_code, 0);
-+    stream->sm_qflags |= had_wuf;
-     if (had_ss)
-         stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
-     else if (stream->error_code == 0)
+@@ -4376,7 +4420,11 @@
+     if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
+         TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
+                                                         next_send_stream);
+-    stream->sm_qflags &= ~SMQF_SENDING_FLAGS;
++    /* bun: a queued MAX_STREAM_DATA is the read side's, and that side stays
++     * open unless this closes the stream.  The limit has moved already, so
++     * nothing would queue the frame again and the peer would wait for it. */
++    stream->sm_qflags &= ~(do_close ? SMQF_SENDING_FLAGS
++                                : SMQF_SENDING_FLAGS & ~SMQF_SEND_WUF);
+     stream->sm_qflags |= SMQF_SEND_RST;
+ 
+     if (stream->sm_qflags & SMQF_QPACK_DEC)
 --- a/src/liblsquic/lsquic_stream.h
 +++ b/src/liblsquic/lsquic_stream.h
 @@ -213,6 +213,7 @@

@@ -290,7 +290,8 @@ impl QuicStream {
             // lsquic takes a bidirectional stream's send limit from the
             // connection's role, not from the stream's initiator. On a stream
             // the server opened that is the wrong one of the peer's two
-            // limits, and only a limit that moves at the read hides it.
+            // limits, so the sender can pass the limit it was given. A limit
+            // that waits for JavaScript makes that certain past one window.
             if id & STREAM_ID_SERVER_BIT == 0 {
                 s.credit_on_consume();
             }
@@ -818,6 +819,15 @@ impl QuicStream {
         });
         if let Some(session) = self.session_ref() {
             session.note_stream_write();
+        }
+        // A stream at its flow-control limit is not writable, so lsquic runs
+        // no `on_stream_write` for it, and a FIN needs no credit. Body bytes
+        // are in lsquic, so a header block is as well.
+        if !wants_trailers
+            && self.outbound.get().data.is_empty()
+            && self.read_stat(IDX_STATS_BYTES_SENT) != 0
+        {
+            self.drain_outbound();
         }
         self.kick_write();
         Ok(JSValue::UNDEFINED)

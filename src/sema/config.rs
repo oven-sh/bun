@@ -1509,7 +1509,10 @@ fn marshal_compiler_options(compiler: &Json, config_path: &[u8]) -> Json {
                 },
                 Json::Array(libs) if name == b"lib" => {
                     let file_name = |lib: &Json| match lib.as_str() {
-                        Some(lib) => Json::String([b"lib.", lib, b".d.ts"].concat()),
+                        Some(lib) => {
+                            let lib = crate::resolve::lib_map_get(lib).unwrap_or(lib);
+                            Json::String([b"lib.", lib, b".d.ts"].concat())
+                        }
                         None => lib.clone(),
                     };
                     Json::Array(libs.iter().map(file_name).collect())

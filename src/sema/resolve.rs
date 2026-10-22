@@ -1229,7 +1229,7 @@ pub fn lib_name(name: &[u8]) -> Vec<u8> {
 }
 
 /// `LibMap.Get`: the `N` of the `lib.N.d.ts` that is the value of `key`.
-fn lib_map_get(key: &[u8]) -> Option<&[u8]> {
+pub(crate) fn lib_map_get(key: &[u8]) -> Option<&[u8]> {
     let value: &[u8] = match key {
         b"es6" => b"es2015",
         b"es7" => b"es2016",

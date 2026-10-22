@@ -286,6 +286,32 @@ ${isVirtual}`,
     );
   });
 
+  test("compiler options reach the mapper as numbers and as the names of lib files", async () => {
+    const mapper = `let seen;
+    serve({
+      openProject: ({ compilerOptions: o }) => {
+        seen = [...o.lib, o.jsx, o.moduleDetection, o.module, o.moduleResolution, o.target, o.newLine].join(" ");
+        return {};
+      },
+      transform: () => ({ text: "export const count: " + JSON.stringify(seen) + " = 0;\\n", extension: ".ts" }),
+    });`;
+    await expectErrors(
+      {
+        mapper,
+        compilerOptions: {
+          lib: ["es6", "ES7", "esnext.array", "esnext.collection", "dom", "es2022"],
+          jsx: "react",
+          moduleDetection: "legacy",
+          target: "es2022",
+          newLine: "lf",
+        },
+        files: { "main.ts": `import "./App.vue";\n` },
+      },
+      `App.vue(1,14): error TS2322: Type '0' is not assignable to type '"lib.es2015.d.ts lib.es2016.d.ts lib.es2026.array.d.ts lib.es2026.collection.d.ts lib.dom.d.ts lib.es2022.d.ts 2 2 99 100 9 2"'.
+${isVirtual}`,
+    );
+  });
+
   const withoutErrors = { "App.vue": app.replace(`"one"`, "1"), "main.ts": `import "./App.vue";\n` };
 
   /** Returns the column at which `text` begins in the project's `tsconfig.json`, which is one line. */

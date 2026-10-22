@@ -967,6 +967,27 @@ console.log("the child exited with", child.exitCode);
     expect(pidsOf(dir)).toHaveLength(1);
   });
 
+  test("a process that the program forks needs its own flag too", async () => {
+    using dir = project({
+      mapper,
+      files: {
+        ...files,
+        "parent.ts": `import type { Count } from "./App.vue";
+type Child = { on(event: "exit", listener: (code: number) => void): void };
+declare function require(name: "node:child_process"): { fork(path: string): Child };
+const one: Count = 1;
+console.log("ran", one);
+const child = require("node:child_process").fork("./main.ts");
+child.on("exit", code => console.log("the child exited with", code));
+`,
+      },
+    });
+    const { stdout, output } = await run(dir, ["--check", "--runExternalCode", "parent.ts"]);
+    expect(stdout).toBe("ran 1\nthe child exited with 1\n");
+    expect(output).toContain(notAllowed);
+    expect(pidsOf(dir)).toHaveLength(1);
+  });
+
   test.each(["--watch", "--hot"])(
     "bun %s --check --runExternalCode starts the mapper again for each check",
     async flag => {

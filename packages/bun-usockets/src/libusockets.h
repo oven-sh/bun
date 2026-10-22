@@ -155,11 +155,6 @@ enum {
      * Safe for HTTP/TLS where the client always sends first; do not use for protocols where
      * the server sends the first bytes. */
     LIBUS_LISTEN_DEFER_ACCEPT = 64,
-    /* Enable IP_RECVERR on a UDP socket so ICMP errors land on the error
-     * queue for on_recv_error to drain. Off by default: on a shared
-     * unconnected socket it also makes the next send fail for a datagram
-     * bound to a different, live peer. */
-    LIBUS_UDP_LINUX_RECVERR = 128,
     /* A socket adopted by us_socket_from_fd, or accepted by a listener created with this option,
      * is registered as if us_socket_pause had been called on it, so no extra poll change is needed
      * per connection (node:net's pauseOnConnect; cluster adopts every connection this way). Not
@@ -219,7 +214,7 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, void *user);
+struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
@@ -237,7 +232,7 @@ LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
 /* Adopts an already created (and usually already bound) UDP socket descriptor
  * instead of creating a new one. The fd is made non-blocking and the standard
  * receive-path options are applied. Returns null with *err set on failure. */
-struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int shared, int *err, void *user);
+struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), LIBUS_SOCKET_DESCRIPTOR fd, int shared, int *err, void *user);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);

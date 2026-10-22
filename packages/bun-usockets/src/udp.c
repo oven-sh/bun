@@ -169,7 +169,7 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     void (*data_cb)(struct us_udp_socket_t *, void *, int),
     void (*drain_cb)(struct us_udp_socket_t *),
     void (*close_cb)(struct us_udp_socket_t *),
-    void (*recv_error_cb)(struct us_udp_socket_t *, int, int),
+    void (*recv_error_cb)(struct us_udp_socket_t *, int),
     LIBUS_SOCKET_DESCRIPTOR fd,
     int shared,
     int *err,
@@ -225,7 +225,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     void (*data_cb)(struct us_udp_socket_t *, void *, int),
     void (*drain_cb)(struct us_udp_socket_t *),
     void (*close_cb)(struct us_udp_socket_t *),
-    void (*recv_error_cb)(struct us_udp_socket_t *, int, int),
+    void (*recv_error_cb)(struct us_udp_socket_t *, int),
     const char *host,
     unsigned short port,
     int flags,
@@ -233,10 +233,6 @@ struct us_udp_socket_t *us_create_udp_socket(
     void *user
 ) {
 
-    /* IP_RECVERR is only useful when there is an on_recv_error handler to
-     * drain the error queue; without one it only poisons subsequent sends. */
-    if (recv_error_cb) flags |= LIBUS_UDP_LINUX_RECVERR;
-    else flags &= ~LIBUS_UDP_LINUX_RECVERR;
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;

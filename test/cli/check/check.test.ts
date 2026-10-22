@@ -15637,6 +15637,46 @@ export class Box<T extends NS & [number, string[]]> {
       expect(exitCode).toBe(1);
     });
 
+    test("`this` is the intersection of a tuple type and its alias however a method is read from it", async () => {
+      using dir = project({
+        "a.ts": `type NS = [number, string[]];
+declare const v: NS & [number, string[]];
+export const a: never = v["sort"]();
+export const b: never = v.sort();
+export const c: never = v["fill"](0 as never);
+export const d: never = v["copyWithin"](0, 1);
+export const e: never = v["reverse"]();
+export const f: never = v["length"];
+export const g: never = v[0];
+declare const k: "sort";
+export const h: never = v[k]();
+type M = (NS & [number, string[]])["sort"];
+export const i: never = (null! as M)();
+const { sort } = v;
+export const j: never = sort.call(v);
+export function t<T extends NS & [number, string[]]>(x: T) { const p: never = x["sort"](); const q: never = x.sort(); return [p, q]; }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(4,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(5,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(6,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(7,14): error TS2322: Type '(number | string[])[]' is not assignable to type 'never'.
+        a.ts(8,14): error TS2322: Type '2' is not assignable to type 'never'.
+        a.ts(9,14): error TS2322: Type 'number' is not assignable to type 'never'.
+        a.ts(11,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(13,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(15,14): error TS2322: Type 'NS & [number, string[]]' is not assignable to type 'never'.
+        a.ts(16,68): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'.
+        a.ts(16,98): error TS2322: Type 'T' is not assignable to type 'never'.
+          Type '[number, string[]]' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2345 for a function argument against an index signature inferred from `keyof T`", async () => {
       using dir = project({
         "a.ts": `declare function m<T>(a: T, b: keyof T): T;

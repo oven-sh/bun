@@ -137,6 +137,16 @@ export const lsquic: Dependency = {
     // lsquic_prq_destroy() only frees the free list. A stateless reset whose
     // send failed is on the returned list, so destroying the engine leaks it.
     "patches/lsquic/prq-free-returned-conns.patch",
+    // lsquic_conn_goaway_stream_id: on_goaway_received() does not pass the id
+    // of the GOAWAY, and a second GOAWAY with a lower id was not stored.
+    "patches/lsquic/goaway-stream-id.patch",
+    // A server's GOAWAY named the last request it accepted, which tells the
+    // client that this request was rejected. Name the one after it.
+    "patches/lsquic/goaway-first-rejected-id.patch",
+    // send_headers_ietf() encoded every header block into 64 KB on the stack
+    // and failed for a larger one. Such a block gets a heap buffer, sized from
+    // the header list.
+    "patches/lsquic/large-header-block.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

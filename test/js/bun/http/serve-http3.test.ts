@@ -889,10 +889,11 @@ async function withCustomServer(
     send: (cmd: string) => void,
     waitForStderr: (re: RegExp) => Promise<RegExpMatchArray>,
   ) => Promise<void>,
+  args: string[] = [],
 ) {
   using dir = tempDir("serve-http3-custom", { "server.mjs": script });
   const proc = Bun.spawn({
-    cmd: [bunExe(), "server.mjs"],
+    cmd: [bunExe(), ...args, "server.mjs"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "inherit",
@@ -1985,11 +1986,8 @@ describe("Bun.serve HTTP/3 request validation", () => {
           await release.promise;
           return new Response("held");
         }
-        const headers = new Headers();
         // lsxpack holds the length of a value in 16 bits.
-        if (pathname === "/value") headers.set("x-value", Buffer.alloc(70_000, "v").toString());
-        // lsquic encodes a header block into 64 KB, and "~" is sent as it is.
-        else for (let i = 0; i < 20; i++) headers.set(`x-field-${i}`, Buffer.alloc(4_000, "~").toString());
+        const headers = { "x-value": Buffer.alloc(70_000, "v").toString() };
         if (req.method === "HEAD") return new Response(null, { headers });
         return new Response("body", { headers });
       },
@@ -2002,17 +2000,43 @@ describe("Bun.serve HTTP/3 request validation", () => {
 
     const other = fetchH3(server.port!, "/held");
     await held.promise;
-    for (const path of ["/value", "/block"]) {
-      expect({ path, GET: await outcome(path), HEAD: await outcome(path, "HEAD") }).toEqual({
-        path,
-        GET: "HTTP3StreamReset",
-        HEAD: "HTTP3StreamReset",
-      });
-    }
+    expect({ GET: await outcome("/"), HEAD: await outcome("/", "HEAD") }).toEqual({
+      GET: "HTTP3StreamReset",
+      HEAD: "HTTP3StreamReset",
+    });
     release.resolve();
     expect(await (await other).text()).toBe("held");
     // A closed connection would have sent it again on a new one.
     expect(heldRequests).toBe(1);
+  });
+
+  test("a header block of more than 64 KB arrives intact in both directions", async () => {
+    await withCustomServer(
+      `
+      const server = Bun.serve({
+        port: 0,
+        tls: ${JSON.stringify(tls)},
+        http3: true,
+        fetch(req) {
+          const headers = new Headers();
+          for (const [name, value] of req.headers) if (name.startsWith("x-field-")) headers.set(name, value);
+          return new Response("ok", { headers });
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
+      `,
+      async port => {
+        const sent: Record<string, string> = {};
+        // QPACK sends "~" as it is.
+        for (let i = 0; i < 30; i++) sent[`x-field-${i}`] = String(i).padEnd(4_000, "~");
+        const res = await fetchH3(port, "/", { headers: sent });
+        expect(Object.fromEntries([...res.headers].filter(([name]) => name.startsWith("x-field-")))).toEqual(sent);
+        expect(res.status).toBe(200);
+      },
+      ["--max-http-header-size=200000"],
+    );
   });
 
   test("request.url falls back to the :path when :authority is not a valid host", async () => {

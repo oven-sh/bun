@@ -317,7 +317,7 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
     let Some(stream) = stream_of(s) else { return };
     *s.ext::<Stream>() = None;
     stream.qstream = None;
-    stream.peer_rejected = s.reset_code() == H3_REQUEST_REJECTED;
+    stream.peer_rejected = s.reset_code() == H3_REQUEST_REJECTED || s.refused_by_goaway();
     bun_core::scoped_log!(
         h3_client,
         "stream_close status={} delivered={}",

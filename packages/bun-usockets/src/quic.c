@@ -740,6 +740,10 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         lsquic_stream_wantread(stream, 0);
         lsquic_stream_shutdown(stream, 0);
         if (ctx->on_stream_data) ctx->on_stream_data(s, ctx->read_buf, 0, 1);
+    } else if (r < 0 && errno == ECONNRESET) {
+        /* lsquic resets a request above the id of a GOAWAY without on_reset,
+         * and calls on_read on every tick until the stream is closed. */
+        lsquic_stream_close(stream);
     }
 }
 
@@ -772,8 +776,9 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
      *         lsquic already queues RESET_STREAM for our send side; the
      *         read half stays open so the response/request that arrived
      *         alongside STOP_SENDING is still delivered. Closing here
-     *         would drop it. */
-    if (h && stream && how == 0) lsquic_stream_close(stream);
+     *         would drop it. H3_REQUEST_REJECTED comes with no response. */
+    if (h && stream && (how == 0 || lsquic_stream_get_error_code(stream) == 0x10B))
+        lsquic_stream_close(stream);
 }
 
 /* ───── public API ───── */
@@ -1283,6 +1288,11 @@ int us_quic_stream_has_unacked(us_quic_stream_t *s) {
 
 uint64_t us_quic_stream_reset_code(us_quic_stream_t *s) {
     return s->stream ? lsquic_stream_get_error_code(s->stream) : 0;
+}
+
+int us_quic_stream_refused_by_goaway(us_quic_stream_t *s) {
+    return s->stream &&
+        lsquic_stream_id(s->stream) >= lsquic_conn_goaway_stream_id(lsquic_stream_conn(s->stream));
 }
 
 void *us_quic_stream_ext(us_quic_stream_t *s) { return s + 1; }

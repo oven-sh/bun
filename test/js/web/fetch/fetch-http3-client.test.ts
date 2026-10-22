@@ -1326,6 +1326,88 @@ describe("the origin ended the stream with no final response", () => {
   });
 });
 
+// A server that shuts down gracefully sends a GOAWAY with the id of the first
+// request that it did not accept. It did not process that request or any later
+// one (RFC 9114 section 5.2), so they are safe to send again whatever their
+// method. The relay lets two requests leave the client without reaching A.
+// A is a node:quic server because it can end the connection after the GOAWAY.
+test.each([
+  ["POST", "HTTP3StreamReset", ["a /accepted", "b /first", "b /second"]],
+  ["PUT", "b", ["a /accepted", "b /accepted", "b /first", "b /second"]],
+])("sends a %s again if the server's GOAWAY does not cover it", async (method, acceptedOutcome, expected) => {
+  const applied: string[] = [];
+  const accepted = Promise.withResolvers<void>();
+  let session: any;
+  const a = await listen(
+    async (incoming: any) => {
+      session = incoming;
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      async onheaders(this: any, headers: Record<string, string>) {
+        for await (const _ of this);
+        applied.push(`a ${headers[":path"]}`);
+        accepted.resolve();
+      },
+    },
+  );
+  await using b = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    async fetch(req) {
+      await req.text();
+      applied.push(`b ${new URL(req.url).pathname}`);
+      return new Response("b");
+    },
+  });
+  const body = Buffer.alloc(2_000, "x");
+  const written = Promise.withResolvers<void>();
+  let origin = a.address!.port;
+  let client = { port: 0, address: "" };
+  let bytesForB = 0;
+  const back = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    socket: { data: (_socket, packet) => void front.send(packet, client.port, client.address) },
+  });
+  const front = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    socket: {
+      data(_socket, packet, port, address) {
+        client = { port, address };
+        back.send(packet, origin, "127.0.0.1");
+        if (origin === b.port && (bytesForB += packet.length) > 2 * body.length) written.resolve();
+      },
+    },
+  });
+  const send = (path: string) =>
+    fetch(`https://127.0.0.1:${front.port}${path}`, { ...h3, method, body }).then(
+      res => res.text(),
+      err => err.code,
+    );
+  try {
+    const first = send("/accepted");
+    await accepted.promise;
+    origin = b.port!;
+    const late = [send("/first"), send("/second")];
+    await written.promise;
+    session.close().catch(() => {});
+    // The request above the id is sent again at once. The one at the id waits for the connection to end.
+    expect(await Promise.any(late)).toBe("b");
+    session.destroy(undefined, { code: 0x100, type: "application" });
+    expect(await Promise.all([first, ...late])).toEqual([acceptedOutcome, "b", "b"]);
+    expect(applied.sort()).toEqual(expected);
+  } finally {
+    front.close();
+    back.close();
+    await a.destroy();
+  }
+});
+
 // Subprocess so the experimental flag is process-scoped and the in-process
 // server above (http1: false) doesn't interfere — this server keeps http1 on
 // so the first fetch goes over TCP and reads Alt-Svc.

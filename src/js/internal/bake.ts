@@ -112,7 +112,9 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
       );
     }
     // import() from this built-in module does not find a page added since the resolver listed the folder.
-    Bun.resolveSync(file, pagesDir);
+    try {
+      Bun.resolveSync(file, pagesDir);
+    } catch {}
     const route = routeOfPage(relative);
     const other = fileOfRoute[route];
     if (other !== undefined) {

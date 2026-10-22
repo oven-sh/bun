@@ -2268,7 +2268,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(urls).toEqual(requests.map(([, url]) => url));
     });
 
-    test("rejects DEL in a header or trailer value unless insecureHTTPParser is set", async () => {
+    test("rejects DEL in a header or trailer value unless the parser is lenient", async () => {
       const seen: string[] = [];
       const onRequest = (req, res) => {
         req.resume().on("end", () => {
@@ -2299,15 +2299,21 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(await sendRequest(header("a\x80\xffb"))).toStartWith("HTTP/1.1 200 OK");
       expect(seen).toEqual(["a\x80\xffb"]);
 
-      server.close();
-      server = new Server({ insecureHTTPParser: true }, onRequest);
-      await once(server.listen(0), "listening");
-      port = server.address().port;
-      seen.length = 0;
-      for (const msg of [header("a\x7fb"), trailer("c\x7fd")]) {
-        expect(await sendRequest(msg)).toStartWith("HTTP/1.1 200 OK");
+      for (const options of [
+        { insecureHTTPParser: true },
+        { httpValidation: "insecure" },
+        { httpValidation: "relaxed" },
+      ]) {
+        server.close();
+        server = new Server(options as any, onRequest);
+        await once(server.listen(0), "listening");
+        port = server.address().port;
+        seen.length = 0;
+        for (const msg of [header("a\x7fb"), trailer("c\x7fd")]) {
+          expect(await sendRequest(msg)).toStartWith("HTTP/1.1 200 OK");
+        }
+        expect({ options, seen }).toEqual({ options, seen: ["a\x7fb", "c\x7fd"] });
       }
-      expect(seen).toEqual(["a\x7fb", "c\x7fd"]);
     });
 
     test("rejects requests with missing Host header in HTTP/1.1", async () => {

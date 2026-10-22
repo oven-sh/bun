@@ -900,6 +900,10 @@ struct HttpResponseData;
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
         template <bool IsNodeHttp>
         static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
+            /* req.url can be three times as long as the target, and has to fit a string. */
+            if (IsNodeHttp && !maxHeaderSize) {
+                maxHeaderSize = INT32_MAX / 3;
+            }
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */

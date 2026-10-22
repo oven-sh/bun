@@ -2156,15 +2156,18 @@ console.log(load());
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual([
-      ["AggregateError", "no code", "unhandledRejection"],
-      ["Error", "ENOENT", "unhandledRejection"],
-      ["DOMException", 20, "unhandledRejection"],
-    ]);
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: [
+        ["AggregateError", "no code", "unhandledRejection"],
+        ["Error", "ENOENT", "unhandledRejection"],
+        ["DOMException", 20, "unhandledRejection"],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // What --unhandled-rejections=throw and =strict raise as the uncaught exception: the reason itself when it is an

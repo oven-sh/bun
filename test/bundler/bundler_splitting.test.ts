@@ -734,6 +734,18 @@ describe("bundler", () => {
       `"index"`,
       {},
     ],
+    // font.woff2 is a file of index.js that stays there. It runs nothing, and setup.js does not import it.
+    [
+      "FollowsStylesheetWithAsset",
+      {
+        "/index.js": `import "./globals.css";\n` + setupBeforeShared["/index.js"],
+        "/globals.css": `@font-face { font-family: "f"; src: url("./font.woff2"); }`,
+        "/font.woff2": "a font",
+      },
+      "index app\nsettings app",
+      `"index"`,
+      { target: "browser", loader: { ".woff2": "file" } },
+    ],
     // A builtin module has no side effects, so it has no place in the order.
     ...(["bun", "node"] as const).map(
       target =>
@@ -1092,6 +1104,14 @@ describe("bundler", () => {
       "ImportsRelativeExternalFile",
       { "/setup.js": `import "./local.js"; globalThis.APP = { name: "app" };` },
       { external: ["*local.js"] },
+    ],
+    // plugin.js can be there at runtime.
+    [
+      "HasImportCallOfMissingFile",
+      {
+        "/setup.js": `globalThis.APP = { name: "app" }; globalThis.load = () => import("./plugin.js").catch(() => null);`,
+      },
+      {},
     ],
     [
       "ImportsExternalDirectory",

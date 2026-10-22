@@ -731,7 +731,7 @@ fn entry_files_ahead_of_parent(
     let module_scopes = this.graph.ast.items_module_scope();
     let entry_bits = this.graph.files.items_entry_bits();
     let css = this.graph.ast.items_css();
-    // Of a file that holds the path of an asset, which is printed from the directory of its chunk.
+    // Of a file that holds the path of an asset, which is printed from the directory of its chunk. It runs nothing.
     let asset_keys = this
         .parse_graph()
         .input_files
@@ -743,11 +743,11 @@ fn entry_files_ahead_of_parent(
             crate::bundled_ast::Flags::HAS_IMPORT_META
                 | crate::bundled_ast::Flags::HAS_RUNTIME_SPECIFIER,
         ) || module_scopes[file as usize].contains_direct_eval
-            || !asset_keys[file as usize].is_empty()
             || import_records[file as usize].iter().any(|record| {
+                // An `import()` that did not resolve is printed as written. A `require()` throws.
                 !record.source_index.is_valid()
                     && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
-                    && !record.path.is_disabled
+                    && (!record.path.is_disabled || record.kind == ImportKind::Dynamic)
                     && !bun_paths::is_package_path(record.path.text)
             })
     };
@@ -811,7 +811,11 @@ fn entry_files_ahead_of_parent(
             }
             Frame::Leave(file) => file,
         };
-        if file == runtime || !is_live(file) || css[file as usize].is_some() {
+        if file == runtime
+            || !is_live(file)
+            || css[file as usize].is_some()
+            || !asset_keys[file as usize].is_empty()
+        {
             continue;
         }
         if !is_own(file) {

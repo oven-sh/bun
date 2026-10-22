@@ -175,3 +175,141 @@ describe("RequestInit signal presence", () => {
     });
   });
 });
+
+describe("Request integrity", () => {
+  const url = "https://example.com/";
+
+  test("the getter returns the init member, or the empty string when there is none", () => {
+    expect([
+      new Request(url).integrity,
+      new Request(url, {}).integrity,
+      new Request(url, { integrity: undefined }).integrity,
+      new Request(url, { integrity: "" }).integrity,
+      new Request(url, { integrity: "sha256-abc" }).integrity,
+      // The string is kept as it is given: it is parsed when the request is fetched.
+      new Request(url, { integrity: "  sha256-abc\tmd5-x " }).integrity,
+    ]).toEqual(["", "", "", "", "sha256-abc", "  sha256-abc\tmd5-x "]);
+  });
+
+  test("it is a DOMString: every value but undefined is converted to a string", () => {
+    const values = [null, 123, true, { toString: () => "sha256-abc" }, ["a", "b"]];
+    expect(values.map(integrity => new Request(url, { integrity: integrity as any }).integrity)).toEqual([
+      "null",
+      "123",
+      "true",
+      "sha256-abc",
+      "a,b",
+    ]);
+    expect(() => new Request(url, { integrity: Symbol("x") as any })).toThrow(TypeError);
+  });
+
+  test("a Request that is the input gives its integrity, and the init replaces it", () => {
+    class SubclassedRequest extends Request {}
+    const input = new Request(url, { integrity: "sha256-abc" });
+    const subclassed = new SubclassedRequest(url, { integrity: "sha256-abc" });
+    expect({
+      copy: new Request(input).integrity,
+      withEmptyInit: new Request(input, {}).integrity,
+      withUndefined: new Request(input, { integrity: undefined }).integrity,
+      replaced: new Request(input, { integrity: "sha512-def" }).integrity,
+      cleared: new Request(input, { integrity: "" }).integrity,
+      clone: input.clone().integrity,
+      cloneOfCopy: new Request(input).clone().integrity,
+      subclass: subclassed.integrity,
+      copyOfSubclass: new Request(subclassed).integrity,
+      subclassOfCopy: new SubclassedRequest(input).integrity,
+      fromPlainObject: new Request({ url, integrity: "sha256-abc" } as any).integrity,
+      input: input.integrity,
+    }).toEqual({
+      copy: "sha256-abc",
+      withEmptyInit: "sha256-abc",
+      withUndefined: "sha256-abc",
+      replaced: "sha512-def",
+      cleared: "",
+      clone: "sha256-abc",
+      cloneOfCopy: "sha256-abc",
+      subclass: "sha256-abc",
+      copyOfSubclass: "sha256-abc",
+      subclassOfCopy: "sha256-abc",
+      fromPlainObject: "sha256-abc",
+      input: "sha256-abc",
+    });
+  });
+
+  test("a property of a Request that is the input does not replace what the Request stores", () => {
+    let getterReads = 0;
+    class GetterRequest extends Request {
+      get integrity() {
+        getterReads++;
+        return "sha512-from-the-getter";
+      }
+    }
+    const withGetter = new GetterRequest(url, { integrity: "sha256-abc" });
+    const withOwnProperty = Object.defineProperty(new Request(url, { integrity: "sha256-abc" }), "integrity", {
+      value: "",
+    });
+    expect({
+      copyOfGetter: new Request(withGetter).integrity,
+      copyOfGetterWithInit: new Request(withGetter, {}).integrity,
+      cloneOfGetter: Object.getOwnPropertyDescriptor(Request.prototype, "integrity")!.get!.call(withGetter.clone()),
+      copyOfOwnProperty: new Request(withOwnProperty).integrity,
+      copyOfOwnPropertyWithInit: new Request(withOwnProperty, { method: "POST" }).integrity,
+      getterReads,
+      // As the init, a Request is a dictionary like every other object: its properties are read.
+      getterAsInit: new Request(url, withGetter).integrity,
+      ownPropertyAsInit: new Request(url, withOwnProperty).integrity,
+    }).toEqual({
+      copyOfGetter: "sha256-abc",
+      copyOfGetterWithInit: "sha256-abc",
+      cloneOfGetter: "sha256-abc",
+      copyOfOwnProperty: "sha256-abc",
+      copyOfOwnPropertyWithInit: "sha256-abc",
+      getterReads: 0,
+      getterAsInit: "sha512-from-the-getter",
+      ownPropertyAsInit: "",
+    });
+  });
+
+  test("the init's integrity is read once, before its other members", () => {
+    const keys: string[] = [];
+    const init = new Proxy(
+      {},
+      {
+        get(_, key) {
+          if (typeof key === "string") keys.push(key);
+          return undefined;
+        },
+      },
+    );
+    expect(new Request(url, init).integrity).toBe("");
+    expect({ first: keys[0], reads: keys.filter(key => key === "integrity").length }).toEqual({
+      first: "integrity",
+      reads: 1,
+    });
+  });
+
+  test("a throwing getter or toString() makes the constructor throw that error", () => {
+    const boom = (message: string): string => {
+      throw new Error(message);
+    };
+    expect(
+      () =>
+        new Request(url, {
+          get integrity() {
+            return boom("from the getter");
+          },
+        }),
+    ).toThrow("from the getter");
+    expect(() => new Request(url, { integrity: { toString: () => boom("from toString()") } as any })).toThrow(
+      "from toString()",
+    );
+  });
+
+  test("it has no setter", () => {
+    const request = new Request(url, { integrity: "sha256-abc" });
+    expect(() => {
+      (request as any).integrity = "sha512-def";
+    }).toThrow(TypeError);
+    expect(request.integrity).toBe("sha256-abc");
+  });
+});

@@ -224,6 +224,28 @@ const response = await fetch("http://example.com", {
 controller.abort();
 ```
 
+### Subresource integrity
+
+To make `fetch` check the response body against a digest, use the `integrity` option:
+
+```ts
+const response = await fetch("data:text/plain,hello", {
+  integrity: "sha256-LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=",
+});
+
+console.log(await response.text()); // "hello"
+```
+
+The value is a list of `sha256-`, `sha384-` or `sha512-` digests in base64 or base64url, separated by whitespace. When the list names more than one algorithm, only the digests of the strongest algorithm count, and the body must match one of them. A value that names none of these algorithms checks no digest.
+
+With a non-empty `integrity`, `fetch` reads the whole body into memory before the promise settles:
+
+- If the body does not match, the promise rejects with a `TypeError` and no `Response` is created. The error has the code `IntegrityCheckFailed`, and its message has the digest of the body that arrived.
+- A response without a body (a `HEAD` request, or status `204`, `205` or `304`) also rejects.
+- The digest is calculated from the bytes that the `Response` gives you. These are the decoded bytes, or the raw bytes with `decompress: false`.
+
+The option also applies to `data:` URLs, to `blob:` URLs of a `Blob` in memory, and to a `Request` that was created with `integrity`. `fetch` rejects a request that it cannot check: a `file:` URL, a `blob:` URL of a `Bun.file()` or of an S3 file, a request that upgrades the connection, and an S3 upload with a stream body.
+
 ### Unix domain sockets
 
 To fetch a URL using a Unix domain socket, use the `unix: string` option:

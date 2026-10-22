@@ -28,6 +28,7 @@ use crate::api::bun_x509 as X509;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
+use crate::webcore::fetch::sri;
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
@@ -181,6 +182,8 @@ pub struct FetchTasklet {
     pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
     /// The session has the callback, and holds it; `fetch_session` holds the session.
     pub(crate) session_check_server_identity: bool,
+    /// The request's `integrity`, until `on_progress_update` has the whole body to check against it.
+    pub(crate) integrity: Option<Box<sri::Metadata>>,
     pub(crate) reject_unauthorized: bool,
     pub(crate) upgraded_connection: bool,
     pub(crate) unix_socket_path: Box<[u8]>,
@@ -544,6 +547,7 @@ impl FetchTasklet {
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
         self.fetch_session = None;
+        self.integrity = None;
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
@@ -1127,6 +1131,12 @@ impl FetchTasklet {
             return Ok(());
         }
 
+        // With `integrity` the promise waits for the whole body, which arrives in parts.
+        if self.integrity.is_some() && self.result.has_more && self.result.is_success() {
+            cleanup(self);
+            return Ok(());
+        }
+
         // WHATWG fetch: once the response head is available the promise
         // resolves; post-head failures (body decompression etc.) surface on
         // the body reader regardless of whether head+body arrived in one read.
@@ -1137,11 +1147,17 @@ impl FetchTasklet {
         // via writeEndRequest while the HTTP result is still a success — server HEADERS
         // raced ahead of the scheduled shutdown. Reject with that reason instead of
         // resolving a 200 Response. Makes wpt-h2 number-chunk test deterministic.
-        if success && self.abort_reason.has() {
+        let rejection = if let Some(integrity) = self.integrity.take() {
+            self.check_integrity(&integrity)
+        } else if success && self.abort_reason.has() {
+            // get_abort_error consumes abort_reason and clears the signal handler.
+            self.get_abort_error()
+        } else {
+            None
+        };
+        if let Some(mut err) = rejection {
             let promise = promise_value.as_any_promise().unwrap();
             let tracker = self.tracker;
-            // get_abort_error consumes abort_reason and clears the signal handler.
-            let mut err = self.get_abort_error().unwrap();
             promise_value.ensure_still_alive();
             let r = promise.reject_with_async_stack(&global_this, err.to_js(&global_this));
             err.reset();
@@ -1203,6 +1219,35 @@ impl FetchTasklet {
         dispatch_cleanup(self);
         cleanup(self);
         Ok(())
+    }
+
+    /// For a fetch with `integrity` whose response is complete: what rejects the promise. `None` when the body in `scheduled_response_buffer` is what the metadata allows.
+    #[cold]
+    fn check_integrity(&mut self, integrity: &sri::Metadata) -> Option<BodyValueError> {
+        let mut err = if self.result.fail.is_some() {
+            // A failure after the head arrives with the head here. It must not become a Response.
+            self.on_reject()
+        } else if let Some(aborted) = self.get_abort_error() {
+            aborted
+        } else {
+            let head = self.metadata.as_ref();
+            let failure = if head
+                .is_none_or(|head| self.response_body_is_null(head.response.status_code as u16))
+            {
+                sri::Failure::NullBody
+            } else {
+                integrity
+                    .check(&self.scheduled_response_buffer.list)
+                    .err()?
+            };
+            failure.into_error(head.map_or(BunString::EMPTY, |head| {
+                BunString::clone_utf8(&ZigURL::parse(head.url.slice()).href_without_userinfo())
+            }))
+        };
+        // The sink gets the error before the promise does: its cancel callback runs the user's script.
+        let err_js = err.to_js(&self.global_this);
+        self.cancel_request_body_sink(err_js);
+        Some(err)
     }
 
     /// `Ok` when the callback approved the certificate; `Err(Some(error))`
@@ -1957,6 +2002,10 @@ impl FetchTasklet {
 
     fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
+        debug_assert!(
+            self.integrity.is_none(),
+            "a Response was built before its body was checked against `integrity`"
+        );
         let response = bun_core::heap::into_raw(Box::new(self.to_response()));
         // The fetch() promise is about to resolve; from here the paused
         // transport should not by itself keep the event loop alive. The body
@@ -2027,6 +2076,7 @@ impl FetchTasklet {
             check_server_identity: fetch_options.check_server_identity,
             fetch_session: fetch_options.fetch_session,
             session_check_server_identity: fetch_options.session_check_server_identity,
+            integrity: fetch_options.integrity,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             unix_socket_path: fetch_options.unix_socket_path,
@@ -2041,6 +2091,16 @@ impl FetchTasklet {
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
+        if fetch_tasklet.integrity.is_some() {
+            // The check takes the whole body, so the transport never pauses. The promise waits for the last byte: the head is not reported by itself.
+            fetch_tasklet.signal_store.receive_all();
+        } else {
+            // we want to return after headers are received
+            fetch_tasklet
+                .signal_store
+                .header_progress
+                .store(true, Ordering::Relaxed);
+        }
 
         fetch_tasklet.tracker.did_schedule(cx.global());
 
@@ -2212,12 +2272,6 @@ impl FetchTasklet {
                 .client
                 .remaining_redirect_count = 0;
         }
-
-        // we want to return after headers are received
-        fetch_tasklet
-            .signal_store
-            .header_progress
-            .store(true, Ordering::Relaxed);
 
         if let HTTPRequestBody::Sendfile(sendfile) = &fetch_tasklet.request_body {
             debug_assert!(url_is_http);
@@ -2832,6 +2886,8 @@ pub(crate) struct FetchOptions {
     pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
     /// The session has the callback, and holds it; `fetch_session` holds the session.
     pub(crate) session_check_server_identity: bool,
+    /// The `integrity` option, parsed. `None` when the request asks for no check.
+    pub(crate) integrity: Option<Box<sri::Metadata>>,
 }
 
 /// Where a request's proxy comes from.

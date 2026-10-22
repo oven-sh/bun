@@ -305,7 +305,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch)
 
-🟢 Fully implemented. The `integrity` option is ignored.
+🟢 Fully implemented. The `cache`, `credentials`, `duplex`, `mode`, `priority`, `referrer`, `referrerPolicy` and `window` options are accepted but ignored.
 
 ### [`File`](https://developer.mozilla.org/en-US/docs/Web/API/File)
 
@@ -421,7 +421,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request)
 
-🟡 Missing `keepalive` and `duplex`. The `credentials`, `integrity`, `referrer` and `referrerPolicy` options are accepted but ignored.
+🟡 Missing `keepalive` and `duplex`. The `credentials`, `referrer` and `referrerPolicy` options are accepted but ignored.
 
 ### [`setImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate)
 

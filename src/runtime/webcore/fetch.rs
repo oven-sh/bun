@@ -36,6 +36,9 @@ pub(crate) mod compress_body;
 pub(crate) mod fetch_session;
 pub(crate) use self::fetch_session::FetchSession;
 
+#[path = "fetch/sri.rs"]
+pub(crate) mod sri;
+
 /// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
 /// snake-cases `TestingAPIs` as `testing_ap_is`.
 #[path = "fetch/proxy_testing.rs"]
@@ -162,7 +165,11 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
 
-fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
+fn data_url_response(
+    url: BunString,
+    global_this: &JSGlobalObject,
+    integrity: Option<Box<sri::Metadata>>,
+) -> JSValue {
     let blob = {
         let url_utf8 = url.to_utf8();
         match DataURL::parse_without_check(url_utf8.slice())
@@ -183,12 +190,42 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
         }
     };
 
-    let response = bun_core::heap::into_raw(Box::new(Response::init(
+    blob_response(
+        global_this,
+        integrity,
+        blob,
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK"),
             ..Default::default()
         },
+        url,
+    )
+}
+
+/// The promise of a fetch whose response body is `blob`. With `integrity` it is rejected when the metadata does not allow the body, or when the body is not in memory to check.
+fn blob_response(
+    global_this: &JSGlobalObject,
+    integrity: Option<Box<sri::Metadata>>,
+    blob: Blob,
+    init: response::Init,
+    url: BunString,
+) -> JSValue {
+    if let Some(integrity) = integrity {
+        let in_memory = !(blob.needs_to_read_file() || blob.is_s3());
+        let checked = if integrity.names_algorithm() && !in_memory {
+            Err(sri::Failure::Unsupported)
+        } else {
+            integrity.check(blob.shared_view())
+        };
+        if let Err(failure) = checked {
+            let err = failure.into_error(url).to_js(global_this);
+            return JSPromise::rejected_promise(global_this, err).to_js();
+        }
+    }
+
+    let response = bun_core::heap::into_raw(Box::new(Response::init(
+        init,
         Body::new(BodyValue::Blob(blob)),
         url,
         false,
@@ -323,26 +360,45 @@ impl StringOrURL {
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe, None))
+    reject_on_exception(ctx, |integrity| {
+        fetch_impl::<false>(ctx, callframe, None, integrity)
+    })
 }
 
 /// What `session.fetch` is bound from: `fetch()` with `this` as its session.
 #[bun_jsc::host_fn]
 pub(crate) fn session_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(
-        ctx,
-        fetch_impl::<false>(ctx, callframe, Some(callframe.this())),
-    )
+    reject_on_exception(ctx, |integrity| {
+        fetch_impl::<false>(ctx, callframe, Some(callframe.this()), integrity)
+    })
+}
+
+/// Whether `value` is a promise that is already rejected.
+fn is_rejected_promise(value: JSValue) -> bool {
+    value
+        .as_any_promise()
+        .is_some_and(|promise| promise.status() == jsc::js_promise::Status::Rejected)
 }
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
 /// rejects the returned promise; `fetch()` never throws synchronously.
 fn reject_on_exception(
     global_this: &JSGlobalObject,
-    result: JsResult<JSValue>,
+    fetch: impl FnOnce(&mut Option<Box<sri::Metadata>>) -> JsResult<JSValue>,
 ) -> JsResult<JSValue> {
-    let err = match result {
-        Ok(v) => return Ok(v),
+    // The request's parsed `integrity`. The exit of `fetch` that checks the body, or hands this to the tasklet, takes it.
+    let mut unchecked: Option<Box<sri::Metadata>> = None;
+    let err = match fetch(&mut unchecked) {
+        Ok(v) if unchecked.is_none() || is_rejected_promise(v) => return Ok(v),
+        // Fail closed: this exit gave out a promise for a body that nothing checks.
+        Ok(v) => {
+            if let Some(promise) = v.as_any_promise() {
+                promise.set_handled(global_this.vm());
+            }
+            sri::Failure::Unsupported
+                .into_error(BunString::EMPTY)
+                .to_js(global_this)
+        }
         Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
         // A terminated worker gets no rejected promise: its termination keeps unwinding.
         Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
@@ -403,6 +459,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     callframe: &CallFrame,
     // `session.fetch()`: the session, which a `session` in the init does not replace.
     bound_session: Option<JSValue>,
+    // Set once from the `integrity` option. `reject_on_exception` rejects when an exit returns without taking it.
+    integrity: &mut Option<Box<sri::Metadata>>,
 ) -> JsResult<JSValue> {
     let context = ctx.bun_vm().context_of_caller(callframe);
     // What script of a disposed `Bun.ModuleGraph` starts does not start, and reports nothing: no
@@ -514,10 +572,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-    let url_str_optional = if first_arg.as_::<Request>().is_none() {
-        StringOrURL::from_js(first_arg, global_this)?
-    } else {
+    let first_arg_is_request = first_arg.as_::<Request>().is_some();
+    let url_str_optional = if first_arg_is_request {
         None
+    } else {
+        StringOrURL::from_js(first_arg, global_this)?
     };
 
     let request_init_object: Option<JSValue> = 'brk: {
@@ -562,8 +621,41 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
+    // "integrity": a DOMString, so every value but undefined is a string. "" asks for no check and hides the Request's.
+    'extract_integrity: {
+        let mut integrity_value = None;
+        if let Some(options) = options_object {
+            integrity_value =
+                options.get_common_string(global_this, jsc::CommonString::FetchOptionIntegrity)?;
+        }
+
+        if integrity_value.is_none() {
+            // A Request gives the value that it stores. A property of the object, its own or a subclass getter, does not replace it.
+            if first_arg_is_request {
+                let stored_in = match request_mut!() {
+                    Some(request) => Some(&*request),
+                    None => first_arg.as_class_ref::<Request>(),
+                };
+                if let Some(stored) = stored_in.and_then(|request| request.integrity()) {
+                    *integrity = sri::Metadata::parse(&stored.to_utf8());
+                }
+                break 'extract_integrity;
+            }
+
+            if let Some(request_init) = request_init_object {
+                integrity_value = request_init
+                    .get_common_string(global_this, jsc::CommonString::FetchOptionIntegrity)?;
+            }
+        }
+
+        if let Some(integrity_value) = integrity_value {
+            let integrity_str = BunString::from_js(integrity_value, global_this)?;
+            *integrity = sri::Metadata::parse(&integrity_str.to_utf8());
+        }
+    }
+
     if url_str.starts_with_ascii(b"data:") {
-        return Ok(data_url_response(url_str, global_this));
+        return Ok(data_url_response(url_str, global_this, integrity.take()));
     }
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
@@ -867,9 +959,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(redirect_value) =
-                    obj.get_optional_enum::<FetchRedirect>(global_this, "redirect")?
-                {
+                if let Some(redirect_value) = obj.get_optional_enum_common_string::<FetchRedirect>(
+                    global_this,
+                    jsc::CommonString::FetchOptionRedirect,
+                    "redirect",
+                )? {
                     break 'extract_redirect_type redirect_value;
                 }
             }
@@ -1442,23 +1536,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
         };
 
-        let response = bun_core::heap::into_raw(Box::new(Response::init(
+        return Ok(blob_response(
+            global_this,
+            integrity.take(),
+            blob_to_use,
             response::Init {
                 status_code: 200,
                 ..Default::default()
             },
-            Body::new(BodyValue::Blob(blob_to_use)),
             url_string,
-            false,
-        )));
-
-        // Ownership of the boxed Response transfers to the JS GC; see
-        // `data_url_response` for the rationale.
-        return Ok(JSPromise::resolved_promise_value(
-            global_this,
-            // SAFETY: `response` is a freshly allocated heap `Response`; ownership
-            // transfers to JSC.
-            Response::make_maybe_pooled(global_this, response),
         ));
     }
 
@@ -1491,6 +1577,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let reason = sig.js_reason(global_this);
             return reject_before_send(global_this, &mut body, reason);
         }
+    }
+
+    // An upgraded connection is the body, and it has no end to check at. Nothing was sent yet.
+    if upgraded_connection && integrity.is_some() {
+        let err = sri::Failure::Unsupported
+            .into_error(BunString::clone_utf8(&url.href_without_userinfo()))
+            .to_js(global_this);
+        return reject_before_send(global_this, &mut body, err);
     }
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
@@ -1775,6 +1869,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 )
                 .to_js());
             }
+            // The Response of a stream upload does not have the body of an HTTP response. Nothing of the upload has started yet.
+            if integrity.is_some() {
+                let err = sri::Failure::Unsupported
+                    .into_error(BunString::clone_utf8(&url.href_without_userinfo()))
+                    .to_js(global_this);
+                return reject_before_send(global_this, &mut body, err);
+            }
             let promise = jsc::JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
 
@@ -1999,6 +2100,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         bypass_pool,
         fetch_session: session_hold,
         session_check_server_identity,
+        integrity: integrity.take(),
     };
 
     let _ = FetchTasklet::queue(

@@ -1290,6 +1290,18 @@ impl JSValue {
             _ => Ok(None),
         }
     }
+    /// [`get_optional_enum`](Self::get_optional_enum) for a key that is one of `BunCommonStrings.h`'s.
+    pub fn get_optional_enum_common_string<E: FromJsEnum>(
+        self,
+        global: &JSGlobalObject,
+        key: crate::CommonString,
+        property_name: &'static str,
+    ) -> JsResult<Option<E>> {
+        match self.get_common_string(global, key)? {
+            Some(v) if !v.is_null() => Ok(Some(v.to_enum::<E>(global, property_name)?)),
+            _ => Ok(None),
+        }
+    }
     /// `get(prop)`, filter
     /// undefined/null → `None`, otherwise `toEnum` (via `to_enum_from_map`).
     pub fn get_optional_enum_from_map<

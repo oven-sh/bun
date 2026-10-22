@@ -13,7 +13,9 @@ import {
   getMaxFD,
   isASAN,
   isDebug,
+  isFreeBSD,
   isLinux,
+  isMacOS,
   isWindows,
   libcPathForDlopen,
   normalizeBunSnapshot,
@@ -6355,6 +6357,7 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
 
       let acceptedFd = -1;
       const report = {};
+      let connectReturned = false;
       const outcome = Promise.withResolvers();
       const server = Bun.listen({
         hostname: "127.0.0.1",
@@ -6373,9 +6376,13 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
               socket: {
                 data() {},
                 open: () => outcome.resolve("open"),
-                connectError: (_socket, error) => outcome.resolve(error.code),
+                connectError(_socket, error) {
+                  if (checkFds) report.refusedInsideConnect = !connectReturned;
+                  outcome.resolve(error.code);
+                },
               },
             }).catch(() => {});
+            connectReturned = true;
             // Bun.connect() to an IP literal creates its socket before it returns, and that
             // socket has to reuse the accepted socket's fd number for the stale read to hit it.
             if (checkFds) report.acceptedFdReusedByConnect = isOpen(acceptedFd);
@@ -6412,10 +6419,20 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const expectedReport = isWindows
-      ? { outcome: "ECONNREFUSED" }
-      : { acceptedFdFreeInClose: true, acceptedFdReusedByConnect: true, outcome: "ECONNREFUSED" };
-    expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(expectedReport) + "\n", stderr: "" });
+    expect(stderr).toBe("");
+    const report = JSON.parse(stdout);
+    // A BSD kernel can refuse a loopback connect inside connect(2). That socket's fd is closed again before Bun.connect() returns.
+    const refusedInsideConnect = (isMacOS || isFreeBSD) && report.refusedInsideConnect === true;
+    expect(report).toEqual(
+      isWindows
+        ? { outcome: "ECONNREFUSED" }
+        : {
+            acceptedFdFreeInClose: true,
+            refusedInsideConnect,
+            acceptedFdReusedByConnect: !refusedInsideConnect,
+            outcome: "ECONNREFUSED",
+          },
+    );
     expect(exitCode).toBe(0);
   });
 });
@@ -7158,6 +7175,107 @@ describe.concurrent("end(data) larger than the send buffer", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr }).toEqual({ stdout: `end ${16 << 20}\nclose\n`, stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // In its own process: the sweeps also advance every other socket's timeout on the thread.
+  // Windows takes a first send of any size whole, so nothing is queued there.
+  it.skipIf(isWindows)(
+    "calls timeout() while the tail waits on a peer that sent its FIN and stopped reading",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const ended = Promise.withResolvers();
+        const closed = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data: socket => console.log("end", socket.end(Buffer.alloc(16 << 20))),
+            end: () => (console.log("peer's FIN"), ended.resolve()),
+            timeout: socket => (console.log("timeout"), socket.terminate()),
+            close: () => (console.log("close"), closed.resolve()),
+          },
+        });
+        using peer = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          allowHalfOpen: true,
+          socket: {
+            open(socket) {
+              socket.pause();
+              socket.write("request");
+              socket.shutdown();
+            },
+            data() {},
+          },
+        });
+        await ended.promise;
+        // One sweep is 4 seconds, and an accepted socket starts with a 120 second timeout.
+        sweepSocketTimers(30);
+        await closed.promise;
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `end ${16 << 20}\npeer's FIN\ntimeout\nclose\n`, stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // In its own process, and not on Windows, for the same reasons.
+  it.skipIf(isWindows).each(["tcp", "tls"] as const)(
+    "%s end() in the timeout handler closes a socket whose peer stopped reading the tail",
+    async transport => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+          import { sweepSocketTimers } from "bun:internal-for-testing";
+          const { key, cert } = JSON.parse(process.env.TEST_TLS);
+          const queued = Promise.withResolvers();
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: key ? { key, cert } : undefined,
+            socket: {
+              data: socket => (console.log("end", socket.end(Buffer.alloc(16 << 20))), queued.resolve()),
+              timeout: socket => (console.log("timeout"), void socket.end()),
+              close: () => console.log("close"),
+            },
+          });
+          function sendRequest(socket) {
+            socket.write("request");
+            socket.pause();
+          }
+          using peer = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            tls: key ? { ca: cert } : undefined,
+            // A TLS socket can't be paused before it has read the handshake.
+            socket: { ...(key ? { handshake: sendRequest } : { open: sendRequest }), data() {} },
+          });
+          await queued.promise;
+          // One sweep is 4 seconds. An accepted socket starts with a 120 second timeout, and a TLS close waits 10 more for unsent records.
+          sweepSocketTimers(33);
+          console.log("done");
+          `,
+        ],
+        env: { ...bunEnv, TEST_TLS: JSON.stringify(transport === "tls" ? { key: tls.key, cert: tls.cert } : {}) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: `end ${16 << 20}\ntimeout\nclose\ndone\n`, stderr: "" });
       expect(exitCode).toBe(0);
     },
   );

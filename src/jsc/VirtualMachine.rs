@@ -6070,7 +6070,7 @@ impl VirtualMachine {
             rare.node_quic_callbacks.deinit();
             // The next file's `node:tls` starts with no override, so native clients must too.
             if rare.tls_default_ca.take().is_some() {
-                rare.default_client_ssl_ctx = None;
+                rare.drop_client_tls_defaults();
             }
         }
         let _ = self.event_loop_mut().drain_microtasks();

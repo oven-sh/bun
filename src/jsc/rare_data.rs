@@ -233,6 +233,8 @@ pub struct RareData {
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
     /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
     pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
+    /// The config of a `fetch` without TLS options, kept so each request doesn't copy and hash the default CA list.
+    pub http_client_tls_defaults: Option<bun_http::ssl_config::SharedPtr>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
@@ -304,6 +306,7 @@ impl Default for RareData {
             test_parallel_ipc_group: SocketGroup::default(),
             socket_groups: SocketGroups::default(),
             default_client_ssl_ctx: None,
+            http_client_tls_defaults: None,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
@@ -827,8 +830,7 @@ impl RareData {
         owned.extend_from_slice(ciphers);
         owned.push(0);
         self.tls_default_ciphers = Some(owned.into_boxed_slice());
-        // Built from the previous list. Open connections hold their own reference.
-        self.default_client_ssl_ctx = None;
+        self.drop_client_tls_defaults();
     }
 
     pub(crate) fn tls_default_ca(&self) -> Option<&[Box<[u8]>]> {
@@ -838,8 +840,13 @@ impl RareData {
     /// An empty list trusts nothing, as in Node.
     pub(crate) fn set_tls_default_ca(&mut self, certs: Vec<Box<[u8]>>) {
         self.tls_default_ca = Some(certs.into_boxed_slice());
-        // Built from the previous list. Open connections hold their own reference.
+        self.drop_client_tls_defaults();
+    }
+
+    /// Both were built from the previous defaults. Open connections hold their own reference.
+    pub(crate) fn drop_client_tls_defaults(&mut self) {
         self.default_client_ssl_ctx = None;
+        self.http_client_tls_defaults = None;
     }
 
     pub fn push_cleanup_hook(

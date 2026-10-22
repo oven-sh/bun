@@ -1312,6 +1312,8 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
     agent1: { key: agent1Key, cert: agent1Cert },
     agent3: { key: agent3Key, cert: agent3Cert },
   };
+  // Clients verify the server's chain but not its name. Their `ca` also completes their own chain up to the root.
+  const verifying = { ca: [ca1, ca2, agent2Cert, loadPEM("ca5-cert.pem")], checkServerIdentity: () => undefined };
   const trustedBy = { agent1: "a", agent3: "b" } as const;
   const servedFor = { a: "agent2", b: "agent3" } as const;
   type Offer = { servername: string | false; protocols: string[] };
@@ -1401,7 +1403,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
     it.each(["agent1", "agent3"] as const)("serves and verifies %s under the selected context", async name => {
       using transport = await transports[kind](createAlpnServer());
       const offer = async (alpn: "a" | "b", session?: Buffer) => {
-        const options = { ...clients[name], rejectUnauthorized: false, ALPNProtocols: [alpn], session };
+        const options = { ...clients[name], ...verifying, ALPNProtocols: [alpn], session };
         const { served, seen, session: issued } = await exchange(transport.open(options));
         return { outcome: { served, seen }, issued };
       };
@@ -1410,7 +1412,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
         seen:
           trustedBy[name] === alpn
             ? { alpn, authorized: true, error: null, resumed }
-            : { alpn, authorized: false, error: "UNABLE_TO_VERIFY_LEAF_SIGNATURE", resumed },
+            : { alpn, authorized: false, error: "SELF_SIGNED_CERT_IN_CHAIN", resumed },
       });
       const [fullA, fullB] = [await offer("a"), await offer("b")];
       expect([fullA.outcome, fullB.outcome]).toEqual([expected("a", false), expected("b", false)]);
@@ -1434,7 +1436,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
       },
     });
     using transport = await transports.listener(server);
-    const { served } = await exchange(transport.open({ rejectUnauthorized: false, ALPNProtocols: ["a"] }));
+    const { served } = await exchange(transport.open({ ...verifying, ALPNProtocols: ["a"] }));
     expect(served).toBe("agent10.example.com");
   });
 
@@ -1491,7 +1493,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
 
   it("does nothing on a client, as in Node", async () => {
     using transport = await transports.listener(createAlpnServer());
-    const client = transport.open({ ...clients.agent1, rejectUnauthorized: false, ALPNProtocols: ["a"] });
+    const client = transport.open({ ...clients.agent1, ...verifying, ALPNProtocols: ["a"] });
     client.on("connect", () => client.setKeyCert(tls.createSecureContext(clients.agent3)));
     // The default context trusts ca1, which issued agent1 and not agent3.
     expect((await exchange(client)).seen.authorized).toBe(true);
@@ -1511,7 +1513,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
       },
     });
     using transport = await transports.listener(server);
-    const { served } = await exchange(transport.open({ rejectUnauthorized: false, ALPNProtocols: ["a"] }));
+    const { served } = await exchange(transport.open({ ...verifying, ALPNProtocols: ["a"] }));
     expect({ thrown, served }).toEqual({ thrown: ["SetKeyCert"], served: "agent2" });
   });
 
@@ -1525,7 +1527,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
       },
     });
     using transport = await transports.listener(server);
-    const options = { ...clients.agent3, rejectUnauthorized: false };
+    const options = { ...clients.agent3, ...verifying };
     const { served, seen, session } = await exchange(transport.open({ ...options, ALPNProtocols: ["late"] }));
     expect({ served, seen }).toEqual({
       served: "agent2",
@@ -1535,7 +1537,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
     expect((await exchange(transport.open({ ...options, ALPNProtocols: ["a"], session }))).seen).toEqual({
       alpn: "a",
       authorized: false,
-      error: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      error: "SELF_SIGNED_CERT_IN_CHAIN",
       resumed: false,
     });
   });
@@ -1560,7 +1562,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
         if (how === "addContext()") server.addContext("named.test", named);
         using transport = await transports[kind](server);
         const offer = async (alpn: string, servername: string) => {
-          const options = { ...clients.agent1, rejectUnauthorized: false, ALPNProtocols: [alpn], servername };
+          const options = { ...clients.agent1, ...verifying, ALPNProtocols: [alpn], servername };
           const { served, seen } = await exchange(transport.open(options));
           return { served, authorized: seen.authorized };
         };
@@ -1588,7 +1590,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
         },
       });
       using transport = await transports[kind](server);
-      const options = { rejectUnauthorized: false, servername: "named.test" };
+      const options = { ...verifying, servername: "named.test" };
       await exchange(transport.open({ ...options, ALPNProtocols: ["a"] }));
       expect(calls.splice(0)).toEqual(alpnFirst ? ["ALPNCallback", "SNICallback"] : ["SNICallback", "ALPNCallback"]);
 
@@ -1608,7 +1610,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
       SNICallback: (_, callback) => callback(null, (server as any)._sharedCreds),
     });
     using transport = await transports.listener(server);
-    const options = { rejectUnauthorized: false, ALPNProtocols: ["b"], servername: "named.test" };
+    const options = { ...verifying, ALPNProtocols: ["b"], servername: "named.test" };
     const outcomes: unknown[] = [];
     for (const name of ["agent1", "agent3"] as const) {
       const { served, seen } = await exchange(transport.open({ ...clients[name], ...options }));
@@ -1652,7 +1654,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
       },
     });
     using transport = await transports.listener(server);
-    const options = { rejectUnauthorized: false, ALPNProtocols: ["a"] };
+    const options = { ...verifying, ALPNProtocols: ["a"] };
     expect((await exchange(transport.open({ ...options, [setting]: ofServer }))).served).toBe("agent3");
 
     const refused = once(server, "tlsClientError");

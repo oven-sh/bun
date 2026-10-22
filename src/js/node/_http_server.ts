@@ -316,6 +316,10 @@ function onTLSClientError(this: Server, err, socket) {
   if (!this.emit("clientError", err, socket)) socket.destroy(err);
 }
 
+function emitTLSClientErrorNT(server: Server, err, socket) {
+  server.emit("tlsClientError", err, socket);
+}
+
 type NodeHTTPServer = import("node:http").Server;
 interface Server extends NodeHTTPServer {
   maxHeaderSize: number | undefined;
@@ -1827,7 +1831,8 @@ function getNodeHTTPServerSocket() {
       // this.server changes when the socket is passed to another server's emit('connection').
       const server = this.#listenerGeneration.server;
       const sniError = this[kSNIError];
-      if (sniError) server.emit("tlsClientError", sniError, this);
+      // On the next tick, still before 'close', so a listener that throws can't skip the cleanup below.
+      if (sniError) process.nextTick(emitTLSClientErrorNT, server, sniError, this);
       const tracked = server[kTrackedConnections];
       if (tracked) {
         tracked.delete(this);

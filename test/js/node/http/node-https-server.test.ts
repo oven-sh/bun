@@ -661,6 +661,11 @@ describe("https.Server has the methods of tls.Server", () => {
       );
     });
 
+    test.each([false, 0, "", null])("SNICallback and ALPNCallback set to %p count as absent", async value => {
+      await using server = https.createServer({ ...agent2, SNICallback: value as any, ALPNCallback: value as any });
+      expect(await servedCN(await listen(server), "a.example.com")).toBe("agent2");
+    });
+
     test.each<[string, NonNullable<tls.TlsOptions["SNICallback"]>, string]>([
       ["passes an error", (_name, callback) => callback(new Error("no context")), "no context"],
       [
@@ -691,6 +696,38 @@ describe("https.Server has the methods of tls.Server", () => {
       expect(await servedCN(await listen(server), "a.example.com")).toBe("ECONNRESET");
       await reported.promise;
       expect(events).toEqual([`clientError ${message}`, `tlsClientError ${message} true`]);
+    });
+
+    test("close() finishes after a 'clientError' listener threw for a refused name", async () => {
+      const script = `
+        const https = require("node:https");
+        const tls = require("node:tls");
+        const { key, cert } = ${JSON.stringify(agent2)};
+        const connect = servername =>
+          tls.connect({ port: server.address().port, host: "127.0.0.1", ca: cert, servername, checkServerIdentity() {} });
+        let response;
+        const SNICallback = (name, callback) => callback(name === "refused.example.com" ? new Error("refused") : null);
+        const server = https.createServer({ key, cert, SNICallback }, (req, res) => {
+          response = res;
+          connect("refused.example.com").on("error", () => {});
+        });
+        server.on("clientError", () => {
+          throw new Error("listener threw");
+        });
+        process.on("uncaughtException", err => {
+          console.log(err.message);
+          // The first connection is still open, so 'close' waits for the connection count to reach zero.
+          server.close(() => server.getConnections((_, count) => console.log("closed", count)));
+          response.end();
+        });
+        server.listen(0, "127.0.0.1", () => {
+          connect("a.example.com").resume().write("GET / HTTP/1.1\\r\\nHost: a.example.com\\r\\nConnection: close\\r\\n\\r\\n");
+        });
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "listener threw\nclosed 0\n", stderr: "" });
+      expect(exitCode).toBe(0);
     });
   });
 

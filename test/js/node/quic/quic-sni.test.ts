@@ -353,6 +353,7 @@ test("a context without `ca` verifies against the default CA store", async () =>
     import { readFileSync } from "node:fs";
     import { join } from "node:path";
     import { connect, listen } from "node:quic";
+    import { setDefaultCACertificates } from "node:tls";
 
     const readKey = name => readFileSync(join(${JSON.stringify(keysDir)}, name));
     const identity = (agent, cert = readKey(agent + "-cert.pem")) => ({
@@ -388,16 +389,20 @@ test("a context without `ca` verifies against the default CA store", async () =>
       return outcome;
     }
 
-    console.log(
-      JSON.stringify({
-        SSL_CERT_FILE: await verdict("agent1"),
-        NODE_EXTRA_CA_CERTS: await verdict("agent3"),
-        bundledRoot: await verdict("bundled-root-probe"),
-        caReplacesTheDefaults: await verdict("agent3", { ca: "ca1-cert.pem" }),
-        crl: await verdict("agent3", { crl: "ca2-crl-agent3.pem" }),
-        nextContextWithoutCrl: await verdict("agent3"),
-      }),
-    );
+    const verdicts = {
+      SSL_CERT_FILE: await verdict("agent1"),
+      NODE_EXTRA_CA_CERTS: await verdict("agent3"),
+      bundledRoot: await verdict("bundled-root-probe"),
+      caReplacesTheDefaults: await verdict("agent3", { ca: "ca1-cert.pem" }),
+      crl: await verdict("agent3", { crl: "ca2-crl-agent3.pem" }),
+      nextContextWithoutCrl: await verdict("agent3"),
+    };
+    setDefaultCACertificates([]);
+    verdicts.emptyDefaultList = await verdict("agent3");
+    setDefaultCACertificates([readKey("ca1-cert.pem")]);
+    verdicts.inDefaultList = await verdict("agent1");
+    verdicts.notInDefaultList = await verdict("agent3");
+    console.log(JSON.stringify(verdicts));
     await server.close();
   `;
 
@@ -423,6 +428,9 @@ test("a context without `ca` verifies against the default CA store", async () =>
       caReplacesTheDefaults: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
       crl: "CERT_REVOKED",
       nextContextWithoutCrl: "verified",
+      emptyDefaultList: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      inDefaultList: "verified",
+      notInDefaultList: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
     }),
     stderr: expect.stringContaining(
       "ExperimentalWarning: quic is an experimental feature and might change at any time",

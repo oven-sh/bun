@@ -376,8 +376,6 @@ function unsealPfxForNative(tls) {
   const unsealed = { __proto__: tls, key, cert, ca, pfx: undefined };
   if (!pfxCAs) return unsealed;
   if (ca) unsealed.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
-  // No addCACert() follows to complete the chain of a lone identity. Several carry theirs already.
-  if (typeof cert === "string") unsealed.cert = cert + pfxCAs[0];
   return unsealed;
 }
 

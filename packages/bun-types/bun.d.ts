@@ -6879,8 +6879,7 @@ declare module "bun" {
      * Call the {@link SocketHandler.timeout `timeout`} handler once, `seconds` seconds from now.
      *
      * The socket stays open. Call {@link end `end()`} or {@link terminate `terminate()`} in the handler to close it.
-     * `end()` first sends the data an earlier `end(data)` queued, so it never closes a socket whose peer stopped
-     * reading. `terminate()` drops that data and closes right away.
+     * Both drop the data an earlier `end(data)` queued and the peer hasn't taken yet.
      *
      * Reads and writes don't restart the timer. To reset the timeout, call this function again. `0` cancels it.
      *

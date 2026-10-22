@@ -327,9 +327,16 @@ pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_
     if !vm.tls_client_defaults_set() {
         return None;
     }
-    Some(bun_http::ssl_config::global_registry::intern(
-        tls_true_defaults(vm, false),
-    ))
+    // `NODE_TLS_REJECT_UNAUTHORIZED` can change between requests.
+    let reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+    let cached = vm.as_mut().rare_data().http_client_tls_defaults.clone();
+    if let Some(config) = cached.filter(|config| config.reject_unauthorized == reject_unauthorized)
+    {
+        return Some(config);
+    }
+    let config = bun_http::ssl_config::global_registry::intern(tls_true_defaults(vm, false));
+    vm.as_mut().rare_data().http_client_tls_defaults = Some(config.clone());
+    Some(config)
 }
 
 /// No `ciphers` option means `tls.DEFAULT_CIPHERS`, as in Node's `configSecureContext`.

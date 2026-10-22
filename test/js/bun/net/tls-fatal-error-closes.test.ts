@@ -8,7 +8,7 @@
 // Two engines: openssl.c drives a socket, SSLWrapper drives TLS over a Duplex, a CONNECT tunnel or a named pipe.
 import { RedisClient, SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { tls as cert } from "harness";
+import { tls as cert, isMacOS, isWindows } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import https from "node:https";
@@ -493,7 +493,7 @@ test.each([false, true])("a client whose peer resets at accept hears ECONNRESET 
   });
   const events: string[] = [];
   const closed = Promise.withResolvers<void>();
-  await Bun.connect({
+  const connected = Bun.connect({
     hostname: "127.0.0.1",
     port: listener.port,
     tls: { rejectUnauthorized: false },
@@ -509,6 +509,17 @@ test.each([false, true])("a client whose peer resets at accept hears ECONNRESET 
       },
     },
   });
+  // On Windows the reset can arrive before connect() completes, so the promise rejects with it instead.
+  if (
+    isWindows &&
+    (await connected.then(
+      () => false,
+      error => error.code === "ECONNRESET",
+    ))
+  )
+    return;
+  await connected;
   await closed.promise;
-  expect(events).toEqual(["handshake(false, ECONNRESET)", "close(ECONNRESET)"]);
+  // On macOS the event loop sees the reset itself, and that closes without a handshake event, like any reset mid-handshake.
+  expect(events).toEqual([...(isMacOS ? [] : ["handshake(false, ECONNRESET)"]), "close(ECONNRESET)"]);
 });

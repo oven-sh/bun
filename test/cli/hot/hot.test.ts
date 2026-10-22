@@ -1430,3 +1430,50 @@ it.each(isWindows ? ["tcp", "tls"] : ["tcp", "unix", "tls"])(
   },
   timeout,
 );
+
+// How get-port, portfinder and detect-port look for a free port.
+it(
+  "should report EADDRINUSE when one --hot run listens on the same port twice",
+  async () => {
+    using dir = tempDir("hot-listen-twice", {
+      "index.ts": `
+        import { once } from "node:events";
+        import net from "node:net";
+
+        const free = net.createServer().listen(0, "127.0.0.1");
+        await once(free, "listening");
+        const { port } = free.address();
+        free.close();
+        await once(free, "close");
+
+        const app = net.createServer(socket => socket.end("app"));
+        await once(app.listen(port, "127.0.0.1"), "listening");
+
+        const probe = net.createServer();
+        const probed = await new Promise(resolve => {
+          probe.once("error", err => resolve(err.code));
+          probe.listen(port, "127.0.0.1", () => probe.close(() => resolve("free")));
+        });
+        const reply = await new Promise(resolve => {
+          const client = net.connect(port, "127.0.0.1");
+          client.on("data", data => resolve(data.toString()));
+          client.on("error", err => resolve(err.code));
+        });
+        console.log(JSON.stringify({ probed, reply }));
+        process.exit(0);
+      `,
+    });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([runner.stdout.text(), runner.exited]);
+    expect(stdout).toBe(JSON.stringify({ probed: "EADDRINUSE", reply: "app" }) + "\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

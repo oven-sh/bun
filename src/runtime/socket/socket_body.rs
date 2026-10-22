@@ -101,6 +101,7 @@ use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
 use crate::server::ServerWebSocket;
 use crate::socket::udp_socket::get_us_error;
+use tls_socket_functions::TlsHandle;
 
 bun_output::declare_scope!(Socket, visible);
 macro_rules! log {
@@ -1120,7 +1121,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
+        this.update_flags(|f| f.insert(Flags::IN_TIMEOUT_HANDLER));
+        let called = callback.call(&global, this_value, &[this_value]);
+        this.update_flags(|f| f.remove(Flags::IN_TIMEOUT_HANDLER));
+        if let Err(err) = called {
             handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
         }
         Ok(())
@@ -3410,6 +3414,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
         let _guard = this.ref_guard();
+        if this.flags.get().contains(Flags::IN_TIMEOUT_HANDLER) {
+            this.discard_queued_writes();
+        }
         // No writable event reaches the raw half of an `upgradeTLS` pair, so nothing would send its tail.
         let queues_tail = !this.flags.get().contains(Flags::BYPASS_TLS);
         let result = match this.write_or_end::<true>(global, args.mut_(), queues_tail) {
@@ -3954,6 +3961,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         unsafe { &*std::ptr::from_ref::<Self>(this).cast::<TLSSocket>() }
     }
 
+    #[inline(always)]
+    fn tls_handle(this: &Self) -> TlsHandle<'_> {
+        TlsHandle::Socket(Self::as_tls(this))
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn disable_renegotiation(
         this: &Self,
@@ -3973,7 +3985,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::is_session_reused(Self::as_tls(this), g, f)
+            tls_socket_functions::is_session_reused(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::FALSE)
         }
@@ -4053,7 +4065,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::export_keying_material(Self::as_tls(this), g, f)
+            tls_socket_functions::export_keying_material(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -4065,7 +4077,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_ephemeral_key_info(Self::as_tls(this), g, f)
+            tls_socket_functions::get_ephemeral_key_info(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::NULL)
         }
@@ -4073,7 +4085,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn get_cipher(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_cipher(Self::as_tls(this), g, f)
+            tls_socket_functions::get_cipher(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -4085,7 +4097,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_tls_peer_finished_message(Self::as_tls(this), g, f)
+            tls_socket_functions::get_tls_peer_finished_message(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -4097,7 +4109,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_tls_finished_message(Self::as_tls(this), g, f)
+            tls_socket_functions::get_tls_finished_message(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -4121,7 +4133,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_tls_version(Self::as_tls(this), g, f)
+            tls_socket_functions::get_tls_version(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::NULL)
         }
@@ -4145,7 +4157,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_peer_certificate(Self::as_tls(this), g, f)
+            tls_socket_functions::get_peer_certificate(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::NULL)
         }
@@ -4157,7 +4169,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_certificate(Self::as_tls(this), g, f)
+            tls_socket_functions::get_certificate(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -4181,7 +4193,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         f: &CallFrame,
     ) -> JsResult<JSValue> {
         if SSL {
-            tls_socket_functions::get_x509_certificate(Self::as_tls(this), g, f)
+            tls_socket_functions::get_x509_certificate(Self::tls_handle(this), g, f)
         } else {
             Ok(JSValue::UNDEFINED)
         }
@@ -4335,6 +4347,8 @@ bitflags::bitflags! {
         const ALPN_REFUSED         = 1 << 16;
         /// A send is reading `buffered_data_for_node_net`, so its caller frees the queue if the socket closes.
         const SENDING_QUEUE        = 1 << 17;
+        /// The `timeout` handler is running. `end()` closes without waiting for the peer to take `end(data)`'s tail.
+        const IN_TIMEOUT_HANDLER   = 1 << 18;
     }
 }
 

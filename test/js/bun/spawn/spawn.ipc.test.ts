@@ -606,6 +606,8 @@ it.skipIf(isWindows)(
     libc.close();
     handle.close();
 
+    // A failed fcntl() returns -1, and -1 & FD_CLOEXEC would read as the flag being set.
+    expect(fdFlags).toBeGreaterThanOrEqual(0);
     expect({ message, peer, cloexec: fdFlags & FD_CLOEXEC }).toEqual({
       message: { hello: "handle" },
       peer: { extras: ["closed", "closed"] },

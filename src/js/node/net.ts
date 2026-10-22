@@ -905,6 +905,7 @@ const SocketHandlers = {
     if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
       const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      self[kBytesWritten] = socket.bytesWritten;
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
@@ -1775,6 +1776,7 @@ const SocketHandlers2 = {
     if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
       const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      self[kBytesWritten] = socket.bytesWritten;
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
@@ -3023,7 +3025,8 @@ function fdSyncWritev(data, callback) {
 
 // Returns true if write(2) failed because the fd is non-blocking, its buffer is full, and a FileSink can poll it.
 function isFullPipe(self, err) {
-  if (process.platform === "win32" || err?.code !== "EAGAIN") return false;
+  // Linux only. kqueue doesn't reliably report a FIFO's readiness on macOS, and a queued write could wait forever.
+  if (process.platform !== "linux" || err?.code !== "EAGAIN") return false;
   if (self[kSyncWriteSink] !== undefined) return true;
   const stats = require("node:fs").fstatSync(self[kSyncWriteFd]);
   return stats.isFIFO() || stats.isSocket();
@@ -3305,6 +3308,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   const res = socket.$write(chunk, encoding);
+  // A transport whose write() destroys this socket made _destroy save the count without these bytes.
+  this[kBytesWritten] = socket.bytesWritten;
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.

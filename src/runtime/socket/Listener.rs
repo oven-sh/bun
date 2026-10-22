@@ -111,6 +111,8 @@ pub(crate) struct Listener {
     pub(crate) context: bun_jsc::ContextId,
     /// This listener's key in `VirtualMachine::hot_map()` while it's registered there.
     pub(crate) hot_key: JsCell<Option<Box<[u8]>>>,
+    /// The `hot_reload_counter` of the last run that listened on this address.
+    pub(crate) hot_run: Cell<u32>,
 }
 
 bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
@@ -300,13 +302,16 @@ impl Listener {
 
         // `--hot` runs the module again while the previous run's listener still holds the address.
         let hot_key = hot_reload_key(&socket_config);
-        if let Some(entry) = hot_key
+        let hot_run = VirtualMachine::get().hot_reload_counter;
+        if let Some(previous) = hot_key
             .as_deref()
             .and_then(|key| VirtualMachine::get().as_mut().hot_map()?.get_entry(key))
             .filter(|entry| entry.tag == HOT_MAP_TAG_LISTENER)
-        {
             // SAFETY: `do_stop` and `deinit` remove the entry, so a registered listener is live.
-            let previous = unsafe { &*entry.ptr.cast::<Listener>() };
+            .map(|entry| unsafe { &*entry.ptr.cast::<Listener>() })
+            // This run's own listener isn't stale. Binding again fails with EADDRINUSE, which port probes rely on.
+            .filter(|previous| previous.hot_run.get() != hot_run)
+        {
             // Its connections stay open and run the new handlers.
             previous
                 .handlers
@@ -326,6 +331,7 @@ impl Listener {
                         data.set(cx.global(), default_data);
                     }
                 });
+                previous.hot_run.set(hot_run);
                 return Ok(this_value);
             }
             Listener::do_stop(previous, false);
@@ -380,6 +386,7 @@ impl Listener {
                     strong_data: JsCell::new(Strong::empty()),
                     this_value: JsCell::new(JsRef::empty()),
                     hot_key: JsCell::new(None),
+                    hot_run: Cell::new(0),
                     abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
                     context: cx.context().id(),
                 }));
@@ -513,6 +520,7 @@ impl Listener {
             strong_data: JsCell::new(Strong::empty()),
             this_value: JsCell::new(JsRef::empty()),
             hot_key: JsCell::new(None),
+            hot_run: Cell::new(0),
             abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
             context: cx.context().id(),
         }));
@@ -729,6 +737,7 @@ impl Listener {
             },
         );
         self.hot_key.set(Some(key));
+        self.hot_run.set(VirtualMachine::get().hot_reload_counter);
     }
 
     fn unregister_for_hot_reload(&self) {
@@ -758,40 +767,8 @@ impl Listener {
     pub(crate) fn on_name_pipe_created<const SSL: bool>(
         listener: &Listener,
     ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
-        debug_assert!(SSL == listener.ssl);
-
-        let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
-            ref_count: bun_ptr::RefCount::init(),
-            handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
-            socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
-            protos: JsCell::new(listener.protos.clone()),
-            // `protos` is `Option<Box<[u8]>>` so we clone the listener's slice.
-            flags: Cell::new(listener.accepted_socket_flags()),
-            owned_ssl_ctx: JsCell::new(None),
-            this_value: JsCell::new(jsc::JsRef::empty()),
-            poll_ref: JsCell::new(KeepAlive::init()),
-            ref_pollref_on_connect: Cell::new(true),
-            connection: JsCell::new(None),
-            local_binding: JsCell::new(None),
-            server_name: JsCell::new(None),
-            buffered_data_for_node_net: Default::default(),
-            bytes_written: Cell::new(0),
-            bytes_read: Cell::new(0),
-            native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
-            verify_error: JsCell::new(None),
-            latest_session: Cell::new(None),
-        });
-        let s = this_socket;
-        s.ref_();
-        // See `on_create`: each accepted named-pipe connection holds the loop
-        // on its own so `conn.unref()` is meaningful.
-        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-        if let Some(default_data) = listener.strong_data.get().get() {
-            let global = listener.handlers.global_object;
-            NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
-        }
-        s
+        // The pipe attaches later, and `on_create` only touches a socket that is connected.
+        Self::on_create::<SSL>(listener, uws::NewSocketHandler::<SSL>::DETACHED)
     }
 
     /// Called from `BunListener::on_open` (uws dispatch) for every accepted socket.

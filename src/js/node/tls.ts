@@ -689,12 +689,12 @@ function TLSSocket(socket?, options?) {
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/wrap.js#L929
   if (isServer) {
     const sniCallback = options.SNICallback;
-    if (sniCallback != null) {
+    if (sniCallback) {
       validateFunction(sniCallback, "options.SNICallback");
       this._SNICallback = sniCallback;
     }
     const alpnCallback = options.ALPNCallback;
-    if (alpnCallback != null) {
+    if (alpnCallback) {
       validateFunction(alpnCallback, "options.ALPNCallback");
       if (options.ALPNProtocols) {
         throw $ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS();
@@ -1106,12 +1106,12 @@ function Server(options, secureConnectionListener): void {
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/wrap.js#L929
   if (options != null && typeof options === "object") {
     const sniCallback = options.SNICallback;
-    if (sniCallback != null) {
+    if (sniCallback) {
       validateFunction(sniCallback, "options.SNICallback");
       this._SNICallback = sniCallback;
     }
     const alpnCallback = options.ALPNCallback;
-    if (alpnCallback != null) {
+    if (alpnCallback) {
       validateFunction(alpnCallback, "options.ALPNCallback");
       // Node forbids combining the dynamic callback with a static list.
       if (options.ALPNProtocols) {

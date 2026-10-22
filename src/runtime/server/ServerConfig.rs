@@ -583,10 +583,10 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 /// The `SSL_CTX` of `tls.secureContext`. Only node:http passes one, so no other server reads the key.
 fn node_http_ssl_ctx(
     global: &JSGlobalObject,
-    args: &ServerConfig,
+    is_node_http_server: bool,
     tls: JSValue,
 ) -> JsResult<Option<bun_boringssl_sys::OwnedSslCtx>> {
-    if !args.is_node_http_server || !tls.is_object() {
+    if !is_node_http_server || !tls.is_object() {
         return Ok(None);
     }
     let Some(value) = tls.get_truthy(global, "secureContext")? else {
@@ -1212,6 +1212,7 @@ impl ServerConfig {
         }
 
         if let Some(tls) = arg.get_truthy(global, "tls")? {
+            let is_node_http_server = args.is_node_http_server;
             if tls.is_falsey() {
                 args.ssl_config = None;
             } else if tls.js_type().is_array() {
@@ -1242,7 +1243,7 @@ impl ServerConfig {
                         }
                     }
                 }
-            } else if let Some(ctx) = node_http_ssl_ctx(global, &args, tls)? {
+            } else if let Some(ctx) = node_http_ssl_ctx(global, is_node_http_server, tls)? {
                 args.ssl_ctx = Some(ctx);
                 // Marks the server as TLS for every reader of `ssl_config`.
                 args.ssl_config = Some(crate::socket::tls_true_defaults(vm, true));

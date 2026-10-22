@@ -11,6 +11,8 @@ pub(super) struct TlsConfig {
     pub certs_pem: Vec<Vec<u8>>,
     pub keys_pem: Vec<Vec<u8>>,
     pub ca_pem: Vec<Vec<u8>>,
+    /// True if there's neither a `ca` option nor a `tls.setDefaultCACertificates()` list.
+    pub default_ca_store: bool,
     pub crl_pem: Vec<Vec<u8>>,
     pub verify_peer_strict: bool,
     pub verify_hostname: bool,
@@ -89,13 +91,17 @@ impl TlsConfig {
         tls: JSValue,
         is_server: bool,
     ) -> JsResult<Self> {
+        let default_ca = global.bun_vm().tls_default_ca();
         let mut config = TlsConfig {
             is_server,
             alpn: Vec::new(),
             servername: None,
             certs_pem: Vec::new(),
             keys_pem: Vec::new(),
-            ca_pem: Vec::new(),
+            ca_pem: default_ca
+                .map(|certs| certs.iter().map(|cert| cert.to_vec()).collect())
+                .unwrap_or_default(),
+            default_ca_store: default_ca.is_none(),
             crl_pem: Vec::new(),
             verify_peer_strict: false,
             verify_hostname: false,
@@ -130,7 +136,11 @@ impl TlsConfig {
             config.keys_pem = collect_pem(global, v)?;
         }
         if let Some(v) = tls.get(global, "ca")? {
-            config.ca_pem = collect_pem(global, v)?;
+            let ca_pem = collect_pem(global, v)?;
+            if !ca_pem.is_empty() {
+                config.ca_pem = ca_pem;
+                config.default_ca_store = false;
+            }
         }
         if let Some(v) = tls.get(global, "crl")? {
             config.crl_pem = collect_pem(global, v)?;
@@ -452,7 +462,7 @@ impl TlsContext {
                     return Err("invalid TLS groups list");
                 }
             }
-            if config.ca_pem.is_empty() {
+            if config.default_ca_store {
                 // `load_crl_store` writes to the context's store, and every context shares the default one.
                 let store = if config.crl_pem.is_empty() {
                     us_get_shared_default_ca_store()

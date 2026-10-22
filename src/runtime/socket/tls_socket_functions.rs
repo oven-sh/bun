@@ -270,24 +270,24 @@ use crate::node::StringOrBuffer;
 // `socket_body` instance.
 type This = super::TLSSocket;
 
-/// Gives the getters that only read the `SSL*` their handle. `ssl()` returns `None` once the connection has closed.
-pub(crate) trait TlsHandle {
-    fn ssl(&self) -> Option<*mut boringssl::SSL>;
+/// Gives the getters that only read the `SSL*` their handle.
+#[derive(Clone, Copy)]
+pub(crate) enum TlsHandle<'a> {
+    Socket(&'a This),
+    /// `this` of a JSNodeHTTPServerSocket method, the handle of a node:https `req.socket`.
+    NodeHTTPServerSocket(JSValue),
 }
 
-impl TlsHandle for This {
-    fn ssl(&self) -> Option<*mut boringssl::SSL> {
-        self.socket.get().ssl()
-    }
-}
-
-/// `this` of a JSNodeHTTPServerSocket method, the handle of a node:https `req.socket`.
-struct NodeHTTPServerSocket(JSValue);
-
-impl TlsHandle for NodeHTTPServerSocket {
-    fn ssl(&self) -> Option<*mut boringssl::SSL> {
-        let ssl = Bun__NodeHTTPServerSocket__ssl(self.0);
-        (!ssl.is_null()).then_some(ssl)
+impl TlsHandle<'_> {
+    /// Returns `None` once the connection has closed. Call it after anything that can run JS.
+    fn ssl(self) -> Option<*mut boringssl::SSL> {
+        match self {
+            Self::Socket(socket) => socket.socket.get().ssl(),
+            Self::NodeHTTPServerSocket(value) => {
+                let ssl = Bun__NodeHTTPServerSocket__ssl(value);
+                (!ssl.is_null()).then_some(ssl)
+            }
+        }
     }
 }
 
@@ -299,55 +299,55 @@ unsafe extern "C" {
 // The methods of JSNodeHTTPServerSocketPrototype.cpp that `tls.TLSSocket` calls on its handle.
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getPeerCertificate")]
 fn node_http_get_peer_certificate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    get_peer_certificate(&NodeHTTPServerSocket(frame.this()), global, frame)
+    get_peer_certificate(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getCertificate")]
 fn node_http_get_certificate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    get_certificate(&NodeHTTPServerSocket(frame.this()), global, frame)
+    get_certificate(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getX509Certificate")]
 fn node_http_get_x509_certificate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    get_x509_certificate(&NodeHTTPServerSocket(frame.this()), global, frame)
+    get_x509_certificate(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getCipher")]
 fn node_http_get_cipher(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    get_cipher(&NodeHTTPServerSocket(frame.this()), global, frame)
+    get_cipher(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getTLSVersion")]
 fn node_http_get_tls_version(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    get_tls_version(&NodeHTTPServerSocket(frame.this()), global, frame)
+    get_tls_version(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getEphemeralKeyInfo")]
 fn node_http_get_ephemeral_key_info(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    get_ephemeral_key_info(&NodeHTTPServerSocket(frame.this()), global, frame)
+    get_ephemeral_key_info(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getTLSFinishedMessage")]
 fn node_http_get_tls_finished_message(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    get_tls_finished_message(&NodeHTTPServerSocket(frame.this()), global, frame)
+    get_tls_finished_message(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getTLSPeerFinishedMessage")]
 fn node_http_get_tls_peer_finished_message(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    get_tls_peer_finished_message(&NodeHTTPServerSocket(frame.this()), global, frame)
+    get_tls_peer_finished_message(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__isSessionReused")]
 fn node_http_is_session_reused(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    is_session_reused(&NodeHTTPServerSocket(frame.this()), global, frame)
+    is_session_reused(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__exportKeyingMaterial")]
 fn node_http_export_keying_material(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    export_keying_material(&NodeHTTPServerSocket(frame.this()), global, frame)
+    export_keying_material(TlsHandle::NodeHTTPServerSocket(frame.this()), global, frame)
 }
 
 pub(super) fn get_servername(
@@ -432,7 +432,7 @@ pub(super) fn get_peer_x509_certificate(
 }
 
 pub(super) fn get_x509_certificate(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -449,7 +449,7 @@ pub(super) fn get_x509_certificate(
 }
 
 pub(super) fn get_tls_version(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -503,7 +503,7 @@ pub(super) fn set_max_send_fragment(
 }
 
 pub(super) fn get_peer_certificate(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -686,7 +686,7 @@ pub(super) fn get_peer_certificate(
 }
 
 pub(super) fn get_certificate(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -702,7 +702,7 @@ pub(super) fn get_certificate(
 }
 
 pub(super) fn get_tls_finished_message(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -841,7 +841,7 @@ pub(super) fn get_shared_sigalgs(
 }
 
 pub(super) fn get_cipher(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -902,7 +902,7 @@ pub(super) fn get_cipher(
 }
 
 pub(super) fn get_tls_peer_finished_message(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -984,7 +984,7 @@ pub(crate) fn set_key_cert(
 }
 
 pub(crate) fn export_keying_material(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -1062,7 +1062,7 @@ pub(crate) fn export_keying_material(
 }
 
 pub(super) fn get_ephemeral_key_info(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -1288,7 +1288,7 @@ pub(super) fn disable_renegotiation(
 }
 
 pub(super) fn is_session_reused(
-    this: &impl TlsHandle,
+    this: TlsHandle<'_>,
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {

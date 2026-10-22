@@ -1066,10 +1066,10 @@ function queueEndCallback(msg, callback) {
 
 // When the last write fails there's no 'finish', and end() callbacks get the error like a Writable's.
 function onFinish(outmsg, err?) {
-  if (!err && !outmsg?.socket?._hadError) return void outmsg.emit("finish");
   const callbacks = outmsg[kEndCallbacks];
+  if (callbacks) outmsg[kEndCallbacks] = undefined;
+  if (!err && !outmsg.socket?._hadError) return void outmsg.emit("finish");
   if (!callbacks) return;
-  outmsg[kEndCallbacks] = undefined;
   err ??= outmsg[kErrored] ?? outmsg[kSocket]?.errored ?? $ERR_STREAM_DESTROYED("end");
   for (let i = 0; i < callbacks.length; i++) callbacks[i](err);
 }

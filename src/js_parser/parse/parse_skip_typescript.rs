@@ -1623,6 +1623,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut snapshot = self.parser_snapshot();
         self.lexer.is_log_disabled = true;
+        // Metadata looks up type names, which adds unbound symbols to the module scope.
+        let emit_decorator_metadata =
+            core::mem::take(&mut self.options.features.emit_decorator_metadata);
         let nested = core::mem::replace(&mut self.in_ts_conditional_arrow_attempt, true);
 
         let mut data = arrow_data.clone();
@@ -1644,6 +1647,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if parsed.is_none() {
             self.restore_parser_snapshot(&mut snapshot);
         }
+        self.options.features.emit_decorator_metadata = emit_decorator_metadata;
         let is_arrow_fn = match result {
             Ok(()) => true,
             // Stack and memory exhaustion are not properties of the attempt

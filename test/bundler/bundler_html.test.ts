@@ -800,6 +800,33 @@ body {
     },
   });
 
+  // Two <link> tags become one CSS chunk. An `@namespace` rule is valid only
+  // at the start of a style sheet.
+  itBundled("html/stylesheets-with-namespaces", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./base.css">
+    <link rel="stylesheet" href="./icons.css">
+  </head>
+  <body></body>
+</html>`,
+      "/base.css": `* { margin: 0 }`,
+      "/icons.css": `@namespace svg url(http://www.w3.org/2000/svg);\nsvg|use { fill: red }\n.icon { fill: blue }`,
+    },
+    entryPoints: ["/index.html"],
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const cssPath = api.readFile("out/index.html").match(/href="(.*\.css)"/)?.[1];
+      expect(api.readFile("out/" + cssPath)).toBe(
+        `@namespace svg "http://www.w3.org/2000/svg";*{margin:0}svg|use{fill:red}.icon{fill:blue}\n`,
+      );
+    },
+  });
+
   // Test absolute paths in HTML
   itBundled("html/absolute-paths", {
     outdir: "out/",

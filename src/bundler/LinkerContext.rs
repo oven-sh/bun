@@ -1463,6 +1463,11 @@ pub struct LinkerOptions {
 }
 
 impl LinkerOptions {
+    /// Whether the rules of a CSS file print minified. Every other entry of a CSS chunk looks only at `minify_whitespace`.
+    pub(crate) fn has_minify_flag(&self) -> bool {
+        self.minify_whitespace || self.minify_syntax || self.minify_identifiers
+    }
+
     /// ESM bytecode in a `--compile` build: JSC does not parse the chunk, so
     /// its `JSModuleRecord` is built from a `ModuleInfo` the linker records
     /// while printing (see `post_process_js_chunk`).

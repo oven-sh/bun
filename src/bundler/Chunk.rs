@@ -1402,6 +1402,9 @@ pub enum CssImportOrderKind {
     ExternalPath(bun_fs::Path<'static>),
     #[strum(serialize = "source_index")]
     SourceIndex(Index),
+    /// `(prefix, url)` of each `@namespace` rule of the chunk, which its files then do not print.
+    #[strum(serialize = "namespaces")]
+    Namespaces(Vec<(Option<&'static [u8]>, &'static [u8])>),
 }
 
 // Copy-on-write list of layer names.
@@ -1467,6 +1470,7 @@ impl CssImportOrder {
             CssImportOrderKind::Layers(_) => 0,
             CssImportOrderKind::ExternalPath(_) => 1,
             CssImportOrderKind::SourceIndex(_) => 2,
+            CssImportOrderKind::Namespaces(_) => 3,
         };
         bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
@@ -1490,6 +1494,8 @@ impl CssImportOrder {
             CssImportOrderKind::SourceIndex(idx) => {
                 bun_core::write_any_to_hasher(hasher, idx.get())
             }
+            // The files of the chunk decide what the entry holds.
+            CssImportOrderKind::Namespaces(_) => {}
         }
     }
 
@@ -1544,6 +1550,12 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
                     source_index.get(),
                     bstr::BStr::new(&source.path.text)
                 )?;
+            }
+            CssImportOrderKind::Namespaces(namespaces) => {
+                for (prefix, url) in namespaces {
+                    let prefix = bstr::BStr::new(prefix.unwrap_or_default());
+                    write!(writer, "{} \"{}\"; ", prefix, bstr::BStr::new(url))?;
+                }
             }
         }
         Ok(())

@@ -200,6 +200,41 @@ body {
 `);
   },
 });
+devTest("css @namespace of the importing file comes before the rules it imports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./second.css";
+      @namespace svg url(http://www.w3.org/2000/svg);
+      svg|a {
+        color: red;
+      }
+    `,
+    "second.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    expect(stylesheet).toBe(`@namespace svg "http://www.w3.org/2000/svg";
+
+/* second.css */
+h1 {
+  color: #00f;
+}
+
+/* styles.css */
+svg|a {
+  color: red;
+}
+`);
+  },
+});
 devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({

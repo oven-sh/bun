@@ -928,6 +928,69 @@ pub enum TopLevelState {
     Body = 5,
 }
 
+impl TopLevelState {
+    pub fn after_layer_statement(self) -> Self {
+        if self <= Self::Layers {
+            Self::Layers
+        } else {
+            Self::Body
+        }
+    }
+
+    /// `Body` when `TopLevelRuleParser` rejects an `@import` in this state.
+    pub fn after_import(self) -> Self {
+        if self <= Self::Imports {
+            Self::Imports
+        } else {
+            Self::Body
+        }
+    }
+
+    /// The state that `TopLevelRuleParser` has after `rule`. `Body` also when it rejects `rule` in this state.
+    pub fn after<R>(self, rule: &CssRule<R>) -> Self {
+        match rule {
+            CssRule::Ignored => self,
+            CssRule::Unknown(unknown) if unknown.block.is_none() => self,
+            CssRule::LayerStatement(_) => self.after_layer_statement(),
+            CssRule::Import(_) => self.after_import(),
+            CssRule::Namespace(_) if self <= Self::Namespaces => Self::Namespaces,
+            CssRule::Namespace(_)
+            | CssRule::Unknown(_)
+            | CssRule::Media(_)
+            | CssRule::Style(_)
+            | CssRule::Keyframes(_)
+            | CssRule::FontFace(_)
+            | CssRule::FontPaletteValues(_)
+            | CssRule::Page(_)
+            | CssRule::Supports(_)
+            | CssRule::CounterStyle(_)
+            | CssRule::MozDocument(_)
+            | CssRule::Nesting(_)
+            | CssRule::Viewport(_)
+            | CssRule::CustomMedia(_)
+            | CssRule::LayerBlock(_)
+            | CssRule::Property(_)
+            | CssRule::Container(_)
+            | CssRule::Scope(_)
+            | CssRule::StartingStyle(_)
+            | CssRule::Custom(_) => Self::Body,
+        }
+    }
+
+    /// The state after what the printer prints for `rule`. Some block rules print only their rules.
+    pub fn after_printed<R>(self, rule: &CssRule<R>, minify: bool, targets: &Targets) -> Self {
+        let rules = match rule {
+            CssRule::Media(media) if media.query.prints_no_block(minify) => &media.rules,
+            CssRule::Style(style) if style.prints_no_block(targets) => &style.rules,
+            _ => return self.after(rule),
+        };
+        let rules = rules.v.iter();
+        rules.fold(self, |state, rule| {
+            state.after_printed(rule, minify, targets)
+        })
+    }
+}
+
 pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     // `DeclarationList = bumpalo::Vec<'bump, Property>` needs the arena up
     // front, so cache it here (same `'static`-erased borrow `DeclarationBlock`
@@ -1331,11 +1394,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 layer @ AtRulePrelude::Layer(_) => {
-                    if (this.state as u8) <= (TopLevelState::Layers as u8) {
-                        this.state = TopLevelState::Layers;
-                    } else {
-                        this.state = TopLevelState::Body;
-                    }
+                    this.state = this.state.after_layer_statement();
                     let mut nested_parser = this.nested();
                     <NestedRuleParser<'_, AtRuleParserT> as AtRuleParser>::rule_without_block(
                         &mut nested_parser,

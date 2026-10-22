@@ -1,8 +1,9 @@
+import type { BuildOutput } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
-import { itBundled } from "../expectBundled";
+import { basename, join } from "node:path";
+import { itBundled, type BundlerTestBundleAPI } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_css_test.go
@@ -324,9 +325,10 @@ describe("bundler", () => {
   };
 
   // The CSS parser rejects an "@import" that comes after a style rule.
-  async function expectToBundleAgain(file: string) {
+  async function expectToBundleAgain(file: string, allowWarnings = true) {
     const again = await Bun.build({ entrypoints: [file], throw: false });
-    expect(again.logs.filter(log => log.level === "error").map(log => log.message)).toEqual([]);
+    const logs = again.logs.filter(log => !allowWarnings || log.level === "error");
+    expect(logs.map(log => log.message)).toEqual([]);
     expect(again.success).toBe(true);
   }
 
@@ -549,6 +551,861 @@ describe("bundler", () => {
       log: ["warn: invalid @ rule encountered: '@tailwind'"],
       exitCode: 0,
     });
+  });
+
+  // CSS takes "@namespace" only between the "@import" rules and the first
+  // other rule of a style sheet. The parser rejects a rule after that place
+  // and warns about a rule in a block, so these cases bundle their output
+  // again and expect no log.
+  const svg = "http://www.w3.org/2000/svg";
+  const xhtml = "http://www.w3.org/1999/xhtml";
+  const xlink = "http://www.w3.org/1999/xlink";
+  const icons = `@namespace svg url(${svg});\nsvg|a { color: red }`;
+  const fontFace = `@font-face { font-family: f; src: url(data:font/woff2;base64,AA==) }`;
+  async function expectStylesheet(api: BundlerTestBundleAPI, file: string, css: string) {
+    api.expectFile(file).toBe(css);
+    await expectToBundleAgain(api.join(file), false);
+  }
+  const warningsOf = (build: BuildOutput) =>
+    build.logs.map(({ level, message, position }) => ({
+      level,
+      message,
+      file: position && basename(position.file),
+      line: position?.line,
+      column: position?.column,
+    }));
+  const noWarnings = {
+    onAfterApiBundle(build: BuildOutput) {
+      expect(warningsOf(build)).toEqual([]);
+    },
+  };
+  const noEffect = (file: string, line: number, column: number, reason: string, url: string) => ({
+    level: "warn",
+    message: `${reason} in the same output file, so this rule ("${url}") has no effect there`,
+    file,
+    line,
+    column,
+  });
+
+  // The chunk prints one entry with the rules after its external "@import" rules.
+  const hoisted: Record<string, { files: Record<string, string>; css: string }> = {
+    OfImportingFile: {
+      files: {
+        "/entry.css": `@import "./a.css";\n${icons}`,
+        "/a.css": `.a { color: blue }`,
+      },
+      css: `@namespace svg "${svg}";.a{color:#00f}svg|a{color:red}`,
+    },
+    // The conditions of an import are a block around the rules of its file.
+    OfConditionalImport: {
+      files: {
+        "/entry.css": `@import "./icons.css" screen;\n.e { color: green }`,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";@media screen{svg|a{color:red}}.e{color:green}`,
+    },
+    OfConditionalImports: {
+      files: {
+        "/entry.css": `
+          @import "./icons.css" screen;
+          @import "./icons.css" layer(x);
+          @import "./icons.css" supports(display: grid);
+          @import "./only.css" layer(y);
+          @import "./only.css" print;
+          .e { color: green }`,
+        "/icons.css": icons,
+        "/only.css": `@namespace svg url(${svg});`,
+      },
+      css: `@namespace svg "${svg}";@media screen{svg|a{color:red}}@layer x{svg|a{color:red}}@supports (display:grid){svg|a{color:red}}@layer y;.e{color:green}`,
+    },
+    AfterConditionalImport: {
+      files: {
+        "/entry.css": `@import "./layers.css" screen;\n@import "./icons.css";`,
+        "/layers.css": `@layer a;`,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";@media screen{@layer a;}svg|a{color:red}`,
+    },
+    // An import with no rule prints "@layer foo;", and a condition around that is a block.
+    AfterImportOfNoRulesInLayerAndMedia: {
+      files: {
+        "/entry.css": `@import "./empty.css" layer(foo) screen;\n@import "./icons.css";\n.e { color: green }`,
+        "/empty.css": ``,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";@media screen{@layer foo;}svg|a{color:red}.e{color:green}`,
+    },
+    AfterImportOfNoRulesInLayerAndSupports: {
+      files: {
+        "/entry.css": `@import "./empty.css" layer(foo) supports(display: grid);\n@import "./icons.css";\n.e { color: green }`,
+        "/empty.css": ``,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";@supports (display:grid){@layer foo;}svg|a{color:red}.e{color:green}`,
+    },
+    AfterImportOfNoRulesInLayerInMedia: {
+      files: {
+        "/entry.css": `@import "./mid.css" screen;\n@import "./icons.css";\n.e { color: green }`,
+        "/mid.css": `@import "./empty.css" layer(b);`,
+        "/empty.css": ``,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";@media screen{@layer b;}svg|a{color:red}.e{color:green}`,
+    },
+    // A "@layer" statement after an "@import" rule ends the prologue.
+    AfterImportOfNoRulesInLayerAfterExternalImport: {
+      files: {
+        "/entry.css": `@import "https://example.com/e.css";\n@import "./empty.css" layer(foo);\n@import "./icons.css";`,
+        "/empty.css": ``,
+        "/icons.css": icons,
+      },
+      css: `@import "https://example.com/e.css";@namespace svg "${svg}";@layer foo;svg|a{color:red}`,
+    },
+    AfterExternalImport: {
+      files: {
+        "/entry.css": `@import "./a.css";\n${icons}`,
+        "/a.css": `@import "https://example.com/e.css";\n@layer x;`,
+      },
+      css: `@import "https://example.com/e.css";@namespace svg "${svg}";@layer x;svg|a{color:red}`,
+    },
+    AfterExternalImports: {
+      files: {
+        "/entry.css": `@import "https://example.com/a.css";\n@import "./x.css";\n@import "https://example.com/b.css" screen;\n${icons}`,
+        "/x.css": `@import "https://example.com/c.css";\n.x { color: green }`,
+      },
+      css: `@import "https://example.com/a.css";@import "https://example.com/c.css";@import "https://example.com/b.css" screen;@namespace svg "${svg}";.x{color:green}svg|a{color:red}`,
+    },
+    // An earlier copy of an import leaves a "@layer" statement in the chunk.
+    WithLayerOfEarlierImport: {
+      files: {
+        "/entry.css": `
+          @import "./icons.css" layer(x);
+          @import "./b.css" layer(y);
+          @import "./icons.css" layer(x);
+          .e { color: green }`,
+        "/icons.css": icons,
+        "/b.css": `@namespace xl url(${xlink});\n[xl|href] { color: blue }`,
+      },
+      css: `@namespace xl "${xlink}";@namespace svg "${svg}";@layer x;@layer y{[xl|href]{color:#00f}}@layer x{svg|a{color:red}}.e{color:green}`,
+    },
+    AfterLayersOfEarlierImportInMedia: {
+      files: {
+        "/entry.css": `@import "./base.css" screen;\n@import "./icons.css";\n@import "./base.css" screen;`,
+        "/base.css": `@layer base { .a { color: blue } }`,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";@media screen{@layer base;}svg|a{color:red}@media screen{@layer base{.a{color:#00f}}}`,
+    },
+    AfterLayersOfEarlierImportInLayer: {
+      files: {
+        "/entry.css": `@import "./base.css" layer(outer);\n@import "./icons.css";\n@import "./base.css" layer(outer);`,
+        "/base.css": `@layer base { .a { color: blue } }`,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";@layer outer{@layer base;}svg|a{color:red}@layer outer{@layer base{.a{color:#00f}}}`,
+    },
+    AfterLayersOfEarlierImportAfterExternalImport: {
+      files: {
+        "/entry.css": `@import "https://example.com/e.css";\n@import "./base.css";\n@import "./icons.css";\n@import "./base.css";`,
+        "/base.css": `@layer base { .a { color: blue } }`,
+        "/icons.css": icons,
+      },
+      css: `@import "https://example.com/e.css";@namespace svg "${svg}";@layer base;svg|a{color:red}@layer base{.a{color:#00f}}`,
+    },
+    // With a minify flag, "@media all" prints only its rules. The rule after it ends the prologue.
+    AfterLayerStatementInMediaAllAndRule: {
+      files: {
+        "/entry.css": `@import "./layers.css";\n@import "./icons.css";`,
+        "/layers.css": `@media all { @layer x; }\n.a { color: blue }`,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";@layer x;.a{color:#00f}svg|a{color:red}`,
+    },
+    SamePrefixAndURL: {
+      files: {
+        "/entry.css": `@import "./a.css";\n@import "./b.css";\n@namespace svg url(${svg});\nsvg|c { color: red }`,
+        "/a.css": `@namespace svg url(${svg});\n@namespace s "${svg}";\nsvg|a { color: red }\ns|a { color: blue }`,
+        "/b.css": `@namespace svg "${svg}";\nsvg|b { color: red }`,
+      },
+      css: `@namespace svg "${svg}";@namespace s "${svg}";svg|a{color:red}s|a{color:#00f}svg|b{color:red}svg|c{color:red}`,
+    },
+    // The chunk has the default namespace that each file with selectors declares.
+    DefaultOfEachFile: {
+      files: {
+        "/entry.css": `@import "./fonts.css";\n@import "./a.css";\n@import "./b.css";`,
+        "/fonts.css": fontFace,
+        "/a.css": `@namespace url(${xhtml});\na { color: blue }`,
+        "/b.css": `@namespace "${xhtml}";\n@namespace svg url(${svg});\nb { color: red }\nsvg|b { color: green }`,
+      },
+      css: `@namespace svg "${svg}";@namespace "${xhtml}";@font-face{font-family:f;src:url(data:font/woff2;base64,AA==)}a{color:#00f}b{color:red}svg|b{color:green}`,
+    },
+    // The last default namespace of a file is the one in force.
+    LastDefaultOfFile: {
+      files: {
+        "/entry.css": `@import "./fonts.css";\n@import "./a.css";`,
+        "/fonts.css": fontFace,
+        "/a.css": `@namespace url(urn:x);\n@namespace url(urn:y);\na { color: blue }`,
+      },
+      css: `@namespace "urn:y";@font-face{font-family:f;src:url(data:font/woff2;base64,AA==)}a{color:#00f}`,
+    },
+    // A "@font-face" rule in a block has no selector.
+    DefaultOfEachFileWithSelectors: {
+      files: {
+        "/entry.css": `@import "./fonts.css";\n@import "./a.css";`,
+        "/fonts.css": `@supports (font-variation-settings: normal) { ${fontFace} }`,
+        "/a.css": `@namespace url(${xhtml});\na { color: blue }`,
+      },
+      css: `@namespace "${xhtml}";@supports (font-variation-settings: normal){@font-face{font-family:f;src:url(data:font/woff2;base64,AA==)}}a{color:#00f}`,
+    },
+    // It comes before the default namespace of a file without selectors, also when that one is in a valid place.
+    DefaultOfEachFileWithSelectorsOverValidRule: {
+      files: {
+        "/entry.css": `@import "./declarations.css";\n@import "./fonts.css";\n@import "./a.css";`,
+        "/declarations.css": `@namespace url(urn:other);`,
+        "/fonts.css": fontFace,
+        "/a.css": `@namespace url(${xhtml});\na { color: blue }`,
+      },
+      css: `@namespace "${xhtml}";@font-face{font-family:f;src:url(data:font/woff2;base64,AA==)}a{color:#00f}`,
+    },
+    // No file with selectors declares a default namespace, so the one in a valid place stays in force.
+    DefaultOfDeclarationsFile: {
+      files: {
+        "/entry.css": `@import "./prefixes.css";\n@import "./default.css";\n@import "./body.css";\n@import "./late.css";`,
+        "/prefixes.css": `@namespace svg url(${svg});`,
+        "/default.css": `@namespace url(${xhtml});`,
+        "/body.css": `p { color: red }\nsvg|svg { color: blue }`,
+        "/late.css": `@namespace xl url(${xlink});\n[xl|href] { color: green }`,
+      },
+      css: `@namespace svg "${svg}";@namespace xl "${xlink}";@namespace "${xhtml}";p{color:red}svg|svg{color:#00f}[xl|href]{color:green}`,
+    },
+    // This is the scope of the chunk, not of CSS: with the two sheets, a browser drops the rule of use.css.
+    PrefixOfAnotherFile: {
+      files: {
+        "/entry.css": `@import "./use.css";\n@import "./icons.css";`,
+        "/use.css": `svg|b { color: blue }`,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";svg|b{color:#00f}svg|a{color:red}`,
+    },
+  };
+  for (const [name, { files, css }] of Object.entries(hoisted)) {
+    itBundled(`css/CSSAtNamespace${name}`, {
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      ...noWarnings,
+      async onAfterBundle(api) {
+        await expectStylesheet(api, "/out.css", css + "\n");
+      },
+    });
+  }
+
+  itBundled("css/CSSAtNamespaceOfImportingFileNotMinified", {
+    files: hoisted.OfImportingFile.files,
+    outfile: "/out.css",
+    ...noWarnings,
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `@namespace svg "${svg}";\n\n/* a.css */\n.a {\n  color: #00f;\n}\n\n/* entry.css */\nsvg|a {\n  color: red;\n}\n`,
+      );
+    },
+  });
+
+  itBundled("css/CSSAtNamespaceOfSecondFileOfJSEntry", {
+    files: {
+      "/entry.js": `import "./base.css";\nimport "./icons.css";`,
+      "/base.css": `.base { color: blue }`,
+      "/icons.css": `${icons}\n[svg|href] { color: green }`,
+    },
+    outdir: "/out",
+    minifyWhitespace: true,
+    ...noWarnings,
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out/entry.css",
+        `@namespace svg "${svg}";.base{color:#00f}svg|a{color:red}[svg|href]{color:green}\n`,
+      );
+    },
+  });
+
+  // Without a minify flag, "@media all" prints as a block.
+  itBundled("css/CSSAtNamespaceOfMediaAllImport", {
+    files: {
+      "/entry.css": `@import "./icons.css" all;\n.e { color: green }`,
+      "/icons.css": icons,
+    },
+    outfile: "/out.css",
+    ...noWarnings,
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `@namespace svg "${svg}";\n\n/* icons.css */\n@media all {\n  svg|a {\n    color: red;\n  }\n}\n\n/* entry.css */\n.e {\n  color: green;\n}\n`,
+      );
+    },
+  });
+
+  // The parser warns about an at-rule that it does not know. One without a
+  // block does not end the prologue, and one with a block ends it.
+  itBundled("css/CSSAtNamespaceAfterUnknownAtRule", {
+    files: {
+      "/entry.css": `
+        @import "./a.css";
+        @unknown a;
+        @namespace svg url(${svg});
+        @unknown b;
+        svg|a { color: red }`,
+      "/a.css": `.a { color: blue }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    async onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(`@namespace svg "${svg}";.a{color:#00f}@unknown a;@unknown b;svg|a{color:red}\n`);
+      await expectToBundleAgain(api.outfile);
+    },
+  });
+
+  itBundled("css/CSSAtNamespaceAfterUnknownAtRuleWithBlock", {
+    files: {
+      "/entry.css": `@import "./unknown.css";\n@import "./reset.css";`,
+      "/unknown.css": `@unknown x { a: b }`,
+      "/reset.css": `@namespace url(${xhtml});\n${icons}\na { color: blue }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      expect(warningsOf(build).map(({ message }) => message)).toEqual([`invalid @ rule encountered: '@unknown'`]);
+    },
+    async onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(`@namespace svg "${svg}";@namespace "${xhtml}";@unknown x{a: b}svg|a{color:red}a{color:#00f}\n`);
+      await expectToBundleAgain(api.outfile);
+    },
+  });
+
+  // The parser decides what a valid place is. Browsers skip a rule that they
+  // do not take, so for them the rule of reset.css is in a valid place here.
+  itBundled("css/CSSAtNamespaceDefaultAfterMozDocument", {
+    files: {
+      "/entry.css": `@import "./moz.css";\n@import "./reset.css";`,
+      "/moz.css": `@-moz-document url-prefix() { a { color: red } }`,
+      "/reset.css": `@namespace url(${xhtml});\na { color: blue }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      expect(warningsOf(build)).toEqual([
+        noEffect("reset.css", 1, 1, `"moz.css" declares no default "@namespace"`, xhtml),
+      ]);
+    },
+    async onAfterBundle(api) {
+      await expectStylesheet(api, "/out.css", `@-moz-document url-prefix(){a{color:red}}a{color:#00f}\n`);
+    },
+  });
+
+  // A chunk is one style sheet: it has one rule for a prefix, and a prefix
+  // means that namespace in each file of the chunk. The first rule in the
+  // chunk stays, and the build warns about the other.
+  const prefixOfTwoURLs = {
+    "/entry.css": `@import "./x.css";\n@import "./a.css";\n@import "./b.css";\n@import "./c.css";`,
+    "/x.css": `.x { color: green }`,
+    "/a.css": `@namespace p url(urn:a);\np|a { color: red }`,
+    // The last rule of a file for a prefix is the one in force.
+    "/b.css": `@namespace p url(urn:unused);\n  @namespace p url(urn:b);\n@namespace q url(urn:q);\np|b, q|b { color: blue }`,
+    "/c.css": `p|c { color: green }`,
+  };
+  const prefixOfTwoURLsReason = `"a.css" declares the "@namespace" prefix "p" as "urn:a"`;
+  itBundled("css/CSSAtNamespacePrefixOfTwoURLs", {
+    files: prefixOfTwoURLs,
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      expect(warningsOf(build)).toEqual([noEffect("b.css", 2, 3, prefixOfTwoURLsReason, "urn:b")]);
+    },
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `@namespace p "urn:a";@namespace q "urn:q";.x{color:green}p|a{color:red}p|b,q|b{color:#00f}p|c{color:green}\n`,
+      );
+    },
+  });
+
+  itBundled("css/CSSAtNamespacePrefixOfTwoURLsCLI", {
+    files: prefixOfTwoURLs,
+    outfile: "/out.css",
+    bundleWarnings: {
+      "/b.css": [`${prefixOfTwoURLsReason} in the same output file, so this rule ("urn:b") has no effect there`],
+    },
+  });
+
+  // A rule in a valid place stays in force: browsers use the last one for a prefix.
+  itBundled("css/CSSAtNamespacePrefixOfTwoURLsInValidPlace", {
+    files: {
+      "/entry.css": `@import "./declarations.css";\n@import "./body.css";\n@import "./late.css";`,
+      "/declarations.css": `@namespace p url(urn:a);`,
+      "/body.css": `@namespace p url(urn:b);\np|a { color: red }`,
+      "/late.css": `@namespace q url(urn:q);\n@namespace p url(urn:c);\nq|b { color: blue }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      const reason = `"body.css" declares the "@namespace" prefix "p" as "urn:b"`;
+      expect(warningsOf(build)).toEqual([
+        noEffect("declarations.css", 1, 1, reason, "urn:a"),
+        noEffect("late.css", 2, 1, reason, "urn:c"),
+      ]);
+    },
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `@namespace p "urn:b";@namespace q "urn:q";p|a{color:red}q|b{color:#00f}\n`,
+      );
+    },
+  });
+
+  itBundled("css/CSSAtNamespaceTwoPrefixesOfTwoURLs", {
+    files: {
+      "/entry.css": `@import "./q.css";\n@import "./a.css";\n@import "./b.css";\n@import "./c.css";`,
+      "/q.css": `@namespace q url(urn:q);\nq|x { color: green }`,
+      "/a.css": `@namespace p url(urn:a);\np|a { color: red }`,
+      "/b.css": `@namespace p url(urn:b);\np|b { color: blue }`,
+      "/c.css": `@namespace p url(urn:a);\n@namespace q url(urn:c);\np|c { color: lime }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      expect(warningsOf(build)).toEqual([
+        noEffect("b.css", 1, 1, prefixOfTwoURLsReason, "urn:b"),
+        noEffect("c.css", 2, 1, `"q.css" declares the "@namespace" prefix "q" as "urn:q"`, "urn:c"),
+      ]);
+    },
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `@namespace q "urn:q";@namespace p "urn:a";q|x{color:green}p|a{color:red}p|b{color:#00f}p|c{color:#0f0}\n`,
+      );
+    },
+  });
+
+  // The rule of b.css has an effect in two.css. The warning is about one.css.
+  itBundled("css/CSSAtNamespaceSplitting", {
+    files: {
+      "/one.js": `import "./a.css";\nimport "./b.css";`,
+      "/two.js": `import "./b.css";`,
+      "/a.css": `@namespace p url(urn:a);\np|a { color: red }`,
+      "/b.css": `@namespace p url(urn:b);\np|b { color: blue }`,
+    },
+    entryPoints: ["/one.js", "/two.js"],
+    outdir: "/out",
+    splitting: true,
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      expect(warningsOf(build)).toEqual([noEffect("b.css", 1, 1, prefixOfTwoURLsReason, "urn:b")]);
+    },
+    async onAfterBundle(api) {
+      await expectStylesheet(api, "/out/one.css", `@namespace p "urn:a";p|a{color:red}p|b{color:#00f}\n`);
+      await expectStylesheet(api, "/out/two.css", `@namespace p "urn:b";p|b{color:#00f}\n`);
+    },
+  });
+
+  // The build warns once for a rule and a reason, and once more for another reason.
+  itBundled("css/CSSAtNamespaceOneWarningForEachReason", {
+    files: {
+      "/one.js": `import "./a.css";\nimport "./b.css";`,
+      "/two.js": `import "./a.css";\nimport "./b.css";\nimport "./x.css";`,
+      "/three.js": `import "./c.css";\nimport "./b.css";`,
+      "/a.css": `@namespace p url(urn:a);\np|a { color: red }`,
+      "/b.css": `@namespace p url(urn:b);\np|b { color: blue }`,
+      "/c.css": `@namespace p url(urn:c);\np|c { color: green }`,
+      "/x.css": `.x { color: green }`,
+    },
+    entryPoints: ["/one.js", "/two.js", "/three.js"],
+    outdir: "/out",
+    splitting: true,
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      expect(warningsOf(build)).toEqual([
+        noEffect("b.css", 1, 1, prefixOfTwoURLsReason, "urn:b"),
+        noEffect("b.css", 1, 1, `"c.css" declares the "@namespace" prefix "p" as "urn:c"`, "urn:b"),
+      ]);
+    },
+    async onAfterBundle(api) {
+      await expectStylesheet(api, "/out/one.css", `@namespace p "urn:a";p|a{color:red}p|b{color:#00f}\n`);
+      await expectStylesheet(
+        api,
+        "/out/two.css",
+        `@namespace p "urn:a";p|a{color:red}p|b{color:#00f}.x{color:green}\n`,
+      );
+      await expectStylesheet(api, "/out/three.css", `@namespace p "urn:c";p|c{color:green}p|b{color:#00f}\n`);
+    },
+  });
+
+  itBundled("css/CSSAtNamespaceOneWarningForEachFile", {
+    files: {
+      "/entry.css": `@import "./x.css";\n@import "./a.css";\n@import "./b.css";\n@import "./c.css";`,
+      "/x.css": `.x { color: green }`,
+      "/a.css": `@namespace p url(urn:a);\np|a { color: red }`,
+      "/b.css": `@namespace p url(urn:b);\np|b { color: blue }`,
+      "/c.css": `@namespace p url(urn:b);\np|c { color: blue }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      expect(warningsOf(build)).toEqual([
+        noEffect("b.css", 1, 1, prefixOfTwoURLsReason, "urn:b"),
+        noEffect("c.css", 1, 1, prefixOfTwoURLsReason, "urn:b"),
+      ]);
+    },
+  });
+
+  // A default namespace that another file with selectors does not have cannot
+  // govern only its own file. The chunk does not print it.
+  itBundled("css/CSSAtNamespaceDefaultOfImportingFile", {
+    files: {
+      "/entry.css": `@import "./a.css";\n@namespace url(${xhtml});\na { color: red }`,
+      "/a.css": `a { color: blue }`,
+    },
+    outfile: "/out.css",
+    onAfterApiBundle(build) {
+      expect(warningsOf(build)).toEqual([
+        noEffect("entry.css", 2, 1, `"a.css" declares no default "@namespace"`, xhtml),
+      ]);
+    },
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `/* a.css */\na {\n  color: #00f;\n}\n\n/* entry.css */\na {\n  color: red;\n}\n`,
+      );
+    },
+  });
+
+  itBundled("css/CSSAtNamespaceDefaultOfThreeFiles", {
+    files: {
+      "/entry.css": `@import "./fonts.css";\n@import "./a.css";\n@import "./b.css";\n@import "./c.css";`,
+      "/fonts.css": fontFace,
+      "/a.css": `@namespace url(urn:a);\na { color: red }`,
+      "/b.css": `@namespace url(urn:b);\nb { color: blue }`,
+      "/c.css": `@namespace url(urn:c);\nc { color: green }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      const a = `"a.css" declares the default "@namespace" as "urn:a"`;
+      expect(warningsOf(build)).toEqual([
+        noEffect("a.css", 1, 1, `"b.css" declares the default "@namespace" as "urn:b"`, "urn:a"),
+        noEffect("b.css", 1, 1, a, "urn:b"),
+        noEffect("c.css", 1, 1, a, "urn:c"),
+      ]);
+    },
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `@font-face{font-family:f;src:url(data:font/woff2;base64,AA==)}a{color:red}b{color:#00f}c{color:green}\n`,
+      );
+    },
+  });
+
+  // A rule in a block holds selectors when a rule in it does.
+  const printedFontFace = `@font-face{font-family:f;src:url(data:font/woff2;base64,AA==)}`;
+  for (const [name, rule, printed, hasSelectors] of [
+    ["Media", `@media screen { a { color: red } }`, `@media screen{a{color:red}}`, true],
+    ["Layer", `@layer x { a { color: red } }`, `@layer x{a{color:red}}`, true],
+    ["Scope", `@scope (.s) { ${fontFace} }`, `@scope(.s){${printedFontFace}}`, true],
+    ["MediaOfFontFace", `@media screen { ${fontFace} }`, `@media screen{${printedFontFace}}`, false],
+    ["LayerOfFontFace", `@layer x { ${fontFace} }`, `@layer x{${printedFontFace}}`, false],
+    ["ScopeOfFontFace", `@scope { ${fontFace} }`, `@scope{${printedFontFace}}`, false],
+  ] as const) {
+    itBundled(`css/CSSAtNamespaceDefaultAfter${name}`, {
+      files: {
+        "/entry.css": `@import "./x.css";\n@import "./reset.css";`,
+        "/x.css": rule,
+        "/reset.css": `@namespace url(${xhtml});\nb { color: blue }`,
+      },
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterApiBundle(build) {
+        const reason = `"x.css" declares no default "@namespace"`;
+        expect(warningsOf(build)).toEqual(hasSelectors ? [noEffect("reset.css", 1, 1, reason, xhtml)] : []);
+      },
+      async onAfterBundle(api) {
+        const namespace = hasSelectors ? "" : `@namespace "${xhtml}";`;
+        await expectStylesheet(api, "/out.css", `${namespace}${printed}b{color:#00f}\n`);
+      },
+    });
+  }
+
+  // The default namespace in a valid place stays in force, as browsers use it now.
+  itBundled("css/CSSAtNamespaceDefaultOfLaterFile", {
+    files: {
+      "/entry.css": `@import "./reset.css";\n@import "./b.css";`,
+      "/reset.css": `@namespace url(${xhtml});\n* { margin: 0 }`,
+      "/b.css": `@namespace url(${svg});\n@namespace svg url(${svg});\nb { color: red }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterApiBundle(build) {
+      expect(warningsOf(build)).toEqual([
+        noEffect("b.css", 1, 1, `"reset.css" declares the default "@namespace" as "${xhtml}"`, svg),
+      ]);
+    },
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `@namespace svg "${svg}";@namespace "${xhtml}";*{margin:0}b{color:red}\n`,
+      );
+    },
+  });
+
+  // A default namespace in a file without selectors has no effect to keep.
+  itBundled("css/CSSAtNamespaceDefaultOfFileWithoutSelectors", {
+    files: {
+      "/entry.css": `@import "./a.css";\n@import "./fonts.css";`,
+      "/a.css": `.a { color: red }`,
+      "/fonts.css": `@namespace url(${xhtml});\n${fontFace}`,
+    },
+    outfile: "/out.css",
+    ...noWarnings,
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `/* a.css */\n.a {\n  color: red;\n}\n\n/* fonts.css */\n@font-face {\n  font-family: f;\n  src: url("data:font/woff2;base64,AA==");\n}\n\n/* entry.css */\n\n`,
+      );
+    },
+  });
+
+  // A chunk with each "@namespace" rule in a valid place keeps its bytes, and
+  // the build has no warning.
+  const inPlace: Record<string, { files: Record<string, string>; css: string }> = {
+    SingleFile: {
+      files: { "/entry.css": `@namespace url(${xhtml});\n${icons}` },
+      css: `@namespace "${xhtml}";@namespace svg "${svg}";svg|a{color:red}`,
+    },
+    FirstFile: {
+      files: {
+        "/entry.css": `@import "./icons.css";\n.e { color: green }`,
+        "/icons.css": icons,
+      },
+      css: `@namespace svg "${svg}";svg|a{color:red}.e{color:green}`,
+    },
+    // The default namespace of the first file also governs the second.
+    FirstFileDefault: {
+      files: {
+        "/entry.css": `@import "./reset.css";\n.icon { color: red }`,
+        "/reset.css": `@namespace url(${xhtml});\na { color: blue }`,
+      },
+      css: `@namespace "${xhtml}";a{color:#00f}.icon{color:red}`,
+    },
+    DeclarationsFiles: {
+      files: {
+        "/entry.css": `@import "./prefixes.css";\n@import "./default.css";\n@import "./body.css";`,
+        "/prefixes.css": `@namespace svg url(${svg});`,
+        "/default.css": `@namespace url(${xhtml});`,
+        "/body.css": `p { color: red }\nsvg|svg { color: blue }`,
+      },
+      css: `@namespace svg "${svg}";@namespace "${xhtml}";p{color:red}svg|svg{color:#00f}`,
+    },
+    // Browsers use the last rule for the prefix.
+    TwoRulesOfPrefix: {
+      files: {
+        "/entry.css": `@import "./declarations.css";\n@import "./body.css";`,
+        "/declarations.css": `@namespace p url(urn:a);`,
+        "/body.css": `@namespace p url(urn:b);\np|a { color: red }`,
+      },
+      css: `@namespace p "urn:a";@namespace p "urn:b";p|a{color:red}`,
+    },
+    AfterExternalImport: {
+      files: {
+        "/entry.css": `@import "./icons.css";\n.e { color: green }`,
+        "/icons.css": `@import "https://example.com/e.css";\n${icons}`,
+      },
+      css: `@import "https://example.com/e.css";@namespace svg "${svg}";svg|a{color:red}.e{color:green}`,
+    },
+    AfterLayerStatements: {
+      files: {
+        "/entry.css": `@import "./layers.css";\n@import "./icons.css";`,
+        "/layers.css": `@layer base, theme;`,
+        "/icons.css": `@layer theme;\n@namespace svg url(${svg});\n@layer theme { svg|a { color: red } }`,
+      },
+      css: `@layer base,theme;@layer theme;@namespace svg "${svg}";@layer theme{svg|a{color:red}}`,
+    },
+    // An earlier copy of an import prints only the names of its layers.
+    AfterLayersOfEarlierImport: {
+      files: {
+        "/entry.css": `@import "./base.css";\n@import "./icons.css";\n@import "./base.css";`,
+        "/base.css": `@layer base { .a { color: blue } }`,
+        "/icons.css": icons,
+      },
+      css: `@layer base;@namespace svg "${svg}";svg|a{color:red}@layer base{.a{color:#00f}}`,
+    },
+    // The conditions of an import are no block when its file prints no rule.
+    AfterConditionalImportOfNoRules: {
+      files: {
+        "/entry.css": `@import "./fonts.css" screen;\n@import "./reset.css";\n.icon { color: red }`,
+        "/fonts.css": `@import "https://example.com/fonts.css";`,
+        "/reset.css": `@namespace url(${xhtml});\na { color: blue }`,
+      },
+      css: `@import "https://example.com/fonts.css" screen;@namespace "${xhtml}";a{color:#00f}.icon{color:red}`,
+    },
+    AfterLayerOfEarlierImport: {
+      files: {
+        "/entry.css": `@import "./tokens.css" layer(base);\n@import "./reset.css";\n@import "./components.css";`,
+        "/tokens.css": `:root { --c: red }`,
+        "/reset.css": `@namespace url(${xhtml});\na { color: blue }`,
+        "/components.css": `@import "./tokens.css" layer(base);\n.btn { color: var(--c) }`,
+      },
+      css: `@layer base;@namespace "${xhtml}";a{color:#00f}@layer base{:root{--c:red}}.btn{color:var(--c)}`,
+    },
+    AfterLayerOfImportOfNoRules: {
+      files: {
+        "/entry.css": `@import "./empty.css" layer(foo);\n@import "./icons.css";\n.e { color: green }`,
+        "/empty.css": ``,
+        "/icons.css": icons,
+      },
+      css: `@layer foo;@namespace svg "${svg}";svg|a{color:red}.e{color:green}`,
+    },
+    // With a minify flag, "@media all" prints no block around its rules.
+    OfMediaAllImport: {
+      files: {
+        "/entry.css": `@import "./reset.css" all;\n.icon { color: red }`,
+        "/reset.css": `@namespace url(${xhtml});\na { color: blue }`,
+      },
+      css: `@namespace "${xhtml}";a{color:#00f}.icon{color:red}`,
+    },
+    AfterLayerStatementInMediaAll: {
+      files: {
+        "/entry.css": `@import "./layers.css";\n@import "./icons.css";`,
+        "/layers.css": `@media all { @layer x; }`,
+        "/icons.css": icons,
+      },
+      css: `@layer x;@namespace svg "${svg}";svg|a{color:red}`,
+    },
+    OfMediaAllImportOfMediaAllImport: {
+      files: {
+        "/entry.css": `@import "./mid.css" all;\n.icon { color: red }`,
+        "/mid.css": `@import "./reset.css" all;`,
+        "/reset.css": `@namespace url(${xhtml});\na { color: blue }`,
+      },
+      css: `@namespace "${xhtml}";a{color:#00f}.icon{color:red}`,
+    },
+    AfterLayerStatementInMediaAllInMediaAll: {
+      files: {
+        "/entry.css": `@import "./layers.css";\n@import "./icons.css";`,
+        "/layers.css": `@media all { @media all { @layer x; } }`,
+        "/icons.css": icons,
+      },
+      css: `@layer x;@namespace svg "${svg}";svg|a{color:red}`,
+    },
+    AfterLayersOfEarlierImportInMediaAll: {
+      files: {
+        "/entry.css": `@import "./base.css" all;\n@import "./icons.css";\n@import "./base.css" all;`,
+        "/base.css": `@layer base { .a { color: blue } }`,
+        "/icons.css": icons,
+      },
+      css: `@layer base;@namespace svg "${svg}";svg|a{color:red}@layer base{.a{color:#00f}}`,
+    },
+  };
+  for (const [name, { files, css }] of Object.entries(inPlace)) {
+    itBundled(`css/CSSAtNamespaceInPlace${name}`, {
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      ...noWarnings,
+      async onAfterBundle(api) {
+        await expectStylesheet(api, "/out.css", css + "\n");
+      },
+    });
+  }
+
+  itBundled("css/CSSAtNamespaceInPlaceOfMediaAllImportMinifySyntax", {
+    files: inPlace.OfMediaAllImport.files,
+    outfile: "/out.css",
+    minifySyntax: true,
+    ...noWarnings,
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `/* reset.css */\n@namespace "${xhtml}";a{color:#00f}\n/* entry.css */\n.icon{color:red}\n`,
+      );
+    },
+  });
+
+  // "minifySyntax" alone minifies the files of a chunk and no other entry, so
+  // the "@layer" name of the earlier copy stays in a "@media all" block.
+  itBundled("css/CSSAtNamespaceAfterLayersOfEarlierImportInMediaAllMinifySyntax", {
+    files: inPlace.AfterLayersOfEarlierImportInMediaAll.files,
+    outfile: "/out.css",
+    minifySyntax: true,
+    ...noWarnings,
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `@namespace svg "${svg}";\n@media all {\n  @layer base;\n}\n\n/* icons.css */\nsvg|a{color:red}\n/* base.css */\n@layer base{.a{color:#00f}}\n/* entry.css */\n`,
+      );
+    },
+  });
+
+  // Without a minify flag, the "@media all" rule of the file prints as a block.
+  itBundled("css/CSSAtNamespaceAfterLayerStatementInMediaAllNotMinified", {
+    files: inPlace.AfterLayerStatementInMediaAll.files,
+    outfile: "/out.css",
+    ...noWarnings,
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `@namespace svg "${svg}";\n\n/* layers.css */\n@media all {\n  @layer x;\n}\n\n/* icons.css */\nsvg|a {\n  color: red;\n}\n\n/* entry.css */\n\n`,
+      );
+    },
+  });
+
+  // The parser skips an at-rule statement that it does not know. A style rule
+  // with only such a statement prints only the statement.
+  for (const [name, rule, printed, atRule] of [
+    ["UnknownAtRule", `@tailwind base;`, `@tailwind base;`, `@tailwind`],
+    ["StyleRuleOfUnknownAtRule", `.btn { @apply px-4; }`, `@apply px-4;`, `@apply`],
+  ] as const) {
+    itBundled(`css/CSSAtNamespaceInPlaceAfter${name}`, {
+      files: {
+        "/entry.css": `@import "./a.css";\n@import "./icons.css";`,
+        "/a.css": rule,
+        "/icons.css": icons,
+      },
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterApiBundle(build) {
+        expect(warningsOf(build).map(({ message }) => message)).toEqual([`invalid @ rule encountered: '${atRule}'`]);
+      },
+      async onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(`${printed}@namespace svg "${svg}";svg|a{color:red}\n`);
+        await expectToBundleAgain(api.outfile);
+      },
+    });
+  }
+
+  itBundled("css/CSSAtNamespaceInPlaceDeclarationsFilesNotMinified", {
+    files: inPlace.DeclarationsFiles.files,
+    outfile: "/out.css",
+    ...noWarnings,
+    async onAfterBundle(api) {
+      await expectStylesheet(
+        api,
+        "/out.css",
+        `/* prefixes.css */\n@namespace svg "${svg}";\n\n/* default.css */\n@namespace "${xhtml}";\n\n/* body.css */\np {\n  color: red;\n}\n\nsvg|svg {\n  color: #00f;\n}\n\n/* entry.css */\n\n`,
+      );
+    },
   });
 
   itBundled("css/CSSUrlImport", {

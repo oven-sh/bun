@@ -667,6 +667,11 @@ impl MediaList {
         self.media_queries.is_empty() || self.media_queries.iter().all(MediaQuery::always_matches)
     }
 
+    /// Whether a `@media` rule with this list prints only its rules, with no block around them.
+    pub fn prints_no_block(&self, minify: bool) -> bool {
+        minify && self.always_matches()
+    }
+
     /// Returns whether the media query list never matches.
     pub(crate) fn never_matches(&self) -> bool {
         !self.media_queries.is_empty() && self.media_queries.iter().all(MediaQuery::never_matches)

@@ -7,7 +7,8 @@ use crate::{BundleV2, Chunk, LinkerContext};
 
 use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
-    BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, SmallList,
+    BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, NamespaceRule,
+    SmallList,
 };
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets};
 use crate::bun_fs::Path;
@@ -96,6 +97,11 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
         let Content::Css(css_chunk) = &mut chunk.content else {
             unreachable!()
         };
+        let hoists_namespaces = css_chunk
+            .imports_in_chunk_in_order
+            .slice()
+            .iter()
+            .any(|entry| matches!(entry.kind, CssImportOrderKind::Namespaces(_)));
         let mut i: usize = css_chunk.imports_in_chunk_in_order.len() as usize;
         while i != 0 {
             i -= 1;
@@ -151,7 +157,24 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         ..BundlerStyleSheet::empty()
                     };
                     wrap_rules_with_conditions(&mut ast, bump, &entry.conditions);
+                    let rules = match len {
+                        0 => TopLevelRules::None,
+                        _ => TopLevelRules::LayerStatement,
+                    };
+                    let minify = c.options.minify_whitespace;
+                    debug_assert_top_level_of_wrapped(&ast.rules, rules, &entry.conditions, minify);
                     css_chunk.asts[i] = ast;
+                }
+                CssImportOrderKind::Namespaces(namespaces) => {
+                    let mut rules: ArenaVec<BundlerCssRule> =
+                        ArenaVec::with_capacity_in(namespaces.len(), bump);
+                    for &(prefix, url) in namespaces.iter() {
+                        rules.push(BundlerCssRule::Namespace(NamespaceRule::new(prefix, url)));
+                    }
+                    css_chunk.asts[i] = BundlerStyleSheet {
+                        rules: arena_rule_list(rules),
+                        ..BundlerStyleSheet::empty()
+                    };
                 }
                 CssImportOrderKind::ExternalPath(p) => {
                     // Taking `&mut` at index 0 here would exclusively borrow
@@ -220,9 +243,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             let printer_options = PrinterOptions {
                                 targets: Targets::for_bundler_target(c.options.target),
                                 // TODO: make this more configurable
-                                minify: c.options.minify_whitespace
-                                    || c.options.minify_syntax
-                                    || c.options.minify_identifiers,
+                                minify: c.options.has_minify_flag(),
                                 ..Default::default()
                             };
 
@@ -352,7 +373,36 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         "parse_bundler keeps each @import in StyleSheet::imports"
                     );
 
+                    let is_namespace =
+                        |rule: &BundlerCssRule| matches!(rule, BundlerCssRule::Namespace(_));
+                    if hoists_namespaces && ast.rules.v.iter().any(is_namespace) {
+                        let mut kept: ArenaVec<BundlerCssRule> =
+                            ArenaVec::with_capacity_in(ast.rules.v.len(), bump);
+                        for rule in ast.rules.v.iter().filter(|rule| !is_namespace(rule)) {
+                            // SAFETY: a bitwise copy of a rule into an arena list that is
+                            // never dropped (see `arena_rule_list`), so the source sheet
+                            // stays the one owner of the heap of the rule.
+                            kept.push(unsafe { core::ptr::read(rule) });
+                        }
+                        // `ast.rules` aliases the buffer of the source sheet, so leak the header.
+                        let _ = core::mem::ManuallyDrop::new(core::mem::replace(
+                            &mut ast.rules,
+                            arena_rule_list(kept),
+                        ));
+                    }
+
+                    let has_no_rule = ast.rules.v.is_empty();
                     wrap_rules_with_conditions(ast, bump, &entry.conditions);
+                    if has_no_rule {
+                        let minify = c.options.has_minify_flag();
+                        let none = TopLevelRules::None;
+                        debug_assert_top_level_of_wrapped(
+                            &ast.rules,
+                            none,
+                            &entry.conditions,
+                            minify,
+                        );
+                    }
                     // TODO: Remove top-level duplicate rules across files
                 }
             }
@@ -360,7 +410,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
     }
 }
 
-/// Builds a one-rule `BundlerCssRuleList` whose backing storage is arena-owned.
+/// Builds a `BundlerCssRuleList` whose backing storage is arena-owned.
 ///
 /// `CssRuleList::v` is a global `Vec`, but every rule slab built here must be
 /// arena-backed: the elements bitwise-alias the source AST and must never run
@@ -369,14 +419,75 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
 /// because the resulting `Vec` is never dropped (`CssChunk::Drop` `forget`s
 /// the `asts` slab) and never grown after this point; the arena reclaims the
 /// storage on `reset`.
-fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList {
-    let mut rules: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(1, bump);
-    rules.push(rule);
+fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
+    let len = rules.len();
+    if len == 0 {
+        return BundlerCssRuleList::default();
+    }
     let slab = rules.into_bump_slice_mut();
     BundlerCssRuleList {
         // SAFETY: `slab` is arena-owned; the `Vec` is never dropped or grown
         // (see fn doc).
-        v: unsafe { Vec::from_raw_parts(slab.as_mut_ptr(), 1, 1) },
+        v: unsafe { Vec::from_raw_parts(slab.as_mut_ptr(), len, len) },
+    }
+}
+
+fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList {
+    let mut rules: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(1, bump);
+    rules.push(rule);
+    arena_rule_list(rules)
+}
+
+/// What an entry prints at the top level of its chunk.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum TopLevelRules {
+    None,
+    LayerStatement,
+    Other,
+    /// A block around the rules of the entry.
+    Block,
+}
+
+/// What `wrap_rules_with_conditions` and the printer make of `rules` at the top level of a chunk.
+pub(crate) fn top_level_of_wrapped(
+    rules: TopLevelRules,
+    conditions: &[ImportConditions],
+    minify: bool,
+) -> TopLevelRules {
+    conditions.iter().rev().fold(rules, |rules, condition| {
+        let media = &condition.media;
+        let has_block = condition.supports.is_some()
+            || !(media.media_queries.is_empty() || media.prints_no_block(minify));
+        let names_layer = condition.layer.as_ref().map(|layer| layer.v.is_some());
+        match (rules, names_layer) {
+            (TopLevelRules::None, None | Some(false)) => TopLevelRules::None,
+            (TopLevelRules::None, Some(true)) if !has_block => TopLevelRules::LayerStatement,
+            (TopLevelRules::LayerStatement | TopLevelRules::Other, None) if !has_block => rules,
+            _ => TopLevelRules::Block,
+        }
+    })
+}
+
+/// Checks `top_level_of_wrapped` against the wrapped rules of an entry with no rule or one `@layer` statement.
+fn debug_assert_top_level_of_wrapped(
+    wrapped: &BundlerCssRuleList,
+    rules: TopLevelRules,
+    conditions: &[ImportConditions],
+    minify: bool,
+) {
+    if cfg!(debug_assertions) {
+        let mut top = wrapped.v.as_slice();
+        while let [BundlerCssRule::Media(media)] = top
+            && media.query.prints_no_block(minify)
+        {
+            top = media.rules.v.as_slice();
+        }
+        let printed = match top {
+            [] => TopLevelRules::None,
+            [BundlerCssRule::LayerStatement(_)] => TopLevelRules::LayerStatement,
+            _ => TopLevelRules::Block,
+        };
+        debug_assert_eq!(printed, top_level_of_wrapped(rules, conditions, minify));
     }
 }
 

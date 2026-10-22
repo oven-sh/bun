@@ -104,7 +104,13 @@ fn generate_compile_result_for_css_chunk_impl(
     };
 
     match &css_import.kind {
-        CssImportOrderKind::Layers(_) => {
+        // The entry only tells the files not to print their own rules.
+        CssImportOrderKind::Namespaces(namespaces) if namespaces.is_empty() => CompileResult::Css {
+            result: Ok(Box::default()),
+            source_index: Index::INVALID.get(),
+            source_map: None,
+        },
+        CssImportOrderKind::Layers(_) | CssImportOrderKind::Namespaces(_) => {
             let printer_options = PrinterOptions {
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace,
@@ -186,9 +192,7 @@ fn generate_compile_result_for_css_chunk_impl(
             let printer_options = PrinterOptions {
                 targets: Targets::for_bundler_target(c.options.target),
                 // TODO: make this more configurable
-                minify: c.options.minify_whitespace
-                    || c.options.minify_syntax
-                    || c.options.minify_identifiers,
+                minify: c.options.has_minify_flag(),
                 ..Default::default()
             };
             match css.to_css_with_writer(

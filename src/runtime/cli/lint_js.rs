@@ -481,20 +481,22 @@ struct Memory {
     rss_growth: usize,
     peak_growth: usize,
     peak_per_vm: usize,
-    /// `rss_growth` and the bytes still to lint when `growth_per_byte` was last computed. `growth_per_byte` is how many
-    /// bytes RSS grew per linted byte.
+    /// `rss_growth` and `bytes_done` when `growth_per_byte` was last computed. `growth_per_byte` is how many bytes RSS
+    /// grew per linted byte.
     last_sample: (usize, u64),
     growth_per_byte: Option<f64>,
     /// How many files the VMs have finished, and what that count was when a VM was last freed.
     files_done: u32,
     freed_at: u32,
+    /// The total size of the files the VMs have finished, without the heavy ones. It's counted here because
+    /// [`Demand::left`] is an estimate that also rises, so how far it fell isn't how much was linted.
+    bytes_done: u64,
 }
 
 impl Memory {
-    /// Call this before the first VM starts. `left` is [`Demand::left`].
-    fn begin(&mut self, left: u64) {
+    /// Call this before the first VM starts.
+    fn begin(&mut self) {
         self.rss_before = bun_sys::self_process_memory_usage().unwrap_or(0);
-        self.last_sample = (0, left);
     }
 
     /// `left` is [`Demand::left`].
@@ -502,13 +504,13 @@ impl Memory {
         let now = bun_sys::self_process_memory_usage().unwrap_or(0);
         self.rss_growth = now.saturating_sub(self.rss_before);
         self.peak_growth = self.peak_growth.max(self.rss_growth);
-        // Only after 1/32 of the remaining bytes. A smaller sample is too noisy.
-        let (growth_then, left_then) = self.last_sample;
-        let done = left_then.saturating_sub(left);
-        if done > 0 && done >= left_then / 32 {
+        // Only after 1/32 of the bytes that remained at the last sample. A smaller sample is too noisy.
+        let (growth_then, done_then) = self.last_sample;
+        let done = self.bytes_done - done_then;
+        if done > 0 && done >= (done + left) / 32 {
             self.growth_per_byte =
                 Some(self.rss_growth.saturating_sub(growth_then) as f64 / done as f64);
-            self.last_sample = (self.rss_growth, left);
+            self.last_sample = (self.rss_growth, self.bytes_done);
         }
         if let Some(for_one) = self.rss_growth.checked_div(loaded) {
             self.peak_per_vm = self.peak_per_vm.max(for_one);
@@ -519,7 +521,7 @@ impl Memory {
     fn note_load(&mut self, left: u64, loaded: usize) {
         self.measure(left, loaded);
         if self.growth_per_byte.is_none() {
-            self.last_sample = (self.rss_growth, left);
+            self.last_sample = (self.rss_growth, self.bytes_done);
         }
     }
 
@@ -750,7 +752,7 @@ impl Crew {
                 .spawn(move || Crew::run_member(&for_thread, at))
                 .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
             if state.all.is_empty() {
-                state.memory.begin(crew.demand.left());
+                state.memory.begin();
             }
             state.all.push(Member::default());
             if state.shared.is_some() {
@@ -896,9 +898,10 @@ impl Crew {
             state.memory.freed_at = state.memory.files_done;
             state.all[at].is_freed = true;
         }
-        // `Demand` doesn't count heavy files.
+        // `Demand` and `Memory` don't count heavy files.
         if size < HEAVY {
             crew.demand.note(size);
+            state.memory.bytes_done += size as u64;
         }
         let _ = Crew::start_more(crew, &mut state);
     }

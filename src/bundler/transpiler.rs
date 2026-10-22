@@ -2510,6 +2510,8 @@ impl<'a> Transpiler<'a> {
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS
             .get()
             .unwrap_or(false)
+            // A text or Markdown module is not JavaScript of its path: the map saved for the path stays.
+            || !result.loader.can_have_source_map()
         {
             return self.print_with_source_map_maybe::<false>(
                 print_arena,

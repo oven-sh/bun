@@ -227,4 +227,37 @@ describe("InternalSourceMap", () => {
     }
     expect(exited).toBe(0);
   });
+
+  // A text import of a file is a module of its own under the path of the file.
+  // It is not the JavaScript of the file: the map saved for the path stays.
+  test("a text import of a module's file leaves the positions of the module", async () => {
+    const { stdout, stderr, exited } = await run({
+      "thrower.ts": `type Erased = { a: number };
+
+export function thrower(): never {
+  throw new Error("thrown");
+}
+`,
+      "index.ts": `
+import { thrower } from "./thrower.ts";
+
+function position() {
+  try {
+    thrower();
+  } catch (error) {
+    return /thrower\\.ts:\\d+:\\d+/.exec((error as Error).stack!)?.[0];
+  }
+}
+
+const before = position();
+await import("./thrower.ts?raw");
+await import("./thrower.ts", { with: { type: "text" } });
+console.log(JSON.stringify({ before, after: position() }));
+`,
+    });
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ before: "thrower.ts:4:13", after: "thrower.ts:4:13" });
+    expect(exited).toBe(0);
+  });
 });

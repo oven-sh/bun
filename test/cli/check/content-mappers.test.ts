@@ -994,7 +994,7 @@ child.on("exit", code => console.log("the child exited with", code));
       mapper,
       files: {
         ...files,
-        "outer/tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+        "outer/tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "lib": ["esnext"], "types": [] } }`,
         "outer/parent.ts": `type Child = { on(event: "exit", listener: (code: number) => void): void };
 declare function require(name: "node:child_process"): { fork(path: string, options: { cwd: string }): Child };
 declare const console: { log(...values: unknown[]): void };

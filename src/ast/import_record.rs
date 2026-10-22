@@ -108,6 +108,9 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// Code writes a property through this `WAS_ORIGINALLY_REQUIRE` record: the target stays CommonJS.
+        const REQUIRE_IS_WRITTEN = 1 << 20;
     }
 }
 

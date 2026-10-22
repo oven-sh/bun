@@ -2135,6 +2135,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// The record of the unwrapped `require()` that `namespace` holds, unless its `var` can be skipped.
+    pub(crate) fn unwrapped_require_record(&self, namespace: Ref) -> Option<u32> {
+        self.imports_to_convert_from_require
+            .iter()
+            .find(|deferred| deferred.namespace.ref_.eql(namespace))
+            .filter(|deferred| deferred.scope.is_none())
+            .map(|deferred| deferred.import_record_id)
+    }
+
+    /// Marks the record as written, and `item` (the import item of a static key) for the linker's error.
+    pub(crate) fn note_write_through_unwrapped_require(
+        &mut self,
+        import_record_index: u32,
+        item: Option<(Ref, &'a [u8], LocRef)>,
+    ) {
+        if self.is_control_flow_dead {
+            return;
+        }
+        self.import_records.items_mut()[import_record_index as usize]
+            .flags
+            .insert(bun_ast::ImportRecordFlags::REQUIRE_IS_WRITTEN);
+        if let Some((namespace, name, item)) = item
+            && !self.symbols[item.ref_.inner_index() as usize].has_been_assigned_to()
+        {
+            self.symbols[item.ref_.inner_index() as usize].set_has_been_assigned_to(true);
+            // The linker reports the item where it is: at the first write.
+            self.import_items_for_namespace
+                .get_mut(&namespace)
+                .unwrap()
+                .put(name, item)
+                .expect("oom");
+        }
+    }
+
+    /// For a write that `maybe_rewrite_property_access` does not see: a computed or folded key, `delete x?.a`.
+    pub(crate) fn note_unfolded_write_through_unwrapped_require(&mut self, namespace: Ref) {
+        if let Some(import_record_index) = self.unwrapped_require_record(namespace) {
+            self.note_write_through_unwrapped_require(import_record_index, None);
+        }
+    }
+
     /// The renamer follows links before it reads the flag, so pin the whole chain.
     pub(crate) fn set_must_not_be_renamed_through_links(&mut self, ref_: Ref) {
         let mut ref_ = ref_;

@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { BlockList } from "node:net";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
+import { inspect } from "node:util";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -968,59 +969,23 @@ describe("the end of a body on a stream with no flow-control credit left", () =>
 
   // A stream with credit keeps lsquic's write event. In a stream handler its
   // FIN is not with lsquic yet when endSync() returns.
-  test("gives the end to lsquic in the call only when the stream has no credit", async () => {
-    const script = `
-      import { createPrivateKey } from "node:crypto";
-      import { readFileSync } from "node:fs";
-      import { join } from "node:path";
-      import { connect, listen, QuicEndpoint } from "node:quic";
-      const { getQuicStreamState } = (await import("internal/quic/quic")).default;
-
-      const keysDir = process.env.QUIC_KEYS_DIR;
-      const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
-      const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
-      const noCredit = { initialMaxStreamDataBidiLocal: 0, initialMaxStreamDataBidiRemote: 0 };
-      const finSent = {};
-      for (const [name, limits] of [["credit", {}], ["noCredit", noCredit]]) {
-        const answered = Promise.withResolvers();
-        const server = await listen(
-          session => {
-            session.closed.catch(() => {});
-            session.onstream = stream => {
-              stream.closed.catch(() => {});
-              stream.writer.endSync();
-              answered.resolve(getQuicStreamState(stream).finSent);
-            };
-          },
-          { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"], transportParams: { maxIdleTimeout: 30 } },
-        );
-        const client = await connect(server.address, {
-          endpoint: new QuicEndpoint(),
-          alpn: "quic-test",
-          servername: "localhost",
-          verifyPeer: "manual",
-          transportParams: { maxIdleTimeout: 30, ...limits },
-        });
-        client.closed.catch(() => {});
-        await client.opened;
-        const stream = await client.createBidirectionalStream();
-        stream.closed.catch(() => {});
-        stream.writer.endSync();
-        finSent[name] = await answered.promise;
-      }
-      console.log(JSON.stringify(finSent));
-      process.exit(0);
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--expose-internals", "-e", script],
-      env: { ...bunEnv, QUIC_KEYS_DIR: keysDir },
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe(JSON.stringify({ credit: false, noCredit: true }) + "\n");
-    expect(exitCode).toBe(0);
-  }, 30_000);
+  test.each([
+    ["gives the end to lsquic in the call when the stream has no credit", noStreamCredit, "true"],
+    ["leaves the end to lsquic's write event when the stream has credit", {}, "false"],
+  ])("%s", async (_, client, finSent) => {
+    await using peers = await setup({ client });
+    const answered = Promise.withResolvers<string | undefined>();
+    peers.server.onstream = (stream: any) => {
+      stream.closed.catch(() => {});
+      stream.writer.endSync();
+      // inspect() shows the state of the stream.
+      answered.resolve(/finSent: (\w+)/.exec(inspect(stream))?.[1]);
+    };
+    const stream = await peers.client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    stream.writer.endSync();
+    expect(await Promise.race([answered.promise, peers.noEnd()])).toBe(finSent);
+  });
 
   test("waits for credit when a byte of the body is still queued", async () => {
     await using peers = await setup({ server: noStreamCredit });

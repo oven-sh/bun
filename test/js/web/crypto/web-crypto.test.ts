@@ -2,7 +2,13 @@ import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createPublicKey, createSecretKey, type webcrypto } from "node:crypto";
-import { ED25519_IDENTITY, ED25519_SMALL_ORDER_POINTS, hexBytes, zeroSignatureWithR } from "./ed25519-small-order";
+import {
+  ED25519_IDENTITY,
+  ED25519_SMALL_ORDER_POINTS,
+  hexBytes,
+  identityRSignature,
+  zeroSignatureWithR,
+} from "./ed25519-small-order";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -602,6 +608,16 @@ describe("Ed25519", () => {
       }
       expect(Object.keys(results)).toHaveLength(8);
       expect(results).toEqual(Object.fromEntries(Object.keys(results).map(name => [name, false])));
+    });
+
+    it("rejects an identity R under an honest key", async () => {
+      const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      const message = encoder.encode("hello");
+      const signature = identityRSignature(await crypto.subtle.exportKey("jwk", privateKey), message);
+      expect(await crypto.subtle.verify("Ed25519", publicKey, signature, message)).toBe(false);
     });
 
     it("rejects the identity key through jwk, spki and KeyObject.toCryptoKey", async () => {

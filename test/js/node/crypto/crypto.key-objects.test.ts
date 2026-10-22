@@ -34,6 +34,7 @@ import {
   ED25519_IDENTITY,
   ED25519_SMALL_ORDER_POINTS,
   hexBytes,
+  identityRSignature,
   zeroSignatureWithR,
 } from "../../web/crypto/ed25519-small-order";
 
@@ -1866,6 +1867,13 @@ describe("Ed25519 verify rejects small-order points", () => {
     }
     expect(Object.keys(results)).toHaveLength(8);
     expect(results).toEqual(Object.fromEntries(Object.keys(results).map(name => [name, false])));
+  });
+
+  test("an identity R under an honest key is rejected", () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const message = Buffer.from("hello");
+    const signature = identityRSignature(privateKey.export({ format: "jwk" }), message);
+    expect(verify(null, message, publicKey, signature)).toBeFalse();
   });
 
   test("every key input form and the callback form reject the identity key", async () => {

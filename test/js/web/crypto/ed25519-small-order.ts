@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 // Small-order Ed25519 points, in the RFC 8032 encoding, as a public key or as
 // the R half of a signature. The cofactorless verify equation
 // [S]B = R + [h]A holds for every message when A and R are small-order and
@@ -54,7 +56,10 @@ export const ED25519_SMALL_ORDER_POINTS: { name: string; hex: string; message: s
     message: "msg 7",
     messageAsR: "msg 13",
   },
-  // Non-canonical encodings of the same points.
+  // Non-canonical encodings of the same points. BoringSSL decodes y >= p
+  // (reduced mod p) and x = 0 with the sign bit set, so each of these is
+  // accepted as a public key. None of them can appear as R: ED25519_verify
+  // re-encodes R canonically and compares the bytes.
   {
     name: "identity (x = 0, sign bit set)",
     hex: "0100000000000000000000000000000000000000000000000000000000000080",
@@ -66,24 +71,24 @@ export const ED25519_SMALL_ORDER_POINTS: { name: string; hex: string; message: s
     message: "msg 0",
   },
   {
-    name: "order 4 (a) (y >= p)",
+    name: "identity (y = p + 1)",
     hex: "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    message: "msg 0",
+  },
+  {
+    name: "identity (y = p + 1, sign bit set)",
+    hex: "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    message: "msg 0",
+  },
+  {
+    name: "order 4 (y = p, sign bit set)",
+    hex: "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     message: "msg 8",
   },
   {
-    name: "order 4 (b) (y >= p)",
-    hex: "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    message: "msg 1",
-  },
-  {
-    name: "identity (y >= p, sign bit set)",
-    hex: "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    message: "msg 0",
-  },
-  {
-    name: "identity (y >= p)",
+    name: "order 4 (y = p)",
     hex: "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-    message: "msg 0",
+    message: "msg 8",
   },
 ];
 
@@ -95,5 +100,35 @@ export function hexBytes(hex: string): Uint8Array {
 export function zeroSignatureWithR(rHex: string): Uint8Array {
   const signature = new Uint8Array(64);
   signature.set(hexBytes(rHex), 0);
+  return signature;
+}
+
+const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+
+function scalarFromLE(bytes: Uint8Array): bigint {
+  return BigInt("0x" + Buffer.from(bytes).reverse().toString("hex"));
+}
+
+// A signature under an honest key pair whose R is the identity point:
+// R = [0]B, so S = h * a mod L with h = SHA-512(R || A || M) satisfies
+// [S]B = R + [h]A. The cofactorless check alone accepts it. Only the key
+// owner can build it, so it is not a forgery, but a strict verifier (Node,
+// libsodium, ed25519-dalek verify_strict) rejects a small-order R.
+// `privateJwk` is the jwk export of the private key (d = seed, x = A).
+export function identityRSignature(privateJwk: { d?: string; x?: string }, message: Uint8Array): Uint8Array {
+  const seed = Buffer.from(privateJwk.d!, "base64url");
+  const A = Buffer.from(privateJwk.x!, "base64url");
+  const expanded = createHash("sha512").update(seed).digest();
+  const aBytes = Uint8Array.from(expanded.subarray(0, 32));
+  aBytes[0] &= 248;
+  aBytes[31] &= 127;
+  aBytes[31] |= 64;
+  const a = scalarFromLE(aBytes);
+  const R = hexBytes(ED25519_IDENTITY);
+  const h = scalarFromLE(createHash("sha512").update(R).update(A).update(message).digest()) % L;
+  const S = (h * a) % L;
+  const signature = new Uint8Array(64);
+  signature.set(R, 0);
+  signature.set(Buffer.from(S.toString(16).padStart(64, "0"), "hex").reverse(), 32);
   return signature;
 }

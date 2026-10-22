@@ -3635,8 +3635,9 @@ namespace {
 // Ed25519 has cofactor 8. The first eight entries are the full canonical
 // small-order subgroup: the identity, one point of order 2, two points of
 // order 4 and four points of order 8. The last six are non-canonical
-// encodings of the same points (y >= p, or x = 0 with the sign bit set).
-// Same table as Node (src/crypto/crypto_sig.cc, nodejs/node#64026).
+// encodings of the same points (y >= p, or x = 0 with the sign bit set),
+// which BoringSSL accepts as a public key. Same table as Node
+// (src/crypto/crypto_sig.cc, nodejs/node#64026).
 constexpr unsigned char kEd25519SmallOrderPoints[][ED25519_PUBLIC_KEY_LEN] = {
     // Identity.
     { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -3666,7 +3667,9 @@ constexpr unsigned char kEd25519SmallOrderPoints[][ED25519_PUBLIC_KEY_LEN] = {
     { 0x26, 0xe8, 0x95, 0x8f, 0xc2, 0xb2, 0x27, 0xb0, 0x45, 0xc3, 0xf4,
         0x89, 0xf2, 0xef, 0x98, 0xf0, 0xd5, 0xdf, 0xac, 0x05, 0xd3, 0xc6,
         0x33, 0x39, 0xb1, 0x38, 0x02, 0x88, 0x6d, 0x53, 0xfc, 0x85 },
-    // Non-canonical encodings of the same small-order points.
+    // Non-canonical encodings of the same small-order points: identity and
+    // order 2 with x = 0 and the sign bit set, identity as y = p + 1 (both
+    // sign bits), order 4 as y = p (both sign bits).
     { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80 },
@@ -3707,10 +3710,10 @@ bool ed25519Verify(const Buffer<const unsigned char>& publicKey,
     if (ED25519_verify(message.data, message.len, signature.data, publicKey.data) != 1) {
         return false;
     }
-    // BoringSSL checks only the cofactorless equation. A small-order A or R
-    // makes it hold for any message, so a signature under such a key is
-    // forgeable without the private key. Node rejects them after the same
-    // check (nodejs/node#64026).
+    // BoringSSL checks only the cofactorless equation. With a small-order
+    // public key A it is solvable without the private key: for the identity,
+    // R = identity and S = 0 pass for any message. A small-order R is rejected
+    // as well to match Node, libsodium and ed25519-dalek verify_strict.
     return !isSmallOrderEd25519Point(signature.data) && !isSmallOrderEd25519Point(publicKey.data);
 }
 

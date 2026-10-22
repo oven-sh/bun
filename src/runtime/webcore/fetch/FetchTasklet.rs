@@ -155,11 +155,6 @@ pub struct FetchTasklet {
     pub(crate) concurrent_task: ConcurrentTask,
     /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
     pub poll_ref: JsCell<KeepAlive>,
-    /// For Http Client requests
-    /// when Content-Length is provided this represents the whole size of the request
-    /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
-    /// If is not chunked encoded and Content-Length is not provided this will be unknown
-    pub(crate) body_size: http::BodySize,
 
     /// This is url + proxy memory buffer and is owned by FetchTasklet
     /// We always clone url and proxy (if informed)
@@ -1810,7 +1805,7 @@ impl FetchTasklet {
     }
 
     fn get_size_hint(&self) -> BlobSizeType {
-        match self.body_size {
+        match self.result.body_size {
             http::BodySize::ContentLength(n) => n as BlobSizeType,
             http::BodySize::TotalReceived(n) => n as BlobSizeType,
             http::BodySize::Unknown => 0,
@@ -1973,7 +1968,7 @@ impl FetchTasklet {
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
-        let mut body_decoded = metadata.did_decompress;
+        let mut body_decoded = self.result.did_decompress;
         let body = if self.response_body_is_null(status_code) {
             body_decoded = false;
             self.null_body_value()
@@ -2073,7 +2068,6 @@ impl FetchTasklet {
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: JsCell::new(KeepAlive::default()),
-            body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
             context: cx.context().id(),
@@ -2681,8 +2675,6 @@ impl FetchTasklet {
             task_ref.result.metadata = None;
         }
 
-        task_ref.body_size = task_ref.result.body_size;
-
         let success = task_ref.result.is_success();
 
         if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Abandoned {
@@ -2702,7 +2694,7 @@ impl FetchTasklet {
                 // doesn't leave the ~2x doubling over-capacity that the
                 // ArrayBuffer would adopt. Only for a consumer that wants the whole body.
                 if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
-                    if let http::BodySize::ContentLength(n) = task_ref.body_size {
+                    if let http::BodySize::ContentLength(n) = task_ref.result.body_size {
                         if n > scheduled.list.capacity() {
                             let additional = n
                                 .min(SCHEDULED_PRERESERVE_MAX)

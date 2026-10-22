@@ -149,8 +149,6 @@ pub struct HTTPResponseMetadata {
     pub url: bun_ptr::RawSlice<u8>,
     pub owned_buf: Box<[u8]>,
     pub response: bun_picohttp::Response<'static>,
-    /// The client decodes the body, so `Content-Encoding` no longer describes it.
-    pub did_decompress: bool,
 }
 
 impl HTTPResponseMetadata {
@@ -508,6 +506,8 @@ pub struct HTTPClientResult<'a> {
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
+    /// The client decodes the body, so `Content-Encoding` no longer describes it.
+    pub did_decompress: bool,
 
     pub fail: Option<crate::Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
@@ -635,6 +635,7 @@ impl<'a> HTTPClientResult<'a> {
             redirected: self.redirected,
             can_stream: self.can_stream,
             is_http2: self.is_http2,
+            did_decompress: self.did_decompress,
             fail: self.fail,
             dns_error: self.dns_error,
             dns_hostname: self.dns_hostname,
@@ -4306,7 +4307,6 @@ impl<'a> HTTPClient<'a> {
             owned_buf,
             response: cloned_response,
             url: href,
-            did_decompress: self.state.encoding.is_compressed(),
         });
     }
 
@@ -4829,6 +4829,7 @@ impl<'a> HTTPClient<'a> {
                         || self.state.request_stage == RequestStage::ProxyBody)
                         && self.flags.is_streaming_request_body,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
+                    did_decompress: self.state.encoding.is_compressed(),
                 };
             }
         }
@@ -4853,6 +4854,7 @@ impl<'a> HTTPClient<'a> {
                 || self.state.request_stage == RequestStage::ProxyBody)
                 && self.flags.is_streaming_request_body,
             is_http2: self.flags.protocol != Protocol::Http1_1,
+            did_decompress: self.state.encoding.is_compressed(),
         }
     }
 

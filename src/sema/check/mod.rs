@@ -3341,6 +3341,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
+        self.limit_at_current_node(code, true);
+    }
+
+    /// For a limit on the size of a type: it's the same at whatever depth, so the queries in progress keep their results.
+    #[cold]
+    fn size_limit_at_current_node(&mut self, code: u32) {
+        self.limit_at_current_node(code, false);
+    }
+
+    #[cold]
+    fn limit_at_current_node(&mut self, code: u32, depends_on_depth: bool) {
         self.note_gave_up();
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
@@ -3369,6 +3380,9 @@ impl<'p, 's> Checker<'p, 's> {
         // `sort_and_deduplicate_diagnostics` would keep only one, so don't accumulate millions until then.
         if !self.is_last_diagnostic_of_task(at, code) {
             self.add_diagnostic_of(None, Reported::bare(at, code));
+        }
+        if !depends_on_depth {
+            return;
         }
         // A query that began under an instantiation had less depth left than the same query has
         // from depth 0, where a finite type doesn't reach the limit. tsgo stores its result

@@ -1325,7 +1325,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // Too large to represent (2799, 2800), so the result is the error type.
                 if inner.len() + out_elems.len() >= 10_000 {
                     let is_type_node = self.is_current_node_part_of_type_node();
-                    self.error_at_current_node(if is_type_node { 2799 } else { 2800 });
+                    self.size_limit_at_current_node(if is_type_node { 2799 } else { 2800 });
                     return TypeId::ERROR;
                 }
                 out_elems.extend_from_slice(inner);

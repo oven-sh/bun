@@ -18724,5 +18724,29 @@
       "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
     },
     "build": true
+  },
+  "union-too-complex-in-a-branch-that-two-uses-reach": {
+    "files": {
+      "a.ts": "declare const first: Wrap<1>;\ndeclare const second: Wrap<2>;\ntype Digit = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;\ntype Wrap<T> = T extends unknown ? `${Digit}${Digit}${Digit}${Digit}${Digit}` : never;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"noLib\": true, \"types\": [] } }\n"
+    }
+  },
+  "tuple-too-large-in-a-branch-that-two-uses-reach": {
+    "files": {
+      "a.ts": "declare const first: Wrap<1>;\ndeclare const second: Wrap<2>;\ntype Ten<T extends unknown[]> = [...T, ...T, ...T, ...T, ...T, ...T, ...T, ...T, ...T, ...T];\ntype Thousand = Ten<Ten<Ten<[0]>>>;\ntype Wrap<T> = T extends unknown ? [...Thousand, ...Thousand, ...Thousand, ...Thousand, ...Thousand, ...Thousand, ...Thousand, ...Thousand, ...Thousand, ...Thousand] : never;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"noLib\": true, \"types\": [] } }\n"
+    }
+  },
+  "union-too-complex-in-a-branch-that-three-files-reach": {
+    "files": {
+      "a.ts": "declare const a1: Wrap<1>;\ndeclare const a2: Wrap<2>;\n",
+      "b.ts": "declare const b: Wrap<3>;\n",
+      "c.ts": "declare const c: Wrap<4>;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "p.ts": "type Digit = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;\ntype Wrap<T> = T extends unknown ? `${Digit}${Digit}${Digit}${Digit}${Digit}` : never;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"noLib\": true, \"types\": [] } }\n"
+    }
   }
 }

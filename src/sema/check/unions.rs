@@ -1118,7 +1118,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // At this rate the total would exceed a million comparisons. That's too complex to represent, so the
                 // result is the error type.
                 if count == 100_000 && (count / (len - i)) * len > 1_000_000 {
-                    self.error_at_current_node(2590);
+                    self.size_limit_at_current_node(2590);
                     return TypeId::ERROR;
                 }
                 count += 1;
@@ -1710,7 +1710,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn checked_cross_product_union_size(&mut self, types: &[TypeId]) -> Option<usize> {
         let size = self.get_cross_product_union_size(types);
         if size >= 100_000 {
-            self.error_at_current_node(2590);
+            self.size_limit_at_current_node(2590);
             return None;
         }
         Some(size)

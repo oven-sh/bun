@@ -1653,7 +1653,7 @@ impl BlobExt for Blob {
         blob.offset.set(offset);
         blob.size.set(len);
 
-        let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
+        let content_type_was_given = !content_type.is_empty();
         // infer the content type if it was not specified
         if content_type.is_empty()
             && !self.content_type.get().is_owned()
@@ -1664,7 +1664,7 @@ impl BlobExt for Blob {
             blob.content_type.set(content_type);
         }
         blob.content_type_was_set
-            .set(self.content_type_was_set.get() || content_type_was_allocated);
+            .set(self.content_type_was_set.get() || content_type_was_given);
 
         blob.into_js(global_this)
     }

@@ -2459,7 +2459,7 @@ impl<'p, 's> Checker<'p, 's> {
             context: None,
         });
         let outer = self.suspend_recheck();
-        let ty = self.type_of_expr(file, e);
+        let ty = self.check_expression_again(file, e);
         self.end_recheck(outer);
         self.inference_contexts.pop();
         self.pop_contextual_type();

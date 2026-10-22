@@ -315,7 +315,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getNarrowableTypeForReference` may substitute a type parameter's constraint, depending on
     /// the check mode and `hasContextualTypeWithNoGenericTypes`. It does the same for `this["p"]`
     /// and `keyof this`, and every method has a `this` type in scope. There the single check
-    /// detects the substitution, see `is_reference_to_recheck`.
+    /// detects the substitution, see `is_reference_to_recheck`. The next walk after one that ended
+    /// with an incomplete type may compute another type too.
     #[inline]
     fn is_rechecked(&mut self, file: FileId, e: ExprId) -> bool {
         self.is_rechecking()
@@ -327,7 +328,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(
             self.hir(file)[e].kind,
             ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. } | ExprKind::Index { .. }
-        ) {
+        ) || self.is_checked_with_incomplete_walk(file, e)
+        {
             return true;
         }
         if !self.hir(file).type_params.is_empty() {

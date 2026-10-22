@@ -10419,6 +10419,48 @@ export function usedBefore(o: { p: object }) {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the arguments of a generic call again after the inference of its type arguments", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare function plain(value: unknown): void;
+declare function generic<T>(value: T): void;
+declare function overloaded(value: string): void;
+declare function overloaded(value: unknown): void;
+export function f(o: { p: number }) {
+  fail();
+  while (c || c) { plain(o.p); }
+}
+export function g(o: { p: number }) {
+  fail();
+  while (c || c) { generic(o.p); }
+}
+export function h(o: { p: number }) {
+  fail();
+  while (c || c) { overloaded(o.p); }
+}
+export function i(o: { p: number }) {
+  fail();
+  while (c || c) { generic<number>(o.p); }
+}
+export function j(o: { p: number }) {
+  fail();
+  while (c || c) { generic([o.p]); }
+}
+export function k(o: { p: number }) {
+  fail();
+  while (c || c) { generic(o); }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(13,30): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(25,31): error TS2339: Property 'p' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

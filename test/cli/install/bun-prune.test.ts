@@ -4885,6 +4885,294 @@ test.concurrent("hoisted: bun update --filter removes the old copy that only a t
   expect(exitCode).toBe(0);
 });
 
+// `b` has no-deps@1.0.0 in its own folder and then takes the root's no-deps@2.0.0. Another folder also links `b` and
+// has no-deps@1.0.0, so the tree of `b` below it places no-deps@2.0.0 in packages/b.
+const takesNoDepsOfRoot = async (dir: string, folder = "b") => {
+  expect(installedIn(dir, `packages/${folder}`)).toEqual({ "no-deps": "1.0.0" });
+  const path = join(dir, "packages", folder, "package.json");
+  await write(path, (await file(path).text()).replace('"no-deps":"1.0.0"', '"no-deps":"2.0.0"'));
+};
+const secondLinker = (linker: Record<string, unknown>): Workspaces => ({
+  root: { workspaces: selfContained("packages/c"), dependencies: { "no-deps": "2.0.0" } },
+  packages: { b: { dependencies: { "no-deps": "1.0.0" } }, c: linker },
+});
+const aliasLinker: Workspaces = {
+  root: { dependencies: { "no-deps": "2.0.0", "what-bin": "1.0.0" } },
+  packages: {
+    a: { devDependencies: { "what-bin": "workspace:b@*" }, dependencies: { "no-deps": "1.0.0" } },
+    b: { dependencies: { "no-deps": "1.0.0" } },
+  },
+};
+
+// The link to `b` is in a dependency group that the run omits, so the run does not write that tree. What is in
+// packages/b is the old copy.
+test.concurrent.each([
+  ["--omit=dev", "c", secondLinker({ devDependencies: { b: "workspace:*" }, dependencies: { "no-deps": "1.0.0" } })],
+  ["--omit=optional", "c", secondLinker({ optionalDependencies: { b: "workspace:*", "no-deps": "1.0.0" } })],
+  ["--omit=peer", "c", secondLinker({ peerDependencies: { b: "workspace:*" }, dependencies: { "no-deps": "1.0.0" } })],
+  ["--omit=dev", "a", aliasLinker],
+] as const)(
+  "hoisted: bun install %s removes the old copy that only the tree below packages/%s places",
+  async (omit, linker, workspaces) => {
+    const dir = await setupWorkspaces("hoisted", workspaces);
+    const ofLinker = installedIn(dir, `packages/${linker}`);
+    await takesNoDepsOfRoot(dir);
+
+    const { stderr, exitCode } = await bun(dir, "install", omit);
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, ".")).toMatchObject({ "no-deps": "2.0.0" });
+    expect(installedIn(dir, "packages/b")).toEqual({});
+    expect(installedIn(dir, `packages/${linker}`)).toEqual(ofLinker);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// No run installed the devDependencies of `c`, so packages/c has no node_modules. The run leaves the link from `c`
+// to `b` out, and what `c` lacks keeps nothing in packages/b.
+test.concurrent(
+  "hoisted: bun install --omit=dev does not ask a folder whose link to the workspace it leaves out",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const linker = secondLinker({ devDependencies: { b: "workspace:*", "no-deps": "1.0.0" } });
+    await writeWorkspaces(dir, packageJson, linker);
+    await install(dir, "--omit=dev");
+    expect(existsSync(join(dir, "packages", "c", "node_modules"))).toBeFalse();
+    await takesNoDepsOfRoot(dir);
+
+    const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "packages/b")).toEqual({});
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `c` links `b` by a dependency, so the run asks packages/c. Its no-deps is a devDependency that the run omits. A row
+// that the run did not write stops no lookup there.
+test.concurrent("hoisted: bun install --omit=dev passes a row that it did not write in a folder it asks", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  const linker = secondLinker({ dependencies: { b: "workspace:*" }, devDependencies: { "no-deps": "1.0.1" } });
+  await writeWorkspaces(dir, packageJson, linker);
+  await install(dir, "--omit=dev");
+  expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.0" });
+  await write(join(dir, "packages", "b", "package.json"), JSON.stringify({ name: "b", version: "1.0.0" }));
+
+  const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+  expect(stderr).not.toContain("warn:");
+  expect(installedIn(dir, "packages/b")).toEqual({});
+  expect(exitCode).toBe(0);
+});
+
+// The link to `b` is a dependency, so the run writes the tree of `b` below `c`, and with it no-deps@2.0.0.
+test.concurrent(
+  "hoisted: bun install --omit=dev keeps what a tree that it installs places in a workspace",
+  async () => {
+    const linker = { dependencies: { b: "workspace:*" }, devDependencies: { "no-deps": "1.0.0" } };
+    const dir = await setupWorkspaces("hoisted", secondLinker(linker));
+    await takesNoDepsOfRoot(dir);
+
+    const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "2.0.0" });
+    expect(installedIn(dir, "packages/c")).toEqual({ b: "link", "no-deps": "1.0.0" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `b` has no-deps in two dependency groups. bun.lock gives the place in packages/b to the devDependency, and a run
+// that omits it installs the other version there. The cleanup does not take that copy for a stale one.
+test.concurrent(
+  "hoisted: bun install --omit=dev keeps the package that it installs at a row of the omitted group",
+  async () => {
+    const linker = secondLinker({ devDependencies: { b: "workspace:*" } });
+    linker.packages.b = { devDependencies: { "no-deps": "1.0.1" } };
+    const dir = await setupWorkspaces("hoisted", linker);
+    expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.1" });
+    const b = {
+      name: "b",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0" },
+      devDependencies: { "no-deps": "1.0.1" },
+    };
+    await write(join(dir, "packages", "b", "package.json"), JSON.stringify(b));
+
+    const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.0" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Only the tree of `b` below `c` places no-deps in packages/b. The run writes that tree, but not this row of it: it
+// is a devDependency of `b`.
+test.concurrent(
+  "hoisted: bun install --omit=dev removes the old copy at a row that it omits in a tree it writes",
+  async () => {
+    const linker = secondLinker({ dependencies: { b: "workspace:*", "no-deps": "1.0.0" } });
+    linker.packages.b = { devDependencies: { "no-deps": "1.0.1" } };
+    const dir = await setupWorkspaces("hoisted", linker);
+    expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.1" });
+    const b = { name: "b", version: "1.0.0", devDependencies: { "no-deps": "2.0.0" } };
+    await write(join(dir, "packages", "b", "package.json"), JSON.stringify(b));
+
+    const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "packages/b")).toEqual({});
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The tree of `b` below the root's link places no-deps@1.0.0 in packages/b. It is a devDependency that the run omits,
+// so the run does not write it. As in a project with no second link to `b`, the copy that is there stays.
+test.concurrent(
+  "hoisted: bun install --omit=dev keeps the old copy at a row of the tree below the root's link",
+  async () => {
+    const linker = secondLinker({ devDependencies: { b: "workspace:*" }, dependencies: { "no-deps": "2.0.0" } });
+    linker.packages.b = { devDependencies: { "no-deps": "1.0.1" } };
+    const dir = await setupWorkspaces("hoisted", linker);
+    const b = { name: "b", version: "1.0.0", devDependencies: { "no-deps": "1.0.0" } };
+    await write(join(dir, "packages", "b", "package.json"), JSON.stringify(b));
+
+    const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.1" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Only the tree of `b` below `a` places a-dep@1.0.1 in packages/b, and the run leaves that tree out. The copy is
+// that package, so it stays for a run that installs the devDependencies.
+test.concurrent("hoisted: bun install --omit=dev keeps the copy that a tree it leaves out places", async () => {
+  const root = { dependencies: { "a-dep": "1.0.1", "what-bin": "1.0.0" } };
+  const dir = await setupWorkspaces("hoisted", {
+    root,
+    packages: {
+      a: { devDependencies: { "what-bin": "workspace:b@*" }, dependencies: { "a-dep": "1.0.2" } },
+      b: { dependencies: { "a-dep": "1.0.1" } },
+    },
+  });
+  expect(installedIn(dir, "packages/b")).toEqual({ "a-dep": "1.0.1" });
+  const withOneFixedDep = { dependencies: { ...root.dependencies, "one-fixed-dep": "2.0.0" } };
+  await write(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "root", workspaces: ["packages/*"], ...withOneFixedDep }),
+  );
+
+  const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+  expect(stderr).not.toContain("warn:");
+  expect(installedIn(dir, ".")).toMatchObject({ "a-dep": "1.0.1", "one-fixed-dep": "2.0.0" });
+  expect(installedIn(dir, "packages/b")).toEqual({ "a-dep": "1.0.1" });
+  expect(exitCode).toBe(0);
+});
+
+// Only the tree of `b` below `a` places no-deps@2.0.0 in packages/b, and the run writes it. The version in the
+// installed package.json is spelled as an install accepts it. A row that the run wrote needs no look at the copy.
+test.concurrent(
+  "hoisted: bun update keeps the copy at a row that it wrote, however its version is spelled",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "2.0.0", "what-bin": "1.0.0" } },
+      packages: {
+        a: { dependencies: { "what-bin": "workspace:b@*", "no-deps": "1.0.0" } },
+        b: { dependencies: { "no-deps": "2.0.0" } },
+      },
+    });
+    expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "2.0.0" });
+    const installed = join(dir, "packages", "b", "node_modules", "no-deps", "package.json");
+    await write(installed, (await file(installed).text()).replace('"2.0.0"', '"v2.0.0"'));
+
+    const { stderr, exitCode } = await update(dir);
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "v2.0.0" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The root's no-deps is a devDependency that no run installed. The lookup for the copy that `b` no longer needs
+// still stops at that row, as before.
+test.concurrent("hoisted: bun install --omit=dev keeps a copy while the root lacks the package it omits", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  await writeWorkspaces(dir, packageJson, {
+    root: { devDependencies: { "no-deps": "2.0.0" } },
+    packages: { b: { dependencies: { "no-deps": "1.0.0" } } },
+  });
+  await install(dir, "--omit=dev");
+  expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.0" });
+  await write(join(dir, "packages", "b", "package.json"), JSON.stringify({ name: "b", version: "1.0.0" }));
+
+  const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+  expect(out(stderr)).toContain(MISSING_WARN("node_modules/no-deps", "packages/b/node_modules/no-deps"));
+  expect(installedIn(dir, "packages/b")).toEqual({ "no-deps": "1.0.0" });
+  expect(exitCode).toBe(0);
+});
+
+// packages/a is two trees: one below the root, and one below `d`, which links `a` by a devDependency. Both link `b`.
+// The run writes the first. The tree of `b` below the second places no-deps@2.0.0 in packages/b, and is not written.
+test.concurrent(
+  "hoisted: bun install --omit=dev tells the two trees of a folder that links the workspace apart",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "2.0.0", "what-bin": "1.0.0", "a-dep": "1.0.1" } },
+      packages: {
+        a: { dependencies: { "what-bin": "workspace:b@*" } },
+        b: { dependencies: { "no-deps": "1.0.0" } },
+        d: { devDependencies: { "a-dep": "workspace:a@*" }, dependencies: { "no-deps": "1.0.0" } },
+      },
+    });
+    await takesNoDepsOfRoot(dir);
+
+    const { stderr, exitCode } = await bun(dir, "install", "--omit=dev");
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "packages/b")).toEqual({});
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `w` is selected, and `x`, which links `w`, is not. The workspace in packages/m has the name of a package that `x`
+// has, so the link from `w` to it is in the tree of `w` below `x`. The run does not write that tree.
+test.concurrent(
+  "hoisted: bun update --filter leaves out a link in a tree below a workspace that it leaves out",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { workspaces: selfContained("packages/x"), dependencies: { "no-deps": "2.0.0" } },
+      packages: {
+        m: { name: "a-dep", version: "9.0.0", dependencies: { "no-deps": "1.0.0" } },
+        w: { dependencies: { "a-dep": "workspace:*", "no-deps": "1.0.1" } },
+        x: { dependencies: { w: "workspace:*", "a-dep": "1.0.1", "no-deps": "1.0.0" } },
+      },
+    });
+    await takesNoDepsOfRoot(dir, "m");
+
+    const { stderr, exitCode } = await bun(dir, "update", "--filter", "w", "--filter", "a-dep");
+    expect(stderr).not.toContain("warn:");
+    expect(installedIn(dir, "packages/m")).toEqual({});
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The package.json of the `file:` dependency has no name, so what is installed cannot be told from another package.
+// `b` is selected and `a`, which links it, is not. The row for local-lib is in the tree that the run writes.
+test.concurrent("hoisted: bun update --filter keeps a package without a name at a row that it writes", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  await Promise.all([
+    writeWorkspaces(dir, packageJson, {
+      root: { dependencies: { "no-deps": "2.0.0", "what-bin": "1.0.0" } },
+      packages: {
+        a: { dependencies: { "what-bin": "workspace:b@*", "no-deps": "1.0.0" } },
+        b: { dependencies: { "local-lib": "file:../../vendor/local-lib" } },
+      },
+    }),
+    write(join(dir, "vendor", "local-lib", "package.json"), JSON.stringify({ version: "1.0.0" })),
+  ]);
+  await install(dir);
+  await install(dir);
+  expect(installedIn(dir, "packages/b")).toEqual({ "local-lib": "1.0.0" });
+
+  const { stderr, exitCode } = await bun(dir, "update", "--filter", "b");
+  expect(stderr).not.toContain("warn:");
+  expect(installedIn(dir, "packages/b")).toEqual({ "local-lib": "1.0.0" });
+  expect(exitCode).toBe(0);
+});
+
 // `b` drops no-deps, so its copy has to go once the root and `c` have theirs. packages/c/node_modules is a link, and
 // a link is never opened.
 test.concurrent(
@@ -5065,6 +5353,28 @@ test.concurrent("hoisted: bun install keeps what is in a workspace that takes th
 
   await install(dir);
   expect(existsSync(own)).toBeTrue();
+});
+
+// one-fixed-dep@1.0.0 has its own no-deps@1.0.0, because `b` has no-deps@1.0.1. The workspace moves to libs/b with
+// its node_modules, no link stays at packages/b, and `b` takes no-deps@1.0.0. The copy below one-fixed-dep has to go.
+test.concurrent("hoisted: bun install removes a nested copy below a workspace that moved", async () => {
+  const root = { workspaces: ["packages/*", "libs/*"], dependencies: { "one-fixed-dep": "2.0.0", "no-deps": "2.0.0" } };
+  const dir = await setupWorkspaces("hoisted", {
+    root,
+    packages: { b: { dependencies: { "one-fixed-dep": "1.0.0", "no-deps": "1.0.1" } } },
+  });
+  const nested = join("node_modules", "one-fixed-dep", "node_modules", "no-deps");
+  expect(existsSync(join(dir, "packages", "b", nested))).toBeTrue();
+  mkdirSync(join(dir, "libs"));
+  renameSync(join(dir, "packages", "b"), join(dir, "libs", "b"));
+  const b = { name: "b", version: "1.0.0", dependencies: { "one-fixed-dep": "1.0.0", "no-deps": "1.0.0" } };
+  await write(join(dir, "libs", "b", "package.json"), JSON.stringify(b));
+
+  const { stderr, exitCode } = await bun(dir, "install");
+  expect(stderr).not.toContain("warn:");
+  expect(installedIn(dir, "libs/b")).toEqual({ "no-deps": "1.0.0", "one-fixed-dep": "1.0.0" });
+  expect(existsSync(join(dir, "libs", "b", nested))).toBeFalse();
+  expect(exitCode).toBe(0);
 });
 
 // `<dir>/project` is the project. The workspace in `<dir>/shared` is outside it. It links `b` under a name that the

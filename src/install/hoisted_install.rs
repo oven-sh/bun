@@ -604,5 +604,9 @@ pub(crate) fn install_hoisted_packages(
         }
     }
 
+    summary.wrote = Some(crate::prune::SavedTree {
+        trees: core::mem::take(&mut this.lockfile.buffers.trees),
+        hoisted_dependencies: core::mem::take(&mut this.lockfile.buffers.hoisted_dependencies),
+    });
     Ok(summary)
 }

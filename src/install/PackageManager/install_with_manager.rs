@@ -1066,7 +1066,8 @@ pub fn install_with_manager(
     if removes_collapsed_copies && isolated {
         crate::prune::unlink_dropped_dependencies(manager, &lockfile_before_clean);
     } else if removes_collapsed_copies {
-        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
+        let wrote = install_summary.wrote.as_ref();
+        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean, wrote);
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;

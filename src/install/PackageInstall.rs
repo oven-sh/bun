@@ -68,6 +68,9 @@ pub struct Summary {
     /// Set by the hoisted linker only. A copy of `tree::Builder::places`.
     pub(crate) places: Vec<(u64, PackageID)>,
 
+    /// Set by the hoisted linker only. The tree that the install wrote: see `Lockfile::filter`.
+    pub(crate) wrote: Option<crate::prune::SavedTree>,
+
     pub(crate) offline_misses: OfflineMisses,
 }
 

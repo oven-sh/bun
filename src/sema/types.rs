@@ -1697,8 +1697,7 @@ impl ProvenanceKey<'_> {
 
 /// Flags that `getUnionTypeEx`, `getIntersectionTypeEx` and `createTypeReferenceEx` set on a type only when they create
 /// it, so the first request for the type decides them. A record is created with them already set
-/// (`Types::as_first_request`). Which task is the first to request a published type depends on timing, so
-/// `FROM_TYPE_NODE` is also set later (`Types::mark_from_type_node`).
+/// (`Types::as_first_request`). `FROM_TYPE_NODE` is also set later (`Types::mark_from_type_node`): which task requests a published type first depends on timing.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct FirstRequest(u8);
 
@@ -4060,12 +4059,7 @@ impl<'p, 's> Types<'p, 's> {
 
     /// `ObjectFlagsFromTypeNode`: `id` is the type of a type node. `first_new_type_id` was taken
     /// before the node was resolved. `createTypeReferenceEx` sets the flags only on a type that it
-    /// creates, so a task-local type that an instantiation created earlier is unchanged.
-    ///
-    /// Unlike in tsgo, a bound type and a published type get the flag even if an instantiation created them earlier.
-    /// Another task's instantiation can create a published record at any moment, and the record may not depend on which
-    /// task created it (`TypeStore`). So the flag of a published type says that a type node has this type. A task that has
-    /// resolved such a node, or has found what another task stored after it resolved one, finds the flag set.
+    /// creates, so a task-local type that an instantiation created earlier is unchanged; a bound or a published type gets the flag all the same.
     pub fn mark_from_type_node(&self, id: TypeId, first_new_type_id: NewTypes) {
         if id.0 & LOCAL == 0
             || self.is_new_since(id, first_new_type_id)

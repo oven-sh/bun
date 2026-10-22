@@ -2748,8 +2748,7 @@ void GlobalObject::finishCreation(VM& vm)
              // Node defines `subtle` on Crypto.prototype with a brand check, not on
              // the instance; the getter above enforces the brand.
              JSObject* prototype = crypto->getPrototypeDirect().getObject();
-             // A program compiled ahead of time counts `subtle` among what the prototype has,
-             // and may have made it immutable before this first read of `crypto`.
+             // A program compiled ahead of time counts `subtle` among what the prototype has, and may have made it immutable before this first read of `crypto`.
              AllowLazyMaterializationOfImmutableProperties allowMaterialization(init.vm);
              prototype->putDirectCustomAccessor(
                  init.vm,
@@ -3055,8 +3054,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
         throwException(globalObject, scope, returnedException.get());
         return {};
     }
-    // A program compiled ahead of time may have made the member immutable. What the getter
-    // creates is what the member holds, so it takes the getter's place all the same.
+    // A program compiled ahead of time may have made the member immutable.
     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     console->putDirect(vm, property, result, 0);
     return JSValue::encode(result);

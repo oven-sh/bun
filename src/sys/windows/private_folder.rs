@@ -1,5 +1,4 @@
-//! What `mkdir` with mode 0700 and a look at `st_uid` and `st_mode` are on POSIX. The temporary folder can be one that every
-//! user may write to (`C:\Windows\Temp` is a service's), and nothing that another user laid there may be loaded as code.
+//! What `mkdir` with mode 0700 and a look at `st_uid` and `st_mode` are on POSIX.
 
 use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;
@@ -134,8 +133,7 @@ impl User {
     }
 }
 
-/// Makes the folder unless there is something at `path`. True where `path` is then a folder that this user, an administrator or
-/// the system made and that nobody else can reach. It cannot be moved or replaced for as long as this process lives.
+/// Makes the folder unless there is something at `path`.
 pub fn make_or_find(path: &[u8]) -> bool {
     static VERIFIED_FOLDERS: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
     let Ok(mut verified_folders) = VERIFIED_FOLDERS.lock() else { return false };

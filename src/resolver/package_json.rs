@@ -1082,8 +1082,7 @@ impl ExportsMap {
         .collect()
     }
 
-    /// The subpaths, without their dot, that a key with a `*` may give the file at `path_in_package` (`/lib/a.js`): for each text
-    /// that the key can lead to, whatever its conditions, what the `*` has to stand for. The resolver says which of them hold.
+    /// The subpaths, without their dot, that a key with a `*` may give the file at `path_in_package` (`/lib/a.js`): for each text that the key can lead to, whatever its conditions, what the `*` has to stand for.
     pub fn subpaths_by_pattern(&self, path_in_package: &[u8]) -> Vec<Vec<u8>> {
         let EntryData::Map(map) = &self.root.data else {
             return Vec::new();

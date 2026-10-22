@@ -86,8 +86,7 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCommonJSModule* requirer = target->m_parent.get();
-    // `target` is the object that require() under a computed name has made to load the file into. It is no module object of that file, and nobody gets to see it:
-    // the engine lists the file among the children of the file that has required it.
+    // `target` is the object that require() under a computed name has made to load the file into.
     auto referrer = requirer ? compiledModuleOf(requirer) : std::nullopt;
     if (referrer && AOT::recordRequire(globalObject, *module, *referrer))
         target->compiledModule = module->index();

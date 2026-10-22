@@ -134,8 +134,7 @@ pub(super) struct Key(TypeId, TypeId, u8);
 /// Flag of a `Key` for two generic type references. The two ids of such a key are the halves of a
 /// hash. `LOCAL` in the first half means the hash includes a task-local id.
 const GENERIC_KEY: u8 = 0x80;
-/// In place of the relation in a `Key`: the entry is the answer to a question of `aot::Queries` whether the first type is
-/// assignable to the second. `COMPLEXITY_OVERFLOW`: the question is given up.
+/// In place of the relation in a `Key`: the entry is the answer to a question of `aot::Queries` whether the first type is assignable to the second.
 const QUESTION_KEY: u8 = 3;
 
 impl Key {
@@ -251,13 +250,7 @@ pub(super) struct Relater {
     /// `constrained`. Consumed by the first comparison that needs a key.
     top_key: Option<(Key, bool)>,
     pub(super) relation_count: i32,
-    /// The check answers a question of `aot::Queries` and `relation_count` began at what such a question may cost. Running
-    /// out of it is neither reported nor a reason to lose the task. A result that waits in `maybe_keys` counts at once.
-    ///
-    /// Whether it runs out must not depend on what other comparisons have settled by now, which is a matter of timing. So
-    /// it reads and writes `Checker::relations_of_query`, which begins empty, and only the answer to the whole question is
-    /// kept for everybody: `QUESTION_KEY`. What the check computes on the way, such as variances, is the checker's own:
-    /// those are other relaters.
+    /// The check answers a question of `aot::Queries` and `relation_count` began at what such a question may cost.
     is_for_query: bool,
     /// `relation_count` once the comparison has stored `ENTRIES_SHARED_RIGHT_AWAY` entries.
     waits_for_commit_below: i32,
@@ -4163,8 +4156,7 @@ impl<'p, 's> Checker<'p, 's> {
         // As in TypeScript 7.1. 7.0 gives up here and reports 2321. Which comparison is the 100th depends on where the
         // outermost one started and on what is cached, so only the last round's task answers. Any other task is
         // discarded, and ends the comparison right away. The results that follow from the answer stay in the task, like
-        // those of `REC_BOTH` below. A question of `aot::Queries` is given up: what is built on its answer takes no
-        // comparison on trust.
+        // those of `REC_BOTH` below. A question of `aot::Queries` is given up: what is built on its answer takes no comparison on trust.
         if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
             if r.is_for_query {
                 r.overflow = true;
@@ -4346,11 +4338,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getIndexedAccessTypeOrUndefined(baseObjectType, baseIndexType, accessFlags)` of `structuredTypeRelatedToWorker`: what
-    /// can be written to `T[K]`.
-    ///
-    /// FOR SPEED: every member of a source union asks for the same one. Where that is an intersection of unions whose size is
-    /// refused, nothing is stored on the way, and each of them goes over all the keys and all the property types again.
+    /// `getIndexedAccessTypeOrUndefined(baseObjectType, baseIndexType, accessFlags)` of `structuredTypeRelatedToWorker`: what can be written to `T[K]`.
     fn write_constraint(
         &mut self,
         object: TypeId,
@@ -4721,8 +4709,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.recursion_identity_as(t, self.data(t))
     }
 
-    /// `recursion_identity` as if no type node had named `t`. Whether one has by now depends on how far the other threads
-    /// have come (`Types::mark_from_type_node`), and what a build writes may not.
+    /// `recursion_identity` as if no type node had named `t`.
     pub(super) fn recursion_identity_of_family(&self, t: TypeId) -> RecursionId {
         self.recursion_identity_given(t, self.data(t), false)
     }

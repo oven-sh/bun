@@ -9,8 +9,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
     // defined and not set. What throws returns without reading `input` again.
     let global = unsafe { heap.global() };
-    // The parser is also the package manager's and the bundler's, so no code is this feature's alone and nothing stands in
-    // for this function where --trim removed the feature: it would run into what was removed with the others.
+    // The parser is also the package manager's and the bundler's, so no code is this feature's alone and nothing stands in for this function where --trim removed the feature: it would run into what was removed with the others.
     if bun_removable_features::is_removed(bun_removable_features::Feature::Jsonc) {
         return Err(crate::removed_feature::throw_for_removed_feature(global, bun_removable_features::Feature::Jsonc));
     }

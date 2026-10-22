@@ -1,6 +1,4 @@
-//! The name that `bun build --compile --aot` gives an executable: 16 bytes made of the compiled program and of this build of
-//! Bun. `bun_exe_format::build_id` writes them into the copy of this executable that gets the program. In Bun itself they
-//! are zero. Nothing compares them with anything when the process starts.
+//! The name that `bun build --compile --aot` gives an executable: 16 bytes made of the compiled program and of this build of Bun.
 
 const NOTE_SIZE: usize = 32;
 const ID_OFFSET: usize = 16;

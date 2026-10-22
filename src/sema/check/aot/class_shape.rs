@@ -462,9 +462,7 @@ fn is_stored_into(
     )
 }
 
-// `F.prototype.name = function () { .. }`, a function in the literal that becomes a prototype object, the `get` or the `set`
-// of a property descriptor. It stores into the object it is called on, which the constructor of that object has made.
-// Whoever constructs with it all the same gets an ordinary object.
+// `F.prototype.name = function () { .. }`, a function in the literal that becomes a prototype object, the `get` or the `set` of a property descriptor.
 fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
     let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
         return false;
@@ -548,8 +546,7 @@ fn binding_candidate(store: &BindingStore) -> StoreCandidate {
     }
 }
 
-// The expression whose value the member holds first. What `+=` computes is no expression of the program, so the first
-// store of another form to the same place says it.
+// The expression whose value the member holds first.
 fn find_stored_value(stores: &[StoreCandidate], candidate: &StoreCandidate) -> Option<ExprId> {
     match candidate.form {
         StoreForm::Plain | StoreForm::Logical => Some(candidate.value),

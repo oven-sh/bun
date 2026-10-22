@@ -1084,9 +1084,7 @@ Server.prototype[kRealListen] = function (
         bunServer: $Node.NativeHTTPServer,
         url: string,
         method: string,
-        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and
-        // token bits for the headers the dispatcher consults, so no header
-        // object or array is materialized unless user code reads them.
+        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
         dispatchBits: number,
         handle: $Node.NodeHTTPResponse,
         hasBody: boolean,
@@ -1510,9 +1508,7 @@ Server.prototype[kRealListen] = function (
         bunServer: $Node.NativeHTTPServer,
         url: string,
         method: string,
-        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and
-        // token bits for the headers the dispatcher consults, so no header
-        // object or array is materialized unless user code reads them.
+        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
         dispatchBits: number,
         handle: $Node.NodeHTTPResponse,
         hasBody: boolean,

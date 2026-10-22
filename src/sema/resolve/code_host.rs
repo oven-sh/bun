@@ -36,7 +36,6 @@ pub trait CodeHost: Host {
     }
 
     /// The directory that the imports of a file are resolved from, and whose `tsconfig.json` says how the file is transpiled.
-    /// A module that a plugin made up lies in none.
     fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         Cow::Borrowed(dirname::<Posix>(path))
     }
@@ -67,8 +66,7 @@ pub trait CodeHost: Host {
         Vec::new()
     }
 
-    /// The declaration file that stands in for `@types/bun` where it is not installed. What it declares counts only where nothing
-    /// else declares the name.
+    /// The declaration file that stands in for `@types/bun` where it is not installed.
     fn declarations_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
         None
     }
@@ -94,8 +92,7 @@ pub trait CodeHost: Host {
         false
     }
 
-    /// Called once every other file is read. If it returns true, `parse_code` gets empty contents for `paths` and
-    /// `read_in_background` runs for each path on its own thread before the load returns. Otherwise they are read normally.
+    /// Called once every other file is read.
     fn start_background_reads(&self, _paths: &[&[u8]]) -> bool {
         false
     }

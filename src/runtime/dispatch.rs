@@ -16,9 +16,7 @@
 //! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
 //!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..); unsafe fn context(..) }`;
-//!   3. a `run_task` arm and a `release_task_unrun` arm here, both through
-//!      `in_features!` if only code of removable features (`src/trim/features`)
-//!      queues it;
+//!   3. a `run_task` arm and a `release_task_unrun` arm here, both through `in_features!` if only code of removable features (`src/trim/features`) queues it;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
 // Flat re-export landing pad for `generated_js2native.rs` thunks. Kept in a
@@ -63,11 +61,7 @@ macro_rules! __fs_pat {
     ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
 }
 
-/// Runs `$body` in a function of its own, which records itself as a part of each
-/// feature listed. Nothing is tested at run time: `--trim` cuts the function, and
-/// what only it reaches, out of an executable that has none of those features
-/// left, and nothing in such an executable queues what the arm handles. List
-/// every feature whose native code can queue it.
+/// Runs `$body` in a function of its own, which records itself as a part of each feature listed.
 macro_rules! in_features {
     (
         [$($feature:ident),+ $(,)?],
@@ -189,8 +183,7 @@ pub(crate) enum RunTaskResult {
 // shell/bake code, blowing the iTLB fault-around window for `bun <file>`.
 // Keeping `run_task` out-of-line lets `tick_queue_with_count` stay a tight
 // drain-loop wrapper (front-clustered via `src/startup.order`), and the cold
-// Shell* cluster is further hoisted into [`run_shell_task`] so this
-// hot dispatcher stays off its pages.
+// Shell* cluster is further hoisted into [`run_shell_task`] so this hot dispatcher stays off its pages.
 #[inline(never)]
 pub(crate) fn run_task(
     task: Task,
@@ -264,9 +257,7 @@ pub(crate) fn run_task(
                     cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Resolve),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
-                // `bun_bundler` is JSC-free; the C++ hop it calls answers the request
-                // itself when the plugin throws, but can return early with an
-                // exception pending (argument conversion), so check the scope here.
+                // `bun_bundler` is JSC-free; the C++ hop it calls answers the request itself when the plugin throws, but can return early with an exception pending (argument conversion), so check the scope here.
                 bun_jsc::call_check_slow(global, || {
                     // SAFETY: tag identifies pointee — a live `Resolve` owned by the
                     // plugin dispatch chain.
@@ -780,10 +771,7 @@ pub(crate) fn run_task(
                 batch: *mut BundleV2DeferredBatchTask = cast_ptr!(BundleV2DeferredBatchTask),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
-                // `bun_bundler` is JSC-free so the exception-scope check is hoisted
-                // to this dispatch arm; without it, `JSBundlerPlugin__drainDeferred`'s
-                // THROW_SCOPE is left unchecked and trips JSC exception validation
-                // at the next `drainMicrotasks` scope.
+                // `bun_bundler` is JSC-free so the exception-scope check is hoisted to this dispatch arm; without it, `JSBundlerPlugin__drainDeferred`'s THROW_SCOPE is left unchecked and trips JSC exception validation at the next `drainMicrotasks` scope.
                 bun_jsc::call_check_slow(global, || {
                     // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
                     unsafe { &mut *batch }.run_on_js_thread();
@@ -817,11 +805,7 @@ pub(crate) fn run_task(
 
 /// The shell's arms, hoisted out of [`run_task`].
 ///
-/// Shell* tags are never seen during `bun <file>` startup or the `dot`
-/// benchmark, but their per-arm bodies pull in `bun_shell` call sites that LLVM
-/// otherwise interleaves with the hot arms. The `#[cold]` boundary lets lld
-/// place this whole cluster after the front-clustered startup window (see
-/// `src/startup.order`), and `--trim` removes it with the shell.
+/// Shell* tags are never seen during `bun <file>` startup, and `--trim` removes the cluster with the shell.
 ///
 /// Returns `()` — none of these arms can fail or early-return; the caller
 /// falls through to `Ok(RunTaskResult::Continue)`.
@@ -1003,8 +987,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             $body;
         }};
     }
-    /// The plain `on_poll(size_or_offset, hup)` call that covers most tags,
-    /// through [`in_features!`].
+    /// The plain `on_poll(size_or_offset, hup)` call that covers most tags, through [`in_features!`].
     macro_rules! feature_poll_arm {
         ($features:tt, $Ty:ty) => {
             in_features!(
@@ -1030,8 +1013,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // dispatch.
             unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
         }),
-        // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed
-        // by the trailing `deref`, so keep raw provenance end-to-end.
+        // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed by the trailing `deref`, so keep raw provenance end-to-end.
         poll_tag::PROCESS => {
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr.cast::<Process>()) {
                 // SAFETY: `proc` carries the +1 ref taken at queue time; this drops it.
@@ -1184,9 +1166,7 @@ unsafe fn __bun_io_pollable_on_io_error(
             (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
                 // SAFETY: per fn contract.
                 let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-                // WriteFile::on_io_error already takes `*mut ()` (it
-                // self-recovers via the io_request path elsewhere); reuse that
-                // shape rather than reborrowing `&mut`.
+                // WriteFile::on_io_error already takes `*mut ()` (it self-recovers via the io_request path elsewhere); reuse that shape rather than reborrowing `&mut`.
                 WriteFile::on_io_error(this.cast(), err);
             }
         ),

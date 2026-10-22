@@ -310,8 +310,7 @@ impl Error {
     /// Shared scaffolding for [`to_shell_system_error`] and [`to_system_error`].
     /// Fills `errno`/`syscall`/`code`/`path`/`dest`/`fd`, leaves `message` empty,
     /// and returns the looked-up `(code, label)` so each caller can build its own
-    /// `message` (shell: static label; node: [`Error::node_message`]), and
-    /// whether `path` and `dest` are all ASCII.
+    /// `message` (shell: static label; node: [`Error::node_message`]), and whether `path` and `dest` are all ASCII.
     fn fill_system_error_common(
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
@@ -381,10 +380,7 @@ impl Error {
         err
     }
 
-    /// `code: label, syscall 'path' -> 'dest'`, cut off at [`MAX_MESSAGE_BYTES`].
-    ///
-    /// format taken from Node.js 'exceptions.cc'
-    /// search keyword: `Local<Value> UVException(Isolate* isolate,`
+    /// `code: label, syscall 'path' -> 'dest'`, cut off at [`MAX_MESSAGE_BYTES`]; the format of Node's `UVException` (exceptions.cc).
     fn node_message(
         &self,
         looked_up: Option<(&'static str, &'static str)>,

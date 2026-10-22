@@ -160,8 +160,7 @@ fn expand_entry_patterns(this_transpiler: &mut Transpiler<'static>) {
     }
 }
 
-/// A native addon among the assets is a further entry point. Its module is the call of `process.dlopen` that starts it: a
-/// `require()` under a computed path finds that module, and the analysis sees that native code may run.
+/// A native addon among the assets is a further entry point.
 fn add_addons_among_assets(ctx: &ContextData, this_transpiler: &mut Transpiler<'static>) {
     let working_directory = FileSystem::get().top_level_dir();
     let mut unreported = bun_ast::Log::init();

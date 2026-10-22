@@ -77,22 +77,19 @@ pub fn admitted_code_of(program: &CompiledProgram) -> Option<AdmittedCode> {
     has_header.then(|| AdmittedCode::from_wire(admitted).unwrap_or_default())
 }
 
-/// Whether the compiler allowed for script and machine code that it did not see. Answers before `use_image` has
-/// run, and `true` for an image that `use_image` refuses.
+/// Whether the compiler allowed for script and machine code that it did not see.
 pub fn admits_unknown_javascript(program: &CompiledProgram) -> bool {
     // SAFETY: the engine reads the image before it returns.
     unsafe { Bun__AOT__admitsUnknownJavaScript(image_of(program)) }
 }
 
-/// Whether the program was built with `--no-compile-function-source`. Answers before `use_image` has run, and
-/// `false` for an image that `use_image` refuses.
+/// Whether the program was built with `--no-compile-function-source`.
 pub fn omits_function_source(program: &CompiledProgram) -> bool {
     // SAFETY: the engine reads the image before it returns.
     unsafe { Bun__AOT__omitsFunctionSource(image_of(program)) }
 }
 
-/// Whether this executable can run a module of Bun's library that the program does not use. The image of a compiled
-/// program has the modules that the program uses, and only a build for the debugger runs the text of the others.
+/// Whether this executable can run a module of Bun's library that the program does not use.
 pub fn can_load_unused_library_modules() -> bool {
     if !bun_removable_features::RuntimeRequirement::WholeRuntime.is_available() {
         return false;
@@ -173,8 +170,7 @@ pub fn error_if_code_outside_image_is_refused(
     (!error.is_empty()).then_some(error)
 }
 
-/// `path` names a file that loads as a database or a page. Compiled code may import one. A `require()` or `import()`
-/// whose name the compiler could not follow finds modules of the executable and plain data, nothing else.
+/// `path` names a file that loads as a database or a page.
 pub fn error_if_host_object_outside_image_is_refused(
     global: &JSGlobalObject,
     code: crate::ErrCode,

@@ -926,9 +926,7 @@ impl Response {
             return Err(global_this.throw_value(err));
         }
 
-        // Use jsonStringifyFast which passes undefined for the space parameter,
-        // triggering JSC's FastStringifier optimization. This is significantly faster
-        // than jsonStringify which passes 0 for space and uses the slower Stringifier.
+        // Use jsonStringifyFast which passes undefined for the space parameter, triggering JSC's FastStringifier optimization.
         json_value.json_stringify_fast(global_this)
     }
 
@@ -1281,12 +1279,9 @@ impl Init {
     }
 
     fn set_headers(&mut self, global_this: &JSGlobalObject, headers: JSValue) -> JsResult<()> {
-        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
-        // FetchHeaders is a hand-bound opaque, so use its dedicated
-        // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
+        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
         if let Some(orig) = FetchHeaders::cast(headers) {
-            // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS;
-            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+            // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS; `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
             let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
             if !orig.is_empty() {
                 self.headers = orig.clone_this(global_this)?.map(|p| {

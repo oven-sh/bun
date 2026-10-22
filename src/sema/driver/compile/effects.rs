@@ -116,8 +116,7 @@ pub(super) struct ProgramOrigins<'a, 's> {
 /// `Cannot find module '{0}'` and `Could not find a declaration file for module '{0}'`, for an import with and without names.
 const UNKNOWN_MODULE_CODES: [u32; 4] = [2307, 2792, 2882, 7016];
 
-/// `Untyped function calls may not accept type arguments`, and `Cannot use namespace '{0}' as a type`: what TypeScript says of a name
-/// that is imported from a module without declarations and stands where a type does. The type is `any`.
+/// `Untyped function calls may not accept type arguments`, and `Cannot use namespace '{0}' as a type`: what TypeScript says of a name that is imported from a module without declarations and stands where a type does.
 const USES_OF_WHAT_HAS_NO_DECLARATION_CODES: [u32; 2] = [2347, 2709];
 
 /// `Cannot find type definition file for '{0}'`. `"types": ["bun"]` is among the options that `bun init` writes.
@@ -163,8 +162,7 @@ impl ProgramOrigins<'_, '_> {
         }
     }
 
-    /// Whether `@types/bun` would have kept TypeScript from saying this. The globals and the modules of the run time have
-    /// declarations all the same: `CodeHost::declarations_in_place_of_bun_types`.
+    /// Whether `@types/bun` would have kept TypeScript from saying this.
     fn is_for_lack_of_bun_types(&self, origin: FileOrigin, diagnostic: &Diagnostic) -> bool {
         let Some(missing) = self.without_bun_types else {
             return false;
@@ -186,8 +184,7 @@ impl ProgramOrigins<'_, '_> {
         } else if UNKNOWN_MEMBER_CODES.contains(&code) {
             (HOLDERS_THAT_BUN_TYPES_FILL.iter()).any(|holder| strings::contains(text, holder))
         } else if diagnostic.class == DiagnosticClass::Style {
-            // A callback that is passed to what has no declaration has parameters without types. The rules are the program's own
-            // where it has written them down.
+            // A callback that is passed to what has no declaration has parameters without types.
             !missing.has_configuration_file
         } else {
             USES_OF_WHAT_HAS_NO_DECLARATION_CODES.contains(&code)

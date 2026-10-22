@@ -1159,8 +1159,7 @@ function nReadingNextTick(self: $Node.Readable) {
 // If the user uses them, then switch into old mode.
 const resumingMethod = (Readable.prototype.resume = function (this: $Node.Readable) {
   const state: ReadableState = this._readableState;
-  // Node 26 (nodejs/node#62557) early-returns on Flag.Destroyed. We narrow it to
-  // Flag.Destroyed && Flag.EndEmitted: fd-slicer-style readables set `destroyed` right
+  // Node 26 (nodejs/node#62557) early-returns on Flag.Destroyed. We narrow it to Flag.Destroyed && Flag.EndEmitted: fd-slicer-style readables set `destroyed` right
   // before push(null), and the full guard strands their buffered tail when a
   // piped dest drains (yauzl/extract-zip). Once 'end' has fired there is
   // nothing left to flush, so becoming a no-op restores readableFlowing /
@@ -1754,8 +1753,7 @@ function finishEnd(state: ReadableState, stream: $Node.Readable): void {
   if (stream.writable && stream.allowHalfOpen === false) {
     queueTick1(endWritableNT, stream);
   } else if ((state[kState] & Flag.AutoDestroy) !== 0) {
-    // In case of duplex streams we need a way to detect
-    // if the writable side is ready for autoDestroy as well.
+    // In case of duplex streams we need a way to detect if the writable side is ready for autoDestroy as well.
     const wState = stream._writableState as WritableState | $Node.ForeignState | undefined;
     const autoDestroy = isWritableState(wState)
       ? (wState[kState] & Flag.AutoDestroy) !== 0 &&

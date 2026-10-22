@@ -629,8 +629,7 @@ static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* cache = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
                           ->lazyRequireCacheObject();
-    // An executable compiled ahead of time whose code never names the cache lacks the function that makes it. Whoever makes the namespace object of node:module reads every export,
-    // and the import must not fail for this one: it is undefined there.
+    // An executable compiled ahead of time whose code never names the cache lacks the function that makes it.
     if (!cache && vm.hasCompiledCode() && scope.tryClearException())
         return jsUndefined();
     RETURN_IF_EXCEPTION(scope, {});

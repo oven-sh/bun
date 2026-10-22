@@ -76,8 +76,7 @@ pub fn decide_roles<'s>(
     }
 }
 
-/// The roles of a project whose files were checked before this build. Each file that an error could cost its role counts as
-/// checked, so no pass looks for errors in it.
+/// The roles of a project whose files were checked before this build.
 pub fn keep_verified_roles(loaded: &LoadedProgram<'_>, files_to_lower: &[FileId]) -> RoleDecision {
     let files = loaded.files();
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));

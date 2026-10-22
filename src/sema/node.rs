@@ -2781,7 +2781,6 @@ impl File<'_> {
             let mut found = Vec::new();
             let mut children = Vec::new();
             // Descend from the file, for each position at each level into the last child that doesn't start after it.
-            // A node is entered once, for all the positions that lead into it.
             let mut entered = vec![(Node::FILE, 0..positions.len())];
             while let Some((node, leading_here)) = entered.pop() {
                 children.clear();

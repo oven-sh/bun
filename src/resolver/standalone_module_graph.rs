@@ -115,9 +115,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn file_at_source_path(&self, _path: &[u8]) -> Option<&'static [u8]> {
         None
     }
-    /// `resolve` for an embedded path, then the modules compiled ahead of time, which are no files of the graph unless
-    /// they are entry points. Those are also found by the paths their sources had. An entry point is a file of the graph
-    /// under the name that `bun build --compile` gives it; the answer is the key of its module.
+    /// `resolve` for an embedded path, then the modules compiled ahead of time, which are no files of the graph unless they are entry points.
     fn resolve_module(
         &self,
         source_dir: &[u8],
@@ -152,8 +150,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
         let public_root = self.base_public_path_with_default_suffix();
         self.compiled_program()?.resolve_package(public_root, source_dir, specifier, is_require, search)
     }
-    /// `compiled_program::directories_of_importer`. None without a program compiled ahead of time, whose modules keep
-    /// their folders: a bundle has one folder.
+    /// `compiled_program::directories_of_importer`.
     fn directories_of_importer(&self, source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
         if self.compiled_program().is_none() {
             return Vec::new();

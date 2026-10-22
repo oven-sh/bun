@@ -6965,8 +6965,7 @@ impl VirtualMachine {
                     // Avoid printing "export default 'native'"
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
-                // What lies on the disk under the name of a module that is compiled into an executable is not what runs. A program
-                // that runs in place runs that file, and holds no text of it.
+                // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
                 let top_path = frames[top].source_url.to_utf8();
                 if crate::compiled_program::is_compiled_module(top_path.slice()) {
                     if !crate::compiled_program::runs_in_place() {

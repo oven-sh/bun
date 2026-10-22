@@ -149,15 +149,11 @@ pub struct Options {
     /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and
     /// `following_node` of `hir::Comment`, and the HTML-like comments of a script.
     pub attach_comments: bool,
-    /// Parsing for `bun compile`. Beside the JSX pragmas (`pragmas/code_pragmas.rs`), text that is not UTF-8 and the lines
-    /// of JSX text, which are trimmed as `bun run` trims them (both in `lexer/runtime_text.rs`), it has an effect only on a
-    /// JavaScript file with `dialect.ecmascript`.
+    /// Parsing for `bun compile`.
     pub compiles: bool,
-    /// With `compiles`: a `"use strict"` directive of a function counts. `bun run` drops the directives of functions from
-    /// every file that it transpiles, so only text that reaches the engine as it is written (`new Function`) has this.
+    /// With `compiles`: a `"use strict"` directive of a function counts.
     pub keeps_function_directives: bool,
-    /// Functions have empty bodies wherever `parser/skipped_blocks.rs` can step over their blocks. The caller parses a file that
-    /// fails whole.
+    /// Functions have empty bodies wherever `parser/skipped_blocks.rs` can step over their blocks.
     pub skips_function_blocks: bool,
 }
 

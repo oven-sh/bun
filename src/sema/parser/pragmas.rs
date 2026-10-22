@@ -9,9 +9,7 @@ use bun_sema::hir::{
 };
 
 /// `getCommentPragmas` and `processPragmasIntoFields`. `leading`: the comments before the first
-/// token. `error_kind`: the kind of the diagnostic for an error that TypeScript reports about one
-/// of them. `None`: the file gets no diagnostic, and the result is false. `compiles`:
-/// `Options::compiles`. The JSX pragmas are then those `bun run` reads, for the code and the checker.
+/// token. `error_kind`: the kind of the diagnostic for TypeScript's error about one of them, `None` for none and a false result. `compiles`: the JSX pragmas are those `bun run` reads.
 pub(crate) fn process_pragmas_into_fields(
     text: &[u8],
     leading: &[(u32, u32)],

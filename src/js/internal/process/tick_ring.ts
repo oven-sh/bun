@@ -1,9 +1,4 @@
 // The ticks that wait are in a ring of nodes, from `ring.read` up to `ring.write`, which is always free.
-// The ring grows by a node when it is full, so nothing is allocated for a tick unless more are
-// waiting than ever before. A ring that a burst has made larger than kMaxSize is dropped when a
-// drain has used less than a quarter of it.
-// Up to four arguments of a tick lie in its node. More than four lie in an array in `list`.
-// A tick whose TickObject an `init` hook of node:async_hooks has seen holds that object in `shown`: the program may change it until the tick runs.
 const { ring, takeTick } = require("internal/process/next_tick_queue");
 const asyncHooksTick = require("internal/async_hooks_tick");
 

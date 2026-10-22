@@ -74,8 +74,7 @@ fn find_assignment(hir: &File<'_>, node: ExprId) -> Option<ExportStore> {
     })
 }
 
-// The binder declares an export wherever the text reads `module.exports` or `exports`. Both functions answer `None`
-// where those names are bound to other variables.
+// The binder declares an export wherever the text reads `module.exports` or `exports`.
 type FindExportStore = fn(&File<'_>, &Bound<'_>, Decl) -> Option<ExportStore>;
 
 fn find_store_of_whole(
@@ -139,8 +138,7 @@ fn find_statement_around(bound: &Bound<'_>, parent: Parent) -> Option<StmtId> {
     }
 }
 
-// The expression is a statement of the body of the file, the initializer of a variable declared there, or the value that
-// such an expression assigns.
+// The expression is a statement of the body of the file, the initializer of a variable declared there, or the value that such an expression assigns.
 fn is_evaluated_by_file_body(hir: &File<'_>, bound: &Bound<'_>, mut expr: ExprId) -> bool {
     let mut parent = bound.parent_of_expr(expr);
     while let Parent::Expr(outer) = parent {
@@ -178,8 +176,7 @@ fn is_in_catch_clause(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool {
     false
 }
 
-// The store that is expected to give the value that another module finds. The last store of the text decides where the
-// body of the file always runs it. Otherwise there has to be one store, not counting those that run after an exception.
+// The store that is expected to give the value that another module finds.
 fn find_deciding_store(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -595,8 +592,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
     }
 
-    // `f.name = value` and `Object.assign(f, { name: value })` in the body of a file, where `f` is one of the bindings that
-    // led to the function or the class.
+    // `f.name = value` and `Object.assign(f, { name: value })` in the body of a file, where `f` is one of the bindings that led to the function or the class.
     fn step_stored_member(&mut self, name: Atom) -> StepOf<'s, C> {
         let mut stored = None;
         for &holder in &self.visited {

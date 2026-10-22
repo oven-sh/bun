@@ -365,14 +365,12 @@ fn graph_in_front_of_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::
     standalone_module_graph().filter(|_| bun_standalone_graph::is_bun_standalone_file_path(path))
 }
 
-/// The graph, for any other path. There it holds only what the disk does not have (`Graph::find_at_source_path`,
-/// `Graph::directory_key`) and every lookup normalizes the path, so it is asked once the disk has failed.
+/// The graph, for any other path.
 fn graph_behind_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph> {
     compiled_program_graph().filter(|_| !bun_standalone_graph::is_bun_standalone_file_path(path))
 }
 
-/// The executable holds read-only data. What would change `path` under its own root fails as on a read-only file system,
-/// where the system looks the path up first: what is not there is ENOENT.
+/// The executable holds read-only data.
 fn change_in_executable(path: &[u8], syscall: sys::Tag) -> Option<sys::Error> {
     let graph = graph_in_front_of_disk(path)?;
     let errno = if graph.contains_file(path) || graph.find_dir(path) { E::EROFS } else { E::ENOENT };
@@ -447,9 +445,7 @@ fn read_file_in_graph(
     if let Some(file) = graph.find_ref(path) {
         let contents: &[u8] = file.utf8_contents();
         return Some(if encoding == Encoding::Buffer {
-            // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
-            // `into_boxed_slice()` so the allocation layout JSC frees with
-            // matches what we hand it (capacity == len).
+            // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through `into_boxed_slice()` so the allocation layout JSC frees with matches what we hand it (capacity == len).
             let raw = bun_core::heap::into_raw(contents.to_vec().into_boxed_slice());
             // SAFETY: ownership of the allocation is transferred to JSC; the
             // ArrayBuffer finalizer reconstructs the Box and frees it

@@ -256,9 +256,7 @@ impl ThreadPool {
         self
     }
 
-    /// The same pool, which wakes or starts a thread only when a task waits for one. Otherwise a thread that wakes up and
-    /// finds a task always wakes or starts the next thread, which is then ready for a task that may follow. Before any is
-    /// started.
+    /// The same pool, which wakes or starts a thread only when a task waits for one.
     pub fn without_spare_threads(mut self) -> ThreadPool {
         self.keeps_spare_thread_awake = false;
         self
@@ -278,8 +276,7 @@ impl ThreadPool {
         }
     }
 
-    /// Whether a task is in a queue. Sees every task that was scheduled before the notification that the calling thread has
-    /// consumed.
+    /// Whether a task is in a queue.
     fn has_waiting_task(&self) -> bool {
         if !self.run_queue.is_empty() {
             return true;

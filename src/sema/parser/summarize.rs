@@ -435,8 +435,7 @@ pub fn summarize<'s>(
     })
 }
 
-/// [`summarize`] for a caller that reads the top level of a TypeScript file alone: the functions have empty bodies wherever their
-/// blocks could be stepped over. `None`: the file has to be parsed whole.
+/// [`summarize`] for a caller that reads the top level of a TypeScript file alone: the functions have empty bodies wherever their blocks could be stepped over.
 pub fn summarize_top_level<'s>(
     arena: &'s Arena,
     path: &[u8],

@@ -19,11 +19,7 @@ fn is_member_of_receiver_or_prototype_object(hir: &hir::File<'_>, place: ExprId)
         || matches!(hir.member_key(object), Some((_, MemberKey::Name(name))) if name == known::prototype)
 }
 
-// Whether `value`, which is a function, stands where somebody may construct with it: behind `new`, in front of `.prototype`,
-// or on its way to a place that this file does not follow. A function that is called, that is called through `call` or
-// `apply`, that is handed to a call (a listener, a callback), that becomes a member of `this` or of a prototype object
-// (a method) or the `get` or the `set` of a property descriptor gets its `this` from its caller. One that is compared goes nowhere.
-// `function write(this: Socket, ..)`: the function says itself what it is called on. Where it becomes a member of any object, it is a method of such objects.
+// Whether `value`, which is a function, stands where somebody may construct with it: behind `new`, in front of `.prototype`, or on its way to a place that this file does not follow.
 fn stands_where_a_constructor_stands(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -143,8 +139,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         list_in(self.c.arena, &used)
     }
 
-    // Whether the text of its file lets somebody construct with `function`. To store into `this` is no sign of it:
-    // methods, listeners and helpers that are called with `call` do that as well.
+    // Whether the text of its file lets somebody construct with `function`.
     pub(super) fn is_used_like_constructor(&mut self, function: FunctionRef) -> bool {
         let FunctionRef { file, function } = function;
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));

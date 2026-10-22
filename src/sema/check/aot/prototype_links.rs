@@ -69,7 +69,6 @@ impl LinkEnd {
 }
 
 // The prototype object of `child` gets the prototype object of `parent` as its prototype.
-// Without a parent it gets an object that is the prototype object of nothing the program names.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) struct PrototypeLink {
     pub(super) child: LinkEnd,
@@ -82,9 +81,7 @@ pub(super) struct FunctionCall {
     pub(super) callee: FunctionRef,
 }
 
-// What the text of one file says. It depends on the tree, the binder, folding and the named values only, so the program
-// has one for each file. What a call of a function does to its arguments is not in it: `linked_functions` has that, and
-// reads the texts of other files.
+// What the text of one file says.
 pub(in crate::check) struct PrototypeLinks<'s> {
     links_of_declarations: &'s [PrototypeLink],
     links_of_parameters: &'s [(FnId, PrototypeLink)],
@@ -295,8 +292,7 @@ impl EndFinder<'_, '_, '_> {
         }
     }
 
-    // What `link`, which the file of the callee has in terms of the parameters of the callee, does to the arguments of
-    // `call`, which is a call in this file.
+    // What `link`, which the file of the callee has in terms of the parameters of the callee, does to the arguments of `call`, which is a call in this file.
     pub(super) fn apply_to_arguments(
         &self,
         link: PrototypeLink,

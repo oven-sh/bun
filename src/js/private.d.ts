@@ -462,7 +462,6 @@ declare module "bun" {
   }
 
   // The native class `ServerWebSocket`: src/runtime/server/server.bind.ts, ServerWebSocket.rs.
-  // A send answers -1 (queued behind backpressure), 0 (dropped) or the number of bytes sent.
   interface ServerWebSocket<T = undefined> {
     data: T;
     readonly readyState: number;
@@ -510,7 +509,6 @@ declare var TextEncoder: {
 };
 
 // Host classes under their public names: the built-ins table binds a native class to the path of its type.
-// A class that is also used as a value has its `declare var`.
 
 // src/jsc/bindings/webcore/JSEventTarget.cpp
 interface EventTarget {
@@ -1086,8 +1084,7 @@ declare namespace $Node {
   }
 }
 
-// Classes from `*.classes.ts`. The generated `$Bindgen` says `unknown` for every parameter and result;
-// the declarations here merge with it and say what the native code takes and returns.
+// Classes from `*.classes.ts`.
 declare namespace $Bindgen {
   // src/runtime/webcore/ReadableStream.bind.ts, ReadableStream.rs
   interface FileInternalReadableStreamSource {
@@ -1128,10 +1125,7 @@ declare namespace $Bindgen {
   }
   interface PostgresSQLQuery extends MySQLQuery {
     run(connection: PostgresSQLConnection, query: object): void;
-    /**
-     * `callback()` when the server enters copy mode; then `callback(chunk)` for each chunk (TO STDOUT, `false` pauses
-     * the socket) or `callback()` each time the socket has drained (FROM STDIN).
-     */
+    /** `callback()` when the server enters copy mode; then `callback(chunk)` for each chunk (TO STDOUT, `false` pauses the socket) or `callback()` each time the socket has drained (FROM STDIN). */
     setCopy(callback: ((chunk?: Uint8Array) => unknown) | undefined, writable: boolean): void;
     /** `false`: the socket has no room, wait for the callback. */
     copyWrite(chunk: string | ArrayBufferView | ArrayBufferLike): boolean;
@@ -1673,8 +1667,7 @@ interface $BunModules {
   "undici": $ModuleValue<typeof import("./thirdparty/undici")>;
   "ws": $ModuleValue<typeof import("./thirdparty/ws")>;
 }
-// The default matters: without one TypeScript takes the pattern of `const { a } = require("x")` as the call's return type
-// while it infers T, which resolves `$BunModules[keyof $BunModules]`: every module then depends on every other.
+// The default matters: without one TypeScript takes the pattern of `const { a } = require("x")` as the call's return type while it infers T, which resolves `$BunModules[keyof $BunModules]`: every module then depends on every other.
 declare function require<T extends keyof $BunModules = keyof $BunModules>(id: T): $BunModules[T];
 declare function require(id: string): any;
 
@@ -1748,13 +1741,9 @@ declare namespace $Node {
     _getFd(): number;
   }
 
-  // node:fs. src/runtime/node/node_fs_binding.bind.ts (NodeJSFS), node_fs.rs, Stat.rs, StatFS.rs;
-  // src/jsc/bindings/NodeFSStatBinding.cpp, NodeDirent.cpp
+  // node:fs. src/runtime/node/node_fs_binding.bind.ts (NodeJSFS), node_fs.rs, Stat.rs, StatFS.rs; src/jsc/bindings/NodeFSStatBinding.cpp, NodeDirent.cpp
 
-  /**
-   * Any view, with `Buffer` said apart from `Uint8Array`: the compiler does not yet take a value of the class
-   * `Buffer` at a position that names only its parent.
-   */
+  /** Any view, with `Buffer` said apart from `Uint8Array`: the compiler does not yet take a value of the class `Buffer` at a position that names only its parent. */
   type AnyView = Buffer | ArrayBufferView;
   type PathLike = string | Buffer | Uint8Array | URL;
   type TimeLike = number | string | Date;
@@ -2185,8 +2174,7 @@ declare namespace $Bindgen {
   }
 }
 
-// Host classes under their public names: the names programs use, and the ones that the table of built-ins knows the
-// native classes by. Each has its value too: an interface alone would make `Buffer.from(..)` an error.
+// Host classes under their public names: the names programs use, and the ones that the table of built-ins knows the native classes by.
 
 // src/jsc/bindings/JSBuffer.cpp, src/js/builtins/JSBufferPrototype.ts
 interface Buffer<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> extends Uint8Array<TArrayBuffer> {
@@ -2306,8 +2294,7 @@ interface BufferConstructor {
   isEncoding(encoding: unknown): boolean;
   of(...items: number[]): Buffer;
 }
-// `any` until the compiler takes a `Buffer` where a `Uint8Array` is declared: with `BufferConstructor` here,
-// `chunk = Buffer.concat(..)` into a `Uint8Array` variable stops every build. The front end binds the value by its name.
+// `any` until the compiler takes a `Buffer` where a `Uint8Array` is declared: with `BufferConstructor` here, `chunk = Buffer.concat(..)` into a `Uint8Array` variable stops every build.
 declare var Buffer: any;
 
 // src/runtime/webcore/Blob.rs, Blob.bind.ts
@@ -2385,7 +2372,6 @@ declare var URLSearchParams: {
 };
 
 // #region node:http
-// The native objects behind `node:http`.
 declare namespace $Node {
   interface SocketAddressInfo {
     address: string;
@@ -2399,10 +2385,7 @@ declare namespace $Node {
     [name: string]: string | string[] | undefined;
   }
 
-  /**
-   * What `ServerResponse` calls on the object that puts its bytes on the wire: a `NodeHTTPResponse`, or the stand-in
-   * of `internal/http1_server_fallback`.
-   */
+  /** What `ServerResponse` calls on the object that puts its bytes on the wire: a `NodeHTTPResponse`, or the stand-in of `internal/http1_server_fallback`. */
   interface HttpResponseHandle {
     /** `NodeHTTPResponseFlags` */
     readonly flags: number;
@@ -2640,8 +2623,7 @@ declare module "node:string_decoder" {
 }
 // #endregion node:http
 
-// src/jsc/bindings/webcore/JSPerformance*.cpp. Of these only PerformanceMark and PerformanceObserver can be constructed;
-// the other construct signatures are declared so that `instanceof` and `extends` are allowed.
+// src/jsc/bindings/webcore/JSPerformance*.cpp.
 interface PerformanceEntry {
   readonly name: string;
   readonly entryType: string;

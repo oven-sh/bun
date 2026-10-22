@@ -97,8 +97,7 @@ const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, Array
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseResolve = Promise.$resolve.bind(Promise);
-// Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`
-// is null for the void variant (no result bookkeeping, resolves with nothing).
+// Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal` is null for the void variant (no result bookkeeping, resolves with nothing).
 const safePromiseAllCollect = (promises, mapFn, returnVal) =>
   new Promise((resolve, reject) => {
     const { length } = promises;

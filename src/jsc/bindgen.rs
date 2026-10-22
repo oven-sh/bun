@@ -81,10 +81,7 @@ impl<'a> JsHeap<'a> {
         JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
     }
 
-    /// A string of `length` 8-bit characters, 2 to [`JSString::MAX_LENGTH`].
-    ///
-    /// # Safety
-    /// `fill` writes all of them.
+    /// A string of `length` 8-bit characters, 2 to [`JSString::MAX_LENGTH`]. SAFETY: `fill` writes all of them.
     #[inline(always)]
     pub unsafe fn create_latin1_string_with(
         &self,
@@ -380,8 +377,7 @@ impl<'a, T> JsLocal<'a, T> {
         Self::from_raw(value)
     }
 
-    /// # Safety
-    /// As [`Self::from_extern`], or `value` is empty: the caller has no such argument.
+    /// SAFETY: As [`Self::from_extern`], or `value` is empty: the caller has no such argument.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn from_extern_or_absent(value: JSValue, _: &JsHeap<'a>) -> Option<Self> {
@@ -406,8 +402,7 @@ impl<'a, T> JsLocal<'a, T> {
     }
 }
 
-/// # Safety
-/// `values` are `count` non-empty `T`s that something holds for the call `heap` belongs to.
+/// SAFETY: `values` are `count` non-empty `T`s that something holds for the call `heap` belongs to.
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn rest_from_extern<'a, T>(
@@ -459,8 +454,7 @@ impl<'a> JsLocal<'a> {
 }
 
 impl<'a> JsLocal<'a, JSString> {
-    /// # Safety
-    /// `cell` is a `JSString` that something holds for the call `heap` belongs to.
+    /// SAFETY: `cell` is a `JSString` that something holds for the call `heap` belongs to.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn from_cell(cell: *mut c_void, _: &JsHeap<'a>) -> Self {
@@ -490,8 +484,7 @@ impl<'a> JsLocal<'a, JSString> {
         })
     }
 
-    /// As [`flat_latin1`](Self::flat_latin1), and of a substring too. `None` for a 16-bit string and for any other rope,
-    /// which [`view`](Self::view) serves.
+    /// As [`flat_latin1`](Self::flat_latin1), and of a substring too.
     #[inline]
     pub fn latin1(self) -> Option<JsLatin1<'a>> {
         Some(JsLatin1 {
@@ -500,8 +493,7 @@ impl<'a> JsLocal<'a, JSString> {
         })
     }
 
-    /// As [`latin1`](Self::latin1), of a rope too: it is resolved, which fails when there is no memory for it. `None`
-    /// for a 16-bit string.
+    /// As [`latin1`](Self::latin1), of a rope too: it is resolved, which fails when there is no memory for it.
     #[inline]
     pub fn resolved_latin1(self, heap: &JsHeap<'a>) -> Result<'a, Option<JsLatin1<'a>>> {
         if let Some(text) = self.latin1() {
@@ -550,8 +542,7 @@ impl<'a> JsLatin1<'a> {
         unsafe { self.substring_unchecked(heap, start, end) }
     }
 
-    /// # Safety
-    /// `start <= end <= self.characters().len()`.
+    /// SAFETY: `start <= end <= self.characters().len()`.
     #[inline(always)]
     pub unsafe fn substring_unchecked(
         &self,
@@ -573,10 +564,7 @@ impl<'a> JsLatin1<'a> {
         })
     }
 
-    /// As [`substring_unchecked`](Self::substring_unchecked), several with one call.
-    ///
-    /// # Safety
-    /// `start <= end <= self.characters().len()` of each range.
+    /// As [`substring_unchecked`](Self::substring_unchecked), several with one call. SAFETY: `start <= end <= self.characters().len()` of each range.
     #[inline(always)]
     pub unsafe fn substrings_unchecked<const N: usize>(
         &self,
@@ -604,8 +592,7 @@ impl<'a> JsLatin1<'a> {
         unsafe { (&raw const substrings).cast::<[JsLocal<'a, JSString>; N]>().read() }
     }
 
-    /// `part` as a string: a [`substring`](Self::substring) if it is a slice of [`characters`](Self::characters), a
-    /// copy if it lies elsewhere.
+    /// `part` as a string: a [`substring`](Self::substring) if it is a slice of [`characters`](Self::characters), a copy if it lies elsewhere.
     #[inline(always)]
     pub fn part(&self, heap: &JsHeap<'a>, part: &[u8]) -> JsLocal<'a, JSString> {
         let start = (part.as_ptr() as usize).wrapping_sub(self.text.characters.as_ptr() as usize);
@@ -1216,8 +1203,7 @@ pub mod to_js {
     /// An empty value is a member that is absent.
     ///
     /// # Safety
-    /// `Tables::memberNames` names `values`, from `first_member_name_index`. They are the members of the returned
-    /// dictionary number `dictionary_index`, of which `has_every_member` says that none is absent.
+    /// `Tables::memberNames` names `values`, from `first_member_name_index`: the members of the returned dictionary number `dictionary_index`.
     #[doc(hidden)]
     #[inline]
     pub unsafe fn object<'a>(

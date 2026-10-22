@@ -43,8 +43,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// Where `JSC::JSString` and `JSC::JSRopeString` keep what [`JSString::latin1_characters`] reads.
-/// bindings.cpp asserts each of these beside `JSC__JSString__substringOfResolved`.
+/// Where `JSC::JSString` and `JSC::JSRopeString` keep what [`JSString::latin1_characters`] reads. bindings.cpp asserts each of these beside `JSC__JSString__substringOfResolved`.
 mod layout {
     /// `JSString::m_fiber`: a `StringImpl*`, or the flags of a rope.
     pub(super) const FIBER: usize = 8;
@@ -59,8 +58,7 @@ mod layout {
     pub(super) const FIBER2_LOWER: usize = 26;
 }
 
-/// The characters of an 8-bit string and where they lie in a string that is no rope, so that a part
-/// of them can be answered as a substring.
+/// The characters of an 8-bit string and where they lie in a string that is no rope, so that a part of them can be answered as a substring.
 #[derive(Clone, Copy)]
 pub struct Latin1Characters<'a> {
     /// The string itself, or the base of a substring. Never a rope.
@@ -137,8 +135,7 @@ impl JSString {
         })
     }
 
-    /// The characters, read in place: no call, nothing resolved, nothing thrown. `None` for a
-    /// 16-bit string and for a rope that is not a substring: [`JSString::view`] serves those.
+    /// The characters, read in place: no call, nothing resolved, nothing thrown.
     #[inline]
     pub fn latin1_characters(&self) -> Option<Latin1Characters<'_>> {
         // SAFETY: every JSString has `m_fiber`.
@@ -180,8 +177,7 @@ impl JSString {
         }
     }
 
-    /// How many of the first characters were written to `characters`: all that fit. No rope is
-    /// resolved, so nothing is allocated in the JavaScript heap and nothing is thrown.
+    /// How many of the first characters were written to `characters`: all that fit.
     #[cold]
     pub fn first_characters(&self, characters: &mut [u16]) -> usize {
         // SAFETY: at most `characters.len()` of them are written.
@@ -191,11 +187,7 @@ impl JSString {
         }
     }
 
-    /// `length` characters of this string from `offset` on, sharing them with it. Nothing is thrown.
-    ///
-    /// # Safety
-    /// This string is no rope (the `owner` of [`Latin1Characters`]), the characters are in it, and they are not all
-    /// of it.
+    /// `length` characters of this string from `offset` on, sharing them with it.
     #[inline(always)]
     pub unsafe fn substring_of_resolved(
         &self,
@@ -207,11 +199,7 @@ impl JSString {
         unsafe { JSC__JSString__substringOfResolved(self, global, offset, length) }
     }
 
-    /// As [`substring_of_resolved`](Self::substring_of_resolved), several with one call. Each range is an offset and
-    /// a length, and may be all of this string.
-    ///
-    /// # Safety
-    /// This string is no rope, and the characters of each range are in it.
+    /// As [`substring_of_resolved`](Self::substring_of_resolved), several with one call.
     #[inline(always)]
     pub unsafe fn substrings_of_resolved<const N: usize>(
         &self,
@@ -235,10 +223,7 @@ impl JSString {
     /// `JSString::MaxLength`.
     pub const MAX_LENGTH: usize = i32::MAX as usize;
 
-    /// A new 8-bit string of `length` characters (2 to [`JSString::MAX_LENGTH`]).
-    ///
-    /// # Safety
-    /// `fill` writes all of them, and allocates nothing in the JavaScript heap.
+    /// A new 8-bit string of `length` characters (2 to [`JSString::MAX_LENGTH`]). SAFETY: `fill` writes all of them, and allocates nothing in the JavaScript heap.
     #[inline(always)]
     pub unsafe fn create_latin1_with(
         global: &JSGlobalObject,

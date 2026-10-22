@@ -6,8 +6,7 @@ use bun_aot::Compilation;
 use bun_aot::compile::{EntryPointPaths, ProgramSummary};
 use bun_ast::Loader;
 
-/// Entry point `i` is shown as `shown[i]`, the path of its source, and is a file of the executable under `embedded[i]`, the
-/// name that `bun build --compile` gives it.
+/// Entry point `i` is shown as `shown[i]`, the path of its source, and is a file of the executable under `embedded[i]`, the name that `bun build --compile` gives it.
 pub(crate) struct EntryPointNames<'a> {
     pub module_prefix: &'a [u8],
     pub shown: &'a [Vec<u8>],
@@ -93,8 +92,7 @@ fn collect_output_files(
             file.source_map_index += entry_count as u32;
         }
         file.entry_point_index = None;
-        // In place, an entry point that is embedded, a native addon, has one name for its file and for its bytes, and of two files with one name
-        // the executable keeps the first.
+        // In place, an entry point that is embedded, a native addon, has one name for its file and for its bytes, and of two files with one name the executable keeps the first.
         let entry_files = &mut output_files[..entry_count];
         if let Some(entry_file) = entry_files
             .iter_mut()

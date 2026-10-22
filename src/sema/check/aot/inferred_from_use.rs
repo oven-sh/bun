@@ -16,8 +16,7 @@ use crate::types::{
 use smallvec::SmallVec;
 use std::rc::Rc;
 
-// Something in the queried file that the checker types `any` because nobody annotated it. An inferred type is only an
-// expectation: the checker's own type stays `any`.
+// Something in the queried file that the checker types `any` because nobody annotated it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Subject {
     Binding(SymbolId),
@@ -43,8 +42,7 @@ pub(super) enum TypeState {
     Known(TypeId),
 }
 
-// The subjects in progress. It tells whether a computation ran into a subject that had started before it and has not
-// finished: such a result is missing what that subject has yet to find, so it is not remembered.
+// The subjects in progress.
 #[derive(Default)]
 struct SubjectStack {
     depth: usize,
@@ -712,9 +710,7 @@ struct CallWithReceiver {
 type TypeParts = SmallVec<[TypeId; 4]>;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    // The type that a checked file gives a parameter, a variable or a result is tested where a value arrives, and the code
-    // behind the test relies on it. What the uses say is only expected, so in such a file it is said of each expression
-    // (`infer_expression_type`) and of no position. Nothing tests the `this` of a function that is no member of a class.
+    // The type that a checked file gives a parameter, a variable or a result is tested where a value arrives, and the code behind the test relies on it.
     fn are_positions_only_expected(&self, of: FileId) -> bool {
         match self.role(of) {
             FileRole::Inferred => true,
@@ -797,8 +793,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     // What is expected of an argument where the function is entered.
     fn inferred_argument_type_or(&mut self, subject: Subject, checked: TypeId) -> TypeId {
-        // `number` alone means int32 or double, which every arithmetic operator finds out by itself: a test for it at the
-        // entry buys nothing.
+        // `number` alone means int32 or double, which every arithmetic operator finds out by itself: a test for it at the entry buys nothing.
         match self.inferred_type_or(subject, checked) {
             TypeId::NUMBER => checked,
             inferred => inferred,
@@ -1017,8 +1012,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.add_arm(result, expected);
     }
 
-    // A variable that starts as an integer, gets only integers and values that nobody knows, and is a key or an operand of a
-    // bitwise operator somewhere is expected to hold int32. Returns `any` otherwise: the checker's `number` stands.
+    // A variable that starts as an integer, gets only integers and values that nobody knows, and is a key or an operand of a bitwise operator somewhere is expected to hold int32.
     fn compute_number_type(&mut self, symbol: SymbolId) -> TypeId {
         let Some(int32) = self.c.p.aot_symbols().int32_alias() else {
             return TypeId::ANY;
@@ -1314,8 +1308,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Subject::This(function) => {
                 let references = self.reference_index().to_this;
                 for &(_, reference) in references_to(references, function) {
-                    // What the checker takes `this` to be comes from where the function is written, not from how it is
-                    // called: a method of an object literal may be copied to another object.
+                    // What the checker takes `this` to be comes from where the function is written, not from how it is called: a method of an object literal may be copied to another object.
                     let checked = self.expression_type(reference);
                     if checked.is_ok_and(|checked| self.c.is_any(checked)) {
                         self.add_evidence(walk, reference, &mut usage);
@@ -1741,8 +1734,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn add_object_parts(&mut self, usage: &Usage, parts: &mut TypeParts) {
         let elements = usage.elements.as_deref();
-        // An object whose names are enumerated or computed is used as a dictionary: the names that the program spells
-        // are not all that it cares about, so they do not describe it.
+        // An object whose names are enumerated or computed is used as a dictionary: the names that the program spells are not all that it cares about, so they do not describe it.
         if usage.facts.contains(Facts::OBJECT) && elements.is_none() {
             parts.push(TypeId::OBJECT);
             return;
@@ -1765,8 +1757,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             parts[at] = array;
             return;
         }
-        // An element access or an iteration proposes a list. The name of a member proposes nothing: it only rules out a type
-        // that lacks it.
+        // An element access or an iteration proposes a list.
         let mut fitting = TypeParts::new();
         for (fits, candidate) in [(can_be_array, array), (can_be_string, TypeId::STRING)] {
             if fits && elements.is_some() {
@@ -1782,8 +1773,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             && self.has_every_member(function, &usage.members);
         let can_be_builtin = can_be_array || can_be_string || can_be_function;
         match fitting[..] {
-            // The names do not tell an Array, a string or a function from an object of the program that has them too, and a
-            // type made of them would leave out all three.
+            // The names do not tell an Array, a string or a function from an object of the program that has them too, and a type made of them would leave out all three.
             [] if can_be_builtin => {}
             [] => {
                 let known_parts = parts.clone();
@@ -1799,8 +1789,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // Whether `receiver` has every member, and exactly its methods are the ones that are called: `layer.keys.length` does
-    // not make `layer` an Array.
+    // Whether `receiver` has every member, and exactly its methods are the ones that are called: `layer.keys.length` does not make `layer` an Array.
     fn has_every_member(&mut self, receiver: TypeId, members: &[Member]) -> bool {
         members.iter().all(|member| {
             let found = self.c.get_property_of_type(receiver, member.name);

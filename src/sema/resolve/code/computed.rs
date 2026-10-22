@@ -378,8 +378,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
                 if is_root && !name.starts_with(name_prefix) && !has_matching_spelling(&name) {
                     continue;
                 }
-                // LICENSE, Makefile, a lock file. Bun takes such a file for JavaScript, and a build would stop at its first word.
-                // A program that does load one by a computed path gets the error of a file that is not in the executable.
+                // LICENSE, Makefile, a lock file.
                 if !has_extension(&name) {
                     continue;
                 }

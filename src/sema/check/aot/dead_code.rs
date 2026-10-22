@@ -102,8 +102,7 @@ impl Checker<'_, '_> {
         dead_code
     }
 
-    /// `bun check` judges the function as it is written. What has replaced it has none of its type syntax, and a build
-    /// reports no error that `bun check` does not.
+    /// `bun check` judges the function as it is written.
     fn push_replaced_functions(&self, file: FileId, dead_code: &mut Vec<(u32, u32)>) {
         let hir = self.hir(file);
         for (index, function) in hir.fns.iter().enumerate() {

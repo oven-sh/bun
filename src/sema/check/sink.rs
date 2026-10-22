@@ -6,8 +6,7 @@
 //! - One reported inside a query belongs to the query. A hit on the query's entry reports nothing,
 //!   but several tasks may each have evaluated the query. The first task that commits a diagnostic
 //!   under the query reports. Diagnostics that later tasks commit under it are dropped
-//!   (`Program::publish_reported`). For a query about syntax that's decided for each file it reports
-//!   in (`owned_part`).
+//!   (`Program::publish_reported`). For a query about syntax that's decided for each file it reports in (`owned_part`).
 //!
 //! `add_diagnostic` pushes onto `Checker::reported`. A frame's diagnostics are the suffix from
 //! `QueryFrame::reported_from`. `Checker::leave` calls `settle_reported` for them:
@@ -246,8 +245,7 @@ pub(super) struct Sink<'s> {
     /// The diagnostics reported in each file. A `Reported` owns regular heap memory, which
     /// `release` frees.
     by_file: ArenaVec<'s, Guarded<Vec<Reported>>>,
-    /// The queries under which a task has reported (`owned_part`), each with the `Task::number` of the first task that
-    /// did. Any thread can add to it, so it's on the regular heap too.
+    /// The queries under which a task has reported (`owned_part`), each with the `Task::number` of the first task that did.
     owners: Guarded<FxHashMap<(Query, Option<FileId>), u64>>,
 }
 
@@ -318,13 +316,7 @@ fn is_same_in_every_task(q: Query) -> bool {
     }
 }
 
-/// What the first task to commit a diagnostic in `file` under `q` owns: everything `q` reports, or only what it reports
-/// in `file`.
-///
-/// A task that checks a later file leaves what a query about syntax reports in an earlier file to that file's own task
-/// (`defers_to_earlier_file`). So it has only logged what the query reports from its own file on, and the earlier
-/// file's task still reports the rest. Any other query is logged whole or not at all. Where it reports can depend on
-/// the node its task is at, so only one task reports.
+/// What the first task to commit a diagnostic in `file` under `q` owns: everything `q` reports, or only what it reports in `file`.
 fn owned_part(q: Query, file: FileId) -> (Query, Option<FileId>) {
     (q, q.syntax().map(|_| file))
 }

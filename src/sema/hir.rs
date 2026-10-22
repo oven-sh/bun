@@ -692,8 +692,7 @@ bitflags::bitflags! {
         /// A namespace that's synthesized from a JSDoc tag of a class element. In tsgo it's an element of that class
         /// (`parseListIndex`). Here it's a statement before the class.
         const CLASS_ELEMENT = 1 << 27;
-        /// A function whose parameters and body a build has written in place of the program's: the
-        /// output of the React Compiler.
+        /// A function whose parameters and body a build has written in place of the program's: the output of the React Compiler.
         const REPLACED_BODY = 1 << 28;
     }
 }
@@ -996,8 +995,7 @@ impl ExprKind {
     }
 }
 
-/// Declares `$tag`, the kind of a `$kind` without its payload, in the same order, and `$kind::tag`. A kind that is listed
-/// after the braces has the tag of another kind.
+/// Declares `$tag`, the kind of a `$kind` without its payload, in the same order, and `$kind::tag`.
 macro_rules! tags {
     (
         $(#[$doc:meta])* $tag:ident of $kind:ident { $($variant:ident $shape:tt,)* }
@@ -1149,8 +1147,7 @@ pub struct Call {
     /// [`INCOMPLETE_TEMPLATE`].
     pub close_pos: u32,
     pub chain: Chain,
-    /// `/* @__PURE__ */` or `/* #__PURE__ */` is the last comment before the first token of the `Call` or `New`, and the
-    /// member and call chain that starts there ends in a `Call` or a `New`.
+    /// `/* @__PURE__ */` or `/* #__PURE__ */` is the last comment before the first token of the `Call` or `New`, and the member and call chain that starts there ends in a `Call` or a `New`.
     pub is_pure: bool,
 }
 
@@ -1594,8 +1591,7 @@ pub enum StmtKind {
         object: ExprId,
         body: StmtId,
     },
-    /// A statement of the directive prologue of the file or of a function. `expr` is a `String`. `raw` is the text between
-    /// the quotes, escapes not decoded. Its tag is `Expr`.
+    /// A statement of the directive prologue of the file or of a function.
     Directive {
         expr: ExprId,
         raw: Atom,
@@ -1659,13 +1655,11 @@ pub struct Func {
     /// Position of its first token, including decorators and modifiers. For a method or an accessor, the member's first
     /// token.
     pub start: u32,
-    /// Position of the first token of the ECMAScript production: `async` if written, else `function`, `get`, `set`, `*` or
-    /// the key. Decorators and the other modifiers (`export`, `default`, `declare`, `static`, `public`, ..) come before it.
+    /// Position of the first token of the ECMAScript production: `async` if written, else `function`, `get`, `set`, `*` or the key.
     pub text_start: u32,
     /// Its code is strict mode code. `File::set_strict` and `File::reset_strict` change it.
     pub is_strict: bool,
-    /// The same as far as the file's own syntax says: a `"use strict"` directive of it, of a function around it or of the
-    /// file, a class around it, or a module declaration in the file.
+    /// The same as far as the file's own syntax says: a `"use strict"` directive of it, of a function around it or of the file, a class around it, or a module declaration in the file.
     pub is_strict_by_syntax: bool,
 }
 
@@ -2519,8 +2513,7 @@ pub struct FileIn<S: Storage> {
     /// `JsxExpression`: the inner expression, the start and the end of the braces. Ordered by
     /// expression.
     pub jsx_expressions: S::Nodes<(ExprId, u32, u32)>,
-    /// The JSX pragmas from the leading comments of this file. Parsed with `Options::compiles`: those of all comments, as
-    /// `bun run` reads them.
+    /// The JSX pragmas from the leading comments of this file.
     pub jsx_pragmas: JsxPragmas,
     /// The spans of the JSDoc comments of a JavaScript file. Sorted. A node whose position is
     /// inside one is synthesized from a tag.
@@ -2593,16 +2586,12 @@ pub struct FileIn<S: Storage> {
     /// The parts of one template are contiguous. Read them with `template_parts`.
     pub template_parts: S::Nodes<TemplatePart>,
     /// Each `Template`, and each `String` that is the template of a tagged template, with the index of its first part.
-    /// Ascending in both.
     pub template_part_starts: S::Few<(ExprId, u32)>,
     /// A `String` that is the value of a JSX attribute, and its run-time value where that differs from the `String`.
-    /// Ascending.
     pub jsx_attribute_texts: S::Few<(ExprId, Atom)>,
     /// An `ExportStar` with `with { .. }`, and the `Object`. Ascending.
     pub export_star_attributes: S::Few<(StmtId, ExprId)>,
-    /// The position of each BigInt literal that is the name of a property, a class member or a binding element, and the
-    /// name of the property at run time: `1` for `1n`, `16` for `0x10n`. To the checker it declares nothing. Ascending. Read
-    /// it with `runtime_property_key`, `runtime_member_key` and `runtime_binding_key`.
+    /// The position of each BigInt literal that is the name of a property, a class member or a binding element, and the name of the property at run time: `1` for `1n`, `16` for `0x10n`.
     pub bigint_names: S::Few<(u32, Atom)>,
     /// The code of the file is strict mode code. `set_strict` and `reset_strict` change it.
     pub is_strict: bool,

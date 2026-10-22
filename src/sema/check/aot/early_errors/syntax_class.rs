@@ -51,8 +51,7 @@ impl Checker<'_, '_> {
         self.is_strict_mode_code(file, node) || self.hir(file).follows_dropped_directive(node)
     }
 
-    /// For what Bun's own parser refuses in strict mode code: a reserved word as a name, `eval` and `arguments` as a
-    /// target or a declaration.
+    /// For what Bun's own parser refuses in strict mode code: a reserved word as a name, `eval` and `arguments` as a target or a declaration.
     pub(in crate::check) fn strict_mode_name_error_class(
         &self,
         file: FileId,

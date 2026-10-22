@@ -1,12 +1,6 @@
 // What an emitter of trace events needs: which categories are enabled, and the buffer of events.
-// Who enables categories, instruments other modules and writes the file is internal/trace_events.
-//
-// Call `emitEvent(ph, cat, name, id, data)` after checking `isCategoryGroupEnabled(cat)`. `cat` may
-// be a compound string like "node,node.fs,node.fs.sync": the event is recorded when any
-// comma-separated component is enabled, and the cat string is written to the file verbatim.
 
-// Enabled categories with refcounts. Insertion-ordered, so CLI categories
-// (enabled first, at bootstrap) come first in getEnabledCategories().
+// Enabled categories with refcounts.
 const categoryRefs = new Map<string, number>();
 
 const events: object[] = [];
@@ -39,10 +33,7 @@ function emitEvent(ph: string, cat: string, name: string, id?: number, data?: un
   emitEventWithArgs(ph, cat, name, id, data === undefined ? {} : { data });
 }
 
-// Like `emitEvent`, but `args` lands at the top level of the event's `args`
-// object instead of under `args.data`. Node's native TRACE_EVENT macros
-// (e.g. the pipe connect event in pipe_wrap.cc) emit their key/value pairs
-// this way, and tests assert e.g. `trace.args.path_type` directly.
+// Like `emitEvent`, but `args` lands at the top level of the event's `args` object instead of under `args.data`.
 function emitEventWithArgs(ph: string, cat: string, name: string, id?: number, args?: unknown): void {
   const event: Record<string, unknown> = {
     pid: process.pid,

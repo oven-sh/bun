@@ -20,8 +20,7 @@
 
 using namespace JSC;
 
-// collectAsyncStackFramesFromPromise for a process with compiled code: what awaits a promise is a
-// JSAsyncFunctionGenerator or a suspended compiled async function, and the engine answers for both.
+// collectAsyncStackFramesFromPromise for a process with compiled code: what awaits a promise is a JSAsyncFunctionGenerator or a suspended compiled async function, and the engine answers for both.
 static NEVER_INLINE void collectAsyncStackFramesFromPromiseWithCompiledCode(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, WTF::Vector<JSC::StackFrame>& results, size_t maxStackSize)
 {
     JSC::AssertNoGC assertNoGC;

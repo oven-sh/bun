@@ -133,8 +133,7 @@ fn is_undeclared_intrinsic(intrinsic: Intrinsic) -> bool {
     }
 }
 
-/// One symbol holds all meanings of a name. An interface, a type alias and an import that brings a type may stand beside the
-/// declaration of a value, in front of it or behind it, and declare no value themselves.
+/// One symbol holds all meanings of a name.
 pub fn declares_type_alone(declaration: Decl) -> bool {
     matches!(
         declaration,
@@ -349,8 +348,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `keyof T`, `T[K]` and the test of a conditional type answer with what the declaration of `T` says, in a type that
-    /// does not show who declared it.
+    /// `keyof T`, `T[K]` and the test of a conditional type answer with what the declaration of `T` says, in a type that does not show who declared it.
     fn add_read_types(
         &mut self,
         file: FileId,
@@ -478,8 +476,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `typeof value` says what the declaration of `value` says: for a variable or a parameter its annotation, and
-    /// without one whatever the checker infers, from wherever that comes.
+    /// `typeof value` says what the declaration of `value` says: for a variable or a parameter its annotation, and without one whatever the checker infers, from wherever that comes.
     fn is_trusted_value(&mut self, value: Option<Sym>) -> bool {
         let Some(value) = value else {
             return false;

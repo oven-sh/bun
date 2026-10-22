@@ -2,8 +2,7 @@
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
-// embedded below lazyMinimatch(); the vendored block is third-party: its code
-// is not edited, only types are added — the port above it follows bun's style.
+// embedded below lazyMinimatch(); the vendored block is third-party and not edited but for types — the port above it follows bun's style.
 //
 // This is not backed by Bun.Glob: the vendored test-fs-glob.mjs (448 cases)
 // exercises minimatch-specific semantics — withFileTypes Dirents, the

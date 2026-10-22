@@ -87,8 +87,7 @@ impl<'s> Folder<'_, 's> {
 }
 
 impl<'s> Folder<'_, 's> {
-    /// The lists of a file and of a namespace are left out: their imports, exports and declarations
-    /// count wherever they stand.
+    /// The lists of a file and of a namespace are left out: their imports, exports and declarations count wherever they stand.
     fn push_statements_never_reached(&self, roots: &mut Vec<TreeNode>) {
         let hir = self.hir;
         for function in hir.fns.iter() {
@@ -147,8 +146,7 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// A function declaration is created where its list is entered. A type says the same wherever
-    /// it stands, and so do the members of a constant enum.
+    /// A function declaration is created where its list is entered.
     fn counts_unreached(&self, statement: StmtId) -> bool {
         let mut current = statement;
         while let StmtKind::Labeled { body, .. } = self.hir[current].kind {

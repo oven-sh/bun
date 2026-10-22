@@ -1,9 +1,6 @@
 #pragma once
 
-// The bodies of the native functions of src/js/internal/validators.ts, which src/runtime/node/node_validators.bind.ts declares. They are
-// here so that the host functions that are generated from that file hold them, as hand-written host functions would. NodeValidator.cpp
-// has the entry points for code that `bun build --compile --aot` has compiled. `arguments.at(n)` is the argument, or undefined for one
-// that is left out: a body asks for it where it needs it, so that a host function reads from its frame no more than it uses.
+// The bodies of the native functions of src/js/internal/validators.ts, which src/runtime/node/node_validators.bind.ts declares.
 
 #include "root.h"
 
@@ -170,17 +167,14 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validatePort(JSC:
         auto port_str = port.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto trimmed = port_str.trim([](auto c) {
-            // https://tc39.es/ecma262/multipage/text-processing.html#sec-string.prototype.trim
-            // The definition of white space is the union of *WhiteSpace* and *LineTerminator*.
+            // White space is the union of *WhiteSpace* and *LineTerminator*: https://tc39.es/ecma262/multipage/text-processing.html#sec-string.prototype.trim
 
             // WhiteSpace ::
             if (c == 0x0009) return true; //     <TAB>
             if (c == 0x000B) return true; //     <VT>
             if (c == 0x000C) return true; //     <FF>
             if (c == 0xFEFF) return true; //     <ZWNBSP>
-            //     <USP>
-            // any code point in general category “Space_Separator”
-            // ranges accurate as of unicode 16.0.0
+            // <USP>: any code point in general category “Space_Separator”, as of Unicode 16.0.0.
             if (c >= 0x0009 && c <= 0x000D) return true;
             if (c >= 0x0020 && c <= 0x0020) return true;
             if (c >= 0x0085 && c <= 0x0085) return true;

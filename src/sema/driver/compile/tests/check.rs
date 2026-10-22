@@ -532,8 +532,6 @@ fn count_export_collisions(files: &[(&str, &str)], threads: usize) -> Vec<usize>
     })
 }
 
-// From top.ts the walk comes to shared.ts through first.ts. So that time inner.ts exports nothing of it, the two `x` do
-// not meet in second.ts, and they meet in top.ts.
 #[test]
 fn module_reached_twice_exports_nothing_the_second_time() {
     let files = [

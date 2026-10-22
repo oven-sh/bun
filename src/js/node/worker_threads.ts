@@ -97,9 +97,7 @@ const {
   typeof globalThis.BroadcastChannel,
 ];
 
-// The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-// instance. This is so that it can emit the `worker` event on the process with the
-// node:worker_threads instance instead of the Web Worker instance.
+// The Worker constructor secretly takes an extra parameter to provide the node:worker_threads instance.
 type WebWorkerConstructor = new (filename: string | URL, options: object, nodeWorker: Worker) => WebWorker;
 
 interface NodeWorkerOptions {

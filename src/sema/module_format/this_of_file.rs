@@ -15,8 +15,7 @@ fn visit_this_of_file(
     visit_this_below(hir, decisions, stack, ParameterDecorators::PassedBy, visit);
 }
 
-// The decorators of a method's parameters are evaluated where the class is, on the `this` of that place. `bun run` visits them
-// with the method, so it reads no `exports` for a `this` in one that stands at the level of the file.
+// The decorators of a method's parameters are evaluated where the class is, on the `this` of that place.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ParameterDecorators {
     PassedBy,
@@ -85,9 +84,7 @@ pub(crate) fn has_live_this_of_file(hir: &File<'_>, decisions: &Decisions<'_>) -
     is_found
 }
 
-/// Whether the function can evaluate a `this` that is its own: in its parameters and its body, in arrow functions there, and in
-/// the computed names and the decorators of the methods, accessors, fields and parameters of an object or a class that it makes.
-/// `FnInfo::contains_this` books those names and decorators on the member.
+/// Whether the function can evaluate a `this` that is its own: in its parameters and its body, in arrow functions there, and in the computed names and the decorators of the methods, accessors, fields and parameters of an object or a class that it makes.
 pub fn evaluates_own_this(hir: &File<'_>, function: FnId) -> bool {
     let mut stack = Vec::new();
     push_children(hir, TreeNode::Function(function), &mut stack);
@@ -100,8 +97,7 @@ pub fn evaluates_own_this(hir: &File<'_>, function: FnId) -> bool {
     is_found
 }
 
-/// Where a file says `this`, in the order of its text. Most functions have none between their first token and their last
-/// statement, and whoever asks about many functions of a file finds that out without a walk through each of them.
+/// Where a file says `this`, in the order of its text.
 #[derive(Default)]
 pub struct ThisPositions(Box<[u32]>);
 

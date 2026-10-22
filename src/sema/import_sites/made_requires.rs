@@ -183,8 +183,7 @@ pub enum OwnRequire {
 
 const LONGEST_CHAIN_OF_BINDINGS: usize = 8;
 
-// The `require` of the file, or `createRequire(import.meta.url)`, which resolves what it is given as that one does: written on the spot,
-// or held by a binding that nothing stores to, which may start as another such binding.
+// The `require` of the file, or `createRequire(import.meta.url)`, which resolves what it is given as that one does: written on the spot, or held by a binding that nothing stores to, which may start as another such binding.
 pub fn find_own_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<OwnRequire> {
     let mut e = hir.skip_type_assertions(e);
     for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
@@ -209,8 +208,7 @@ pub fn find_own_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<
     None
 }
 
-// `import.meta.require` held by a binding that nothing stores to, which may start as another such binding:
-// `var __require = import.meta.require;` stands at the top of what `bun build --target=bun` writes.
+// `import.meta.require` held by a binding that nothing stores to, which may start as another such binding: `var __require = import.meta.require;` stands at the top of what `bun build --target=bun` writes.
 pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     let mut e = hir.skip_type_assertions(e);
     for _ in 0..LONGEST_CHAIN_OF_BINDINGS {

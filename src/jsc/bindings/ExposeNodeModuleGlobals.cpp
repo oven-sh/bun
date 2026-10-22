@@ -110,8 +110,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalOb
 
 extern "C" JSC::EncodedJSValue Bun__Process__getExecArgv(JSC::JSGlobalObject*);
 
-// What `internal/process/pre_execution` does with `--stack-trace-limit`, word for word, for an executable that cannot
-// load that module. The two options whose value may be a word of its own take that word here too.
+// What `internal/process/pre_execution` does with `--stack-trace-limit`, word for word, for an executable that cannot load that module.
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__applyStackTraceLimitOption(Zig::GlobalObject* globalObject)
 {
     using namespace JSC;

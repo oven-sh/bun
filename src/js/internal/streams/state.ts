@@ -23,7 +23,6 @@ const kAfterWriteTickInfoValue = Symbol("kAfterWriteTickInfoValue");
 const kBufferedValue = Symbol("kBufferedValue");
 
 // The flags are const enums, here and in the modules that test them: each use is a number in the bundled module.
-// As constants they were variables that every function captured, and made the modules a tenth slower to load.
 
 // The bits of [kState] that mean the same in a ReadableState and in a WritableState.
 const enum Flag {
@@ -296,18 +295,15 @@ function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
     this.awaitDrainWriters = null;
     return;
   }
-  // Bit map field to store ReadableState more efficiently with 1 bit per field
-  // instead of a V8 slot per field.
+  // Bit map field to store ReadableState more efficiently with 1 bit per field instead of a V8 slot per field.
   this[kState] = Flag.EmitClose | Flag.AutoDestroy | Flag.Constructed | ReadableFlag.Sync;
 
-  // Object stream flag. Used to make read(n) ignore n and to
-  // make all the buffer merging and length checks go away.
+  // Object stream flag.
   if (options?.objectMode) this[kState] |= Flag.ObjectMode;
 
   if (isDuplex && options?.readableObjectMode) this[kState] |= Flag.ObjectMode;
 
-  // The point at which it stops calling _read() to fill the buffer
-  // Note: 0 is a valid value, means "don't call _read preemptively ever"
+  // The point at which it stops calling _read() to fill the buffer; 0 means never ahead of a read.
   this.highWaterMark = options
     ? getHighWaterMark(this, options, "readableHighWaterMark", isDuplex)
     : getDefaultHighWaterMark(false);
@@ -323,9 +319,7 @@ function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
   // Should .destroy() be called after 'end' (and potentially 'finish').
   if (options && options.autoDestroy === false) this[kState] &= ~Flag.AutoDestroy;
 
-  // Crypto is kind of old and crusty.  Historically, its default string
-  // encoding is 'binary' so we have to make this configurable.
-  // Everything else in the universe uses 'utf8', though.
+  // Crypto is kind of old and crusty.  Historically, its default string encoding is 'binary' so we have to make this configurable.
   const defaultEncoding = options?.defaultEncoding;
   if (defaultEncoding == null || defaultEncoding === "utf8" || defaultEncoding === "utf-8") {
     this[kState] |= ReadableFlag.DefaultUTF8Encoding;
@@ -335,8 +329,7 @@ function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
     throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
   }
 
-  // Ref the piped dest which we need a drain event on it
-  // type: null | Writable | Set<Writable>.
+  // The piped destinations whose drain event is awaited: null | Writable | Set<Writable>.
   this.awaitDrainWriters = null;
 
   if (options?.encoding) {
@@ -351,18 +344,11 @@ ObjectDefineProperties(ReadableState.prototype, {
   ended: makeBitMapDescriptor(ReadableFlag.Ended),
   endEmitted: makeBitMapDescriptor(ReadableFlag.EndEmitted),
   reading: makeBitMapDescriptor(ReadableFlag.Reading),
-  // Stream is still being constructed and cannot be
-  // destroyed until construction finished or failed.
-  // Async construction is opt in, therefore we start as
-  // constructed.
+  // Stream is still being constructed and cannot be destroyed until construction finished or failed.
   constructed: makeBitMapDescriptor(Flag.Constructed),
-  // A flag to be able to tell if the event 'readable'/'data' is emitted
-  // immediately, or on a later tick.  We set this to true at first, because
-  // any actions that shouldn't happen until "later" should generally also
-  // not happen before the first read call.
+  // A flag to be able to tell if the event 'readable'/'data' is emitted immediately, or on a later tick.  We set this to true at first, because any actions that shouldn't happen until "later" should generally also not happen before the first read call.
   sync: makeBitMapDescriptor(ReadableFlag.Sync),
-  // Whenever we return null, then we set a flag to say
-  // that we're awaiting a 'readable' event emission.
+  // Whenever we return null, then we set a flag to say that we're awaiting a 'readable' event emission.
   needReadable: makeBitMapDescriptor(ReadableFlag.NeedReadable),
   emittedReadable: makeBitMapDescriptor(ReadableFlag.EmittedReadable),
   readableListening: makeBitMapDescriptor(ReadableFlag.ReadableListening),
@@ -375,18 +361,14 @@ ObjectDefineProperties(ReadableState.prototype, {
   destroyed: makeBitMapDescriptor(Flag.Destroyed),
   // Indicates whether the stream has finished destroying.
   closed: makeBitMapDescriptor(Flag.Closed),
-  // True if close has been emitted or would have been emitted
-  // depending on emitClose.
+  // True if close has been emitted or would have been emitted depending on emitClose.
   closeEmitted: makeBitMapDescriptor(Flag.CloseEmitted),
   multiAwaitDrain: makeBitMapDescriptor(ReadableFlag.MultiAwaitDrain),
   // If true, a maybeReadMore has been scheduled.
   readingMore: makeBitMapDescriptor(ReadableFlag.ReadingMore),
   dataEmitted: makeBitMapDescriptor(ReadableFlag.DataEmitted),
 
-  // Indicates whether the stream has errored. When true no further
-  // _read calls, 'data' or 'readable' events should occur. This is needed
-  // since when autoDestroy is disabled we need a way to tell whether the
-  // stream has failed.
+  // Indicates whether the stream has errored.
   errored: {
     __proto__: null,
     enumerable: false,
@@ -596,8 +578,7 @@ interface WritableState {
 WritableState.prototype = {} as { getBuffer?(this: WritableState): (BufferedWrite | null)[] };
 ObjectDefineProperties(WritableState.prototype, {
   constructor: { __proto__: null, value: WritableState, writable: true, configurable: true },
-  // Object stream flag to indicate whether or not this stream
-  // contains buffers or objects.
+  // Object stream flag to indicate whether or not this stream contains buffers or objects.
   objectMode: makeBitMapDescriptor(Flag.ObjectMode),
 
   // if _final has been called.
@@ -618,33 +599,22 @@ ObjectDefineProperties(WritableState.prototype, {
   // Has it been destroyed.
   destroyed: makeBitMapDescriptor(Flag.Destroyed),
 
-  // Should we decode strings into buffers before passing to _write?
-  // this is here so that some node-core streams can optimize string
-  // handling at a lower level.
+  // Should we decode strings into buffers before passing to _write? this is here so that some node-core streams can optimize string handling at a lower level.
   decodeStrings: makeBitMapDescriptor(WritableFlag.DecodeStrings),
 
   // A flag to see when we're in the middle of a write.
   writing: makeBitMapDescriptor(WritableFlag.Writing),
 
-  // A flag to be able to tell if the onwrite cb is called immediately,
-  // or on a later tick.  We set this to true at first, because any
-  // actions that shouldn't happen until "later" should generally also
-  // not happen before the first write call.
+  // A flag to be able to tell if the onwrite cb is called immediately, or on a later tick.  We set this to true at first, because any actions that shouldn't happen until "later" should generally also not happen before the first write call.
   sync: makeBitMapDescriptor(WritableFlag.Sync),
 
-  // A flag to know if we're processing previously buffered items, which
-  // may call the _write() callback in the same tick, so that we don't
-  // end up in an overlapped onwrite situation.
+  // A flag to know if we're processing previously buffered items, which may call the _write() callback in the same tick, so that we don't end up in an overlapped onwrite situation.
   bufferProcessing: makeBitMapDescriptor(WritableFlag.BufferProcessing),
 
-  // Stream is still being constructed and cannot be
-  // destroyed until construction finished or failed.
-  // Async construction is opt in, therefore we start as
-  // constructed.
+  // Stream is still being constructed and cannot be destroyed until construction finished or failed.
   constructed: makeBitMapDescriptor(Flag.Constructed),
 
-  // Emit prefinish if the only thing we're waiting for is _write cbs
-  // This is relevant for synchronous Transform streams.
+  // Emit prefinish if the only thing we're waiting for is _write cbs.
   prefinished: makeBitMapDescriptor(WritableFlag.Prefinished),
 
   // True if the error was already emitted and should not be thrown again.
@@ -659,17 +629,13 @@ ObjectDefineProperties(WritableState.prototype, {
   // Indicates whether the stream has finished destroying.
   closed: makeBitMapDescriptor(Flag.Closed),
 
-  // True if close has been emitted or would have been emitted
-  // depending on emitClose.
+  // True if close has been emitted or would have been emitted depending on emitClose.
   closeEmitted: makeBitMapDescriptor(Flag.CloseEmitted),
 
   allBuffers: makeBitMapDescriptor(WritableFlag.AllBuffers),
   allNoop: makeBitMapDescriptor(WritableFlag.AllNoop),
 
-  // Indicates whether the stream has errored. When true all write() calls
-  // should return false. This is needed since when autoDestroy
-  // is disabled we need a way to tell whether the stream has failed.
-  // This is/should be a cold path.
+  // Indicates whether the stream has errored.
   errored: {
     __proto__: null,
     enumerable: false,
@@ -737,8 +703,7 @@ ObjectDefineProperties(WritableState.prototype, {
     },
   },
 
-  // Storage for data passed to the afterWrite() callback in case of
-  // synchronous _write() completion.
+  // Storage for data passed to the afterWrite() callback in case of synchronous _write() completion.
   afterWriteTickInfo: {
     __proto__: null,
     enumerable: false,
@@ -773,17 +738,14 @@ ObjectDefineProperties(WritableState.prototype, {
 });
 
 function WritableState(this: WritableState, options?, stream?, isDuplex?) {
-  // Bit map field to store WritableState more efficiently with 1 bit per field
-  // instead of a V8 slot per field.
+  // Bit map field to store WritableState more efficiently with 1 bit per field instead of a V8 slot per field.
   this[kState] = WritableFlag.Sync | Flag.Constructed | Flag.EmitClose | Flag.AutoDestroy;
 
   if (options?.objectMode) this[kState] |= Flag.ObjectMode;
 
   if (isDuplex && options?.writableObjectMode) this[kState] |= Flag.ObjectMode;
 
-  // The point at which write() starts returning false
-  // Note: 0 is a valid value, means that we always return false if
-  // the entire buffer is not flushed immediately on write().
+  // The point at which write() starts returning false; 0 means always unless the buffer is flushed at once.
   this.highWaterMark = options
     ? getHighWaterMark(this, options, "writableHighWaterMark", isDuplex)
     : getDefaultHighWaterMark(false);
@@ -796,9 +758,7 @@ function WritableState(this: WritableState, options?, stream?, isDuplex?) {
   // Should .destroy() be called after 'end' (and potentially 'finish').
   if (options && options.autoDestroy === false) this[kState] &= ~Flag.AutoDestroy;
 
-  // Crypto is kind of old and crusty.  Historically, its default string
-  // encoding is 'binary' so we have to make this configurable.
-  // Everything else in the universe uses 'utf8', though.
+  // Crypto is kind of old and crusty.  Historically, its default string encoding is 'binary' so we have to make this configurable.
   const defaultEncoding = options ? options.defaultEncoding : null;
   if (defaultEncoding == null || defaultEncoding === "utf8" || defaultEncoding === "utf-8") {
     this[kState] |= WritableFlag.DefaultUTF8Encoding;
@@ -809,9 +769,7 @@ function WritableState(this: WritableState, options?, stream?, isDuplex?) {
     throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
   }
 
-  // Not an actual buffer we keep track of, but a measurement
-  // of how much we're waiting to get pushed to some underlying
-  // socket or file.
+  // Not an actual buffer we keep track of, but a measurement of how much we're waiting to get pushed to some underlying socket or file.
   this.length = 0;
 
   // When true all writes will be buffered until .uncork() call.
@@ -829,8 +787,7 @@ function WritableState(this: WritableState, options?, stream?, isDuplex?) {
   this[kState] |= WritableFlag.AllBuffers | WritableFlag.AllNoop;
   this[kState] &= ~WritableFlag.Buffered;
 
-  // Number of pending user-supplied write callbacks
-  // this must be 0 before 'finish' can be emitted.
+  // Number of pending user-supplied write callbacks; 0 before 'finish' can be emitted.
   this.pendingcb = 0;
 }
 

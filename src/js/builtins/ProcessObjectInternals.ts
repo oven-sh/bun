@@ -575,10 +575,7 @@ export function createOnWarning(
     }
     // process.stderr.write, not console.error: under an inspector Session console.* emits
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
-    // so console.error would re-enter and loop. writeWarning (BunProcess.cpp) reads process.stderr
-    // per call (like Node) so a reassigned process.stderr is honored. Only in a compiled or trimmed
-    // executable, outside node:worker_threads, it writes to fd 2 without the stream until the program
-    // has read or replaced process.stderr.
+    // so console.error would re-enter and loop. writeWarning (BunProcess.cpp) reads process.stderr per call, as Node does.
     writeWarning(message + "\n");
   }
 

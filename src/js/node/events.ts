@@ -116,11 +116,7 @@ interface PendingNext {
 }
 
 declare global {
-  /**
-   * The instances of node's classes that are written as constructor functions, and their constructors.
-   * `function Readable(this: $Node.Readable, options?: $Node.ReadableOptions)` says what `this` is, and every module
-   * names the same type. Each interface is declared by the module that owns the class.
-   */
+  /** The instances of node's classes that are written as constructor functions, and their constructors. */
   namespace $Node {
     type EventName = string | symbol;
 
@@ -208,8 +204,7 @@ function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions
       this._maxListeners = undefined;
       this[kCapture] = capture;
     } else {
-      // Preallocated `_events` (streams). The count comes from the prototype
-      // default `EventEmitterPrototype._eventsCount = 0`, as in node.
+      // Preallocated `_events` (streams).
       this[kShapeMode] = true;
       this._maxListeners = undefined;
       this[kCapture] = capture;
@@ -309,8 +304,7 @@ function applyHandlers(
 }
 
 function addCatch(that: $Node.EventEmitter, promise: MaybeThenable, type: $Node.EventName, ...args: unknown[]) {
-  // Handle Promises/A+ spec, then could be a getter
-  // that throws on second use.
+  // Handle Promises/A+ spec, then could be a getter that throws on second use.
   try {
     const then = promise.then;
 
@@ -329,8 +323,7 @@ function emitUnhandledRejectionOrErr(emitter: $Node.EventEmitter, err: unknown, 
   if (typeof emitter[kRejection] === "function") {
     emitter[kRejection](err, type, ...args);
   } else {
-    // We have to disable the capture rejections mechanism, otherwise
-    // we might end up in an infinite loop.
+    // We have to disable the capture rejections mechanism, otherwise we might end up in an infinite loop.
     const prev = emitter[kCapture];
 
     // If the error handler throws, it is not catchable and it will end up in 'uncaughtException'.
@@ -345,9 +338,7 @@ function emitUnhandledRejectionOrErr(emitter: $Node.EventEmitter, err: unknown, 
   }
 }
 
-// One body, and `args` is only ever read or spread in it: handed to another function as a value
-// the array would have to be made on every call, and a helper between here and the listener is a
-// level of inlining more.
+// One body, and `args` is only ever read or spread in it: handed to another function as a value the array would have to be made on every call, and a helper between here and the listener is a level of inlining more.
 const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...args: unknown[]) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
 

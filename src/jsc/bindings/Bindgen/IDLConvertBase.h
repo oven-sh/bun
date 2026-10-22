@@ -135,7 +135,6 @@ private:
 };
 
 // A value of the wrong type throws what src/runtime/node/util/validators.rs does: `The "name" property must be of type string, got number`.
-// With an index, the value is one of the arguments that `name` stands for: `The "name[2]" property ..`.
 struct ValidatorArgumentContext : Detail::ContextBase<ValidatorArgumentContext> {
     using ElementContext = Detail::ElementOf<ValidatorArgumentContext>;
 

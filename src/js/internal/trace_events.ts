@@ -1,9 +1,4 @@
-// Trace-events agent: who enables categories, the instrumentation of other
-// modules, and the `node_trace.${rotation}.log` writer. Everything that switches
-// tracing on funnels through here — `node:trace_events`, `internal/test/binding`,
-// and the `internal/process/pre_execution` bootstrap. The registry of enabled
-// categories and the buffer of events are in internal/trace_event_recorder, which
-// is all that an emitter (node:http's server) requires.
+// Trace-events agent: who enables categories, the instrumentation of other modules, and the `node_trace.${rotation}.log` writer.
 // Worker support: call `setTid(n)` before emitting to tag events with a
 // non-main thread id.
 const { categoryRefs, events, now, setTid, getTid, isCategoryGroupEnabled, emitEvent, emitEventWithArgs } =

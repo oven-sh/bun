@@ -102,8 +102,7 @@ JSC::JSObject* appendInternalModuleExports(Zig::GlobalObject* globalObject, JSC:
         PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
         bool hasOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, entry, slot);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
-        // Accessors are how builtins defer loading (fs.ReadStream pulls in node:stream); JSC reads them off `object` on
-        // first binding. An accessor user code defined on the exports object is read now instead (see isBunDefinedGetter).
+        // Accessors are how builtins defer loading (fs.ReadStream pulls in node:stream); JSC reads them off `object` on first binding.
         if (hasOwn && (slot.isCustom() || (slot.isAccessor() && Zig::isBunDefinedGetter(slot.getterSetter()->getter())))) {
             exportValues.append(JSValue());
             hasLazyExports = true;

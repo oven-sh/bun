@@ -278,8 +278,7 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
   // $requireMap.
   const isBuiltinKey = (key: string | symbol) =>
     typeof key === "string" && (key.startsWith("node:") || key.startsWith("bun:"));
-  // An executable that `bun build --compile --aot` made never lists its own files, which run once: the cache holds the files that
-  // were loaded from outside of the executable, as in a bundled executable.
+  // An executable that `bun build --compile --aot` made never lists its own files, which run once: the cache holds the files that were loaded from outside of the executable, as in a bundled executable.
   const hidesFiles = $isHiddenFromRequireCache();
   const isHidden = (key: string | symbol) => hidesFiles && $isHiddenFromRequireCache(key);
   const hasKey = (key: string) =>

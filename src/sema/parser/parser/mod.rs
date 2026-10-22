@@ -65,8 +65,7 @@ pub(crate) mod ctx {
     pub(crate) const IN_NAMESPACE: u32 = 1 << 14;
     /// The node isn't inside a function body. It can still be in a function's parameters or return type, or in a class.
     pub(crate) const OUTSIDE_BODIES: u32 = 1 << 15;
-    /// The node is strict mode code as far as the parser has read: an enclosing class, or a `"use strict"` directive of
-    /// the file or of an enclosing function.
+    /// The node is strict mode code as far as the parser has read: an enclosing class, or a `"use strict"` directive of the file or of an enclosing function.
     pub(crate) const STRICT: u32 = 1 << 16;
 }
 

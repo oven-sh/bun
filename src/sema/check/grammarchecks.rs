@@ -839,8 +839,7 @@ impl Checker<'_, '_> {
         self.property_name_of_type(ty)
     }
 
-    /// `checkGrammarObjectLiteralExpression`. `computes_types`: repeated names follow TypeScript's
-    /// rule. Else ECMAScript's, which rejects a second `__proto__: v` and nothing more.
+    /// `checkGrammarObjectLiteralExpression`.
     pub(super) fn check_grammar_object_literal_expression(
         &mut self,
         file: FileId,

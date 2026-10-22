@@ -1359,8 +1359,7 @@ impl<'s> Checker<'_, 's> {
         self.within_unreachable_code = save_within_unreachable_code;
     }
 
-    /// `checkSourceElementWorker`. The head of a `for` is stored as a statement but isn't a
-    /// statement.
+    /// `checkSourceElementWorker`.
     fn check_source_element_worker(&mut self, file: FileId, s: StmtId) {
         if s.is_none() {
             return;

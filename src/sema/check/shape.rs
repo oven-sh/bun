@@ -5812,8 +5812,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some((of, e)) = assignment_declaration(declaration) else {
                         continue;
                     };
-                    // An assignment that the build has folded away stores nothing, and what it names may not be in the program:
-                    // `if (process.env.NODE_ENV === "production") module.exports = require(a); else module.exports = require(b);`
+                    // An assignment that the build has folded away stores nothing, and what it names may not be in the program: `if (process.env.NODE_ENV === "production") module.exports = require(a); else module.exports = require(b);`
                     if self.is_dead_expression(of, e) {
                         continue;
                     }

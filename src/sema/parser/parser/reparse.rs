@@ -211,8 +211,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.jsdoc.full_signatures.contains(&func.0)
     }
 
-    /// `checkNonIdentifierName`. It reports a parser error, not a JSDoc error. In compiled JavaScript no comment makes
-    /// an error of the parser: `bun run` runs the file.
+    /// `checkNonIdentifierName`.
     fn check_non_identifier_name(&mut self, name: &Name<'_>) {
         if bun_core::lexer::is_identifier(&name.text) {
             return;

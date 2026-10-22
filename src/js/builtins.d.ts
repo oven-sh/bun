@@ -364,8 +364,6 @@ interface InternalFieldObject<T extends any[]> {
 }
 
 // You can also `@` on any method on a classes to avoid prototype pollution and secret internals.
-// Each one is written out. An interface that extends a mapped type over itself has members that depend on where the
-// type checker enters the circle, and it goes around again at every use.
 declare interface CallableFunction {
   $call: CallableFunction["call"];
   $bind: CallableFunction["bind"];

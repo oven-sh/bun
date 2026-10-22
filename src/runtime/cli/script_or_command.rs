@@ -1,5 +1,4 @@
-//! `bun check`, `bun lint`, `bun fmt` and `bun compile` ran the script of that name in `package.json`
-//! before they were commands, so where a project has such a script they still do. In that script, and in what it
+//! `bun check`, `bun lint`, `bun fmt` and `bun compile` ran the script of that name in `package.json` before they were commands, so where a project has such a script they still do. In that script, and in what it
 //! runs, they are the commands: `"lint": "bun lint"`. So it is with a file `lint.ts` and with
 //! `node_modules/.bin/lint`. With `--no-script` they are the commands whatever the project has.
 //! A `package.json` that names the script and can't be parsed stops `bun lint` and `bun fmt`, which can write files.

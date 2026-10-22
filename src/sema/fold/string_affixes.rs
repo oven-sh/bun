@@ -246,9 +246,6 @@ impl<'s> Folder<'_, 's> {
     }
 
     /// `path.join(__dirname, "lib", name + ".js")`: the folder of the file, "/lib/", and the last argument.
-    ///
-    /// The call hands back a normalized path, so the written segments are normalized here. A path that leaves the folder
-    /// does not begin with it: it is followed only where every argument is written.
     fn expand_path_from_own_directory(&self, call: Call, function: Atom) -> Option<Expansion> {
         let is_join = function == known::join;
         let mut ends_with_slash = false;

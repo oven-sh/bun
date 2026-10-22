@@ -109,8 +109,7 @@ pub fn static_referent<'s, C: ReferentContext<'s>>(
     walk::ReferentWalk::new(context).resolve_expression(file, expr)
 }
 
-// What another module finds in the export `name` of `file`, or in the member `member` of that value. A member of a function
-// or of a class is what the bodies of the files on the way from the export to the declaration store there.
+// What another module finds in the export `name` of `file`, or in the member `member` of that value.
 pub fn export_referent<'s, C: ReferentContext<'s>>(
     context: &C,
     file: FileId,

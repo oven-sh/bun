@@ -7,8 +7,6 @@ use bun_sema::program::{FileId, FileRole};
 use std::fmt::Write;
 use std::sync::Mutex;
 
-// `Queries::is_assignable` has 20,000 entries of the relation. Two families of this many levels take 19,019 and 22,140, or 17,613
-// and 20,580 where the last leaf differs.
 const LEVELS_UNDER_BUDGET: usize = 38;
 const LEVELS_OVER_BUDGET: usize = 40;
 
@@ -38,9 +36,6 @@ fn write_family(text: &mut String, name: char, levels: usize, steps: [usize; 4],
     }
 }
 
-// The four members take the four combinations of steps, so that a comparison of the two tops compares every A of a level with
-// every B of it, each pair once: 1 + 4 + 9 + .. pairs. No pair leads back to itself, so each is settled when it has been
-// compared, and is an entry. The pair of the two last leaves is the last to be compared.
 fn write_families(levels: usize, last_leaf_of_b: &str) -> String {
     let mut text = String::new();
     write_family(&mut text, 'A', levels, [0, 0, 1, 1], "number");
@@ -70,8 +65,6 @@ fn write_chains(levels: usize) -> String {
     text
 }
 
-// What can be written to `Results[Name]` fits every member of `Results`: it is the intersection of two unions of 320 object types,
-// and 102,400 combinations are over the limit of 100,000 (2590). So the type is the error type, to which everything is related.
 fn write_unions_over_size_limit() -> String {
     let mut text = String::new();
     for name in ['L', 'R'] {
@@ -228,8 +221,6 @@ fn answer_does_not_depend_on_what_is_settled() {
     assert_gave_up(&asked);
 }
 
-// Nothing in the program reads the member, so no check instantiates its type. At the limit of instantiations it is the error
-// type, to which a string is related.
 fn write_member_past_instantiation_limit(length: usize) -> String {
     let elements: Vec<String> = (0..length).map(|index| index.to_string()).collect();
     format!(
@@ -260,8 +251,6 @@ fn question_that_is_too_deep_gives_up_and_changes_no_check() {
     assert_answered(&ask(&write_chains(90), ASKS_ONLY), true);
 }
 
-// Whether two unions are too large to be intersected is a function of the two. So the task that asks goes on, and asks.ts is
-// lowered once. The intersection is the error type, to which everything is related, so the question has no answer.
 #[test]
 fn question_at_union_size_limit_keeps_its_task() {
     let asked = ask(&write_unions_over_size_limit(), ASKS_ONLY);

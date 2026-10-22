@@ -1,9 +1,6 @@
 use super::*;
 
-// What a file reads from the object of a module that `import()` or `require()` evaluates to, by the rules of `bun build`:
-// `dynamic_import_namespace_locals`, `try_track_dynamic_import_destructure` and `track_promise_all_destructure` in
-// src/js_parser/p.rs, `bare_statement_namespace` in src/js_parser/visit/visit_stmt.rs. Every function here answers `None` where
-// those rules lose sight of the object: all of its names are read then.
+// What a file reads from the object of a module that `import()` or `require()` evaluates to, by the rules of `bun build`: `dynamic_import_namespace_locals`, `try_track_dynamic_import_destructure` and `track_promise_all_destructure` in src/js_parser/p.rs, `bare_statement_namespace` in src/js_parser/visit/visit_stmt.rs.
 #[derive(Default)]
 pub(super) struct ObjectReads {
     pub(super) names: Vec<Atom>,
@@ -169,8 +166,7 @@ impl Summary<'_, '_> {
         }
     }
 
-    // `promise.then(callback)`, `promise.then(callback, other)`: the pattern of the first parameter of the callback, `None` inside
-    // if it has no parameter. Only an arrow function: another function reaches its arguments without a parameter.
+    // `promise.then(callback)`, `promise.then(callback, other)`: the pattern of the first parameter of the callback, `None` inside if it has no parameter.
     fn find_then_parameter(&self, member: ExprId) -> Option<Option<PatId>> {
         let hir = self.hir;
         let (_, call) = self.find_call_of(member)?;

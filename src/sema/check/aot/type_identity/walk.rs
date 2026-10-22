@@ -193,8 +193,7 @@ impl Walk {
         self.is_refining = was_refining;
         match refined {
             Ok(keys) => {
-                // All of them or none: a walk that found one member known and the others not would describe a smaller
-                // component, and give a member another key than the walk that began elsewhere.
+                // All of them or none: a walk that found one member known and the others not would describe a smaller component, and give a member another key than the walk that began elsewhere.
                 for (&member, &key) in members.iter().zip(&keys) {
                     self.visits.insert(member, Visit::Described(key));
                     if !self.is_refining {
@@ -569,8 +568,7 @@ impl Walk {
         let mut description = Description::new(Tag::Object);
         description.word(u64::from(accepted_primitives.bits()));
         description.word(members.len() as u64);
-        // No declaration orders the members of a computed type. The checker lists them in an order that depends on which
-        // types it made first, and the layout lists its fields by key: two orders are one identity.
+        // No declaration orders the members of a computed type.
         let mut described = Vec::with_capacity(members.len());
         for member in members {
             let name = member_name_key(queries, member.name);

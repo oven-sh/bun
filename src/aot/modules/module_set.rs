@@ -137,6 +137,9 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         let externals = scan.externals.iter();
         external_kinds.extend(externals.map(|&(specifier, kind)| ((importer, specifier), kind)));
     }
+    for entry_point in input.sources.entry_points() {
+        ensure_record(input, &mut interops, entry_point.file);
+    }
     if let Some(entry_point) = input.sources.entry_points().first() {
         let importer = entry_point.file;
         for package in input.external_packages {

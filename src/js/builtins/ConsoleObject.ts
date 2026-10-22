@@ -145,7 +145,7 @@ export function write(this: Console & { $writer: $Node.FileSink | undefined }, i
 // TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
 export function createConsoleConstructor(console: Console) {
   const { inspect, formatWithOptions } = require("node:util");
-  const { isBuffer }: { isBuffer(value: unknown): boolean } = require("node:buffer");
+  const { isBuffer }: { isBuffer(value: unknown): boolean } = require("node:buffer").Buffer;
   const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");

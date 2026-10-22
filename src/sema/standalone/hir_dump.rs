@@ -1,16 +1,4 @@
 //! Dumps a `hir::File` as text, to compare the output of two front ends for the same source.
-//!
-//! The order in which the nodes were pushed into their vectors is an implementation detail, so no
-//! id is ever printed: the HIR is walked from `File::body`, a node is one line with all of its own
-//! data, and its children follow, indented, each after the name of its field.
-//!
-//! ```text
-//! body[1]:
-//!   Stmt If pos=0
-//!     test: Expr Ident pos=4 "a"
-//!     yes: Stmt Empty pos=6
-//!     no: -
-//! ```
 
 use bun_sema::atom::{Atom, Intern, Interner};
 use bun_sema::hir::*;
@@ -29,8 +17,7 @@ macro_rules! put {
     }};
 }
 
-/// The node that `$id` refers to in `File::$arena`. If there is none to print, prints a line with
-/// the reason and returns from the function.
+/// The node that `$id` refers to in `File::$arena`.
 macro_rules! node {
     ($self:ident, $depth:ident, $label:ident, $arena:ident, $id:ident) => {{
         if $id.is_none() {
@@ -60,11 +47,9 @@ struct Dump<'a, 's> {
     seen: bun_sema::util::FxHashSet<(&'static str, u32)>,
 }
 
-/// Also returns the unreachable nodes, which code that iterates over a whole vector still visits:
-/// `vector[index] pos=..`.
+/// Also returns the unreachable nodes, which code that iterates over a whole vector still visits: `vector[index] pos=..`.
 pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) {
-    // Every field is destructured by name, so that a new one must be handled. `error_pos` is only
-    // the position to report when a parser bailed out.
+    // Every field is destructured by name, so that a new one must be handled.
     let File {
         kind,
         has_module_syntax,

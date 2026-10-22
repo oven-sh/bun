@@ -368,8 +368,7 @@ public:
 
     void resetOnEachMicrotaskTick();
 
-    // The function to hand to a promise for `handler`, one for each handler in a realm. It is found by the address of the handler: a list of the
-    // handlers here would keep every feature that has one in an executable built with --trim.
+    // The function to hand to a promise for `handler`, one for each handler in a realm.
     JSFunction* thenable(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
     double INSPECT_MAX_BYTES = 50;

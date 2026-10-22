@@ -342,8 +342,7 @@ function writeOrBuffer(
 
   const length = state.length;
   if (length < state.highWaterMark || length === 0) {
-    // Return false if errored or destroyed in order to break
-    // any synchronous while(stream.write(data)) loops.
+    // Return false if errored or destroyed in order to break any synchronous while(stream.write(data)) loops.
     return (state[kState] & Flag.DestroyedOrErrored) === 0;
   }
 
@@ -776,8 +775,7 @@ function finish(stream: $Node.Writable, state: WritableState): void {
         ((rState[kState] & ReadableFlag.EndEmitted) !== 0 || rState.readable === false)
       : !rState ||
         (rState.autoDestroy &&
-          // We don't expect the readable to ever 'end'
-          // if readable is explicitly set to false.
+          // We don't expect the readable to ever 'end' if readable is explicitly set to false.
           (rState.endEmitted || rState.readable === false));
     if (autoDestroy) {
       stream.destroy();

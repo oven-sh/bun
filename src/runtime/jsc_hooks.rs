@@ -4303,8 +4303,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
-    // The `JSModuleLoader` that is fetching when it is not the global object's (a
-    // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
+    // The `JSModuleLoader` that is fetching when it is not the global object's (a `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
 ) -> *mut c_void {
     bun_jsc::mark_binding();
@@ -4328,8 +4327,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     }
 }
 
-/// # Safety
-/// `jsc_vm` is the live per-thread VM.
+/// SAFETY: `jsc_vm` is the live per-thread VM.
 #[inline(never)]
 unsafe fn transpile_file(
     jsc_vm: *mut VirtualMachine,
@@ -4341,8 +4339,7 @@ unsafe fn transpile_file(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
-    // The `JSModuleLoader` that is fetching when it is not the global object's (a
-    // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
+    // The `JSModuleLoader` that is fetching when it is not the global object's (a `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
     module_loader: JSValue,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
@@ -4918,9 +4915,7 @@ fn make_or_find_private_folder(path: &[u8], _uid: u32) -> bool {
     bun_sys::windows::private_folder::make_or_find(path)
 }
 
-/// An addon may load libraries by a path relative to itself (`$ORIGIN/../lib`, `@loader_path/../lib`). When the executable embeds
-/// shared libraries at their source paths, writes them and the addon at those paths under one directory that only this user can
-/// write to, and returns the addon's path there. `None` when it embeds none or a step fails.
+/// An addon may load libraries by a path relative to itself (`$ORIGIN/../lib`, `@loader_path/../lib`).
 fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::O;
 

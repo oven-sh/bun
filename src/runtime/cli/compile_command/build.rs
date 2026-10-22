@@ -294,8 +294,7 @@ fn modules_without_text(output_files: &[OutputFile]) -> ModulesWithoutText {
         .collect()
 }
 
-/// An asset at the path of a compiled module gives the module's file its bytes, which `node:fs` and `Bun.file()` read, and its
-/// loader: the bytes are stored as they are, not as text that the executable runs.
+/// An asset at the path of a compiled module gives the module's file its bytes, which `node:fs` and `Bun.file()` read, and its loader: the bytes are stored as they are, not as text that the executable runs.
 fn add_asset(
     asset: OutputFile,
     modules_without_text: &mut ModulesWithoutText,

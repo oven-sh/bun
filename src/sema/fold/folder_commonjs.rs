@@ -53,9 +53,6 @@ impl<'s> Folder<'_, 's> {
     }
 
     /// The one of the five names that `e` reads, where it holds what the loader has put there in every run.
-    ///
-    /// A live mention of `module` or `exports` makes a file without `export` and top-level `await` a CommonJS module, so
-    /// the answer does not wait for the format. In an ES module the two are names of the global scope.
     pub(super) fn find_loader_name(&self, e: ExprId) -> Option<CommonJsVariable> {
         let Binding::CommonJs(variable) = self.bound.binding(e) else {
             return None;
@@ -76,8 +73,7 @@ impl<'s> Folder<'_, 's> {
         is_unchanged.then_some(variable)
     }
 
-    /// A live `this` of the file makes a file without ES module syntax a CommonJS module, whose body is called on its exports
-    /// object.
+    /// A live `this` of the file makes a file without ES module syntax a CommonJS module, whose body is called on its exports object.
     fn is_this_of_commonjs_file(&self, e: ExprId) -> bool {
         matches!(self.hir[e].kind, ExprKind::This)
             && self.loader_names().esm_syntax == EsmSyntax::None

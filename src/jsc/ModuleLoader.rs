@@ -196,8 +196,7 @@ extern "C" fn Bun__fetchBuiltinModule(
 ) -> bool {
     jsc::mark_binding();
     let code = if is_commonjs_require { jsc::ErrCode::MODULE_NOT_FOUND } else { jsc::ErrCode::ERR_MODULE_NOT_FOUND };
-    // The helpers of the bundler are served as text. An executable that was compiled ahead of time interprets none. Where a file of the program imports them by name, the compiled
-    // module answers, like a file of the program. Elsewhere the name fails as for any built-in module that isn't in the executable.
+    // The helpers of the bundler are served as text.
     if Bun__refusesCodeOutsideExecutable(global_object) && specifier.to_utf8().slice() == b"bun:wrap" {
         if Bun__isCompiledProgramFile(specifier) {
             return false;

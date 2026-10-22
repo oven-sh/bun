@@ -47,9 +47,7 @@ impl<'h> Resolver<'h> {
             .or_else(|| self.find_file_in_another_case(trimmed))
     }
 
-    // `bun run` looks a name up in the listing of its directory without regard to case, and opens the file under the name that is
-    // listed. It does so for the name as written: one that it has put an extension to, it opens as it has made it. Asked last:
-    // a name that is found in any other way costs no listing.
+    // `bun run` looks a name up in the listing of its directory without regard to case, and opens the file under the name that is listed.
     fn find_file_in_another_case(&self, path: &[u8]) -> Option<Vec<u8>> {
         let directory = dirname::<Posix>(path);
         let name = &path[strings::last_index_of_char(path, b'/')? + 1..];

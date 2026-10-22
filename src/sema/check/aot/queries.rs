@@ -26,8 +26,7 @@ use crate::types::{EnumValue, SigId, TypeData, TypeId, tf};
 use crate::util::FxHashMap;
 use std::hash::Hash;
 
-// What `is_assignable` may cost. The answers only make compiled code faster, and one question of a large program took half a million
-// entries and thirteen seconds to say no. Most take some hundred.
+// What `is_assignable` may cost.
 const MAX_RELATION_ENTRIES: i32 = 20_000;
 
 #[derive(Copy, Clone)]
@@ -178,8 +177,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.c.was_discarded()
     }
 
-    /// Call where no question is in progress. It is to a lowering what the end of a statement is to the checker's own walk:
-    /// what the task has stored for a cycle ends here, and so does what is compared with the cycles of other tasks.
+    /// Call where no question is in progress.
     pub fn note_idle(&mut self) {
         debug_assert!(self.depth == 0);
         self.c.idle_between_statements();
@@ -292,8 +290,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.ask(|_| stored)
     }
 
-    /// The checker infers the type of a member that nobody has annotated, and assigns it anew where two visits of the member
-    /// nest and where a cycle runs through it. So what is said of such a member holds for the moment.
+    /// The checker infers the type of a member that nobody has annotated, and assigns it anew where two visits of the member nest and where a cycle runs through it.
     pub(super) fn note_inferred_member(&mut self) {
         self.has_met_inferred_member = true;
     }
@@ -497,8 +494,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    /// What the checker says or, where that is `any` or the `number` of a variable without an annotation, what the uses of
-    /// the value say. It is an expectation: nothing that decides what a program does, and no diagnostic, may rest on it.
+    /// What the checker says or, where that is `any` or the `number` of a variable without an annotation, what the uses of the value say.
     pub fn predicted_expression_type(&mut self, expression: ExprId) -> CheckedType {
         let checked = self.expression_type(expression)?;
         self.ask(|queries| Ok(queries.infer_expression_type(expression, checked)))
@@ -964,8 +960,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// What the stores into `this` in `function`, into its binding and into its prototype object say. What calls store
-    /// there is only in `constructor_function_shape`.
+    /// What the stores into `this` in `function`, into its binding and into its prototype object say.
     pub(super) fn own_constructor_function_shape(
         &mut self,
         function: FunctionRef,
@@ -1005,9 +1000,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// The built-in classes whose instances can be of `object_type` with members that a cast has given them: the class behind
-    /// a view that the type extends, and an array with a `pos` and an `end` for `{ pos: number; end: number }`, where an
-    /// interface of the program extends an array type and declares both. Only the first can be a class without an exact type.
+    /// The built-in classes whose instances can be of `object_type` with members that a cast has given them: the class behind a view that the type extends, and an array with a `pos` and an `end` for `{ pos: number; end: number }`, where an interface of the program extends an array type and declares both.
     pub fn accepted_builtins(
         &mut self,
         object_type: TypeId,
@@ -1185,11 +1178,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.compute_object_origin(object_type)
     }
 
-    /// `isDeeplyNestedType` of the last type of `path`, with the types that lead to it in front of it, where each of
-    /// the last instantiations is nested more deeply than the one before. The checker also counts those of one
-    /// height, `Of<A>` in `Of<B>` in `Of<C>`, which come to an end. It counts three and leaves out an instantiation that a
-    /// type node has named by now, which differs from one run to the next. This counts them all, and one more for the
-    /// written type that a path begins with.
+    /// `isDeeplyNestedType` of the last type of `path`, with the types that lead to it in front of it, where each of the last instantiations is nested more deeply than the one before.
     pub fn grows_along(&mut self, path: &[TypeId]) -> bool {
         const MAX_DEPTH: usize = 4;
         let Some(&ty) = path.last() else {

@@ -26,8 +26,7 @@ pub fn compile_build_overrides() -> Vec<(Vec<u8>, Json)> {
     ]
 }
 
-// They say what tsc writes and where, and a build writes none of it. Left in, they are held against each other, against
-// `noEmit` and against the places of the files. `composite` and `declaration` stay: other projects ask for them.
+// They say what tsc writes and where, and a build writes none of it.
 const OUTPUT_OPTIONS: [&[u8]; 20] = [
     b"charset",
     b"declarationDir",
@@ -51,9 +50,7 @@ const OUTPUT_OPTIONS: [&[u8]; 20] = [
     b"tsBuildInfoFile",
 ];
 
-// TypeScript 7 has removed them, and `bun run` never looked at them. They say what tsc writes, or how tsc finds a module,
-// which a build finds as `bun run` does. The two about default imports forbid an import that `bun run` performs, and the
-// checker reads neither: a namespace that is called, which only they allowed, is reported where it is called.
+// TypeScript 7 has removed them, and `bun run` never looked at them.
 fn is_removed_and_means_nothing(option: &(Vec<u8>, Json)) -> bool {
     let is_one_of = |values: &[&[u8]]| {
         let written = option.1.as_str();
@@ -81,8 +78,7 @@ pub fn load_for_build(
     load(host, session, path, RootFiles::Listed)
 }
 
-/// `load_for_build` without reading a directory. A project that has references is loaded with its files, because
-/// `only_has_references` asks for them. No error says that there are no files.
+/// `load_for_build` without reading a directory.
 pub fn load_for_build_with_unlisted_files(
     host: &dyn Host,
     session: &Session,
@@ -104,8 +100,7 @@ pub fn load_options_for_build(
 }
 
 impl Project {
-    // A solution: it lists projects and has no file of its own, so its options are written for no file. Only a project that
-    // was loaded with its root files can say so.
+    // A solution: it lists projects and has no file of its own, so its options are written for no file.
     pub fn only_has_references(&self) -> bool {
         debug_assert!(self.unlisted_files.is_none() || self.references.is_empty());
         self.files.is_empty() && !self.references.is_empty()
@@ -119,8 +114,7 @@ impl Project {
     }
 }
 
-// The projects that `project` references, directly or indirectly, each before its own references: the order in which the
-// language service looks for the project of an open file.
+// The projects that `project` references, directly or indirectly, each before its own references: the order in which the language service looks for the project of an open file.
 fn load_referenced_projects(
     host: &dyn Host,
     project: &Project,
@@ -152,8 +146,7 @@ pub fn load_referenced_projects_for_build(host: &dyn Host, solution: &Project) -
     load_referenced_projects(host, solution, |path| load_for_build(host, &Session::new(), path).ok())
 }
 
-// The sources of a referenced project stand in for the declaration files that it would write, so nothing has to be built
-// first: for each that writes into a directory of its own, that directory and the directory of sources that it mirrors.
+// The sources of a referenced project stand in for the declaration files that it would write, so nothing has to be built first: for each that writes into a directory of its own, that directory and the directory of sources that it mirrors.
 fn find_outputs_of_referenced_projects(host: &dyn Host, project: &Project) -> Vec<(Vec<u8>, Vec<u8>)> {
     let referenced = load_referenced_projects(host, project, |path| {
         let (session, mut errors) = (Session::new(), Vec::new());

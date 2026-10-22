@@ -1,10 +1,4 @@
-//! What a checker has answered about a type, a signature or a declaration holds in every file that it visits, and neighbors
-//! in the program ask about the same ones. So those answers live as long as the checker, with their lists in an arena of
-//! their own: a file that asks again reads the answer where it lies.
-//!
-//! A type has one record for all that is asked about it, found by its number without hashing.
-//!
-//! Only an answer is kept. That the checker gave up holds for the file that heard it (`Memo::gave_up`).
+//! What a checker has answered about a type, a signature or a declaration holds in every file that it visits, and neighbors in the program ask about the same ones.
 
 use super::answers::{
     CheckedMember, ClassRef, FunctionRef, GaveUp, IndexSignature, ListedMember, ObjectMember, PositionTypes,
@@ -47,8 +41,7 @@ impl KeptAnswers {
 }
 
 impl KeptMemo<'_> {
-    /// # Safety
-    /// Every reference in it points into the arena that it is put back with.
+    /// SAFETY: Every reference in it points into the arena that it is put back with.
     pub(super) unsafe fn outliving_its_borrow(self) -> KeptMemo<'static> {
         // SAFETY: that arena is freed behind the memo, and `KeptAnswers::take` hands both out together.
         unsafe { std::mem::transmute::<KeptMemo<'_>, KeptMemo<'static>>(self) }

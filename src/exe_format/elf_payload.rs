@@ -100,20 +100,7 @@ impl LoadSegments {
     ) -> Result<PayloadMapping, ElfError> {
         let rw_phdr = self.rw_phdr;
 
-        // Place the new data at a page-aligned virtual address past every
-        // existing mapping. page_size is ≥ 128 so this also guarantees the
-        // 128-byte alignment that JSC's bytecode cache requires — see
-        // `target_mod = 120` in StandaloneModuleGraph.rs, which assumes the
-        // payload starts on a 128-byte boundary so bytecode at payload-offset
-        // 120 lands 128-aligned once the 8-byte `[u64 size]` header is
-        // accounted for. A non-page-aligned `address` (e.g. one inheriting
-        // `rw_phdr.p_vaddr`'s residue mod 128) would SIGSEGV in JSC bytecode
-        // deserialization on aarch64.
-        //
-        // `file_offset` follows the segment's existing (vaddr - offset)
-        // delta, so the kernel's mmap at `rw_phdr.p_offset → rw_phdr.p_vaddr`
-        // covers our new payload continuously once we grow p_filesz.
-        // A payload from an earlier call keeps its address: BUN_COMPILED already holds it.
+        // Place the new data at a page-aligned virtual address past every existing mapping; a payload from an earlier call keeps its address.
         let address = match replaced_address {
             Some(address) => address,
             None => self
@@ -122,10 +109,7 @@ impl LoadSegments {
                 .ok_or(ElfError::InvalidElfFile)?,
         };
 
-        // Sanity: `max_vaddr_end` already reflects the RW segment's full
-        // memsz range (`find_load_segments` folds every PT_LOAD), so address is
-        // past it by construction. This guard catches pathological inputs
-        // (e.g. corrupt ELF with rw_phdr.p_vaddr past max_vaddr_end).
+        // Sanity: `max_vaddr_end` already reflects the RW segment's full memsz range (`find_load_segments` folds every PT_LOAD), so address is past it by construction.
         if replaced_address.is_none() && address < rw_phdr.p_vaddr + rw_phdr.p_memsz {
             return Err(ElfError::NewVaddrCollides);
         }
@@ -139,12 +123,6 @@ impl LoadSegments {
             .ok_or(ElfError::InvalidElfFile)?;
 
         // Extend the existing writable PT_LOAD to cover the appended payload.
-        // Keep p_offset/p_vaddr/p_paddr/p_align unchanged; only set filesz
-        // and memsz. Equal values are fine — the extension is entirely
-        // file-backed (no new BSS gap).
-        //
-        // PT_GNU_STACK is deliberately left alone; repurposing it into a
-        // separate late PT_LOAD is what breaks WSL1 (#29963).
         let segment_size = offset_in_segment
             .checked_add(aligned_size)
             .ok_or(ElfError::InvalidElfFile)?;
@@ -221,30 +199,7 @@ impl<'a> ElfFile<&'a mut [u8]> {
         Ok(ElfFile { data })
     }
 
-    /// Find the `.bun` section and place `payload` so the kernel `mmap`s it at
-    /// exec time alongside the rest of the binary. Stores the data's vaddr at
-    /// the original BUN_COMPILED location so the runtime can dereference it
-    /// directly. The pieces are the content of the new file, in order.
-    ///
-    /// We extend the existing writable `PT_LOAD` to cover the appended payload
-    /// rather than creating a new segment (by repurposing `PT_GNU_STACK`).
-    /// Earlier versions added a late `PT_LOAD`; WSL1's kernel ELF loader
-    /// rejects that shape with `ENOEXEC` at `execve` time before anything in
-    /// the binary runs (#29963). Growing an already-valid `PT_LOAD` — the shape
-    /// a linker would natively produce — keeps compiled binaries loadable on
-    /// WSL1 while preserving the mmap-at-execve contract (no file I/O at
-    /// startup, works with execute-only permissions).
-    ///
-    /// We always append rather than writing in-place because `.bun` is in the
-    /// middle of a `PT_LOAD` segment — sections like `.dynamic`, `.got`,
-    /// `.got.plt` come after it, and expanding in-place would invalidate their
-    /// absolute virtual addresses.
-    /// A payload that an earlier call appended is replaced where it is (`bun_section_is_payload`).
-    ///
-    /// With a reserved program header (`reserved_segment`) the payload gets a segment of its own past the end of the
-    /// image, which keeps the size of `.bss` out of the file. That is a late `PT_LOAD`.
-    ///
-    /// `code` is the range of compiled code in the payload. It gets a read-execute segment if three headers are reserved.
+    /// Find the `.bun` section and place `payload` so the kernel `mmap`s it at exec time alongside the rest of the binary.
     pub fn bun_section_in_pieces(
         mut self,
         payload: &'a [u8],
@@ -502,11 +457,7 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             return Err(ElfError::InvalidElfFile);
         }
 
-        // Extend the writable PT_LOAD that contains `.bun` (matched by vaddr,
-        // not "first writable": patchelf'd templates have an extra writable
-        // PT_LOAD holding the relocated PHDR + `.interp`, #31023). Growing an
-        // existing PT_LOAD rather than adding a late one is required by
-        // WSL1's kernel loader (#29963).
+        // Extend the writable PT_LOAD that contains `.bun` (matched by vaddr, not "first writable": patchelf'd templates have an extra writable PT_LOAD holding the relocated PHDR + `.interp`, #31023).
         let mut rw_segment: Option<(usize, Elf64_Phdr)> = None;
         let mut max_vaddr_end: u64 = 0;
         let mut next_vaddr = u64::MAX;
@@ -548,26 +499,7 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
     }
 
     fn find_tail(&self, ehdr: Elf64_Ehdr, rw_phdr: &Elf64_Phdr) -> Result<Range<u64>, ElfError> {
-        // File layout once the plan is carried out:
-        //
-        //   [0, tail_start)                           original content, unchanged
-        //                                             (RW segment's file-backed bytes)
-        //   [tail_start, file_offset)                 zero fill
-        //                                             (becomes file-backed inside the
-        //                                              extended RW PT_LOAD; must read as
-        //                                              zero to keep BSS semantics)
-        //   [file_offset, +aligned_size)              [u64 LE size][payload][zero pad]
-        //                                             (new .bun contents — vaddr = address)
-        //   [moved_tail_start, +tail size)            relocated non-ALLOC sections + old
-        //                                             section header table
-        //
-        // Anything past `tail_start` in the input — non-ALLOC sections
-        // like `.comment`, `.symtab`, `.strtab`, `.shstrtab`, debug info,
-        // plus the section header table — has to be moved out of the way
-        // because that file range now lives inside the extended RW PT_LOAD.
-        // Leaving it in place would mmap it into what was previously BSS
-        // (zero-initialized statics), corrupting the process.
-        // A replaced payload ends the RW segment: `tail_start` is its end, and the tail is the same.
+        // The tail behind the RW segment's file-backed bytes moves past the payload, and the gap is filled with zeros to keep BSS semantics.
         let tail_end: u64 = self.data.len() as u64;
         let tail_start = rw_phdr
             .p_offset
@@ -595,8 +527,6 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
         };
         let (header_index, header_count) = (reserved.header_index, reserved.header_count);
         // A replaced payload keeps its address, which BUN_COMPILED already holds.
-        // Below the end of the image lie its segments and the ranges removed from them. The payload holds compiled
-        // code, and a call into a removed range has to fault.
         let free_address = reserved
             .address
             .checked_next_multiple_of(page_size)
@@ -682,11 +612,7 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
     }
 
     fn write_payload_headers(&mut self, plan: &PayloadPlan) {
-        // Write the vaddr of the appended data at the ORIGINAL .bun section location
-        // (where BUN_COMPILED symbol points). At runtime, BUN_COMPILED.size will be
-        // this vaddr (always non-zero), which the runtime dereferences as a pointer.
-        // Non-standalone binaries have BUN_COMPILED.size = 0, so 0 means "no data".
-        // A replaced payload keeps its vaddr, which BUN_COMPILED already holds.
+        // Write the vaddr of the appended data at the ORIGINAL .bun section location (where BUN_COMPILED symbol points).
         if !plan.replaces_payload {
             write_u64_le(
                 &mut self.data[usize::try_from(plan.pointer_file_offset).expect("int cast")..][..8],
@@ -694,13 +620,7 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             );
         }
 
-        // Update every section header whose sh_offset pointed into the moved
-        // tail so tools like `readelf -S`, `objdump`, and `gdb` still find
-        // the right bytes. Special-case the .bun header — it moves to the
-        // payload's new position, not to the shifted tail.
-        //
-        // The section header table itself is part of the moved tail, so we
-        // compute its new location from e_shoff's old value.
+        // Update every section header whose sh_offset pointed into the moved tail so tools like `readelf -S`, `objdump`, and `gdb` still find the right bytes.
         self.write_ehdr_shoff(plan.moved_tail_offset(plan.section_headers_offset));
 
         for i in 0..plan.section_count as usize {
@@ -754,11 +674,7 @@ impl ElfFile {
         // The section header table moves with the tail.
         self.write_payload_headers(&plan);
 
-        // Relocate the tail (non-ALLOC sections + old shdr table) past the
-        // payload. Do this BEFORE zero-filling and writing the payload — if
-        // `file_offset < tail_end` (debug binaries with hundreds of
-        // MB of debug info past the RW segment), the destination overlaps
-        // the source, so memmove is required.
+        // Relocate the tail (non-ALLOC sections + old shdr table) past the payload.
         self.data.copy_within(
             usize::try_from(plan.tail_start).expect("int cast")
                 ..usize::try_from(plan.tail_end).expect("int cast"),
@@ -766,10 +682,7 @@ impl ElfFile {
         );
         self.data.truncate(file_size);
 
-        // Zero the bytes between the old RW file-content end and the payload
-        // start. This entire range is now inside the extended PT_LOAD's
-        // file-backed region; keeping it zero preserves BSS semantics.
-        // The call that appended the payload being replaced already did this.
+        // Zero the bytes between the old RW file-content end and the payload start.
         if !plan.replaces_payload {
             self.data[usize::try_from(plan.tail_start).expect("int cast")
                 ..usize::try_from(plan.file_offset).expect("int cast")]

@@ -3010,8 +3010,7 @@ impl Checker<'_, '_> {
     /// `checkNonNullType`: the type of `node` with `null` and `undefined` removed, which aren't allowed here.
     pub(super) fn check_non_null_type(&mut self, file: FileId, node: ExprId, ty: TypeId) -> TypeId {
         self.check_non_null_type_with_reporter(ty, |c, error| {
-            // Without `strictNullChecks` TypeScript still refuses `null` and `undefined` themselves. A file that was written
-            // without it is let off where the program has it, because the types are made under the program's.
+            // Without `strictNullChecks` TypeScript still refuses `null` and `undefined` themselves.
             if c.files.options.strict_null_checks && !c.reports_null_checks(file) {
                 return;
             }

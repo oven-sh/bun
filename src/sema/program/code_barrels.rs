@@ -10,10 +10,7 @@ use crate::resolve::{
     SiteResolution,
 };
 
-// A barrel is a module of a package with `"sideEffects": false` that defines none of its exports: each is an export of
-// another module under a name. The module behind such a name is loaded when some loaded file asks the barrel for the name,
-// as in src/bundler/barrel_imports.rs. What is loaded and what is asked for only grow, and each rule here holds for more
-// when they do, so the files of a build are the same whichever file is parsed first.
+// A barrel is a module of a package with `"sideEffects": false` that defines none of its exports: each is an export of another module under a name.
 
 pub(super) const NOT_LOADED: u32 = u32::MAX;
 

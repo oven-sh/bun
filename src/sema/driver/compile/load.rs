@@ -121,8 +121,7 @@ pub fn load_program<'s>(
     })
 }
 
-/// A leaf is read only by the task that checks it, and a build checks a source file only if it compiles it. The project's
-/// `tsconfig.json` includes tests, scripts and other programs: their trees are held for nothing.
+/// A leaf is read only by the task that checks it, and a build checks a source file only if it compiles it.
 fn free_unread_leaves(files: &Files<'_>, host: &dyn CodeHost) {
     let is_unread = |&file: &FileId| {
         let module = files.module(file);
@@ -257,7 +256,6 @@ fn find_project_of_first_entry_point(
 }
 
 // What a project declares globally is known to its own files, so the files of the project of each entry point are in the program.
-// A run of tests has thousands of entry points in a few projects: each tsconfig.json is looked for once a folder and read once.
 fn add_files_of_other_projects(
     host: &dyn CodeHost,
     program: &mut config::Project,

@@ -73,8 +73,7 @@ impl BuiltinTypeSymbols {
         }
     }
 
-    /// Whether `program_subtypes` or `classes_with_static_member` can name a declaration of `file`. The queries of every
-    /// file read the tree of such a file.
+    /// Whether `program_subtypes` or `classes_with_static_member` can name a declaration of `file`.
     pub fn can_list_declarations_of(files: &Files<'_>, file: FileId) -> bool {
         resolve::can_list_declarations_of(files, file)
     }

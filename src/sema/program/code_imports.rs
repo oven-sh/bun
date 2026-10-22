@@ -259,8 +259,7 @@ fn embed_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
     hir.import_attribute(attributes, known::embed)
 }
 
-/// `bun run` reads a required file as code when no loader has its extension. A file that a site only names, or that is one
-/// of several it may load, gets the loader an `import` of it has.
+/// `bun run` reads a required file as code when no loader has its extension.
 fn loader_kind(site: &ImportSite) -> CodeImportKind {
     let is_constant = matches!(site.specifier, ImportSpecifier::Constant(_));
     match site.kind {

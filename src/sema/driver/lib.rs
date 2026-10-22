@@ -406,8 +406,7 @@ fn runs_regions_inline() -> bool {
         .contains(&std::thread::current().id())
 }
 
-/// A pool thread that waited until other pool threads have started its tasks could wait forever, because they may all
-/// be waiting like it. See `Region::work_off_with_idle_threads`.
+/// A pool thread that waited until other pool threads have started its tasks could wait forever, because they may all be waiting like it.
 fn is_pool_thread() -> bool {
     !bun_threading::thread_pool::Thread::current().is_null()
 }
@@ -434,8 +433,7 @@ pub fn use_dedicated_pool(name: &'static str) {
 static FITS_THREADS_TO_SOURCES: AtomicBool = AtomicBool::new(false);
 static SOURCE_BYTES_READ: AtomicUsize = AtomicUsize::new(0);
 
-/// A thread that joins a build touches megabytes of its own first, which takes about two milliseconds. Compiling this much
-/// source text takes many times as long.
+/// A thread that joins a build touches megabytes of its own first, which takes about two milliseconds.
 const SOURCE_BYTES_PER_THREAD: usize = 32 << 10;
 /// The libraries' declarations and Bun's own modules, which are part of every build, keep this many threads busy.
 const THREADS_FOR_ANY_PROGRAM: usize = 4;
@@ -444,9 +442,7 @@ fn threads_for_sources_read() -> usize {
     THREADS_FOR_ANY_PROGRAM + SOURCE_BYTES_READ.load(Ordering::Relaxed) / SOURCE_BYTES_PER_THREAD
 }
 
-/// From now on the dedicated pool starts no more threads than there is source text for: `THREADS_FOR_ANY_PROGRAM`, and one
-/// more for every `SOURCE_BYTES_PER_THREAD` reported to `did_read_source` since this call. The tasks of a parallel region
-/// that have no thread yet get one as more is read. For a build whose thread count nobody chose.
+/// From now on the dedicated pool starts no more threads than there is source text for: `THREADS_FOR_ANY_PROGRAM`, and one more for every `SOURCE_BYTES_PER_THREAD` reported to `did_read_source` since this call.
 pub fn fit_threads_to_sources() {
     SOURCE_BYTES_READ.store(0, Ordering::Relaxed);
     FITS_THREADS_TO_SOURCES.store(true, Ordering::Relaxed);
@@ -539,8 +535,7 @@ impl JoinableRegion {
 }
 
 impl Region<'_> {
-    /// `work_off` on the calling thread, which at most `helpers` pool threads with nothing else to do join. The calling
-    /// thread only waits for those that have joined, so pool threads that all call this can't wait for each other.
+    /// `work_off` on the calling thread, which at most `helpers` pool threads with nothing else to do join.
     fn work_off_with_idle_threads(&self, helpers: usize) {
         use bun_threading::thread_pool::{Batch, Node, Task};
         #[repr(C)]
@@ -4912,15 +4907,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             files: files.len(),
         });
     };
-    // The last round is believed because one thread checks its files in order. What a build does with a checked file takes
-    // twenty times as long as that check. Each of these tasks sees what the last round has committed, is believed as it was,
-    // and commits nothing.
-    //
-    // A build asks questions that no check asks. Where one of them ends at a limit, its answer depends on what its checker has
-    // computed before, like everything at a limit. So which files share a task is a function of the program, never of the
-    // number of threads:
-    // - The files that were lost at a limit are one task, in program order, as in the last round.
-    // - Every other file was lost at a cycle or an invalid commit, and is a task by itself.
+    // The last round is believed because one thread checks its files in order.
     let work_after_last_round =
         |work: &compile::FileWork<'_, 's>, files: &[usize], expected: Requested| {
             // The last round has checked the files, and that is all this pass wants of them.

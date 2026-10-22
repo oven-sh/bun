@@ -13,8 +13,7 @@ pub enum WrittenPlace {
     Node(FileId, TypeNodeId),
 }
 
-/// The order in which the members of the unions below one type node are written. The checker sorts the members of a
-/// union, so `A | B` and `B | A` are one type, and the order of its members follows their names.
+/// The order in which the members of the unions below one type node are written.
 #[derive(Default, Debug)]
 pub struct WrittenUnionOrders {
     members: FxHashMap<TypeId, Box<[TypeId]>>,
@@ -35,10 +34,7 @@ impl WrittenUnionOrders {
         self.first_mentions.contains_key(&ty.plain())
     }
 
-    /// Puts `members`, which stand for members of `union`, in the order in which the types that `written_type` gives
-    /// for them are written. A union that nobody wrote as it is (an optional member adds `undefined`) goes by where
-    /// its members are first written as members of a union. Members that are written nowhere stay behind the others,
-    /// in the order they have.
+    /// Puts `members`, which stand for members of `union`, in the order in which the types that `written_type` gives for them are written.
     pub fn sort_members_by<T>(
         &self,
         union: TypeId,
@@ -131,8 +127,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Follows what a value of the type at `node` is made of: the aliases and interfaces that are named, with their type
-    /// arguments, members, elements and the members of unions. Function types hold no data.
+    /// Follows what a value of the type at `node` is made of: the aliases and interfaces that are named, with their type arguments, members, elements and the members of unions.
     pub(super) fn compute_written_union_orders(
         &mut self,
         file: FileId,

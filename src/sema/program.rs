@@ -257,8 +257,7 @@ pub struct Module<'s> {
     pub is_in_types_program: bool,
 }
 
-/// A build reads a file that it does not compile only if a file that it reads refers to it, and a project's `tsconfig.json`
-/// includes tests, scripts and other programs. Binding is more than half of loading a file.
+/// A build reads a file that it does not compile only if a file that it reads refers to it, and a project's `tsconfig.json` includes tests, scripts and other programs.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum BindTime {
     Now,
@@ -659,8 +658,7 @@ pub struct ModuleSymbolLinks<'s> {
     /// that `visit` reaches from there. A module that was already visited exports nothing the second time, so these
     /// aren't the errors that module would get on its own.
     pub export_collisions: &'s [ExportCollision],
-    /// The modules that `visit` came to, in its order, if there are several and `Resolve::finished_visit` may take
-    /// `resolved_exports` for what `visit` returns for the module.
+    /// The modules that `visit` came to, in its order, if there are several and `Resolve::finished_visit` may take `resolved_exports` for what `visit` returns for the module.
     visited: &'s [Sym],
 }
 
@@ -1142,8 +1140,7 @@ impl<'s, 'r> Prefetch<'s, 'r> {
         self.wake_all();
     }
 
-    /// Call when no thread is loading. Queues again what the early load skipped and what has changed on disk since it was
-    /// read. Returns false if nothing of the early load can be kept.
+    /// Call when no thread is loading.
     fn finish_early_load(&self, host: &dyn Host) -> bool {
         const FILES_PER_TASK: usize = 64;
         let read_early = std::mem::take(&mut self.state.lock().read_early);
@@ -1264,8 +1261,7 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
         !names.is_empty()
     }
 
-    /// With `once`, returns true after reading or processing one batch, or after one wait. Returns false once every
-    /// file is loaded.
+    /// With `once`, returns true after reading or processing one batch, or after one wait.
     fn load(&self, reads: bool, processes: bool, once: bool) -> bool {
         /// Adjacent paths are in the same directory.
         const RUN: usize = 16;
@@ -1476,8 +1472,7 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
                     ),
                 };
                 let mut loaded = Box::new(loaded);
-                // The sub tasks that don't depend on a file's depth in packages: all
-                // references, and these imports.
+                // The sub tasks that don't depend on a file's depth in packages: all references, and these imports.
                 let predicted: Vec<usize> = (0..loaded.imports.len())
                     .filter(|&at| {
                         let it = &loaded.imports[at];
@@ -2104,9 +2099,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         }
     }
 
-    /// The links of `module` where `visit` would do for it what `getExportsOfModuleWorker` has done: it has been to none
-    /// of those modules yet. Otherwise each module in a row of `export *` visits the whole row below it again, which
-    /// is the cube of their number, all told.
+    /// The links of `module` where `visit` would do for it what `getExportsOfModuleWorker` has done: it has been to none of those modules yet.
     fn finished_visit(
         &self,
         module: Sym,
@@ -5319,8 +5312,6 @@ impl<'s> Files<'s> {
             let has_root_files = !roots.is_empty() || compile.is_some();
             let mut starts: Vec<FileId> = Vec::new();
             // `processAllProgramFiles`: without root files there are no libraries and no automatic type directives.
-            // `processingDiagnostics` of the tasks that don't read a file, in the order of `rootTasks`:
-            // `diagnosticReason`, and the message.
             let mut without_file: Vec<(Visit, Problem)> = Vec::new();
             let mut libs_without_file: Vec<(Visit, Problem)> = Vec::new();
             let because = |reason: IncludeReason, name: &[u8]| Visit {
@@ -5349,8 +5340,7 @@ impl<'s> Files<'s> {
                     Ok(Some(found)) => {
                         root_of_start.push(index as u32);
                         let file = add(&found, false, &mut modules, &mut depths, &mut all_found);
-                        // The root files are the first of `rootTasks`, and the first task for a file
-                        // name is the one that is loaded (`loadedTask`): it has no `libFile`.
+                        // The root files are the first of `rootTasks`, and the first task for a file name is the one that is loaded (`loadedTask`): it has no `libFile`.
                         all_found.files[file.idx()].is_lib = false;
                         starts.push(file);
                     }
@@ -5362,16 +5352,12 @@ impl<'s> Files<'s> {
                 }
             }
             without_file.append(&mut libs_without_file);
-            // `collectFiles`, `seen[data]`: of the tasks for one path only the first is walked, and the
-            // `processingDiagnostics` of the others are dropped. This uses a set of paths because
-            // thousands of entries of `files` can be missing.
+            // `collectFiles`, `seen[data]`: of the tasks for one path only the first is walked, and the `processingDiagnostics` of the others are dropped.
             let mut walked: FxHashSet<Vec<u8>> = FxHashSet::default();
             without_file
                 .retain(|(visit, _)| walked.insert(to_path(&visit.name, is_case_sensitive).into()));
             let roots_end = starts.len();
-            // `addAutomaticTypeDirectiveTasks`: the last of `rootTasks`, for this file name. There's
-            // one `parseTaskData` per path, and `collectFiles` continues from the first of its tasks,
-            // so a root file or a library at this path replaces the directives.
+            // `addAutomaticTypeDirectiveTasks`: the last of `rootTasks`, for this file name.
             let containing_file = inside(&options.base_dir, INFERRED_TYPES_CONTAINING_FILE);
             let is_containing_file = |found: &FoundFile| {
                 is_same_path(found.path.pretty, &containing_file, is_case_sensitive)
@@ -5382,8 +5368,7 @@ impl<'s> Files<'s> {
             } else {
                 Vec::new()
             };
-            // Its entry in `taskDataByPath`. A sub task for the same file name gets it as `loadedTask`,
-            // so the file isn't read. There's no such sub task unless the file exists.
+            // Its entry in `taskDataByPath`.
             let mut automatic_task = None;
             if has_automatic_task && host.is_file(&containing_file) {
                 let task = add(
@@ -5481,8 +5466,7 @@ impl<'s> Files<'s> {
         let has_root_files = !roots.is_empty() || compile.is_some();
         let root_file_count = all_found.files.len();
         let mut program_errors = Vec::new();
-        // A file is checked under the project that governs it, and the globals and modules that its `types` declare are what
-        // it was written against. There is one program, so they are declared for every file.
+        // A file is checked under the project that governs it, and the globals and modules that its `types` declare are what it was written against.
         for project in build.iter().flat_map(|build| build.projects.naming_types()) {
             let build = build.as_ref().expect("a project governs a file of a build");
             let resolver = build.project_resolvers.resolver_for(&resolver, project);
@@ -6339,8 +6323,7 @@ impl<'s> Files<'s> {
                 || !(module.hir.imports.iter().any(|it| reexports_relatively(it.spec))
                     || module.hir.exports.iter().any(|it| reexports_relatively(it.spec)));
         }
-        // What is bound looks into what it refers to. The rest of what waits is read by nothing, so it could as well be absent.
-        // `Files::new_symbol`
+        // What is bound looks into what it refers to.
         let waits = |file: usize| {
             file != 0 && modules[file].bound.is_unbound && summaries[file].is_unread_unless_reached
         };
@@ -6565,8 +6548,7 @@ impl<'s> Files<'s> {
         let side_jobs: [&(dyn Fn() + Sync); 2] = [&find_components, &end_resolution];
         let declares_globals = |file: &FileId| summaries[file.idx()].declares_globals;
         let mut declaring: Vec<FileId> = order.iter().copied().filter(declares_globals).collect();
-        // The compiler's declarations refer to the installed types, so those come first in `order`. Where both declare a
-        // name, the compiler's declaration counts.
+        // The compiler's declarations refer to the installed types, so those come first in `order`.
         let of_compiler = files.by_path.get(COMPILER_DECLARATIONS_PATH);
         if let Some(at) = declaring.iter().position(|&file| Some(file) == of_compiler) {
             let libs_end = declaring.partition_point(|file| summaries[file.idx()].is_lib);
@@ -6782,8 +6764,7 @@ impl<'s> Files<'s> {
         if !bound.ran_out_of_stack {
             return bound;
         }
-        // The same result as when the parser runs out of stack: an empty HIR, which `check_file`
-        // reports as not fully checked.
+        // The same result as when the parser runs out of stack: an empty HIR, which `check_file` reports as not fully checked.
         *hir = hir::File {
             text: std::mem::take(&mut hir.text),
             source_len: hir.source_len,
@@ -6923,11 +6904,7 @@ impl<'s> Files<'s> {
         module.transient_symbols.clear();
     }
 
-    /// The load of a build leaves the text of a source file that no code loads with the file. Once for each file, when it
-    /// is known which of them nothing will read: those have nothing to report either.
-    ///
-    /// # Safety
-    /// No task has begun, and no reference into the text of the file is alive.
+    /// The load of a build leaves the text of a source file that no code loads with the file.
     pub unsafe fn settle_text(&self, file: FileId, is_read: bool) {
         // SAFETY: nothing else reads or writes the module now.
         let module: &mut Module<'s> = unsafe { &mut *self.modules[file.idx()].0.get() };
@@ -7241,8 +7218,7 @@ impl<'s> Files<'s> {
                 continue;
             }
             let resolved = resolver.resolve_module_name(text, from, mode);
-            // In a build: `bun check` resolves with the options of the program in every file, and a build reports no
-            // error that it does not.
+            // In a build: `bun check` resolves with the options of the program in every file, and a build reports no error that it does not.
             let resolved = resolved.or_else(|| {
                 let is_governed = build.is_some() && !std::ptr::eq(resolver, program_resolver);
                 let program = is_governed.then_some(program_resolver)?;
@@ -9664,7 +9640,6 @@ impl<'s> Files<'s> {
         // (`priority` of the component, the share, its deferred results)
         let left_over: Guarded<Vec<(u64, u32, Resolved<'s>)>> = Guarded::new(Vec::new());
         // Links `files`, which are in component `at`, and publishes the results for the files that `is_in_share` accepts.
-        // A share with cycles publishes nothing.
         let link_files = |at: u32, files: &[FileId], share: u32, is_in_share: &dyn Fn(FileId) -> bool| {
             let mut resolved = self.resolve_files(files, Some((&plan, at)), share);
             if share != WHOLE_COMPONENT && resolved.has_cycles {

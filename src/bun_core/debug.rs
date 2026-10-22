@@ -219,9 +219,7 @@ fn is_valid_memory(address: usize) -> bool {
     }
 }
 
-/// How the frame of ahead-of-time compiled code that a return address runs in
-/// is found. Such a frame may have no frame record: it is then addressed off
-/// the stack pointer, and its size comes from the tables of the compiled image.
+/// How the frame of ahead-of-time compiled code that a return address runs in is found.
 #[derive(Clone, Copy)]
 pub struct CompiledFrame {
     has_frame_record: bool,
@@ -259,8 +257,7 @@ fn compiled_frame_at_return_address(return_address: usize) -> Option<CompiledFra
     COMPILED_FRAME_AT_RETURN_ADDRESS.get().and_then(|lookup| lookup(return_address))
 }
 
-/// The registers of the caller of a frame of compiled code, given those in the
-/// frame: (pc, sp, fp). `load` reads a word of the stack.
+/// The registers of the caller of a frame of compiled code, given those in the frame: (pc, sp, fp).
 fn caller_of_compiled_frame(
     frame: CompiledFrame,
     sp: usize,
@@ -287,8 +284,7 @@ fn caller_of_compiled_frame(
 /// Walks the frame-pointer chain, and frames of compiled code by their tables.
 pub struct StackIterator {
     pub fp: usize,
-    /// The return address that `next()` gave last and the stack pointer in the
-    /// frame it runs in.
+    /// The return address that `next()` gave last and the stack pointer in the frame it runs in.
     returned_to: Option<(usize, usize)>,
     ma: MemoryAccessor,
 }

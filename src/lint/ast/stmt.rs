@@ -534,8 +534,7 @@ impl<'a> Stmt<'a> {
         Some(self.file.ident(name, at))
     }
 
-    /// True if it wraps the expression in a `for` head. The HIR has a statement there but the source doesn't, so it's
-    /// never a parent and no listener is called with it.
+    /// True if it wraps the expression in a `for` head.
     #[inline]
     pub fn is_wrapper(self) -> bool {
         self.file.wrapped_in(self.id).is_some()

@@ -1113,8 +1113,7 @@ impl<'a> Resolver<'a> {
 
     // var tracing_start: i128 — unused; dropped.
 
-    /// The module of the executable that `specifier` names from `source_dir`, found as `bun run` finds a file: as spelled, with
-    /// each extension, then the index file of a directory.
+    /// The module of the executable that `specifier` names from `source_dir`, found as `bun run` finds a file: as spelled, with each extension, then the index file of a directory.
     pub fn resolve_embedded_module(
         &self,
         source_dir: &[u8],
@@ -1152,8 +1151,7 @@ impl<'a> Resolver<'a> {
         self.standalone_module_graph?.resolve_package(source_dir, specifier, is_require, &search)
     }
 
-    /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module,
-    /// then a file that `--asset` gave it. The disk has been asked first.
+    /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module, then a file that `--asset` gave it.
     fn resolve_at_source_path(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
         use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
         let graph = self.standalone_module_graph?;

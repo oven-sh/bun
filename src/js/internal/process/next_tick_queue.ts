@@ -1,5 +1,4 @@
-// process.nextTick, and what a built-in module calls in its place. What makes the ring's nodes and what empties the ring is in
-// internal/process/tick_ring, which is loaded at the first tick: a program that only loads modules does not pay for it.
+// process.nextTick, and what a built-in module calls in its place.
 type TickRing = $BunModules["internal/process/tick_ring"];
 type Tick = import("./tick_ring").Tick;
 type TickCallback = import("./tick_ring").TickCallback;

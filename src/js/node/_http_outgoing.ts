@@ -363,8 +363,7 @@ function computeLenientHeaderValidation(message: $Node.OutgoingMessage): boolean
   // New httpValidation option takes priority (ClientRequest case)
   const httpValidation = message.httpValidation;
   if (httpValidation !== undefined) return httpValidation !== "strict";
-  // ServerResponse routes both options through the owning server; walk the
-  // req -> socket -> server chain once, not once per option.
+  // ServerResponse routes both options through the owning server; walk the req -> socket -> server chain once, not once per option.
   const server = getServer(message);
   const serverHttpValidation = getServerHttpValidation(server);
   if (serverHttpValidation !== undefined) return serverHttpValidation !== "strict";

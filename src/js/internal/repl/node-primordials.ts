@@ -1,14 +1,4 @@
-// Uncurried "primordials" shims for Node.js sources ported into Bun
-// (node:repl and the internal/readline stack). Each helper captures its
-// intrinsic once at module load and invokes it through the tamper-proof
-// `$call`/`$apply` intrinsics, so replacing a prototype method (e.g.
-// `Array.prototype.push = ...`) after this module loads does not affect the
-// ported code. Safe* containers re-export the real makeSafe()-wrapped
-// implementations from internal/primordials so there is one definition per
-// name. Weaker than Node only in that capture happens at (lazy) module load
-// rather than realm bootstrap; SafePromiseRace additionally wraps its input in
-// a SafeArrayIterator because spec Promise.race reads
-// Array.prototype[Symbol.iterator] at CALL time.
+// Uncurried "primordials" shims for Node.js sources ported into Bun (node:repl and the internal/readline stack).
 const { SafeSet, SafeStringIterator, SafeArrayIterator } = require("internal/primordials");
 
 type Replacement = string | Parameters<typeof String.prototype.replace>[1];

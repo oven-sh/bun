@@ -398,8 +398,7 @@ impl Glob {
 
         // Match the walker's root choice (`Iterator::init`): an absolute
         // pattern roots at its literal prefix and ignores the cwd, a relative
-        // pattern roots at the cwd. A `/$bunfs/` root walks the graph, and so does
-        // a directory embedded under its source path that is not on disk.
+        // pattern roots at the cwd. A `/$bunfs/` root walks the graph, as does an embedded directory that is not on disk.
         let pattern_is_absolute = resolve_path::is_absolute(self.pattern.slice())
             || (cfg!(windows) && resolve_path::is_absolute_posix(self.pattern.slice()));
         let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some_and(|graph| {

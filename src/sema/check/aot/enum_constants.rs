@@ -109,10 +109,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(constant.and_then(EnumConstant::value_known_to_build))
     }
 
-    /// `bun run` puts the value in the place of an access where its transpiler has seen the member by then. It goes
-    /// through a file in the order of the text, and takes the enums among the statements of a list before the other
-    /// statements of that list. So the part of an enum in a later block of a namespace is not seen from an earlier
-    /// block, nor from between the two: there the access reads the object as it is at run time.
+    /// `bun run` puts the value in the place of an access where its transpiler has seen the member by then.
     fn is_member_seen_before_access(&self, member: EnumMemberId, access: ExprId) -> bool {
         let hir = self.hir();
         if hir[member].pos < hir::start_of(hir, access) {
@@ -156,7 +153,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         }
         // The value is what the file's own code says, as `bun run` inlines it: the file's role has no say.
-        // A member of a `const` enum is its value wherever TypeScript names it, as in tsc and `bun build`.
         let is_declared_here = self.is_first_identifier_own_declaration(object);
         let is_const_enum_elsewhere =
             reach == EnumReach::ConstEnums && flags.intersects(SymFlags::CONST_ENUM);

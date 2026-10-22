@@ -7867,10 +7867,7 @@ impl<'p, 's> Checker<'p, 's> {
         // statements has that many in a row, so here these invocations wait in a list, outermost
         // first.
         let mut shared: SmallVec<[(FlowId, Memoizable); 2]> = SmallVec::new();
-        // The type at a compound assignment asks at each assignment on its way back: each walk starts one node in front of the
-        // last one and passes the same nodes again: the cube of their number, all told. Every node that this loop passes has
-        // the answer of the loop, so where walks can be long it is kept for all of them. With a label reduced the answer is
-        // not that of the node alone.
+        // The type at a compound assignment asks at each assignment on its way back: each walk starts one node in front of the last one and passes the same nodes again: the cube of their number, all told.
         const LONG_WALK: u32 = 256;
         let keeps_every_node = reduced.is_empty() && bound.flow_depth >= LONG_WALK;
         let reachable = loop {

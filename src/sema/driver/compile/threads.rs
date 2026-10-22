@@ -7,8 +7,7 @@ pub fn drop_thread_caches(caches: &ThreadCaches) {
     caches.idle.lock().clear();
 }
 
-/// Runs `on_one_thread` on a thread of the pool, which keeps the parallel regions that it starts to itself, while the calling
-/// thread runs `meanwhile`.
+/// Runs `on_one_thread` on a thread of the pool, which keeps the parallel regions that it starts to itself, while the calling thread runs `meanwhile`.
 pub fn run_on_one_thread_while<A: Send, B>(
     caches: &ThreadCaches,
     on_one_thread: impl FnOnce() -> A + Send,
@@ -27,10 +26,7 @@ pub fn run_on_one_thread_while<A: Send, B>(
     (result.expect("the region ended"), other_result.expect("called once"))
 }
 
-/// Calls `run(argument)` once, on a thread of the pool that parallel regions run on. Does not wait for it.
-///
-/// # Safety
-/// `run` may be called with `argument` on any thread, at any later time.
+/// Calls `run(argument)` once, on a thread of the pool that parallel regions run on.
 pub unsafe extern "C" fn run_on_region_thread(
     run: unsafe extern "C" fn(*mut c_void),
     argument: *mut c_void,

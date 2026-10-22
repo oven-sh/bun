@@ -2,8 +2,7 @@ use super::super::{ExprId, ExprKind, File, NodeData, StmtId};
 use super::{CheckResult, FileRule, invalid};
 use crate::fold::{TreeNode, push_children};
 
-// Whoever changes a tree can only append to it, so a cast that is put around an expression that stood there comes in front of
-// its operand. Such a cast takes no room in the text, which a written one always does.
+// Whoever changes a tree can only append to it, so a cast that is put around an expression that stood there comes in front of its operand.
 fn is_cast_without_text(file: &File<'_>, cast: ExprId, operand: ExprId) -> bool {
     let (cast, operand) = (&file[cast], &file[operand]);
     matches!(cast.kind, ExprKind::As { .. }) && (cast.pos, cast.end) == (operand.pos, operand.end)

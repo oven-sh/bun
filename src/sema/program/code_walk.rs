@@ -40,9 +40,7 @@ struct WalkState<'s, 'r> {
     /// What `enqueue` has added, until `queue_found_files` says who reads it.
     found: Vec<u32>,
     to_read: VecDeque<u32>,
-    /// A plugin can take seconds for a file, most of them waiting: for a process it has started, for a file, for its turn on
-    /// the one thread that the plugins of a build run on. So all such reads are asked for at once, each by a thread that
-    /// does nothing else, and no other file waits behind one.
+    /// A plugin can take seconds for a file, most of them waiting: for a process it has started, for a file, for its turn on the one thread that the plugins of a build run on.
     to_read_by_plugin: VecDeque<u32>,
     plugin_readers: usize,
     idle_plugin_readers: usize,
@@ -59,8 +57,7 @@ struct WalkState<'s, 'r> {
 }
 
 impl WalkState<'_, '_> {
-    /// Each file that can be read or parsed now is in the hands of a thread, which may wait for a plugin. The other threads
-    /// have nothing to do.
+    /// Each file that can be read or parsed now is in the hands of a thread, which may wait for a plugin.
     fn has_idle_threads(&self) -> bool {
         self.to_read.is_empty() && self.ready.is_empty() && self.in_progress > 0
     }
@@ -91,8 +88,7 @@ pub(super) type SpawnBackgroundReaders<'w> = &'w (dyn Fn(Vec<Vec<u8>>) + Sync);
 pub(super) const MAX_BACKGROUND_READERS: usize = MAX_PLUGIN_READERS;
 
 impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
-    /// `meanwhile` runs on the calling thread during the walk. Once it has set `early_prefetch`, those files are loaded while
-    /// the walk leaves threads idle.
+    /// `meanwhile` runs on the calling thread during the walk.
     pub(super) fn load_code_files(
         &self,
         spawn_background_readers: SpawnBackgroundReaders<'_>,
@@ -225,8 +221,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         state.barrels = barrels;
     }
 
-    /// A file that a plugin reads is asked for at once. It doesn't wait for the files that were found before it.
-    /// Returns whether there is more to read.
+    /// A file that a plugin reads is asked for at once.
     fn queue_found_files(&self, start_plugin_reader: StartPluginReader<'_>) -> bool {
         let mut state = self.state.lock();
         let found = std::mem::take(&mut state.found);

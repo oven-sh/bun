@@ -44,16 +44,14 @@ pub fn top_level_dir() -> &'static [u8] {
 static HAS_WORKING_DIRECTORY_IN_EXECUTABLE: AtomicBool = AtomicBool::new(false);
 static WORKING_DIRECTORY_IN_EXECUTABLE: crate::RwLock<Option<&'static [u8]>> = crate::RwLock::new(None);
 
-/// `process.chdir()` into a folder that only the executable holds, without a separator at its end. The system has no such
-/// directory: its own working directory stays, `top_level_dir()` with it, and children inherit that one.
+/// `process.chdir()` into a folder that only the executable holds, without a separator at its end.
 pub fn set_working_directory_in_executable(directory: Option<&'static [u8]>) {
     let mut current = WORKING_DIRECTORY_IN_EXECUTABLE.write();
     *current = directory;
     HAS_WORKING_DIRECTORY_IN_EXECUTABLE.store(directory.is_some(), Ordering::Release);
 }
 
-/// Where `process.cwd()`, `path.resolve()` and the path arguments of `node:fs` and `Bun.file()` start, if not in the
-/// system's working directory.
+/// Where `process.cwd()`, `path.resolve()` and the path arguments of `node:fs` and `Bun.file()` start, if not in the system's working directory.
 #[inline]
 pub fn working_directory_in_executable() -> Option<&'static [u8]> {
     if !HAS_WORKING_DIRECTORY_IN_EXECUTABLE.load(Ordering::Acquire) {

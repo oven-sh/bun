@@ -26,13 +26,7 @@ U_CAPI void U_EXPORT2 uloc_setDefault(const char* localeID, UErrorCode* status);
 U_CAPI const char* U_EXPORT2 uloc_getDefault(void);
 extern "C" const unsigned char U_ICUDATA_ENTRY_POINT[];
 
-// `--trim` leaves 16 bytes in the place of the items of a language that the program does not name, and whoever opens
-// one ends the process. ICU opens the bundle of its default locale on its own: the first date format of a process makes
-// a calendar in it to find the default century. No program sees that locale, so a host with another language than the
-// program's (or with none: LANG=C is en_US_POSIX) must not end it.
-//
-// The bundle ICU would open is the first that exists of en_US_POSIX, en_US, en. The table of contents of ICU's package is
-// a count and that many pairs of offsets (name, data) from the count, in the order of the names.
+// `--trim` leaves 16 bytes in the place of the items of a language that the program does not name, and whoever opens one ends the process.
 static bool isBundleOfLocaleRemoved(std::string_view locale)
 {
     const unsigned char* package = U_ICUDATA_ENTRY_POINT;

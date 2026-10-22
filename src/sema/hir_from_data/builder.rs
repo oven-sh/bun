@@ -347,8 +347,7 @@ impl<'s> Builder<'_, 's> {
         vec![declaration, load, self.export_default(value)]
     }
 
-    /// `new (import.meta.require("bun:sqlite").Database)(path)`. In place of the path of an embedded database stand its bytes:
-    /// `import.meta.require("node:fs").readFileSync(path)`.
+    /// `new (import.meta.require("bun:sqlite").Database)(path)`.
     fn database(&mut self, path: Atom, is_embedded: bool) -> ExprId {
         let path = self.expr(ExprKind::String(path));
         let source = match is_embedded {

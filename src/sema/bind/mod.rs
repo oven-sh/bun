@@ -3013,8 +3013,7 @@ impl<'s> Bound<'s> {
         BoundBuilder::default().move_to_arena(arena)
     }
 
-    /// In place of the side tables of a module that is bound once a file that is read refers to it. `specifiers`:
-    /// `specifiers_of_closed_module`. No other field is filled in.
+    /// In place of the side tables of a module that is bound once a file that is read refers to it.
     pub fn unbound_in(arena: &'s Arena, specifiers: Vec<Atom>) -> Bound<'s> {
         let mut unbound = BoundBuilder {
             is_unbound: true,

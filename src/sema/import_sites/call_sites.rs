@@ -102,7 +102,6 @@ pub struct RequireCall {
 }
 
 // `require(p)`, `require.call(receiver, p)` and `require.apply(receiver, [p])`, where `require` is the one of the file under any name.
-// `args` is what `require` is given.
 pub fn find_require_call(
     hir: &File<'_>,
     bound: &Bound<'_>,

@@ -112,8 +112,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Where the symbol is made that names the member `name`. None unless a `const` declares it and `Symbol()` or
-    /// `Symbol("text")` initializes that: a symbol that is only declared, or that `Symbol.for` answers, is made elsewhere.
+    /// Where the symbol is made that names the member `name`.
     pub fn symbol_creation(&mut self, name: Atom) -> Option<SymbolCreation> {
         let key = self.c.key_type_of_name(name)?;
         let &TypeData::UniqueSymbol {
@@ -381,8 +380,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Ok(checked) => checked,
             Err(reason) => return WrittenType::GaveUp(reason),
         };
-        // A copy names declarations, not what it was copied from. The copy of a mapped member names the member that was
-        // mapped, and has the type of the template, which somebody else may have written.
+        // A copy names declarations, not what it was copied from.
         match self.c.union(&sources.types) == checked {
             true => WrittenType::Written(checked),
             false => WrittenType::Unwritten,

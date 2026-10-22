@@ -1,5 +1,4 @@
-//! What a compiled program adds to the standalone module graph: its record, the graph handed over by descriptor,
-//! and the paths outside the virtual root that the graph answers for.
+//! What a compiled program adds to the standalone module graph: its record, the graph handed over by descriptor, and the paths outside the virtual root that the graph answers for.
 
 use core::mem::size_of;
 use core::ptr::read_unaligned;
@@ -206,8 +205,7 @@ pub(crate) fn append_record(
     Ok(())
 }
 
-/// The number of names, a record a name, then the paths one after the other. `places[i]` is where entry point `i` of the input is
-/// in the record.
+/// The number of names, a record a name, then the paths one after the other.
 fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) -> Option<Vec<u8>> {
     let mut names: Vec<&CompiledPackageNameInput<'_>> = names.iter().collect();
     names.sort_unstable_by_key(|name| name.path);
@@ -409,8 +407,7 @@ pub(crate) fn add_source_directories(
     }
 }
 
-/// Whether normalizing `name` changes nothing but a separator at its end: it starts at the root and none of its components
-/// is empty, `.` or `..`.
+/// Whether normalizing `name` changes nothing but a separator at its end: it starts at the root and none of its components is empty, `.` or `..`.
 fn is_normalized_posix_path(name: &[u8]) -> bool {
     let Some(rest) = name.strip_prefix(b"/") else {
         return false;
@@ -551,8 +548,7 @@ impl StandaloneModuleGraph {
             .map(Box::from)
     }
 
-    /// Whether `key`, as `absolute_key` makes it, can be a file or a directory that the graph answers for outside of its
-    /// own root: each of those begins as all of them do, or is a directory above them all.
+    /// Whether `key`, as `absolute_key` makes it, can be a file or a directory that the graph answers for outside of its own root: each of those begins as all of them do, or is a directory above them all.
     fn is_near_source_paths(&self, program: &CompiledProgram, key: &[u8]) -> bool {
         if cfg!(windows) {
             return true;
@@ -566,8 +562,7 @@ impl StandaloneModuleGraph {
         })
     }
 
-    /// For a path the disk does not have: whether any of `stat`, `find_ref`, `find_dir` and `source_path_kind` can find
-    /// something there. A program probes many paths that do not exist, and nearly all of them lie elsewhere.
+    /// For a path the disk does not have: whether any of `stat`, `find_ref`, `find_dir` and `source_path_kind` can find something there.
     pub fn may_answer_for(&self, path: &[u8]) -> bool {
         if is_bun_standalone_file_path(path) {
             return true;
@@ -614,8 +609,7 @@ impl StandaloneModuleGraph {
             .map(|(key, file)| (&key[..], file.contents.as_bytes()))
     }
 
-    /// A file that `--asset` or an import put into the executable of a compiled program as it is. It stands for the file at its
-    /// path: no module text. Compiled in place that is its source path, and otherwise a path under the executable's own root.
+    /// A file that `--asset` or an import put into the executable of a compiled program as it is.
     pub fn is_asset_of_compiled_program(&self, name: &[u8], file: &File) -> bool {
         let Some(program) = self.compiled_program.as_ref() else {
             return false;
@@ -641,8 +635,7 @@ impl StandaloneModuleGraph {
         let mut buffer = path_buffer_pool::get();
         let key = absolute_key(name, &mut buffer)?;
         let file_index = self.files.get_index(key.as_bytes())?;
-        // The file of an entry point is empty: its text is on the disk or nowhere. But one that is embedded, a native addon or an asset, has its bytes
-        // and its loader under the same name, and an asset may be an empty file.
+        // The file of an entry point is empty: its text is on the disk or nowhere.
         let is_entry_point = program
             .entry_point_by_file_index(u32::try_from(file_index).ok()?)
             .is_some();

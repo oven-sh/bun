@@ -277,8 +277,7 @@ fn in_memory_path(working_directory: &[u8], key: &[u8]) -> Vec<u8> {
     to_native(&from_argument(working_directory, key)).to_vec()
 }
 
-// The bundler's own patterns are addresses of a development server. Only what the build marks as external names code
-// that the executable loads at run time.
+// The bundler's own patterns are addresses of a development server.
 fn externals(options: &BundleOptions<'_>) -> Externals {
     let external = &options.external;
     let patterns = external.patterns.iter().map(|pattern| (&pattern.prefix[..], &pattern.suffix[..]));
@@ -342,8 +341,7 @@ fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) ->
     without_trailing_slash_windows_path(&common).to_vec()
 }
 
-/// `resolve_path::longest_common_path` has a second rule for more than eight paths, which can answer a folder that
-/// does not hold all of them.
+/// `resolve_path::longest_common_path` has a second rule for more than eight paths, which can answer a folder that does not hold all of them.
 fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
     let Some((&first, rest)) = paths.split_first() else {
         return b"";
@@ -382,8 +380,7 @@ fn entry_point_names(
     without_equal_names(names.into_iter().collect::<Option<_>>()?, log)
 }
 
-/// The names of the entry points' files in the executable, which are those that `bun build --compile` gives them: the
-/// resolver looks for an entry point under `.js` whatever the extension of its source was, and tools read the list.
+/// The names of the entry points' files in the executable, which are those that `bun build --compile` gives them: the resolver looks for an entry point under `.js` whatever the extension of its source was, and tools read the list.
 pub(crate) fn embedded_entry_point_names(
     options: &BundleOptions<'_>,
     working_directory: &[u8],
@@ -438,8 +435,7 @@ fn output_name_template(entry_naming: &[u8]) -> PathTemplate {
     template
 }
 
-// Without a template of the user's the module of an entry point is named like any other module, after its
-// source file: the name is what `Bun.main`, `import.meta.path` and stack frames show.
+// Without a template of the user's the module of an entry point is named like any other module, after its source file: the name is what `Bun.main`, `import.meta.path` and stack frames show.
 fn entry_name(template: Option<&mut PathTemplate>, relative: Vec<u8>) -> Vec<u8> {
     let mut name = match template {
         None => relative,

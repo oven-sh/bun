@@ -357,9 +357,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
   },
 });
 
-// Whether a read of `message.rawHeaders` reaches the accessor above, which is not configurable. A message as the server
-// made it has nothing in front of that accessor: two questions that need no call into native code. Behind a prototype that
-// somebody put in between, `__lookupGetter__` goes on from there: each object is asked once, in the order of a lookup.
+// Whether a read of `message.rawHeaders` reaches the accessor above, which is not configurable.
 function readsRawHeadersThroughAccessor(message: $Node.IncomingMessage): boolean {
   if (ObjectHasOwn(message, "rawHeaders")) return false;
   const parent: object | null = ObjectGetPrototypeOf(message);
@@ -500,12 +498,7 @@ function resumeConnection(req: $Node.IncomingMessage) {
 function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.HttpSocket) {
   if (req.upgrade || socket[kHandoffResponse] !== undefined) {
     "unlikely";
-    // Upgrade request with a body (Node 26 semantics): reading the request
-    // must not flip the raw socket into flowing mode - tunnel bytes pushed
-    // to the socket before the 'upgrade' listener attaches its own 'data'
-    // handler would be discarded by a flowing stream with no readers.
-    // Resume the native body source directly instead.
-    // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
+    // Upgrade request with a body (Node 26 semantics): reading the request must not flip the raw socket into flowing mode - tunnel bytes pushed to the socket before the 'upgrade' listener attaches its own 'data' handler would be discarded by a flowing stream with no readers.
     onIncomingMessageResumeNodeHTTPResponse.$call(req);
   } else if (!socket._paused) {
     const resumeUnlessFlowing = socket[kResumeUnlessFlowing];

@@ -38,8 +38,7 @@ impl<S: Storage> FileIn<S> {
         self.runtime_key(self[p].key, self[p].key_pos)
     }
 
-    /// `static constructor() {}` is a static method named `constructor`. To TypeScript, which the parser follows, it is a
-    /// constructor with a modifier that may not stand there.
+    /// `static constructor() {}` is a static method named `constructor`.
     #[inline]
     pub fn runtime_member_kind(&self, m: MemberId) -> MemberKind {
         match self[m].kind {
@@ -144,8 +143,7 @@ impl<S: Storage> FileIn<S> {
 }
 
 impl File<'_> {
-    /// `bun run` drops a function's own `"use strict"` from a file that it transpiles, after its parser has read what
-    /// follows the directive, nested functions too, as strict mode code.
+    /// `bun run` drops a function's own `"use strict"` from a file that it transpiles, after its parser has read what follows the directive, nested functions too, as strict mode code.
     pub fn follows_dropped_directive(&self, node: Node) -> bool {
         if self.rare_syntax & rare::DROPPED_STRICT_DIRECTIVE == 0 {
             return false;

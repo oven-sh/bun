@@ -1,8 +1,4 @@
 //! The bodies of node_path.bind.ts.
-//!
-//! An 8-bit string is read where it is. Only '/', '\\', ':', '.', '?' and the ASCII letters mean anything in a path, so
-//! its Latin-1 characters go through `bun_node_path` as they are. An answer that is part of an operand shares its
-//! characters, and one that is all of it is the operand. A 16-bit string is turned into UTF-8 first.
 
 use crate::generated_bindgen::node_path::ParsedPath;
 use crate::jsc::bindgen::{self, JsHeap, JsLatin1, JsLocal, JsScope};
@@ -28,8 +24,7 @@ use bun_paths::MAX_PATH_BYTES;
 type Text<'a> = JsLocal<'a, JSString>;
 type TextResult<'a> = bindgen::Result<'a, Text<'a>>;
 
-/// Path scratch carved from the per-VM [`RarePathBuf`], which is allocated once. What exceeds its largest tier
-/// (32 × `MAX_PATH_BYTES`) is a zeroed heap slab of its own.
+/// Path scratch carved from the per-VM [`RarePathBuf`], which is allocated once.
 enum PathScratch<'a> {
     Pooled(&'a mut [u8]),
     Spill(Box<[u8]>),
@@ -64,8 +59,7 @@ fn latin1_answer<'a>(heap: &JsHeap<'a>, answer: &[u8]) -> Option<Text<'a>> {
     (answer.len() <= JSString::MAX_LENGTH).then(|| heap.create_latin1_string(answer))
 }
 
-/// With `FLAT_ONLY`, `None` for all but an 8-bit string that is no rope, and nothing is called. Each function tries that
-/// first, inlined into its thunk, and leaves every other string to a function of its own.
+/// With `FLAT_ONLY`, `None` for all but an 8-bit string that is no rope, and nothing is called.
 #[inline(always)]
 fn latin1_of<'a, const FLAT_ONLY: bool>(
     heap: &JsHeap<'a>,
@@ -143,10 +137,7 @@ impl<'a> IntoAnswer<ParsedPath<'a>> for ParsedPath<'a> {
 
 // ───────────────────────────── parts of one path ─────────────────────────────
 
-/// The characters `range` of `text`.
-///
-/// # Safety
-/// `range` is what a function of `bun_node_path` answered for `text.characters()`.
+/// The characters `range` of `text`. SAFETY: `range` is what a function of `bun_node_path` answered for `text.characters()`.
 #[inline(always)]
 unsafe fn part<'a>(heap: &JsHeap<'a>, text: &JsLatin1<'a>, range: core::ops::Range<usize>) -> Text<'a> {
     // SAFETY: forwarded.
@@ -453,8 +444,7 @@ const FEW: usize = 8;
 
 type Parts<'p> = [core::mem::MaybeUninit<&'p [u8]>; FEW];
 
-/// # Safety
-/// All of `parts` are written.
+/// SAFETY: All of `parts` are written.
 #[inline(always)]
 unsafe fn written<'s, 'p>(parts: &'s [core::mem::MaybeUninit<&'p [u8]>]) -> &'s [&'p [u8]] {
     // SAFETY: forwarded.
@@ -763,8 +753,7 @@ unsafe extern "C" {
     safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
 }
 
-/// `None` unless the paths that count are 8-bit strings and [`SHORT`] together. Those are the last that is absolute and
-/// all after it, or all of them behind the working directory, which then has to be ASCII: its characters are UTF-8.
+/// `None` unless the paths that count are 8-bit strings and [`SHORT`] together.
 #[inline(always)]
 fn resolve_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     heap: &JsHeap<'a>,
@@ -986,8 +975,7 @@ pub(crate) fn to_namespaced_path_posix<'a>(_: &JsHeap<'a>, path: JsLocal<'a>) ->
     path
 }
 
-/// Based on Node v21.6.1 path.win32.toNamespacedPath:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L624
+/// Based on Node v21.6.1 path.win32.toNamespacedPath: https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L624
 pub(crate) fn to_namespaced_path_win32<'a>(
     cx: &mut JsScope<'a>,
     path: JsLocal<'a>,

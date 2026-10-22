@@ -97,8 +97,7 @@ ALWAYS_INLINE JSC::JSValue stringOfStringObject(JSC::JSGlobalObject& globalObjec
     return value;
 }
 
-// An argument of a function whose body is C++ (`cppSymbol`). The frame of the caller holds it for the whole call, and the body borrows
-// nothing from it that would outlive the value in its own hands, so nothing is kept alive here and the call of the body is the last thing done.
+// An argument of a function whose body is C++ (`cppSymbol`).
 class ArgumentInFrame {
 public:
     ALWAYS_INLINE ArgumentInFrame(JSC::JSValue value)
@@ -112,8 +111,7 @@ private:
     JSC::JSValue m_value;
 };
 
-// What an inline C++ body (`cppInlineBody`) is handed by the generated host function: `at(n)` reads the argument from the frame of the
-// caller where the body asks for it, and answers undefined for one that is left out.
+// What an inline C++ body (`cppInlineBody`) is handed by the generated host function: `at(n)` reads the argument from the frame of the caller where the body asks for it, and answers undefined for one that is left out.
 class ArgumentsInFrame {
 public:
     ALWAYS_INLINE explicit ArgumentsInFrame(JSC::CallFrame& callFrame)

@@ -1687,15 +1687,13 @@ pub struct Checker<'p, 's> {
     /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task has
     /// stored. The entries from files that a single checker would have checked earlier aren't counted.
     relation_sizes: [i32; 6],
-    /// `Some`: the next call of `related` answers a question of `aot::Queries`, which no check of the program asks, with this
-    /// much `relationCount`. See `Relater::is_for_query`.
+    /// `Some`: the next call of `related` answers a question of `aot::Queries`, which no check of the program asks, with this much `relationCount`.
     relation_entries_for_query: Option<i32>,
     /// A comparison that answers such a question is in progress, with whatever it evaluates on the way.
     is_comparing_for_query: bool,
     /// How many times `refuse_cross_product_of_two_unions` has left the task as it is.
     size_refusals_in_queries: u64,
-    /// The arguments of `Checker::write_constraint` for which the answer is the error type, for no other reason than such a
-    /// refusal. Read and written while `is_comparing_for_query`: a check of the program reports 2590 each time.
+    /// The arguments of `Checker::write_constraint` for which the answer is the error type, for no other reason than such a refusal.
     write_constraints_refused_for_size: crate::util::FxHashSet<(TypeId, TypeId, u16)>,
     variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
     #[expect(
@@ -3190,8 +3188,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// it would, so that results computed from it are recorded in turn.
     fn cut_short_again(&mut self) {
         self.times_cut_short.set(self.times_cut_short.get() + 1);
-        // Every other cut discards the task. So in one that has got this far the result was cut short by
-        // `refuse_cross_product_of_two_unions` and by nothing else.
+        // Every other cut discards the task.
         if self.is_comparing_for_query {
             self.task.stop_writing_immediately();
             return self.mark_rejected_from(0);
@@ -3439,12 +3436,6 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `error_at_current_node(2590)` for the intersection of two unions, neither of which has primitive types alone.
-    ///
-    /// Whether `checkCrossProductUnion` rejects those is a function of the two. Nothing is ever stored for a set that is
-    /// rejected. A set of two is not split in halves, whatever the first request for it looked like. And no flag that a
-    /// first request leaves on a union is asked for. So where nothing is reported either, in a comparison for a question
-    /// of `aot::Queries`, every task gets the same whatever it has found, and this one is not discarded. It goes on as a
-    /// trusted task does.
     #[cold]
     fn refuse_cross_product_of_two_unions(&mut self) {
         if !self.is_comparing_for_query || self.span_to_report_limit_at().is_some() {

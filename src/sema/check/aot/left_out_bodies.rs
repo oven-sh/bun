@@ -56,8 +56,7 @@ impl LeftOutBodies {
 #[derive(Default)]
 pub(in crate::check) struct LeftOutOfCheck<'p> {
     bodies: Option<&'p LeftOutBodies>,
-    // Of the file that is being checked: from the type parameters to the end of each function. In ascending order, and none
-    // is in another.
+    // Of the file that is being checked: from the type parameters to the end of each function.
     ranges: Vec<(u32, u32)>,
 }
 

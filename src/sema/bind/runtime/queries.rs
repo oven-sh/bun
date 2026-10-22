@@ -49,8 +49,7 @@ impl<S: Storage> RuntimeDeclarationsIn<S> {
 }
 
 impl<S: Storage> BoundIn<S> {
-    /// What the declaration is when it runs. Bun builds its own modules with its bundler, which makes a `var` of a `let` or
-    /// a `const` at the top level of a file: they have no dead zone, and some of them are read before they are initialized.
+    /// What the declaration is when it runs.
     pub fn variable_kind(&self, hir: &File, declaration: VarDeclId) -> VarKind {
         let written = hir[declaration].kind;
         let statement = self.var_stmt[declaration.idx()];
@@ -480,8 +479,7 @@ impl Bound<'_> {
         has_bit(&self.runtime.references.evaluated_idents, e.idx())
     }
 
-    /// Whether code inside the function expression can get hold of the function: by its own name, by `arguments.callee` or by a
-    /// direct eval.
+    /// Whether code inside the function expression can get hold of the function: by its own name, by `arguments.callee` or by a direct eval.
     pub fn finds_itself(&self, hir: &File, function: FnId) -> bool {
         if hir[function].kind == FnKind::Arrow {
             return false;
@@ -498,8 +496,7 @@ impl Bound<'_> {
         idents.any(|ident| self.is_evaluated_ident(ident) && self.binding(ident) == own_name)
     }
 
-    /// Whether the function expression is the callee of a call and nothing else ever holds it, so that it runs where it is
-    /// written and at no other time.
+    /// Whether the function expression is the callee of a call and nothing else ever holds it, so that it runs where it is written and at no other time.
     pub fn is_called_only_where_written(&self, hir: &File, function: FnId) -> bool {
         self.get_immediately_invoked_function_expression(hir, function).is_some()
             && !self.finds_itself(hir, function)

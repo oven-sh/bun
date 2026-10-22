@@ -124,8 +124,7 @@ impl ProgramSymbols {
     }
 }
 
-// `declared_in` is the compiler's own declaration file: a name means what that file declares, whatever another file
-// declares under it. A host that supplies no such file leaves the names to the installed types.
+// `declared_in` is the compiler's own declaration file: a name means what that file declares, whatever another file declares under it.
 fn find_export(
     files: &Files<'_>,
     container: Sym,
@@ -174,9 +173,7 @@ fn find_tag_literal(files: &Files<'_>, int32: Sym) -> Option<(FileId, TypeNodeId
 }
 
 impl Checker<'_, '_> {
-    // What the compiler declares for its own operations, like `JSON.parse<T>`, comes on top of the types that the program is
-    // checked with. Beside a signature of those types it would make an overloaded function of one that has a single
-    // signature, and an overloaded function gives a function expression no parameter types.
+    // What the compiler declares for its own operations, like `JSON.parse<T>`, comes on top of the types that the program is checked with.
     pub(in crate::check) fn remove_compiler_signatures(&self, signatures: &mut SmallVec<[SigId; 4]>) {
         let Some(compiler_declarations) = self.p.aot_symbols().compiler_declarations else {
             return;

@@ -170,8 +170,7 @@ fn is_checked_by_kind(files: &Files<'_>, file: FileId) -> bool {
         FileKind::Declaration => {
             !options.skip_lib_check && !(options.skip_default_lib_check && module.is_lib)
         }
-        // A source file that no code loads is in the program for what it declares: its errors are those of no
-        // compiled code.
+        // A source file that no code loads is in the program for what it declares: its errors are those of no compiled code.
         FileKind::Ts | FileKind::Tsx => files.is_compiled(file),
     }
 }

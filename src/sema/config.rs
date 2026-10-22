@@ -1500,8 +1500,7 @@ impl GlobPattern {
         reached.iter().any(is_whole) || self.is_exclude && !prefix_only
     }
 
-    /// How many parts of `directory` the literal components at the start match, one each: `match_parts` can start behind
-    /// them, for every name in the directory. `None`: one of them differs, so nothing in the directory matches.
+    /// How many parts of `directory` the literal components at the start match, one each: `match_parts` can start behind them, for every name in the directory.
     fn match_start(&self, directory: &[&[u8]]) -> Option<usize> {
         let mut matched = 0;
         for (component, part) in self.components.iter().zip(directory) {

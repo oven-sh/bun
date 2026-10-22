@@ -1,5 +1,4 @@
-//! Finds the end of a function's block without parsing it. A mistake (it does not know JSX text) ends the block too early or too
-//! late, so the text behind it does not parse, and the caller parses the file whole.
+//! Finds the end of a function's block without parsing it.
 
 use bun_core::strings;
 

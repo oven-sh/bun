@@ -1,7 +1,4 @@
-// What the compiler reads in place of src/js/internal/primordials.js. Both make the same objects.
-// The interpreter's text walks the keys of Map, Set and WeakMap: a loop is warm after its first turn, a statement that runs once never is.
-// A compiler wants to see what lies under each name. Here every member is bound to its built-in by a read under a constant key, one statement a member, in the order of
-// the built-in's own keys, and nothing walks the keys of an object. test/aot/primordials-are-bound-by-name.test.ts holds the two texts against each other.
+// What the compiler reads in place of src/js/internal/primordials.js.
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectFreeze = Object.freeze;
@@ -173,8 +170,7 @@ sealClass(SafeWeakMap);
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseResolve = Promise.$resolve.bind(Promise);
-// Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`
-// is null for the void variant (no result bookkeeping, resolves with nothing).
+// Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal` is null for the void variant (no result bookkeeping, resolves with nothing).
 const safePromiseAllCollect = (promises, mapFn, returnVal) =>
   new Promise((resolve, reject) => {
     const { length } = promises;

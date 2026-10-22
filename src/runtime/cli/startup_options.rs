@@ -135,8 +135,7 @@ struct BuildRecord {
 impl BuildRecord {
     fn obstacle_to(self, requirement: RuntimeRequirement) -> Option<Obstacle> {
         match requirement {
-            // What the build proved holds while nothing but the code it saw runs. A build for the debugger proves nothing.
-            // A module of the library carries out an option that needs the whole runtime, and the image has the modules that the program uses.
+            // What the build proved holds while nothing but the code it saw runs.
             RuntimeRequirement::RuntimeCode | RuntimeRequirement::WholeRuntime if self.omits_function_source => {
                 Some(Obstacle::BuiltWithoutFunctionSource)
             }
@@ -257,7 +256,6 @@ fn forbids_text_evaluation(option: &WrittenOption<'_>) -> bool {
 fn read_option_words(words: &[&[u8]]) -> ExecArgvOptions {
     let mut requirements = Vec::new();
     // The runtime looks for these in every word, a value or what follows a positional included.
-    // Native code carries out `--stack-trace-limit`, and nobody does anything for `--trace-env-native-stack`.
     let needs_library = |word: &&&[u8]| {
         bun_core::is_bootstrap_flag(word)
             && !bun_core::is_stack_trace_limit_flag(word)
@@ -284,8 +282,7 @@ fn read_option_words(words: &[&[u8]]) -> ExecArgvOptions {
     }
 }
 
-// What a module of the library carries out prints or writes something for whoever started the program, and the program does the
-// same without it. Such an option may come from the environment of a server, which has to start all the same.
+// What a module of the library carries out prints or writes something for whoever started the program, and the program does the same without it.
 fn is_only_for_diagnosis(requirement: RuntimeRequirement) -> bool {
     requirement == RuntimeRequirement::WholeRuntime
 }
@@ -463,8 +460,7 @@ pub(crate) fn reject_unusable_bunfig_settings(ctx: &mut ContextData) {
     exit_if_unusable(find_unusable_bunfig_setting(ctx, obstacle_in_this_executable));
 }
 
-// The file is the one that happens to lie in the working directory, and it may be there for `bun`. Nobody wrote its preloads and
-// its plugins for this executable, which only runs code that was compiled into it.
+// The file is the one that happens to lie in the working directory, and it may be there for `bun`.
 fn ignore_code_of_bunfig(ctx: &mut ContextData, obstacle_to_code: Option<Obstacle>) {
     if obstacle_to_code == Some(Obstacle::RunsOnlyCompiledCode) {
         ctx.preloads.clear();

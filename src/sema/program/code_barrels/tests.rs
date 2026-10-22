@@ -65,8 +65,6 @@ struct Outcome {
     waiting: Vec<(u32, Vec<u32>)>,
 }
 
-// File 0 is the entry point. `order` says which of the files that are loaded and not parsed is parsed next: the choice
-// taken and the number of choices at each step. A step past its end takes the first choice and adds itself.
 fn load(files: &[TestFile], order: &mut Vec<(usize, usize)>) -> Outcome {
     let mut requests = BarrelRequests::default();
     let mut is_loaded = vec![false; files.len()];

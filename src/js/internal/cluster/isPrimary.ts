@@ -12,8 +12,7 @@ function loadChild(): $BunModules["internal/cluster/child"] {
     }
     return child;
   }
-  // An executable of a program that never names node:cluster holds nothing of a worker. Started as one all the same, by the
-  // setupPrimary({ exec }) of another program, it says so where it would listen, and does not listen as a primary would.
+  // An executable of a program that never names node:cluster holds nothing of a worker.
   throw Object.assign(
     new Error(
       "Cannot load 'node:cluster': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)",

@@ -3048,8 +3048,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
-    /// `Types::mark_from_type_node`, except for the declared type of a class or interface, which `T[]` is in
-    /// `interface Array<T>`. Every task resolves it before it reaches a node that names it, so it never has the flag.
+    /// `Types::mark_from_type_node`, except for the declared type of a class or interface, which `T[]` is in `interface Array<T>`.
     fn mark_from_type_node(&self, ty: TypeId, first_new_type_id: NewTypes) {
         if self.types().is_from_type_node(ty) {
             return;

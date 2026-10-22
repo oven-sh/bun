@@ -152,8 +152,7 @@ pub trait Host: Sync {
         atoms: &crate::atom::Interner<'s>,
         options: ParseOptions,
     ) -> crate::hir::File<'s>;
-    /// `parse` for a caller that reads the top level of the file alone: a function may have an empty body in the place of its
-    /// own. `None`: the host has no such parse, or the file has to be parsed whole.
+    /// `parse` for a caller that reads the top level of the file alone: a function may have an empty body in the place of its own.
     fn parse_top_level<'s>(
         &self,
         _arena: &'s crate::session::Arena,
@@ -200,8 +199,7 @@ pub trait Host: Sync {
         self.parallel(count, work);
         meanwhile();
     }
-    /// Runs `work`. Each `parallel` that it calls runs on the calling thread alone. This is for the `meanwhile` of a
-    /// `parallel_while` whose tasks keep every thread until they're all done.
+    /// Runs `work`.
     fn run_regions_inline(&self, work: &mut dyn FnMut()) {
         work();
     }
@@ -607,8 +605,7 @@ pub fn is_javascript_file(host: &dyn Host, path: &[u8]) -> bool {
 pub struct ParseOptions {
     pub experimental_decorators: bool,
     pub module_detection: ModuleDetection,
-    /// What the project says. A build differs: Bun runs every file as a module, so there `module_detection` is `Force` and
-    /// what the code of a file declares is the file's own. A file that only declares is what the project makes of it.
+    /// What the project says.
     pub written_module_detection: ModuleDetection,
     /// `jsx` is `react-jsx` or `react-jsxdev`: a JSX tag imports its factory.
     pub jsx_imports_its_factory: bool,
@@ -758,7 +755,6 @@ pub struct Options {
     /// `composite` don't apply to them. `None`: all of them belong to it.
     pub own_roots: Option<usize>,
     /// A root file, a script, whose global declarations and ambient modules count only where no other file declares the name.
-    /// Empty: there is none.
     pub declarations_of_last_resort: Vec<u8>,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
     /// `validatedFilesSpec` as an absolute path.
@@ -784,8 +780,7 @@ pub struct Options {
     /// The effective `moduleResolution` is `node16` or `nodenext`, specified or defaulted.
     /// Otherwise it is `bundler`.
     pub resolves_like_node: bool,
-    /// What an `import` names is found as `bun run` finds it, which adds an extension and takes the index file of a directory
-    /// under every `moduleResolution`.
+    /// What an `import` names is found as `bun run` finds it, which adds an extension and takes the index file of a directory under every `moduleResolution`.
     pub imports_need_no_extension: bool,
     /// The effective `moduleResolution` is `node16`, which doesn't support `#/` in the `imports`
     /// of a `package.json` (`NodeResolutionFeaturesImportsPatternRoot`). `nodenext` and `bundler`

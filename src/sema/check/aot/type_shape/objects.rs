@@ -44,8 +44,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !matches!(own.kind, ShapeKind::Object) {
             return Ok(own);
         }
-        // An interface that extends an array type or `Map` describes arrays or maps that have some more properties:
-        // `interface NodeArray<T> extends ReadonlyArray<T>, TextRange`.
+        // An interface that extends an array type or `Map` describes arrays or maps that have some more properties: `interface NodeArray<T> extends ReadonlyArray<T>, TextRange`.
         match self.builtin_base(ty)? {
             Some(base) if base.builtin_denotation() == Some(Denotation::Exact) => Ok(base),
             Some(_) | None => Ok(own),
@@ -99,7 +98,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     // The members that instantiations share say whether there is a signature, so none is instantiated to find that there is none.
-    // Only for a type that is its own apparent type, which is where `Checker::signatures` looks.
     fn has_no_signature(&mut self, ty: TypeId) -> bool {
         let is_own_apparent_type = match self.c.data(ty) {
             TypeData::Ref { .. } | TypeData::Synth(_) => true,

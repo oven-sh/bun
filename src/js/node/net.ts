@@ -66,8 +66,7 @@ type Timer = NodeJS.Timeout;
 
 type ConnectionListener = (socket: $Node.Socket) => void;
 
-// The handles of a `node:cluster` worker (internal/cluster/child.ts). The round-robin one stands in for the listener as
-// `server._handle`.
+// The handles of a `node:cluster` worker (internal/cluster/child.ts).
 interface ClusterFauxHandle {
   stop?: undefined;
   sharedFd?: undefined;

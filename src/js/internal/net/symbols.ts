@@ -14,7 +14,6 @@ export default {
   kStandaloneWrap: Symbol("kStandaloneWrap"),
 
   // Registered symbols: other modules name them by their keys.
-  // On a tls.TLSSocket and a tls.Server: the function that answers the native TLS options.
   bunTlsSymbol: Symbol.for("::buntls::"),
   bunSocketServerOptions: Symbol.for("::bunnetserveroptions::"),
   // On a tls.TLSSocket and a tls.Server: the constructor of the native SecureContext.

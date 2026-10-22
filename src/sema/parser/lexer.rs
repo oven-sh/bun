@@ -56,8 +56,7 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_script: bool,
     /// The file is JavaScript parsed for `bun compile`.
     pub(crate) compiles: bool,
-    /// `Options::compiles`: text that is not UTF-8 is read as `bun run` reads it, so the value of every token is WTF-8, and
-    /// the lines of JSX text are trimmed as `bun run` trims them.
+    /// `Options::compiles`: text that is not UTF-8 is read as `bun run` reads it, so the value of every token is WTF-8, and the lines of JSX text are trimmed as `bun run` trims them.
     pub(crate) decodes_ill_formed_text: bool,
     /// `Dialect::typescript_5`
     pub(crate) is_typescript_5: bool,
@@ -1551,8 +1550,7 @@ impl<'a> Lexer<'a> {
         Some(pos + 2)
     }
 
-    /// `scanEscapeSequence`, at a backslash before a byte that isn't valid UTF-8. Go decodes it as U+FFFD. With
-    /// `decodes_ill_formed_text` the escape stands for what `bun run` reads there.
+    /// `scanEscapeSequence`, at a backslash before a byte that isn't valid UTF-8.
     #[cold]
     #[inline(never)]
     fn escaped_byte(&self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
@@ -2573,8 +2571,7 @@ fn with_replacement_characters(mut text: &[u8]) -> String {
     read
 }
 
-/// Returns the value of the JSX text `text`, which is WTF-8: lines are trimmed and joined with a space, whitespace-only
-/// lines are dropped, and entities are decoded. `is_white_space`: what counts as whitespace besides a space and a tab.
+/// Returns the value of the JSX text `text`, which is WTF-8: lines are trimmed and joined with a space, whitespace-only lines are dropped, and entities are decoded.
 fn fix_whitespace_and_decode_jsx_entities(text: &[u8], is_white_space: fn(i32) -> bool) -> Vec<u8> {
     let mut decoded = Vec::new();
     let mut after_last_non_whitespace = None;

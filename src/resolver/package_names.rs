@@ -1,6 +1,4 @@
-//! What a build asks so that an executable finds its entry points by the names of their packages. The executable holds no
-//! `package.json`: the build resolves each name that a package gives its files, from each place where a compiled file sees the
-//! package, and writes down those that lead to an entry point.
+//! What a build asks so that an executable finds its entry points by the names of their packages.
 
 use core::ptr::NonNull;
 

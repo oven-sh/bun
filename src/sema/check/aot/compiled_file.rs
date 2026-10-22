@@ -21,9 +21,7 @@ impl Program<'_> {
 }
 
 impl Checker<'_, '_> {
-    // TypeScript takes a `unique symbol` for `symbol` in every declaration but the one that created it, which is what a
-    // declaration file can say. A constant holds the one symbol it was initialized with, and `this[kName]` finds its member
-    // by that symbol.
+    // TypeScript takes a `unique symbol` for `symbol` in every declaration but the one that created it, which is what a declaration file can say.
     pub(in crate::check) fn keeps_unique_symbol(&self, name: Option<(FileId, PatId)>) -> bool {
         let Some((file, pattern)) = name else {
             return false;
@@ -127,8 +125,7 @@ impl<'s> Checker<'_, 's> {
         self.module_options(file).no_implicit_any && !self.is_inferred_file(file)
     }
 
-    // Types are made under the `strictNullChecks` of the program. A file that was written without it and without
-    // `noImplicitAny` expects `any[]` of `[]` and `any` of `null`, not `never[]` and `null`.
+    // Types are made under the `strictNullChecks` of the program.
     pub(in crate::check) fn follows_variables_that_start_empty(&self, file: FileId) -> bool {
         self.follows_untyped_variables(file) || self.is_non_strict_file_in_strict_program(file)
     }

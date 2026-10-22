@@ -176,8 +176,7 @@ function emitErrorNextTickIfErrorListener(
 }
 
 function takeRequestTrailers(self: $Node.IncomingMessage, handle: $Node.NodeHTTPResponse) {
-  // The lenient value bytes must match what the parser accepted on the wire,
-  // or a CTL byte in a trailer value would make the trailers vanish here.
+  // The lenient value bytes must match what the parser accepted on the wire, or a CTL byte in a trailer value would make the trailers vanish here.
   const server = self.socket?.server;
   const { calculateLenientFlags, HTTPParser } = require("node:_http_common");
   return handle.takeRequestTrailers(
@@ -454,9 +453,7 @@ const kHighWaterMark = Symbol("kHighWaterMark");
 const kSocket = Symbol("kSocket");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const kUniqueHeaders = Symbol("kUniqueHeaders");
-// Cache slot for the server dispatcher's keep-alive decision (stamped once
-// per request in _http_server.ts); declared in the constructor of IncomingMessage
-// so the stamp never shape-transitions the request.
+// Cache slot for the server dispatcher's keep-alive decision (stamped once per request in _http_server.ts); declared in the constructor of IncomingMessage so the stamp never shape-transitions the request.
 const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
 const kIncomingMessage = Symbol("IncomingMessage");
 const kSkipPendingData = Symbol("SkipPendingData");
@@ -467,10 +464,7 @@ const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
 // What the modules of `node:http` share, and the members of their classes whose keys are the symbols above.
 declare global {
   namespace $Node {
-    /**
-     * An object without a prototype that serves as a table. `{ __proto__: null } as Dictionary<T>` creates one:
-     * TypeScript takes the `__proto__` of the literal for a property.
-     */
+    /** An object without a prototype that serves as a table. */
     type Dictionary<T> = { [key: string]: T } & { __proto__?: null };
     type HttpHeaderValue = number | string | (number | string)[];
     /** `kOutHeaders`: lowercased name -> the name as it was given, and the value. */
@@ -492,10 +486,7 @@ declare global {
       close(): void;
     }
 
-    /**
-     * A stream that carries HTTP messages, with what `node:http` keeps on it: a `net.Socket`, or a `Duplex` that was
-     * given to `node:http`.
-     */
+    /** A stream that carries HTTP messages, with what `node:http` keeps on it: a `net.Socket`, or a `Duplex` that was given to `node:http`. */
     interface HttpSocket extends Duplex {
       _httpMessage?: OutgoingMessage | null;
       parser?: HTTPParser | HttpServerParserShim | null;
@@ -515,10 +506,7 @@ declare global {
       [kResumeUnlessFlowing]?(): void;
     }
 
-    /**
-     * The server of a connection, as `node:http` reads it: an `http.Server`, or a `net.Server` (an `Http2SecureServer`
-     * that allows HTTP/1, a server whose sockets are handed on) that has some of an `http.Server`'s options or none.
-     */
+    /** The server of a connection, as `node:http` reads it: an `http.Server`, or a `net.Server` (an `Http2SecureServer` that allows HTTP/1, a server whose sockets are handed on) that has some of an `http.Server`'s options or none. */
     interface HttpSocketServer extends EventEmitter {
       timeout?: number;
       maxHeaderSize?: number;

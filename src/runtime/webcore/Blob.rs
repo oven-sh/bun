@@ -5482,8 +5482,7 @@ fn find_or_create_s3_file(
     Blob::find_or_create_file_from_path(path_or_fd, global_this, true)
 }
 
-/// `find_or_create_file_from_path` with `check_s3`. Throws for an `s3://` path in an executable without S3.
-/// Inlined so that each caller has its own guard site.
+/// `find_or_create_file_from_path` with `check_s3`.
 #[inline(always)]
 fn try_find_or_create_file_from_path(
     path_or_fd: &mut PathOrFileDescriptor<'static>,

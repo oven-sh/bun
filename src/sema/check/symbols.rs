@@ -2870,8 +2870,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Without `strictNullChecks`, `getWidenedType` turns `null` and `undefined` into `any`, and
-    /// `[]` into `any[]`.
+    /// Without `strictNullChecks`, `getWidenedType` turns `null` and `undefined` into `any`, and `[]` into `any[]`.
     fn implicit_any_in_non_strict_file(
         &mut self,
         file: FileId,

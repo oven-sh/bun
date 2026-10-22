@@ -16,7 +16,6 @@ pub(crate) const PT_NULL: u32 = 0;
 pub(crate) const PT_NOTE: u32 = 4;
 pub(crate) const PT_PHDR: u32 = 6;
 // FreeBSD reads program headers from the first page only (imgact_elf.c, phdr_in_zero_page).
-// Linux rejects a table larger than 4096 bytes (fs/binfmt_elf.c, load_elf_phdrs), a weaker limit.
 const MAX_TABLE_END_OFFSET: u64 = 4096;
 // Type of the note named "Bun\0" whose descriptor is room for the program header table.
 pub(crate) const NT_BUN_PROGRAM_HEADER_ROOM: u32 = 1;

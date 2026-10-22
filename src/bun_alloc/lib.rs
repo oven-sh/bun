@@ -744,7 +744,6 @@ impl WTFStringImplStruct {
     /// binary), so the one-instruction body is reimplemented here.
     /// `Relaxed` matches WebKit's
     /// `m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed)`.
-    ///
     /// A static string can be in read-only memory, so its count is never written.
     #[inline]
     pub fn r#ref(&self) {

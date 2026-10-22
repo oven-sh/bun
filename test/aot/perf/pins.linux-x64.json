@@ -1050,6 +1050,11 @@
     "untyped": 684.0,
     "jit": 943.6
   },
+  "built-in/create-an-object-below-an-object-nobody-knows": {
+    "typed": 161.7,
+    "untyped": 91.9,
+    "jit": 227
+  },
   "built-in/number-of-a-header": {
     "typed": 191.0,
     "untyped": 180.0,

@@ -120,8 +120,7 @@ fn remove_packed_relocations(elf: &mut [u8], ehdr: &crate::elf::Elf64_Ehdr, tabl
     Ok((all.len() - kept.len()) as u64)
 }
 
-/// Drops the relative relocations whose target is in `removed` (sorted, disjoint), so the loader doesn't dirty those
-/// pages. Returns the number dropped.
+/// Drops the relative relocations whose target is in `removed` (sorted, disjoint), so the loader doesn't dirty those pages.
 pub(crate) fn remove_relative_relocations(elf: &mut [u8], removed: &[AddressRange]) -> Result<u64, ImageError> {
     let ehdr = read_header(elf)?;
     let relative = match ehdr.e_machine {

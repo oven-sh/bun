@@ -4355,8 +4355,7 @@ pub fn maybe_handle_panic_during_process_reload() {
 
 static RESTART_ARGUMENTS: Once<Vec<ZBox>> = Once::new();
 
-/// `reload_process` starts the process with the arguments it was started with, except those that `replace` gives
-/// another text for.
+/// `reload_process` starts the process with the arguments it was started with, except those that `replace` gives another text for.
 pub fn replace_restart_arguments(replace: impl Fn(&[u8]) -> Option<&'static [u8]>) {
     RESTART_ARGUMENTS.get_or_init(|| {
         let arguments = argv_storage().iter().map(|argument| argument.as_bytes());
@@ -4489,8 +4488,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 }
 
-/// Replaces this process with Bun run with `args`. File descriptors this process inherited, and `keep_open`, stay open.
-/// Returns the errno of `execve`.
+/// Replaces this process with Bun run with `args`.
 #[cfg(unix)]
 pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     unsafe extern "C" {

@@ -1,5 +1,4 @@
-// The bundler cuts this file up with regular expressions: a `type` ends at the first "$", and the parameters of an
-// exported function at the first ")".
+// The bundler cuts this file up with regular expressions: a `type` ends at the first "$", and the parameters of an exported function at the first ")".
 interface ShellResolve {
   (code: number, stdout: Buffer, stderr: Buffer): void;
 }

@@ -1,9 +1,7 @@
 //! `--disallow-code-generation-from-strings`: whether script may be made from a
 //! string in this process. Set while the command line is parsed and never
 //! lowered afterwards, so every thread and every global object made later
-//! reads the same answer. An executable from which `--trim` removed the
-//! interpreter is at `Strict` whatever its flags say, and so is one whose
-//! program `bun compile` found to evaluate no text.
+//! reads the same answer.
 //!
 //! A build configured with `codeGenerationFromStrings` off
 //! (scripts/build/config.ts) has no level to set: it is the constant

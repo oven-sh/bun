@@ -1093,11 +1093,7 @@ export const internalModuleBytecode: {
   (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
 } = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);
 
-/**
- * An answer: an absolute native path | `builtin:node:fs` | `external` | `erased` | `computed` (unknown) |
- * `computed: <answer>, <answer>` | `not found` (bunRun) | `not found (PackagePathNotExported)` (compile: the member of
- * `CodeFailure`).
- */
+/** An answer: an absolute native path | `builtin:node:fs` | `external` | `erased` | `computed` (unknown) | `computed: <answer>, <answer>` | `not found` (bunRun) | `not found (PackagePathNotExported)` (compile: the member of `CodeFailure`). */
 export type CodeResolutionSite = {
   importer: string;
   specifier: string;
@@ -1148,10 +1144,7 @@ const compareCodeResolutionNative = $newRustFunction("code_resolver_testing.rs",
   listsEverySite: boolean,
 ) => string;
 
-/**
- * Resolves every constant specifier of every source file under `root`, as `import` and as `require`, with the resolver
- * of `bun compile` and with the resolver of `bun run`.
- */
+/** Resolves every constant specifier of every source file under `root`, as `import` and as `require`, with the resolver of `bun compile` and with the resolver of `bun run`. */
 export const compareCodeResolution = (
   root: string,
   options: { conditions?: string[]; preserveSymlinks?: boolean; listsEverySite?: boolean } = {},
@@ -1205,11 +1198,7 @@ const resolveComputedSpecifierNative = $newRustFunction("code_resolver_testing.r
   kind: "import" | "require",
 ) => string;
 
-/**
- * The modules that a specifier starting with `prefix` and ending with `suffix` can name in the file `importer` (an
- * absolute native path), by the resolver of `bun compile`: absolute native paths and `builtin:node:fs`, in the
- * resolver's order. `all`: unknown, and `cause` is the member of `ComputedUnknown`.
- */
+/** The modules that a specifier starting with `prefix` and ending with `suffix` can name in the file `importer` (an absolute native path), by the resolver of `bun compile`: absolute native paths and `builtin:node:fs`, in the resolver's order. */
 export const resolveComputedSpecifier = (
   importer: string,
   prefix: string,

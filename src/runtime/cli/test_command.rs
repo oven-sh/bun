@@ -3031,8 +3031,7 @@ impl TestCommand {
             match promise.map(|promise| jsc::JSInternalPromise::opaque_mut(promise).status()) {
                 None | Some(jsc::js_promise::Status::Rejected) => {
                     if let Some(promise) = promise {
-                        // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                        // `unhandled_rejection(&mut self, ...)` can reborrow.
+                        // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so `unhandled_rejection(&mut self, ...)` can reborrow.
                         let global = vm.global();
                         let p = jsc::JSInternalPromise::opaque_mut(promise);
                         let (result, promise_js) = (p.result(global.vm()), p.to_js());

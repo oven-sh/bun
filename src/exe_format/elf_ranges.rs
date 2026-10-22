@@ -197,8 +197,7 @@ fn find_image_end(headers: &[Elf64_Phdr]) -> Result<u64, ImageError> {
     Ok(image_end)
 }
 
-// A header for the payload's own segment, so that `.bss` gets no file bytes. The payload holds compiled code and a call
-// into a removed range has to fault, so its addresses are ones that the linked image never had.
+// A header for the payload's own segment, so that `.bss` gets no file bytes.
 fn create_reserved_header(image_end: u64, alignment: u64) -> Result<Elf64_Phdr, ImageError> {
     let address = image_end
         .checked_next_multiple_of(alignment)

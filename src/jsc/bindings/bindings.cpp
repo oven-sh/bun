@@ -2390,9 +2390,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0
     return WebCoreCast<WebCore::JSFetchHeaders, WebCore::FetchHeaders>(JSValue0);
 }
 
-// What the conversion in WebCore__FetchHeaders__createFromJS() makes of a record of compiled code that holds nothing but strings under
-// string keys, without the question for @@iterator and without the list of pairs in between: no code of the program runs, and a string
-// is converted without an error, so the first header that is refused is the first error either way. Nothing where that function has to answer.
+// What the conversion in WebCore__FetchHeaders__createFromJS() makes of a record of compiled code that holds nothing but strings under string keys, without the question for @@iterator and without the list of pairs in between: no code of the program runs, and a string is converted without an error, so the first header that is refused is the first error either way.
 static std::optional<WebCore::FetchHeaders*> tryCreateFetchHeadersFromCompiledRecord(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
@@ -3468,8 +3466,7 @@ static_assert(JSC::JSRopeString::CompactFibers::addressMask <= (1ULL << 48) - 1 
 static_assert(JSC::JSString::MaxLength == std::numeric_limits<int32_t>::max(), "JSString::MaxLength is mirrored in src/jsc/JSString.rs");
 static_assert(WTF::StringImpl::lengthMemoryOffset() == 4 && WTF::StringImpl::dataOffset() == 8 && WTF::StringImpl::flagsOffset() == 16 && WTF::StringImpl::flagIs8Bit() == 4, "StringImpl is mirrored in src/bun_alloc/lib.rs");
 
-// Whether the next cell of `space` comes off the free list. Asked first, it leaves the allocation that follows without its
-// call, and so the function around it without registers to save.
+// Whether the next cell of `space` comes off the free list.
 static ALWAYS_INLINE bool nextCellIsOnFreeList(JSC::GCClient::IsoSubspace& space)
 {
     auto* allocator = space.allocatorFor(0, JSC::AllocatorForMode::AllocatorIfExists).localAllocator();
@@ -5565,8 +5562,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
         unsigned attributes;
     };
 #if ENABLE(AOT)
-    // A compiled object stands in the place of an ordinary one, whose properties the quick walk below takes from its Structure:
-    // in the order of their creation, enumerable or not. The same is listed here wherever that ordinary object would take the quick walk.
+    // A compiled object stands in the place of an ordinary one, whose properties the quick walk below takes from its Structure: in the order of their creation, enumerable or not.
     WTF::Vector<SnapshottedProperty, 16> propertiesOfCompiledObject;
     MarkedArgumentBuffer valuesOfCompiledObject;
     bool listsCompiledObject = false;

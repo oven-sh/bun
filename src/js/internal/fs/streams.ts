@@ -76,10 +76,7 @@ declare global {
       close(callback?: ErrorCallback): void;
       [kFs]: StreamFs;
       [kIsPerformingIO]: boolean;
-      /**
-       * true = path must be opened
-       * sink = FileSink
-       */
+      /** true: the path must be opened; a sink: a FileSink. */
       [kWriteStreamFastPath]?: undefined | true | FileSink;
     }
 

@@ -203,6 +203,7 @@
   "built-in/stringify-a-message-of-code-with-one-wide-character": 20000,
   "built-in/stringify-a-short-wide-text-with-nothing-to-escape": 300000,
   "built-in/stringify-a-short-wide-text-with-one-quote": 300000,
+  "built-in/create-an-object-below-an-object-nobody-knows": 1000000,
   "built-in/string-of-a-header": 1000000,
   "enumerate/values-of-an-element-of-a-local-list": 4000000,
   "array/sum-of-a-float64-array": 4000000,

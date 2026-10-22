@@ -16,8 +16,7 @@ pub struct CompiledEntryPoint {
     pub file_index: u32,
     pub module_id: u32,
     pub source_path: &'static [u8],
-    /// The key of the compiled module, which frames, `import.meta.path` and `Bun.main` show. The file of the graph has
-    /// the name that `bun build --compile` gives an entry point, and a request finds it by that name.
+    /// The key of the compiled module, which frames, `import.meta.path` and `Bun.main` show.
     pub module_path: &'static [u8],
 }
 
@@ -44,8 +43,7 @@ pub struct CompiledProgram {
     /// Ascending by `path`.
     package_names: Box<[CompiledPackageName]>,
     module_lookup: OnceLock<ModuleLookup>,
-    /// What every path that the executable answers for outside of its own root begins with; found by the graph at the
-    /// first question. `None` if there is no such path.
+    /// What every path that the executable answers for outside of its own root begins with; found by the graph at the first question.
     pub common_start_of_source_paths: OnceLock<Option<Box<[u8]>>>,
 }
 
@@ -109,8 +107,7 @@ fn segments_below_public_root<'p>(
     Some(kept)
 }
 
-/// The public path a file would have, without a trailing `/`. A path on the disk is the public path of nothing: the executable
-/// does not know where its sources were.
+/// The public path a file would have, without a trailing `/`.
 fn join_public_path(public_root: &[u8], source_dir: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
     let (base, written): (&[u8], &[u8]) = if is_relative_specifier(specifier) {
         (source_dir, specifier)
@@ -125,9 +122,7 @@ fn join_public_path(public_root: &[u8], source_dir: &[u8], specifier: &[u8]) -> 
     Some(path.strip_suffix(b"/").unwrap_or(&path).to_vec())
 }
 
-/// Where to search from for what a module in `source_dir`, a directory of public paths, names outside the executable,
-/// when `base` stands for the root directory of the build: the directory itself, then each of its parents below the
-/// root. The first that exists is the one. None for the root directory.
+/// Where to search from for what a module in `source_dir`, a directory of public paths, names outside the executable, when `base` stands for the root directory of the build: the directory itself, then each of its parents below the root.
 pub fn directories_of_importer(public_root: &[u8], source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
     use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
     let mut segments = segments_below_public_root(public_root, source_dir, b"").unwrap_or_default();
@@ -172,8 +167,7 @@ fn find_file(
     rewritten.find_map(|&extension| lookup(&[stem, extension].concat()))
 }
 
-/// The order of `bun run`: the file as spelled, with each extension, with a TypeScript extension in place of the
-/// written one, then the index file of the directory. The image holds no `package.json`, so a directory has no `main`.
+/// The order of `bun run`: the file as spelled, with each extension, with a TypeScript extension in place of the written one, then the index file of the directory.
 fn find_file_or_index(
     path: &[u8],
     search: &ExtensionSearch<'_>,
@@ -271,8 +265,7 @@ impl CompiledProgram {
             .find(|entry_point| entry_point.module_path == path)
     }
 
-    /// The public path of the compiled module that `specifier` names when imported from `source_dir`. Nothing for a
-    /// bare specifier, and nothing in a program that runs in place: its modules have the paths of their files on disk.
+    /// The public path of the compiled module that `specifier` names when imported from `source_dir`.
     pub fn resolve_module(
         &self,
         public_root: &[u8],
@@ -310,9 +303,7 @@ impl CompiledProgram {
         position.is_ok_and(|position| self.package_names[position].hides_other_paths)
     }
 
-    /// The public path of the compiled module that a bare `specifier` names when loaded from `source_dir`. The folders of the
-    /// importer are gone up as `bun run` goes up the disk: in each, `node_modules/<specifier>` is a name that the build wrote
-    /// down, or the path of a file.
+    /// The public path of the compiled module that a bare `specifier` names when loaded from `source_dir`.
     pub fn resolve_package(
         &self,
         public_root: &[u8],
@@ -362,7 +353,6 @@ impl CompiledProgram {
     }
 
     /// In a program that runs in place: the compiled module at `path`, an absolute path, found as `bun run` finds a file.
-    /// For a name that the disk has not answered: the sources may be gone.
     pub fn resolve_module_at_source_path(
         &self,
         path: &[u8],

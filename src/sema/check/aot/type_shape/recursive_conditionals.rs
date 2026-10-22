@@ -8,9 +8,7 @@ use smallvec::SmallVec;
 const MAX_CONSTRAINT_STEPS: usize = 8;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    /// The checker finds the base constraint of a conditional type by evaluating it with the constraints of its type
-    /// parameters. Those seldom end a recursion, which then runs to the checker's limit of a thousand rounds, makes a
-    /// union of what every round left behind, and answers with no type.
+    /// The checker finds the base constraint of a conditional type by evaluating it with the constraints of its type parameters.
     pub(super) fn has_costly_base_constraint(&mut self, ty: TypeId) -> bool {
         let mut pending: SmallVec<[TypeId; 4]> = SmallVec::from_slice(&[ty]);
         let mut steps = 0;
@@ -45,8 +43,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         is_recursive
     }
 
-    /// Follows what is evaluated with the type. The members of an object type, a mapped type and a function type are
-    /// evaluated when they are asked for, so a recursion through them ends by itself.
+    /// Follows what is evaluated with the type.
     fn reaches_itself(&mut self, file: FileId, node: TypeNodeId) -> bool {
         let TypeNodeKind::Cond { check, extends, yes, no } = self.c.hir(file)[node].kind else {
             return false;

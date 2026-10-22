@@ -361,8 +361,7 @@ static bool describesWithoutScript(JSC::JSGlobalObject* globalObject)
 #endif
 }
 
-// What util.inspect prints from own data properties and class names alone, on one line: an accessor is not called, and an object that is
-// neither plain nor an array (a proxy, a Map, ..) is "[Name]". Strings are quoted like Bun.inspect quotes them.
+// What util.inspect prints from own data properties and class names alone, on one line: an accessor is not called, and an object that is neither plain nor an array (a proxy, a Map, ..) is "[Name]".
 static constexpr unsigned inspectedDepth = 2;
 static constexpr unsigned inspectedArrayLength = 100;
 
@@ -555,8 +554,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
 }
 
-// What value.constructor.name is where reading it runs no script: only data properties count, and a prototype whose "constructor" is a
-// native accessor is named by its class. A null string says that there is no such name.
+// What value.constructor.name is where reading it runs no script: only data properties count, and a prototype whose "constructor" is a native accessor is named by its class.
 static WTF::String constructorNameOf(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

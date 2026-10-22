@@ -1848,8 +1848,7 @@ static void writeToStandardError(std::span<const char> bytes)
 }
 #endif
 
-// Calls process.stderr.write. In a compiled or trimmed executable the streams are there only when the program uses them:
-// process.stderr is a lazy property, and until the program reads or replaces it a warning creates no stream.
+// Calls process.stderr.write.
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -3286,8 +3285,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
     for (unsigned index : { 1u, 2u }) {
         // Nothing of the program has run since the first read of `process`, unless the first stream was read the long way: the second read finds the same.
         if (!holder) {
-            // What lies on the global object as a plain property is what a read finds. Where nothing lies there, and nobody has stored, defined or deleted any of the properties that the
-            // host makes on demand, a read finds the object of the host.
+            // What lies on the global object as a plain property is what a read finds.
             JSValue own = lexicalGlobalObject->getDirect(vm, processName);
             auto* hostGlobalObject = own ? nullptr : dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
             if (isPlainValue(own)) [[likely]]

@@ -146,8 +146,7 @@ static WTF::String formatLocation(const WTF::String& url, int lineNumber)
     return path;
 }
 
-// Absolute file path → `file://` URL. Chrome DevTools expects `callFrame.url`
-// to be a proper URL; leaving the raw path breaks source-view resolution.
+// Absolute file path → `file://` URL.
 static void normalizeURL(WTF::String& u)
 {
     if (u.isEmpty())
@@ -449,11 +448,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     }
 
                     // Normalize `url` to a `file://` URL now that any
-                    // sourcemap rewriting is done. The callback (see
-                    // FormatStackTraceForJS.cpp) unconditionally rewrites its
-                    // out-param back to the raw provider URL when no sourcemap
-                    // is found, which would undo an earlier normalization.
-                    // See #29240.
+                    // sourcemap rewriting is done.
                     normalizeURL(url);
 
                     if (frame.hasExpressionInfo()) {

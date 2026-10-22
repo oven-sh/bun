@@ -1553,8 +1553,7 @@ impl Run<'_> {
                             entry,
                         )
                     }
-                    // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the
-                    // kill signal's JS handlers run first, as in watch mode.
+                    // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the kill signal's JS handlers run first, as in watch mode.
                     if entry.is_none() {
                         bun_jsc::posix_signal_handle::set_watch_kill_signal(
                             ctx.debug.watch_kill_signal,

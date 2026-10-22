@@ -1,5 +1,4 @@
-//! `path.posix` for 8-bit characters, eight of them at a time. Each function answers what the one it names in the
-//! crate root answers. Only '/' and '.' are looked for, so the characters may be ASCII, Latin-1 or UTF-8.
+//! `path.posix` for 8-bit characters, eight of them at a time.
 
 use core::mem::MaybeUninit;
 use core::ops::Range;
@@ -19,8 +18,7 @@ const LOWEST_BITS: u64 = 0x0101_0101_0101_0101;
 const ALL_BUT_HIGHEST_BITS: u64 = 0x7f7f_7f7f_7f7f_7f7f;
 
 impl Block {
-    /// # Safety
-    /// The characters `at..at + WIDTH` are in `path`.
+    /// SAFETY: The characters `at..at + WIDTH` are in `path`.
     #[inline(always)]
     unsafe fn read(path: &[u8], at: usize) -> Block {
         debug_assert!(at + WIDTH <= path.len());
@@ -88,8 +86,7 @@ fn is_tidy_by_blocks(path: &[u8]) -> bool {
     }
 }
 
-/// Whether no part of `path` between two slashes is empty, "." or "..". [`crate::normalize_posix_t`]
-/// answers such a path as it is, whether or not it starts or ends with a slash.
+/// Whether no part of `path` between two slashes is empty, "." or "..".
 #[inline(always)]
 pub fn is_tidy_posix(path: &[u8]) -> bool {
     let len = path.len();
@@ -107,8 +104,7 @@ pub fn is_tidy_posix(path: &[u8]) -> bool {
     true
 }
 
-/// The first '/' of `path[*at..limit]` in front of a part that is empty, "." or "..". Without one, `*at` is where
-/// fewer than `WIDTH` characters and one more are left.
+/// The first '/' of `path[*at..limit]` in front of a part that is empty, "." or "..".
 #[inline(always)]
 fn first_untidy_slash_by_blocks(path: &[u8], at: &mut usize, limit: usize) -> Option<usize> {
     while *at + WIDTH < limit {
@@ -127,8 +123,7 @@ fn first_untidy_slash_by_blocks(path: &[u8], at: &mut usize, limit: usize) -> Op
     None
 }
 
-/// Where the parts from `start` on that are kept as they are end: at a '/' in front of a part that is empty, "." or "..",
-/// or at `limit`, which is not behind a slash.
+/// Where the parts from `start` on that are kept as they are end: at a '/' in front of a part that is empty, "." or "..", or at `limit`, which is not behind a slash.
 #[inline(always)]
 fn end_of_tidy_parts(path: &[u8], start: usize, limit: usize) -> usize {
     let mut at = start;
@@ -144,8 +139,7 @@ fn end_of_tidy_parts(path: &[u8], start: usize, limit: usize) -> usize {
     limit
 }
 
-/// `normalize_string_t` in the crate root, with '/'. How many characters were written to `to`, which has room for as
-/// many as `path` has.
+/// `normalize_string_t` in the crate root, with '/'.
 #[inline(always)]
 fn normalize_string_posix_latin1(
     path: &[u8],
@@ -315,8 +309,7 @@ pub fn basename_without_suffix_posix_latin1(path: &[u8], suffix: &[u8]) -> Range
         return 0..0;
     }
     let name = basename_posix_latin1(path);
-    // Node looks for the suffix and for the start of the name at once, from the end. Where the name runs out first and
-    // was the end of the suffix so far, or there is no name, it has not noted where the name ends.
+    // Node looks for the suffix and for the start of the name at once, from the end.
     if name.len() < suffix.len() {
         return if suffix.ends_with(&path[name.clone()]) {
             name.start..path.len()
@@ -438,8 +431,7 @@ pub fn is_resolved_posix(path: &[u8]) -> bool {
         && is_tidy_posix(path)
 }
 
-/// The answer is ".." `ups` times with slashes between them and then `to[rest..]`, which is empty or starts with a
-/// slash unless `ups` is 0.
+/// The answer is ".." `ups` times with slashes between them and then `to[rest..]`, which is empty or starts with a slash unless `ups` is 0.
 pub struct RelativePosixLatin1 {
     pub ups: usize,
     pub rest: usize,

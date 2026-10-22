@@ -145,8 +145,7 @@ fn find_ambient_module_around(hir: &hir::File<'_>, class: ClassId) -> Option<Ato
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    // The class or the constructor function to whose prototype object the file that declares `function` links the prototype
-    // object of `function`. It is what the program is expected to have done by the first construction. Nothing proves it.
+    // The class or the constructor function to whose prototype object the file that declares `function` links the prototype object of `function`.
     pub fn constructor_function_parent(&mut self, function: FunctionRef) -> Option<ClassParent> {
         let parent = self.find_linked_parent(function)?;
         let mut ancestor = parent;
@@ -163,8 +162,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         None
     }
 
-    // The class or the constructor function that the heritage of `class` names. It is what the heritage is expected to
-    // evaluate to. Nothing proves it.
+    // The class or the constructor function that the heritage of `class` names.
     pub fn class_parent(&mut self, class: ClassRef) -> Option<ClassParent> {
         let heritage = self.c.hir(class.file)[class.class].extends.some()?;
         let parent = self.end_finder(class.file).find_parent(heritage)?;
@@ -176,9 +174,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.end_finder(file).find_parent(callee)
     }
 
-    // The classes and the functions of Bun's own modules that make what has the type. `declare module "http"` exports a class
-    // under a name, and the module that the specifier loads exports what makes the objects under that name. What has an
-    // intersection has each of its parts.
+    // The classes and the functions of Bun's own modules that make what has the type.
     pub fn library_declarations_of_type(&mut self, ty: TypeId) -> SmallVec<[ClassDeclaration; 1]> {
         let parts: SmallVec<[TypeId; 2]> = match self.c.data(ty) {
             TypeData::Intersection(parts) => parts.iter().copied().collect(),
@@ -220,8 +216,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.inputs.named_values.find_library_export(specifier, name)
     }
 
-    /// Whether the program gives members to the prototype object of `function` or links it to another one, as it does
-    /// for a function that it constructs with. A helper that stores into the `this` it is handed has neither.
+    /// Whether the program gives members to the prototype object of `function` or links it to another one, as it does for a function that it constructs with.
     pub fn is_prototype_object_used(&mut self, function: FunctionRef) -> bool {
         let Some(shape) = self.constructor_function_shape(function) else {
             return false;
@@ -262,8 +257,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         LinkedFunctions::new(self.c.arena, file, &links)
     }
 
-    // The links that a call of `function` makes between its arguments and what the program names, in terms of its
-    // parameters. It reads the texts of files only, never `linked_functions`, which waits for this.
+    // The links that a call of `function` makes between its arguments and what the program names, in terms of its parameters.
     fn find_links_of_parameters(
         &mut self,
         function: FunctionRef,
@@ -309,9 +303,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Some(links)
     }
 
-    // The own shape, the fields that the functions store to which `function` hands its `this`, and the members that are
-    // copied into its prototype object. A function without a store of its own is a constructor function too where its
-    // prototype object gets members or is an end of a link. To hand on `this` makes it none: methods do that as well.
+    // The own shape, the fields that the functions store to which `function` hands its `this`, and the members that are copied into its prototype object.
     pub(super) fn complete_constructor_function_shape(
         &mut self,
         function: FunctionRef,

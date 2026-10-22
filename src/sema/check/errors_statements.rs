@@ -493,8 +493,7 @@ impl Checker<'_, '_> {
             let code = if is_for_in { 1091 } else { 1188 };
             self.early_grammar_error_at((file, second, 0), code, &[])
         } else if first.init.is_some() {
-            // Annex B.3.5: `for (var a = 0 in o)` is JavaScript in sloppy mode. `bun run` moves the
-            // initializer in front of the loop, so it runs the loop in strict mode code too.
+            // Annex B.3.5: `for (var a = 0 in o)` is JavaScript in sloppy mode.
             let is_annex_b = is_for_in
                 && first.kind == VarKind::Var
                 && matches!(hir[first.pat].kind, PatKind::Ident(_));

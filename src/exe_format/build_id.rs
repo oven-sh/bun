@@ -1,5 +1,4 @@
-//! The name of an executable that holds a compiled program. `bun_crash_handler::build_id` has the 32 bytes that it is written
-//! into: an ELF note (owner "Bun", type 1), and the same bytes in a section of their own in the other formats.
+//! The name of an executable that holds a compiled program.
 
 use crate::builtins::Image;
 use crate::identity::find_rest_of_gnu_build_id;
@@ -55,8 +54,7 @@ pub fn write(template: &mut [u8], id: &[u8; SIZE]) -> bool {
     true
 }
 
-/// perf, gdb and systemd-coredump tell files apart by the GNU build ID, and every executable would have its template's. The part that
-/// is the identity of the run time stays as it is.
+/// perf, gdb and systemd-coredump tell files apart by the GNU build ID, and every executable would have its template's.
 fn write_into_gnu_build_id(template: &mut [u8], id: &[u8; SIZE]) {
     let len = template.len();
     let mut read = |offset: usize, out: &mut [u8]| read_bytes_at(template, offset, out);

@@ -25,9 +25,7 @@ impl<'s> Folder<'_, 's> {
             .unwrap_or(Folded::UNKNOWN)
     }
 
-    // `"quire".replace(/^/, "re")`. The method of a string is String.prototype's, and it asks RegExp.prototype: an ahead-of-time
-    // build locks what both have. There is no engine for regular expressions here, so of all patterns only the two that
-    // match nothing but one end of the text are decided.
+    // `"quire".replace(/^/, "re")`.
     fn fold_replace_at_end_of_text(&self, call: Call) -> Option<Folded> {
         let hir = self.hir;
         let callee = hir.skip_type_assertions(call.callee);

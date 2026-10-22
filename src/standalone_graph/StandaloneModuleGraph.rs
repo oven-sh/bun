@@ -682,8 +682,7 @@ mod elf {
         Some((payload, payload_len as usize))
     }
 
-    /// The end of the `PT_LOAD` segments that follow the found one without a gap. The payload of an
-    /// executable compiled ahead of time is mapped as several segments, one for each protection.
+    /// The end of the `PT_LOAD` segments that follow the found one without a gap.
     fn end_of_adjacent_segments(module: &bun_sys::elf::LoadedModule) -> usize {
         // SAFETY: `program_headers` points to `program_header_count` headers of a loaded object.
         let headers = unsafe {
@@ -2259,8 +2258,7 @@ pub(crate) fn inject<'a>(
             return None;
         }
     };
-    // An executable with compiled code can be large: beside the output file, so the rename at the end stays in one
-    // directory of one file system.
+    // An executable with compiled code can be large: beside the output file, so the rename at the end stays in one directory of one file system.
     #[cfg(not(windows))]
     {
         if additions.has_code {

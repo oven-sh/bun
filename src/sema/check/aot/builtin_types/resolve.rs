@@ -168,8 +168,7 @@ impl HeritageEdges {
     }
 }
 
-// The table was written against TypeScript's own library: a type of that library that the table
-// leaves out (`HighlightRegistry extends Map` of lib.dom.d.ts) has no value in this runtime.
+// The table was written against TypeScript's own library: a type of that library that the table leaves out (`HighlightRegistry extends Map` of lib.dom.d.ts) has no value in this runtime.
 fn describes_values_outside_table(files: &Files<'_>, file: FileId) -> bool {
     files.hir(file).kind == FileKind::Declaration && !files.module(file).is_lib
 }

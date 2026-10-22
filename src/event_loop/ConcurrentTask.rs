@@ -231,9 +231,7 @@ pub trait Taskable {
 }
 
 impl TaskTag {
-    /// A bundle asks its plugins to resolve or load something. A thread of the bundle waits for the answer, and finds the
-    /// rest of the module graph only then, so the request runs ahead of the tasks that are already queued. What a
-    /// plugin does after its first `await` is an ordinary task.
+    /// A bundle asks its plugins to resolve or load something.
     #[inline]
     pub fn is_plugin_request(self) -> bool {
         self == task_tag::BundleV2PluginResolve || self == task_tag::BundleV2PluginLoad

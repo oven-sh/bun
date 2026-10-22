@@ -100,8 +100,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
     }
 }
 
-/// The resolver of the project that governs `module`. Outside a build only a referenced project governs a module, and
-/// `redirect_for_resolution` finds that one by the path.
+/// The resolver of the project that governs `module`.
 pub(super) fn resolver_of_governed_module<'q, 's: 'r, 'r>(
     project_resolvers: &'q ProjectResolvers<'r>,
     program: &'q Resolver<'r>,
@@ -138,8 +137,7 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
         true
     }
 
-    /// TypeScript has found no file for the import. Where its attribute names one of Bun's loaders, what the loader makes of the
-    /// file says the type.
+    /// TypeScript has found no file for the import.
     pub(super) fn answer_types_from_named_loader(&mut self, specifier: Atom, mode: ResolutionMode) {
         let Some(index) = self.find_target(specifier, mode) else {
             return;

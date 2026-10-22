@@ -37,10 +37,7 @@ const kControllerErrorFunction = Symbol.for("nodejs.webstream.controllerErrorFun
 
 declare global {
   namespace $Node {
-    /**
-     * Whatever passes for a stream of node: one of ours, one of another implementation (the `readable-stream`
-     * package), a request or a response of node:http, an old-style stream. Every member is looked for before it is used.
-     */
+    /** Whatever passes for a stream of node: one of ours, one of another implementation (the `readable-stream` package), a request or a response of node:http, an old-style stream. */
     interface AnyStream extends EventEmitter {
       _readableState?: ReadableState | ForeignState;
       _writableState?: WritableState | ForeignState;

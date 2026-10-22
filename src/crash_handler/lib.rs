@@ -1735,9 +1735,7 @@ mod draft {
     static REPORTS_ABORTS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// For a process that has loaded a compiled program: an assertion of the engine that fails in
-    /// compiled code calls `abort()`, which on Windows raises no exception. Elsewhere SIGABRT is one
-    /// of the signals that `init` handles.
+    /// For a process that has loaded a compiled program: an assertion of the engine that fails in compiled code calls `abort()`, which on Windows raises no exception.
     pub fn report_aborts() {
         #[cfg(windows)]
         {

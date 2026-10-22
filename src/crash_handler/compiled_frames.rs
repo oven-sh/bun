@@ -31,8 +31,7 @@ fn own_short_build_id() -> Option<ShortBuildId> {
     Some(digits)
 }
 
-/// The object of a frame in compiled code, as the link of a crash report names it. The first such frame of a link says
-/// which build the offsets are of.
+/// The object of a frame in compiled code, as the link of a crash report names it.
 pub(crate) fn object_name(names_build: bool) -> Box<[u8]> {
     match own_short_build_id().filter(|_| names_build) {
         Some(id) => [OBJECT_NAME, &id[..]].concat().into_boxed_slice(),

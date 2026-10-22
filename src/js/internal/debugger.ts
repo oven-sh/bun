@@ -722,7 +722,6 @@ async function connectToUnixServer(
         },
 
         // Ensure we always drain the socket.
-        // This is necessary due to socket.$write usage.
         drain: (_socket: FramedSocket) => {},
 
         close: (socket: FramedSocket) => {

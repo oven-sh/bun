@@ -91,8 +91,7 @@ impl Checker<'_, '_> {
         if !(locals || parameters || !renamed.is_empty()) || hir.kind == FileKind::Declaration {
             return;
         }
-        // What only a function that is left out refers to would count as unused. So would what only the type syntax of a
-        // function refers to whose body was replaced.
+        // What only a function that is left out refers to would count as unused.
         let is_replaced = |function: &Func| function.flags.contains(Flags::REPLACED_BODY);
         if self.has_left_out_functions() || hir.fns.iter().any(is_replaced) {
             return;
@@ -1054,8 +1053,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// False if no file reports a member as unused that an access in `file` refers to. The file that declares the member
-    /// reports it, and in a build it can have other options than `file`.
+    /// False if no file reports a member as unused that an access in `file` refers to.
     pub(super) fn can_mark_properties_as_referenced(&self, file: FileId) -> bool {
         self.is_in_compile_build(file) || self.module_options(file).no_unused_locals
     }

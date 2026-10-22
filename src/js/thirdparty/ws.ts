@@ -1690,7 +1690,7 @@ const receiverErrors = {
   WS_ERR_UNSUPPORTED_MESSAGE_LENGTH: [RangeError, "Max payload size exceeded", false, 1009],
   Z_DATA_ERROR: [Error, "invalid compressed data", false, 1007],
   // Not an upstream ws code. Allocating a buffer for the message failed.
-  ERR_MEMORY_ALLOCATION_FAILED: [RangeError, "Out of memory", false, 1011],
+  ERR_MEMORY_ALLOCATION_FAILED: [RangeError, "Failed to allocate memory", false, 1011],
 } as const;
 type ReceiverErrorCode = Exclude<keyof typeof receiverErrors, "__proto__">;
 

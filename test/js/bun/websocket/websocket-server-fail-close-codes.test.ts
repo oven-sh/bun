@@ -250,11 +250,23 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
   const MiB = 1024 * 1024;
   const CAP_MB = 4;
   const diagnostic = "Received message that does not fit in memory";
+  const failed = `close 1011 ${JSON.stringify(diagnostic)}`;
   const deflate = { "Sec-WebSocket-Extensions": "permessage-deflate" };
   const deflated = (size: number) => deflateRawSync(Buffer.alloc(size, 7));
   const tooBig = Buffer.alloc(CAP_MB * MiB + 2 * MiB);
   // Fills a buffer to exactly the cap, so appending one more byte has to grow it past the cap.
   const full = Buffer.alloc(CAP_MB * MiB);
+  // For messages that are delivered. The fixture replies with a hash of what its handler received, and the
+  // 37-byte period isn't a power of two, so a growth that loses or moves bytes changes the reply.
+  const patterned = (size: number) => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz+");
+  const got = (message: Buffer) => `text "got ${message.length} ${Bun.hash(message)}"`;
+  const intact = patterned(2 * MiB);
+  // What the `error` handler receives when the message handler's copy can't be allocated.
+  const copyFailed = {
+    error: "RangeError",
+    message: "Failed to allocate memory",
+    code: "ERR_MEMORY_ALLOCATION_FAILED",
+  };
 
   type Mode = "ws" | "wss" | "ws-package";
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
@@ -272,7 +284,8 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
     }
   }
 
-  // Returns the fixture's next output line. It prints one per close handler call and one per `ws` 'error' event.
+  // Returns the fixture's next output line. It prints one per close handler call, one per `error` handler call
+  // and one per `ws` 'error' event.
   async function nextEvent() {
     const { value, done } = await lines.next();
     if (done) throw new Error(`the server exited:\n${await stderr}`);
@@ -342,21 +355,28 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
       deflate,
       client => client.binary(deflated(full.length + 1024), { rsv1: true }),
     ],
-    // Fails to allocate the message handler's copy. One non-ASCII character makes the string 16-bit.
+  ];
+
+  // Fails to allocate the message handler's copy. One non-ASCII character makes the string 16-bit. An 8-bit
+  // string of exactly the cap is over it by the string's header.
+  const copyRejected: [name: string, send: (client: RawClient) => void][] = [
     [
       "a text message whose UTF-16 copy is over the cap",
-      undefined,
       client => client.text("\u00e9" + Buffer.alloc(3 * MiB - 2, "a").toString("latin1")),
+    ],
+    [
+      "a text message whose 8-bit copy is over the cap",
+      client => client.text(Buffer.alloc(full.length, "a").toString("latin1")),
     ],
   ];
 
   // Checks that the server still accepts connections and the shared inflate buffer still works.
   async function expectStillServing(scheme: "ws" | "wss") {
     using client = await connect(scheme, deflate);
-    client.binary(Buffer.alloc(2 * MiB));
-    client.binary(deflated(2 * MiB), { rsv1: true });
+    client.binary(intact);
+    client.binary(deflateRawSync(intact), { rsv1: true });
     client.close(1000);
-    expect(await client.remainingFrames()).toEqual([`text "got ${2 * MiB}"`, `text "got ${2 * MiB}"`, "close 1000"]);
+    expect(await client.remainingFrames()).toEqual([got(intact), got(intact), "close 1000"]);
     expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
   }
 
@@ -364,8 +384,17 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
     test.each(rejected)("%s fails that connection with 1011", async (_name, headers, send) => {
       using client = await connect(scheme, headers);
       send(client);
-      expect(await client.remainingFrames()).toEqual([`close 1011 ${JSON.stringify(diagnostic)}`]);
+      expect(await client.remainingFrames()).toEqual([failed]);
       expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+      await expectStillServing(scheme);
+    });
+
+    // The `error` handler is called with the failed copy before the connection is closed.
+    test.each(copyRejected)("%s fails that connection with 1011", async (_name, send) => {
+      using client = await connect(scheme);
+      send(client);
+      expect(await client.remainingFrames()).toEqual([failed]);
+      expect([await nextEvent(), await nextEvent()]).toEqual([copyFailed, { close: 1006, reason: diagnostic }]);
       await expectStillServing(scheme);
     });
   });
@@ -373,11 +402,53 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
   // Appending 1 MiB to 2.5 MiB first tries to double to 5 MiB, which fails, then falls back to exactly 3.5 MiB.
   test("delivers a message when only an exact-size allocation succeeds", async () => {
     using client = await connect("ws");
-    client.binary(Buffer.alloc(2.5 * MiB), { fin: false });
-    client.send(OP.continuation, Buffer.alloc(MiB));
+    const message = patterned(3.5 * MiB);
+    client.binary(message.subarray(0, 2.5 * MiB), { fin: false });
+    client.send(OP.continuation, message.subarray(2.5 * MiB));
     client.close(1000);
-    expect(await client.remainingFrames()).toEqual([`text "got ${3.5 * MiB}"`, "close 1000"]);
+    expect(await client.remainingFrames()).toEqual([got(message), "close 1000"]);
     expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+  });
+
+  // A buffered compressed message gets 9 bytes of padding appended before it is inflated in place.
+  test("delivers a buffered compressed message", async () => {
+    using client = await connect("ws", deflate);
+    const message = patterned(3 * MiB);
+    client.binary(deflateRawSync(message, { level: 0 }), { rsv1: true });
+    client.close(1000);
+    expect(await client.remainingFrames()).toEqual([got(message), "close 1000"]);
+    expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+  });
+
+  // The ping is stored after the first fragment until its second half arrives, then removed again, and the
+  // message continues in the same buffer.
+  test("delivers a fragmented message intact around a ping that arrives in two reads", async () => {
+    using client = await connect("ws");
+    using other = await connect("ws");
+    const message = patterned(MiB);
+    const ping = client.frame(OP.ping, "0123456789");
+    client.binary(message.subarray(0, MiB / 2), { fin: false });
+    client.write(ping.subarray(0, 10));
+    // After two round trips on another connection, the server has read the first half.
+    expect([await other.roundTrip(), await other.roundTrip()]).toEqual([[], []]);
+    client.write(ping.subarray(10));
+    client.send(OP.continuation, message.subarray(MiB / 2));
+    client.close(1000);
+    expect(await client.remainingFrames()).toEqual(['pong "0123456789"', got(message), "close 1000"]);
+    expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+    other.close(1000);
+    expect(await other.remainingFrames()).toEqual(["close 1000"]);
+    expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+  });
+
+  // Nothing is unsent yet, so the Close frame is queued and goes out once the socket is writable.
+  test.skipIf(!fault.available())("still sends the Close frame to a socket that can't write yet", async () => {
+    using client = await connect("ws");
+    client.text("hold");
+    client.binary(tooBig);
+    expect(await client.remainingFrames()).toEqual([failed]);
+    expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+    await expectStillServing("ws");
   });
 
   // A Close frame would be queued behind the 3 MiB, in a buffer that would have to grow for it.
@@ -390,15 +461,75 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
     await expectStillServing("ws");
   });
 
+  // That close is not a reset, so the peer still receives what the kernel had already accepted.
+  test("delivers the frames the kernel already accepted when data is still unsent", async () => {
+    using client = await connect("ws", deflate);
+    client.socket.pause();
+    client.text("flood");
+    const { flooded } = await nextEvent();
+    expect(flooded).toBeGreaterThan(0);
+    client.binary(deflated(tooBig.length), { rsv1: true });
+    expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+    client.socket.resume();
+    const frames = await client.remainingFrames();
+    await client.closed;
+    expect({ frames: frames.length, socketEvents: client.socketEvents }).toEqual({
+      frames: flooded,
+      socketEvents: ["end", "close"],
+    });
+    await expectStillServing("ws");
+  });
+
+  // Failing the connection unsubscribes the socket without writing its queued publishes. Every socket in the
+  // fixture subscribes to one topic, and a "publish" message publishes to it.
+  describe("a socket with a queued publish", () => {
+    // Both frames go out in one write, so the publish is still queued when the second frame is rejected.
+    const publishThenRejected = (client: RawClient) =>
+      client.write(
+        Buffer.concat([
+          client.frame(OP.text, "publish"),
+          client.frame(OP.binary, deflated(tooBig.length), { rsv1: true }),
+        ]),
+      );
+
+    // The other subscriber received that publish, and the topic still works for the next one.
+    async function expectTopicIntact(bystander: RawClient) {
+      bystander.text("publish");
+      bystander.close(1000);
+      expect(await bystander.remainingFrames()).toEqual(['text "published"', 'text "published"', "close 1000"]);
+      expect(await nextEvent()).toEqual({ close: 1000, reason: "" });
+    }
+
+    test("gets the 1011 without the publish", async () => {
+      using bystander = await connect("ws");
+      using victim = await connect("ws", deflate);
+      publishThenRejected(victim);
+      expect(await victim.remainingFrames()).toEqual([failed]);
+      expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+      await expectTopicIntact(bystander);
+    });
+
+    test.skipIf(!fault.available())("is also unsubscribed when data is still unsent", async () => {
+      using bystander = await connect("ws");
+      using victim = await connect("ws", deflate);
+      victim.text("stall");
+      publishThenRejected(victim);
+      expect(await victim.remainingFrames()).toEqual([]);
+      expect(await nextEvent()).toEqual({ close: 1006, reason: diagnostic });
+      await expectTopicIntact(bystander);
+    });
+  });
+
   // The `ws` package's server sockets use the same parser, but report the failure as an 'error' event.
   describe("the ws package", () => {
-    const error = { error: "RangeError", message: "Out of memory", code: "ERR_MEMORY_ALLOCATION_FAILED" };
+    const error = { error: "RangeError", message: "Failed to allocate memory", code: "ERR_MEMORY_ALLOCATION_FAILED" };
+    const hi = Buffer.from("hi");
 
     async function expectStillServing() {
       using client = await connect("ws-package");
-      client.text("hi");
+      client.text(hi);
       client.close(1000);
-      expect(await client.remainingFrames()).toEqual(['text "got 2"', "close 1000"]);
+      expect(await client.remainingFrames()).toEqual([got(hi), "close 1000"]);
       expect(await nextEvent()).toEqual({ close: 1000 });
     }
 

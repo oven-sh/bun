@@ -1,7 +1,7 @@
 // A JavaScript file names other files in the `import()` types of its JSDoc comments. `tsc` has such a file in the program
 // if it finds the type in the comment of a node, whether or not a tag gives the type to a node. The lines here are what
-// `tsc` 7.0.2 prints. `differential-cases.json` has the same programs, and there `tsc` itself is the oracle. That needs the
-// `typescript7` package, and a debug build runs one in forty of them.
+// `tsc` 7.0.2 prints. `differential-cases.json` has these programs with more forms, and there `tsc` itself is the oracle.
+// That needs the `typescript7` package, and a debug build runs one in forty of them.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { endChildren, longLimit, spawn } from "../children";

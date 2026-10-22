@@ -7,7 +7,7 @@
 //!
 //! The module specifiers in a type stay, without nodes, until all comments of the node are read. Then `with_jsdoc`
 //! decides which of them `collectExternalModuleReferences` finds: its walk looks in the comments of a node, not at
-//! what a tag gave to another node.
+//! what a tag gave to another node. The second parse makes such an entry the node's too. See `SpecifierRole`.
 //!
 //! All of this only runs with `Options::reads_jsdoc`. Without it, a node that can have comments costs one flag test.
 
@@ -82,6 +82,9 @@ pub(crate) struct State {
     pub(super) full_signatures: bun_sema::util::FxHashSet<u32>,
     /// The functions whose `@param` tags were compared with their parameters.
     pub(super) documented_functions: bun_sema::util::FxHashSet<u32>,
+    /// While the tags of a node are reparsed: where in `FileBuilder::module_specifiers` `keep_found_specifiers` kept
+    /// the module specifiers of its comments, in the order of the text.
+    pub(super) found_specifiers: (usize, usize),
     /// The first tokens of the nodes in whose comments `keep_found_specifiers` kept a module specifier.
     pub(super) hosts_of_found_specifiers: bun_sema::util::FxHashSet<u32>,
     /// True if two of them start with the same token, so they have the same comments. A speculative parse that's
@@ -218,7 +221,7 @@ fn finish_jsdoc_lists(file: &mut FileBuilder, src: &[u8], comments: &[Comment]) 
 }
 
 /// A comment is read for each node that has it, and what the walk of `collectExternalModuleReferences` finds in it is
-/// in the list once for each of them. It's found once.
+/// in the list once for each of them. It's found once. An entry that is a node too is the one that stays found.
 #[cold]
 #[inline(never)]
 fn forget_specifiers_found_again(file: &mut FileBuilder, comments: &[Comment]) {
@@ -228,26 +231,22 @@ fn forget_specifiers_found_again(file: &mut FileBuilder, comments: &[Comment]) {
             .checked_sub(1)
             .is_some_and(|at| pos < comments[at].end)
     };
+    // What `keep_found_specifiers` kept, whatever was done to it later.
     let is_found = |it: &SpecifierUse| {
-        let is_import_without_node = matches!(
-            it.role,
-            SpecifierRole::Import
-                | SpecifierRole::ImportOfStatement
-                | SpecifierRole::ImportUnlessReparsed
-        );
-        is_import_without_node && is_in_comment(it.pos)
+        let has_import = it.role.without_import() != it.role;
+        has_import && it.kind.is_dynamic() && is_in_comment(it.pos)
     };
     let all = file.module_specifiers.iter().enumerate();
     let found = all.filter(|(_, it)| is_found(it));
-    let mut found: SmallVec<[(u32, u32); 16]> =
-        found.map(|(index, it)| (it.pos, index as u32)).collect();
+    let key = |(index, it): (usize, &SpecifierUse)| (it.pos, !it.role.is_node(), index as u32);
+    let mut found: SmallVec<[(u32, bool, u32); 16]> = found.map(key).collect();
     found.shared_sort_unstable();
     let mut before = u32::MAX;
-    for &(pos, index) in &found {
+    for &(pos, _, index) in &found {
         if pos == before
             && let Some(again) = file.module_specifiers.get_mut(index as usize)
         {
-            again.role = SpecifierRole::Neither;
+            again.role = again.role.without_import();
         }
         before = pos;
     }
@@ -695,8 +694,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         // `checkTypeReferenceNode`: `A.<T>` is `A<T>` in a JSDoc comment.
         reported.retain(|it| it.kind == DiagnosticKind::Parse && it.code != 8020);
         let specifiers = first.checkpoint.file.module_specifiers as usize;
-        let has_any = self.f.is_js && self.f.module_specifiers.len() > specifiers;
-        match keeps_specifiers && has_any {
+        let has_any = self.f.module_specifiers.len() > specifiers;
+        match has_any && keeps_specifiers && self.f.is_js {
             true => self.rollback_but_specifiers(&first.checkpoint),
             false => self.rollback(&first.checkpoint),
         }
@@ -725,23 +724,48 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         };
         let found: SmallVec<[SpecifierUse; 4]> = found.map(without_node).collect();
         self.rollback(to);
-        self.f.module_specifiers.extend(found);
+        self.f.module_specifiers.extend_from_slice(&found);
     }
 
-    /// What was reparsed since the file had `from` module specifiers is what a tag gives to a node. The walk of
-    /// `collectExternalModuleReferences` finds the original in the comment, not this clone.
+    /// What was reparsed since the file had `from` module specifiers is what a tag gives to a node: a clone. The walk
+    /// of `collectExternalModuleReferences` finds the original in the comment, not the clone. Where
+    /// `keep_found_specifiers` kept the original, its entry becomes the node too and the clone adds none, so a type
+    /// that one node gets has one entry, as it has outside a comment.
     #[cold]
     #[inline(never)]
     fn note_specifiers_of_clone(&mut self, from: usize) {
-        for specifier in self.f.module_specifiers.iter_mut().skip(from) {
-            if specifier.kind.is_dynamic() {
-                specifier.role = match specifier.role {
-                    SpecifierRole::NodeAndImport => SpecifierRole::Node,
-                    SpecifierRole::Import => SpecifierRole::Neither,
-                    role => role,
+        let (first_found, after_found) = self.jsdoc.found_specifiers;
+        let specifiers = &mut self.f.module_specifiers;
+        let mut end = from;
+        for index in from..specifiers.len() {
+            let mut clone = specifiers[index];
+            if clone.kind.is_dynamic() {
+                let found = specifiers.get_mut(first_found..after_found);
+                let found = found.unwrap_or_default();
+                let original = match clone.role {
+                    SpecifierRole::NodeAndImport => found
+                        .binary_search_by_key(&clone.pos, |it| it.pos)
+                        .ok()
+                        .map(|at| &mut found[at]),
+                    _ => None,
                 };
+                match original {
+                    Some(original) if original.role == SpecifierRole::ImportInComment => {
+                        original.role = SpecifierRole::NodeAndImportInComment;
+                        continue;
+                    }
+                    Some(original) if original.role == SpecifierRole::Import => {
+                        original.role = SpecifierRole::NodeAndImport;
+                        continue;
+                    }
+                    // Another clone of it is the node already, or the walk doesn't find the original.
+                    _ => clone.role = clone.role.without_import(),
+                }
             }
+            specifiers[end] = clone;
+            end += 1;
         }
+        specifiers.truncate(end);
     }
 
     /// Filters the diagnostics reported since the file had `from` of them, which are about reparsed nodes. Keeps only
@@ -1272,16 +1296,19 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             }
         }
         if self.f.module_specifiers.len() > specifiers {
-            self.keep_found_specifiers(host, token, &attached, specifiers);
+            let end = self.keep_found_specifiers(host, token, &attached, specifiers);
+            self.jsdoc.found_specifiers = (specifiers, end);
         }
         if !attached.docs.is_empty() {
             self.reparse_tags(host, &attached);
         }
+        self.jsdoc.found_specifiers = (0, 0);
     }
 
     /// `GetNodeAtPosition` with `includeJSDoc`, for the comments of `host`, whose first token is at `token`. The
     /// reader's parses left the module specifiers from `from` on. The walk finds the ones in a type that the tree of a
-    /// comment keeps: jsdoc.go parses more than it keeps. Each is kept once, and the rest is dropped.
+    /// comment keeps: jsdoc.go parses more than it keeps. Each is kept once, in the order of the text, and the rest is
+    /// dropped. Returns where the kept ones end.
     #[cold]
     #[inline(never)]
     fn keep_found_specifiers(
@@ -1290,7 +1317,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         token: u32,
         attached: &Attached<'a>,
         from: usize,
-    ) {
+    ) -> usize {
         let mut kept: SmallVec<[KeptType; 8]> = SmallVec::new();
         for doc in &attached.docs {
             kept_types(&doc.tags, &mut kept);
@@ -1303,14 +1330,22 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             kept.shared_sort_unstable_by_key(|it| it.pos);
         }
         let specifiers = &mut self.f.module_specifiers;
-        let (mut end, mut last) = (from, 0);
+        let (mut end, mut last, mut is_in_order) = (from, 0, true);
+        // How many of `kept` start at or before the specifier.
+        let (mut after, mut previous) = (0, 0);
         for index in from..specifiers.len() {
             let mut specifier = specifiers[index];
-            let after = kept.partition_point(|it| it.pos <= specifier.pos);
+            // The reader goes back and reads a tag again.
+            if specifier.pos < previous {
+                after = 0;
+            }
+            previous = specifier.pos;
+            while kept.get(after).is_some_and(|it| it.pos <= specifier.pos) {
+                after += 1;
+            }
             let Some(around) = after.checked_sub(1).map(|at| kept[at]) else {
                 continue;
             };
-            // The reader goes back and reads a tag again.
             let is_known = specifier.pos <= last
                 && specifiers[from..end]
                     .iter()
@@ -1318,18 +1353,23 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             if specifier.pos >= around.end || is_known {
                 continue;
             }
+            is_in_order &= specifier.pos >= last;
             last = last.max(specifier.pos);
             specifier.role = match around.is_of_statement {
-                true => SpecifierRole::ImportOfStatement,
-                false => SpecifierRole::Import,
+                true => SpecifierRole::Import,
+                false => SpecifierRole::ImportInComment,
             };
             specifiers[end] = specifier;
             end += 1;
         }
         specifiers.truncate(end);
+        if !is_in_order {
+            specifiers[from..end].shared_sort_unstable_by_key(|it| it.pos);
+        }
         if end > from && !self.jsdoc.hosts_of_found_specifiers.insert(token) {
             self.jsdoc.has_found_specifiers_twice = true;
         }
+        end
     }
 
     /// The first `JSDoc` of a node starts where the node starts, at `full_start`. So to the walk, a comment before
@@ -1342,8 +1382,12 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let earlier = self.f.module_specifiers.iter_mut().take(before).rev();
         // What is at or after `full_start` belongs to this node.
         for specifier in earlier.take_while(|it| it.pos >= full_start) {
-            if specifier.pos < first && specifier.role == SpecifierRole::Import {
-                specifier.role = SpecifierRole::Neither;
+            if specifier.pos < first {
+                specifier.role = match specifier.role {
+                    SpecifierRole::ImportInComment => SpecifierRole::Neither,
+                    SpecifierRole::NodeAndImportInComment => SpecifierRole::Node,
+                    role => role,
+                };
             }
         }
     }
@@ -1378,9 +1422,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 .checked_sub(1)
                 .is_some_and(|at| pos < comments[at].end)
         };
+        // An entry that is both stays both: the walk finds it in the comment, or it finds the node.
         for specifier in self.f.module_specifiers.iter_mut().skip(from) {
             specifier.role = match specifier.role {
-                SpecifierRole::Import | SpecifierRole::ImportOfStatement
+                SpecifierRole::Import | SpecifierRole::ImportInComment
                     if is_in_comment(specifier.pos) =>
                 {
                     SpecifierRole::ImportUnlessReparsed

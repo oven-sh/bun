@@ -1037,11 +1037,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         truncate_file(&mut self.f, &lens);
         let kept = since.file.module_specifiers as usize;
         for specifier in self.f.module_specifiers.iter_mut().skip(kept) {
-            specifier.role = match specifier.role {
-                SpecifierRole::NodeAndImport => SpecifierRole::Import,
-                SpecifierRole::Node => SpecifierRole::Neither,
-                role => role,
-            };
+            specifier.role = specifier.role.without_node();
         }
         let strays = since.stacks.stray_decorators as usize;
         self.s.stray_decorators.truncate(strays);

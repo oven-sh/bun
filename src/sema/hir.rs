@@ -1820,22 +1820,29 @@ impl SpecifierKind {
 /// `collectExternalModuleReferences` puts in `file.Imports()` what it finds in the text: the statements, and for each
 /// `import` and `require` the node at that place (`GetNodeAtPosition`). In a JavaScript file that walk looks in the JSDoc
 /// comments of a node before it looks at the children, so the two sets differ there in both directions.
+///
+/// A type in a comment is parsed again for the node that a tag gives it to. That node is what the checker resolves, and
+/// the walk finds the type in the comment, not that node. One entry stands for both where both are there.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SpecifierRole {
-    /// A node that the walk finds: every specifier outside JSDoc comments.
+    /// A node that the walk finds: every specifier outside JSDoc comments. In a comment, one in a `@typedef`, `@callback`
+    /// or `@import` tag: the statement that the tag makes has it too, so the walk finds it where the comment has no node
+    /// that it enters.
     NodeAndImport,
-    /// A node that the walk does not get to: of a type that is parsed again for the node a tag gives it to. The walk
-    /// finds that type in the comment.
+    /// A node, and the walk finds its type in a JSDoc comment of a node.
+    NodeAndImportInComment,
+    /// A node that the walk does not find: its type is in a comment that the walk does not look in, or another entry
+    /// stands for that type.
     Node,
-    /// No node: what the walk finds in a JSDoc comment of a node, or in syntax that the tree of the file has no place for.
+    /// No node. The walk finds it in a `@typedef`, `@callback` or `@import` tag, or in syntax that the tree of the file
+    /// has no place for.
     Import,
-    /// `Import`, in a `@typedef`, `@callback` or `@import` tag. The statement that the tag makes has it too, so the walk
-    /// finds it where the comment has no node that it enters.
-    ImportOfStatement,
-    /// Neither, in a JSDoc comment: the walk does not look there, or another of the list stands for this one.
+    /// No node. The walk finds it in a JSDoc comment of a node, and no tag gives it to a node.
+    ImportInComment,
+    /// Neither, in a JSDoc comment: the walk does not look there, or another entry stands for this one.
     Neither,
-    /// `Import`, in a statement that `reparseTopLevelAwait` parses again if the file is a module. The comments of what it
-    /// parses again are lost to the walk.
+    /// `Import` or `ImportInComment`, in a statement that `reparseTopLevelAwait` parses again if the file is a module.
+    /// The comments of what it parses again are lost to the walk.
     ImportUnlessReparsed,
     /// `Node`, in such a statement. There the walk has only the nodes. It gets to some of them and not to others, which
     /// is not told apart: each counts.
@@ -1846,7 +1853,10 @@ impl SpecifierRole {
     #[inline]
     pub fn is_node(self) -> bool {
         use SpecifierRole::*;
-        matches!(self, NodeAndImport | Node | NodeAndImportIfReparsed)
+        matches!(
+            self,
+            NodeAndImport | NodeAndImportInComment | Node | NodeAndImportIfReparsed
+        )
     }
 
     /// `is_module`: `ExternalModuleIndicator != nil`, which is what `reparseTopLevelAwait` asks.
@@ -1854,10 +1864,33 @@ impl SpecifierRole {
     pub fn is_import(self, is_module: bool) -> bool {
         use SpecifierRole::*;
         match self {
-            NodeAndImport | Import | ImportOfStatement => true,
+            NodeAndImport | NodeAndImportInComment | Import | ImportInComment => true,
             Node | Neither => false,
             ImportUnlessReparsed => !is_module,
             NodeAndImportIfReparsed => is_module,
+        }
+    }
+
+    /// The role of an entry whose node the tree of the file does not have.
+    #[inline]
+    pub fn without_node(self) -> SpecifierRole {
+        use SpecifierRole::*;
+        match self {
+            NodeAndImport => Import,
+            NodeAndImportInComment => ImportInComment,
+            Node => Neither,
+            role => role,
+        }
+    }
+
+    /// The role of an entry that the walk does not find.
+    #[inline]
+    pub fn without_import(self) -> SpecifierRole {
+        use SpecifierRole::*;
+        match self {
+            NodeAndImport | NodeAndImportInComment => Node,
+            Import | ImportInComment | ImportUnlessReparsed => Neither,
+            role => role,
         }
     }
 }

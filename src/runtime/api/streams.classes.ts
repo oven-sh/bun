@@ -89,7 +89,7 @@ function source(name) {
     // (`sink` backref). A chained transform needs both.
     // `closeAdapter`: the C++ JSNativeStreamSourceAdapter to notify from `on_close` (BunStreamSource.cpp sets it).
     // `lockedStream`: the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. A Blob source never gets a native sink.
-    // `pendingPromise`: the promise of a read that waits on the source (a parked pull, or a whole-body read). It is held here and is no GC root (`NewSource::hold_waiting_read`).
+    // `pendingPromise`: the promise of a read that waits on the source (a parked pull, or a whole-body read). It is held here and is no GC root (`NewSource::take_waiting_read`).
     // `pendingView`: the buffer that a parked pull fills, when no Strong holds it (`ByteStream::set_value`).
     values: [
       "pendingPromise",

@@ -261,9 +261,9 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
 
         JSValue proxyHeadersValue = get(proxy, builtinNames.headersPublicName());
         RETURN_IF_EXCEPTION(throwScope, );
-        if (auto* jsHeaders = dynamicDowncast<JSFetchHeaders>(proxyHeadersValue)) {
+        if (auto* headers = JSFetchHeaders::toWrappedAsInit(proxyHeadersValue)) {
             Vector<KeyValuePair<String, String>> pairs;
-            auto iterator = jsHeaders->wrapped().createIterator(false);
+            auto iterator = headers->createIterator(false);
             while (auto value = iterator.next()) {
                 pairs.append({ value->key, value->value });
             }

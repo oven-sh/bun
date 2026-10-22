@@ -5,16 +5,19 @@
 // lifetime of the VM.
 //
 // Repro:
-//   1. Go async first (setImmediate) so RequestContext.toAsync() has already
-//      registered the uWS abort handler and doRenderStream is parked on the
-//      pending pull() promise (onResolveStream/onRejectStream wired up).
-//   2. Bump the sink's highWaterMark so write() buffers instead of draining
+//   1. Bump the sink's highWaterMark so write() buffers instead of draining
 //      straight to res.write() — this keeps isHttpWriteCalled() false so
 //      end() takes the tryEnd() path.
-//   3. Write a chunk large enough that tryEnd() hits socket backpressure on
+//   2. Write a chunk large enough that tryEnd() hits socket backpressure on
 //      a non-reading client → pending_flush is created + protected.
+//   3. Go async (setImmediate) so RequestContext.toAsync() has registered the
+//      uWS abort handler and doRenderStream is parked on the pending pull()
+//      promise (onResolveStream/onRejectStream wired up).
 //   4. Throw, rejecting the pull() promise → onRejectStream →
 //      handleRejectStream() with pending_flush still set.
+//
+// write() and end() come before the wait. If pull() waited first, the server
+// would send the head (chunked), and a later end() would skip the tryEnd() path.
 //
 // Without the fix, protected Promise count grows by ~1 per iteration.
 
@@ -38,13 +41,13 @@ const server = Bun.serve({
       new ReadableStream({
         type: "direct",
         async pull(controller: any) {
-          await new Promise<void>(r => setImmediate(() => r()));
           controller.start({ highWaterMark: CHUNK.length + 1 });
           controller.write(CHUNK);
           const p = controller.end();
           if (p instanceof Promise && Bun.peek.status(p) === "pending") {
             flushPending++;
           }
+          await new Promise<void>(r => setImmediate(() => r()));
           // Tear down the client after handleRejectStream has run. The throw
           // below rejects pull()'s promise; onRejectStream → handleRejectStream
           // fires on the microtask queue, then this setImmediate fires on the

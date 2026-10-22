@@ -168,7 +168,7 @@ pub(crate) struct RequestContext<
 
     pub(crate) request_body_readable_stream_ref: JsCell<readable_stream::Strong>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
-    /// `Request.body` (each holds its own `+1`). `Drop` releases the count.
+    /// `Request.body` (each holds its own `+1`). Released at the last chunk, or in `deinit`.
     pub(crate) request_body: JsCell<Option<body::BodyHiveHandle>>,
     pub(crate) request_body_buf: JsCell<Vec<u8>>,
     pub(crate) request_body_content_len: Cell<usize>,
@@ -276,7 +276,6 @@ mod NativePromiseContext {
 use crate::node::types::PathLikeExt as _;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
-use crate::webcore::blob::BlobExt as _;
 use crate::webcore::{Blob, ReadableStream, body as Body};
 use bun_jsc::SysErrorJsc as _;
 
@@ -376,6 +375,44 @@ fn report_unhandled_error(vm: &mut jsc::VirtualMachine, global: &JSGlobalObject,
     }
 }
 
+/// Rejects reads of a request body that outgrew `maxRequestBodySize`.
+fn request_body_too_large() -> Body::ValueError {
+    Body::ValueError::Message(BunString::static_(
+        "Request body exceeded maxRequestBodySize",
+    ))
+}
+
+/// Answers 413, or resets a response that already started. `resp` is already detached from its context.
+#[cold]
+#[inline(never)]
+fn refuse_oversized_request(
+    resp: uws::AnyResponse,
+    status_written: bool,
+    close_connection: bool,
+    body: Option<&mut Body::Value>,
+    global_this: &JSGlobalObject,
+) {
+    debug_assert!(!resp.has_responded());
+    if !status_written {
+        resp.write_status(b"413 Payload Too Large");
+        resp.end_without_body(close_connection);
+        resp.close_if_done_and_marked();
+    } else {
+        // Never the terminating chunk: it would make a truncated body look complete.
+        resp.force_close();
+    }
+    // Fail an unread body now, or a first read from an abort listener would find it empty.
+    if let Some(body) = body {
+        let untouched = match body {
+            Body::Value::Locked(locked) => !locked.has_consumer() && !locked.readable.has(),
+            _ => false,
+        };
+        if untouched {
+            let _ = body.to_error_instance(request_body_too_large(), global_this);
+        }
+    }
+}
+
 /// Release the body's hold on a stream the sink is done with, and mark a
 /// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
 /// monomorphizations share one copy.
@@ -445,15 +482,7 @@ mod shim {
         signal.pending_activity_unref();
         signal.unref();
     }
-    /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
-    /// (E0034); inline the body here.
-    #[inline]
-    pub(super) fn blob_is_s3(b: &Blob) -> bool {
-        b.store
-            .get()
-            .as_ref()
-            .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
-    }
+    /// `Blob::needs_to_read_file()` has duplicate impls (E0034); inline the body here.
     #[inline]
     pub(super) fn blob_needs_to_read_file(b: &Blob) -> bool {
         b.store
@@ -752,20 +781,28 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
+    /// Cancel the body of a Response the server will not transmit, unless a consumer or a reader holds it.
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
-        if let Body::Value::Locked(locked) = response.get_body_value()
-            && locked.has_consumer()
-        {
-            return;
+        match response.get_body_value() {
+            // Nothing to release, and the handler can return this Response again.
+            Body::Value::Null | Body::Value::Empty => return,
+            Body::Value::Locked(locked) if locked.has_consumer() => return,
+            _ => {}
         }
         if let Some(stream) = response.get_body_readable_stream() {
             let _keep = jsc::EnsureStillAlive(stream.value);
             response.detach_readable_stream(global_this);
-            // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
-            crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
+            // A locked stream belongs to its reader, which can be another Response's sink.
+            if !stream.is_locked(global_this) {
+                // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
+                crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
+            }
         }
-        *response.get_body_value() = Body::Value::Used;
+        let mut body = core::mem::replace(response.get_body_value(), Body::Value::Used);
+        // A pending body that was never read has no stream to cancel, only its producer.
+        if let Body::Value::Locked(locked) = &mut body {
+            locked.producer.cancel(JSValue::UNDEFINED);
+        }
     }
 
     /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.
@@ -872,6 +909,10 @@ where
             // Report it as if the handler threw it.
             self.run_error_handler(error);
             return;
+        }
+        // `value` came from a deferred `error()`, so respond like a sync `error()` without a Response.
+        if self.flags.is_error_promise_pending() {
+            return self.render_production_error(500);
         }
         self.render_missing();
     }
@@ -1257,8 +1298,8 @@ where
 
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
-                resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
                 if ctx.method == Method::HEAD {
+                    resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
                     ctx.end_without_body(ctx.should_close_connection());
                 } else {
                     ctx.end(WELCOME_PAGE_HTML_GZ, ctx.should_close_connection());
@@ -1269,9 +1310,9 @@ where
                 b"Welcome to Bun! To get started, return a Response object.";
             resp.write_status(b"200 OK");
             resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
-            resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
             ctx.flags.set_has_written_status(true);
             if ctx.method == Method::HEAD {
+                resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
                 ctx.end_without_body(ctx.should_close_connection());
             } else {
                 ctx.end(MISSING_CONTENT, ctx.should_close_connection());
@@ -1417,7 +1458,7 @@ where
             self.detach_response();
             // uWS markDone() clears onAborted on end, so on_abort can never
             // run for this request; this is the last chance to reclaim an
-            // outstanding claim (e.g. a 413 while the handler promise parks).
+            // outstanding claim (e.g. a 426 while the handler promise parks).
             self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
@@ -1445,29 +1486,6 @@ where
             resp.write_header_int(b"Content-Length", 0);
         }
         self.end_without_body(true);
-    }
-
-    /// Answers 413 to a request whose body outgrew `maxRequestBodySize`, after that body has failed.
-    fn end_with_payload_too_large(&self) {
-        let Some(resp) = self.resp.get() else { return };
-        // A dev server bundle that this request waits for must not answer it later.
-        if let Some(abort) = self.additional_on_abort.replace(None) {
-            (abort.cb)(abort.data.as_ptr());
-            abort.deref();
-        }
-        // Failing the body runs JS, which can answer with a file. The file stream
-        // owns the response from then on, and it hears the close as an abort.
-        if self.flags.has_sendfile_ctx() {
-            resp.force_close();
-            return;
-        }
-        if !resp.has_responded() {
-            self.flags.set_has_written_status(true);
-            resp.write_status(b"413 Payload Too Large");
-        }
-        // The normal end path detaches `self.resp` and releases the base ref. uWS
-        // markDone() clears onAborted, so no abort would ever do either.
-        self.end_without_body(!MUX);
     }
 
     pub(crate) fn force_close(&self) {
@@ -1617,6 +1635,15 @@ where
                 return;
             }
         }
+        this.abort(jsc::CommonAbortReason::ConnectionClosed);
+    }
+
+    /// Tears down a request whose response can't complete. The caller pins `self` and holds an event loop scope.
+    #[inline(never)]
+    fn abort(&self, reason: jsc::CommonAbortReason) {
+        let this = self;
+        let server = this.server();
+        let vm = server.vm();
         debug_assert!(!this.flags.aborted());
         // mark request as aborted
         this.flags.set_aborted(true);
@@ -1626,9 +1653,23 @@ where
             abort.deref();
         }
 
+        let resp = this.resp.get();
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
         let global_this = server.global_this();
+        if reason == jsc::CommonAbortReason::RequestBodyTooLarge {
+            this.flags.set_request_body_refused(true);
+            if let Some(resp) = resp {
+                refuse_oversized_request(
+                    resp,
+                    this.flags.has_written_status(),
+                    !MUX,
+                    this.request_body_mut(),
+                    global_this,
+                );
+                this.flags.set_has_written_status(true);
+            }
+        }
         let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
@@ -1645,11 +1686,7 @@ where
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
             if !shim::signal_aborted(signal) {
-                shim::signal_fire(
-                    signal,
-                    global_this,
-                    jsc::CommonAbortReason::ConnectionClosed,
-                );
+                shim::signal_fire(signal, global_this, reason);
                 any_js_calls.set(true);
             }
             shim::signal_release(signal);
@@ -1665,6 +1702,7 @@ where
             unsafe {
                 ResponseStream::<SSL_ENABLED>::abort(
                     sink_ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED>>(),
+                    reason,
                 );
             }
             // Reject a parked request-body read while this abort still drains microtasks.
@@ -1912,6 +1950,28 @@ where
         RangeRequest::if_range_matches(if_range, etag.as_deref(), last_modified_ms)
     }
 
+    /// Returns the default status for a `Bun.file()` body that can't be opened.
+    fn file_open_error_status(&self, errno: bun_sys::E) -> u16 {
+        // `error()` returned this file, so the failure is the handler's fault.
+        if self.flags.has_called_error_handler() {
+            return 500;
+        }
+        match errno {
+            bun_sys::E::ENOENT
+            | bun_sys::E::ENOTDIR
+            | bun_sys::E::EISDIR
+            | bun_sys::E::ENAMETOOLONG => 404,
+            bun_sys::E::EACCES | bun_sys::E::EPERM => 403,
+            _ => 500,
+        }
+    }
+
+    /// Drops the failed file first, so `error()`'s Response doesn't get its Content-Type or filename.
+    fn fail_sendfile(&self, js_err: JSValue, status: u16) {
+        self.blob.with_mut(|b| b.detach());
+        self.run_error_handler_with_status_code(js_err, status);
+    }
+
     pub(crate) fn do_sendfile(&self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
@@ -1943,10 +2003,11 @@ where
             ) {
                 bun_sys::Result::Ok(fd_) => fd_,
                 bun_sys::Result::Err(err) => {
+                    let status = self.file_open_error_status(err.get_errno());
                     let js_err = err
                         .with_path(file.pathlike.path().slice())
                         .to_js(global_this);
-                    return self.run_error_handler(js_err);
+                    return self.fail_sendfile(js_err, status);
                 }
             }
         };
@@ -1966,7 +2027,7 @@ where
                         err.with_fd(*pathlike_fd).to_js(global_this)
                     }
                 };
-                return self.run_error_handler(js_err);
+                return self.fail_sendfile(js_err, 500);
             }
         };
 
@@ -1999,7 +2060,10 @@ where
                 };
                 let mut sys: jsc::SystemError = err.to_system_error().into();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
-                return self.run_error_handler(sys.to_error_instance(global_this));
+                return self.fail_sendfile(
+                    sys.to_error_instance(global_this),
+                    self.file_open_error_status(bun_sys::E::EISDIR),
+                );
             }
             (bun_io::FileType::File, false)
         };
@@ -2009,13 +2073,6 @@ where
             _ => unreachable!(),
         };
         let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
-        if let AnyBlob::Blob(b) = blob_ref {
-            b.size.set(if is_regular {
-                stat_size
-            } else {
-                original_size.min(stat_size)
-            });
-        }
 
         self.flags.set_needs_content_length(is_regular);
         let mut sendfile = SendfileContext {
@@ -2023,11 +2080,6 @@ where
             offset: blob_offset,
             total: 0,
         };
-        if is_regular && auto_close {
-            self.flags.set_needs_content_range(
-                sendfile.remain.saturating_sub(sendfile.offset) != stat_size,
-            );
-        }
         if is_regular {
             sendfile.offset = sendfile.offset.min(stat_size);
             sendfile.remain = sendfile
@@ -2035,6 +2087,10 @@ where
                 .max(sendfile.offset)
                 .min(stat_size)
                 .saturating_sub(sendfile.offset);
+            if auto_close {
+                self.flags
+                    .set_needs_content_range(sendfile.remain != stat_size);
+            }
         }
         self.sendfile.set(sendfile);
 
@@ -2152,7 +2208,6 @@ where
             } else {
                 None
             },
-            idle_timeout: server.config().idle_timeout,
             owner: file_response_stream::StreamOwner::Ctx {
                 ctx: self.as_ctx_ptr().cast::<c_void>(),
                 on_complete: Self::on_file_stream_complete,
@@ -2241,6 +2296,50 @@ where
             Self::destroy_sink(wrapper_ptr);
         }
         readable_ref.deinit();
+    }
+
+    /// Sends the head after the pending microtasks ran, so a body that ends in them keeps `Content-Length`.
+    fn defer_head_commit(&self) {
+        let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
+        let already_posted = self
+            .server()
+            .vm()
+            .as_mut()
+            .event_loop_mut()
+            .deferred_tasks
+            .post_task(ctx, Self::on_deferred_head_commit);
+        if !already_posted {
+            // Released by the task.
+            self.ref_();
+        }
+    }
+
+    extern "C" fn on_deferred_head_commit(ctx: *mut c_void) -> bool {
+        let pinned = RequestContextRef::adopt(ctx.cast::<Self>());
+        let this = pinned.ctx();
+
+        // The response already ended, failed or was aborted.
+        let Some(resp) = this.resp.get() else {
+            return false;
+        };
+        // The stream already settled, and its teardown ends the response.
+        let Some(wrapper) = this.sink_mut() else {
+            return false;
+        };
+        if !wrapper.sink.sends_head_itself() {
+            resp.commit_head();
+        }
+        false
+    }
+
+    /// Sends the whole head for a body that has no bytes yet.
+    fn render_committed_head_corked(this: *mut Self) {
+        // SAFETY: this is the live RequestContext threaded through cork user-data.
+        let this = unsafe { &*this };
+        this.render_metadata();
+        if let Some(resp) = this.resp.get() {
+            resp.commit_head();
+        }
     }
 
     fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>) {
@@ -2383,6 +2482,16 @@ where
                             response_stream.sink.on_first_write = None;
                             response_stream.sink.ctx = None;
                             this.render_metadata();
+                        }
+
+                        // The client gets the head now instead of with the first chunk.
+                        if !MUX {
+                            if this.is_async() {
+                                // `drain_microtasks()` above was a no-op, so the body's microtasks are still queued.
+                                this.defer_head_commit();
+                            } else if !response_stream.sink.sends_head_itself() {
+                                resp.commit_head();
+                            }
                         }
 
                         // TODO: should this timeout?
@@ -2545,6 +2654,14 @@ where
         }
     }
 
+    /// Rejects reads of a request body that will never complete.
+    fn request_body_error(&self) -> Body::ValueError {
+        if self.flags.request_body_refused() {
+            return request_body_too_large();
+        }
+        Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed)
+    }
+
     fn end_request_streaming(&self) -> JsResult<bool> {
         debug_assert!(self.server.get().is_some());
 
@@ -2556,10 +2673,7 @@ where
         if let Some(body) = self.request_body_mut() {
             if matches!(body, Body::Value::Locked(_)) {
                 let global_this = self.server().global_this();
-                body.to_error_instance(
-                    Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
-                    global_this,
-                )?;
+                body.to_error_instance(self.request_body_error(), global_this)?;
                 any_js_calls = true;
             }
         }
@@ -2578,8 +2692,7 @@ where
                 // False unless `to_error_instance` above reached this same stream through the body.
                 if !bytes.has_received_last_chunk.get() {
                     let global_this = self.server().global_this();
-                    let mut err =
-                        Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
+                    let mut err = self.request_body_error();
                     bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
                     ));
@@ -2713,39 +2826,20 @@ where
         // handler-supplied Content-Length / Transfer-Encoding header)
         let body_value = response.get_body_value();
         match body_value {
-            Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
-                let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
-                let size = blob.size();
-                this.render_metadata();
-
-                if size == crate::webcore::blob::MAX_SIZE {
-                    resp.write_header_int(b"content-length", 0);
-                } else {
-                    resp.write_header_int(b"content-length", size as u64);
+            Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) | Body::Value::Blob(_) => {
+                // `render_metadata` reads Content-Type and the filename from `this.blob`. HEAD doesn't consume a Blob body.
+                this.blob.set(match body_value {
+                    Body::Value::Blob(blob) => AnyBlob::Blob(blob.dupe()),
+                    _ => body_value.use_as_any_blob_allow_non_utf8_string(),
+                });
+                // `do_sendfile` opens the file like GET does and ends a HEAD response after the headers.
+                if this.blob.get().needs_to_read_file() {
+                    this.render_with_blob_from_body_value();
+                    return;
                 }
-                this.end_without_body(this.should_close_connection());
-                blob.detach();
-            }
-
-            Body::Value::Blob(blob) => {
-                // Size the blob *before* `render_metadata()`: it re-fetches the
-                // Response from `response_weakref`, so no borrow of the Response
-                // (here, `blob`) may still be live across it. Nothing is written
-                // to the socket in between, so the wire output is unchanged.
-                let blob_size = if shim::blob_is_s3(blob) {
-                    // Match the body GET sends (`render_bytes`). `resolve_size()` would set the blob's size to 0.
-                    blob.shared_view().len() as BlobSizeType
-                } else {
-                    blob.resolve_size();
-                    blob.size.get()
-                };
                 this.render_metadata();
-
-                if blob_size == crate::webcore::blob::MAX_SIZE {
-                    resp.write_header_int(b"content-length", 0);
-                } else {
-                    resp.write_header_int(b"content-length", blob_size as u64);
-                }
+                // GET sends these bytes (`render_bytes`).
+                resp.write_header_int(b"content-length", this.blob.get().slice().len() as u64);
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Locked(_) => {
@@ -3247,7 +3341,10 @@ where
                             ),
                             ..Default::default()
                         };
-                        stream.value.unprotect();
+                        // The stream belongs to its reader, so teardown must not find it and end it.
+                        if let Some(response) = this.response_mut() {
+                            response.detach_readable_stream(global_this);
+                        }
                         let js_err = err.to_error_instance(global_this);
                         this.run_error_handler(js_err);
                         return;
@@ -3343,15 +3440,16 @@ where
                                 || matches!(
                                     byte_stream.parent_const().producer.get(),
                                     WebCore::streams::SourceHandle::HTMLRewriter(_)
+                                        | WebCore::streams::SourceHandle::S3DownloadBody(_)
                                 )
                             {
                                 // Defer status/headers to the first chunk/end
-                                // so a pre-first-byte handler failure can
+                                // so a failure before the first byte can
                                 // still reach `error()`.
                             } else {
-                                // if we only have metadata to send, send it now
+                                // No body bytes yet: send the whole head now.
                                 resp.run_corked_with_type(
-                                    Self::render_metadata_corked,
+                                    Self::render_committed_head_corked,
                                     this.as_ctx_ptr(),
                                 );
                             }
@@ -3414,7 +3512,7 @@ where
         }
         let resp = this.resp.get().expect("infallible: resp bound");
 
-        // A rewriter-produced `Source::Bytes` body defers metadata until the
+        // A rewriter or S3 `Source::Bytes` body defers metadata until the
         // first chunk so a pre-first-byte failure can still reach the
         // server's `error()` hook. Flush it now, corked.
         if !this.flags.has_written_status() {
@@ -3584,8 +3682,6 @@ where
                 if let Some(len) = app_content_length {
                     resp.write_header_int(b"content-length", len);
                 }
-                // end_without_body skips writeMark(); keep Date as try_end did.
-                resp.write_mark();
                 this.end_without_body(this.should_close_connection());
                 return;
             }
@@ -3621,12 +3717,11 @@ where
         if let Some(resp) = self.resp.get() {
             // `AnyResponse` is a `Copy` handle; methods take `self` by value.
             match status {
-                404 => {
+                403 | 404 => {
                     if !self.flags.has_written_status() {
-                        resp.write_status(b"404 Not Found");
-                        self.flags.set_has_written_status(true);
+                        self.do_write_status(status);
                     }
-                    self.end_without_body(self.should_close_connection());
+                    self.end(b"", self.should_close_connection());
                 }
                 _ => {
                     const BODY: &[u8] = b"Something went wrong!";
@@ -3695,6 +3790,12 @@ where
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
+        // A missing or unreadable `Bun.file()` isn't a bug in the handler, so skip the report and the dev error page.
+        if matches!(status, 403 | 404) {
+            self.render_production_error(status);
+            vm.log_mut().unwrap().reset();
+            return;
+        }
         if DEBUG_MODE {
             let mut exception_list: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
@@ -3713,9 +3814,7 @@ where
             log.reset();
             return;
         }
-        if status != 404 {
-            report_unhandled_error(vm, global_this, value);
-        }
+        report_unhandled_error(vm, global_this, value);
         self.render_production_error(status);
         vm.log_mut().unwrap().reset();
     }
@@ -3751,7 +3850,7 @@ where
                 }
                 if !result.is_empty_or_undefined_or_null() {
                     if let Some(err) = result.to_error() {
-                        self.finish_running_error_handler(err, status);
+                        self.finish_running_error_handler(err, 500);
                         return;
                     } else if let Some(promise) = result.as_any_promise() {
                         self.process_on_error_promise(result, promise, value, status);
@@ -3826,7 +3925,7 @@ where
                 return;
             }
             jsc::PromiseResult::Rejected(err) => {
-                ctx.finish_running_error_handler(err, status);
+                ctx.finish_running_error_handler(err, 500);
                 return;
             }
         }
@@ -3861,14 +3960,7 @@ where
         let sendfile = self.sendfile.get();
         let mut status = response.status_code();
         let blob = self.blob.get();
-        let mut needs_content_range = self.flags.needs_content_range()
-            && (sendfile.total > 0 || sendfile.remain < blob.size());
-
-        let size = if needs_content_range {
-            sendfile.remain
-        } else {
-            blob.size()
-        };
+        let mut needs_content_range = self.flags.needs_content_range();
 
         let (content_type, needs_content_type, content_type_needs_free) =
             get_content_type(response.get_init_headers_mut(), blob);
@@ -3881,12 +3973,17 @@ where
         let mut has_content_disposition = false;
         let mut has_content_range = false;
         if let Some(mut headers_) = response.swap_init_headers() {
+            if response.body_decoded() {
+                headers_.fast_remove(jsc::HTTPHeaderName::ContentEncoding);
+            }
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
             // For .slice()-driven ranges, only promote to 206 if the user
             // also set Content-Range (preserves the old contract). For an
             // incoming Range: header (sendfile.total > 0) we always 206.
-            needs_content_range = needs_content_range && (sendfile.total > 0 || has_content_range);
+            // A list implied by the body counts as no list.
+            needs_content_range = needs_content_range
+                && (sendfile.total > 0 || has_content_range || headers_.is_implied_by_body());
             if needs_content_range {
                 status = 206;
             }
@@ -3925,8 +4022,9 @@ where
         if needs_content_type
             // do not insert the content type if it is the fallback value
             // we may not know the content-type when streaming
+            // `OTHER` is a `const` with no stable address, so compare the bytes.
             && (!blob.is_detached()
-                || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
+                || content_type.value.as_ref() != bun_http_types::MimeType::OTHER.value.as_ref())
             && !strings::contains_any(&content_type.value, b"\r\n\0")
         {
             resp.write_header(b"content-type", &content_type.value);
@@ -3950,10 +4048,12 @@ where
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    if !strings::contains_any(truncated, b"\r\n\0\"") {
+                    if truncated.iter().all(|&byte| is_qdtext(byte)) {
                         let header_value = {
                             let mut w = &mut filename_buf[..];
-                            if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
+                            if write!(w, "inline; filename=\"{}\"", bstr::BStr::new(truncated))
+                                .is_ok()
+                            {
                                 let written = 1024 - w.len();
                                 &filename_buf[..written]
                             } else {
@@ -3969,7 +4069,7 @@ where
         }
 
         if self.flags.needs_content_length() {
-            resp.write_header_int(b"content-length", size as u64);
+            resp.write_header_int(b"content-length", sendfile.remain as u64);
             resp.mark_wrote_content_length_header();
             self.flags.set_needs_content_length(false);
         }
@@ -4157,51 +4257,8 @@ where
                 .saturating_add(chunk.len());
             this.request_body_streamed_len.set(streamed_len);
             if streamed_len > server.config().max_request_body_size {
-                this.resp
-                    .get()
-                    .expect("infallible: resp bound")
-                    .clear_on_data();
-                this.flags.set_is_waiting_for_request_body(false);
-                this.resume_request_body_socket();
-
                 let _exit = vm.enter_event_loop_scope();
-
-                // Body first (a tee branch after `req.clone()`), before endRequestStreaming()'s ConnectionClosed.
-                if let Some(body) = this.request_body_mut() {
-                    if matches!(body, Body::Value::Locked(_)) {
-                        let _ = body.to_error_instance(
-                            Body::ValueError::Message(BunString::static_(
-                                "Request body exceeded maxRequestBodySize",
-                            )),
-                            global_this,
-                        );
-                    }
-                }
-
-                // Release the strong stream ref like the `last` arm does, then
-                // error the stream so a pending or future read rejects instead
-                // of hanging forever.
-                let _strong = this
-                    .request_body_readable_stream_ref
-                    .replace(readable_stream::Strong::default());
-
-                readable.value.ensure_still_alive();
-                if let Some(bytes) = readable.ptr.bytes() {
-                    let source = bytes.parent_const();
-                    source.producer.set(WebCore::streams::SourceHandle::None);
-                    // False unless `to_error_instance` above reached this same stream through the body.
-                    if !bytes.has_received_last_chunk.get() {
-                        let mut err = Body::ValueError::Message(BunString::static_(
-                            "Request body exceeded maxRequestBodySize",
-                        ));
-                        bytes.on_data(WebCore::streams::Result::Err(
-                            err.to_stream_error(global_this),
-                        ));
-                        err.reset();
-                    }
-                }
-
-                this.end_with_payload_too_large();
+                this.abort(jsc::CommonAbortReason::RequestBodyTooLarge);
                 return;
             }
 
@@ -4272,27 +4329,8 @@ where
                 .saturating_add(chunk.len())
                 > server.config().max_request_body_size
             {
-                this.request_body_buf.set(Vec::new());
-                this.resp
-                    .get()
-                    .expect("infallible: resp bound")
-                    .clear_on_data();
-                this.flags.set_is_waiting_for_request_body(false);
-
                 let _exit = vm.enter_event_loop_scope();
-                // Reject the pending body first so endRequestStreaming()
-                // below (via this.endWithoutBody) doesn't substitute a
-                // generic ConnectionClosed. toErrorInstance handles
-                // .Locked itself (rejects the promise, deinits the
-                // readable, calls onReceiveValue).
-                let _ = body.to_error_instance(
-                    Body::ValueError::Message(BunString::static_(
-                        "Request body exceeded maxRequestBodySize",
-                    )),
-                    global_this,
-                );
-
-                this.end_with_payload_too_large();
+                this.abort(jsc::CommonAbortReason::RequestBodyTooLarge);
                 return;
             }
 
@@ -4318,6 +4356,8 @@ where
                     let _ =
                         Body::Value::resolve(&mut old, body, &global_this.js_thread(context), None); // TODO: properly propagate exception upwards
                 }
+                // A complete body belongs to the `Request` alone, so ending the request can't fail it.
+                this.request_body_take_unref();
                 return;
             }
 
@@ -4337,9 +4377,12 @@ where
             });
 
             // Pre-stream backpressure; resumed by `on_stream_drained` / `on_start_buffering`.
-            if !this.flags.request_body_buffer_all()
-                && this.request_body_buf.get().len() >= REQUEST_BODY_HIGH_WATER_MARK
-            {
+            let mark = if MUX {
+                MUX_REQUEST_BODY_HIGH_WATER_MARK
+            } else {
+                REQUEST_BODY_HIGH_WATER_MARK
+            };
+            if !this.flags.request_body_buffer_all() && this.request_body_buf.get().len() >= mark {
                 this.pause_request_body_socket();
             }
         }
@@ -4542,6 +4585,8 @@ const MUX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 64 * 1024;
 
 /// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
 const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
+/// For an HTTP/2 or HTTP/3 body no handler has asked for yet. Under half of the HTTP/3 stream window, so the pause lands before lsquic raises the limit.
+const MUX_REQUEST_BODY_HIGH_WATER_MARK: usize = 256 * 1024;
 
 // ─── per-monomorphization C-ABI exports ──────────────────────────────────────
 // The exported symbol name is "Bun__HTTPRequestContext" + (debug ? "Debug" : "")
@@ -4742,6 +4787,8 @@ bitflags::bitflags! {
         const REQUEST_BODY_PAUSED         = 1 << 16;
         /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
+        /// The body outgrew `maxRequestBodySize`, so its reads reject with that error.
+        const REQUEST_BODY_REFUSED        = 1 << 18;
     }
 }
 
@@ -4823,6 +4870,11 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         set_request_body_buffer_all,
         REQUEST_BODY_BUFFER_ALL
     );
+    flag_accessor!(
+        request_body_refused,
+        set_request_body_refused,
+        REQUEST_BODY_REFUSED
+    );
 
     #[inline]
     pub(crate) fn is_web_browser_navigation(&self) -> bool {
@@ -4848,6 +4900,11 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         bits.set(FlagsBits::HAS_FINALIZED, v);
         self.0.set(bits);
     }
+}
+
+/// RFC 9110 5.6.4 `qdtext`: a byte a quoted-string can carry without a backslash escape.
+fn is_qdtext(byte: u8) -> bool {
+    matches!(byte, b'\t' | b' ' | 0x21 | 0x23..=0x5B | 0x5D..=0x7E | 0x80..=0xFF)
 }
 
 fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {

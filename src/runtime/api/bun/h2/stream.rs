@@ -104,7 +104,7 @@ pub(crate) fn transition(state: State, ev: Event) -> Result<State, TransitionErr
 
 /// §6.1/§5.1: DATA may only be received in `open` or `half-closed (local)`. In particular a
 /// promised stream still in `reserved (remote)` must not be handed DATA before its response
-/// HEADERS arrive. (Locally-opened streams the engine never saw are shimmed to `Open` by the
+/// HEADERS arrive. (Locally-opened streams the engine never saw are shimmed by the
 /// caller before this check.)
 pub(crate) fn can_receive_data(state: State) -> bool {
     matches!(state, State::Open | State::HalfClosedLocal)

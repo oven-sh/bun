@@ -68,6 +68,8 @@ public:
     int closeReadError = 0;
     /* Whether the connection closed before the kernel had taken everything, also after an upgrade to a WebSocket. */
     std::optional<bool> closedWithUnsentData;
+    /* socket.bytesRead: bytes read from the connection, after TLS decryption. */
+    uint64_t bytesRead = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;
@@ -146,11 +148,14 @@ public:
      * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody, JSNodeHTTPResponse* response);
 
-    /* Tunnel read backpressure, like net.Socket's handle. Both do nothing outside tunnel mode. */
+    /* Read backpressure, like net.Socket's handle. Both do nothing unless ondata gets the reads: tunnel mode, or setRawReads(). */
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
-    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
+    /* Outside tunnel mode: ondata gets the bytes of every read before the HTTP parser does (Node's parser.unconsume()). A tunnel turns it off. */
+    void setRawReads(bool enabled);
+    void onRawRead(const char* data, int length);
+    /* Tells uWS whether this tunnel is idle: not reading (readStop() or read EOF) with nothing left to send. Also un-parks a request when a raw write leaves bytes to send. See HttpResponse::setNodeHttpTunnelIdle. */
     void updateTunnelIdle();
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
     bool hasUnsentResponseBytes() const;

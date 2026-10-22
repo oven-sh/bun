@@ -5,7 +5,18 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, isASAN, isCI, isDebug, isWindows, randomPort, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleSite,
+  isASAN,
+  isCI,
+  isDebug,
+  isWindows,
+  randomPort,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -25,12 +36,13 @@ import http, {
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
-import { tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { connect as tlsConnect } from "node:tls";
 import { inspect } from "node:util";
+import { runInNewContext } from "node:vm";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -38,14 +50,9 @@ const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
-    server.listen({ port: 0 }, (err?: any, hostname?: string, port?: number) => {
+    server.listen({ port: 0 }, () => {
       clearTimeout(timeout);
-
-      if (err) {
-        reject(err);
-      } else {
-        resolve(new URL(`${protocol}://${hostname}:${port}`));
-      }
+      resolve(new URL(`${protocol}://localhost:${(server.address() as AddressInfo).port}`));
     });
   });
 }
@@ -160,6 +167,18 @@ describe("node:http", () => {
       expect(server.listening).toBe(false);
     });
 
+    // supertest closes the server it started only `if (server._handle)` (#23648).
+    it("server._handle is set only while listening", async () => {
+      const server = createServer() as Server & { _handle: unknown };
+      const handles = [server._handle];
+      await once(server.listen(0), "listening");
+      handles.push(!!server._handle);
+      server.close();
+      handles.push(server._handle);
+      await once(server, "close");
+      expect(handles).toEqual([null, true, null]);
+    });
+
     it("listen callback should be bound to server", async () => {
       const server = createServer();
       const { resolve, reject, promise } = Promise.withResolvers();
@@ -210,6 +229,26 @@ describe("node:http", () => {
         order: ["error:EADDRINUSE", "nextTick"],
         listeningAtOnce: false,
         listening: false,
+      });
+    });
+
+    it("reports the address and port in a listen() error", async () => {
+      await using occupant = createServer();
+      await once(occupant.listen(0, "127.0.0.1"), "listening");
+      const { port } = occupant.address() as AddressInfo;
+
+      const [{ message, code, errno, syscall, address, port: errorPort }] = await once(
+        createServer().listen(port, "127.0.0.1"),
+        "error",
+      );
+      expect({ message, code, errno, syscall, address, port: errorPort }).toEqual({
+        message: `listen EADDRINUSE: address already in use 127.0.0.1:${port}`,
+        code: "EADDRINUSE",
+        // libuv has its own errno values on Windows.
+        errno: isWindows ? expect.any(Number) : -constants.errno.EADDRINUSE,
+        syscall: "listen",
+        address: "127.0.0.1",
+        port,
       });
     });
 
@@ -364,6 +403,138 @@ describe("node:http", () => {
       expect(port1).toBeWithin(1024, 65535);
       server1.close();
       server2.close();
+    });
+
+    it.each([
+      ["listen(null)", (server: Server) => server.listen(null as any)],
+      ["listen(null, host)", (server: Server) => server.listen(null as any, "127.0.0.1")],
+    ])("%s picks a free port", async (_form, listenOn) => {
+      await using server1 = createServer();
+      await using server2 = createServer();
+      await Promise.all([once(listenOn(server1), "listening"), once(listenOn(server2), "listening")]);
+      expect((server1.address() as AddressInfo).port).not.toBe((server2.address() as AddressInfo).port);
+    });
+
+    // Node reports ENOTSUP for reusePort on Windows.
+    it.skipIf(isWindows)("listen({ reusePort: true }) lets two servers share a port", async () => {
+      await using first = createServer();
+      await using second = createServer();
+      await once(first.listen({ port: 0, host: "127.0.0.1", reusePort: true }), "listening");
+      const { port } = first.address() as AddressInfo;
+      await once(second.listen({ port, host: "127.0.0.1", reusePort: true }), "listening");
+      expect((second.address() as AddressInfo).port).toBe(port);
+    });
+
+    describe("listen({ fd })", () => {
+      // What systemd socket activation does: the parent binds the socket, the child inherits it as descriptor 3.
+      it.skipIf(isWindows).concurrent.each([
+        { kind: "tcp", tls: false },
+        { kind: "unix", tls: true },
+      ])("serves on an inherited $kind socket (tls: $tls)", async ({ kind, tls }) => {
+        using dir = tempDir("listen-fd", {});
+        const socketPath = path.join(String(dir), "a.sock");
+        const donor = createNetServer(socket => socket.destroy());
+        await once(donor.listen(kind === "tcp" ? { port: 0, host: "127.0.0.1" } : { path: socketPath }), "listening");
+        const bound = donor.address();
+
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const { createServer } = require(process.env.TLS ? "node:https" : "node:http");
+              let address;
+              const server = createServer(JSON.parse(process.env.TLS || "{}"), (req, res) => {
+                res.end("served by the child");
+                server.close(() => {
+                  let descriptor = "open";
+                  try {
+                    require("node:fs").fstatSync(3);
+                  } catch (e) {
+                    descriptor = e.code;
+                  }
+                  console.log(JSON.stringify({ address, descriptor }));
+                });
+              });
+              server.on("error", e => console.log(JSON.stringify({ error: e.message })));
+              server.listen({ fd: 3, port: 1, host: "192.0.2.1", path: "/nonexistent/b.sock" }, () => {
+                address = server.address();
+              });
+            `,
+          ],
+          env: { ...bunEnv, TLS: tls ? JSON.stringify(tlsCert) : "" },
+          stdio: ["ignore", "pipe", "pipe", (donor as any)._handle.fd],
+        });
+        // Only the child may accept. close() unlinks the socket file, so move it out of the way first.
+        if (kind === "unix") nodefs.renameSync(socketPath, socketPath + ".aside");
+        donor.close();
+        await once(donor, "close");
+        if (kind === "unix") nodefs.renameSync(socketPath + ".aside", socketPath);
+
+        const { promise: body, resolve, reject } = Promise.withResolvers<string>();
+        (tls ? https : http)
+          .get(
+            {
+              ...(kind === "tcp" ? { port: (bound as AddressInfo).port, host: "127.0.0.1" } : { socketPath }),
+              agent: false,
+              ca: tlsCert.cert,
+              servername: "localhost",
+            },
+            res => text(res).then(resolve, reject),
+          )
+          .on("error", reject);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({
+          body: await body,
+          stdout: JSON.parse(stdout),
+          stderr,
+          socketFileKept: nodefs.existsSync(socketPath),
+        }).toEqual({
+          body: "served by the child",
+          // Like Node: close() closes the descriptor, and a unix socket that came as a descriptor has no address.
+          stdout: { address: kind === "tcp" ? bound : null, descriptor: "EBADF" },
+          stderr: "",
+          socketFileKept: kind === "unix",
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      it.each([
+        ["a descriptor that isn't open", () => 0x7fffffff],
+        ["a file", () => nodefs.openSync(import.meta.path, "r")],
+        ["a fraction", () => 1.5],
+        ["a number above int32", () => 2 ** 31],
+      ])("emits EINVAL for %s", async (name, open) => {
+        const fd = open();
+        try {
+          const [{ message, code, errno, syscall, address }] = await once(createServer().listen({ fd }), "error");
+          expect({ message, code, errno, syscall, address }).toEqual({
+            message: "listen EINVAL: invalid argument",
+            code: "EINVAL",
+            // libuv has its own errno values on Windows.
+            errno: isWindows ? expect.any(Number) : -constants.errno.EINVAL,
+            syscall: "listen",
+            address: null,
+          });
+        } finally {
+          if (name === "a file") nodefs.closeSync(fd);
+        }
+      });
+
+      it.each([[-1], ["3"], [null], [NaN], [undefined]])("throws for fd %p without a port or a path", fd => {
+        expect(() => createServer().listen({ fd } as any)).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_ARG_VALUE",
+            message: expect.stringContaining(`The argument 'options' must have the property "port" or "path".`),
+          }),
+        );
+      });
+
+      it("ignores a negative fd next to a port", async () => {
+        await using server = createServer();
+        await once(server.listen({ fd: -1, port: 0, host: "127.0.0.1" } as any), "listening");
+        expect((server.address() as AddressInfo).address).toBe("127.0.0.1");
+      });
     });
 
     it("option method should be uppercase (#7250)", async () => {
@@ -584,12 +755,12 @@ describe("node:http", () => {
           res.end("Hello World");
         }
       });
-      server.listen({ port: 0 }, (_?: any, __?: any, port?: number) => {
+      server.listen({ port: 0 }, () => {
         var _done = (...args) => {
           server.close();
           done(...args);
         };
-        callback(server, port!, _done);
+        callback(server, (server.address() as AddressInfo).port, _done);
       });
     }
 
@@ -1197,6 +1368,117 @@ describe("node:http", () => {
         req.end();
       });
     });
+
+    // A URL from another implementation (jsdom, whatwg-url) has accessors on its prototype and isn't `instanceof URL`.
+    class ForeignURL {
+      #url: URL;
+      constructor(href: string) {
+        this.#url = new URL(href);
+      }
+      get href() {
+        return this.#url.href;
+      }
+      get protocol() {
+        return this.#url.protocol;
+      }
+      get hostname() {
+        return this.#url.hostname;
+      }
+      get port() {
+        return this.#url.port;
+      }
+      get pathname() {
+        return this.#url.pathname;
+      }
+      get search() {
+        return this.#url.search;
+      }
+    }
+
+    async function echoServer() {
+      const server = createServer(async (req, res) => res.end(`${req.method} ${req.url} ${await text(req)}`));
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      return server;
+    }
+
+    it("request() and get() read a URL from another implementation as a URL", async () => {
+      const server = await echoServer();
+      try {
+        const url = new ForeignURL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/some/path?q=1#frag`);
+        const [viaGet] = await once(get(url as any), "response");
+        expect(await text(viaGet)).toBe("GET /some/path?q=1 ");
+        const [viaRequest] = await once(request(url as any, { method: "POST" }).end("body"), "response");
+        expect(await text(viaRequest)).toBe("POST /some/path?q=1 body");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("https.request() reads a URL from another implementation as a URL", () => {
+      const req = https.request(new ForeignURL("https://127.0.0.1:1/some/path?q=1") as any);
+      req.on("error", () => {});
+      req.destroy();
+      expect({ protocol: req.protocol, host: req.host, path: req.path }).toEqual({
+        protocol: "https:",
+        host: "127.0.0.1",
+        path: "/some/path?q=1",
+      });
+    });
+
+    it("request() accepts a URL created before globalThis.URL was replaced", async () => {
+      const NativeURL = URL;
+      const server = await echoServer();
+      const url = new NativeURL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/some/path?q=1`);
+      // @happy-dom/global-registrator does this.
+      globalThis.URL = class URL extends NativeURL {};
+      try {
+        const [res] = await once(get(url), "response");
+        expect(await text(res)).toBe("GET /some/path?q=1 ");
+      } finally {
+        globalThis.URL = NativeURL;
+        server.close();
+      }
+    });
+
+    it.each([
+      ["written after", (req, socket, callback) => (socket.destroy(), req.write("x", callback))],
+      [
+        "corked before",
+        (req, socket, callback) => (req.cork(), req.write("x", callback), socket.destroy(), req.uncork()),
+      ],
+    ])("req.write() calls its callback with an error for a chunk %s the socket was destroyed", async (_, write) => {
+      const server = createNetServer(socket => socket.on("error", () => {}).resume());
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      try {
+        const req = request({ host: "127.0.0.1", port: (server.address() as AddressInfo).port, method: "POST" });
+        req.on("error", () => {});
+        req.flushHeaders();
+        const [socket] = await once(req, "socket");
+        await once(socket, "connect");
+        const { promise, resolve } = Promise.withResolvers<Error | null | undefined>();
+        write(req, socket, resolve);
+        expect(await promise).toMatchObject({ code: "ERR_STREAM_DESTROYED" });
+      } finally {
+        server.close();
+      }
+    });
+
+    it("req.write() and req.end() accept a Uint8Array from another realm", async () => {
+      const chunk = runInNewContext("new Uint8Array([104, 105])");
+      expect(chunk instanceof Uint8Array).toBe(false);
+      const server = await echoServer();
+      try {
+        const req = request({ host: "127.0.0.1", port: (server.address() as AddressInfo).port, method: "POST" });
+        req.write(chunk);
+        req.end(chunk);
+        const [res] = await once(req, "response");
+        expect(await text(res)).toBe("POST / hihi");
+      } finally {
+        server.close();
+      }
+    });
   });
 
   describe("https.request with custom tls options", () => {
@@ -1371,9 +1653,9 @@ describe("node:http", () => {
 
       const server = createServer((req, res) => {});
 
-      server.listen({ port: 0 }, (_err?: any, host?: string, port?: number) => {
-        server_port = port;
-        server_host = host;
+      server.listen({ port: 0 }, () => {
+        server_port = (server.address() as AddressInfo).port;
+        server_host = "localhost";
 
         const signal = AbortSignal.timeout(5);
 
@@ -1415,9 +1697,9 @@ describe("node:http", () => {
       res.write((req as any).req === req ? "ok" : "fail");
       res.end();
     });
-    server.listen({ port: 0 }, async (_err?: any, host?: string, port?: number) => {
+    server.listen({ port: 0 }, async () => {
       try {
-        const x = await fetch(`http://${host}:${port}`).then(res => res.text());
+        const x = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`).then(res => res.text());
         expect(x).toBe("ok");
         done();
       } catch (error) {
@@ -1486,9 +1768,9 @@ describe("node:http", () => {
     const server = createServer((req, res) => {
       res.end();
     });
-    server.listen({ port: "0" }, async (_err?: any, host?: string, port?: number) => {
+    server.listen({ port: "0" }, async () => {
       try {
-        await fetch(`http://${host}:${port}`).then(res => {
+        await fetch(`http://localhost:${(server.address() as AddressInfo).port}`).then(res => {
           expect(res.status).toBe(200);
           done();
         });
@@ -1565,7 +1847,7 @@ describe("server.address should be valid IP", () => {
   });
   it("should return null after close", done => {
     const server = createServer((req, res) => {});
-    server.listen(0, async (_err?: any, host?: string, port?: number) => {
+    server.listen(0, async () => {
       try {
         expect(server.address()).not.toBeNull();
         server.close();
@@ -1578,7 +1860,7 @@ describe("server.address should be valid IP", () => {
   });
   it("test default hostname, issue#5850", done => {
     const server = createServer((req, res) => {});
-    server.listen(0, async (_err?: any, host?: string, port?: number) => {
+    server.listen(0, async () => {
       try {
         const { address, family, port } = server.address() as AddressInfo;
         expect(port).toBeInteger();
@@ -1600,9 +1882,9 @@ describe("server.address should be valid IP", () => {
   });
   it.each([["localhost"], ["127.0.0.1"]])("test %s", (hostname, done) => {
     const server = createServer((req, res) => {});
-    server.listen(0, hostname, async (_err?: any, host?: string, port?: number) => {
+    server.listen(0, hostname, async () => {
       try {
-        const { address, family } = server.address() as AddressInfo;
+        const { address, family, port } = server.address() as AddressInfo;
         expect(port).toBeInteger();
         expect(port).toBeGreaterThan(0);
         expect(port).toBeLessThan(65536);
@@ -1623,7 +1905,7 @@ describe("server.address should be valid IP", () => {
   it("test unix socket, issue#6413", done => {
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
     const server = createServer((req, res) => {});
-    server.listen(socketPath, async (_err?: any, host?: string, port?: number) => {
+    server.listen(socketPath, async () => {
       try {
         expect(server.address()).toStrictEqual(socketPath);
         done();
@@ -1633,6 +1915,30 @@ describe("server.address should be valid IP", () => {
         server.close();
       }
     });
+  });
+  test.each([0, "0", undefined, null])("listen({ port: %p, path }) binds the port and ignores the path", async port => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    await using server = createServer((req, res) => {
+      res.end("ok");
+    });
+    server.listen({ port, path: socketPath } as any);
+    await once(server, "listening");
+    const address = server.address() as AddressInfo;
+    expect(address.port).toBeGreaterThan(0);
+    expect(nodefs.existsSync(socketPath)).toBe(false);
+    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    expect(await response.text()).toBe("ok");
+  });
+  test("listen({ path, host }) binds the path and ignores the host", async () => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    await using server = createServer((req, res) => {
+      res.end("ok");
+    });
+    server.listen({ path: socketPath, host: "localhost" });
+    await once(server, "listening");
+    expect(server.address()).toBe(socketPath);
+    const response = await fetch("http://localhost/", { unix: socketPath });
+    expect(await response.text()).toBe("ok");
   });
   test("ServerResponse init", done => {
     try {
@@ -2415,6 +2721,44 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
       expect(response).toInclude("200 Everything Is Fine");
       expect(response).toInclude("ok");
+    });
+  });
+
+  describe.each(["listen()", 'emit("connection")'])("the response head on a connection from %s", kind => {
+    async function exchange(handler: (req: IncomingMessage, res: ServerResponse) => void) {
+      const server = http.createServer(handler);
+      await using listener =
+        kind === "listen()" ? server : createNetServer(socket => void server.emit("connection", socket));
+      await once(listener.listen(0, "127.0.0.1"), "listening");
+      const client = connect((listener.address() as AddressInfo).port, "127.0.0.1");
+      client.setEncoding("latin1");
+      client.write("GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+      return (await text(client)).split("\r\n");
+    }
+
+    test("is written as Latin-1", async () => {
+      const lines = await exchange((req, res) => {
+        res.setHeader("x-h", "caf\xe9");
+        res.statusMessage = "OK\xe9";
+        res.end();
+      });
+      expect(lines[0]).toBe("HTTP/1.1 200 OK\xe9");
+      expect(lines).toContain("x-h: caf\xe9");
+    });
+
+    test("rejects a statusMessage that doesn't fit Latin-1", async () => {
+      const lines = await exchange((req, res) => {
+        // Truncated to a byte each, these two would be CR LF.
+        res.statusMessage = "OK\u010d\u010aX-Injected: evil";
+        try {
+          res.end();
+        } catch (e: any) {
+          res.statusMessage = e.code;
+          res.end();
+        }
+      });
+      expect(lines[0]).toBe("HTTP/1.1 200 ERR_INVALID_CHAR");
+      expect(lines).not.toContain("X-Injected: evil");
     });
   });
 
@@ -3698,6 +4042,46 @@ it("standalone ServerResponse buffers writes made before assignSocket and flushe
   expect(out).toEndWith("0\r\n\r\n");
 });
 
+it.each(["before", "after"])(
+  "standalone ServerResponse isn't finished until its socket, assigned %s end(), took the last write",
+  async assigned => {
+    const held: (() => void)[] = [];
+    const ws = new Writable({
+      write: (c, e, cb) => void held.push(cb),
+      writev: (c, cb) => void held.push(cb),
+    });
+    const events: string[] = [];
+    const res = new ServerResponse(http11Req());
+    res.on("finish", () => events.push("finish"));
+    if (assigned === "before") res.assignSocket(ws as any);
+    res.writeHead(200, { "Content-Length": 100_000 });
+    const wrote = res.write(Buffer.alloc(100_000, "a"));
+    const buffering = { wrote, writableNeedDrain: res.writableNeedDrain, buffered: res.writableLength >= 100_000 };
+    res.end(() => events.push("end callback"));
+    if (assigned === "after") res.assignSocket(ws as any);
+    await new Promise(resolve => setImmediate(resolve));
+    expect({ ...buffering, writableEnded: res.writableEnded, writableFinished: res.writableFinished, events }).toEqual({
+      wrote: false,
+      writableNeedDrain: true,
+      buffered: true,
+      writableEnded: true,
+      writableFinished: false,
+      events: [],
+    });
+
+    const finished = once(res, "finish");
+    while (!res.writableFinished) {
+      for (const cb of held.splice(0)) cb();
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await finished;
+    expect({ events: events.sort(), writableLength: res.writableLength }).toEqual({
+      events: ["end callback", "finish"],
+      writableLength: 0,
+    });
+  },
+);
+
 it("standalone ServerResponse discards body writes to a no-body response without throwing", async () => {
   // After writeHead(204) (_hasBody = false), Node.js silently ignores
   // write('body') and returns true; the no-handle delegation must pass the
@@ -4349,6 +4733,68 @@ it("standalone ServerResponse end() honors rejectNonStandardBodyWrites for no-bo
   ws.destroy();
 });
 
+it.each([
+  ["HEAD", 200],
+  ["GET", 204],
+  ["GET", 304],
+])('res.write("") throws on a %s %i response with rejectNonStandardBodyWrites', async (method, status) => {
+  let errorCode: string | undefined;
+  const server = createServer({ rejectNonStandardBodyWrites: true }, (req, res) => {
+    res.statusCode = status;
+    try {
+      res.write("");
+    } catch (error) {
+      errorCode = (error as NodeJS.ErrnoException).code;
+    }
+    res.end();
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}`, { method });
+    await response.arrayBuffer();
+    expect(errorCode).toBe("ERR_HTTP_BODY_NOT_ALLOWED");
+  } finally {
+    server.close();
+  }
+});
+
+it('res.write("") throws on a queued pipelined 204 response with rejectNonStandardBodyWrites', async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+  let firstResponse: ServerResponse;
+  const server = createServer({ rejectNonStandardBodyWrites: true }, (req, res) => {
+    if (req.url === "/first") {
+      firstResponse = res;
+      return;
+    }
+    res.statusCode = 204;
+    let errorCode: string | undefined;
+    try {
+      res.write("");
+    } catch (error) {
+      errorCode = (error as NodeJS.ErrnoException).code;
+    }
+    res.end();
+    resolve(errorCode);
+  });
+  let socket: ReturnType<typeof connect> | undefined;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    socket = connect(port, "127.0.0.1");
+    socket.on("error", reject);
+    socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await promise).toBe("ERR_HTTP_BODY_NOT_ALLOWED");
+    firstResponse!.end();
+  } finally {
+    socket?.destroy();
+    server.closeAllConnections?.();
+    server.close();
+  }
+});
+
 it("HEAD response with explicit writeHead(200) carries no body bytes", async () => {
   // writeHead() must not reset _hasBody for a HEAD request (Node only ever
   // clears it); pre-fix the body bytes leaked onto the wire.
@@ -4787,6 +5233,35 @@ it("statusCode = 204 with an empty first write still discards the body", async (
   }
 });
 
+it("write('') after writeHead() ends the header section", async () => {
+  const headSeen = Promise.withResolvers<void>();
+  await using server = createServer(async (req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write("");
+    await headSeen.promise;
+    res.end("data: bye\n\n");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1");
+  let data = "";
+  socket.on("data", chunk => {
+    data += chunk;
+    // The handler only ends the response once the client has the whole head.
+    if (data.includes("\r\n\r\n")) headSeen.resolve();
+  });
+  socket.on("end", () => resolve(data));
+  socket.on("error", reject);
+  socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+
+  expect((await promise).replace(/^Date: .*\r\n/m, "")).toBe(
+    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      "b\r\ndata: bye\n\n\r\n0\r\n\r\n",
+  );
+});
+
 it("res.shouldKeepAlive = false renders Connection: close and ends the socket", async () => {
   // Graceful-shutdown helpers (stoppable, http-terminator) clear
   // shouldKeepAlive on in-flight responses; the rendered header and the
@@ -5154,6 +5629,120 @@ it.each([
 // Node.js v26 removed res.writeHeader (DEP0063 end-of-life, nodejs/node#60635).
 it("ServerResponse.prototype.writeHeader was removed (DEP0063 EOL)", () => {
   expect("writeHeader" in ServerResponse.prototype).toBe(false);
+});
+
+it.each([
+  // Node's bytes.
+  ["flushHeaders()", (res: ServerResponse) => res.flushHeaders(), "Content-Length: 2\r\n\r\nok"],
+  // Node sends Content-Length: 2 in front of these three bytes.
+  [
+    "write()",
+    (res: ServerResponse) => res.write("w"),
+    "Transfer-Encoding: chunked\r\n\r\n1\r\nw\r\n2\r\nok\r\n0\r\n\r\n",
+  ],
+])("res.end(data) sends the body when a replaced writeHead() calls %s", async (_, send, expected) => {
+  await using server = createServer((req, res) => {
+    res.sendDate = false;
+    const writeHead = res.writeHead;
+    res.writeHead = function (this: ServerResponse, ...args: any[]) {
+      writeHead.apply(this, args as any);
+      send(this);
+      return this;
+    } as any;
+    res.end("ok");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  expect(await text(socket)).toBe("HTTP/1.1 200 OK\r\nConnection: close\r\n" + expected);
+});
+
+describe("a chunk of the wrong type throws before the response starts", () => {
+  function respond(res: ServerResponse, method: "write" | "end") {
+    res.sendDate = false;
+    try {
+      (res as any)[method](123);
+    } catch (e: any) {
+      res.writeHead(500, { "X-Code": e.code, "X-Headers-Sent": String(res.headersSent) });
+      res.end();
+    }
+  }
+  const failed =
+    "HTTP/1.1 500 Internal Server Error\r\nX-Code: ERR_INVALID_ARG_TYPE\r\nX-Headers-Sent: false\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+
+  async function exchange(server: Server, request: string) {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.write(request);
+    return await text(socket);
+  }
+
+  it("res.write(123)", async () => {
+    await using server = createServer((req, res) => respond(res, "write"));
+    expect(await exchange(server, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")).toBe(failed);
+  });
+
+  it.each(["write", "end"] as const)("res.%s(123) on a pipelined response", async method => {
+    let first: ServerResponse;
+    await using server = createServer((req, res) => {
+      if (req.url === "/first") return void (first = res);
+      respond(res, method);
+      first.sendDate = false;
+      first.end();
+    });
+    expect(
+      await exchange(
+        server,
+        "GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      ),
+    ).toBe("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n" + failed);
+  });
+});
+
+describe("writeHead() copies array header values", () => {
+  it.each([
+    ["a flat list", (shared: string[], sid: string) => ["Set-Cookie", shared, "Set-Cookie", sid]],
+    [
+      "a list of pairs",
+      (shared: string[], sid: string) => [
+        ["Set-Cookie", shared],
+        ["Set-Cookie", sid],
+      ],
+    ],
+  ])("%s doesn't append to the caller's array", async (_, headers) => {
+    const shared = ["theme=light"];
+    await using server = createServer((req, res) => {
+      res.writeHead(200, headers(shared, "sid=" + req.headers["x-user"]) as any);
+      res.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    const cookies: string[][] = [];
+    for (const user of ["alice", "bob"]) {
+      const res = await fetch(url, { headers: { "x-user": user } });
+      cookies.push(res.headers.getSetCookie());
+      await res.arrayBuffer();
+    }
+    expect({ cookies, shared }).toEqual({
+      cookies: [
+        ["theme=light", "sid=alice"],
+        ["theme=light", "sid=bob"],
+      ],
+      shared: ["theme=light"],
+    });
+  });
+
+  it("ignores changes to the array after writeHead()", async () => {
+    await using server = createServer((req, res) => {
+      const cookies = ["sid=alice"];
+      res.writeHead(200, { "Set-Cookie": cookies });
+      cookies[0] = "sid=bob";
+      res.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    expect(res.headers.getSetCookie()).toEqual(["sid=alice"]);
+  });
 });
 
 it("setHeaders stores an empty set-cookie array (nodejs/node#59734)", () => {
@@ -5583,7 +6172,13 @@ describe("HTTP server transport shutdown", () => {
       await release.promise;
       res.end("done");
     });
-    server.on("connection", socket => socket.once("close", () => events.push("socket close")));
+    const socketClosed = Promise.withResolvers<void>();
+    server.on("connection", socket =>
+      socket.once("close", () => {
+        events.push("socket close");
+        socketClosed.resolve();
+      }),
+    );
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
@@ -5624,9 +6219,9 @@ describe("HTTP server transport shutdown", () => {
 
       client.destroy();
       expect(await closed.promise).toBeUndefined();
-      await clientClosed.promise;
-      expect(events[0]).toBe("socket close");
-      expect(events.indexOf("socket close")).toBeLessThan(events.indexOf("close callback"));
+      await Promise.all([clientClosed.promise, socketClosed.promise]);
+      // Node's net.Server queues its 'close' when the last socket is destroyed, ahead of that socket's own 'close'.
+      expect(events).toEqual(["close callback", "socket close"]);
       expect(wire).toContain("Content-Length: 4\r\n");
       expect(wire).toEndWith("\r\n\r\ndone");
     } finally {
@@ -6483,6 +7078,196 @@ it("connectionListener ends the connection after a Connection: close response in
   serverSide.destroy();
 });
 
+describe("connectionListener closes the connection like Node's resOnFinish", () => {
+  // Node sets res._last when the request or the response forbids reuse, or when the peer
+  // sent FIN while the response was in flight (httpAllowHalfOpen).
+  type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+  // `connection` lists the value of every Connection header in the response.
+  type WireResponse = { connection: string[]; body: string };
+  // `destroyed` is true if the server destroyed its side instead of ending it.
+  type Outcome = { responses: WireResponse[]; ended: boolean; destroyed: boolean; served: string[] };
+  type Case = {
+    name: string;
+    version?: string;
+    requestHeaders?: string;
+    handler?: Handler;
+    // Sets httpAllowHalfOpen, and the client sends FIN right after its request.
+    peerEndsFirst?: boolean;
+    expected: Outcome;
+  };
+
+  // Splits the received bytes at each status line. `complete` is false until the last response
+  // has its whole head and Content-Length bytes of body.
+  function splitResponses(wire: string) {
+    const responses: WireResponse[] = [];
+    let complete = true;
+    for (const piece of wire === "" ? [] : wire.split(/(?=HTTP\/1\.1 \d{3} )/)) {
+      const headEnd = piece.indexOf("\r\n\r\n");
+      const head = headEnd === -1 ? "" : piece.slice(0, headEnd);
+      const body = headEnd === -1 ? piece : piece.slice(headEnd + 4);
+      complete = headEnd !== -1 && body.length >= Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0);
+      responses.push({ connection: Array.from(head.matchAll(/^connection: (.*)$/gim), match => match[1]), body });
+    }
+    return { responses, complete };
+  }
+
+  async function serve({
+    version = "1.1",
+    requestHeaders = "",
+    handler = endBody,
+    peerEndsFirst = false,
+  }: Case): Promise<Outcome> {
+    const requestFor = (path: string) => `GET ${path} HTTP/${version}\r\nHost: x\r\n${requestHeaders}\r\n`;
+    const served: string[] = [];
+    const server = createServer((req, res) => {
+      served.push(req.url!);
+      handler(req, res);
+    });
+    if (peerEndsFirst) (server as any).httpAllowHalfOpen = true;
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      let wire = "";
+      let ended = false;
+      let destroyed = false;
+      let observed = 0;
+      clientSide.on("error", reject);
+      clientSide.on("close", () => reject(new Error("the connection closed before the server ended it")));
+      clientSide.on("end", () => {
+        ended = true;
+        // Read it here. A stream that ended in both directions destroys itself right after 'end'.
+        destroyed = serverSide.destroyed;
+        resolve();
+      });
+      clientSide.on("data", chunk => {
+        wire += chunk;
+        const { responses, complete } = splitResponses(wire);
+        if (!complete || responses.length === observed) return;
+        observed = responses.length;
+        // A server that closes does it as the response finishes, so 'end' fires before
+        // this immediate. Otherwise send a second request, which it must answer.
+        setImmediate(() => {
+          if (ended) return;
+          if (peerEndsFirst || observed >= 2) resolve();
+          else clientSide.write(requestFor("/2"));
+        });
+      });
+      if (peerEndsFirst) clientSide.end(requestFor("/1"));
+      else clientSide.write(requestFor("/1"));
+      await promise;
+      return { responses: splitResponses(wire).responses, ended, destroyed, served };
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+
+  function endBody(_req: IncomingMessage, res: ServerResponse) {
+    res.end("served");
+  }
+  const answered = (connection: string[], body = "served"): WireResponse => ({ connection, body });
+  const ends = (response: WireResponse): Outcome => ({
+    responses: [response],
+    ended: true,
+    destroyed: false,
+    served: ["/1"],
+  });
+  const closes = ends(answered(["close"]));
+  const closesAdvertisingKeepAlive = ends(answered(["keep-alive"]));
+  let manyOtherHeaders = "";
+  for (let i = 0; i < 40; i++) manyOtherHeaders += `X-Filler-${i}: ${i}\r\n`;
+
+  const cases: Case[] = [
+    {
+      name: "closes after an HTTP/1.0 request with Connection: keep-alive",
+      version: "1.0",
+      requestHeaders: "Connection: keep-alive\r\n",
+      expected: closes,
+    },
+    { name: "closes after an HTTP/1.0 request", version: "1.0", expected: closes },
+    {
+      name: "closes after an HTTP/1.1 request with Connection: close",
+      requestHeaders: "Connection: close\r\n",
+      expected: closes,
+    },
+    {
+      // More header fields than the parser delivers in one batch.
+      name: "closes after a Connection: close request with 40 other headers",
+      requestHeaders: "Connection: close\r\n" + manyOtherHeaders,
+      expected: closes,
+    },
+    {
+      name: "closes when the handler sets Connection: close",
+      handler: (_req, res) => {
+        res.setHeader("Connection", "close");
+        res.end("served");
+      },
+      expected: closes,
+    },
+    {
+      name: "closes when the handler sets shouldKeepAlive = false",
+      handler: (_req, res) => {
+        res.shouldKeepAlive = false;
+        res.end("served");
+      },
+      expected: closes,
+    },
+    {
+      // Node's _removedConnection branch.
+      name: "closes when the handler sets shouldKeepAlive = false and removes the Connection header",
+      handler: (_req, res) => {
+        res.removeHeader("Connection");
+        res.shouldKeepAlive = false;
+        res.end("served");
+      },
+      expected: ends(answered([])),
+    },
+    {
+      name: "closes after a 204 with a Transfer-Encoding header",
+      handler: (_req, res) => {
+        res.writeHead(204, { "Transfer-Encoding": "chunked" });
+        res.end();
+      },
+      expected: ends(answered(["close"], "")),
+    },
+    {
+      // Only the end of the connection delimits this body.
+      name: "closes after an HTTP/1.0 response without Content-Length even if the handler sets Connection: keep-alive",
+      version: "1.0",
+      requestHeaders: "Connection: keep-alive\r\n",
+      handler: (_req, res) => {
+        res.setHeader("Connection", "keep-alive");
+        res.end("served");
+      },
+      expected: closesAdvertisingKeepAlive,
+    },
+    {
+      name: "closes after the response when the peer sent FIN before the handler responded (httpAllowHalfOpen)",
+      peerEndsFirst: true,
+      handler: (req, res) => req.socket.once("end", () => res.end("served")),
+      expected: closesAdvertisingKeepAlive,
+    },
+    {
+      name: "closes after a synchronous response when the request and the peer's FIN arrive together (httpAllowHalfOpen)",
+      peerEndsFirst: true,
+      expected: closesAdvertisingKeepAlive,
+    },
+    {
+      name: "keeps an HTTP/1.1 keep-alive connection open for the next request",
+      expected: {
+        responses: [answered(["keep-alive"]), answered(["keep-alive"])],
+        ended: false,
+        destroyed: false,
+        served: ["/1", "/2"],
+      },
+    },
+  ];
+  it.each(cases)("$name", async testCase => {
+    expect(await serve(testCase)).toEqual(testCase.expected);
+  });
+});
+
 it("connectionListener resets the connection when a queued pipelined response is destroyed", async () => {
   // Deliberate divergence from Node v26, which assigns the destroyed message
   // and wedges the connection until requestTimeout: an HTTP/1.1 connection
@@ -7167,6 +7952,104 @@ describe("connectionListener maxRequestsPerSocket", () => {
         .statusCode,
     ).toBe(101);
     expect(events).toEqual(["request /1", "upgrade /ws"]);
+  });
+});
+
+it("http._connectionListener serves a socket it is called with", async () => {
+  // httpolyglot and spdy call the listener with the server as `this` instead of emitting 'connection'.
+  const server = createServer((req, res) => res.end("direct:" + req.url));
+  const [clientSide, serverSide] = duplexPair();
+  (http as any)._connectionListener.call(server, serverSide);
+  clientSide.write("GET /x HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  const raw = await text(clientSide);
+  expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(raw).toEndWith("\r\n\r\ndirect:/x");
+});
+
+it("connectionListener doesn't abort an upgraded request when the tunnel closes", async () => {
+  const events: string[] = [];
+  const upgraded = Promise.withResolvers<IncomingMessage>();
+  const server = createServer(() => upgraded.reject(new Error("'request' fired for a handled upgrade")));
+  const listeners: Record<string, number> = {};
+  server.on("upgrade", (req, socket) => {
+    for (const name of ["data", "end", "error", "drain", "finish", "close"])
+      listeners[name] = socket.listenerCount(name);
+    req.on("aborted", () => events.push("aborted"));
+    req.on("error", (err: any) => events.push("error:" + err.code));
+    req.on("close", () => events.push("close"));
+    // fastify-websocket and others route the upgrade through a response they assign to the socket themselves.
+    const res = new ServerResponse(req);
+    res.assignSocket(socket as any);
+    res.writeHead(400);
+    res.end();
+    upgraded.resolve(req);
+  });
+  const [clientSide, serverSide] = duplexPair();
+  clientSide.resume();
+  server.emit("connection", serverSide);
+  clientSide.write("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\n");
+  const req = await upgraded.promise;
+  const closed = once(serverSide, "close");
+  serverSide.destroy();
+  await closed;
+  // The request's 'error' and 'close' would come a tick after the socket's 'close'.
+  await new Promise(resolve => setImmediate(resolve));
+  expect({ listeners, events, destroyed: req.destroyed, aborted: req.aborted }).toEqual({
+    listeners: { data: 0, end: 0, error: 0, drain: 0, finish: 0, close: 0 },
+    events: [],
+    destroyed: false,
+    aborted: false,
+  });
+  clientSide.destroy();
+});
+
+it("connectionListener answers an HTTP/1.1 request without a Host header with 400", async () => {
+  // Resolves with everything the server wrote, once the handler answered the last request or the server ended the connection.
+  async function exchange(options: http.ServerOptions, requests: string[], maxRequestsPerSocket = 0) {
+    const urls: (string | undefined)[] = [];
+    const server = createServer(options, (req, res) => {
+      urls.push(req.url);
+      res.end("ok");
+    });
+    server.maxRequestsPerSocket = maxRequestsPerSocket;
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let raw = "";
+      clientSide.on("error", reject);
+      clientSide.on("data", chunk => {
+        raw += chunk;
+        if (raw.endsWith("ok") && raw.split("HTTP/1.1 ").length - 1 === requests.length) resolve(raw);
+      });
+      clientSide.on("end", () => resolve(raw + "<end>"));
+      clientSide.write(requests.join(""));
+      return { urls, raw: (await promise).replace(/Date: [^\r]*\r\n/g, "") };
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+  const ok = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok";
+  const badRequest =
+    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n<end>";
+
+  expect(await exchange({}, ["GET / HTTP/1.1\r\n\r\n"])).toEqual({ urls: [], raw: badRequest });
+  // Each request on the connection is checked by its own headers.
+  expect(await exchange({}, ["GET /1 HTTP/1.1\r\nhOsT: x\r\n\r\n", "GET /2 HTTP/1.1\r\n\r\n"])).toEqual({
+    urls: ["/1"],
+    raw: ok + badRequest,
+  });
+  // The 400 doesn't count against maxRequestsPerSocket, so it isn't a 503.
+  expect(await exchange({}, ["GET /1 HTTP/1.1\r\nHost: x\r\n\r\n", "GET /2 HTTP/1.1\r\n\r\n"], 1)).toEqual({
+    urls: ["/1"],
+    raw: ok.replace("keep-alive\r\nKeep-Alive: timeout=5", "close") + badRequest,
+  });
+  expect(await exchange({}, ["GET / HTTP/1.1\r\nHost:\r\n\r\n"])).toEqual({ urls: ["/"], raw: ok });
+  expect(await exchange({ requireHostHeader: false }, ["GET / HTTP/1.1\r\n\r\n"])).toEqual({ urls: ["/"], raw: ok });
+  expect(await exchange({}, ["GET / HTTP/1.0\r\n\r\n"])).toEqual({
+    urls: ["/"],
+    raw: "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok",
   });
 });
 
@@ -7921,4 +8804,319 @@ it("a listener can cancel Readable.toWeb(req) and end the response in the same t
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr }).toEqual({ stdout: "keep-alive timeout 4000\n200 ok\n", stderr: "" });
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/11924
+describe("raw request bytes on a server's connection socket", () => {
+  const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+  // Runs `fn` with a raw client connected to `server`. `until(text)` resolves once the client has received `text`.
+  async function withClient(
+    server: Server,
+    fn: (client: import("node:net").Socket, until: (text: string) => Promise<void>) => Promise<void>,
+  ) {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const secure = server instanceof https.Server;
+    const client = secure ? tlsConnect({ port, host: "127.0.0.1", ca: tlsCert.cert }) : connect(port, "127.0.0.1");
+    try {
+      await once(client, secure ? "secureConnect" : "connect");
+      let received = "";
+      client.on("data", chunk => (received += chunk.toString("latin1")));
+      await fn(client, async text => {
+        while (!received.includes(text)) await once(client, "data");
+      });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  const first = "POST /one HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nHELLO";
+  const second = "POST /two HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nWORLD\r\n0\r\n\r\n";
+  const echoBody = (req: IncomingMessage, res: ServerResponse) => void text(req).then(body => res.end(`<${body}>`));
+
+  it.each(["http", "https"])("%s: 'data' gets every keep-alive request with its body framing", async scheme => {
+    const server = scheme === "https" ? createHttpsServer(tlsCert, echoBody) : createServer(echoBody);
+    let raw = "";
+    let socket!: import("node:net").Socket;
+    // Node's https 'connection' socket is the TCP socket under the TLSSocket.
+    server.on(scheme === "https" ? "secureConnection" : "connection", connection => {
+      socket = connection;
+      socket.on("data", chunk => (raw += chunk.toString("latin1")));
+    });
+    await withClient(server, async (client, until) => {
+      client.write(first);
+      await until("<HELLO>");
+      client.write(second);
+      await until("<WORLD>");
+    });
+    expect(raw).toBe(first + second);
+    if (scheme === "http") expect(socket.bytesRead).toBe(raw.length);
+  });
+
+  // https://github.com/oven-sh/bun/issues/28709
+  it.each(["http", "https"])("%s: req.socket.bytesRead counts every request on the connection", async scheme => {
+    const seen: [string, number][] = [];
+    const closed = Promise.withResolvers<void>();
+    const listener = (req: IncomingMessage, res: ServerResponse) => {
+      const socket = req.socket;
+      seen.push([`${req.url} dispatch`, socket.bytesRead]);
+      req.resume().on("end", () => {
+        seen.push([`${req.url} end`, socket.bytesRead]);
+        res.end(`<${req.url}>`);
+      });
+      if (req.url !== "/one") return;
+      socket.on("close", () => {
+        seen.push(["close", socket.bytesRead]);
+        closed.resolve();
+      });
+    };
+    const server = scheme === "https" ? createHttpsServer(tlsCert, listener) : createServer(listener);
+    await withClient(server, async (client, until) => {
+      client.write(first);
+      await until("</one>");
+      client.write(second);
+      await until("</two>");
+      client.end();
+      await closed.promise;
+    });
+    expect(seen).toEqual([
+      ["/one dispatch", first.length],
+      ["/one end", first.length],
+      ["/two dispatch", first.length + second.length],
+      ["/two end", first.length + second.length],
+      ["close", first.length + second.length],
+    ]);
+  });
+
+  it("'readable' and read() get them too", async () => {
+    const server = createServer(echoBody);
+    let raw = "";
+    server.on("connection", socket => {
+      socket.on("readable", () => {
+        for (let chunk; (chunk = socket.read()) !== null;) raw += chunk.toString("latin1");
+      });
+    });
+    await withClient(server, async (client, until) => {
+      client.write(first);
+      await until("<HELLO>");
+    });
+    expect(raw).toBe(first);
+  });
+
+  it.each(["on", "addListener", "prependListener"] as const)(
+    "a listener added in 'request' with %s() gets the later reads until it's removed",
+    async method => {
+      const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
+      let raw = "";
+      const onData = (chunk: Buffer) => (raw += chunk.toString("latin1"));
+      const server = createServer((req, res) => {
+        if (req.url === "/1") req.socket[method]("data", onData);
+        if (req.url === "/3") req.socket.off("data", onData);
+        res.end(`<${req.url}>`);
+      });
+      await withClient(server, async (client, until) => {
+        for (const path of ["/1", "/2", "/3", "/4"]) {
+          client.write(get(path));
+          await until(`<${path}>`);
+        }
+      });
+      expect(raw).toBe(get("/2") + get("/3"));
+    },
+  );
+
+  it.each([
+    ["connect", "CONNECT x:1 HTTP/1.1\r\nHost: x\r\n\r\n"],
+    ["upgrade", "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n"],
+  ])("a listener added in '%s' gets only the tunnel bytes", async (event, head) => {
+    const server = createServer();
+    const seen = { connection: "", tunnel: "", head: "", bytesRead: 0 };
+    server.on("connection", socket => socket.on("data", chunk => (seen.connection += chunk)));
+    server.on(event, (req, socket, head) => {
+      seen.head = head.toString();
+      socket.on("data", chunk => {
+        seen.tunnel += chunk;
+        seen.bytesRead = socket.bytesRead;
+        socket.write("<done>");
+      });
+      socket.write("<ready>");
+    });
+    await withClient(server, async (client, until) => {
+      client.write(head + "EARLY");
+      await until("<ready>");
+      client.write("LATER");
+      await until("<done>");
+    });
+    expect(seen).toEqual({
+      connection: head + "EARLY" + "LATER",
+      tunnel: "LATER",
+      head: "EARLY",
+      bytesRead: head.length + "EARLY".length + "LATER".length,
+    });
+  });
+
+  it("stops reading while the socket's buffer is full", async () => {
+    const length = 16 * 1024 * 1024;
+    const head = `POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: ${length}\r\n\r\n`;
+    let uploader: import("node:net").Socket | undefined;
+    let rawLength = 0;
+    let reading = false;
+    const readAll = () => {
+      if (reading) for (let chunk; (chunk = uploader!.read()) !== null;) rawLength += chunk.length;
+    };
+    const server = createServer((req, res) => {
+      if (req.url === "/ping") return void res.end("<pong>");
+      let bodyLength = 0;
+      req.on("data", chunk => (bodyLength += chunk.length));
+      req.on("end", () => res.end(`<${bodyLength}>`));
+    });
+    server.on("connection", socket => {
+      if (uploader) return;
+      uploader = socket;
+      socket.on("readable", readAll);
+    });
+    await withClient(server, async (client, until) => {
+      client.write(head);
+      client.write(Buffer.alloc(length, "a"));
+      while (!uploader || uploader.readableLength < uploader.readableHighWaterMark) await nextTurn();
+
+      // Each answer takes a turn of the server's event loop, which would read more of the upload if the reads were still on.
+      const { port } = server.address() as AddressInfo;
+      const other = connect(port, "127.0.0.1");
+      try {
+        const ping = async () => {
+          other.write("GET /ping HTTP/1.1\r\nHost: x\r\n\r\n");
+          await once(other, "data");
+        };
+        await ping();
+        const buffered = uploader!.readableLength;
+        for (let i = 0; i < 10; i++) await ping();
+        expect(uploader!.readableLength).toBe(buffered);
+      } finally {
+        other.destroy();
+      }
+
+      reading = true;
+      readAll();
+      await until(`<${length}>`);
+    });
+    expect(rawLength).toBe(head.length + length);
+  });
+
+  it("a 'data' listener can destroy the socket", async () => {
+    const server = createServer((req, res) => res.end("ok"));
+    server.on("connection", socket => socket.on("data", () => socket.destroy()));
+    await withClient(server, async client => {
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      await once(client, "close");
+    });
+  });
+});
+
+describe("http.Server() and TLS options", () => {
+  async function answers(server: Server) {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const get = (url: string) =>
+      fetch(url, { tls: { ca: tlsCert.cert, checkServerIdentity: () => undefined } }).then(
+        response => response.text(),
+        () => "failed",
+      );
+    try {
+      return { http: await get(`http://127.0.0.1:${port}/`), https: await get(`https://127.0.0.1:${port}/`) };
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  it.each([
+    ["no options", []],
+    ["options unrelated to TLS", [{ keepAliveTimeout: 1234 }]],
+  ])("an https.Server still speaks TLS after http.Server.call(server) with %s", async (_, args) => {
+    const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert }, (req, res) => res.end("hello"));
+    (http.Server as Function).call(server, ...args);
+    expect(await answers(server)).toEqual({ http: "failed", https: "hello" });
+  });
+
+  it("createServer() ignores _pfxExtraCACerts in the caller's options", async () => {
+    const options = { _pfxExtraCACerts: [tlsCert.cert] } as http.ServerOptions;
+    const server = createServer(options, (req, res) => res.end("hello"));
+    expect(await answers(server)).toEqual({ http: "hello", https: "failed" });
+  });
+});
+
+describe.each([
+  ["server.listen()", false],
+  ["server.emit('connection')", true],
+])("Expect: 100-continue over %s", (_, viaConnectionEvent) => {
+  const upload = "POST /upload HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n";
+
+  async function dial(onCheckContinue: (res: ServerResponse) => void) {
+    const server = createServer((req, res) => res.end(req.url));
+    const clientErrors: string[] = [];
+    server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+      clientErrors.push(err.code!);
+      socket.destroy();
+    });
+    server.on("checkContinue", (req, res) => onCheckContinue(res));
+    const listener = viaConnectionEvent ? createNetServer(socket => server.emit("connection", socket)) : server;
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    const client = connect((listener.address() as AddressInfo).port, "127.0.0.1");
+    return {
+      client,
+      clientErrors,
+      [Symbol.dispose]() {
+        client.destroy();
+        server.closeAllConnections();
+        listener.close();
+      },
+    };
+  }
+
+  it.each<[string, (res: ServerResponse) => void]>([
+    ["writeHead(417) and end()", res => void res.writeHead(417).end()],
+    ["statusCode = 417 and end()", res => void ((res.statusCode = 417), res.end())],
+    ["write() and end()", res => void (res.write("no"), res.end())],
+    ["flushHeaders() and end()", res => void (res.flushHeaders(), res.end())],
+  ])("closes the connection after %s with no 100 Continue", async (_, respond) => {
+    using connection = await dial(respond);
+    const { client, clientErrors } = connection;
+    let received = "";
+    let serverEnded = false;
+    client.on("data", chunk => {
+      received += chunk;
+      // Don't wait for a close that won't come.
+      if (received.includes("\r\nConnection: keep-alive\r\n")) client.destroy();
+    });
+    client.on("end", () => (serverEnded = true));
+    client.write(upload);
+    await once(client, "close");
+    expect({ connection: /\r\nConnection: (.*)\r\n/.exec(received)?.[1], serverEnded, clientErrors }).toEqual({
+      connection: "close",
+      serverEnded: true,
+      clientErrors: [],
+    });
+  });
+
+  it.each<[string, (res: ServerResponse) => void]>([
+    ["writeContinue()", res => void (res.writeContinue(), res.end("accepted"))],
+    ["a Connection: keep-alive header", res => void res.writeHead(417, { Connection: "keep-alive" }).end("rejected")],
+  ])("keeps the connection open after %s", async (_, respond) => {
+    using connection = await dial(respond);
+    const { client } = connection;
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let received = "";
+    client.on("data", chunk => {
+      received += chunk;
+      if (received.includes("/next")) resolve();
+    });
+    client.on("error", reject);
+    client.on("close", () => reject(new Error(`the connection closed after ${JSON.stringify(received)}`)));
+    client.write(upload + "body" + "GET /next HTTP/1.1\r\nHost: x\r\n\r\n");
+    await promise;
+  });
 });

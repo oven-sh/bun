@@ -2,7 +2,8 @@
 // This is a port of Node.js's lib/_http_outgoing.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js
 const { Stream } = require("internal/stream");
-const { isUint8Array, validateString } = require("internal/validators");
+const { validateString } = require("internal/validators");
+const { isUint8Array } = require("node:util/types");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
@@ -333,33 +334,51 @@ OutgoingMessage.prototype.cork = function cork() {
 
 OutgoingMessage.prototype.uncork = function uncork() {
   this[kCorked]--;
-  if (this[kSocket]) {
-    this[kSocket].uncork();
-  }
-
-  if (this[kCorked] || this[kChunkedBuffer].length === 0) {
-    return;
-  }
-
-  const len = this[kChunkedLength];
-  const buf = this[kChunkedBuffer];
-
-  $assert(this.chunkedEncoding);
-
-  let callbacks;
-  this._send(len.toString(16), "latin1", null);
-  this._send(crlf_buf, null, null);
-  for (let n = 0; n < buf.length; n += 3) {
-    this._send(buf[n + 0], buf[n + 1], null);
-    if (buf[n + 2]) {
-      callbacks ??= [];
-      callbacks.push(buf[n + 2]);
+  const socket = this[kSocket];
+  try {
+    if (this[kCorked] || this[kChunkedBuffer].length === 0) {
+      return;
     }
-  }
-  this._send(crlf_buf, null, callbacks?.length ? runChunkCallbacks.bind(undefined, callbacks) : null);
 
-  this[kChunkedBuffer].length = 0;
-  this[kChunkedLength] = 0;
+    const len = this[kChunkedLength];
+    const buf = this[kChunkedBuffer];
+    if (this.destroyed || socket?.destroyed) {
+      const error = this[kErrored] || socket?._writableState?.errored || $ERR_STREAM_DESTROYED("write");
+      for (let n = 2; n < buf.length; n += 3) {
+        if (buf[n] !== nop) {
+          process.nextTick(buf[n], error);
+        }
+      }
+      buf.length = 0;
+      this[kChunkedLength] = 0;
+      return;
+    }
+
+    $assert(this.chunkedEncoding);
+
+    let callbacks;
+    this._send(len.toString(16), "latin1", null);
+    this._send(crlf_buf, null, null);
+    for (let n = 0; n < buf.length; n += 3) {
+      this._send(buf[n + 0], buf[n + 1], null);
+      if (buf[n + 2]) {
+        callbacks ??= [];
+        callbacks.push(buf[n + 2]);
+      }
+    }
+    this._send(crlf_buf, null, callbacks?.length ? runChunkCallbacks.bind(undefined, callbacks) : null);
+
+    this[kChunkedBuffer].length = 0;
+    this[kChunkedLength] = 0;
+  } finally {
+    socket?.uncork();
+  }
+
+  // If we had a pending drain and flushed all data, emit the drain event.
+  if (this[kNeedDrain] && this.writableLength === 0) {
+    this[kNeedDrain] = false;
+    this.emit("drain");
+  }
 };
 
 function runChunkCallbacks(callbacks, err) {
@@ -986,6 +1005,12 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
     }
   }
 
+  // _writeRaw() drops a write to a destroyed socket along with its callback.
+  if (callback !== nop && msg[kSocket]?.destroyed) {
+    process.nextTick(callback, msg[kSocket]._writableState?.errored || $ERR_STREAM_DESTROYED("write"));
+    callback = nop;
+  }
+
   let msgSocket;
   if (!fromEnd && (msgSocket = msg.socket) && !msgSocket.writableCorked) {
     msgSocket.cork();
@@ -1107,6 +1132,13 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
   let contentLength;
   if (strictContentLength(this) && this[kBytesWritten] !== (contentLength = this._contentLength)) {
     throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(this[kBytesWritten], contentLength);
+  }
+
+  // Flush buffered chunks before terminating the message.
+  if (this[kChunkedBuffer].length !== 0) {
+    this[kSocket]?.cork();
+    this[kCorked] = 1;
+    this.uncork();
   }
 
   const finish = onFinish.bind(undefined, this);

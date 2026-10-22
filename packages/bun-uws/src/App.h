@@ -756,31 +756,18 @@ private:
     struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
 
 public:
-    /* Host, port, options, callback */
-    TemplatedApp &&listen(const std::string &host, int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        if (host.empty()) {
-            return listen(port, options, std::move(handler));
-        }
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), host.c_str(), port, options)) : nullptr);
-        return std::move(*this);
+    /* A nullptr host listens on every address. See us_socket_group_listen for the out-params. */
+    us_listen_socket_t *listen(const char *host, int port, int options, int *error, int *dnsError) {
+        return httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), host, port, options, error, dnsError)) : nullptr;
     }
 
-    /* Port, callback */
-    TemplatedApp &&listen(int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), nullptr, port, 0)) : nullptr);
-        return std::move(*this);
+    us_listen_socket_t *listen_unix(std::string_view path, int options, int *error) {
+        return httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options, error)) : nullptr;
     }
 
-    /* Port, options, callback */
-    TemplatedApp &&listen(int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), nullptr, port, options)) : nullptr);
-        return std::move(*this);
-    }
-
-    /* options, callback, path to unix domain socket */
-    TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path) {
-        handler(httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options)) : nullptr);
-        return std::move(*this);
+    /* already-bound descriptor, backlog, options, errno out */
+    us_listen_socket_t *listen_fd(LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int *error) {
+        return httpContext ? trackListenSocket(httpContext->listen_fd(sslCtxOrNull(), fd, backlog, options, error)) : nullptr;
     }
 
     void setOnSocketClosed(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
@@ -829,6 +816,11 @@ public:
 
     TemplatedApp &&setMaxHTTPHeaderSize(uint64_t maxHeaderSize) {
         httpContext->getSocketContextData()->maxHeaderSize = maxHeaderSize;
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setMaxRequestBodySize(uint64_t maxRequestBodySize) {
+        httpContext->getSocketContextData()->maxRequestBodySize = maxRequestBodySize;
         return std::move(*this);
     }
 

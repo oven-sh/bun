@@ -1125,3 +1125,8 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 #endif
 }
 }
+
+extern "C" JSC::EncodedJSValue Bun__Process__getEnvObjectIfCreated(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(defaultGlobalObject(globalObject)->m_processEnvObject.get());
+}

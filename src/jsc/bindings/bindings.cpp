@@ -2369,6 +2369,11 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     throwScope.assertNoException();
 
+    if (!argument0.value().isUndefined() && !argument0.value().isObject()) {
+        Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "headers"_s, "Headers, Array, or Object"_s, argument0.value());
+        return nullptr;
+    }
+
     // Note that we use IDLDOMString here rather than IDLByteString: while headers
     //  should be ASCII only, we want the headers->fill implementation to discover
     //  and error on invalid names and values
@@ -2436,6 +2441,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* h
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    clone->setImpliedByBody(headers->isImpliedByBody());
     WebCore::propagateException(*lexicalGlobalObject, throwScope, clone->fill(*headers));
     return clone;
 }
@@ -2655,7 +2661,11 @@ extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPH
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     throwScope.assertNoException(); // can't throw an exception when there's already one.
     // `toWTFString()` refs a `WTFStringImpl`-tagged value instead of copying it.
-    WebCore::propagateException(*global, throwScope, headers->set(name, arg2->toWTFString()));
+    WTF::String value = arg2->toWTFString();
+    // HTTPHeaderMap treats a null value as absent in get() and iteration, but not in has().
+    if (value.isNull())
+        value = WTF::emptyString();
+    WebCore::propagateException(*global, throwScope, headers->set(name, value));
 }
 void WebCore__FetchHeaders__fastRemove_(WebCore::FetchHeaders* headers, unsigned char headerName)
 {

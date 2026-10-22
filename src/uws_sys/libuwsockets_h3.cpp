@@ -41,8 +41,6 @@ typedef void (*uws_h3_listen_handler)(us_quic_listen_socket_t*, void*);
 
 uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s)
 {
-    static int once = (us_quic_global_init(), 1);
-    (void)once;
     uWS::SocketContextOptions sco;
     static_assert(sizeof(sco) == sizeof(options));
     memcpy(&sco, &options, sizeof(sco));
@@ -51,6 +49,8 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
+void uws_h3_app_on_released(uws_h3_app_t* app, void (*cb)(void*), void* user) { ((H3App*)app)->onReleased(cb, user); }
+bool uws_h3_app_is_released(uws_h3_app_t* app) { return ((H3App*)app)->isReleased(); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
@@ -116,10 +116,11 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
     r->sendTerminatingChunk(close_connection);
 }
 
+/* RESET_STREAM, not FIN: a FIN would make a truncated body look complete. */
 void uws_h3_res_force_close(uws_h3_res_t* res)
 {
     ((Http3Response*)res)->clearOnWritableAndAborted();
-    us_quic_stream_close((us_quic_stream_t*)res);
+    us_quic_stream_reset_internal_error((us_quic_stream_t*)res);
 }
 
 bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)

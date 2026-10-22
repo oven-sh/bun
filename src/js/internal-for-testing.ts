@@ -342,6 +342,11 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+/** Sends `[name, value, ...]` on a node:quic stream as one header block, without `sendHeaders()`'s checks. */
+export function quicSendRawHeaders(stream: object, pairs: string[], kind: number, flags: number): boolean {
+  return require("internal/quic/quic").sendRawHeadersForTesting(stream, pairs, kind, flags);
+}
+
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
@@ -700,6 +705,13 @@ export function setSocketOptions(socket: any, option: 1 | 2, size: number): void
     size,
   );
 }
+
+// Runs this thread's usockets timeout sweep (normally every 4 s) on the next loop iteration. Every socket on the thread moves one tick closer to its timeout.
+export const runSocketTimeoutSweepSoon: () => void = $newRustFunction(
+  "runtime/socket/socket.rs",
+  "TestingAPIs.jsRunSocketTimeoutSweepSoon",
+  0,
+);
 
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure

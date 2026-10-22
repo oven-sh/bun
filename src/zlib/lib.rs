@@ -157,7 +157,11 @@ mod ZlibAllocator {
     pub(crate) use malloc_items as alloc;
 }
 
+/// ID1 and ID2, the first two bytes of a gzip member (RFC 1952 §2.3.1).
+pub const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
 pub struct ZlibReaderArrayList<'a> {
+    input: &'a [u8],
     // We operate directly through `list_ptr` (a `&'a mut Vec<u8>`).
     pub(crate) list_ptr: &'a mut Vec<u8>,
     pub(crate) zlib: zStream_struct,
@@ -166,6 +170,8 @@ pub struct ZlibReaderArrayList<'a> {
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
     pub(crate) max_output_size: usize,
+    /// RFC 1952 §2.2: a gzip file is a series of members. Set for gzip-only `window_bits`.
+    multi_member: bool,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -208,10 +214,12 @@ impl<'a> ZlibReaderArrayList<'a> {
         options: Options,
     ) -> Result<Box<Self>, ZlibError> {
         let mut zlib_reader = Box::new(Self {
+            input,
             list_ptr: list,
             zlib: bun_core::ffi::zeroed(),
             state: ZlibReaderArrayListState::Uninitialized,
             max_output_size: usize::MAX,
+            multi_member: (16..32).contains(&options.window_bits),
         });
 
         let list_len = zlib_reader.list_ptr.len();
@@ -335,6 +343,18 @@ impl<'a> ZlibReaderArrayList<'a> {
 
                 match rc {
                     ReturnCode::StreamEnd => {
+                        let rest = &self.input[self.input.len() - self.zlib.avail_in as usize..];
+                        if self.multi_member && rest.starts_with(&GZIP_MAGIC) {
+                            // `inflateReset` zeroes `total_out`, which tracks `list_ptr`'s length.
+                            let total_out = self.zlib.total_out;
+                            // SAFETY: self.zlib was initialized via inflateInit2_.
+                            if unsafe { inflateReset(&raw mut self.zlib) } != ReturnCode::Ok {
+                                self.state = ZlibReaderArrayListState::Error;
+                                return Err(ZlibError::ZlibError);
+                            }
+                            self.zlib.total_out = total_out;
+                            continue;
+                        }
                         self.end();
                         return Ok(());
                     }
@@ -982,6 +1002,25 @@ impl InflateDecoder {
         matches!(self.state, State::Inflating)
     }
 
+    /// `next` is the byte after a gzip member. 0x1f (ID1, RFC 1952 §2.3.1) starts another one, any other byte is junk that ends the content.
+    fn starts_next_member(&mut self, next: Option<&u8>) -> Result<bool, ZlibError> {
+        match next {
+            Some(0x1f) if self.multi_member => {
+                if self.reset() != ReturnCode::Ok {
+                    self.state = State::Error;
+                    return Err(ZlibError::ZlibError);
+                }
+                Ok(true)
+            }
+            Some(_) => {
+                // Decided once, or a later read of the junk that happens to start with 0x1f would be parsed as a member.
+                self.multi_member = false;
+                Ok(false)
+            }
+            None => Ok(false),
+        }
+    }
+
     /// One `inflate()` call writing into `out`'s spare capacity. Same
     /// contract as [`DeflateEncoder::step`].
     pub fn step(
@@ -1020,19 +1059,8 @@ impl InflateDecoder {
         if matches!(self.state, State::Error) {
             return Ok(input_len);
         }
-        if matches!(self.state, State::End) {
-            // A prior call completed a gzip member at the chunk boundary.
-            // Only resume when the next byte is the gzip magic ID1 (RFC 1952
-            // §2.3.1); any other trailing bytes are tolerated as garbage so
-            // stray CRLF/footer junk does not turn into a decode error.
-            if self.multi_member && input.first() == Some(&0x1f) {
-                if self.reset() != ReturnCode::Ok {
-                    self.state = State::Error;
-                    return Err(ZlibError::ZlibError);
-                }
-            } else {
-                return Ok(input_len);
-            }
+        if matches!(self.state, State::End) && !self.starts_next_member(input.first())? {
+            return Ok(input_len);
         }
         loop {
             if out.len() >= max_output {
@@ -1063,15 +1091,7 @@ impl InflateDecoder {
             match rc {
                 ReturnCode::StreamEnd => {
                     self.state = State::End;
-                    // Continue only when the next byte is the gzip magic ID1
-                    // (0x1f). Anything else is trailing garbage/padding and
-                    // ends the stream, keeping prior tolerance for origins
-                    // that append stray bytes after a valid member.
-                    if self.multi_member && input.first() == Some(&0x1f) {
-                        if self.reset() != ReturnCode::Ok {
-                            self.state = State::Error;
-                            return Err(ZlibError::ZlibError);
-                        }
+                    if self.starts_next_member(input.first())? {
                         continue;
                     }
                     return Ok(input_len);

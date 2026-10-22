@@ -399,11 +399,16 @@ void us_socket_set_first_flight_before_fin(us_socket_r s) nonnull_fn_decl;
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX
  * (borrowed ref, optional), the SNI tree (optional), and the kind to stamp on
- * accepted sockets. */
+ * accepted sockets.
+ *
+ * On failure these return NULL and set *error to the failing call's errno (a
+ * WSA or Win32 code on Windows). If the lookup of `host` failed instead,
+ * *dns_error holds getaddrinfo()'s return value and *error is untouched. The
+ * two number spaces overlap, so callers zero both first. */
 struct us_listen_socket_t *us_socket_group_listen(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-    const char *host, int port, int options, int socket_ext_size, int *error)
-    __attribute__((nonnull(1, 8)));  /* ssl_ctx, host nullable */
+    const char *host, int port, int options, int socket_ext_size, int *error, int *dns_error)
+    __attribute__((nonnull(1, 8, 9)));  /* ssl_ctx, host nullable */
 struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *path, size_t pathlen, int options, int socket_ext_size, int *error)
@@ -724,7 +729,9 @@ void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull
 void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
-void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
+/* Dispatches on_writable once the socket is writable, as if a us_socket_write() had come up short.
+ * Safe to call from on_writable. Doesn't resume a paused read side. */
+void us_socket_request_writable(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
@@ -756,6 +763,12 @@ int us_socket_get_error(us_socket_r s);
  * making a stall there routine backpressure, so it asks the kernel
  * (SO_ERROR, then a zero-byte send probe). */
 int us_socket_stalled_write_means_peer_gone(us_socket_r s);
+/* A running count of the bytes TCP has delivered to the peer (Linux: tcpi_bytes_acked, macOS: tcpi_txbytes).
+ * Unlike the send queue's depth, it grows while a producer refills the queue as fast as the peer drains it.
+ * Returns 0, or -1 if this platform or socket type keeps no such count. */
+int us_socket_delivered_bytes(us_socket_r s, uint64_t *bytes);
+/* Returns 1 and moves *mark forward if at least min_bytes were delivered since us_socket_delivered_bytes() read *mark. */
+int us_socket_delivered_since(us_socket_r s, uint64_t *mark, uint64_t min_bytes);
 
 void us_socket_ref(us_socket_r s);
 void us_socket_unref(us_socket_r s);

@@ -500,6 +500,7 @@ test("a completed streaming POST keeps its connection in the keep-alive pool", a
 //   /302-body         a 302 that carries a body
 //   /302-http10       the same 302 from an HTTP/1.0 server (socket left open)
 //   /302-http10-ka    ... that says Connection: keep-alive
+//   /307-end          the same 307, then the server closes without Connection: close
 //   anything else     200 whose body is "<method>:<request body length>"
 const redirectServer = `
   import net from "node:net";
@@ -526,12 +527,15 @@ const redirectServer = `
           "/302-http10-ka": "302 Found",
           "/303": "303 See Other",
           "/307": "307 Temporary Redirect",
+          "/307-end": "307 Temporary Redirect",
         }[path];
         if (!redirect) {
           const body = method + ":" + len;
           sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: " + body.length + "\\r\\n\\r\\n" + body);
         } else if (path === "/302-close") {
           sock.end("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+        } else if (path === "/307-end") {
+          sock.end("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 0\\r\\n\\r\\n");
         } else if (path === "/302-body") {
           sock.write("HTTP/1.1 " + redirect + "\\r\\nLocation: /legit\\r\\nContent-Length: 5\\r\\n\\r\\nmoved");
         } else if (path === "/302-http10") {
@@ -560,7 +564,7 @@ const redirectServer = `
 test.concurrent.each([
   ["GET -> 302", "/302", "{}", "GET:0", 1],
   ["POST -> 303 (hop is a bodyless GET)", "/303", '{ method: "POST", body: "payload" }', "GET:0", 1],
-  ["POST -> 307 (hop resends the body)", "/307", '{ method: "POST", body: "payload" }', "POST:7", 1],
+  ["PUT -> 307 (hop resends the body)", "/307", '{ method: "PUT", body: "payload" }', "PUT:7", 1],
   ["GET -> HTTP/1.0 302 with Connection: keep-alive", "/302-http10-ka", "{}", "GET:0", 1],
   // Not reusable, so every fetch dials once more for the hop; the hop's own
   // connection is pooled and carries the next fetch's 3xx. The HTTP/1.0 row is
@@ -569,6 +573,11 @@ test.concurrent.each([
   ["GET -> 302 with Connection: close", "/302-close", "{}", "GET:0", 5],
   ["GET -> 302 carrying a body", "/302-body", "{}", "GET:0", 5],
   ["GET -> HTTP/1.0 302", "/302-http10", "{}", "GET:0", 5],
+  // A hop that's still a POST can't be retried if the server closed behind the
+  // 3xx, so it always dials.
+  ["POST -> 307", "/307", '{ method: "POST", body: "payload" }', "POST:7", 5],
+  ["POST -> 307, then the server closes", "/307-end", '{ method: "POST", body: "payload" }', "POST:7", 5],
+  ["PUT -> 307, then the server closes (hop is retried)", "/307-end", '{ method: "PUT", body: "payload" }', "PUT:7", 5],
 ])("redirect keep-alive: %s", async (_, path, init, hopBody, connections) => {
   await using proc = Bun.spawn({
     cmd: [
@@ -1079,3 +1088,38 @@ test.concurrent(
     }
   },
 );
+
+// Reuse stops 2 seconds before the origin's `Keep-Alive: timeout=N` runs out, so N <= 2 never reaches the pool.
+test.concurrent.each([
+  ["timeout=1", 2],
+  ["timeout=2", 2],
+  ["max=100, timeout=1", 2],
+  ["timeout=1; max=100", 2],
+  ["TIMEOUT = 2", 2],
+  ["timeout=60\r\nKeep-Alive: timeout=1", 2],
+  ["timeout=60", 1],
+  ["timeout=99999999999", 1],
+  ["timeout=soon", 1],
+  ["max=100", 1],
+])("two POSTs to an origin that sends Keep-Alive: %s use %i connection(s)", async (keepAlive, expected) => {
+  const sockets: Socket[] = [];
+  const server = createServer(socket => {
+    sockets.push(socket);
+    socket.on("error", () => {});
+    eachRequest(socket, () => {
+      socket.write(`HTTP/1.1 200 OK\r\nContent-Length: 2\r\nKeep-Alive: ${keepAlive}\r\n\r\nok`);
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    for (let i = 0; i < 2; i++) {
+      expect(await (await fetch(url, { method: "POST", body: "select 1" })).text()).toBe("ok");
+    }
+    expect(sockets.length).toBe(expected);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise(closed => server.close(closed));
+  }
+});

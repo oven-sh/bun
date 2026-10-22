@@ -127,6 +127,10 @@ bitflags! {
         /// The server socket granted the connection to this response. A queued pipelined response waits for it.
         const CURRENT                             = 1 << 4;
         const IS_REQUEST_PENDING                  = 1 << 5;
+        /// Set by `pause_socket`, cleared by `resume_socket`.
+        const READS_PAUSED                        = 1 << 6;
+        /// See `update_parked`.
+        const PARKED                              = 1 << 7;
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
         const TUNNELED                            = 1 << 8;
@@ -184,6 +188,7 @@ unsafe extern "C" {
     // node:http flood prevention (JSNodeHTTPServerSocket.cpp): unsent response bytes and queued responses hold a paused socket.
     safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
     safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
+    safe fn Bun__NodeHTTP__onRequestParked(ssl: core::ffi::c_int, socket: *mut c_void);
     // False when no read of this socket is being parsed.
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
     -> bool;
@@ -498,6 +503,8 @@ impl NodeHTTPResponse {
             return;
         }
         raw.pause();
+        self.update_flags(|f| f.insert(Flags::READS_PAUSED));
+        self.update_parked();
     }
 
     /* Pipelined flood prevention pauses READS on the connection, legal after the in-flight
@@ -523,6 +530,8 @@ impl NodeHTTPResponse {
 
     fn resume_socket(&self) {
         scoped_log!(NodeHTTPResponse, "resumeSocket");
+        self.update_flags(|f| f.remove(Flags::READS_PAUSED));
+        self.update_parked();
         let flags = self.flags.get();
         let Some(raw) = self.reader() else {
             return;
@@ -664,10 +673,37 @@ impl NodeHTTPResponse {
             self.release_body_slot();
         }
         self.body_read_state.set(to);
+        self.update_parked();
         if self.body_read_ref.get().has {
             self.body_read_ref.with_mut(|r| r.unref(vm_get()));
         }
         true
+    }
+
+    /// Parks a request whose response is sent and whose body reads are paused. Like libuv after `uv_read_stop()`, it stops holding the event loop: https://github.com/libuv/libuv/blob/v1.51.0/src/unix/stream.c#L1465-L1477
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_updateParked", no_catch)]
+    pub(crate) fn update_parked(&self) {
+        let flags = self.flags.get();
+        let pending = self.body_still_arriving();
+        let parked = pending
+            && flags.contains(Flags::READS_PAUSED | Flags::REQUEST_HAS_COMPLETED)
+            && self.reader().is_some_and(|raw| raw.has_fully_drained());
+        if parked == flags.contains(Flags::PARKED) {
+            return;
+        }
+        self.update_flags(|f| f.toggle(Flags::PARKED));
+        self.server.note_request_parked(parked);
+        if parked {
+            self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+            if let Some(raw) = self.reader() {
+                Bun__NodeHTTP__onRequestParked(
+                    any_response_is_ssl(&raw) as core::ffi::c_int,
+                    raw.socket().cast(),
+                );
+            }
+        } else if pending {
+            self.body_read_ref.with_mut(|r| r.r#ref(vm_get()));
+        }
     }
 
     fn mark_socket_closed(&self) {
@@ -742,6 +778,7 @@ impl NodeHTTPResponse {
 
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
+        debug_assert!(!self.flags.get().contains(Flags::PARKED));
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
 
         let mut server = self.server;
@@ -874,7 +911,7 @@ impl NodeHTTPResponse {
         &self,
         cx: &mut JsScope<'_>,
         status_code: i32,
-        status_message: Option<&[u8]>,
+        status_message: Option<bun_core::String>,
         headers: JsLocal<'_>,
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
@@ -885,7 +922,20 @@ impl NodeHTTPResponse {
         } else {
             JSValue::UNDEFINED
         };
-        let status_message_bytes: &[u8] = status_message.unwrap_or_default();
+        // The status line is Latin-1, like Node's. A code unit above 0xFF becomes NUL, which the check below rejects.
+        let narrowed: Vec<u8>;
+        let status_message_bytes: &[u8] = match &status_message {
+            None => &[],
+            Some(message) if message.is_8bit() => message.latin1(),
+            Some(message) => {
+                narrowed = message
+                    .utf16()
+                    .iter()
+                    .map(|&unit| u8::try_from(unit).unwrap_or(0))
+                    .collect();
+                &narrowed
+            }
+        };
 
         if self.is_requested_completed_or_ended() {
             return err_throw(
@@ -1002,7 +1052,7 @@ impl NodeHTTPResponse {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         status_code: i32,
-        status_message: Option<&[u8]>,
+        status_message: Option<bun_core::String>,
         headers: JsLocal<'_>,
         chunk: Option<StringOrJsBytes<'_>>,
         encoding: JsLocal<'_>,
@@ -1116,6 +1166,8 @@ impl NodeHTTPResponse {
         handle_ended_if_necessary(state, global_object)?;
 
         raw_response.write_continue();
+        // The socket is corked until the handler returns. Flush now: a 1xx is only useful ahead of the final response.
+        raw_response.send_corked();
         Ok(())
     }
 
@@ -1150,6 +1202,7 @@ impl NodeHTTPResponse {
         };
         handle_ended_if_necessary(raw_response.state(), global_object)?;
         raw_response.write_informational(string_or_buffer.slice());
+        raw_response.send_corked();
         Ok(())
     }
 }
@@ -1395,6 +1448,7 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
 
+        self.update_parked();
         self.mark_request_as_done_if_necessary();
     }
 }
@@ -1521,7 +1575,7 @@ impl NodeHTTPResponse {
         if let Some(raw_response) = self.writer() {
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            raw_response.end_without_body(true);
+            raw_response.abandon();
         }
         self.on_request_complete();
     }
@@ -1553,6 +1607,7 @@ impl NodeHTTPResponse {
         if last && event == AbortEvent::None && self.body_read_state.get() == BodyReadState::Pending
         {
             self.body_read_state.set(BodyReadState::Complete);
+            self.update_parked();
         }
 
         if let Some(callback) = js::on_data_get_cached(this_value) {
@@ -1901,6 +1956,11 @@ impl NodeHTTPResponse {
             self.get_this_value()
         };
 
+        // uWS skips an empty write, but Node's _send("") still ends the header section.
+        if !IS_END && bytes.is_empty() && !state.is_http_write_called() {
+            self.writer().unwrap().flush_headers(false);
+        }
+
         // An empty write looks flushed to uWS; WantMore would disarm the drain that is still owed.
         if !IS_END && bytes.is_empty() && self.has_unflushed_write() {
             if !callback_value.is_undefined() {
@@ -2177,8 +2237,8 @@ impl NodeHTTPResponse {
             raw_response.on_data(on_data_shim, self.as_ctx_ptr());
         }
 
-        // `body_read_ref` is still held from create(): every unref also leaves `.pending`.
-        debug_assert!(self.body_read_ref.get().has);
+        // `body_read_ref` is still held from create(): every unref also leaves `.pending` or parks the request.
+        debug_assert!(self.body_read_ref.get().has != flags.contains(Flags::PARKED));
     }
 
     pub(crate) fn write(

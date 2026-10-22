@@ -533,6 +533,7 @@ mod c {
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
         pub(super) fn uws_loop_flush_pending_writes(loop_: *mut Loop);
+        pub fn us_internal_sweep_soon(loop_: *mut Loop);
     }
 }
 // Re-exported raw externs for cross-thread callers (e.g. bun_http's
@@ -542,7 +543,7 @@ mod c {
 // event-loop thread parks inside it while worker threads call
 // `us_wakeup_loop` concurrently; routing either through a `&mut self`
 // receiver would create two live `&mut Loop` to the same singleton (UB).
-pub use c::{us_loop_run, us_wakeup_loop};
+pub use c::{us_internal_sweep_soon, us_loop_run, us_wakeup_loop};
 
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.

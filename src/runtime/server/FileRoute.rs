@@ -3,7 +3,7 @@ use core::mem::size_of;
 
 use bun_core::String as BunString;
 use bun_core::strings;
-use bun_http::{Headers, Method};
+use bun_http::{Headers, Method, header_has_token};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
 use bun_io::Closer;
@@ -36,9 +36,10 @@ pub(crate) struct FileRoute {
     // event loop.
     stat_hash: Cell<StatHash>,
     has_last_modified_header: bool,
-    has_content_length_header: bool,
     has_content_range_header: bool,
     has_date_header: bool,
+    has_connection_header: bool,
+    has_connection_close: bool,
 }
 
 pub(crate) struct InitOptions<'a> {
@@ -49,13 +50,20 @@ pub(crate) struct InitOptions<'a> {
 
 use crate::webcore::headers_ref::blob_content_type;
 
-#[inline]
+/// Drops the framing headers, because `serve` frames each response from the file's size.
 fn headers_from(
     global: &JSGlobalObject,
     fetch_headers: Option<&FetchHeaders>,
     blob: &Blob,
 ) -> JsResult<Headers> {
-    bun_http_jsc::headers_jsc::from_fetch_headers(global, fetch_headers, blob_content_type(blob))
+    let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+        global,
+        fetch_headers,
+        blob_content_type(blob),
+    )?;
+    headers.remove(b"transfer-encoding");
+    headers.remove(b"content-length");
+    Ok(headers)
 }
 
 #[inline]
@@ -118,9 +126,12 @@ impl FileRoute {
             ref_count: Cell::new(1),
             server: Cell::new(server),
             has_last_modified_header: headers.get(b"last-modified").is_some(),
-            has_content_length_header: headers.get(b"content-length").is_some(),
             has_content_range_header: headers.get(b"content-range").is_some(),
             has_date_header: headers.get(b"date").is_some(),
+            has_connection_header: headers.get(b"connection").is_some(),
+            has_connection_close: headers
+                .get(b"connection")
+                .is_some_and(|value| header_has_token(value, b"close")),
             blob,
             headers,
             status_code,
@@ -232,10 +243,6 @@ impl FileRoute {
             }
             self.stat_hash.set(sh);
         }
-
-        if self.has_content_length_header {
-            resp.mark_wrote_content_length_header();
-        }
     }
 
     pub(crate) fn on_head_request(this: ThisPtr<FileRoute>, req: AnyRequest, resp: AnyResponse) {
@@ -295,7 +302,7 @@ impl FileRoute {
         };
 
         // Every non-streaming outcome — bodiless status codes
-        // (304/204/205/307/308), HEAD, non-streamable files, and the JS-exception
+        // (1xx/204/205/304), HEAD, non-streamable files, and the JS-exception
         // early returns — is `Serve::Done`, so neither the fd nor the route ref
         // (or the server's pending_requests counter) can leak regardless of
         // which branch ran.
@@ -323,7 +330,6 @@ impl FileRoute {
                     pollable,
                     offset,
                     length,
-                    idle_timeout: server.config().idle_timeout,
                     owner: StreamOwner::FileRoute(route),
                 });
             }
@@ -413,17 +419,18 @@ impl FileRoute {
         if self.has_date_header {
             resp.mark_wrote_date_header();
         }
+        if self.has_connection_header {
+            resp.mark_wrote_connection_header(self.has_connection_close);
+        }
         resp.write_mark();
         self.write_headers(resp);
 
-        // Bodiless statuses end before the range switch so a 304 emits no
-        // Content-Range. FileResponseStream ships via sendfile/write(), so a
-        // null-body status must never start it; 307/308 routes skip it too.
-        if HTTPStatusText::is_null_body(status_code) || matches!(status_code, 307 | 308) {
+        // 1xx, 204 and 304 end at the blank line (RFC 9112 6.3). 205 and 412 need Content-Length: 0.
+        if HTTPStatusText::is_null_body(status_code) && status_code != 205 {
             resp.end_without_body(resp.should_close_connection());
             return Serve::Done;
         }
-        if status_code == 412 {
+        if matches!(status_code, 205 | 412) {
             resp.end(b"", resp.should_close_connection());
             return Serve::Done;
         }
@@ -449,10 +456,8 @@ impl FileRoute {
         };
 
         if let Some(len) = body_len {
-            if !resp.state().has_written_content_length_header() {
-                resp.write_header_int(b"content-length", len);
-                resp.mark_wrote_content_length_header();
-            }
+            resp.write_header_int(b"content-length", len);
+            resp.mark_wrote_content_length_header();
         }
 
         if method == Method::HEAD {

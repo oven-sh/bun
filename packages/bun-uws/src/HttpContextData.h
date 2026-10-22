@@ -85,6 +85,8 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
+    /* Bun.serve answers 413 to a larger Content-Length, so such a request gets no automatic 100 Continue. */
+    uint64_t maxRequestBodySize = UINT64_MAX;
     uint32_t maxHeadersCount = 0; // node:http server.maxHeadersCount; 0 means not set
 
     /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2

@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { once } from "node:events";
 import http2 from "node:http2";
+import net from "node:net";
+import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
   F,
+  Fixture,
   H2Result,
+  PREFACE,
   RawH2,
   T,
   baseHeaders,
@@ -125,6 +130,111 @@ describe("Bun.serve http2 lifecycle", () => {
     expect(raw.frames.filter(f => f.type === T.GOAWAY).every(f => f.payload.readUInt32BE(4) === 0)).toBe(true);
     raw.close();
   });
+
+  // Such a connection is still an HTTP/1 socket when stop() sends GOAWAY to the HTTP/2 connections.
+  describe("graceful stop: a connection that becomes HTTP/2 after stop() serves one stream, then closes", () => {
+    async function stopThenBecomeH2(fx: Fixture, secure: boolean, becomeH2: () => Promise<RawH2>) {
+      const session = await connectH2(fx.port, secure);
+      const sessionClosed = once(session, "close");
+      expect((await request(session, { ":path": "/stop?exit" })).body.toString()).toBe("stopping");
+      // stop() closes this drained session, so once it's closed stop() has run.
+      await sessionClosed;
+
+      const raw = await becomeH2();
+      const get = (id: number) =>
+        frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, id, hpackLiteral(baseHeaders("/hello")));
+      // One write, so the server has read both requests before it can close.
+      raw.write(Buffer.concat([get(1), get(3)]));
+      expect((await raw.body(1)).toString()).toBe("hello");
+      await raw.waitForClose();
+      expect({
+        goaways: raw.frames
+          .filter(f => f.type === T.GOAWAY)
+          .map(f => ({ lastStreamId: f.payload.readUInt32BE(0), code: f.payload.readUInt32BE(4) })),
+        answeredStream3: raw.frames.some(f => f.streamId === 3),
+      }).toEqual({ goaways: [{ lastStreamId: 1, code: 0 }], answeredStream3: false });
+      // The fixture exits when stop() resolves.
+      expect(await fx.proc.exited).toBe(0);
+    }
+
+    test("TLS handshake pending", async () => {
+      await using fx = await startFixture({ tls: true });
+      const tcp = net.connect({ port: fx.port, host: "127.0.0.1" });
+      await once(tcp, "connect");
+      // The ClientHello goes out, but the server's reply is held back so the handshake can't finish yet.
+      let hold = true;
+      const held: Buffer[] = [];
+      const wire = new Duplex({ read() {}, write: (chunk, _encoding, cb) => void tcp.write(chunk, cb) });
+      tcp.on("data", d => void (hold ? held.push(d) : wire.push(d)));
+      tcp.on("close", () => wire.push(null));
+      const socket = tls.connect({ socket: wire, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+      socket.on("error", () => {});
+      await once(tcp, "data");
+
+      await stopThenBecomeH2(fx, true, async () => {
+        const secured = once(socket, "secureConnect");
+        hold = false;
+        for (const d of held) wire.push(d);
+        await secured;
+        return RawH2.over(socket);
+      });
+    });
+
+    test("cleartext preface pending", async () => {
+      await using fx = await startFixture({ tls: false });
+      const tcp = net.connect({ port: fx.port, host: "127.0.0.1" });
+      await once(tcp, "connect");
+      // Too short to tell HTTP/2 from HTTP/1, so the server buffers these bytes and waits for more.
+      tcp.write(PREFACE.subarray(0, 3));
+
+      await stopThenBecomeH2(fx, false, async () => {
+        const raw = RawH2.over(tcp, { sendPreface: false });
+        raw.write(PREFACE.subarray(3));
+        raw.write(frame(T.SETTINGS, 0, 0));
+        return raw;
+      });
+    });
+  });
+
+  // close(2) resets the connection when another frame arrives, and the reset drops what the kernel hasn't delivered.
+  describe.each([
+    ["h2c", false],
+    ["TLS", true],
+  ] as const)(
+    "graceful stop over %s delivers the whole response to a client that keeps sending frames",
+    (_, secure) => {
+      test.each([
+        ["it's already in the kernel's send buffer", "/fixed?n=1048576", 1024 * 1024],
+        ["the server is still writing it", "/big", 5 * 1024 * 1024],
+      ])("when %s", async (_name, path, size) => {
+        await using fx = await startFixture({ tls: secure });
+        // Windows wide enough that flow control never holds the response back.
+        const raw = await RawH2.connect(fx.port, secure, { settings: Buffer.from([0, 4, 0x40, 0, 0, 0]) });
+        raw.write(frame(T.WINDOW_UPDATE, 0, 0, Buffer.from([0x40, 0, 0, 0])));
+        raw.headers(1, baseHeaders(path));
+        await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+        // The client stops reading, so the response backs up in the kernel and then in the server.
+        raw.socket.pause();
+
+        const session = await connectH2(fx.port, secure);
+        const sessionClosed = once(session, "close");
+        expect((await request(session, { ":path": "/stop?exit" })).body.toString()).toBe("stopping");
+        await sessionClosed;
+
+        // Like a client that sends WINDOW_UPDATE while it downloads.
+        raw.socket.on("data", () => {
+          if (!raw.closed && raw.socket.writable) raw.write(frame(T.PING, 0, 0, Buffer.from("8 bytes!")));
+        });
+        raw.write(frame(T.PING, 0, 0, Buffer.from("8 bytes!")));
+        raw.socket.resume();
+        expect((await raw.body(1)).length).toBe(size);
+        expect(await raw.goaway()).toEqual({ lastStreamId: 1, code: 0 });
+        await raw.waitForClose();
+        // The fixture exits when stop() resolves.
+        expect(await fx.proc.exited).toBe(0);
+      });
+    },
+  );
 
   test("a paused (slowly read) request body does not idle out the connection", async () => {
     // usockets ticks timeouts in 4 s steps, so this needs real seconds.

@@ -1,4 +1,5 @@
 #include "internal/internal.h"
+#include "quic.h"
 #include "lsquic.h"
 #include "lsxpack_header.h"
 #include <openssl/ssl.h>
@@ -25,7 +26,7 @@ struct us_nq_vtable {
     void (*on_stream_reset)(void *stream_ctx, int how, uint64_t error_code);
     ssize_t (*on_dg_write)(void *conn_ctx, void *buf, size_t buf_sz);
     void (*on_datagram)(void *conn_ctx, const void *buf, size_t sz);
-    void (*on_datagram_status)(void *conn_ctx, unsigned count, int acked);
+    void (*on_datagram_status)(void *conn_ctx, uint64_t id, int status);
     void (*on_early_data_failed)(void *conn_ctx);
     void (*on_path_switch)(void *conn_ctx, int validated, int is_preferred,
                            const struct sockaddr *new_local,
@@ -40,15 +41,19 @@ struct us_nq_vtable {
                             const char *sni);
     int (*packets_out)(void *owner, const struct lsquic_out_spec *specs,
                        unsigned n);
-    void (*on_mini_conn_failed)(void *owner, const struct sockaddr *peer_sa,
-                                uint64_t error_code);
+    void *(*on_new_mini_conn)(void *owner, lsquic_conn_t *c);
+    void (*on_mini_conn_failed)(void *conn_ctx, uint64_t error_code);
 };
 
+/* The conn already has its session: a client's from lsquic_engine_connect(),
+ * a server's from its mini conn. Rust reads it from the conn. */
 static lsquic_conn_ctx_t *nq_on_new_conn(void *if_ctx, lsquic_conn_t *c) {
-    void *existing = (void *) lsquic_conn_get_ctx(c);
-    if (existing) return (lsquic_conn_ctx_t *) existing;
     struct us_nq_vtable *vt = if_ctx;
     return (lsquic_conn_ctx_t *) vt->on_new_conn(vt->owner, c);
+}
+static lsquic_conn_ctx_t *nq_on_new_mini_conn(void *if_ctx, lsquic_conn_t *c) {
+    struct us_nq_vtable *vt = if_ctx;
+    return (lsquic_conn_ctx_t *) vt->on_new_mini_conn(vt->owner, c);
 }
 static void nq_on_conn_closed(lsquic_conn_t *c) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
@@ -65,10 +70,9 @@ static void nq_on_hsk_done(lsquic_conn_t *c, enum lsquic_hsk_status s) {
         vt->on_hsk_done(ctx, (int) s);
     }
 }
-static void nq_on_mini_conn_failed(void *if_ctx, const struct sockaddr *peer_sa,
-                                   uint64_t error_code) {
-    struct us_nq_vtable *vt = if_ctx;
-    vt->on_mini_conn_failed(vt->owner, peer_sa, error_code);
+static void nq_on_mini_conn_failed(lsquic_conn_ctx_t *ctx, uint64_t error_code) {
+    struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
+    vt->on_mini_conn_failed(ctx, error_code);
 }
 static void nq_on_hsk_confirmed(lsquic_conn_t *c) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
@@ -149,11 +153,14 @@ static void nq_on_datagram(lsquic_conn_t *c, const void *buf, size_t sz) {
         vt->on_datagram(ctx, buf, sz);
     }
 }
-static void nq_on_datagram_status(lsquic_conn_t *c, unsigned count, int acked) {
+/* lsquic_sys mirrors these values as LSQ_DG_*. */
+_Static_assert(LSQ_DG_ACKED == 0 && LSQ_DG_LOST == 1 && LSQ_DG_UNSENT == 2,
+               "lsquic_sys::LSQ_DG_* must match enum lsquic_dg_status");
+static void nq_on_datagram_status(lsquic_conn_t *c, uint64_t id, int status) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
         struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_datagram_status(ctx, count, acked);
+        vt->on_datagram_status(ctx, id, status);
     }
 }
 static void nq_on_early_data_failed(lsquic_conn_t *c) {
@@ -241,6 +248,10 @@ static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
     lsxpack_header_prepare_decode(&h->xhdr, h->decode_buf, 0, h->decode_cap);
     return &h->xhdr;
 }
+static int nq_field_has_byte(const struct lsxpack_header *hdr, int byte) {
+    return (hdr->name_len && memchr(lsxpack_header_get_name(hdr), byte, hdr->name_len))
+        || (hdr->val_len && memchr(lsxpack_header_get_value(hdr), byte, hdr->val_len));
+}
 static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     struct nq_hset *h = hset;
     if (!hdr)
@@ -251,14 +262,16 @@ static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     if (h->max_bytes
             && h->total_bytes + hdr->name_len + hdr->val_len > h->max_bytes)
         return 0;
-    h->n_pairs++;
-    h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
     const char *name = lsxpack_header_get_name(hdr);
     const char *val = lsxpack_header_get_value(hdr);
     /* RFC 9114 4.1.2 makes such a field invalid. */
-    if ((hdr->name_len && memchr(name, 0, hdr->name_len))
-            || (hdr->val_len && memchr(val, 0, hdr->val_len)))
+    if (nq_field_has_byte(hdr, 0))
         return -1;
+    /* nghttp3 drops a regular field with CR or LF before Node counts it, and fails the session for a pseudo-header. */
+    if (nq_field_has_byte(hdr, '\r') || nq_field_has_byte(hdr, '\n'))
+        return hdr->name_len && name[0] == ':' ? -1 : 0;
+    h->n_pairs++;
+    h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
     size_t need = h->pairs_len + (size_t) hdr->name_len + 1
                 + (size_t) hdr->val_len + 1;
     if (need > h->pairs_cap) {
@@ -351,6 +364,7 @@ static const struct lsquic_stream_if nq_stream_if = {
     .on_close = nq_on_stream_close,
     .on_hsk_done = nq_on_hsk_done,
     .on_hsk_confirmed = nq_on_hsk_confirmed,
+    .on_new_mini_conn = nq_on_new_mini_conn,
     .on_mini_conn_failed = nq_on_mini_conn_failed,
     .on_goaway_received = nq_on_goaway_received,
     .on_new_token = nq_on_new_token,
@@ -382,19 +396,6 @@ static int nq_packets_out(void *out_ctx, const struct lsquic_out_spec *specs,
                           unsigned n) {
     struct us_nq_vtable *vt = out_ctx;
     return vt->packets_out(vt->owner, specs, n);
-}
-
-static int nq_log_buf(void *ctx, const char *buf, size_t len) {
-    (void) ctx;
-    fwrite(buf, 1, len, stderr);
-    fputc('\n', stderr);
-    return 0;
-}
-static const struct lsquic_logger_if nq_logger = { nq_log_buf };
-
-void us_nq_enable_logging(const char *level) {
-    lsquic_logger_init(&nq_logger, NULL, LLTS_HHMMSSUS);
-    lsquic_set_log_level(level);
 }
 
 size_t us_nq_vtable_size(void) { return sizeof(struct us_nq_vtable); }
@@ -444,6 +445,19 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     /* lsquic then parses nothing past an unclaimed header block. A client's
      * default of 2 lets the body reach JS ahead of the `onheaders` before it. */
     s->es_max_header_sets = 1;
+    /* lsquic's default stream windows are for HTTP/3: 0 for a bidirectional
+     * stream the server opens, 12 or 32 KiB for a unidirectional one. Use the
+     * window for client-opened bidirectional streams for all three, as Node
+     * uses one default (256 KiB) for all three. */
+    if (is_server) {
+        s->es_init_max_stream_data_bidi_local = s->es_init_max_stream_data_bidi_remote;
+        s->es_init_max_stream_data_uni = s->es_init_max_stream_data_bidi_remote;
+    } else {
+        s->es_init_max_stream_data_bidi_remote = s->es_init_max_stream_data_bidi_local;
+        s->es_init_max_stream_data_uni = s->es_init_max_stream_data_bidi_local;
+    }
+    /* Node's handshakeTimeout bounds the whole handshake. */
+    s->es_handshake_to_strict = 1;
 }
 
 #define NQ_SET(field, ctype) \
@@ -513,6 +527,7 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
                                   struct us_nq_vtable *vt,
                                   const struct lsquic_engine_settings *settings,
                                   const char *alpn) {
+    if (us_quic_global_init() != 0) return NULL;
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
     api.ea_settings = settings;

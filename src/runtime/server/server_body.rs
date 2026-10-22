@@ -21,6 +21,8 @@ use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, strings};
 use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
+use bun_http_jsc::method_jsc;
+use bun_http_types::Method::OwnedMethod;
 use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
@@ -1235,7 +1237,7 @@ impl UpgradeOptions {
         else {
             return Ok(this);
         };
-        if let Some(headers) = FetchHeaders::cast_(headers_value, global.vm()) {
+        if let Some(headers) = FetchHeaders::cast_as_init(headers_value) {
             this.headers = Some(headers);
             this._headers_object = jsc::EnsureStillAlive(headers_value);
         } else if headers_value.is_object() {
@@ -1642,10 +1644,6 @@ where
 
         let seconds = arguments[1];
 
-        if self.config.address.is_unix() {
-            return Ok(JSValue::NULL);
-        }
-
         if !seconds.is_number() {
             return Err(self
                 .global()
@@ -1898,8 +1896,11 @@ where
         &mut self,
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
-    ) {
+    ) -> JsResult<()> {
         httplog!("onReload");
+
+        // Runs before any route is swapped, so a failure leaves the server as it was.
+        self.init_dev_server_for_reload(new_config, global)?;
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
@@ -1973,6 +1974,26 @@ where
             dev_server.html_router.fallback = None;
         }
 
+        // The chunk routes of a built HTML route are only in the old list.
+        let mut adopted_assets = Vec::new();
+        for new_entry in &new_config.static_routes {
+            let AnyRoute::Html(new_route) = &new_entry.route else {
+                continue;
+            };
+            for old_entry in &self.config.static_routes {
+                if let AnyRoute::Html(old_route) = &old_entry.route {
+                    adopted_assets.extend(new_route.adopt_assets(old_route));
+                }
+            }
+        }
+        for (path, route) in adopted_assets {
+            bun_core::handle_oom(new_config.append_static_route(
+                &path,
+                AnyRoute::Static(route),
+                server_config::MethodOptional::Any,
+            ));
+        }
+
         // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
         // a move-assign frees the old `static_routes`.
         self.config.static_routes = core::mem::take(&mut new_config.static_routes);
@@ -1998,6 +2019,27 @@ where
                 ));
             }
         }
+        Ok(())
+    }
+
+    /// Creates the DevServer when a reload brings the server's first HTML route. `init()` only does it for the first config.
+    fn init_dev_server_for_reload(
+        &mut self,
+        new_config: &mut ServerConfig,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        // The DevServer is HTTP/1-only. With it, an HTML route answers HTTP/2 and HTTP/3 with a 503.
+        if self.dev_server.is_some()
+            || !self.config.development.is_hmr_enabled()
+            || self.h2_app.is_some()
+            || self.h3_app.is_some()
+            || !self.has_listener()
+            || !self.config.take_dev_server_options_from(new_config, global)
+        {
+            return Ok(());
+        }
+        self.init_dev_server()
+            .inspect_err(|_| self.config.drop_dev_server_options())
     }
 
     pub(crate) fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
@@ -2049,7 +2091,7 @@ where
         // ws shadows, and each `wrap_handler_slot` call allocates via
         // `with_async_context_if_needed`. Same window as `serve()`; same fix.
         let _handler_pins = super::protect_handler_shadows(&new_config);
-        self.on_reload_from_zig(&mut new_config, global);
+        self.on_reload_from_zig(&mut new_config, global)?;
 
         Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
     }
@@ -2084,7 +2126,7 @@ where
         }
 
         let mut headers: Option<HeadersRef> = None;
-        let mut method = Method::GET;
+        let mut method = OwnedMethod::from(Method::GET);
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
         let mut args = jsc::ArgumentsSlice::init(ctx.bun_vm(), arguments);
 
@@ -2093,8 +2135,20 @@ where
         // TODO: set Host header
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
-        let existing_request: Box<Request> = if first_arg.is_string() {
-            let url_utf8 = arguments[0].to_utf8(ctx)?;
+        let request_arg = first_arg
+            .is_object()
+            .then(|| <Request as bun_jsc::JsClass>::from_js(first_arg))
+            .flatten();
+        let url_arg = if first_arg.is_string() {
+            Some(first_arg.to_utf8(ctx)?)
+        } else if first_arg.is_object() && request_arg.is_none() {
+            // A `URL`, or any other object, is read as its href, like fetch() does.
+            let href = <jsc::URL as jsc::URLJsc>::href_from_js(first_arg, ctx)?;
+            (href.tag() != bun_core::Tag::Dead).then(|| href.into_utf8())
+        } else {
+            None
+        };
+        let existing_request: Box<Request> = if let Some(url_utf8) = url_arg {
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
@@ -2125,12 +2179,11 @@ where
             if arguments.len() >= 2 && arguments[1].is_object() {
                 let opts = arguments[1];
                 if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::Method)? {
-                    let slice_ = method_.to_utf8(ctx)?;
-                    method = Method::which(slice_.slice()).unwrap_or(method);
+                    method = method_jsc::request_method_from_js(ctx, method_)?;
                 }
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
-                    if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
+                    if let Some(headers__) = FetchHeaders::cast_as_init(headers_) {
                         // Copy the headers like `new Request(url, { headers })` does.
                         // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
                         headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
@@ -2162,15 +2215,16 @@ where
                 crate::webcore::body::hive_alloc(body),
                 method,
             ))
-        } else if let Some(request_) = first_arg
-            .is_object()
-            .then(|| <Request as bun_jsc::JsClass>::from_js(first_arg))
-            .flatten()
-        {
+        } else if let Some(request_) = request_arg {
             // SAFETY: JsClass::from_js returns a live *mut Request.
             // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
             // sentinel and calls `clone_into(.., preserve_url=false)`.
-            unsafe { (*request_).clone(&ctx.js_thread_of_caller(callframe))? }
+            match unsafe { (*request_).clone(&ctx.js_thread_of_caller(callframe)) } {
+                Ok(cloned) => cloned,
+                Err(err) => {
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
+                }
+            }
         } else {
             let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
@@ -2189,8 +2243,9 @@ where
         // SAFETY: `request` was just allocated via `heap::alloc`; ownership
         // transfers to the JS wrapper inside `to_js`.
         let request_value = unsafe { (*request).to_js(&global_this) };
+        let this_value = self.js_value_assert_alive();
         let response_value =
-            match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
+            match on_request.call(&global_this, this_value, &[request_value, this_value]) {
                 Ok(v) => v,
                 Err(err) => {
                     return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
@@ -2415,13 +2470,11 @@ where
         // unconditional. `Box::into_raw` (not `heap::release`) keeps raw-owner
         // provenance for the `deinit()` dealloc — a `&mut self`-derived tag
         // there would be Stacked-Borrows UB. JSC-handle Drops are no-ops past
-        // `is_shutting_down()`; `TERMINATED` means `app.close()` already ran,
-        // so `NewApp::destroy` can't orphan a keep-alive socket.
+        // `is_shutting_down()`, and teardown already closed every socket.
         unsafe {
             (*this_ptr).js_value.finalize();
             (*this_ptr).deinit_if_we_can();
             if (*this_ptr).flags.contains(ServerFlags::DEINIT_SCHEDULED)
-                && (*this_ptr).flags.contains(ServerFlags::TERMINATED)
                 && (*this_ptr).vm().is_shutting_down()
             {
                 Self::deinit(this_ptr);
@@ -2478,6 +2531,7 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        self.flags.remove(ServerFlags::UNREFED_BY_USER);
         self.ref_();
         Ok(this_value)
     }
@@ -2489,6 +2543,7 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        self.flags.insert(ServerFlags::UNREFED_BY_USER);
         self.unref();
         Ok(this_value)
     }

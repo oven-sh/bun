@@ -82,8 +82,8 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
 // bitfield) to `args`, and capture the raw header bytes into `flatHeaders`
 // as [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
 // req.headers can be materialized lazily (Bun__NodeHTTP__buildRawHeadersArray,
-// Bun__NodeHTTP__buildHeadersObject) only when user code reads them.
-static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+// Bun__NodeHTTP__buildHeadersObject) only when user code reads them. Returns the bitfield.
+static uint32_t assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     {
         std::string_view fullURLStdStr = request->getFullUrl();
@@ -160,6 +160,17 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     // The headers-object slot now carries the dispatch bitfield; rawHeaders
     // materialize lazily from the captured bytes, so no array is passed.
     args.append(jsNumber(bits));
+    return bits;
+}
+
+// Returns true if the JS dispatcher can pass `head` on: to 'connect', or to 'upgrade' for a request with no body that isn't pipelined.
+static ALWAYS_INLINE bool canHandOffHead(JSC::VM& vm, JSValue methodString, uint32_t dispatchBits, bool hasBody, bool isPipelinedDispatch)
+{
+    static constexpr uint32_t upgradeBits = kDispatchHasUpgrade | kDispatchConnUpgrade;
+    // Bun__HTTPMethod__toJS returns this cell for every CONNECT. It's null until the first one, and then matches nothing.
+    if (methodString == JSValue(Bun::commonStrings(vm).m_httpCONNECT))
+        return true;
+    return !hasBody && !isPipelinedDispatch && (dispatchBits & upgradeBits) == upgradeBits;
 }
 
 // A known header's value as a string: the one remembered from the last request when it holds the same bytes,
@@ -411,7 +422,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     // Typical request header sections are a few hundred bytes; the inline
     // capacity keeps the capture heap-allocation-free for the common case.
     WTF::Vector<uint8_t, 1024> flatHeaders;
-    assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
+    const uint32_t dispatchBits = assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
 
     auto* httpResponseData = response->getHttpResponseData();
     // Pipelined: an earlier response is in flight, so this one is queued and gets the connection at its turn (startPipelinedResponse).
@@ -457,7 +468,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     args.append(jsBoolean(request->isAncient()));
 
     // Pass pipelined data (head buffer) for Node.js compat (connect/upgrade events)
-    if (!request->head.empty()) {
+    if (!request->head.empty() && canHandOffHead(vm, methodString, dispatchBits, hasBody, isPipelinedDispatch)) {
         JSC::JSUint8Array* headBuffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(request->head.data()), request->head.size()));
         RETURN_IF_EXCEPTION(scope, {});
         args.append(headBuffer);
@@ -579,8 +590,11 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         // close the connection after the response. Mark the uWS state so
         // end()/tryEnd() shut the socket down instead of returning it to the
         // keep-alive pool.
-        if (header.key == WebCore::HTTPHeaderName::Connection && connectionValueHasClose(value)) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
+        if (header.key == WebCore::HTTPHeaderName::Connection) {
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER;
+            if (connectionValueHasClose(value)) {
+                data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
+            }
         }
         writeResponseHeader<isSSL>(res, name, value);
     }
@@ -604,6 +618,8 @@ static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
 // Node's _storeHeader emits chunked Transfer-Encoding after Connection/Keep-Alive, so it
 // cannot ride in the flat array (written first). Carry as an auto-header bit, rendered last.
 static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
+// No header line. The handler set Transfer-Encoding: chunked, which overrides HTTP/1.0 and Content-Length framing.
+static constexpr uint32_t kAutoHeaderBodyChunked = 1 << 5;
 
 // "Date: <IMF-fixdate>\r\n", rebuilt at most once per second. Hand-rolled
 // (not strftime) so the day/month names are locale-independent.
@@ -669,6 +685,9 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
         // chunk-frames the body.
         response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
     }
+    if (autoHeaderBits & kAutoHeaderBodyChunked) {
+        response->getHttpResponseData()->state &= ~(uWS::HttpResponseData<isSSL>::HTTP_ANCIENT_REQUEST | uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER);
+    }
 }
 
 template<bool isSSL>
@@ -690,10 +709,9 @@ static void NodeHTTPServer__writeHead(
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
-    // node:http's ServerResponse owns the Date header entirely (it honors
-    // res.sendDate / removeHeader("date") in JS), so never let uWS write its
-    // own Date header for these responses.
-    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+    // node:http's ServerResponse decides the Date and Connection headers in JS, so uWS must not add its own.
+    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER
+        | uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER;
 
     // 204/304 responses must not carry any body framing, even when the user
     // explicitly set a Transfer-Encoding header (Node.js suppresses the

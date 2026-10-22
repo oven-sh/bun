@@ -84,3 +84,6 @@ const control = http.createServer((req, res) => {
 });
 const controlPort = await listen(control);
 console.log(relayPort, controlPort);
+
+// Exit when the test process closes the pipe.
+process.stdin.on("end", () => process.exit(0)).resume();

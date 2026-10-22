@@ -32,7 +32,9 @@ use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamSt
 use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
-use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
+use crate::webcore::{
+    AbortSignal, BlobExt as _, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle,
+};
 use bun_jsc::AbortSignalRef;
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
@@ -234,16 +236,23 @@ impl HTTPRequestBody {
                 stream.deinit();
             }
             HTTPRequestBody::Sendfile(sendfile) => {
-                if sendfile.offset.max(sendfile.remain) > 0 {
+                if sendfile.fd.is_valid() {
                     sendfile.fd.close();
+                    sendfile.fd = bun_sys::Fd::INVALID;
                 }
-                sendfile.offset = 0;
-                sendfile.remain = 0;
             }
         }
     }
 
     pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+        if let Some(form_data) = jsc::DOMFormData::from_js(value) {
+            return match Blob::from_dom_form_data(cx.global(), form_data) {
+                Ok(blob) => Ok(HTTPRequestBody::AnyBlob(AnyBlob::Blob(blob))),
+                Err(err) => Err(cx
+                    .global()
+                    .throw_value(super::system_type_error(&err, cx.global()))),
+            };
+        }
         let mut body_value = BodyValue::from_js(cx.global(), value)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))
@@ -928,16 +937,42 @@ impl FetchTasklet {
         Ok(())
     }
 
+    /// Removes the failure from `result` if body bytes that arrived before it haven't been delivered yet.
+    fn defer_failure_until_body_is_delivered(&mut self) -> Option<http::Error> {
+        let fail = self.result.fail?;
+        // Without a Response yet, the failure has to build it so every consumer sees the error.
+        if self.scheduled_response_buffer.list.is_empty() || !self.is_waiting_body {
+            return None;
+        }
+        // An abort ends the body right away.
+        if self.is_waiting_abort
+            || self.abort_reason.has()
+            || self.result.abort_reason().is_some()
+            || self.signal_store.aborted.load(Ordering::Relaxed)
+        {
+            return None;
+        }
+        self.result.fail = None;
+        self.result.has_more = true;
+        Some(fail)
+    }
+
     pub(crate) fn on_progress_update(&mut self) -> JsResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();
-        self.has_schedule_callback.store(false, Ordering::Relaxed);
-        let is_done = !self.result.has_more;
+        // Only the HTTP thread's `callback` sets this flag, so the task `cleanup` enqueues below won't defer the failure again.
+        let posted_by_http_thread = self.has_schedule_callback.swap(false, Ordering::Relaxed);
 
         let vm = self.global_this.bun_vm();
         // The response, the upload's pump and what they settle continue the script that fetched.
         let _context = vm.enter_context(self.context);
+        let deferred_failure = if posted_by_http_thread && vm.script_allowed() {
+            self.defer_failure_until_body_is_delivered()
+        } else {
+            None
+        };
+        let is_done = !self.result.has_more;
         // teardown forbade script: we cannot touch JS
         if !vm.script_allowed() {
             // The certificate will never be checked; release the parked
@@ -959,6 +994,15 @@ impl FetchTasklet {
         let global_this = self.global_this;
         // explicit cleanup at each return (a closure keeps borrowck happy)
         let cleanup = |this: &mut FetchTasklet| {
+            if let Some(fail) = deferred_failure {
+                // This run delivered the bytes. The next task fails the body and owns this thread's ref.
+                this.result.fail = Some(fail);
+                this.result.has_more = false;
+                // SAFETY: `vm.event_loop()` is the live JS-thread loop.
+                unsafe {
+                    (*vm.event_loop()).enqueue_task(Task::init(std::ptr::from_mut(this)));
+                }
+            }
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if is_done {
@@ -979,7 +1023,7 @@ impl FetchTasklet {
             if let Err(err) = self.start_request_stream() {
                 // The VM is being stopped: leave like the `!script_allowed()` gate above does.
                 self.mutex.unlock();
-                if is_done {
+                if is_done || deferred_failure.is_some() {
                     // SAFETY: `self` is the live heap tasklet; we hold a ref.
                     FetchTasklet::deref(std::ptr::from_mut(self));
                 }
@@ -1430,6 +1474,14 @@ impl FetchTasklet {
             _ => fail.name(),
         };
 
+        let syscall = match fail {
+            http::Error::ConnectionRefused => BunString::static_("connect"),
+            http::Error::FailedToOpenSocket if self.result.connect_errno != 0 => {
+                BunString::static_("connect")
+            }
+            _ => BunString::EMPTY,
+        };
+
         let message = match fail {
             http::Error::ConnectionClosed => BunString::create_format(format_args!(
                 "{code}: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
@@ -1655,6 +1707,7 @@ impl FetchTasklet {
             code: BunString::static_(code),
             message,
             path,
+            syscall,
             ..Default::default()
         };
 
@@ -1920,13 +1973,15 @@ impl FetchTasklet {
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
+        let mut body_decoded = metadata.did_decompress;
         let body = if self.response_body_is_null(status_code) {
+            body_decoded = false;
             self.null_body_value()
         } else {
             self.is_waiting_body = self.result.has_more;
             self.to_body_value()
         };
-        Response::init(
+        let response = Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
@@ -1937,7 +1992,9 @@ impl FetchTasklet {
             Body::new(body),
             url,
             redirected,
-        )
+        );
+        response.set_body_decoded(body_decoded);
+        response
     }
 
     /// Nothing will read the rest of the body: abort the transport, let go of the loop and of the
@@ -2801,7 +2858,8 @@ impl FetchTasklet {
 }
 
 pub(crate) struct FetchOptions {
-    pub method: Method,
+    /// A token points into `headers.buf`.
+    pub method: http::MethodRef,
     pub(crate) headers: Headers,
     pub(crate) body: HTTPRequestBody,
     /// For a `ReadableStream` body; `transfer_encoding` points into `headers.buf`.

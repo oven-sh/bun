@@ -517,6 +517,7 @@ fn dispatch_frame(
                 }
                 _ => Some(crate::Error::HTTP2StreamReset),
             };
+            stream.http1_required = code == wire::ErrorCode::HTTP_1_1_REQUIRED.0;
         }
         FT_GOAWAY => {
             if stream_id != 0 {
@@ -532,11 +533,13 @@ fn dispatch_frame(
                 wire::UInt31WithReserved::from_bytes(&payload[0..4]).uint31();
             let code: u32 = wire::u32_from_bytes(&payload[4..8]);
             let graceful = code == wire::ErrorCode::NO_ERROR.0;
+            let http1_required = code == wire::ErrorCode::HTTP_1_1_REQUIRED.0;
             let last_id = session.goaway_last_stream_id;
             for &s_ptr in session.streams.values() {
                 // SAFETY: stream pointer valid for session lifetime.
                 let s = stream_mut(s_ptr);
                 if s.id > last_id {
+                    s.http1_required |= http1_required;
                     s.fatal_error = Some(if graceful {
                         crate::Error::HTTP2RefusedStream
                     } else {
@@ -547,6 +550,9 @@ fn dispatch_frame(
                     // still complete successfully" — don't discard a
                     // response that already finished in this same read.
                     s.fatal_error = Some(crate::Error::HTTP2GoAway);
+                    // The server may have processed this stream, so only an idempotent request is sent again.
+                    s.http1_required |=
+                        http1_required && s.client_ref().is_some_and(|c| c.method.is_idempotent());
                 }
             }
         }
@@ -620,15 +626,9 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
                 continue;
             }
             seen_status = true;
-            // RFC 9110 §15: status-code is a 3-digit integer. Header values
-            // are octets, not guaranteed UTF-8.
-            status = if result.value.len() == 3 {
-                bun_core::parse_unsigned::<u32>(result.value, 10).unwrap_or(0)
-            } else {
-                0
-            };
-            if status < 100 || status > 999 {
-                malformed = true;
+            match bun_http_types::parse_status_pseudo_header(result.value) {
+                Some(code) => status = u32::from(code),
+                None => malformed = true,
             }
             continue;
         }

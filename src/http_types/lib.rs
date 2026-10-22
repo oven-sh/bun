@@ -40,3 +40,12 @@ pub fn parse_content_length_strict(value: &[u8]) -> Option<u64> {
     }
     Some(n)
 }
+
+/// A response `:status`: three digits, 100 to 999, and never 101, which HTTP/2 and HTTP/3 don't have (RFC 9113 §8.6, RFC 9114 §4.5).
+pub fn parse_status_pseudo_header(value: &[u8]) -> Option<u16> {
+    let &[a @ b'1'..=b'9', b @ b'0'..=b'9', c @ b'0'..=b'9'] = value else {
+        return None;
+    };
+    let status = u16::from(a - b'0') * 100 + u16::from(b - b'0') * 10 + u16::from(c - b'0');
+    (status != 101).then_some(status)
+}

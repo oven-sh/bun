@@ -723,7 +723,7 @@ impl UDPSocket {
                 on_recv_error,
                 hostname_z.as_ptr(),
                 config.port,
-                config.flags,
+                config.flags | uws::LIBUS_UDP_LINUX_RECVERR,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )

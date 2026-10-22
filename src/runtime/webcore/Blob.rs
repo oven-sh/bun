@@ -179,7 +179,11 @@ pub(crate) trait BlobExt {
     ) -> Blob
     where
         Self: Sized;
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob
+    /// Returns the error instead of throwing it if a file-backed entry can't be read.
+    fn from_dom_form_data(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+    ) -> bun_sys::Result<Blob>
     where
         Self: Sized;
     fn content_type(&self) -> &[u8];
@@ -821,7 +825,10 @@ impl BlobExt for Blob {
         blob
     }
 
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
+    fn from_dom_form_data(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+    ) -> bun_sys::Result<Blob> {
         // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
         const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
@@ -836,8 +843,7 @@ impl BlobExt for Blob {
         let mut context = FormDataContext {
             joiner: bun_core::string_joiner::StringJoiner::default(),
             boundary,
-            failed: false,
-            global_this,
+            read_error: None,
         };
         // Size the node list up front: a file entry pushes at most 13 slices, a
         // string entry 8, plus 3 for the closing boundary.
@@ -909,12 +915,12 @@ impl BlobExt for Blob {
             (&raw mut context).cast::<c_void>(),
             for_each_thunk,
         );
-        if context.failed {
+        if let Some(err) = context.read_error {
             // Drop the joiner (Drop runs StringJoiner::deinit) so every
             // heap-owned slice already pushed — escaped names, non-ASCII
             // conversions, NodeFS read_file result buffers — is freed.
             drop(context.joiner);
-            return Blob::init_empty(global_this);
+            return Err(err);
         }
 
         context.joiner.push_static(b"--");
@@ -937,7 +943,7 @@ impl BlobExt for Blob {
             .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
         blob.content_type_was_set.set(true);
 
-        blob
+        Ok(blob)
     }
 
     fn content_type(&self) -> &[u8] {
@@ -3517,15 +3523,12 @@ where
 // FormDataContext
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Stack-local helper for `Blob::from_dom_form_data`. `boundary` borrows the
-/// caller's `hex_buf` and `global_this` borrows the incoming `&JSGlobalObject`;
-/// both strictly outlive this struct, so they are stored as plain references
-/// rather than raw pointers.
+/// Stack-local helper for `Blob::from_dom_form_data`.
 struct FormDataContext<'a> {
     joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
-    failed: bool,
-    global_this: &'a JSGlobalObject,
+    /// Set by the first file-backed entry that can't be read. Later entries are skipped.
+    read_error: Option<bun_sys::Error>,
 }
 
 /// Which piece of a `multipart/form-data` entry a string is, selecting the
@@ -3615,12 +3618,11 @@ impl FormDataContext<'_> {
     }
 
     fn on_entry(&mut self, name: EncodedSlice, entry: FormDataEntry<'_>) {
-        if self.failed {
+        if self.read_error.is_some() {
             return;
         }
         // Copy the borrowed refs out first (disjoint-field reads) so the
         // long-lived `&mut self.joiner` below doesn't conflict.
-        let global_this = self.global_this;
         let boundary = self.boundary;
         let joiner = &mut self.joiner;
 
@@ -3685,11 +3687,7 @@ impl FormDataContext<'_> {
                             rf_args.max_size = Some(blob.size.get());
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
                             match res {
-                                Err(err) => {
-                                    self.failed = true;
-                                    let js_err = err.to_js(global_this);
-                                    let _ = global_this.throw_value(js_err);
-                                }
+                                Err(err) => self.read_error = Some(err),
                                 Ok(mut result) => {
                                     joiner.push_cloned(result.slice());
                                     // StringOrBuffer::Drop is a no-op for Buffer; release
@@ -6076,6 +6074,20 @@ impl Any {
         }
     }
 
+    /// Returns the code units after a leading U+FEFF. `text()` and `json()` drop one, like a UTF-8 decode does.
+    fn units_after_bom(&self) -> Option<&[u16]> {
+        let Any::WTFStringImpl(string) = self else {
+            return None;
+        };
+        if string.is_8bit() {
+            return None;
+        }
+        match string.utf16_slice() {
+            [0xFEFF, rest @ ..] => Some(rest),
+            _ => None,
+        }
+    }
+
     fn to_internal_blob_if_possible(&mut self) {
         let Any::Blob(blob) = self else {
             return;
@@ -6185,6 +6197,11 @@ impl Any {
                 str
             }
             Any::WTFStringImpl(_) => {
+                if let Some(units) = self.units_after_bom() {
+                    let json = EncodedSlice::utf16(units).to_json_object(cx.global());
+                    *self = Any::Blob(Blob::default());
+                    return json;
+                }
                 let str = self.take_string();
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
@@ -6255,7 +6272,18 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 Ok(owned)
             }
-            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
+            Any::WTFStringImpl(_) => {
+                if let Some(units) = self.units_after_bom() {
+                    let mut text = Vec::new();
+                    if text.try_reserve_exact(units.len()).is_err() {
+                        return Err(cx.global().throw_memory_allocation_failed());
+                    }
+                    text.extend_from_slice(units);
+                    *self = Any::Blob(Blob::default());
+                    return bun_string_jsc::owned_utf16_into_js(cx.global(), text);
+                }
+                self.take_string().into_js(cx.global())
+            }
         }
     }
 

@@ -63,6 +63,12 @@ public:
         auto* data = getHttpResponseData();
 
         Super::timeout(data->idleTimeout);
+        /* The kernel drains a blocked write at the peer's pace, and a writable event only comes once a good part of the
+         * send buffer is free. Record how far the kernel got, so onTimeout can tell a slow reader from a stalled one. */
+        if (((us_socket_t *) this)->flags.last_write_failed) [[unlikely]] {
+            data->setFlag(HttpResponseData<SSL>::HTTP_DELIVERED_BYTES_RECORDED,
+                data->idleTimeout && us_socket_delivered_bytes((us_socket_t *) this, &data->deliveredBytes) == 0);
+        }
     }
     /* The chunk-size line of a chunk. Returns its length. */
     static constexpr size_t CHUNK_HEAD_MAX = 10;
@@ -91,6 +97,36 @@ public:
         /* Date is always written */
         writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) this))))->date, 29));
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
+    }
+
+    /* Writes the headers uWS adds unless the caller wrote them: Date, Transfer-Encoding: chunked for a chunked
+     * body, and Connection: close when the connection closes after this response (RFC 9112 9.6). A client that
+     * doesn't see "close" puts the socket back in its pool and loses the next request on it. */
+    void writeOwnedHeaders(bool chunked) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        writeMark();
+        if (chunked && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+            writeHeader("Transfer-Encoding", "chunked");
+        }
+        if (httpResponseData->closesAfterResponse() && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER)) [[unlikely]] {
+            writeHeader("Connection", "close");
+            /* Nothing may follow a response that says "close", so a graceful stop's mark becomes a hard close. */
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+        }
+    }
+
+    /* Ends the header section. Every HTTP/1 response goes through here or through internalEnd()'s Content-Length path. */
+    void terminateHeaders(bool chunked = false) {
+        writeOwnedHeaders(chunked);
+        Super::write("\r\n", 2);
+    }
+
+    /* The close mark has to be set before the header section ends, or the response can't say "close". */
+    void markCloseConnection(bool closeConnection) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (closeConnection && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED)) {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+        }
     }
 
     /* Shutdown+close when the connection is marked to close (Connection:
@@ -171,6 +207,10 @@ public:
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
                 idle = false;
             }
+        } else if (idle && !Super::hasFullyDrained()) {
+            /* Bun.serve: close() would drop the bytes of a finished response that are still in the backpressure buffer.
+             * Not idle until they are out: the graceful stop() marks the connection, and onWritable closes it. */
+            idle = false;
         }
         if (!idle) {
             return false;
@@ -184,16 +224,18 @@ public:
         return true;
     }
 
-    /* node:http: an idle tunnel is at read EOF and has nothing left to send. Like a libuv handle in that state, it does not hold
-     * the event loop. The filter hears -3 when a tunnel becomes idle and +3 when it has bytes to send again. */
-    void setNodeHttpTunnelIdle(bool idle) {
+    /* node:http: an idle tunnel doesn't read (reads stopped, or at EOF) and has nothing left to send. Like a libuv handle in that state,
+     * it does not hold the event loop. The filter hears -3 when a tunnel becomes idle. When that ends it hears +3 if only bytes to send
+     * can be the reason, and +4 if the tunnel can also be reading again (canRead).
+     * A parked request's connection (NodeHTTPResponse::update_parked) counts as one until it reads or has bytes to send again. */
+    void setNodeHttpTunnelIdle(bool idle, bool canRead = false) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!httpResponseData->filteredAccept || httpResponseData->filteredIdleTunnel == idle) {
             return;
         }
         httpResponseData->filteredIdleTunnel = idle;
         for (auto &f : HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->filterHandlers) {
-            f(this, idle ? -3 : 3);
+            f(this, idle ? -3 : canRead ? 4 : 3);
         }
     }
 
@@ -226,22 +268,7 @@ public:
         }
 
         /* In some cases, such as when refusing huge data we want to close the connection when drained */
-        if (closeConnection) {
-            /* We can only write the header once */
-            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
-
-                /* HTTP 1.1 must send this back unless the client already sent it to us.
-                * It is a connection close when either of the two parties say so but the
-                * one party must tell the other one so.
-                *
-                * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    writeHeader("Connection", "close");
-                }
-
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-            }
-        }
+        markCloseConnection(closeConnection);
 
         /* if write was called and there was previously no Content-Length header set.
          * node:http compat: pending response trailers (addTrailers) also force chunked
@@ -254,11 +281,7 @@ public:
             /* Trailers-only end with no body chunk: write() below would early-return on
              * empty data, so terminate the header section and enter chunked mode here. */
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED) && data.empty()) [[unlikely]] {
-                writeMark();
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                    writeHeader("Transfer-Encoding", "chunked");
-                }
-                Super::write("\r\n", 2);
+                terminateHeaders(true);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
 
@@ -311,8 +334,7 @@ public:
                  * header bytes into the body. The connection close delimits
                  * the message instead. */
                 if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    /* Write mark, this propagates to WebSockets too */
-                    writeMark();
+                    writeOwnedHeaders(false);
 
                     /* WebSocket upgrades does not allow content-length */
                     if (allowContentLength) {
@@ -385,6 +407,7 @@ public:
             ->writeHeader("Upgrade", "websocket")
             ->writeHeader("Connection", "Upgrade")
             ->writeHeader("Sec-WebSocket-Accept", secWebSocketAccept);
+        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER;
 
         /* Select first subprotocol if present */
         if (secWebSocketProtocol.length()) {
@@ -430,8 +453,7 @@ public:
             }
         }
 
-        writeMark();
-        Super::write("\r\n", 2);
+        terminateHeaders();
 
         return adoptWebSocket(std::forward<UserData>(userData), perMessageDeflate, compressOptions, webSocketContext);
     }
@@ -473,6 +495,12 @@ private:
          * that takes over the socket), and the cork stays so the handshake
          * batches with the first frames written from open(). */
         auto* responseData = getHttpResponseData();
+
+        /* Bytes parked behind this handshake are frames from a client that didn't wait for the 101 (RFC 6455 4.1).
+         * Take them before markDone() requests a replay and before their owner is destructed. */
+        WTF::Vector<char> earlyFrames = std::exchange(responseData->parkedRequestBytes, {});
+        size_t earlyFramesStart = std::exchange(responseData->parkedRequestBytesStart, 0);
+
         responseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
         responseData->markDone(this);
 
@@ -560,6 +588,20 @@ private:
             webSocketContextData->openHandler(webSocket);
         }
 
+        if (!earlyFrames.isEmpty()) [[unlikely]] {
+            /* Parking paused reads, and us_socket_adopt() keeps the pause. Resuming can close the socket, which is an ordinary WebSocket close by now. */
+            us_socket_resume(usSocket);
+            if (!us_socket_is_closed(usSocket) && !us_socket_is_shut_down(usSocket)) {
+                /* The frame parser writes on both sides of its input, like it can in the loop's padded receive buffer. */
+                size_t length = earlyFrames.size() - earlyFramesStart;
+                WTF::Vector<char> padded;
+                padded.grow(LIBUS_RECV_BUFFER_PADDING + length + LIBUS_RECV_BUFFER_PADDING);
+                char *frames = padded.mutableSpan().data() + LIBUS_RECV_BUFFER_PADDING;
+                memcpy(frames, earlyFrames.span().data() + earlyFramesStart, length);
+                us_dispatch_data(usSocket, frames, (int) length);
+            }
+        }
+
         /* Uncork here. An enclosing HttpResponse::cork() can't uncork a WebSocket, and after an await there isn't one. */
         ((AsyncSocket<SSL> *) webSocket)->uncork();
 
@@ -575,16 +617,22 @@ public:
     using Super::getRemoteAddressAsText;
     using Super::getNativeHandle;
 
-    /* Throttle reads and writes */
+    /* Throttle reads and writes. The idle timeout keeps running, because a blocked response write has nothing else to end it. */
     HttpResponse *pause() {
         Super::pause();
-        Super::timeout(0);
         return this;
     }
 
     HttpResponse *resume() {
-        Super::resume();
+        /* While requests are parked, the replay owns the pause. Reading on would queue more behind them. */
+        if (getHttpResponseData()->parkedRequestBytes.isEmpty()) [[likely]] {
+            Super::resume();
+        }
         this->resetTimeout();
+        /* A parked request's connection reads again. A tunnel reports its own state (JSNodeHTTPServerSocket::updateTunnelIdle). */
+        if (!getHttpResponseData()->isConnectRequest) {
+            setNodeHttpTunnelIdle(false);
+        }
         return this;
     }
 
@@ -662,6 +710,7 @@ public:
     /* End the response with an optional data chunk. Always starts a timeout. */
     void end(std::string_view data = {}, bool closeConnection = false) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        markCloseConnection(closeConnection);
 
         /* 204/304 responses carry no body framing at all: no Content-Length,
          * no chunked framing and no terminating chunk, even when an explicit
@@ -690,8 +739,7 @@ public:
             !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER
                 | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
             writeStatus(HTTP_200_OK);
-            writeMark();
-            Super::write("\r\n", 2);
+            terminateHeaders();
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
@@ -718,14 +766,9 @@ public:
     bool sendTerminatingChunk(bool closeConnection = false) {
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        markCloseConnection(closeConnection);
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
-            /* Write mark on first call to write */
-            writeMark();
-
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                writeHeader("Transfer-Encoding", "chunked");
-            }
-            Super::write("\r\n", 2);
+            terminateHeaders(true);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
@@ -750,19 +793,12 @@ public:
          * header the user removed; their body is raw, so take the else path. */
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-                /* Write mark on first call to write */
-                writeMark();
-
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                    writeHeader("Transfer-Encoding", "chunked");
-                }
-                Super::write("\r\n", 2);
+                terminateHeaders(true);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
 
          } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-            writeMark();
-            Super::write("\r\n", 2);
+            terminateHeaders();
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
         if (flushImmediately) {
@@ -827,21 +863,14 @@ public:
          * write raw bytes with no chunk framing, like the else path. */
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED))) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-                /* Write mark on first call to write */
-                writeMark();
-
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                    writeHeader("Transfer-Encoding", "chunked");
-                }
-                Super::write("\r\n", 2);
+                terminateHeaders(true);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
 
             chunkHeadLength = chunkHead(chunkHeadBuffer, (unsigned int) data.length());
             chunkTail = isLast ? "\r\n0\r\n\r\n" : "\r\n";
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-            writeMark();
-            Super::write("\r\n", 2);
+            terminateHeaders();
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
         auto [written, failed] = Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), length, chunkTail);
@@ -872,17 +901,12 @@ public:
             writeStatus(HTTP_200_OK);
             if (chunked) {
                 if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-                    writeMark();
-                    if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                        writeHeader("Transfer-Encoding", "chunked");
-                    }
-                    Super::write("\r\n", 2);
+                    terminateHeaders(true);
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
                 }
                 chunkHeadLength = chunkHead(chunkHeadBuffer, (unsigned int) data.length());
             } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-                writeMark();
-                Super::write("\r\n", 2);
+                terminateHeaders();
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
         }

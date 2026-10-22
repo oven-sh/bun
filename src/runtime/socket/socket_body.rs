@@ -2680,6 +2680,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         res
     }
 
+    /// Returns true if a write refused with would-block can still go out after a writable event.
+    pub(crate) fn write_side_open(&self) -> bool {
+        let socket = self.socket.get();
+        socket.is_established()
+            && !socket.is_shutdown()
+            && !socket.is_closed()
+            && !(SSL && self.flags.get().contains(Flags::REJECTED))
+    }
+
     pub(crate) fn write_maybe_corked(&self, buffer: &[u8]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
@@ -3279,7 +3288,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let [arg] = callframe.arguments_as_array::<1>();
         if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
-        } else {
+        } else if !this.native_callback.get().defer_shutdown() {
             this.socket.get().shutdown();
         }
 
@@ -4187,6 +4196,13 @@ impl NativeCallbacks {
         // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
         unsafe { (*h2).on_native_writable() };
         true
+    }
+    /// Returns true if the attached parser takes over the half-close and sends the FIN after its own output.
+    pub(crate) fn defer_shutdown(&self) -> bool {
+        match self {
+            NativeCallbacks::H2(h2) => h2.defer_shutdown(),
+            NativeCallbacks::None => false,
+        }
     }
 }
 
@@ -5225,6 +5241,17 @@ pub(crate) mod testing_apis {
         #[cfg(not(windows))]
         let count = 0usize;
         Ok(JSValue::js_number(count as f64))
+    }
+
+    /// `runSocketTimeoutSweepSoon` in `bun:internal-for-testing`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_run_socket_timeout_sweep_soon(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `Loop::get()` returns this thread's live loop, and the call only moves its sweep deadline.
+        unsafe { bun_uws_sys::loop_::us_internal_sweep_soon(bun_uws_sys::Loop::get()) };
+        Ok(JSValue::UNDEFINED)
     }
 
     /// Live `DuplexUpgradeContext`s (one per TLS socket over a JS stream).

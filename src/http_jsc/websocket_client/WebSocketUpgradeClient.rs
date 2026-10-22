@@ -887,9 +887,10 @@ where
                     this.interim_len.set(0);
                     return on_head(&response, &unparsed[response.bytes_read..]);
                 }
-                Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
-                    ErrorCode::InvalidResponse
-                }
+                Err(
+                    picohttp::ParseResponseError::MalformedHttpResponse
+                    | picohttp::ParseResponseError::TooManyHeaders,
+                ) => ErrorCode::InvalidResponse,
                 // picohttpparser validates nothing until it has 9 bytes, so check the prefix here.
                 Err(picohttp::ParseResponseError::ShortRead)
                     if !b"HTTP/1.".starts_with(&window[..window.len().min(7)]) =>

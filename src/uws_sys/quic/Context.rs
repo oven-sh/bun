@@ -6,6 +6,7 @@ use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::Loop;
 use crate::quic::{PendingConnect, Socket, Stream};
+use crate::socket_context::BunSocketContextOptions;
 
 bun_opaque::opaque_ffi! { pub struct Context; }
 
@@ -29,6 +30,7 @@ unsafe extern "C" {
         port: c_int,
         sni: *const c_char,
         reject_unauthorized: c_int,
+        tls: *const BunSocketContextOptions,
         out_qs: *mut *mut Socket,
         out_pending: *mut *mut PendingConnect,
         user: *mut c_void,
@@ -110,11 +112,12 @@ impl Context {
         port: u16,
         sni: &CStr,
         reject_unauthorized: bool,
+        tls: Option<&BunSocketContextOptions>,
         user: *mut c_void,
     ) -> ConnectResult {
         let mut qs: *mut Socket = core::ptr::null_mut();
         let mut pc: *mut PendingConnect = core::ptr::null_mut();
-        // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write.
+        // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write; C copies what it needs from `tls` before it returns.
         let rc = unsafe {
             us_quic_socket_context_connect(
                 self,
@@ -122,6 +125,7 @@ impl Context {
                 c_int::from(port),
                 sni.as_ptr(),
                 reject_unauthorized as c_int,
+                tls.map_or(core::ptr::null(), core::ptr::from_ref),
                 &raw mut qs,
                 &raw mut pc,
                 user,

@@ -408,6 +408,35 @@ describe.concurrent("Server", () => {
     }
   });
 
+  test("server.fetch should work with a URL object", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(`${req.method} ${req.url}`),
+    });
+    const url = new URL("/from-url?x=1", server.url);
+    expect(await (await server.fetch(url)).text()).toBe(`GET ${url.href}`);
+    expect(await (await server.fetch(url, { method: "POST", body: "b" })).text()).toBe(`POST ${url.href}`);
+    expect(await (await server.fetch(url, { method: "LIST" })).text()).toBe(`LIST ${url.href}`);
+    expect(await (await server.fetch(new Request(url, { method: "LIST" }))).text()).toBe(`LIST ${url.href}`);
+    // @ts-expect-error
+    await expect(server.fetch({})).rejects.toThrow("fetch() expects a string, but received Object");
+  });
+
+  test("server.fetch passes the server as the handler's second argument", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        return Response.json({
+          isServer: srv === server,
+          upgrade: srv.upgrade(req),
+          requestIP: srv.requestIP(req),
+        });
+      },
+      websocket: { message() {} },
+    });
+    expect(await (await server.fetch("/")).json()).toEqual({ isServer: true, upgrade: false, requestIP: null });
+  });
+
   test("server.fetch(url, { headers }) copies a Headers object", async () => {
     using server = Bun.serve({
       port: 0,
@@ -427,6 +456,23 @@ describe.concurrent("Server", () => {
     Bun.gc(true);
     // The Requests that server.fetch() created have been collected.
     expect(kept.map(h => h.get("x-i"))).toEqual(kept.map((_, i) => String(i * 2)));
+  });
+
+  test.each([
+    ["the default hostname", {}, "http://0.0.0.0"],
+    ["tls", { hostname: "127.0.0.1", tls }, "https://127.0.0.1"],
+    ["only an http3 listener", { hostname: "127.0.0.1", tls, http3: true, http1: false }, "https://127.0.0.1"],
+  ])("server.fetch() joins a relative URL onto the bound port with %s", async (_, options, origin) => {
+    using server = Bun.serve({ ...options, port: 0, fetch: req => new Response(req.url) });
+    const response = await server.fetch("/relative");
+    expect(await response.text()).toBe(`${origin}:${server.port}/relative`);
+  });
+
+  test("server.fetch() joins a relative URL onto a baseURI that has no port", async () => {
+    // @ts-expect-error baseURI is undocumented
+    using server = Bun.serve({ port: 0, baseURI: "https://example.com/api/", fetch: req => new Response(req.url) });
+    const response = await server.fetch("/relative");
+    expect(await response.text()).toBe("https://example.com/api/relative");
   });
 
   test("server should return a body for a OPTIONS Request", async () => {
@@ -2854,6 +2900,46 @@ describe.concurrent("HEAD requests #15355", () => {
       contentLength: "11",
       text: "Hello World",
     });
+  });
+});
+
+// Bun.serve can't tunnel, so the bytes after a CONNECT head are never answered.
+describe.concurrent("closes the connection after the response to a CONNECT request", () => {
+  const head = "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n";
+  const next = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+  const immediate = () => new Promise<void>(resolve => setImmediate(resolve));
+  const notAProxy = () => new Response("not a proxy", { status: 405 });
+
+  test.each([
+    ["head in one read", [head + next], notAProxy],
+    ["head split across reads", [head.slice(0, 40), head.slice(40) + next], notAProxy],
+    ["handler responds later", [head + next], () => immediate().then(notAProxy)],
+  ] as const)("%s", async (_, writes, fetch) => {
+    // The idle timeout must not be what closes the connection.
+    await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 255, fetch });
+    let received = "";
+    const closed = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port!,
+      socket: {
+        data(_socket, data) {
+          received += data.toString("latin1");
+        },
+        close: () => closed.resolve(),
+        error: (_socket, error) => closed.reject(error),
+      },
+    });
+    for (const write of writes) {
+      socket.write(write);
+      socket.flush();
+      // The server shares this event loop and reads the write before the second immediate runs.
+      await immediate();
+      await immediate();
+    }
+    await closed.promise;
+    expect(received.match(/^HTTP\/1\.1 .*$/gm)).toEqual(["HTTP/1.1 405 Method Not Allowed"]);
+    expect(received).toEndWith("\r\n\r\nnot a proxy");
   });
 });
 

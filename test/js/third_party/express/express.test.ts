@@ -3,7 +3,6 @@
 // depend on @types/node which conflicts with bun-types
 import { expect, test } from "bun:test";
 import express from "express";
-import { isIPv6 } from "node:net";
 // https://github.com/oven-sh/bun/issues/8926
 test("should respond with 404 when wrong method is used", async () => {
   const { promise: serve, resolve } = Promise.withResolvers();
@@ -16,12 +15,8 @@ test("should respond with 404 when wrong method is used", async () => {
     });
   });
 
-  const server = app.listen(0, (_, host, port) => {
-    if (isIPv6(host)) {
-      resolve(`http://[${host}]:${port}`);
-    } else {
-      resolve(`http://${host}:${port}`);
-    }
+  const server = app.listen(0, () => {
+    resolve(`http://localhost:${server.address().port}`);
   });
 
   try {

@@ -1819,6 +1819,9 @@ JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason 
     case CommonAbortReason::ConnectionClosed: {
         return createDOMException(globalObject, ExceptionCode::AbortError, "The connection was closed."_s);
     }
+    case CommonAbortReason::RequestBodyTooLarge: {
+        return createDOMException(globalObject, ExceptionCode::AbortError, "Request body exceeded maxRequestBodySize"_s);
+    }
     default: {
         break;
     }
@@ -1914,6 +1917,8 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_HTTP2_SESSION_ERROR, 1, { "Session closed with error code "_s, ""_s, ""_s } },
     { ErrorCode::ERR_HTTP2_PAYLOAD_FORBIDDEN, 1, { "Responses with "_s, " status must not have a payload"_s, ""_s } },
     { ErrorCode::ERR_HTTP2_INVALID_INFO_STATUS, 1, { "Invalid informational status code: "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_HTTP2_UNSUPPORTED_PROTOCOL, 1, { "protocol \""_s, "\" is unsupported."_s, ""_s } },
+    { ErrorCode::ERR_HTTP2_TOO_MANY_ORIGINS, 1, { "The server sent more ORIGIN frames than the allowed number of "_s, ""_s, ""_s } },
     { ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE, 2, { "Invalid value \""_s, "\" for header \""_s, "\""_s } },
     { ErrorCode::ERR_HTTP_HEADERS_SENT, 1, { "Cannot "_s, " headers after they are sent to the client"_s, ""_s } },
     { ErrorCode::ERR_UNESCAPED_CHARACTERS, 1, { ""_s, " contains unescaped characters"_s, ""_s } },

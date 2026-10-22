@@ -6,7 +6,7 @@ use core::mem::size_of;
 
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
-use bun_http::{Headers, Method};
+use bun_http::{Headers, Method, header_has_token};
 use bun_http_types::ETag;
 use bun_ptr::{RefPtr, ThisPtr};
 
@@ -18,7 +18,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{AnyServer, HTTPStatusText, write_status};
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
-use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
+use crate::webcore::{AnyBlob, Blob, FetchHeaders, InternalBlob, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct StaticRoute {
@@ -35,6 +35,8 @@ pub(crate) struct StaticRoute {
     pub(crate) blob: AnyBlob,
     pub(crate) cached_blob_size: u64,
     pub(crate) has_date: bool,
+    pub(crate) has_connection: bool,
+    has_connection_close: bool,
     pub(crate) headers: Headers,
 }
 
@@ -68,6 +70,10 @@ impl StaticRoute {
             pending_responses: Cell::new(0),
             cached_blob_size: blob.size(),
             has_date: headers.get(b"date").is_some(),
+            has_connection: headers.get(b"connection").is_some(),
+            has_connection_close: headers
+                .get(b"connection")
+                .is_some_and(|value| header_has_token(value, b"close")),
             blob,
             headers,
             server: Cell::new(server),
@@ -150,6 +156,8 @@ impl StaticRoute {
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
             has_date: self.has_date,
+            has_connection: self.has_connection,
+            has_connection_close: self.has_connection_close,
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
             status_code: self.status_code,
@@ -228,6 +236,9 @@ impl StaticRoute {
             if let Some(h) = response.get_init_headers_mut() {
                 h.fast_remove(HTTPHeaderName::TransferEncoding);
                 h.fast_remove(HTTPHeaderName::ContentLength);
+                if response.body_decoded() {
+                    h.fast_remove(HTTPHeaderName::ContentEncoding);
+                }
             }
 
             // Consuming the body left a plain `Blob` behind, which no longer implies
@@ -247,6 +258,22 @@ impl StaticRoute {
                 blob,
                 response.get_init_headers(),
                 response.status_code(),
+            )?));
+        }
+
+        // `Bun.file()` of a file embedded in a compiled executable is an in-memory Blob. Serve it like `new Response(blob)`.
+        if let Some(blob) = argument.as_class_ref::<Blob>()
+            && !blob.needs_to_read_file()
+            && !blob.is_s3()
+        {
+            let blob = blob.dupe();
+            blob.global_this
+                .set(std::ptr::from_ref::<JSGlobalObject>(global_this));
+            return Ok(Some(Self::init_from_any_blob_with_headers(
+                global_this,
+                AnyBlob::Blob(blob),
+                None,
+                200,
             )?));
         }
 
@@ -393,9 +420,8 @@ impl StaticRoute {
         // Content-Length (uWS suppresses it for 1xx/204) desyncs keep-alive.
         if HTTPStatusText::is_null_body(self.status_code) {
             // 304: try_end would write Content-Length: 0 (RFC 9110 §8.6 forbids
-            // any but the 200's length); write_mark keeps Date.
+            // any but the 200's length).
             if self.status_code == 304 {
-                resp.write_mark();
                 resp.end_without_body(resp.should_close_connection());
                 *did_finish = true;
             } else {
@@ -446,6 +472,9 @@ impl StaticRoute {
         // carries one, suppress uWS's auto-Date so only the user's value is sent.
         if self.has_date {
             resp.mark_wrote_date_header();
+        }
+        if self.has_connection {
+            resp.mark_wrote_connection_header(self.has_connection_close);
         }
         let entries = self.headers.entries.slice();
         let names: &[StringPointer] = entries.items_name();

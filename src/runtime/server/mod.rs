@@ -204,6 +204,8 @@ bitflags::bitflags! {
     pub struct ServerFlags: u8 {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
+        /// Set by `server.unref()`, cleared by `server.ref()`.
+        const UNREFED_BY_USER             = 1 << 2;
     }
 }
 
@@ -270,15 +272,17 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// ([`NewServer::is_drained`]); for Bun.serve it also holds the
     /// graceful-stop promise open ([`NewServer::is_closed`]).
     pub(crate) active_connection_count: core::cell::Cell<u32>,
-    /// The node:http tunnels in `active_connection_count` that are at read EOF and have nothing left to send.
+    /// The connections in `active_connection_count` that don't hold the loop: node:http tunnels that don't read (stopped or at EOF) with nothing left to send, and connections with a parked request.
     pub(crate) idle_tunnel_count: core::cell::Cell<u32>,
+    /// The node:http requests in `pending_requests` that are parked (`NodeHTTPResponse::update_parked`).
+    pub(crate) parked_request_count: core::cell::Cell<u32>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
     /// `Cell` because the open/close accounting arrives through shared
     /// `AnyServer` handles on the JS thread.
     pub(crate) active_websocket_count: core::cell::Cell<u32>,
     /// Set across [`NewServer::deinit_if_we_can`] and the synchronous
-    /// `app.close()` drain in `stop_listening`; lets a nested call (reached
+    /// `app.close()` drains in `stop_listening` and `deinit`; lets a nested call (reached
     /// via a callback the body fires) early-return instead of re-running the
     /// downgrade/teardown while the outer frame still holds `&mut self`.
     deinit_running: core::cell::Cell<bool>,
@@ -288,12 +292,12 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// handler runs (its `AbortSignal`) belongs to it.
     pub(crate) context: core::cell::Cell<jsc::ContextId>,
     pub(crate) request_pool:
-        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
+        *const request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until `listen()` creates an HTTP/2 or HTTP/3 app. Kept as a raw
     /// nullable pointer rather than a conditional field so the struct stays
     /// uniform across monomorphizations.
     pub(crate) mux_request_pool:
-        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
+        *const request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
     /// Authoritative GC root for the `server.stop()` promise. Lazily filled by
     /// `get_all_closed_promise`; read in `deinit_if_we_can` (which can run
     /// after the wrapper is collected, so a wrapper-traced slot would not
@@ -509,7 +513,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
     /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send again. `-4`: it closes idle.
+    /// `-3`: a node:http tunnel becomes idle. `+3` / `+4`: it has bytes to send again / that, or it reads again. `-4`: it closes idle.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -528,11 +532,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     this.note_connection_opened();
                     return;
                 }
-                3 => {
+                3 | 4 => {
                     this.note_tunnel_idle(false);
-                    // With a listener open, the loop ref is the user's to drop (`server.unref()`).
-                    if !this.has_listener() {
-                        // SAFETY: `this` is not used again, and a tunnel write never runs inside `app.close()`.
+                    // With a listener open, the loop ref is the user's to drop (`server.unref()`). After that, a tunnel's reads don't take it back.
+                    if !this.has_listener()
+                        && !this.deinit_running.get()
+                        && (opened == 3 || !this.flags.contains(ServerFlags::UNREFED_BY_USER))
+                    {
+                        // SAFETY: `this` is not used again, and `deinit_running` rules out an outer `&mut self` (the `app.close()` drain).
                         unsafe { &mut *user_data.cast::<Self>() }.ref_();
                     }
                     return;
@@ -556,6 +563,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // early-returns under that guard.
             unsafe { &mut *user_data.cast::<Self>() }.deinit_if_we_can();
         }
+    }
+
+    /// quic.c closed the HTTP/3 UDP socket and the last QUIC connection is gone ([`Self::has_open_h3_transport`]).
+    extern "C" fn on_h3_released(user_data: *mut c_void) {
+        // SAFETY: `user_data` is the `*mut Self` registered in `listen()`, and quic.c drops the
+        // hook before it frees the app's context, so the server is alive. Only `&Self` is formed:
+        // the H3 close calls in `stop_listening` can reach this under its `&mut self`.
+        if unsafe { &*user_data.cast::<Self>() }.deinit_running.get() {
+            return;
+        }
+        // SAFETY: `stop_listening` holds `deinit_running` across those calls, so no `&mut self`
+        // is live. This can run inside lsquic's `process_conns`: `deinit_if_we_can` reads cells
+        // and queues tasks, it doesn't enter the engine.
+        unsafe { &mut *user_data.cast::<Self>() }.deinit_if_we_can();
     }
 
     /// Build the server's base URL string (`http(s)://host:port/`, or a
@@ -620,7 +641,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Returns the wrapper while it is alive (`Strong` or `Weak`) and its VM may still run script,
     /// else `None`. It stays `Strong` — the WriteBarrier root of the handler shadows — until the
-    /// server is drained (no listener, request, HTTP/1 connection or websocket left; connections count
+    /// server is drained (no listener, request, connection or websocket left; TCP connections count
     /// from accept), so nothing dispatches through a wrapper the GC may have collected. A VM whose
     /// script gate has closed (a worker that called `process.exit()` or was asked to terminate, still
     /// draining the current loop tick before its stop phase closes the listener) must not have a
@@ -630,9 +651,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !self.vm().script_allowed() {
             return None;
         }
-        // HTTP/3 connections are not counted yet, so a stream on one can still arrive after the drain.
         debug_assert!(
-            self.h3_app.is_some() || self.js_value.is_strong() || self.js_value.try_get().is_none(),
+            self.js_value.is_strong() || self.js_value.try_get().is_none(),
             "a socket outlived the server's connection accounting"
         );
         self.js_value.try_get()
@@ -810,8 +830,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // SAFETY: `request_pool` points at a process-static (or
-        // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
+        // SAFETY: `request_pool` points at the VM's `HiveArray::Fallback`
+        // (see `RequestPools`); valid for the server's lifetime.
         // The `HiveSlot` token is leaked deliberately: the slot is recycled by
         // `RequestContext::deinit` via `put_raw`, never via `HiveSlot::Drop`.
         let ctx_slot = std::mem::ManuallyDrop::new(unsafe { (*server.request_pool).claim() })
@@ -1609,7 +1629,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn note_tunnel_idle(&self, idle: bool) {
         let count = self.idle_tunnel_count.get();
-        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3 or -4.
+        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3, +4 or -4.
         debug_assert!(idle || count > 0);
         self.idle_tunnel_count.set(if idle {
             count + 1
@@ -1618,7 +1638,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         });
     }
 
-    /// An idle tunnel is open but, like a libuv handle at EOF with no write pending, does not hold the loop.
+    pub(crate) fn note_request_parked(&self, parked: bool) {
+        let count = self.parked_request_count.get();
+        self.parked_request_count
+            .set(if parked { count + 1 } else { count - 1 });
+    }
+
+    /// An idle tunnel is open but, like a libuv handle that doesn't read and has no write pending, does not hold the loop.
     fn has_loop_holding_connections(&self) -> bool {
         self.active_connection_count.get() > self.idle_tunnel_count.get()
     }
@@ -1645,19 +1671,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.active_sockets_count() > 0
     }
 
-    /// What the `stop()` promise (node:http: 'close') and the loop unref wait for. A connection counts from accept, before its TLS handshake completes.
+    /// What the `stop()` promise (node:http: 'close') and the loop unref wait for. A connection counts from accept, before its TLS handshake completes. A parked request doesn't count.
     pub(crate) fn is_closed(&self) -> bool {
-        self.pending_requests.get() == 0
+        self.pending_requests.get() == self.parked_request_count.get() as usize
             && !self.has_listener()
             && !self.has_active_web_sockets()
             && !self.has_loop_holding_connections()
+            && !self.has_open_h3_transport()
     }
 
-    /// Nothing is left that can dispatch a handler: [`Self::is_closed`] and
-    /// no open HTTP connection. The wrapper may only go `Weak` from here on
-    /// (see [`Self::js_value_for_dispatch`]).
+    /// Returns true if the HTTP/3 app still has its UDP socket or a QUIC connection. [`Self::on_h3_released`] runs when both are gone.
+    fn has_open_h3_transport(&self) -> bool {
+        Self::HAS_H3
+            && self
+                .h3_app
+                // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                .is_some_and(|h3a| !bun_opaque::opaque_deref_mut(h3a).is_released())
+    }
+
+    /// Nothing is left that can dispatch a handler: [`Self::is_closed`], no parked request and no open HTTP connection. The wrapper may only go `Weak` from here on (see [`Self::js_value_for_dispatch`]).
     pub(crate) fn is_drained(&self) -> bool {
-        self.is_closed() && !self.has_active_connections()
+        self.is_closed() && self.pending_requests.get() == 0 && !self.has_active_connections()
     }
 
     pub(crate) fn has_listener(&self) -> bool {
@@ -1721,9 +1755,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if Self::HAS_H3 {
             let h3l = self.h3_listener.take();
+            // Both close calls can reach `on_h3_released`.
+            let was_running = self.deinit_running.replace(true);
             // Graceful: GOAWAY + drain via the still-open UDP socket; the
             // engine rejects new conns and the timer keeps in-flight streams
-            // progressing until deinit. Abrupt: close the fd now.
+            // progressing until the last connection is gone. Abrupt: close the fd now.
             if !abrupt {
                 if let (Some(h3l), Some(h3a)) = (h3l, self.h3_app) {
                     // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -1734,12 +1770,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(h3l).close();
             }
+            self.deinit_running.set(was_running);
         }
 
         let already_terminated = self.flags.contains(ServerFlags::TERMINATED);
         let Some(listener) = self.listener.take() else {
             if Self::HAS_H3 && self.h3_app.is_some() {
-                self.unref();
+                // As in the TCP arm below: a graceful stop keeps the ref while QUIC connections drain.
+                if abrupt || self.is_closed() {
+                    self.unref();
+                }
                 self.notify_inspector_server_stopped();
                 if abrupt {
                     self.flags.insert(ServerFlags::TERMINATED);
@@ -1756,10 +1796,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 self.flags.insert(ServerFlags::TERMINATED);
                 if let Some(app) = self.app {
-                    self.deinit_running.set(true);
+                    let was_running = self.deinit_running.replace(true);
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).close();
-                    self.deinit_running.set(false);
+                    self.deinit_running.set(was_running);
                 }
                 if let Some(ws) = self.config.websocket.as_mut() {
                     ws.handler.server = None;
@@ -1787,13 +1827,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.notify_inspector_server_stopped();
 
         match &self.config.address {
-            server_config::Address::Unix(path) => {
+            // The socket file of an inherited descriptor belongs to the process that bound it.
+            server_config::Address::Unix(path) if self.config.listen_fd.is_none() => {
                 let bytes = path.as_bytes();
                 if !bytes.is_empty() && bytes[0] != 0 {
                     let _ = bun_sys::unlink(path.as_zstr());
                 }
             }
-            server_config::Address::Tcp { .. } => {}
+            server_config::Address::Unix(_) | server_config::Address::Tcp { .. } => {}
         }
 
         if !abrupt {
@@ -1813,10 +1854,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // reaps it — verified against Node v26.
             if !self.config.is_node_http_server {
                 if let Some(app) = self.app {
-                    self.deinit_running.set(true);
+                    let was_running = self.deinit_running.replace(true);
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     let _closed = bun_opaque::opaque_deref_mut(app).close_idle_connections(true);
-                    self.deinit_running.set(false);
+                    self.deinit_running.set(was_running);
                 }
             }
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
@@ -1830,10 +1871,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // while this frame still holds `&mut self`. Hold the re-entrance
             // guard across the drain so that nested call early-returns —
             // `stop()` runs `deinit_if_we_can` itself right after this returns.
-            self.deinit_running.set(true);
+            let was_running = self.deinit_running.replace(true);
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
-            self.deinit_running.set(false);
+            self.deinit_running.set(was_running);
             // Only clear after the drain — `on_close` defers reach
             // `on_websocket_closed` through `handler.server`, so wiping it
             // earlier would strand the live-socket count and the idle pass
@@ -2004,11 +2045,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    pub(crate) fn on_listen(&mut self, socket: Option<*mut uws_sys::app::ListenSocket<SSL>>) {
-        let Some(socket) = socket else {
-            return self.on_listen_failed();
+    pub(crate) fn on_listen(
+        &mut self,
+        listened: Result<*mut uws_sys::app::ListenSocket<SSL>, uws_sys::app::ListenError>,
+    ) {
+        let socket = match listened {
+            Ok(socket) => socket,
+            Err(failure) => return self.on_listen_failed(failure),
         };
         self.listener = Some(socket);
+        // `None` for a unix socket.
+        if let Some(port) = bun_opaque::opaque_deref_mut(socket).get_local_port() {
+            self.base_url_string_for_joining = self.config.base_url_string_for_joining(Some(port));
+        }
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); single-threaded JS context.
         unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
@@ -2021,89 +2070,58 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// Build the bind/listen failure as a `SystemError` (so JS sees
-    /// `err.code`/`err.syscall`) and `globalThis.throwValue` it. The BoringSSL
-    /// error-stack drain is still TODO; the EADDRINUSE/
-    /// EACCES paths below cover the node:http `server.listen` error contract.
     #[cold]
-    pub(crate) fn on_listen_failed(&mut self) {
+    pub(crate) fn on_listen_failed(&mut self, failure: uws_sys::app::ListenError) {
         self.listener = None;
         let global = self.global_this();
 
-        let error_instance = match &self.config.address {
-            server_config::Address::Tcp {
-                port,
-                hostname: _hostname,
-            } => {
-                // Rust's `target_os = "linux"` excludes
-                // Android, so match both explicitly.
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                {
-                    let errno = bun_sys::last_error();
-                    if errno == bun_sys::E::EACCES {
-                        let host = _hostname
-                            .as_ref()
-                            .map(|h| h.as_bytes())
-                            .unwrap_or(b"0.0.0.0");
-                        let err = jsc::SystemError {
-                            message: bun_core::String::create_format(format_args!(
-                                "permission denied {}:{}",
-                                bstr::BStr::new(host),
-                                port
-                            )),
-                            code: bun_core::String::static_("EACCES"),
-                            syscall: bun_core::String::static_("listen"),
-                            ..Default::default()
-                        };
-                        let _ = global.throw_value(err.to_error_instance(global));
-                        return;
-                    }
-                    // e.g. ENOSPC from epoll_ctl(EPOLL_CTL_ADD). Linux-only because
-                    // on other platforms errno is not reliably preserved through
-                    // the C++/callback chain to here; see PR #30364.
-                    if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
-                        let err = jsc::SystemError::from(
-                            bun_sys::Error::from_code(errno, bun_sys::Tag::listen)
-                                .to_system_error(),
-                        );
-                        let _ = global.throw_value(err.to_error_instance(global));
-                        return;
-                    }
-                }
-                jsc::SystemError {
-                    message: bun_core::String::create_format(format_args!(
+        let hostname = match &self.config.address {
+            server_config::Address::Tcp { hostname, .. } => hostname.as_ref().map(|h| h.as_bytes()),
+            server_config::Address::Unix(_) => None,
+        };
+        if let Some(err) =
+            crate::dns_jsc::cares_jsc::getaddrinfo_error(failure.dns_error, hostname.unwrap_or(b""))
+        {
+            let _ = global.throw_value(err.to_error_instance(global));
+            return;
+        }
+
+        let errno = uws_sys::SocketGroup::listen_errno(failure.error)
+            .unwrap_or(bun_sys::SystemErrno::EUNKNOWN);
+        let err = match &self.config.address {
+            server_config::Address::Tcp { port, .. } => {
+                // Winsock has no privileged ports: WSAEACCES means the port is held or in an excluded range.
+                #[cfg(windows)]
+                let errno = if errno == bun_sys::SystemErrno::EACCES {
+                    bun_sys::SystemErrno::EADDRINUSE
+                } else {
+                    errno
+                };
+                let mut err = jsc::SystemError::from(
+                    bun_sys::Error::new(errno, bun_sys::Tag::listen).to_system_error(),
+                );
+                if errno == bun_sys::SystemErrno::EADDRINUSE {
+                    err.message = bun_core::String::create_format(format_args!(
                         "Failed to start server. Is port {} in use?",
                         port
-                    )),
-                    code: bun_core::String::static_("EADDRINUSE"),
-                    syscall: bun_core::String::static_("listen"),
-                    ..Default::default()
+                    ));
+                } else if errno == bun_sys::SystemErrno::EACCES {
+                    err.message = bun_core::String::create_format(format_args!(
+                        "permission denied {}:{}",
+                        bstr::BStr::new(hostname.unwrap_or(b"0.0.0.0")),
+                        port
+                    ));
                 }
-                .to_error_instance(global)
+                err
             }
-            server_config::Address::Unix(unix) => {
-                let unix = unix.as_bytes();
-                match bun_sys::last_error() {
-                    bun_sys::E::SUCCESS => jsc::SystemError {
-                        message: bun_core::String::create_format(format_args!(
-                            "Failed to listen on unix socket {}",
-                            bun_core::fmt::QuotedFormatter { text: unix }
-                        )),
-                        code: bun_core::String::static_("EADDRINUSE"),
-                        syscall: bun_core::String::static_("listen"),
-                        ..Default::default()
-                    }
-                    .to_error_instance(global),
-                    e => jsc::SystemError::from(
-                        bun_sys::Error::from_code(e, bun_sys::Tag::listen)
-                            .with_path(unix)
-                            .to_system_error(),
-                    )
-                    .to_error_instance(global),
-                }
-            }
+            server_config::Address::Unix(unix) => jsc::SystemError::from(
+                bun_sys::Error::new(errno, bun_sys::Tag::listen)
+                    .with_path(unix.as_bytes())
+                    .to_system_error(),
+            ),
         };
 
+        let error_instance = err.to_error_instance(global);
         error_instance.ensure_still_alive();
         let _ = global.throw_value(error_instance);
     }
@@ -2120,6 +2138,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.h3_alt_svc = format!("h3=\":{port}\"; ma=86400")
                 .into_bytes()
                 .into_boxed_slice();
+            // With `http1: false` this is the only listener.
+            self.base_url_string_for_joining = self.config.base_url_string_for_joining(Some(port));
         }
         // An `http3_server` feature counter is not (yet) declared in
         // `bun_analytics`. No-op until it is.
@@ -2135,6 +2155,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// must not be used after this returns.
     pub(super) fn deinit(this: *mut Self) {
         httplog!("deinit");
+        // SAFETY: `this` is live and uniquely owned. `NewApp::destroy` closes nothing, and close
+        // callbacks re-derive `&Self` from `this`, so close before the Box is reclaimed.
+        unsafe {
+            if !(*this).flags.contains(ServerFlags::TERMINATED)
+                && let Some(app) = (*this).app
+            {
+                (*this).flags.insert(ServerFlags::TERMINATED);
+                (*this).deinit_running.set(true);
+                bun_opaque::opaque_deref_mut(app).close();
+            }
+        }
         // SAFETY: paired with heap::alloc in `init()`; `this` is uniquely
         // owned here, so reclaim the Box up front and let its `&mut` drive
         // the teardown (dropped — and freed — at scope exit).
@@ -2181,10 +2212,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     where
         Self: ServerPools<SSL, DEBUG>,
     {
-        let base_url: Box<[u8]> = bun_core::trim(&config.base_uri, b"/")
-            .to_vec()
-            .into_boxed_slice();
-        // `base_url` drops on Err automatically.
+        let base_url = config.base_url_string_for_joining(None);
 
         let server = bun_core::heap::into_raw(Box::new(Self {
             global_this: std::ptr::from_ref(global),
@@ -2206,6 +2234,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             pending_requests: core::cell::Cell::new(0),
             active_connection_count: core::cell::Cell::new(0),
             idle_tunnel_count: core::cell::Cell::new(0),
+            parked_request_count: core::cell::Cell::new(0),
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
@@ -2213,7 +2242,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
             // Servers that enable neither HTTP/2 nor HTTP/3 never allocate the
             // ~816 KB mux pool; `listen()` materializes it on demand.
-            mux_request_pool: core::ptr::null_mut(),
+            mux_request_pool: core::ptr::null(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::default(),
             flags: ServerFlags::default(),
@@ -2241,31 +2270,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // (since-moved) stack slot. On Err, the `Box<Self>` drop frees the
         // half-built server.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        if let Some(bake_options) = unsafe { &mut (*server).config.bake } {
-            // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-            let broadcast = unsafe {
-                (*server)
-                    .config
-                    .broadcast_console_log_from_browser_to_server_for_bake
-            };
-            let dev = match crate::bake::DevServer::init(crate::bake::DevServer::Options {
-                arena: &bake_options.arena,
-                root: bake_options.root.as_zstr(),
-                // SAFETY: per-thread VM singleton; STATIC lifetime.
-                vm: jsc::VirtualMachine::get(),
-                framework: core::mem::take(&mut bake_options.framework),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options),
-                broadcast_console_log_from_browser_to_server: broadcast,
-            }) {
-                Ok(d) => d,
-                Err(e) => {
-                    // SAFETY: paired with heap::alloc above.
-                    drop(unsafe { bun_core::heap::take(server) });
-                    return Err(e);
-                }
-            };
-            // SAFETY: `server` is uniquely owned here.
-            unsafe { (*server).dev_server = Some(dev) };
+        if let Err(e) = unsafe { (*server).init_dev_server() } {
+            // SAFETY: paired with heap::alloc above.
+            drop(unsafe { bun_core::heap::take(server) });
+            return Err(e);
         }
 
         if SSL {
@@ -2275,6 +2283,28 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         Ok(server)
+    }
+
+    /// Creates the DevServer from `self.config.bake`, which must already be at its final heap address.
+    fn init_dev_server(&mut self) -> JsResult<()> {
+        let Some(bake_options) = &mut self.config.bake else {
+            return Ok(());
+        };
+        let mut dev = crate::bake::DevServer::init(crate::bake::DevServer::Options {
+            arena: &bake_options.arena,
+            root: bake_options.root.as_zstr(),
+            // SAFETY: per-thread VM singleton; STATIC lifetime.
+            vm: jsc::VirtualMachine::get(),
+            framework: core::mem::take(&mut bake_options.framework),
+            bundler_options: core::mem::take(&mut bake_options.bundler_options),
+            broadcast_console_log_from_browser_to_server: self
+                .config
+                .broadcast_console_log_from_browser_to_server_for_bake,
+        })?;
+        // A reload gets here after `set_inspector_server_id` ran.
+        dev.inspector_server_id = self.inspector_server_id;
+        self.dev_server = Some(dev);
+        Ok(())
     }
 
     // ─── set_routes ──────────────────────────────────────────────────────────
@@ -2351,8 +2381,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // --- 3. Register compiled user routes & track "/*" coverage ---
-        let mut star_methods_covered_by_user = http_method::Set::empty();
-        let mut has_any_user_route_for_star_path = false;
+        let mut has_any_method_route_for_star_path = false;
         let mut has_any_ws_route_for_star_path = false;
 
         // reshaped for borrowck — `app.ws(..)` reads `to_behavior()`
@@ -2369,9 +2398,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let ud: *mut c_void = std::ptr::from_mut::<UserRoute<SSL, DEBUG>>(user_route).cast();
             let path = user_route.route.path.as_bytes();
             let is_star_path = path == b"/*";
-            if is_star_path {
-                has_any_user_route_for_star_path = true;
-            }
             if should_add_chrome_devtools_json_route
                 && (path == CHROME_DEVTOOLS_ROUTE || path.starts_with(b"/.well-known/"))
             {
@@ -2394,7 +2420,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         );
                     });
                     if is_star_path {
-                        star_methods_covered_by_user = http_method::Set::all();
+                        has_any_method_route_for_star_path = true;
                     }
                     if let Some(websocket) = websocket_ptr {
                         if is_star_path {
@@ -2424,9 +2450,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             Self::on_mux_user_route_request,
                         );
                     });
-                    if is_star_path {
-                        star_methods_covered_by_user.insert(method_val);
-                    }
                     // Setup user websocket in the route if needed.
                     if let Some(websocket) = websocket_ptr {
                         // Websocket upgrade is a GET request
@@ -2446,9 +2469,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 4. Register negative routes ---
         // A `false` route means "fall through to the default handler": same
-        // ladder as the `/*` fallback in step 9. H2/H3 stay on on_mux_request,
+        // handler as the `/*` fallback in step 9. H2/H3 stay on on_mux_request,
         // which already falls back to on_mux_404 when on_request is empty.
-        let negative_h1 = if !self.config.on_node_http_request.is_empty() {
+        let default_h1 = if !self.config.on_node_http_request.is_empty() {
             trampoline::on_node_http_request::<SSL, DEBUG>
         } else if !self.config.on_request.is_empty() {
             trampoline::on_request::<SSL, DEBUG>
@@ -2457,8 +2480,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
         for route_path in self.config.negative_routes.iter() {
             let p = route_path.as_bytes();
-            app.head(p, Some(negative_h1), self_ptr.cast());
-            app.any(p, Some(negative_h1), self_ptr.cast());
+            app.head(p, Some(default_h1), self_ptr.cast());
+            app.any(p, Some(default_h1), self_ptr.cast());
             for_each_mux_app!(self, |mux| {
                 mux.head(p, self_ptr, Self::on_mux_request);
                 mux.any(p, self_ptr, Self::on_mux_request);
@@ -2467,19 +2490,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 5. Register static routes & track "/*" coverage ---
         let mut needs_plugins = dev_server.is_some();
-        let mut has_static_route_for_star_path = false;
 
         for entry in &self.config.static_routes {
-            if &*entry.path == b"/*" {
-                has_static_route_for_star_path = true;
-                match &entry.method {
-                    server_config::MethodOptional::Any => {
-                        star_methods_covered_by_user = http_method::Set::all();
-                    }
-                    server_config::MethodOptional::Method(method) => {
-                        star_methods_covered_by_user |= *method;
-                    }
-                }
+            if &*entry.path == b"/*" && matches!(entry.method, server_config::MethodOptional::Any) {
+                has_any_method_route_for_star_path = true;
             }
             if should_add_chrome_devtools_json_route
                 && (&*entry.path == CHROME_DEVTOOLS_ROUTE
@@ -2631,21 +2645,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // Snapshot "/*" coverage from user/static routes before DevServer
         // (which is H1-only and not mirrored to the H2/H3 routers) marks it full.
-        let mux_star_covered = star_methods_covered_by_user;
+        let mux_has_any_method_route_for_star_path = has_any_method_route_for_star_path;
 
         // --- 8. Handle DevServer routes & track "/*" coverage ---
-        let mut has_dev_server_for_star_path = false;
         if let Some(dev) = dev_server {
             // dev.setRoutes might register its own "/*" HTTP handler
             // SAFETY: `dev` is the live `*mut DevServer` snapshotted from
             // `self.dev_server` above; `self_ptr` is the live server. The two
             // allocations are disjoint so the `&mut` borrows do not alias.
-            has_dev_server_for_star_path = bun_core::handle_oom(
+            let has_dev_server_for_star_path = bun_core::handle_oom(
                 unsafe { &mut *dev }.set_routes::<SSL, DEBUG>(unsafe { &mut *self_ptr }),
             );
             if has_dev_server_for_star_path {
                 // Assume dev server "/*" covers all methods if it exists
-                star_methods_covered_by_user = http_method::Set::all();
+                has_any_method_route_for_star_path = true;
             }
         }
 
@@ -2665,72 +2678,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 9. Consolidated "/*" HTTP fallback registration ---
         let ud = self_ptr.cast::<c_void>();
-        let has_node_http = !self.config.on_node_http_request.is_empty();
-        let has_on_request = !self.config.on_request.is_empty();
-        if star_methods_covered_by_user == http_method::Set::all() {
-            // User/Static/Dev has already provided a "/*" handler for ALL methods.
-            // No further global "/*" HTTP fallback needed.
-        } else if has_any_user_route_for_star_path
-            || has_static_route_for_star_path
-            || has_dev_server_for_star_path
-        {
-            // A "/*" route exists, but doesn't cover all methods. Apply the
-            // global handler to the *remaining* methods for "/*".
-            for method_to_cover in !star_methods_covered_by_user {
-                if has_node_http {
-                    app.method(
-                        method_to_cover,
-                        b"/*",
-                        Some(trampoline::on_node_http_request::<SSL, DEBUG>),
-                        ud,
-                    );
-                } else if has_on_request {
-                    app.method(
-                        method_to_cover,
-                        b"/*",
-                        Some(trampoline::on_request::<SSL, DEBUG>),
-                        ud,
-                    );
-                } else {
-                    app.method(
-                        method_to_cover,
-                        b"/*",
-                        Some(trampoline::on_404::<SSL, DEBUG>),
-                        ud,
-                    );
-                }
-            }
-        } else if has_node_http {
-            app.any(
-                b"/*",
-                Some(trampoline::on_node_http_request::<SSL, DEBUG>),
-                ud,
-            );
-        } else if has_on_request {
-            app.any(b"/*", Some(trampoline::on_request::<SSL, DEBUG>), ud);
-        } else {
-            app.any(b"/*", Some(trampoline::on_404::<SSL, DEBUG>), ud);
+        // An any-method route runs after a "/*" route for one method: it takes the other methods and the requests that route yields.
+        if !has_any_method_route_for_star_path {
+            app.any(b"/*", Some(default_h1), ud);
         }
 
-        // H2/H3 fallback — same three-way as H1 above, but driven by user/static
-        // "/*" coverage only (DevServer routes are not mirrored to H2/H3).
-        for_each_mux_app!(self, |mux| {
-            if mux_star_covered == http_method::Set::all() {
-                // user/static "/*" already covers every method
-            } else if has_any_user_route_for_star_path || has_static_route_for_star_path {
-                for m in !mux_star_covered {
-                    if has_on_request {
-                        mux.method(m, b"/*", self_ptr, Self::on_mux_request);
-                    } else {
-                        mux.method(m, b"/*", self_ptr, Self::on_mux_404);
-                    }
+        // H2/H3 fallback: the same, but only user and static "/*" routes count (DevServer routes are not mirrored to H2/H3).
+        if !mux_has_any_method_route_for_star_path {
+            let has_on_request = !self.config.on_request.is_empty();
+            for_each_mux_app!(self, |mux| {
+                if has_on_request {
+                    mux.any(b"/*", self_ptr, Self::on_mux_request);
+                } else {
+                    mux.any(b"/*", self_ptr, Self::on_mux_404);
                 }
-            } else if has_on_request {
-                mux.any(b"/*", self_ptr, Self::on_mux_request);
-            } else {
-                mux.any(b"/*", self_ptr, Self::on_mux_404);
-            }
-        });
+            });
+        }
 
         if should_add_chrome_devtools_json_route {
             app.get(
@@ -3057,11 +3020,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         bun_opaque::opaque_deref_mut(app).filter(Self::on_connection_filter, this.cast::<c_void>());
+        if Self::HAS_H3 {
+            if let Some(h3_app) = this_ref.h3_app {
+                // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(h3_app)
+                    .on_released(Self::on_h3_released, this.cast::<c_void>());
+            }
+        }
 
         if this_ref.config.is_node_http_server {
             // SAFETY: `this` is the live boxed server from `init()`; no other
             // borrow is live — `&mut` scoped to this call.
             unsafe { (*this).set_using_custom_expect_handler(true) };
+        } else {
+            bun_opaque::opaque_deref_mut(app)
+                .set_max_request_body_size(this_ref.config.max_request_body_size as u64);
         }
 
         // the listen_* trampolines re-derive `&mut *this` synchronously
@@ -3082,11 +3055,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         enum Addr {
             Tcp { port: u16, host: *const c_char },
             Unix { ptr: *const u8, len: usize },
+            Fd(i32),
         }
         let (addr, tcp, options) = {
             let cfg = &this_ref.get().config;
-            let addr = match &cfg.address {
-                server_config::Address::Tcp { port, hostname } => {
+            let addr = match (cfg.listen_fd, &cfg.address) {
+                (Some(fd), _) => Addr::Fd(fd),
+                (None, server_config::Address::Tcp { port, hostname }) => {
                     let mut host: *const c_char = core::ptr::null();
                     if let Some(existing) = hostname.as_deref() {
                         let bytes = existing.as_bytes();
@@ -3101,7 +3076,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                     Addr::Tcp { port: *port, host }
                 }
-                server_config::Address::Unix(unix) => Addr::Unix {
+                (None, server_config::Address::Unix(unix)) => Addr::Unix {
                     ptr: unix.as_ptr().cast(),
                     len: unix.as_bytes().len(),
                 },
@@ -3110,6 +3085,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
 
         match addr {
+            Addr::Fd(fd) => {
+                // 511 is net.Server's default backlog. S012: `NewApp<SSL>` is a ZST opaque — safe deref.
+                let fd = fd as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
+                match bun_opaque::opaque_deref_mut(app).listen_fd(fd, 511, options) {
+                    // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
+                    Ok(socket) => unsafe { (*this).on_listen(Ok(socket)) },
+                    Err(errno) => {
+                        let err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::listen);
+                        let err = jsc::SystemError::from(err.to_system_error());
+                        let _ = global.throw_value(err.to_error_instance(global));
+                    }
+                }
+            }
             Addr::Tcp { port, host } => {
                 // With `{port: 0, http3: true}` we bind TCP:0 (kernel picks N),
                 // then must bind UDP:N for QUIC so Alt-Svc works. UDP:N may
@@ -3126,20 +3114,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 loop {
                     attempt += 1;
                     if tcp {
-                        // SAFETY: app is a live uws handle owned by this server. No
-                        // `&*this` is live across this call; the trampoline's
-                        // `&mut *this` is the sole borrow while it runs.
-                        unsafe {
-                            (*app).listen_with_config(
-                                Some(trampoline::on_listen::<SSL, DEBUG>),
-                                this.cast::<c_void>(),
-                                uws_app_c::uws_app_listen_config_t {
-                                    port: port as c_int,
-                                    host,
-                                    options,
-                                },
-                            );
-                        }
+                        // SAFETY: app is a live uws handle owned by this server.
+                        let listened = unsafe {
+                            (*app).listen_with_config(uws_app_c::uws_app_listen_config_t {
+                                port: port as c_int,
+                                host,
+                                options,
+                            })
+                        };
+                        // SAFETY: `this` is the live boxed server; no other borrow is live.
+                        unsafe { (*this).on_listen(listened) };
                     }
 
                     if Self::HAS_H3 {
@@ -3214,16 +3198,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // SAFETY: ptr/len reference `config.address`'s ZBox; NUL
                 // sentinel at `ptr[len]` holds for ZStr::from_raw.
                 let z = unsafe { bun_core::ZStr::from_raw(ptr, len) };
-                // SAFETY: app is a live uws handle owned by this server. No
-                // `&*this` is live across this call.
-                unsafe {
-                    (*app).listen_on_unix_socket(
-                        trampoline::on_listen_unix::<SSL, DEBUG>,
-                        this.cast::<c_void>(),
-                        z,
-                        options,
-                    );
-                }
+                // SAFETY: app is a live uws handle owned by this server.
+                let listened = unsafe { (*app).listen_on_unix_socket(z, options) };
+                // SAFETY: `this` is the live boxed server; no other borrow is live.
+                unsafe { (*this).on_listen(listened) };
             }
         }
 
@@ -3434,30 +3412,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 // the bodies downcast `user_data` and forward into the typed method.
 mod trampoline {
     use super::*;
-    use bun_uws_sys::{ListenSocket as UwsListenSocket, Request as UwsRequest, uws_res};
-
-    pub(super) extern "C" fn on_listen<const SSL: bool, const DEBUG: bool>(
-        socket: *mut UwsListenSocket,
-        user_data: *mut c_void,
-    ) {
-        // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
-        let server = unsafe { bun_ptr::callback_ctx::<NewServer<SSL, DEBUG>>(user_data) };
-        let socket = if socket.is_null() {
-            None
-        } else {
-            Some(socket.cast::<uws_sys::app::ListenSocket<SSL>>())
-        };
-        server.on_listen(socket);
-    }
-
-    pub(super) extern "C" fn on_listen_unix<const SSL: bool, const DEBUG: bool>(
-        socket: *mut UwsListenSocket,
-        _domain: *const c_char,
-        _flags: i32,
-        user_data: *mut c_void,
-    ) {
-        on_listen::<SSL, DEBUG>(socket, user_data);
-    }
+    use bun_uws_sys::{Request as UwsRequest, uws_res};
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
@@ -3544,60 +3499,82 @@ mod trampoline {
 }
 
 // ─── per-monomorphization request pools ──────────────────────────────────────
-// Rust generics cannot own statics, so
-// declare one `thread_local!` per concrete (SSL, DEBUG, H3) combo via macro and
-// hand the leaked pointer back through a trait.
-//
-// THREAD-SAFETY: this MUST be thread-local, not process-global. `hive_array::
-// Fallback::{get,put,claim}` take `&mut self` with no internal synchronization;
-// a process-static would race when two `Bun.serve` instances run on distinct
-// Worker threads (each Worker has its own event loop and may host a server).
+// `claim`/`put` are unsynchronized and Workers host servers too, so each VM owns its pools.
 pub(crate) trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
-    fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
-    fn mux_request_pool()
-    -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
+    fn request_pool() -> *const RequestPool<SSL, DEBUG, false>;
+    fn mux_request_pool() -> *const RequestPool<SSL, DEBUG, true>;
+}
+
+type RequestPool<const SSL: bool, const DEBUG: bool, const MUX: bool> =
+    request_context::RequestContextStackAllocator<NewServer<SSL, DEBUG>, SSL, DEBUG, MUX>;
+
+type RequestPoolSlot<const SSL: bool, const DEBUG: bool, const MUX: bool> =
+    core::cell::OnceCell<Box<RequestPool<SSL, DEBUG, MUX>>>;
+
+/// One ~816 KB pool per server type, allocated by the first server of that type.
+#[derive(Default)]
+pub(crate) struct RequestPools {
+    http: RequestPoolSlot<false, false, false>,
+    https: RequestPoolSlot<true, false, false>,
+    debug_http: RequestPoolSlot<false, true, false>,
+    debug_https: RequestPoolSlot<true, true, false>,
+    http_mux: RequestPoolSlot<false, false, true>,
+    https_mux: RequestPoolSlot<true, false, true>,
+    debug_http_mux: RequestPoolSlot<false, true, true>,
+    debug_https_mux: RequestPoolSlot<true, true, true>,
+}
+
+impl RequestPools {
+    fn get<const SSL: bool, const DEBUG: bool, const MUX: bool>(
+        slot: &RequestPoolSlot<SSL, DEBUG, MUX>,
+    ) -> *const RequestPool<SSL, DEBUG, MUX> {
+        // SAFETY: `new_boxed` leaks a fully initialized `Box` without staging the pool on the stack.
+        &raw const **slot.get_or_init(|| unsafe {
+            bun_core::heap::take(RequestPool::<SSL, DEBUG, MUX>::new_boxed().as_ptr())
+        })
+    }
+}
+
+impl Drop for RequestPools {
+    fn drop(&mut self) {
+        fn release<const SSL: bool, const DEBUG: bool, const MUX: bool>(
+            slot: &mut RequestPoolSlot<SSL, DEBUG, MUX>,
+        ) {
+            let Some(pool) = slot.take() else { return };
+            if pool.hive.used.find_first_set().is_some() {
+                // The JSC VM is gone, so a context that was never released can't be dropped now.
+                bun_core::asan::ignore_object(bun_core::heap::into_raw(pool).cast());
+            }
+        }
+        release(&mut self.http);
+        release(&mut self.https);
+        release(&mut self.debug_http);
+        release(&mut self.debug_https);
+        release(&mut self.http_mux);
+        release(&mut self.https_mux);
+        release(&mut self.debug_http_mux);
+        release(&mut self.debug_https_mux);
+    }
 }
 
 macro_rules! impl_server_pools {
-    ($(($ssl:literal, $debug:literal)),* $(,)?) => {$(
+    ($(($ssl:literal, $debug:literal, $pool:ident, $mux_pool:ident)),* $(,)?) => {$(
         impl ServerPools<$ssl, $debug> for NewServer<$ssl, $debug> {
-            fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
-                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, false>;
-                thread_local! {
-                    static POOL: core::cell::Cell<*mut Pool> =
-                        const { core::cell::Cell::new(core::ptr::null_mut()) };
-                }
-                POOL.with(|cell| {
-                    let mut p = cell.get();
-                    if p.is_null() {
-                        // `Box::new(Pool::init())` builds the ~816 KB pool on
-                        // the stack and `memcpy`s it into the heap (no NRVO);
-                        // `new_boxed` writes only the 256 B bitset in place.
-                        p = Pool::new_boxed().as_ptr();
-                        cell.set(p);
-                    }
-                    p
-                })
+            fn request_pool() -> *const RequestPool<$ssl, $debug, false> {
+                RequestPools::get(&crate::jsc_hooks::request_pools().$pool)
             }
-            fn mux_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, true> {
-                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, true>;
-                thread_local! {
-                    static POOL: core::cell::Cell<*mut Pool> =
-                        const { core::cell::Cell::new(core::ptr::null_mut()) };
-                }
-                POOL.with(|cell| {
-                    let mut p = cell.get();
-                    if p.is_null() {
-                        p = Pool::new_boxed().as_ptr();
-                        cell.set(p);
-                    }
-                    p
-                })
+            fn mux_request_pool() -> *const RequestPool<$ssl, $debug, true> {
+                RequestPools::get(&crate::jsc_hooks::request_pools().$mux_pool)
             }
         }
     )*};
 }
-impl_server_pools!((false, false), (true, false), (false, true), (true, true));
+impl_server_pools!(
+    (false, false, http, http_mux),
+    (true, false, https, https_mux),
+    (false, true, debug_http, debug_http_mux),
+    (true, true, debug_https, debug_https_mux),
+);
 
 // ─── FFI ─────────────────────────────────────────────────────────────────────
 mod ffi {
@@ -4104,6 +4081,10 @@ impl AnyServer {
 
     pub(crate) fn on_request_complete(&mut self) {
         any_server_dispatch_mut!(self, |s| s.on_request_complete())
+    }
+
+    pub(crate) fn note_request_parked(&self, parked: bool) {
+        any_server_dispatch!(self, |s| s.note_request_parked(parked))
     }
 
     pub(crate) fn on_static_request_complete(&mut self) {

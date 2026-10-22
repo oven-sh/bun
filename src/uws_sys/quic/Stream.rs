@@ -21,14 +21,15 @@ unsafe extern "C" {
     safe fn us_quic_stream_close(s: &mut Stream);
     safe fn us_quic_stream_reset(s: &mut Stream);
     safe fn us_quic_stream_reset_code(s: &mut Stream) -> u64;
+    safe fn us_quic_stream_reset_received(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_refused_by_goaway(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
     safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
     safe fn us_quic_stream_headers_too_large(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
     fn us_quic_stream_write(s: *mut Stream, data: *const u8, len: c_uint) -> c_int;
-    safe fn us_quic_stream_want_write(s: &mut Stream, want: c_int);
-    safe fn us_quic_stream_want_read(s: &mut Stream, want: c_int);
+    safe fn us_quic_stream_want_write(s: &mut Stream, want: c_int) -> c_int;
+    safe fn us_quic_stream_hold_window(s: &mut Stream, hold: c_int);
     fn us_quic_stream_send_headers(
         s: *mut Stream,
         h: *const Header,
@@ -62,6 +63,11 @@ impl Stream {
     /// The code of the last RESET_STREAM or STOP_SENDING on the stream, 0 without one.
     pub fn reset_code(&mut self) -> u64 {
         us_quic_stream_reset_code(self)
+    }
+
+    /// Returns true if the peer sent RESET_STREAM.
+    pub fn reset_received(&mut self) -> bool {
+        us_quic_stream_reset_received(self) != 0
     }
 
     /// The server did not process a request above the id in its GOAWAY (RFC 9114 §5.2).
@@ -103,11 +109,12 @@ impl Stream {
     }
 
     pub fn want_write(&mut self, want: bool) {
-        us_quic_stream_want_write(self, want as c_int)
+        us_quic_stream_want_write(self, want as c_int);
     }
 
-    pub fn want_read(&mut self, want: bool) {
-        us_quic_stream_want_read(self, want as c_int)
+    /// Receive backpressure, see `lsquic_stream_hold_window()` in lsquic.h.
+    pub fn hold_window(&mut self, hold: bool) {
+        us_quic_stream_hold_window(self, hold as c_int)
     }
 
     pub fn send_headers(&mut self, headers: &[Header], end_stream: bool) -> c_int {

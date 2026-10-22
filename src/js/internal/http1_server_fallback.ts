@@ -1,7 +1,7 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const { STATUS_CODES, kPendingCallbacks, kRequest, http1ServerPipeline } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 
@@ -9,10 +9,17 @@ const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 // Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
 const kHttp1MessageOpen = Symbol("http1MessageOpen");
+// When the connection was accepted or its current request began. 0 between requests and after a request timeout was reported.
+const kHttp1MessageStart = Symbol("http1MessageStart");
+const monotonicNowMs = $bindgen("Timer.bind.ts", "monotonicNowMs");
 const reportError = globalThis.reportError;
 
 function rethrowUncaught(err) {
   throw err;
+}
+
+function connectionCorkNT(socket) {
+  socket.uncork();
 }
 
 // Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
@@ -165,12 +172,13 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       out += "Transfer-Encoding: chunked\r\n";
     }
     out += "\r\n";
-    writeToSocket(out);
+    if (!socket.writableEnded) socket.write(out, "latin1");
   }
 
   function toBuffer(chunk, encoding) {
     if (chunk == null) return null;
     if (typeof chunk === "string") return Buffer.from(chunk, encoding || "utf8");
+    if (!ArrayBuffer.isView(chunk)) throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
     return chunk;
   }
 
@@ -180,7 +188,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   function writeBody(buf, callback?) {
-    const length = buf ? (buf.byteLength ?? buf.length) : 0;
+    const length = buf ? buf.byteLength : 0;
     if (length) {
       if (chunked) {
         writeToSocket(length.toString(16) + "\r\n");
@@ -293,6 +301,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     },
     write(chunk, encoding, callback, _strictContentLength) {
       const buf = toBuffer(chunk, encoding);
+      // Like Node's write_(): everything written in one tick reaches the socket as one write.
+      if (!socket.writableCorked) {
+        socket.cork();
+        process.nextTick(connectionCorkNT, socket);
+      }
       writeHeadToSocket(null);
       const length = writeBody(buf);
       // Node's rule: the socket's own write() reports the backpressure. A discarded chunk (HEAD, 204, 304) is null.
@@ -307,7 +320,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       // A finished response emits no 'drain': native disarms its drain callback in end() too.
       this.onwritable = null;
       const buf = toBuffer(chunk, encoding);
-      const length = buf ? (buf.byteLength ?? buf.length) : 0;
+      const length = buf ? buf.byteLength : 0;
+      socket.cork();
       writeHeadToSocket(length);
       // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
       // response never writes the terminating chunk, even when the user set
@@ -315,6 +329,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       const terminated = chunked && !noBody;
       writeBody(buf, terminated ? undefined : onEndWritten);
       if (terminated) writeToSocket("0\r\n\r\n", onEndWritten);
+      // Like Node's end(), fully uncork: the socket has the whole response, so a destroy() right after end() can't truncate it.
+      socket._writableState.corked = 1;
+      socket.uncork();
       this.ended = true;
       // Like Node's OutgoingMessage#end(): while the socket holds bytes, the response has finished when its last write completes.
       if (socket.writableLength > 0 && !socket.destroyed) {
@@ -356,8 +373,9 @@ function connectionListenerHTTP1(server, socket, options) {
     continueExpression,
     MAX_HEADER_PAIRS,
   } = require("node:_http_common");
+  const { readStart, readStop } = require("node:_http_incoming");
   const { ConnResetException } = require("internal/shared");
-  const { kHandle: kHttp1ResponseHandle, kHeaderSource, http1ServerPipeline } = require("internal/http");
+  const { kHandle: kHttp1ResponseHandle, kHeaderSource } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
   const {
     queuePipelinedResponse,
@@ -368,6 +386,10 @@ function connectionListenerHTTP1(server, socket, options) {
     resumeFallbackReadsOnDrain,
     finishDrainedResponse,
     kMustCloseConnection,
+    socketOnError,
+    socketOnTimeout,
+    onResponseFinishHandleSocket,
+    resetSocketTimeout,
   } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
 
@@ -381,10 +403,19 @@ function connectionListenerHTTP1(server, socket, options) {
   // through req.socket.server (nodejs/node#13435).
   socket.server = server;
 
+  const { timeout } = server;
+  if (timeout && typeof socket.setTimeout === "function") socket.setTimeout(timeout);
+  socket.on("timeout", socketOnTimeout);
+
   const connections = (server[kHttp1Connections] ??= new SafeSet());
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
   socket[kHttp1MessageOpen] = false;
+  // Like Node, headersTimeout also covers a connection that never sends anything.
+  socket[kHttp1MessageStart] = monotonicNowMs();
+  // Like Node's connectionListenerInternal. readStart() skips a socket that still has an earlier connection's read-gate mark.
+  socket._paused = false;
+  const connectionFrame = AsyncContextFrame.current();
 
   const kOnHeaders = HTTPParser.kOnHeaders | 0;
   const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
@@ -405,6 +436,7 @@ function connectionListenerHTTP1(server, socket, options) {
 
   let req: Http1FallbackRequest | null = null;
   let pendingUpgrade: Http1FallbackRequest | null = null;
+  let stoppedBy: Http1FallbackRequest | null = null;
   // Node's per-connection state.requestsCount, behind server.maxRequestsPerSocket.
   let requestsCount = 0;
 
@@ -413,6 +445,7 @@ function connectionListenerHTTP1(server, socket, options) {
   let flushedUrl = "";
   parser[kOnMessageBegin] = function onHttp1MessageBegin() {
     socket[kHttp1MessageOpen] = true;
+    socket[kHttp1MessageStart] = monotonicNowMs();
   };
 
   parser[kOnHeaders] = function onHttp1Headers(headers, url) {
@@ -440,6 +473,7 @@ function connectionListenerHTTP1(server, socket, options) {
       flushedUrl = "";
     }
 
+    resetSocketTimeout(server, socket);
     socket[kHttp1ActiveRequests]++;
 
     req = new IncomingMessageClass(socket);
@@ -478,6 +512,8 @@ function connectionListenerHTTP1(server, socket, options) {
       this._consuming = true;
       if (!socket._paused && socket.readable) socket.resume();
     };
+    // The socket's 'timeout' listener forwards the event to the request that's still arriving.
+    socket[kRequest] = req;
 
     const res = new ServerResponseClass(req);
     // The native dispatcher seeds these from the server; renderNativeHeaders
@@ -518,12 +554,16 @@ function connectionListenerHTTP1(server, socket, options) {
       // `_last`: onHttp1SocketEnd saw the client's FIN while this response owned the socket.
       if (this[kMustCloseConnection] || this._last) {
         if (typeof socket.destroySoon === "function") {
+          // Bun's net.Socket emits 'end' for its own destroySoon(), and the parser would report that as a client's early EOF.
+          socket.removeListener("end", onHttp1SocketEnd);
           socket.destroySoon();
         } else if (!socket.writableEnded) {
           socket.end();
         }
         return;
       }
+      // Arms the keep-alive timeout.
+      onResponseFinishHandleSocket(server, socket, this);
       advanceResponsePipeline(server, socket);
     });
 
@@ -531,13 +571,16 @@ function connectionListenerHTTP1(server, socket, options) {
     // outgoing side is backed up, so pipelined requests cannot flood it.
     maybePauseFallbackReads(socket);
 
+    const isHttp11 = versionMajor === 1 && versionMinor === 1;
+    // Like Node's parserOnIncoming, before the request count and the Expect routing.
+    if (isHttp11 && server.requireHostHeader && req.headers.host === undefined) {
+      res.writeHead(400, ["Connection", "close"]);
+      res.end();
+      return 0;
+    }
+
     // Like Node's parserOnIncoming: upgrades (handed off above) are not counted, and the socket is never closed here.
-    if (
-      versionMajor === 1 &&
-      versionMinor === 1 &&
-      typeof maxRequestsPerSocket === "number" &&
-      maxRequestsPerSocket > 0
-    ) {
+    if (isHttp11 && typeof maxRequestsPerSocket === "number" && maxRequestsPerSocket > 0) {
       requestsCount++;
       res.maxRequestsOnConnectionReached = maxRequestsPerSocket <= requestsCount;
       if (maxRequestsPerSocket < requestsCount) {
@@ -551,8 +594,9 @@ function connectionListenerHTTP1(server, socket, options) {
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
     // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).
     const expect = req.headers.expect;
-    if (expect !== undefined && versionMajor === 1 && versionMinor === 1) {
+    if (expect !== undefined && isHttp11) {
       if (continueExpression.test(String(expect))) {
+        res._expect_continue = true;
         if (server.listenerCount("checkContinue") > 0) {
           server.emit("checkContinue", req, res);
         } else {
@@ -570,11 +614,22 @@ function connectionListenerHTTP1(server, socket, options) {
     server.emit("request", req, res);
     return 0;
   };
+  // pipeline() and `for await` destroy a request but keep its connection, and a destroyed request never calls _read() again.
+  function onStoppedRequestClose(this: Http1FallbackRequest) {
+    if (!this.complete) readStart(socket);
+  }
+  // Node's parserOnBody: a full request buffer stops the socket, and req._read() restarts it.
   parser[kOnBody] = function onHttp1Body(chunk) {
-    if (req && !req._dumped) req.push(chunk);
+    if (!req || req._dumped || req.destroyed || req.push(chunk)) return;
+    readStop(socket);
+    if (stoppedBy !== req) {
+      stoppedBy = req;
+      req.once("close", onStoppedRequestClose);
+    }
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
     socket[kHttp1MessageOpen] = false;
+    socket[kHttp1MessageStart] = 0;
     // Fields flushed after the header section are the trailers.
     const rawTrailers = flushedHeaders;
     if (rawTrailers.length !== 0) flushedHeaders = [];
@@ -583,33 +638,21 @@ function connectionListenerHTTP1(server, socket, options) {
       req.complete = true;
       req._addHeaderLines(rawTrailers, rawTrailers.length);
       req.push(null);
+      if (socket[kRequest] === req) socket[kRequest] = undefined;
     }
+    // Read the next request even if this one's body is still buffered, like Node's parserOnMessageComplete.
+    if (!socket.readableFlowing) readStart(socket);
   };
 
-  function onHttp1SocketError(err, rawPacket) {
-    // Match Node's http _connectionListener: attach err.rawPacket and, when no
-    // 'clientError' listener is present, write the same raw error response
-    // Node's socketOnError does before destroying.
-    prepareError(err, parser, rawPacket);
-    if (!server.emit("clientError", err, socket)) {
-      if (socket.writable && !socket.destroyed) {
-        const code = err?.code;
-        socket.write(
-          code === "HPE_HEADER_OVERFLOW"
-            ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
-            : code === "HPE_CHUNK_EXTENSIONS_OVERFLOW"
-              ? "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n"
-              : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
-          "latin1",
-        );
-      }
-      socket.destroy(err);
-    }
-  }
+  // req._read() restarts a stopped socket, so 'data' can fire in that reader's async context. Node's parser runs in the connection's.
   function onHttp1SocketData(data) {
+    AsyncContextFrame.run(connectionFrame, parseHttp1SocketData, undefined, data);
+  }
+  function parseHttp1SocketData(data) {
     const ret = parser.execute(data);
     if (ret instanceof Error) {
-      onHttp1SocketError(ret, data);
+      prepareError(ret, parser, data);
+      socketOnError.$call(socket, ret);
       return;
     }
     if (pendingUpgrade) {
@@ -619,9 +662,13 @@ function connectionListenerHTTP1(server, socket, options) {
       const upgradeReq = pendingUpgrade;
       pendingUpgrade = null;
       socket.removeListener("data", onHttp1SocketData);
-      socket.removeListener("error", onHttp1SocketErrorListener);
+      socket.removeListener("error", socketOnError);
+      socket.removeListener("timeout", socketOnTimeout);
       socket.removeListener("end", onHttp1SocketEnd);
       socket.removeListener("drain", onHttp1SocketDrain);
+      socket.removeListener("finish", onHttp1SocketFinish);
+      socket.removeListener("close", onHttp1SocketCloseFlush);
+      socket.removeListener("close", onHttp1SocketClose);
       connections.delete(socket);
       try {
         parser.close();
@@ -637,15 +684,14 @@ function connectionListenerHTTP1(server, socket, options) {
       }
     }
   }
-  function onHttp1SocketErrorListener(err) {
-    onHttp1SocketError(err, undefined);
-  }
   // Node's socketOnEnd: let llhttp detect a message cut short by EOF, then end
   // the connection the way Node does (httpAllowHalfOpen / _last / idle end).
   function onHttp1SocketEnd() {
+    // Bun's net.Socket also emits 'end' after its own destroy(), which isn't the client's EOF.
+    if (socket.destroyed) return;
     const ret = parser.finish();
     if (ret instanceof Error) {
-      onHttp1SocketError(ret, undefined);
+      socketOnError.$call(socket, ret);
       return;
     }
     if (!server.httpAllowHalfOpen) {
@@ -665,26 +711,22 @@ function connectionListenerHTTP1(server, socket, options) {
   function onHttp1SocketDrain() {
     resumeFallbackReadsOnDrain(socket);
     // Node's socketOnDrain then emits 'drain' on the response that waits for it.
-    socket._httpMessage?.[kHttp1ResponseHandle]?.socketDrained();
+    socket._httpMessage?.[kHttp1ResponseHandle]?.socketDrained?.();
   }
-  socket.on("data", onHttp1SocketData);
-  socket.on("error", onHttp1SocketErrorListener);
-  socket.once("end", onHttp1SocketEnd);
-  socket.on("drain", onHttp1SocketDrain);
-  socket.once("finish", () => {
+  // A tunnel socket can still carry a listen() server's pending response, and its native handle has none of these methods.
+  function onHttp1SocketFinish() {
     const inflight = socket._httpMessage;
     // An ended socket emits no 'drain', and all that the response wrote is out: the write callbacks that wait succeed.
-    inflight?.[kHttp1ResponseHandle]?.socketEnded(() => inflight._callPendingCallbacks());
-  });
-  // Prepended: like Node's 'finish' after a failed last write, a draining response finishes (and detaches) before the other 'close' listeners run.
-  socket.prependOnceListener("close", () => {
-    socket._httpMessage?.[kHttp1ResponseHandle]?.flushed();
-  });
-  socket.once("close", () => {
+    inflight?.[kHttp1ResponseHandle]?.socketEnded?.(() => inflight._callPendingCallbacks());
+  }
+  function onHttp1SocketCloseFlush() {
+    socket._httpMessage?.[kHttp1ResponseHandle]?.flushed?.();
+  }
+  function onHttp1SocketClose() {
     connections.delete(socket);
     const inflight = socket._httpMessage;
     // The write callbacks that still wait fail, before the response's 'close', as in Node.
-    inflight?.[kHttp1ResponseHandle]?.socketEnded(() =>
+    inflight?.[kHttp1ResponseHandle]?.socketEnded?.(() =>
       failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write")),
     );
     // Like the native socket's close path (Node's socketOnClose ->
@@ -704,7 +746,15 @@ function connectionListenerHTTP1(server, socket, options) {
     try {
       parser.close();
     } catch {}
-  });
+  }
+  socket.on("data", onHttp1SocketData);
+  socket.on("error", socketOnError);
+  socket.once("end", onHttp1SocketEnd);
+  socket.on("drain", onHttp1SocketDrain);
+  socket.once("finish", onHttp1SocketFinish);
+  // Prepended: like Node's 'finish' after a failed last write, a draining response finishes (and detaches) before the other 'close' listeners run.
+  socket.prependOnceListener("close", onHttp1SocketCloseFlush);
+  socket.once("close", onHttp1SocketClose);
 }
 
 function closeIdleHttp1Connections(server) {
@@ -724,6 +774,26 @@ function closeAllHttp1Connections(server) {
     if (!socket.destroyed) socket.destroy();
   }
 }
+
+// The headersTimeout / requestTimeout sweep for these connections. The server's checkConnections() calls it.
+function checkHttp1Connections(server, headersTimeout, requestTimeout, onRequestTimeout) {
+  const connections = server[kHttp1Connections];
+  if (!connections || connections.size === 0) return;
+  const now = monotonicNowMs();
+  for (const socket of connections) {
+    const start = socket[kHttp1MessageStart];
+    if (!start || socket.destroyed) continue;
+    const elapsed = now - start;
+    if (
+      (requestTimeout > 0 && elapsed > requestTimeout) ||
+      (headersTimeout > 0 && elapsed > headersTimeout && !socket.parser?.headersCompleted())
+    ) {
+      socket[kHttp1MessageStart] = 0;
+      onRequestTimeout(socket);
+    }
+  }
+}
+http1ServerPipeline.checkHttp1Connections = checkHttp1Connections;
 
 export default {
   connectionListenerHTTP1,

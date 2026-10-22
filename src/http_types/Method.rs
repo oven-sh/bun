@@ -1,4 +1,7 @@
+use bun_core::StringPointer;
 use enumset::EnumSet;
+
+use crate::ETag::Headers;
 
 #[allow(non_camel_case_types)]
 #[repr(u8)]
@@ -173,8 +176,9 @@ impl Method {
         }
     }
 
+    /// Returns true if a response to this method can have a body (RFC 9112 §6.3 excludes only HEAD).
     pub fn has_body(self) -> bool {
-        !matches!(self, Method::HEAD | Method::TRACE)
+        !matches!(self, Method::HEAD)
     }
 
     /// RFC 9110: GET/HEAD have no defined body semantics; TRACE "MUST NOT
@@ -221,6 +225,129 @@ impl Method {
     #[inline]
     pub fn which(str: &[u8]) -> Option<Method> {
         METHOD_MAP.get(str).copied()
+    }
+}
+
+/// RFC 9110 §5.6.2 `token`.
+fn is_token(bytes: &[u8]) -> bool {
+    !bytes.is_empty()
+        && bytes
+            .iter()
+            .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(c))
+}
+
+/// The method of a `Request`: a verb from the table, or any other token as written.
+#[derive(Clone)]
+pub enum OwnedMethod {
+    Known(Method),
+    Token(Box<[u8]>),
+}
+
+impl From<Method> for OwnedMethod {
+    #[inline]
+    fn from(method: Method) -> Self {
+        OwnedMethod::Known(method)
+    }
+}
+
+impl OwnedMethod {
+    /// Parses a string that isn't in [`Method::which`]'s table. Falls back to GET if it isn't a token.
+    #[cold]
+    pub fn from_unlisted(bytes: &[u8]) -> OwnedMethod {
+        // Fetch normalizes these six case-insensitively.
+        for method in [
+            Method::DELETE,
+            Method::GET,
+            Method::HEAD,
+            Method::OPTIONS,
+            Method::POST,
+            Method::PUT,
+        ] {
+            if bytes.eq_ignore_ascii_case(method.as_str().as_bytes()) {
+                return method.into();
+            }
+        }
+        if is_token(bytes) {
+            OwnedMethod::Token(Box::from(bytes))
+        } else {
+            Method::GET.into()
+        }
+    }
+
+    #[inline]
+    pub fn known(&self) -> Option<Method> {
+        match self {
+            OwnedMethod::Known(method) => Some(*method),
+            OwnedMethod::Token(_) => None,
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            OwnedMethod::Known(method) => method.as_str().as_bytes(),
+            OwnedMethod::Token(token) => token,
+        }
+    }
+
+    /// Appends a token to `headers.buf`, where the HTTP client reads it from.
+    pub fn to_ref(&self, headers: &mut Headers) -> MethodRef {
+        match self {
+            OwnedMethod::Known(method) => MethodRef::Known(*method),
+            OwnedMethod::Token(token) => {
+                let offset = u32::try_from(headers.buf.len()).unwrap();
+                headers.buf.extend_from_slice(token);
+                MethodRef::Token(StringPointer {
+                    offset,
+                    length: u32::try_from(token.len()).unwrap(),
+                })
+            }
+        }
+    }
+}
+
+/// The HTTP client's copy of the method. A token is stored in the request's header buffer.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum MethodRef {
+    Known(Method),
+    Token(StringPointer),
+}
+
+impl From<Method> for MethodRef {
+    #[inline]
+    fn from(method: Method) -> Self {
+        MethodRef::Known(method)
+    }
+}
+
+impl PartialEq<Method> for MethodRef {
+    #[inline]
+    fn eq(&self, other: &Method) -> bool {
+        self.known() == Some(*other)
+    }
+}
+
+impl MethodRef {
+    #[inline]
+    pub fn known(self) -> Option<Method> {
+        match self {
+            MethodRef::Known(method) => Some(method),
+            MethodRef::Token(_) => None,
+        }
+    }
+
+    #[inline]
+    pub fn has_body(self) -> bool {
+        self.known().is_none_or(Method::has_body)
+    }
+
+    #[inline]
+    pub fn has_request_body(self) -> bool {
+        self.known().is_none_or(Method::has_request_body)
+    }
+
+    #[inline]
+    pub fn is_idempotent(self) -> bool {
+        self.known().is_some_and(Method::is_idempotent)
     }
 }
 

@@ -1,7 +1,8 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import net from "node:net";
+import { join } from "node:path";
 
 describe("path parameters", () => {
   let server: Server<undefined>;
@@ -91,6 +92,23 @@ describe("path parameters", () => {
     const response = await promise;
     expect(response).toContain("HTTP/1.1 200");
     expect(JSON.parse(response.slice(response.indexOf("\r\n\r\n") + 4))).toEqual({ id: expected, method: "GET" });
+  });
+
+  it.each([
+    ["50%-off", "50%-off"],
+    ["a%zzb", "a%zzb"],
+    ["abc%", "abc%"],
+    ["x%2", "x%2"],
+    ["a%%b", "a%%b"],
+    ["100%25", "100%"],
+    ["caf%C3%A9", "café"],
+  ])("decodes the route parameter %s without dropping characters", async (raw, expected) => {
+    const res = await fetch(new URL(`/users/${raw}`, server.url).href);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      id: expected,
+      method: "GET",
+    });
   });
 });
 
@@ -324,6 +342,36 @@ describe("static responses", () => {
   it("skips route when false", async () => {
     const res = await fetch(`${server.url}skip`);
     expect(await res.text()).toBe("fallback");
+  });
+});
+
+it("static and file routes send no Content-Type for a Blob with an empty type", async () => {
+  using dir = tempDir("serve-routes-empty-type", { "data.txt": "hello world" });
+  const blob = () => new Blob(["hello world"], { type: "text/x" });
+  const file = (type?: string) => Bun.file(`${dir}/data.txt`, type ? { type } : undefined);
+  const routes = {
+    "/static/slice": new Response(blob().slice(0, 5)),
+    "/static/typed": new Response(blob()),
+    "/file/slice": new Response(file("text/x").slice(0, 5)),
+    "/file/slice-without-response": file("text/x").slice(0, 5),
+    "/file/typed": new Response(file("text/x")),
+    "/file/slice-of-sniffed-type": new Response(file().slice(0, 5)),
+  };
+  await using server = Bun.serve({ port: 0, routes });
+
+  const seen: Record<string, unknown> = {};
+  for (const pathname of Object.keys(routes)) {
+    const res = await fetch(new URL(pathname, server.url));
+    await res.arrayBuffer();
+    seen[pathname] = res.headers.get("content-type");
+  }
+  expect(seen).toEqual({
+    "/static/slice": null,
+    "/static/typed": "text/x",
+    "/file/slice": null,
+    "/file/slice-without-response": null,
+    "/file/typed": "text/x",
+    "/file/slice-of-sniffed-type": "text/plain;charset=utf-8",
   });
 });
 
@@ -718,6 +766,46 @@ describe("many route params", () => {
     for (let i = 1; i <= 65; i++) {
       expect(params[`p${i}`]).toBe(`value${i}`);
     }
+  });
+});
+
+describe("a ':' that doesn't start a path segment", () => {
+  it("is not a parameter in req.params", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fallback"),
+      routes: {
+        "/files:batchGet/:id": req => Response.json(req.params),
+        "/:org/repos:list/:repo": { GET: req => Response.json(req.params) },
+        "/users:search": req => Response.json(req.params),
+      },
+    });
+    const get = (path: string) => fetch(new URL(path, server.url)).then(res => res.text());
+
+    expect({
+      "/files:batchGet/123": await get("/files:batchGet/123"),
+      "/oven-sh/repos:list/bun": await get("/oven-sh/repos:list/bun"),
+      "/users:search": await get("/users:search"),
+      "/files/123": await get("/files/123"),
+    }).toEqual({
+      "/files:batchGet/123": JSON.stringify({ id: "123" }),
+      "/oven-sh/repos:list/bun": JSON.stringify({ org: "oven-sh", repo: "bun" }),
+      "/users:search": "{}",
+      "/files/123": "fallback",
+    });
+  });
+
+  it("is not validated as a parameter name", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/v1:2/:id": req => Response.json(req.params),
+        "/a:x/:x": req => Response.json(req.params),
+      },
+    });
+
+    expect(await fetch(new URL("/v1:2/5", server.url)).then(res => res.json())).toEqual({ id: "5" });
+    expect(await fetch(new URL("/a:x/1", server.url)).then(res => res.json())).toEqual({ x: "1" });
   });
 });
 
@@ -1123,4 +1211,213 @@ it("request.clone() copies a param whose name is an array index", async () => {
   });
   const res = await fetch(`${server.url}users/42`);
   expect(await res.json()).toEqual({ keys: ["0", "id"], byIndex: "zero" });
+});
+
+describe.concurrent('a "/*" route for some methods falls back to the any-method routes, then to fetch', () => {
+  const protocols = ["http1.1", "http2", "http3"] as const;
+
+  // Responses have no body, so HEAD and TRACE answers compare like the others.
+  const answer = (name: string) => (req: Request) =>
+    new Response(null, { headers: { "x-from": `${name} ${req.method}` } });
+  const fixed = (name: string) => new Response(null, { headers: { "x-from": name } });
+
+  type Table = { routes: (dir: string) => any; fetch?: false; rows: Record<string, string> };
+  const tables: Record<string, Table> = {
+    "a GET function": {
+      routes: () => ({ "/*": { GET: answer("star") } }),
+      rows: {
+        "GET /x": "200 star GET",
+        "HEAD /x": "200 star HEAD",
+        "POST /x": "200 fetch POST",
+        "PROPFIND /x": "200 fetch PROPFIND",
+        "ACL /x": "200 fetch ACL",
+      },
+    },
+    "a static GET": {
+      routes: () => ({ "/*": { GET: fixed("star") } }),
+      rows: {
+        "GET /x": "200 star",
+        "HEAD /x": "200 star",
+        "POST /x": "200 fetch POST",
+        "PROPFIND /x": "200 fetch PROPFIND",
+      },
+    },
+    "a static GET and a TRACE function": {
+      routes: () => ({ "/*": { GET: fixed("star"), TRACE: answer("trace") } }),
+      rows: {
+        "TRACE /x": "200 trace TRACE",
+        "POST /x": "200 fetch POST",
+        "PROPFIND /x": "200 fetch PROPFIND",
+        "ACL /x": "200 fetch ACL",
+      },
+    },
+    "a GET function next to any-method routes": {
+      routes: dir => ({
+        "/*": { GET: answer("star") },
+        "/any": answer("any"),
+        "/static": fixed("static"),
+        "/file": new Response(Bun.file(join(dir, "file.txt"))),
+        "/u/:id": answer("param"),
+      }),
+      rows: {
+        "POST /any": "200 any POST",
+        "PROPFIND /any": "200 any PROPFIND",
+        "POST /static": "200 static",
+        "POST /file": "200 9 bytes",
+        "POST /u/1": "200 param POST",
+        "PROPFIND /u/1": "200 param PROPFIND",
+        "POST /nope": "200 fetch POST",
+        "PROPFIND /nope": "200 fetch PROPFIND",
+      },
+    },
+    "a GET file route whose file is missing": {
+      routes: dir => ({ "/*": { GET: new Response(Bun.file(join(dir, "missing.txt"))) }, "/any": answer("any") }),
+      rows: {
+        "GET /x": "200 fetch GET",
+        "POST /x": "200 fetch POST",
+        "GET /any": "200 any GET",
+      },
+    },
+    "a GET function and the server has no fetch": {
+      routes: () => ({ "/*": { GET: answer("star") }, "/any": answer("any") }),
+      fetch: false,
+      rows: {
+        "GET /x": "200 star GET",
+        "POST /x": "404 0 bytes",
+        "PROPFIND /x": "404 0 bytes",
+        "POST /any": "200 any POST",
+        "PROPFIND /any": "200 any PROPFIND",
+      },
+    },
+  };
+
+  test.each(Object.keys(tables))('when "/*" has %s', async name => {
+    using dir = tempDir("serve-routes-star-default", { "file.txt": "file body" });
+    const table = tables[name];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      http2: true,
+      http3: true,
+      routes: table.routes(String(dir)),
+      ...(table.fetch === false ? {} : { fetch: answer("fetch") }),
+    });
+
+    const results: Record<string, Record<string, string>> = {};
+    for (const row of Object.keys(table.rows)) {
+      const [method, path] = row.split(" ");
+      results[row] = {};
+      for (const protocol of protocols) {
+        const res = await fetch(`https://127.0.0.1:${server.port}${path}`, {
+          method,
+          protocol,
+          // fetch() over HTTP/3 doesn't accept a custom CA.
+          tls: protocol === "http3" ? { rejectUnauthorized: false } : { ca: tls.cert },
+        });
+        // Only the file route and the 404 set no x-from header.
+        const from = res.headers.get("x-from") ?? `${(await res.bytes()).length} bytes`;
+        results[row][protocol] = `${res.status} ${from}`;
+      }
+    }
+    expect(results).toEqual(
+      Object.fromEntries(
+        Object.entries(table.rows).map(([row, expected]) => [
+          row,
+          Object.fromEntries(protocols.map(protocol => [protocol, expected])),
+        ]),
+      ),
+    );
+  });
+});
+
+describe.concurrent("an HTTP/1.1 request that no route handles", () => {
+  // Resolves with everything the server sent before it closed the connection, without the Date header.
+  async function send(port: number, bytes: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let received = "";
+    const socket = net.connect(port, "127.0.0.1", () => socket.write(bytes));
+    socket.on("data", chunk => (received += chunk.toString("latin1")));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(received.replace(/^Date: .*\r\n/gm, "")));
+    return promise;
+  }
+  const request = (method: string, path: string, fields = "") =>
+    `${method} ${path} HTTP/1.1\r\nHost: localhost\r\n${fields}\r\n`;
+  const handler = (calls: string[], name: string) => (req: Request) => {
+    calls.push(`${name} ${req.method}`);
+    return new Response(`${name} ${req.method}`, { headers: { Connection: "close" } });
+  };
+  const notImplemented = "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+
+  // Registering the same method and pattern twice removes the first handler, which used to break the any-method fallback.
+  const tables: Record<string, (calls: string[]) => Record<string, any>> = {
+    "no routes": () => ({}),
+    "a static route for HEAD": () => ({ "/x": { HEAD: new Response("h") } }),
+    "two parameter routes of one shape": calls => ({
+      "/u/:id": handler(calls, "id"),
+      "/u/:name": handler(calls, "name"),
+    }),
+    "a function route and a static route for HEAD": calls => ({
+      "/x": handler(calls, "x"),
+      "/y": { HEAD: new Response("h") },
+    }),
+    'a GET route on "/*"': calls => ({ "/*": { GET: handler(calls, "star") } }),
+  };
+
+  test.each(Object.keys(tables))("answers 501 to an unknown method and runs no handler with %s", async name => {
+    const calls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: tables[name](calls),
+      fetch: handler(calls, "fetch"),
+    });
+    const targets = ["BREW /nope", "get /x", "patch /x", "GETS /u/1"];
+    const received = await Promise.all(
+      // The server must not answer the GET behind the 501.
+      targets.map(target =>
+        send(server.port!, request(...(target.split(" ") as [string, string])) + request("GET", "/")),
+      ),
+    );
+    expect({ received, calls }).toEqual({ received: targets.map(() => notImplemented), calls: [] });
+  });
+
+  test("answers 501 without upgrading, sending 100 Continue or reading the body", async () => {
+    const calls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        calls.push(`fetch ${req.method}`);
+        if (server.upgrade(req)) return;
+        return new Response("fetch");
+      },
+      websocket: { message() {} },
+    });
+    const requests = [
+      request(
+        "BREW",
+        "/ws",
+        "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+      ),
+      request("BREW", "/x", "Expect: 100-continue\r\nContent-Length: 5\r\n"),
+      request("BREW", "/x", "Content-Length: 5\r\n") + "hello",
+      request("BREW", "/x", "Transfer-Encoding: chunked\r\n") + "5\r\nhello\r\n0\r\n\r\n",
+    ];
+    const received = await Promise.all(requests.map(bytes => send(server.port!, bytes)));
+    expect({ received, calls }).toEqual({ received: requests.map(() => notImplemented), calls: [] });
+  });
+
+  test("answers 404 when the only matching route yields", async () => {
+    using dir = tempDir("serve-routes-miss", {});
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/*": new Response(Bun.file(join(String(dir), "missing.txt"))) },
+    });
+    expect(await send(server.port!, request("GET", "/x") + request("GET", "/y"))).toBe(
+      "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+    );
+  });
 });

@@ -144,6 +144,9 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     if let Some(ctx) = ClientContext::get() {
         ClientContext::as_mut(ctx).unregister(session);
     }
+    if !session.handshake_done && !session.closed_by_us {
+        super::alt_svc::report_unreachable(&session.hostname, session.port);
+    }
     while !session.pending.is_empty() {
         // lsquic fires on_stream_close for every bound stream before
         // on_conn_closed, so anything still here never got a qstream.
@@ -226,6 +229,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     stream.decoded_headers.clear();
     stream.decoded_headers.reserve(n as usize);
     let mut status: u16 = 0;
+    let mut seen_status = false;
     let mut i: c_uint = 0;
     while i < n {
         let Some(h) = s.header(i) else {
@@ -236,7 +240,12 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         let value = h.value_bytes();
         if name.first() == Some(&b':') {
             if name == b":status" {
-                status = bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0);
+                // A repeated `:status` is malformed, so a valid one can't replace a bad one.
+                status = match bun_http_types::parse_status_pseudo_header(value) {
+                    Some(code) if !seen_status => code,
+                    _ => 0,
+                };
+                seen_status = true;
             }
             i += 1;
             continue;
@@ -278,17 +287,15 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     stream.session_mut().deliver(stream, fin != 0);
 
     let Some(stream) = stream_of(s) else { return };
-    if fin != 0 || stream.read_paused {
+    if fin != 0 {
         return;
     }
     let Some(client) = stream.client else { return };
-    if super::client_session::client_mut(client)
-        .signals
-        .is_receive_paused()
-    {
-        stream.read_paused = true;
-        s.want_read(false);
-    }
+    s.hold_window(
+        super::client_session::client_mut(client)
+            .signals
+            .is_receive_paused(),
+    );
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {
@@ -319,11 +326,13 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
     *s.ext::<Stream>() = None;
     stream.qstream = None;
     stream.peer_rejected = s.reset_code() == H3_REQUEST_REJECTED || s.refused_by_goaway();
+    let peer_reset = s.reset_received();
     bun_core::scoped_log!(
         h3_client,
-        "stream_close status={} delivered={}",
+        "stream_close status={} delivered={} peer_reset={}",
         stream.status_code,
         stream.headers_delivered,
+        peer_reset,
     );
-    stream.session_mut().deliver(stream, true);
+    stream.session_mut().on_stream_closed(stream, peer_reset);
 }

@@ -46,6 +46,48 @@ const server = Bun.serve({
 console.log(`Server running at ${server.url}`);
 ```
 
+### Splitting routes across files
+
+`routes` is a plain object, so you can define groups of routes in separate files and spread them together. Annotate `req` with `BunRequest<path>` to keep `req.params` typed.
+
+```ts title="users.ts" icon="/icons/typescript.svg"
+import type { BunRequest } from "bun";
+
+export const userRoutes = {
+  "/users/:id": (req: BunRequest<"/users/:id">) => {
+    return new Response(`Hello User ${req.params.id}!`);
+  },
+};
+```
+
+```ts title="posts.ts" icon="/icons/typescript.svg"
+export const postRoutes = {
+  "/api/posts": {
+    GET: () => new Response("List posts"),
+    POST: async (req: Request) => {
+      const post = await req.json();
+      return Response.json({ created: true, post });
+    },
+  },
+};
+```
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import { userRoutes } from "./users";
+import { postRoutes } from "./posts";
+
+const server = Bun.serve({
+  routes: {
+    ...userRoutes,
+    ...postRoutes,
+  },
+
+  fetch(req) {
+    return new Response("Not Found", { status: 404 });
+  },
+});
+```
+
 ---
 
 ## HTML imports
@@ -147,7 +189,7 @@ NODE_PORT=4002 bun server.ts
 
 ## Unix domain sockets
 
-To listen on a [unix domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket), pass the `unix` option with the path to the socket.
+To listen on a [Unix domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket), pass the `unix` option with the path to the socket.
 
 ```ts
 Bun.serve({
@@ -171,7 +213,7 @@ Bun.serve({
 });
 ```
 
-Unlike unix domain sockets, abstract namespace sockets are not bound to the filesystem and are automatically removed when the last reference to the socket is closed.
+Unlike Unix domain sockets, abstract namespace sockets are not bound to the filesystem and are automatically removed when the last reference to the socket is closed.
 
 ---
 
@@ -213,7 +255,7 @@ Bun.serve({
 ```
 
 <Note>
-  `http3` is not supported with unix domain sockets: QUIC requires a UDP port. `http1: false` requires `http2: true` or
+  `http3` is not supported with Unix domain sockets: QUIC requires a UDP port. `http1: false` requires `http2: true` or
   `http3: true`.
 </Note>
 
@@ -264,6 +306,8 @@ Bun.serve({
   },
 });
 ```
+
+`idleTimeout` is also how long Bun keeps an idle keep-alive connection open between requests. Behind a load balancer or a reverse proxy, set it above the keep-alive time the proxy uses for its upstream connections, or to `0`. Otherwise the proxy can send a request on a connection that Bun is closing.
 
 <Note>
   **Streaming & Server-Sent Events** — The idle timer applies while a response is being streamed. If your stream goes
@@ -336,6 +380,8 @@ await server.stop(true);
 
 By default, `stop()` allows in-flight requests and WebSocket connections to complete. The server closes idle keep-alive connections immediately. Connections with a request in flight close once the server has sent their response. Pass `true` to immediately terminate all connections instead. Open WebSockets close with code `1001`. The returned promise resolves once every connection has closed.
 
+The last HTTP/1.1 response on a connection carries `Connection: close`. An HTTP/2 connection gets a `GOAWAY` frame, and once its streams are done the server ends its side of the connection. The connection closes when the client ends its side too, or after 10 seconds.
+
 ### `server.closeIdleConnections()`
 
 To close keep-alive connections that are not currently serving a request, without stopping the server:
@@ -392,7 +438,7 @@ Use this for development and hot reloading. You can update only `fetch`, `error`
 
 ### `server.timeout(Request, seconds)`
 
-Override the idle timeout for an individual request. Pass `0` to disable the timeout entirely for that request.
+Override the idle timeout for an individual request. Pass `0` to disable the timeout entirely for that request. The maximum is `255`, and larger values are clamped to it.
 
 ```ts
 const server = Bun.serve({
@@ -621,7 +667,7 @@ interface Server extends Disposable {
    * Make a request to the running server.
    * Useful for testing or internal routing.
    */
-  fetch(request: Request | string): Response | Promise<Response>;
+  fetch(request: Request | string | URL, init?: RequestInit): Response | Promise<Response>;
 
   /**
    * Upgrade an HTTP request to a WebSocket connection.

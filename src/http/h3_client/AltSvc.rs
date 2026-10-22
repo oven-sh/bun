@@ -124,6 +124,8 @@ pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
 struct Record {
     h3_port: u16,
     expires_at: i64,
+    /// `lookup()` skips the alternative until then, see `report_unreachable()`.
+    broken_until: i64,
 }
 
 // module-level mutable state; safe because
@@ -200,12 +202,18 @@ pub(crate) fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
             return;
         }
     }
+    // The origin repeats the header on every response, which says nothing new about the alternative.
+    let broken_until = cache()
+        .get(k)
+        .filter(|rec| rec.h3_port == entry.port)
+        .map_or(0, |rec| rec.broken_until);
     // `StringHashMap::put` dupes the key on insert.
     let _ = cache().put(
         k,
         Record {
             h3_port: entry.port,
             expires_at: now + i64::from(entry.ma),
+            broken_until,
         },
     );
     bun_core::scoped_log!(
@@ -227,9 +235,28 @@ pub(crate) fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
     }
     let k = key(&mut buf, origin_host, origin_port);
     let rec = *cache().get(k)?;
-    if timestamp() >= rec.expires_at {
+    let now = timestamp();
+    if now >= rec.expires_at {
         cache().remove(k);
         return None;
     }
+    if now < rec.broken_until {
+        return None;
+    }
     Some(rec.h3_port)
+}
+
+/// Chromium's `kDefaultBrokenAlternativeProtocolDelay`.
+const BROKEN_SECS: i64 = 300;
+
+/// No QUIC connection to the alternative `host:port` could be established, so `lookup()` skips it for `BROKEN_SECS`.
+pub(crate) fn report_unreachable(host: &[u8], port: u16) {
+    let until = timestamp() + BROKEN_SECS;
+    for (origin, rec) in cache().iter_mut() {
+        // Alternatives are same-host, so the origin's key is `host:<origin port>`.
+        let origin_host = origin.rsplitn(2, |&b| b == b':').nth(1).unwrap_or_default();
+        if rec.h3_port == port && bun_url::strip_ipv6_brackets(origin_host) == host {
+            rec.broken_until = until;
+        }
+    }
 }

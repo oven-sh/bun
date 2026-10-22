@@ -2072,6 +2072,29 @@ https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets`;
   return value;
 }
 
+/**
+ * Runs usockets' timeout sweep on this thread now instead of within 4 seconds, and resolves once it's done.
+ * `idleTimeout` 1 to 4 fires at the first sweep after the timer is armed, 5 to 8 at the second.
+ * Every socket on the thread moves one tick closer to its timeout, so don't call this from a concurrent test.
+ */
+export async function sweepSocketTimeouts() {
+  const pending = Promise.withResolvers<void>();
+  using canary = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    idleTimeout: 1,
+    fetch() {
+      pending.resolve();
+      return new Promise<Response>(() => {});
+    },
+  });
+  // The sweep closes this request. fetch() reports that from another thread, so the sweep is over by then.
+  const closed = fetch(canary.url).catch(pending.reject);
+  await pending.promise;
+  require("bun:internal-for-testing").runSocketTimeoutSweepSoon();
+  await closed;
+}
+
 export function assertManifestsPopulated(absCachePath: string, registryUrl: string) {
   const { npm_manifest_test_helpers } = require("bun:internal-for-testing");
   const { parseManifest } = npm_manifest_test_helpers;

@@ -80,6 +80,8 @@ public:
     // `canceled1` / `canceled2`
     bool m_canceled1 : 1 { false };
     bool m_canceled2 : 1 { false };
+    // Set by a body clone. Both queues hold the same chunk, and a branch copies it when script reads it (teeBranchCopiesChunks).
+    bool m_copyChunksForScript : 1 { false };
 
 private:
     JSStreamTeeState(JSC::VM&, JSC::Structure*);

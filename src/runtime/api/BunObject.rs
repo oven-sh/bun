@@ -1262,7 +1262,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
                         let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
-                        server.on_reload_from_zig(&mut config, global_object);
+                        server.on_reload_from_zig(&mut config, global_object)?;
                         // Its handlers are the calling script's now, and so is the server: it goes
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();
@@ -1954,9 +1954,20 @@ pub(crate) mod JSZlib {
                     bun_libdeflate::Encoding::Deflate
                 };
                 let max_output = ArrayBuffer::MAX_SIZE as usize;
-                let result = decompressor
-                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output)
-                    .map_err(|_| bun_alloc::AllocError)?;
+                let mut rest = compressed;
+                let result = loop {
+                    let result = decompressor
+                        .decompress_to_vec_grow(rest, &mut list, encoding, max_output)
+                        .map_err(|_| bun_alloc::AllocError)?;
+                    // libdeflate decodes one gzip member per call (RFC 1952 §2.2).
+                    rest = &rest[result.read..];
+                    if result.status != bun_libdeflate::Status::Success
+                        || !is_gzip
+                        || !rest.starts_with(&zlib::GZIP_MAGIC)
+                    {
+                        break result;
+                    }
+                };
                 match result.status {
                     bun_libdeflate::Status::Success if list.len() <= max_output => {}
                     bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {

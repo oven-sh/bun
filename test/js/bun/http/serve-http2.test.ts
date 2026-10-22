@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { runSocketTimeoutSweepSoon, setSocketOptions } from "bun:internal-for-testing";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isLinux, sweepSocketTimeouts, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -406,10 +407,10 @@ for (const secure of [true, false]) {
       for (const r of results) expect(sha256(r.body)).toBe(expected);
     }, 30000); // 40 MB through 64 KB client windows; slow on debug/ASAN
 
-    test("expect: 100-continue gets an interim response", async () => {
+    test.each(["100-continue", "100-Continue"])("expect: %s gets an interim response", async expectation => {
       const raw = await RawH2.connect(fx.port, secure);
       await raw.waitFor(f => f.type === T.SETTINGS);
-      raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", "100-continue"]], F.END_HEADERS);
+      raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", expectation]], F.END_HEADERS);
       const interim = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
       expect(decodeStatus(interim.payload)).toBe(100);
       expect(interim.flags & F.END_STREAM).toBe(0);
@@ -969,5 +970,106 @@ describe("Bun.serve http2 in-process", () => {
       lateWriteFailed: true,
       pendingRequests: 0,
     });
+  });
+
+  // allowHalfOpen keeps the client's side open after the server's close_notify, so the client never answers it.
+  describe("a TLS client that never answers close_notify", () => {
+    async function pendingRequest(idleTimeout: number) {
+      const started = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<void>();
+      const server = Bun.serve({
+        port: 0,
+        tls: tlsCert,
+        http2: true,
+        idleTimeout,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve());
+          started.resolve();
+          return new Promise<Response>(() => {});
+        },
+      });
+      const raw = await RawH2.connect(server.port!, true);
+      raw.socket.allowHalfOpen = true;
+      raw.socket.once("close", () => started.reject(new Error("closed before the request reached the handler")));
+      raw.headers(1, baseHeaders("/"));
+      await started.promise;
+      return { server, raw, aborted: aborted.promise };
+    }
+
+    test("stop(true) aborts the open stream and resolves", async () => {
+      const { server, raw, aborted } = await pendingRequest(0);
+      try {
+        await Promise.all([server.stop(true), aborted]);
+      } finally {
+        raw.close();
+      }
+    });
+
+    test("the idle timeout aborts the open stream", async () => {
+      const { server, raw, aborted } = await pendingRequest(1);
+      try {
+        runSocketTimeoutSweepSoon();
+        await aborted;
+      } finally {
+        raw.close();
+        await server.stop(true);
+      }
+    });
+  });
+
+  // Linux only: macOS sends to a reader that freed less than a segment of its window only at the next persist probe, seconds later.
+  test.skipIf(!isLinux).each([
+    ["cleartext", false],
+    ["TLS", true],
+  ] as const)("a slow reader stays connected until it stalls (%s)", async (_name, secure) => {
+    const onAbort = mock();
+    await using server = Bun.serve({
+      port: 0,
+      tls: secure ? tlsCert : undefined,
+      http2: true,
+      // Two sweeps, so each timeout comes a whole read after the timer was armed.
+      idleTimeout: 5,
+      fetch(req) {
+        req.signal.addEventListener("abort", onAbort);
+        return new Response(new Uint8Array(16 * 1024 * 1024));
+      },
+    });
+    // Both flow-control windows are wide open, so only the socket holds the response back.
+    const maxWindow = 0x7fffffff;
+    const streamWindow = Buffer.alloc(6);
+    streamWindow.writeUInt16BE(0x4 /* SETTINGS_INITIAL_WINDOW_SIZE */, 0);
+    streamWindow.writeUInt32BE(maxWindow, 2);
+    const connectionWindow = Buffer.alloc(4);
+    connectionWindow.writeUInt32BE(maxWindow - 65535);
+    const raw = await RawH2.connect(server.port!, secure, { settings: streamWindow });
+    // A small receive buffer makes every read open the window. The reads stay too small for a writable event on the server.
+    setSocketOptions(raw.socket, 2 /* SO_RCVBUF */, 128 * 1024);
+    let received = 0;
+    let wake = Promise.withResolvers<void>();
+    raw.socket.on("close", () => wake.resolve());
+    raw.socket.on("data", chunk => {
+      received += chunk.length;
+      wake.resolve();
+    });
+    try {
+      raw.write(frame(T.WINDOW_UPDATE, 0, 0, connectionWindow));
+      raw.headers(1, baseHeaders("/"));
+      for (let i = 0; i < 8; i++) {
+        const target = received + 256 * 1024;
+        raw.socket.resume();
+        while (received < target && !raw.closed) {
+          wake = Promise.withResolvers<void>();
+          await wake.promise;
+        }
+        raw.socket.pause();
+        await sweepSocketTimeouts();
+      }
+      expect(onAbort).not.toHaveBeenCalled();
+
+      for (let i = 0; i < 8 && onAbort.mock.calls.length === 0; i++) await sweepSocketTimeouts();
+      expect(onAbort).toHaveBeenCalledTimes(1);
+    } finally {
+      raw.close();
+    }
   });
 });

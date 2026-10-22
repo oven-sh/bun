@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
-import { createServer, request } from "http";
+import { ClientRequest, createServer, get, IncomingMessage, request, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
 import type { Duplex } from "stream";
+import { text } from "stream/consumers";
 import { connect as tlsConnect } from "tls";
 // The llhttp binding. It has no type declarations, like in node-http-parser.test.ts.
 const { HTTPParser, calculateLenientFlags } = require("node:_http_common");
@@ -314,6 +315,33 @@ test("comma-only Transfer-Encoding value still fires clientError like node", asy
   socket.destroy();
   expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
   expect(urls).toEqual(["/a"]);
+});
+
+test.concurrent.each([
+  ["Content-Length:", "HPE_INVALID_CONTENT_LENGTH", "Empty Content-Length"],
+  ["Content-Length: abc", "HPE_INVALID_CONTENT_LENGTH", "Invalid character in Content-Length"],
+  ["Content-Length: 5, 5", "HPE_INVALID_CONTENT_LENGTH", "Invalid character in Content-Length"],
+  ["Content-Length: 12345678901234567890123", "HPE_INVALID_CONTENT_LENGTH", "Content-Length overflow"],
+  ["Content-Length: 5\r\nContent-Length: 6", "HPE_UNEXPECTED_CONTENT_LENGTH", "Duplicate Content-Length"],
+])("clientError reports %j with Node's code and reason", async (header, code, reason) => {
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  await using server = createServer(() => reject(new Error("the request was dispatched")));
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    resolve(err);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1", () => {
+    socket.write(`POST / HTTP/1.1\r\nHost: x\r\n${header}\r\n\r\nhello`);
+  });
+  socket.on("error", () => {});
+  const err = await promise;
+  socket.destroy();
+  expect({ code: err.code, reason: err.reason, message: err.message }).toEqual({
+    code,
+    reason,
+    message: `Parse Error: ${reason}`,
+  });
 });
 
 // llhttp flags a request as an upgrade when it is a CONNECT, or when it has an Upgrade header and
@@ -1027,7 +1055,10 @@ test("pipelined non-chunked request does not read prior request's trailers", asy
 // body framing. Bun's server frames the body natively and never sets
 // `res.chunkedEncoding`, so the check has to recompute that decision instead of reading
 // it, or it rejects every `Trailer` header.
-function collectResponse(handler: (req: any, res: any) => void) {
+function collectResponse(
+  handler: (req: any, res: any) => void,
+  request = "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+) {
   const done = Promise.withResolvers<{ raw: Buffer; thrown: string | null }>();
   let thrown: string | null = null;
   const server = createServer((req, res) => {
@@ -1041,7 +1072,7 @@ function collectResponse(handler: (req: any, res: any) => void) {
   once(server.listen(0, "127.0.0.1"), "listening").then(() => {
     const { port } = server.address() as AddressInfo;
     const socket = connect(port, "127.0.0.1", () => {
-      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      socket.write(request);
     });
     const chunks: Buffer[] = [];
     socket.on("data", (c: Buffer) => chunks.push(c));
@@ -1100,6 +1131,75 @@ test("Trailer response header on a body-less status throws ERR_HTTP_TRAILER_INVA
     expect(thrown).toBe("ERR_HTTP_TRAILER_INVALID");
     expect(raw.toString("latin1")).not.toMatch(/^trailer:/im);
   }
+});
+
+// Node v26 frames these the same way, with two differences: it merges same-tick writes into one chunk, and it
+// answers "identity" with keep-alive, so the client never finds the end of that body.
+test.concurrent.each([
+  [
+    "chunked frames the body of an HTTP/1.0 request",
+    "GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+    (res: any) => {
+      res.setHeader("Transfer-Encoding", "chunked");
+      res.write("hel");
+      res.end("lo");
+    },
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nhel\r\n2\r\nlo\r\n0\r\n\r\n",
+  ],
+  [
+    "chunked sends trailers to an HTTP/1.0 request",
+    "GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+    (res: any) => {
+      res.writeHead(200, { "Transfer-Encoding": "chunked" });
+      res.addTrailers({ "X-Foo": "bar" });
+      res.end("hello");
+    },
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\nX-Foo: bar\r\n\r\n",
+  ],
+  [
+    "chunked wins over Content-Length",
+    undefined,
+    (res: any) => {
+      res.setHeader("Content-Length", "5");
+      res.setHeader("Transfer-Encoding", "chunked");
+      res.end("hello");
+    },
+    "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+  ],
+  [
+    "identity sends a raw body and closes the connection",
+    "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+    (res: any) => {
+      res.setHeader("Transfer-Encoding", "identity");
+      res.write("hel");
+      res.end("lo");
+    },
+    "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\nConnection: close\r\n\r\nhello",
+  ],
+] as const)("response Transfer-Encoding: %s", async (_, request, respond, expected) => {
+  const { raw, thrown } = await collectResponse((req, res) => {
+    res.sendDate = false;
+    respond(res);
+  }, request);
+  expect({ raw: raw.toString("latin1"), thrown }).toEqual({ raw: expected, thrown: null });
+});
+
+test.concurrent.each([
+  ["a HEAD request", "HEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", 200, undefined],
+  ["an HTTP/1.0 request", "GET / HTTP/1.0\r\nHost: x\r\n\r\n", 200, undefined],
+  ["a 204 response", undefined, 204, undefined],
+  ["a Content-Length response", undefined, 200, { "Content-Length": "0" }],
+] as const)("writeHead() after addTrailers() drops the trailers of %s", async (_, request, status, headers) => {
+  const { raw, thrown } = await collectResponse((req, res) => {
+    res.addTrailers({ "X-Foo": "bar" });
+    res.writeHead(status, headers);
+    res.end();
+  }, request);
+  expect(thrown).toBeNull();
+  const text = raw.toString("latin1");
+  expect(text).toStartWith(`HTTP/1.1 ${status} `);
+  expect(text).toEndWith("\r\n\r\n");
+  expect(text).not.toContain("X-Foo");
 });
 
 // The trailer section is captured on the CONNECTION during the parse. Both
@@ -1343,6 +1443,124 @@ describe("tearing down a response with its headers on the wire adds no bytes", (
   });
 });
 
+// The destroys run from setImmediate: a destroy inside the request listener takes a different native path.
+describe("destroying a response before its head is sent", () => {
+  async function bytesReceivedByClient({
+    listener,
+    https = false,
+    onData,
+  }: {
+    listener: (req: IncomingMessage, res: ServerResponse) => void;
+    https?: boolean;
+    onData?: (received: string) => void;
+  }) {
+    let dispatched = false;
+    const dispatch = (req: IncomingMessage, res: ServerResponse) => {
+      dispatched = true;
+      listener(req, res);
+    };
+    await using server = https ? createHttpsServer(tlsCert, dispatch) : createServer(dispatch);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const rawRequest = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    const socket = https
+      ? tlsConnect({ port, host: "127.0.0.1", servername: "localhost", ca: tlsCert.cert }, () =>
+          socket.write(rawRequest),
+        )
+      : connect(port, "127.0.0.1", () => socket.write(rawRequest));
+    const closed = Promise.withResolvers<void>();
+    let received = "";
+    socket.on("data", (chunk: Buffer) => {
+      received += chunk.toString("latin1");
+      onData?.(received);
+    });
+    // The teardown may surface as ECONNRESET; what matters is what arrived before 'close'.
+    socket.on("error", () => {});
+    socket.on("close", () => closed.resolve());
+    await closed.promise;
+    expect(dispatched).toBe(true);
+    return received;
+  }
+
+  test.concurrent.each([
+    ["res.destroy() on an untouched response", false, (req, res) => res.destroy()],
+    ["res.destroy() after writeHead(500)", false, (req, res) => void res.writeHead(500).destroy()],
+    ["req.destroy() after writeHead(200)", false, (req, res) => void (res.writeHead(200), req.destroy())],
+    ["res.destroy() over https", true, (req, res) => res.destroy()],
+  ] as [string, boolean, (req: IncomingMessage, res: ServerResponse) => void][])(
+    "%s sends nothing",
+    async (_name, https, destroy) => {
+      const received = await bytesReceivedByClient({
+        https,
+        listener: (req, res) => void setImmediate(destroy, req, res),
+      });
+      expect(received).toBe("");
+    },
+  );
+
+  test.concurrent("drops a chunk written in the same tick as the destroy()", async () => {
+    const inFlight = Promise.withResolvers<ServerResponse>();
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200, { "content-length": "10" });
+        res.write("first");
+        inFlight.resolve(res);
+      },
+      onData(received) {
+        if (!received.endsWith("first")) return;
+        inFlight.promise.then(res => {
+          res.write("later");
+          res.destroy();
+        });
+      },
+    });
+    expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(received).toEndWith("\r\n\r\nfirst");
+  });
+
+  test.concurrent("closes the pipelined responses queued behind the destroyed one", async () => {
+    const events: string[] = [];
+    const allClosed = Promise.withResolvers<void>();
+    let first: ServerResponse | undefined;
+    let closes = 0;
+    await using server = createServer((req, res) => {
+      req.on("error", () => {});
+      res.on("finish", () => events.push(`finish ${req.url}`));
+      res.on("close", () => {
+        events.push(`close ${req.url}`);
+        if (++closes === 3) allClosed.resolve();
+      });
+      first ??= res;
+      if (req.url === "/3") setImmediate(() => first!.destroy());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(["/1", "/2", "/3"].map(url => `GET ${url} HTTP/1.1\r\nHost: x\r\n\r\n`).join(""));
+    });
+    const closed = Promise.withResolvers<void>();
+    let received = "";
+    socket.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
+    socket.on("error", () => {});
+    socket.on("close", () => closed.resolve());
+    await Promise.all([closed.promise, allClosed.promise]);
+    expect({ received, events: events.sort() }).toEqual({ received: "", events: ["close /1", "close /2", "close /3"] });
+  });
+
+  test.concurrent("http.get() reports a socket hang up", async () => {
+    await using server = createServer((req, res) => void setImmediate(() => res.destroy()));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const outcome = await new Promise<unknown>(resolve => {
+      get({ port, host: "127.0.0.1" }, res => {
+        res.resume();
+        resolve({ statusCode: res.statusCode });
+      }).on("error", (err: NodeJS.ErrnoException) => resolve({ code: err.code, message: err.message }));
+    });
+    expect(outcome).toEqual({ code: "ECONNRESET", message: "socket hang up" });
+  });
+});
+
 // llhttp under LENIENT_TRANSFER_ENCODING (insecureHTTPParser: true, httpValidation: "insecure")
 // accepts any Transfer-Encoding list. Its chunked verdict is the last element's. When that is not
 // "chunked", the request has no body framing: every byte until the client ends the connection is
@@ -1579,6 +1797,8 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
   test.concurrent.each([
     ["gzip", "Transfer-Encoding: gzip", ["request POST /p", "clientError HPE_INVALID_TRANSFER_ENCODING"]],
     ["chunked, gzip", "Transfer-Encoding: chunked, gzip", ["clientError HPE_INVALID_TRANSFER_ENCODING"]],
+    ["chunked, (trailing comma)", "Transfer-Encoding: chunked,", ["clientError HPE_INVALID_TRANSFER_ENCODING"]],
+    ["chunked , (space, comma, space)", "Transfer-Encoding: chunked , ", ["clientError HPE_INVALID_TRANSFER_ENCODING"]],
   ])("the strict parser still rejects %s", async (_name, teFields, expected) => {
     const { events } = await run(teFields, {});
     expect(events).toEqual(expected);
@@ -1933,5 +2153,146 @@ describe("res.useChunkedEncodingByDefault = false makes the response close-delim
       tail: "aaaaaaaa",
       closedByServer: true,
     });
+  });
+
+  // Node's _send("") writes the rendered head, so the framing is fixed before end() knows the body length.
+  test.concurrent.each([
+    [
+      "write('') + end(data) is chunked",
+      GET11,
+      (res: any) => {
+        res.write("");
+        res.end("hello");
+      },
+      {
+        head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked",
+        body: "5\r\nhello\r\n0\r\n\r\n",
+        framing: "chunked",
+        connection: "reused",
+      },
+    ],
+    [
+      "write('') + end() is chunked",
+      GET11,
+      (res: any) => {
+        res.write("");
+        res.end();
+      },
+      {
+        head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked",
+        body: "0\r\n\r\n",
+        framing: "chunked",
+        connection: "reused",
+      },
+    ],
+    [
+      "write('') keeps an explicit Content-Length",
+      GET11,
+      (res: any) => {
+        res.setHeader("Content-Length", "5");
+        res.write("");
+        res.end("hello");
+      },
+      {
+        head: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5",
+        body: "hello",
+        framing: "content-length",
+        connection: "reused",
+      },
+    ],
+    [
+      "write('') + end(data) on HTTP/1.0 is close-delimited",
+      "GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+      (res: any) => {
+        res.write("");
+        res.end("hello");
+      },
+      {
+        head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close",
+        body: "hello",
+        framing: "close-delimited",
+        connection: "closed",
+      },
+    ],
+  ] as const)("%s", async (_, request, respond, expected) => {
+    expect(await exchange((req, res) => respond(res), request)).toEqual(expected);
+  });
+});
+
+describe("a chunked request body written under req.cork()", () => {
+  async function echo(send: (req: ClientRequest) => void | Promise<void>, afterConnect: boolean) {
+    const server = createServer(async (req, res) => res.end(await text(req)));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const req = request({
+        host: "127.0.0.1",
+        port: (server.address() as AddressInfo).port,
+        method: "POST",
+        agent: false,
+      });
+      if (afterConnect) {
+        req.flushHeaders();
+        const [socket] = await once(req, "socket");
+        await once(socket, "connect");
+      }
+      const response = once(req, "response");
+      await send(req);
+      return await text((await response)[0]);
+    } finally {
+      server.close();
+    }
+  }
+
+  describe.each([
+    ["before the socket connects", false],
+    ["on a connected socket", true],
+  ])("%s", (_, afterConnect) => {
+    test.concurrent.each<[string, (req: ClientRequest) => void]>([
+      [
+        "cork, write, write, end",
+        req => {
+          req.cork();
+          req.write("aaaa");
+          req.write("bbbbbb");
+          req.end();
+        },
+      ],
+      [
+        "write, cork, write, end(chunk)",
+        req => {
+          req.write("aaaa");
+          req.cork();
+          req.write("bbbb");
+          req.end("bb");
+        },
+      ],
+      [
+        "cork, cork, write, write, uncork, end",
+        req => {
+          req.cork();
+          req.cork();
+          req.write("aaaa");
+          req.write("bbbbbb");
+          req.uncork();
+          req.end();
+        },
+      ],
+    ])("%s sends every chunk before the last chunk", async (_, send) => {
+      expect(await echo(send, afterConnect)).toBe("aaaabbbbbb");
+    });
+  });
+
+  test("uncork() emits 'drain' after a corked write() returned false", async () => {
+    const body = Buffer.alloc(64 * 1024, "a").toString();
+    const echoed = await echo(async req => {
+      req.cork();
+      expect(req.write(body)).toBe(false);
+      const drained = once(req, "drain");
+      req.uncork();
+      await drained;
+      req.end();
+    }, true);
+    expect(echoed).toBe(body);
   });
 });

@@ -1139,7 +1139,7 @@ static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStrea
     auto scope = DECLARE_THROW_SCOPE(vm);
     stream->materializeIfNeeded(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
+    auto* reader = acquireReadableStreamDefaultReader(globalObject, stream, ReaderOwner::Native);
     RETURN_IF_EXCEPTION(scope, );
     // The sink consumes the stream as a body: it stays locked after rsisFinally releases the pump's reader.
     stream->markConsumedAsBody();

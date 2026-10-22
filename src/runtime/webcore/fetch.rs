@@ -50,18 +50,20 @@ use crate::webcore::jsc::{
 };
 use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::http_request_body::StreamFraming;
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
+use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _};
 use bun_http_jsc::method_jsc;
-use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
+use bun_http_types::Method::{Method, OwnedMethod};
+use bun_jsc::{HTTPHeaderName, StringJsc as _, URLJsc as _};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
 use crate::node::types::PathLikeExt as _;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
-use crate::webcore::blob::BlobExt as _;
-use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
+use crate::webcore::blob::{BlobContentType, BlobExt as _};
+use crate::webcore::body::{
+    Action as BodyValueLockedAction, BodyMixin, InternalBlob, Value as BodyValue,
+};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::s3::client as s3;
@@ -75,7 +77,7 @@ use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
-use bun_resolver::data_url::DataURL;
+use bun_resolver::data_url::{DataURL, FetchDataURL};
 use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
@@ -162,31 +164,37 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
 
-fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
-    let blob = {
-        let url_utf8 = url.to_utf8();
-        match DataURL::parse_without_check(url_utf8.slice())
-            .ok()
-            .and_then(|data_url| {
-                let blob = Blob::init(data_url.decode_data().ok()?, global_this);
-                let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
-                blob.content_type
-                    .set(crate::webcore::blob::BlobContentType::from(mime_type));
-                Some(blob)
-            }) {
-            Some(blob) => blob,
-            None => {
-                let err =
-                    global_this.create_error_instance(format_args!("failed to fetch the data URL"));
-                return JSPromise::rejected_promise(global_this, err).to_js();
-            }
-        }
+/// `url` is the serialized URL without its fragment.
+fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    let Some(FetchDataURL { mime_type, body }) = DataURL::process_for_fetch(url.to_utf8().slice())
+    else {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_URL,
+            format_args!("failed to fetch the data URL"),
+        );
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     };
+
+    // Set `Content-Type` now. The lazy copy from the body's Blob is lost once the body is consumed.
+    let mut headers = HeadersRef::create_empty();
+    headers.put(
+        HTTPHeaderName::ContentType,
+        &BunString::borrow_utf8(&mime_type),
+        global_this,
+    )?;
+
+    let blob = Blob::init(body, global_this);
+    // `Blob.type` is lowercase.
+    blob.content_type
+        .set(BlobContentType::Owned(std::sync::Arc::from(
+            mime_type.to_ascii_lowercase(),
+        )));
 
     let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK"),
+            headers: Some(headers),
             ..Default::default()
         },
         Body::new(BodyValue::Blob(blob)),
@@ -197,12 +205,39 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
     // Ownership of the boxed Response is transferred to the JS GC via
     // `make_maybe_pooled` (which stores the raw `*mut Response` in the wrapper
     // and finalizes it). Dropping a `Box<Response>` here would be a UAF.
-    JSPromise::resolved_promise_value(
+    Ok(JSPromise::resolved_promise_value(
         global_this,
         // SAFETY: `response` is a freshly allocated heap `Response`; ownership
         // transfers to JSC.
         Response::make_maybe_pooled(global_this, response),
-    )
+    ))
+}
+
+/// `fetch()` rejects with a `TypeError` that keeps the system error's `code`, `syscall` and `path`.
+fn system_type_error(err: &bun_sys::Error, global_this: &JSGlobalObject) -> JSValue {
+    jsc::SystemError::from(err.to_system_error()).to_type_error_instance(global_this)
+}
+
+/// Returns the `TypeError` that `fetch("file:...")` rejects with if reading `file_blob` can only fail.
+fn file_url_unreadable_error(file_blob: &Blob, global_this: &JSGlobalObject) -> Option<JSValue> {
+    // A file embedded in a standalone executable is a byte store and isn't on disk.
+    let blob::store::Data::File(file) = &file_blob.store()?.data else {
+        return None;
+    };
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return None;
+    };
+
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    // `stat`, not `open`: opening a FIFO blocks until it has a writer.
+    let err = match bun_sys::stat(path.slice_z(&mut path_buf)) {
+        Ok(stat) if bun_sys::S::ISDIR(stat.st_mode as _) => {
+            bun_sys::Error::from_code(bun_sys::E::EISDIR, bun_sys::Tag::read)
+        }
+        Ok(_) => return None,
+        Err(err) => err,
+    };
+    Some(system_type_error(&err.with_path(path.slice()), global_this))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -262,7 +297,7 @@ fn bun_fetch_preconnect(
         };
     }
 
-    if !url.is_http() && !url.is_https() && !url.is_s3() {
+    if !url.is_http() && !url.is_https() {
         reclaim_href!();
         return Err(
             global_object.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS"))
@@ -551,7 +586,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        break 'extract_url BunString::EMPTY;
+        let err = ctx.to_type_error(
+            jsc::ErrorCode::INVALID_URL,
+            format_args!("fetch() URL is invalid"),
+        );
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     };
 
     if url_str.is_empty() {
@@ -562,24 +601,26 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
-    if url_str.starts_with_ascii(b"data:") {
-        return Ok(data_url_response(url_str, global_this));
+    // A fetch never uses the fragment, and `Response.url` excludes it.
+    let mut href = bun_url::href_from_string_without_fragment(&url_str);
+    if href.starts_with_ascii(b"s3:") {
+        // `#` is part of an S3 key.
+        href = bun_url::href_from_string(&url_str);
+    }
+    if href.tag() == BunStringTag::Dead {
+        let err = ctx.to_type_error(
+            jsc::ErrorCode::INVALID_URL,
+            format_args!("fetch() URL is invalid"),
+        );
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
-    // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
-    // immediately move that buffer into `url_proxy_buffer` and re-parse `url` to
-    // borrow it.
-    let owned_url = match ZigURL::from_string(&url_str) {
-        Ok(u) => u,
-        Err(_) => {
-            let err = ctx.to_type_error(
-                jsc::ErrorCode::INVALID_URL,
-                format_args!("fetch() URL is invalid"),
-            );
-            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-        }
-    };
-    let mut url_proxy_buffer = owned_url.into_href().into_vec();
+    if href.starts_with_ascii(b"data:") {
+        return data_url_response(href, global_this);
+    }
+
+    // Move the href into `url_proxy_buffer` and re-parse `url` to borrow it.
+    let mut url_proxy_buffer = href.to_owned_slice();
     let mut url = parse_url_detached!(&url_proxy_buffer[..]);
     if url.is_file() {
         url_type = URLType::File;
@@ -590,26 +631,25 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // **Start with the harmless ones.**
 
     // "method"
-    let mut method = 'extract_method: {
+    let mut method: OwnedMethod = 'extract_method: {
         if let Some(options) = options_object {
             if let Some(method_) = options.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                break 'extract_method method_jsc::from_js(global_this, method_)?;
+                break 'extract_method method_jsc::request_method_from_js(global_this, method_)?;
             }
         }
 
         if let Some(req) = request_mut!() {
-            break 'extract_method Some(req.method);
+            break 'extract_method req.method.clone();
         }
 
         if let Some(req) = request_init_object {
             if let Some(method_) = req.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                break 'extract_method method_jsc::from_js(global_this, method_)?;
+                break 'extract_method method_jsc::request_method_from_js(global_this, method_)?;
             }
         }
 
-        break 'extract_method None;
-    }
-    .unwrap_or(Method::GET);
+        Method::GET.into()
+    };
 
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
@@ -774,6 +814,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 {
                     if let Some(path) = parse_unix(vm, global_this, socket_path)? {
                         break 'extract_unix_socket_path path;
+                    }
+                    // Ignoring it would send the request to the URL's host over TCP.
+                    if !socket_path.is_string() && socket_path.to_boolean() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "fetch: 'unix' must be a string"
+                        )));
                     }
                 }
             }
@@ -1130,6 +1176,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
+            BodyMixin::copy_content_type_to_headers(&*req, global_this)?;
             break 'extract_body Some(HTTPRequestBody::AnyBlob(
                 req.get_body_value().use_as_any_blob(),
             ));
@@ -1150,11 +1197,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     .unwrap_or_default();
 
-    // HTTPRequestBody::from_js() throws without returning Err; see Blob::from_dom_form_data
-    if global_this.has_exception() {
-        return Err(jsc::JsError::Thrown);
-    }
-
     // headers: Headers | undefined;
     headers = 'extract_headers: {
         // Holds the +1 from `create_from_js` until this block exits.
@@ -1166,7 +1208,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
+                        if let Some(headers__) = FetchHeaders::cast_as_init(headers_value) {
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                             if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;
@@ -1195,7 +1237,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
+                        if let Some(headers__) = FetchHeaders::cast_as_init(headers_value) {
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                             if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;
@@ -1439,7 +1481,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 crate::webcore::node_types::PathLike::owned(temp_file_path.to_vec()),
             );
 
-            break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
+            let file_blob = Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
+            if let Some(err) = file_url_unreadable_error(&file_blob, global_this) {
+                return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+            }
+            break 'blob file_blob;
         };
 
         let response = bun_core::heap::into_raw(Box::new(Response::init(
@@ -1475,7 +1521,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally
     // rejects TRACE (RFC 9110 §9.3.8 "MUST NOT send content") since it does
     // not enforce forbidden methods. has_request_body() encodes exactly that.
-    if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
+    if !ALLOW_GET_BODY
+        && method.known().is_some_and(|verb| !verb.has_request_body())
+        && body.has_body()
+        && !upgraded_connection
+    {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!("fetch() request with GET/HEAD method cannot have body."),
@@ -1493,7 +1543,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
+    if headers.is_none() && body.has_content_type_from_user() {
         headers = Some(from_fetch_headers(
             global_this,
             None,
@@ -1559,7 +1609,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 match &store.data.as_file().pathlike {
-                    PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd),
+                    // On Windows `read_file` would wrap dup's HANDLE in a CRT fd that the close below never frees.
+                    PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd).and_then(|duped| {
+                        duped.make_lib_uv_owned_for_syscall(
+                            bun_sys::Tag::dup,
+                            bun_sys::ErrorCase::CloseOnFail,
+                        )
+                    }),
                     PathOrFileDescriptor::Path(path) => {
                         let zpath = path.slice_z(&mut open_path_buf);
                         let flags = if cfg!(windows) {
@@ -1574,7 +1630,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             let opened_fd = match opened_fd_res {
                 Err(err) => {
-                    let err_js = err.to_js(global_this);
+                    let err_js = system_type_error(&err, global_this);
                     let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
                     return Ok(rejected_value);
                 }
@@ -1601,12 +1657,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         Err(_) => break 'use_sendfile,
                     };
 
-                    #[cfg(target_os = "macos")]
-                    {
-                        // macOS only supports regular files for sendfile()
-                        if !bun_sys::S::ISREG(stat.st_mode as u32) {
-                            break 'use_sendfile;
-                        }
+                    // A redirect sends the body again from its first byte, so the fd has to be seekable.
+                    if !bun_sys::S::ISREG(stat.st_mode as u32) {
+                        break 'use_sendfile;
                     }
 
                     // if it's < 32 KB, it's not worth it
@@ -1627,26 +1680,30 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         content_size: original_size.min(stat_size) as usize,
                     };
 
-                    if bun_sys::S::ISREG(stat.st_mode as u32) {
-                        let stat_size_usize = stat_size as usize;
-                        sf.offset = sf.offset.min(stat_size_usize);
-                        sf.remain = sf
-                            .remain
-                            .max(sf.offset)
-                            .min(stat_size_usize)
-                            .saturating_sub(sf.offset);
-                        // `remain` is now the exact byte count we will send (the slice
-                        // window clamped to the file); that is the Content-Length.
-                        sf.content_size = sf.remain;
-                    }
+                    let stat_size_usize = stat_size as usize;
+                    sf.offset = sf.offset.min(stat_size_usize);
+                    sf.remain = sf
+                        .remain
+                        .max(sf.offset)
+                        .min(stat_size_usize)
+                        .saturating_sub(sf.offset);
+                    // `remain` is now the slice window clamped to the file, which is the Content-Length.
+                    sf.content_size = sf.remain;
                     body.detach();
+
+                    // macOS and FreeBSD read a sendfile(2) length of 0 as "until end of file".
+                    if sf.remain == 0 {
+                        opened_fd.close();
+                        break 'prepare_body;
+                    }
+
                     body = HTTPRequestBody::Sendfile(sf);
 
                     break 'prepare_body;
                 }
             }
 
-            // The sendfile path above moves `opened_fd` into `SendFile` (which
+            // The sendfile path above closes `opened_fd` or moves it into `SendFile` (which
             // owns its lifecycle and breaks out of `'prepare_body`). On this
             // read-file path we are the sole owner of the fresh fd: `read_file`
             // is handed it as an `Fd` and never takes ownership. Wrap it in an
@@ -1675,8 +1732,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             match res {
                 Err(err) => {
-                    let rejected_value =
-                        JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js();
+                    let err_js = system_type_error(&err, global_this);
+                    let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
                     body.detach();
                     return Ok(rejected_value);
                 }
@@ -1766,7 +1823,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // we cannot direct stream to s3 we need to use multi part upload
             // `defer body.ReadableStream.deinit()` → Drop on `body` scope exit.
 
-            if method != Method::PUT && method != Method::POST {
+            if !matches!(method.known(), Some(Method::PUT | Method::POST)) {
                 return Ok(JSPromise::rejected_promise(
                     global_this,
                     global_this.create_error_instance(format_args!(
@@ -1835,14 +1892,23 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
         }
-        if method == Method::POST {
-            method = Method::PUT;
-        }
+        let sign_method = match method.known() {
+            Some(Method::POST) => Method::PUT,
+            Some(verb) => verb,
+            None => {
+                return Ok(JSPromise::rejected_promise(
+                    global_this,
+                    s3::get_js_sign_error(bun_s3_signing::Error::InvalidMethod, global_this),
+                )
+                .to_js());
+            }
+        };
+        method = sign_method.into();
 
         let mut result = match credentials_with_options.credentials.sign_request::<false>(
             &SignOptions {
                 path: url.s3_path(),
-                method,
+                method: sign_method,
                 ..Default::default()
             },
             None,
@@ -1959,10 +2025,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     } else {
         None
     };
+    let mut request_headers = headers.take().unwrap_or_default();
     let fetch_options = FetchOptions {
-        method,
+        method: method.to_ref(&mut request_headers),
         url: url_static,
-        headers: headers.take().unwrap_or_default(),
+        headers: request_headers,
         body,
         stream_framing,
         disable_keepalive,

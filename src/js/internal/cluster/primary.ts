@@ -270,8 +270,8 @@ function queryServer(worker, message) {
   if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
 
   const kSharedOnlyHint =
-    "TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
-    "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
+    "http, https and TLS cluster workers cannot share the same address:port with a net worker under SCHED_RR " +
+    "(their accept is native and cannot adopt round-robin connection fds)";
   if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
     send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
     return;
@@ -292,8 +292,13 @@ function queryServer(worker, message) {
   if (handle === undefined) {
     let address = message.address;
 
-    // Find shortest path for unix sockets because of the ~100 byte limit
-    if (message.port < 0 && typeof address === "string" && process.platform !== "win32") {
+    // Find shortest path for unix sockets because of the ~100 byte limit. An abstract name (leading NUL) isn't a path.
+    if (
+      message.port < 0 &&
+      typeof address === "string" &&
+      process.platform !== "win32" &&
+      address.charCodeAt(0) !== 0
+    ) {
       address = require("node:path").relative(process.cwd(), address);
 
       if (message.address.length < address.length) address = message.address;

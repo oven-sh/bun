@@ -269,8 +269,8 @@ public:
             }
         }
 
-        /* Always test any route last (this check should not be necessary if we always have at least one handler) */
-        if (root.children.empty()) [[unlikely]] {
+        /* Always test any route last. remove() erases the any-method node while it's empty, and then back() is another method's tree. */
+        if (root.children.empty() || root.children.back()->name != ANY_METHOD_TOKEN) [[unlikely]] {
             return false;
         }
         return executeHandlers(root.children.back().get(), 0, userData);

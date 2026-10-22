@@ -189,6 +189,8 @@ int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd);
  * resulting value to *out; on failure returns the setsockopt/getsockopt result
  * with the error left in errno (WSAGetLastError on Windows). */
 int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out);
+/* See us_socket_delivered_bytes. */
+int bsd_socket_delivered_bytes(LIBUS_SOCKET_DESCRIPTOR fd, uint64_t *bytes);
 int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags);
@@ -231,7 +233,7 @@ int bsd_send_is_transient_error();
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error, int* dns_error);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options, int* error);
 

@@ -17,6 +17,7 @@ use super::stream::Stream;
 use crate::HTTPClient;
 use crate::h3_client as H3;
 use crate::http_thread::WriteMessageType;
+use crate::ssl_config::SSLConfig;
 
 use crate::h3_client::h3_client;
 
@@ -38,7 +39,6 @@ pub(crate) struct ClientContext {
 // uncontended atomic op is free on the single HTTP client thread.
 static INSTANCE: bun_core::AtomicCell<Option<NonNull<ClientContext>>> =
     bun_core::AtomicCell::new(None);
-static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
     /// Mutable access to the lsquic client engine.
@@ -75,7 +75,6 @@ impl ClientContext {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
-        LSQUIC_INIT_ONCE.call_once(quic::global_init);
         // SAFETY: `loop_` is the live HTTP-thread uws loop (NonNull invariant).
         let qctx = unsafe {
             quic::Context::create_client(
@@ -108,12 +107,19 @@ impl ClientContext {
     /// `false` leaves `client` on no session, for the caller to fail.
     pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
+        // Same gate as `HTTPThread::connect`: `rejectUnauthorized` alone stays on the default context.
+        let tls_props = client
+            .tls_props
+            .clone()
+            .filter(|tls| tls.get().requires_custom_request_ctx);
+        let tls_props_ptr = SSLConfig::raw_ptr(tls_props.as_ref());
         for &s in self.sessions.iter() {
             // sessions vec holds live ClientSession pointers; removed via
             // unregister() before destroy — `session_mut` centralises that
             // backref upgrade.
             let s = session_mut(s);
-            if s.matches(hostname, port, reject, client.pool.id) && s.has_headroom() {
+            if s.matches(hostname, port, reject, tls_props_ptr, client.pool.id) && s.has_headroom()
+            {
                 bun_core::scoped_log!(
                     h3_client,
                     "reuse session {}:{}",
@@ -134,7 +140,21 @@ impl ClientContext {
         let mut host_buf = bun_url::strip_ipv6_brackets(hostname).to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
-        let session = ClientSession::new(hostname.to_vec(), port, reject, client.pool.id);
+        let tls_options = tls_props
+            .as_ref()
+            .map(|tls| tls.get().as_usockets_for_client_verification());
+        let sni = tls_props
+            .as_ref()
+            .and_then(|tls| tls.get().server_name_cstr())
+            .filter(|name| !name.to_bytes().is_empty())
+            .unwrap_or(host_z);
+        let session = ClientSession::new(
+            hostname.to_vec(),
+            port,
+            reject,
+            tls_props.clone(),
+            client.pool.id,
+        );
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `session` was just allocated by ClientSession::new — `session_mut`
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
@@ -142,9 +162,14 @@ impl ClientContext {
         self.sessions.push(session);
         session_mut(session).enqueue(client);
 
-        let result =
-            self.qctx_mut()
-                .connect(host_z, port, host_z, reject, session.cast::<c_void>());
+        let result = self.qctx_mut().connect(
+            host_z,
+            port,
+            sni,
+            reject,
+            tls_options.as_ref(),
+            session.cast::<c_void>(),
+        );
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);

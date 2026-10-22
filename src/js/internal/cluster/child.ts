@@ -20,6 +20,7 @@ interface ChildCluster extends InstanceType<typeof EventEmitter> {
   Worker: typeof Worker;
   _setupWorker(): void;
   _getServer(obj, options, cb): void;
+  _trackServer(server): void;
 }
 
 interface RoundRobinFauxHandle {
@@ -119,8 +120,10 @@ cluster._setupWorker = function () {
 cluster._getServer = function (obj, options, cb) {
   let address = options.address;
 
-  // Resolve unix socket paths to absolute paths
-  if (options.port < 0 && typeof address === "string" && process.platform !== "win32") address = path.resolve(address);
+  // Resolve unix socket paths to absolute paths. An abstract name (leading NUL) isn't a path.
+  if (options.port < 0 && typeof address === "string" && process.platform !== "win32" && address.charCodeAt(0) !== 0) {
+    address = path.resolve(address);
+  }
 
   const indexesKey = ArrayPrototypeJoin.$call([address, options.port, options.addressType, options.fd], ":");
 
@@ -173,6 +176,13 @@ cluster._getServer = function (obj, options, cb) {
     message.port = (address && address.port) || options.port;
     send(message);
   });
+};
+
+// For a server that bound its own socket, so that worker.disconnect() closes it too.
+cluster._trackServer = function (server) {
+  const handle = { [owner_symbol]: server };
+  handles.set(handle, handle);
+  server.once("close", () => handles.delete(handle));
 };
 
 function removeIndexesKey(indexesKey, index) {

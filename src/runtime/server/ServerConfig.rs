@@ -59,6 +59,8 @@ pub(crate) struct ServerConfig {
     pub(crate) websocket: Option<WebSocketServerContext>,
 
     pub(crate) reuse_port: bool,
+    /// node:http only. Listen on this already-bound descriptor instead of binding `address`.
+    pub(crate) listen_fd: Option<i32>,
     pub(crate) id: Box<[u8]>,
     pub(crate) allow_hot: bool,
     pub(crate) ipv6_only: bool,
@@ -94,6 +96,7 @@ impl Default for ServerConfig {
             is_node_http_server: false,
             websocket: None,
             reuse_port: false,
+            listen_fd: None,
             id: Box::default(),
             allow_hot: true,
             ipv6_only: false,
@@ -147,7 +150,7 @@ pub(crate) enum DevelopmentOption {
 }
 
 impl DevelopmentOption {
-    fn is_hmr_enabled(self) -> bool {
+    pub(crate) fn is_hmr_enabled(self) -> bool {
         self == DevelopmentOption::Development
     }
 
@@ -174,6 +177,24 @@ impl ServerConfig {
         }
 
         cost
+    }
+
+    /// `base_uri` is formatted before the listener binds, so `bound_port` replaces a port of `0`.
+    pub(crate) fn base_url_string_for_joining(&self, bound_port: Option<u16>) -> Box<[u8]> {
+        let base = bun_core::trim(&self.base_uri, b"/");
+        let port = URL::parse(base).port;
+        if let Some(bound_port) = bound_port
+            && port == b"0"
+            && let Some([start, len]) = bun_alloc::range_of_slice_in_buffer(port, base)
+        {
+            let (start, len) = (start as usize, len as usize);
+            let mut buf: Vec<u8> = Vec::with_capacity(base.len() + 4);
+            buf.extend_from_slice(&base[..start]);
+            let _ = write!(&mut buf, "{bound_port}");
+            buf.extend_from_slice(&base[start + len..]);
+            return buf.into_boxed_slice();
+        }
+        Box::from(base)
     }
 }
 
@@ -296,6 +317,7 @@ impl ServerConfig {
             is_node_http_server: self.is_node_http_server,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
+            listen_fd: self.listen_fd,
             id: core::mem::take(&mut self.id),
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
@@ -489,6 +511,10 @@ impl ServerConfig {
         let mut arraylist: Vec<u8> = Vec::new();
 
         let _ = arraylist.write_all(b"[http]-");
+        if let Some(fd) = self.listen_fd {
+            let _ = write!(&mut arraylist, "fd:{fd}");
+            return arraylist;
+        }
         match &self.address {
             Address::Tcp { port, hostname } => {
                 if let Some(host) = hostname {
@@ -534,14 +560,12 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
 
     // For now, we don't support params that start with a number.
     // Mostly because it makes the params object more complicated to implement and it's easier to cut scope this way for now.
-    let mut remaining = path;
     let mut duped_route_names: StringHashMap<()> = StringHashMap::new();
-    while let Some(index) = strings::index_of_char(remaining, b':') {
-        remaining = &remaining[(index + 1) as usize..];
-        let end = strings::index_of_char(remaining, b'/')
-            .map(|i| i as usize)
-            .unwrap_or(remaining.len());
-        let route_name = &remaining[..end];
+    for segment in strings::split(&path[1..], b"/") {
+        // uWS::HttpRouter only captures a segment that starts with ':'.
+        let Some(route_name) = segment.strip_prefix(b":") else {
+            continue;
+        };
         if !route_name.is_empty() && route_name[0].is_ascii_digit() {
             return Err(global.throw_todo(
                 b"Route parameter names cannot start with a number.\n\n\
@@ -556,10 +580,24 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
                   If you run into this, please file an issue and we will add support for it.",
             ));
         }
-
-        remaining = &remaining[end..];
     }
     Ok(())
+}
+
+/// Returns true if JavaScript set `process.env.NODE_ENV` or `BUN_ENV` to "production". `env_loader()` only has the values from startup.
+fn process_env_is_production(global: &JSGlobalObject) -> JsResult<bool> {
+    let Some(process_env) = global.process_env_if_created() else {
+        return Ok(false);
+    };
+    for key in ["NODE_ENV", "BUN_ENV"] {
+        if let Some(value) = process_env.get(global, key)?
+            && value.is_string()
+            && value.to_js_string_view(global)?.eq_ascii(b"production")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
@@ -576,6 +614,82 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 }
 
 impl ServerConfig {
+    /// Returns the DevServer options for HTML and framework router routes.
+    fn dev_server_options(
+        vm: &bun_jsc::virtual_machine::VirtualMachine,
+        framework: crate::bake::Framework,
+        bundler_options: crate::bake::SplitBundlerOptions,
+    ) -> crate::bake::UserOptions {
+        use bun_options_types::schema::api::DotEnvBehavior;
+
+        let mut user_options = crate::bake::UserOptions {
+            arena: bun_alloc::Arena::new(),
+            root: bun_core::ZBox::from_bytes(bun_paths::fs::FileSystem::instance().top_level_dir()),
+            framework,
+            bundler_options,
+        };
+
+        let o = &vm.transpiler.options.transform_options;
+
+        match o.serve_env_behavior {
+            DotEnvBehavior::prefix => {
+                user_options
+                    .bundler_options
+                    .client
+                    .env_prefix
+                    .clone_from(&o.serve_env_prefix);
+                user_options.bundler_options.client.env = DotEnvBehavior::prefix;
+            }
+            DotEnvBehavior::load_all => {
+                user_options.bundler_options.client.env = DotEnvBehavior::load_all;
+            }
+            DotEnvBehavior::disable => {
+                user_options.bundler_options.client.env = DotEnvBehavior::disable;
+            }
+            _ => {}
+        }
+
+        // `[serve.static] define` comes last so it overrides a top-level define with the same key.
+        let mut define = o.define.clone().unwrap_or_default();
+        if let Some(serve_define) = &o.serve_define {
+            define.keys.extend_from_slice(&serve_define.keys);
+            define.values.extend_from_slice(&serve_define.values);
+        }
+        user_options.bundler_options.client.define = define.clone();
+        user_options.bundler_options.server.define = define.clone();
+        user_options.bundler_options.ssr.define = define;
+
+        user_options
+    }
+
+    /// A reload can't change the server's mode, so an HTML route gets DevServer options even if `new_config` has `development: false`.
+    pub(crate) fn take_dev_server_options_from(
+        &mut self,
+        new_config: &mut ServerConfig,
+        global: &JSGlobalObject,
+    ) -> bool {
+        self.bake = new_config.bake.take();
+        if self.bake.is_none()
+            && new_config
+                .static_routes
+                .iter()
+                .any(|entry| matches!(entry.route, AnyRoute::Html(_)))
+        {
+            let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+            let framework = crate::bake::Framework::auto(resolver, Vec::new());
+            self.bake = Some(Self::dev_server_options(
+                global.bun_vm(),
+                framework,
+                crate::bake::SplitBundlerOptions::default(),
+            ));
+        }
+        self.bake.is_some()
+    }
+
+    pub(crate) fn drop_dev_server_options(&mut self) {
+        self.bake = None;
+    }
+
     pub(crate) fn from_js(
         global: &JSGlobalObject,
         arguments: &mut bun_jsc::call_frame::ArgumentsSlice,
@@ -610,7 +724,7 @@ impl ServerConfig {
             args.development = DevelopmentOption::Production;
         }
 
-        if arguments.vm.transpiler.options.production {
+        if arguments.vm.transpiler.options.production || process_env_is_production(global)? {
             args.development = DevelopmentOption::Production;
         }
 
@@ -896,8 +1010,6 @@ impl ServerConfig {
                 || bake_pages
             {
                 if args.development.is_hmr_enabled() {
-                    use bun_options_types::schema::api::DotEnvBehavior;
-
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
                     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
@@ -924,42 +1036,7 @@ impl ServerConfig {
                         ),
                     };
 
-                    let mut user_options = crate::bake::UserOptions {
-                        arena: bun_alloc::Arena::new(),
-                        root: bun_core::ZBox::from_bytes(
-                            bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        ),
-                        framework,
-                        bundler_options,
-                    };
-
-                    let o = &vm.transpiler.options.transform_options;
-
-                    match o.serve_env_behavior {
-                        DotEnvBehavior::prefix => {
-                            user_options
-                                .bundler_options
-                                .client
-                                .env_prefix
-                                .clone_from(&o.serve_env_prefix);
-                            user_options.bundler_options.client.env = DotEnvBehavior::prefix;
-                        }
-                        DotEnvBehavior::load_all => {
-                            user_options.bundler_options.client.env = DotEnvBehavior::load_all;
-                        }
-                        DotEnvBehavior::disable => {
-                            user_options.bundler_options.client.env = DotEnvBehavior::disable;
-                        }
-                        _ => {}
-                    }
-
-                    if let Some(define) = &o.serve_define {
-                        user_options.bundler_options.client.define = define.clone();
-                        user_options.bundler_options.server.define = define.clone();
-                        user_options.bundler_options.ssr.define = define.clone();
-                    }
-
-                    args.bake = Some(user_options);
+                    args.bake = Some(Self::dev_server_options(vm, framework, bundler_options));
                 } else {
                     if !init_ctx.framework_router_list.is_empty() {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -1155,6 +1232,16 @@ impl ServerConfig {
             }
             args.on_node_http_request = on_request_;
             args.is_node_http_server = true;
+
+            if let Some(fd) = arg.get(global, "fd")? {
+                let number = fd.get_number().unwrap_or(-1.0);
+                if number.fract() != 0.0 || !(0.0..=f64::from(i32::MAX)).contains(&number) {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Expected fd to be a non-negative integer"
+                    )));
+                }
+                args.listen_fd = Some(number as i32);
+            }
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {

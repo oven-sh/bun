@@ -403,6 +403,13 @@ void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+/* loop.c stops polling for writable after an on_writable that left last_write_failed clear. */
+void us_socket_request_writable(struct us_socket_t *s) {
+    if (us_socket_is_closed(s)) return;
+    s->flags.last_write_failed = 1;
+    us_internal_rearm_writable(s);
+}
+
 /* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
  * may follow them. ECONNABORTED is a peer-gone errno, so it is never retried; the shutdown is for the writers that
  * take any failed send for backpressure. No write may close under its caller: the writable event does. */
@@ -436,6 +443,22 @@ int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
 #else
     return 1;
 #endif
+}
+
+int us_socket_delivered_bytes(struct us_socket_t *s, uint64_t *bytes) {
+    if (us_socket_is_closed(s)) {
+        return -1;
+    }
+    return bsd_socket_delivered_bytes(us_poll_fd(&s->p), bytes);
+}
+
+int us_socket_delivered_since(struct us_socket_t *s, uint64_t *mark, uint64_t min_bytes) {
+    uint64_t now;
+    if (us_socket_delivered_bytes(s, &now) != 0 || now < *mark || now - *mark < min_bytes) {
+        return 0;
+    }
+    *mark = now;
+    return 1;
 }
 
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {

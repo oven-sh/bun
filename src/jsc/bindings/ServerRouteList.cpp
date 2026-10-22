@@ -135,7 +135,9 @@ private:
                     break;
                 }
                 case ':': {
-                    startOfIdentifier = j + 1;
+                    // uWS::HttpRouter only captures a segment that starts with ':'.
+                    if (startOfIdentifier || (j && path[j - 1] == '/'))
+                        startOfIdentifier = j + 1;
                     break;
                 }
                 default: {

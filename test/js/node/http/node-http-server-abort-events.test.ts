@@ -1475,3 +1475,54 @@ describe("req.socket reports how the client closed the connection", () => {
     );
   }
 });
+
+// The handler closes the connection in the same turn, so the client only sees the 1xx if the call itself sent it.
+test.concurrent.each([
+  ["writeContinue()", (res: ServerResponse) => res.writeContinue(), "HTTP/1.1 100 Continue\r\n\r\n"],
+  ["writeProcessing()", (res: ServerResponse) => res.writeProcessing(), "HTTP/1.1 102 Processing\r\n\r\n"],
+  [
+    "writeEarlyHints()",
+    (res: ServerResponse) => res.writeEarlyHints({ link: "</style.css>; rel=preload; as=style" }),
+    "HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload; as=style\r\n\r\n",
+  ],
+])("%s sends the 1xx response before the handler returns", async (_, write, expected) => {
+  const server = createServer((req, res) => {
+    write(res);
+    req.socket.destroy();
+  });
+  try {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    let wire = "";
+    client.setEncoding("latin1");
+    client.on("data", chunk => (wire += chunk));
+    client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    await once(client, "close");
+    expect(wire).toBe(expected);
+  } finally {
+    server.close();
+  }
+});
+
+test("writeContinue() calls its callback on a later tick", async () => {
+  const order: string[] = [];
+  const called = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    res.writeContinue(() => {
+      order.push("callback");
+      called.resolve();
+    });
+    order.push("returned");
+    res.end();
+  });
+  try {
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.resume();
+    client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    await Promise.all([called.promise, once(client, "close")]);
+    expect(order).toEqual(["returned", "callback"]);
+  } finally {
+    server.close();
+  }
+});

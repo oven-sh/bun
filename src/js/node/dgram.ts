@@ -1186,17 +1186,20 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
     return;
   }
   const promise = $newPromise();
-  this.close(FunctionPrototypeBind.$call(onAsyncDisposeClosed, undefined, promise));
+  this.close(createAsyncDisposeClosedCallback(promise));
 
   return promise;
 };
 
-function onAsyncDisposeClosed(promise, err) {
-  if (err) {
-    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
-  } else {
-    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
-  }
+// A closure, not bind(). A patched Function.prototype.bind would receive a function that settles any argument without a type check.
+function createAsyncDisposeClosedCallback(promise) {
+  return err => {
+    if (err) {
+      $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+    } else {
+      $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+    }
+  };
 }
 
 function socketCloseNT(self) {

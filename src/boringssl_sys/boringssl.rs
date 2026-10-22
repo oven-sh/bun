@@ -182,6 +182,27 @@ pub struct EVP_MD_CTX {
 // All-zero is exactly the state `EVP_MD_CTX_init` writes (S021).
 unsafe impl bun_core::ffi::Zeroable for EVP_MD_CTX {}
 
+/// `struct ssl_early_callback_ctx`, valid only inside a `select_certificate_cb`.
+#[repr(C)]
+pub struct SSL_CLIENT_HELLO {
+    pub ssl: *mut SSL,
+    pub client_hello: *const u8,
+    pub client_hello_len: usize,
+    pub version: u16,
+    pub random: *const u8,
+    pub random_len: usize,
+    pub session_id: *const u8,
+    pub session_id_len: usize,
+    pub dtls_cookie: *const u8,
+    pub dtls_cookie_len: usize,
+    pub cipher_suites: *const u8,
+    pub cipher_suites_len: usize,
+    pub compression_methods: *const u8,
+    pub compression_methods_len: usize,
+    pub extensions: *const u8,
+    pub extensions_len: usize,
+}
+
 /// `struct hmac_ctx_st`.
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -877,6 +898,8 @@ pub const SSL_TLSEXT_ERR_ALERT_FATAL: c_int = 2;
 pub const SSL_TLSEXT_ERR_NOACK: c_int = 3;
 
 pub const OPENSSL_NPN_NEGOTIATED: c_int = 1;
+/// `enum ssl_select_cert_result_t::ssl_select_cert_success`.
+pub const ssl_select_cert_success: c_int = 1;
 
 /// `enum ssl_renegotiate_mode_t` — passed to `SSL_set_renegotiate_mode`.
 pub type ssl_renegotiate_mode_t = c_uint;
@@ -1020,9 +1043,14 @@ unsafe extern "C" {
         name: *const c_char,
         namelen: usize,
     ) -> c_int;
+    pub fn X509_VERIFY_PARAM_set1_ip(param: *mut c_void, ip: *const u8, iplen: usize) -> c_int;
     pub fn SSL_CTX_set_keylog_callback(
         ctx: *mut SSL_CTX,
         cb: Option<unsafe extern "C" fn(ssl: *const SSL, line: *const c_char)>,
+    );
+    pub fn SSL_CTX_set_select_certificate_cb(
+        ctx: *mut SSL_CTX,
+        cb: Option<unsafe extern "C" fn(client_hello: *const SSL_CLIENT_HELLO) -> c_int>,
     );
     pub fn SSL_CTX_set_early_data_enabled(ctx: *mut SSL_CTX, enabled: c_int);
     pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;

@@ -1115,6 +1115,7 @@ impl RewriterPipe {
         }
 
         result_ref.set_url(original.url().clone());
+        result_ref.set_body_decoded(original.body_decoded());
 
         // ── wire input ──────────────────────────────────────────────────────
         let value = original.get_body_value();

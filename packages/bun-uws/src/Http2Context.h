@@ -117,6 +117,8 @@ static constexpr size_t MAX_QUEUED_CONTROL = 1u << 20;
 /* RST_STREAM token bucket (CVE-2023-44487 class): burst, refill per second. */
 static constexpr double RESET_BURST = 1000;
 static constexpr double RESET_REFILL_PER_SEC = 33;
+/* Seconds the peer has to answer the FIN of a graceful close. usockets waits as long for a TLS peer's close_notify. */
+static constexpr unsigned FIN_WAIT_TIMEOUT_S = 10;
 
 static constexpr char CLIENT_PREFACE[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 static constexpr uint32_t CLIENT_PREFACE_LEN = 24;
@@ -391,6 +393,8 @@ struct Http2Connection {
     uint32_t lastProcessedStreamId = 0;
     bool goawaySent = false;
     bool goawayReceived = false;
+    /* finish() ran. No frame is read or written after it. */
+    bool finSent = false;
     double resetTokens = http2::RESET_BURST;
     std::chrono::steady_clock::time_point resetRefilledAt = std::chrono::steady_clock::now();
 
@@ -424,6 +428,9 @@ struct Http2Connection {
     /* Seconds of silence before onTimeout; recomputed when a stream sets a
      * timeout or retires (see Http2Response::timeoutS). */
     unsigned idleTimeoutS = 0;
+    /* Same as HTTP_DELIVERED_BYTES_RECORDED and HttpResponseData::deliveredBytes. */
+    bool deliveredBytesRecorded = false;
+    uint64_t deliveredBytes = 0;
     int drainDepth = 0;
 
     Http2Connection(us_socket_t *socket, Http2Context *context) : s(socket), ctx(context) {
@@ -588,7 +595,16 @@ struct Http2Connection {
     inline void scheduleFlush();
 
     bool drainedAfterGoaway() {
-        return !closed && streams.empty() && (goawaySent || goawayReceived) && out->length() == 0;
+        return !closed && !finSent && streams.empty() && (goawaySent || goawayReceived) && out->length() == 0;
+    }
+
+    /* The graceful close, once drainedAfterGoaway() holds. The kernel may still hold the end of a response, and
+     * close(2) would drop it as soon as another frame (a WINDOW_UPDATE, say) arrives. So send a FIN behind it and
+     * drop input until the peer's FIN closes the socket, or onTimeout does. */
+    void finish() {
+        finSent = true;
+        us_socket_shutdown(s);
+        us_socket_timeout(s, http2::FIN_WAIT_TIMEOUT_S);
     }
 
     bool takeResetToken() {
@@ -647,6 +663,9 @@ struct Http2Context {
     /* Seconds without traffic in either direction before a connection is
      * dropped (streams in flight are aborted); 0 disables. */
     unsigned idleTimeoutS = 10;
+    /* A graceful stop ran. A connection adopted after it (its TLS handshake or
+     * cleartext preface was pending) sends GOAWAY with its first stream. */
+    bool stopping = false;
 
     /* Output buffer lent to whichever connection is inside a socket event;
      * see Http2Connection::out. */
@@ -790,22 +809,24 @@ struct Http2Context {
         forEachConnection([](Http2Connection *conn) {
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
-            us_socket_close(conn->s, 0, nullptr);
+            us_socket_close_now(conn->s);
         });
     }
 
     /* Close connections with nothing in flight (after a GOAWAY). With
      * `closeWhenIdle`, busy connections also get GOAWAY so no new streams
      * start and they close once their last stream retires (graceful stop);
-     * without it they are left alone. */
+     * without it they are left alone. A connection with unsent bytes closes
+     * from the epilogue of the writable event that drains them. */
     size_t closeIdle(bool closeWhenIdle) {
+        if (closeWhenIdle) stopping = true;
         size_t closedNow = 0;
         forEachConnection([&](Http2Connection *conn) {
-            if (!conn->streams.empty() && !closeWhenIdle) return;
+            if (conn->finSent || (!conn->streams.empty() && !closeWhenIdle)) return;
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
-            if (conn->streams.empty()) {
-                us_socket_close(conn->s, 0, nullptr);
+            if (conn->drainedAfterGoaway()) {
+                conn->finish();
                 closedNow++;
             }
         });
@@ -867,7 +888,7 @@ struct Http2Context {
             conn->returnSharedOut();
             conn->busy--;
             if (!sweepConnection(conn)) continue;
-            if (conn->drainedAfterGoaway()) us_socket_close(conn->s, 0, nullptr);
+            if (conn->drainedAfterGoaway()) conn->finish();
         }
     }
 
@@ -904,8 +925,8 @@ private:
     /* ── socket vtable ────────────────────────────────────────────────── */
 
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
-        if (us_socket_is_shut_down(s)) return s;
         Http2Connection *conn = connection(s);
+        if (conn->finSent || us_socket_is_shut_down(s)) return s;
         conn->borrowSharedOut();
         conn->onData(data, (size_t) length);
         return s;
@@ -956,6 +977,13 @@ private:
      * connection): streams in flight are aborted through onClose. */
     static us_socket_t *onTimeout(us_socket_t *s) {
         Http2Connection *conn = connection(s);
+        if (conn->finSent) return us_socket_close_now(s);
+        /* Same rule as HttpContext::onTimeout. */
+        if (s->flags.last_write_failed && conn->deliveredBytesRecorded
+            && us_socket_delivered_since(s, &conn->deliveredBytes, (uint64_t) HttpContext<false>::HTTP_RECEIVE_THROUGHPUT_BYTES * conn->idleTimeoutS)) {
+            us_socket_timeout(s, conn->idleTimeoutS);
+            return s;
+        }
         conn->busy++;
         std::vector<Http2Response *> open = conn->streams;
         for (Http2Response *stream : open) {
@@ -968,7 +996,9 @@ private:
         }
         if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
         conn->flush();
-        return us_socket_close(s, 0, nullptr);
+        /* With no stream to abort, a TLS close can wait for the peer's close_notify, so a request that crosses the GOAWAY isn't reset. */
+        if (conn->streams.empty()) return us_socket_close(s, 0, nullptr);
+        return us_socket_close_now(s);
     }
 
     static us_socket_t *onEnd(us_socket_t *s) {
@@ -978,7 +1008,7 @@ private:
     }
 
     /* After user code ran from a socket event: push bytes out, free what
-     * retired, close a drained going-away connection. */
+     * retired, finish a drained going-away connection. */
     static us_socket_t *epilogue(Http2Connection *conn, us_socket_t *s) {
         if (conn->closed) {
             conn->returnSharedOut();
@@ -990,7 +1020,7 @@ private:
         conn->busy--;
         conn->returnSharedOut();
         if (!sweepConnection(conn)) return s;
-        if (conn->drainedAfterGoaway()) return us_socket_close(s, 0, nullptr);
+        if (conn->drainedAfterGoaway()) conn->finish();
         return s;
     }
 
@@ -1030,7 +1060,12 @@ inline void Http2Connection::writeSettings() {
 }
 
 inline void Http2Connection::touch() {
+    if (finSent) return;
     us_socket_timeout(s, idleTimeoutS);
+    /* See HttpResponse::resetTimeout. */
+    if (s->flags.last_write_failed) [[unlikely]] {
+        deliveredBytesRecorded = idleTimeoutS && us_socket_delivered_bytes(s, &deliveredBytes) == 0;
+    }
 }
 
 inline void Http2Connection::recomputeIdleTimeout() {
@@ -1299,7 +1334,7 @@ inline void Http2Connection::onData(const char *data, size_t length) {
             return;
         }
         if (avail - consumed < http2::FRAME_HEADER_SIZE + flen) break;
-        if (!handleFrame(type, flags, streamId, h + http2::FRAME_HEADER_SIZE, flen) || closed) {
+        if (!handleFrame(type, flags, streamId, h + http2::FRAME_HEADER_SIZE, flen) || closed || finSent) {
             busy--;
             Http2Context::epilogue(this, s);
             return;
@@ -1313,8 +1348,9 @@ inline void Http2Connection::onData(const char *data, size_t length) {
         in.append((const char *) p + consumed, avail - consumed);
     }
     /* Only frames that move a stream count as activity: a peer holding
-     * streams open at a zero window can't keep the connection alive on PINGs. */
-    if (progressed || streams.empty()) touch();
+     * streams open at a zero window can't keep the connection alive on PINGs.
+     * After a graceful stop, neither can a peer with no stream. */
+    if (progressed || (streams.empty() && !ctx->stopping)) touch();
     progressed = false;
     busy--;
     Http2Context::epilogue(this, s);
@@ -1648,6 +1684,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         return streamError(streamId, nullptr, http2::ERR_REFUSED_STREAM);
     }
     lastProcessedStreamId = streamId;
+    if (ctx->stopping) writeGoaway(http2::ERR_NO_ERROR);
     if (tooLarge) {
         Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
         stream->remoteClosed = endStream;
@@ -1723,7 +1760,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
 
 inline bool Http2Connection::dispatchRequest(Http2Response *stream, const us_quic_header_t *headers, unsigned count) {
     Http2Request req(headers, count);
-    if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && req.getHeader("expect") == "100-continue") {
+    if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && isExpect100Continue(req.getHeader("expect"))) {
         stream->writeContinue();
     }
     ctx->dispatchDepth++;
@@ -1933,7 +1970,7 @@ inline bool Http2Response::drain() {
 inline Http2Response *Http2Response::pause() {
     if (paused) return this;
     paused = true;
-    /* Like HTTP/1: a request the app has paused doesn't idle out. */
+    /* A request the app has paused doesn't idle out. */
     pausedTimeoutS = timeoutS;
     timeoutS = 0;
     conn->recomputeIdleTimeout();

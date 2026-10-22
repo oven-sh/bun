@@ -1305,3 +1305,105 @@ test(
   },
   timeout,
 );
+
+// The servers start after a tick because leaksan.supp suppresses everything allocated under
+// JSModuleLoader::evaluateNonVirtual, which is on the stack during module evaluation.
+describe.skipIf(!isASAN || isWindows)("Bun.serve request pools", () => {
+  const suppressions = join(import.meta.dirname, "../../../leaksan.supp");
+  const asanOptions = (option: string) => [bunEnv.ASAN_OPTIONS, option].filter(Boolean).join(":");
+
+  async function run(files: Record<string, string>, env: Record<string, string>) {
+    using dir = tempDir("worker-serve-pool", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  }
+
+  const runWorker = `
+    const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+    const closed = new Promise((resolve, reject) => {
+      worker.addEventListener("close", resolve);
+      worker.addEventListener("error", e => reject(e.message));
+    });
+  `;
+
+  test.concurrent.each([
+    ["http", `{}`],
+    ["https and http3", `{ tls: ${JSON.stringify({ cert: tls.cert, key: tls.key })}, http3: true }`],
+  ])(
+    "are freed when a Worker that served %s exits",
+    (_, options) =>
+      run(
+        {
+          "main.ts": `${runWorker} await closed; console.log("ok");`,
+          "worker.ts": `
+            await Bun.sleep(0);
+            const server = Bun.serve({ ...${options}, port: 0, fetch: () => new Response("ok") });
+            await (await fetch(server.url, { tls: { rejectUnauthorized: false } })).text();
+            await server.stop(true);
+          `,
+        },
+        {
+          ASAN_OPTIONS: asanOptions("detect_leaks=1"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${suppressions}`,
+        },
+      ),
+    timeout,
+  );
+
+  const parkedServer = (onRequest: string) => `
+    await Bun.sleep(0);
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch() {
+        ${onRequest}
+        return new Promise(() => {});
+      },
+    });
+    fetch(server.url).catch(() => {});
+  `;
+
+  // Malloc=1 lets ASAN see a destructor touch the dead JSC VM. It needs leak detection off.
+  test.concurrent(
+    "keep a request that is in flight when the Worker is terminated",
+    () =>
+      run(
+        {
+          "main.ts": `
+            ${runWorker}
+            await new Promise(resolve => (worker.onmessage = resolve));
+            worker.terminate();
+            await closed;
+            console.log("ok");
+          `,
+          "worker.ts": parkedServer(`postMessage("in flight");`),
+        },
+        { Malloc: "1", ASAN_OPTIONS: asanOptions("detect_leaks=0") },
+      ),
+    timeout,
+  );
+
+  // Only the parked request still references the server, so this runs without the entries that hide a server.
+  test.concurrent(
+    "keep a request that is in flight when the main thread exits",
+    async () =>
+      run(
+        {
+          "lsan.supp": (await Bun.file(suppressions).text())
+            .split("\n")
+            .filter(line => !/uws|ServerAllConnectionsClosedTask/.test(line))
+            .join("\n"),
+          "main.ts": parkedServer(`setImmediate(() => { console.log("ok"); process.exit(0); });`),
+        },
+        { ASAN_OPTIONS: asanOptions("detect_leaks=1"), LSAN_OPTIONS: "print_suppressions=0:suppressions=lsan.supp" },
+      ),
+    timeout,
+  );
+});

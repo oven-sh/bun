@@ -66,6 +66,8 @@ public:
     // Body.textStream(): the native source adapter decodes each chunk as UTF-8
     // text before enqueue.
     bool m_nativeTextMode : 1 { false };
+    // Set once a default reader is acquired with ReaderOwner::Native. Never cleared.
+    bool m_nonScriptConsumer : 1 { false };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).
     JSC::WriteBarrier<JSReadableStreamReaderBase> m_reader;

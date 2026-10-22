@@ -608,7 +608,8 @@ impl ClientSession {
             client.fail(e);
             return;
         }
-        let request = client.h2_build_request(client.body_len_for_send());
+        let mut header_overflow = Vec::new();
+        let request = client.build_request(client.body_len_for_send(), &mut header_overflow);
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
             // encodeHeader pushes into the HPACK encoder's dynamic table per
             // call, so a mid-encode failure leaves entries the server will
@@ -1207,6 +1208,10 @@ impl ClientSession {
         if let Some(err) = stream.fatal_error {
             stream.client = None;
             client.h2 = None;
+            if stream.http1_required && stream.status_code == 0 && client.can_retry_over_http1() {
+                client.retry_over_http1();
+                return true;
+            }
             // Only transparently retry when the server refused the stream
             // before producing any of it (REFUSED_STREAM after HEADERS would
             // be a server bug, but retrying then re-streams a body prefix

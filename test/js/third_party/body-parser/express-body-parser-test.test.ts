@@ -122,15 +122,10 @@ test("GET with body-parser", async () => {
     return promise;
   }
 
-  const { promise: listening, resolve, reject } = Promise.withResolvers();
+  const { promise: listening, resolve } = Promise.withResolvers();
 
-  const server = app.listen(0, async (...args) => {
-    const [err, hostname, port] = args;
-    if (err) {
-      reject(err);
-      return;
-    }
-    resolve({ hostname, port });
+  const server = app.listen(0, () => {
+    resolve({ hostname: "localhost", port: server.address().port });
   });
 
   try {

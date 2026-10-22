@@ -40,9 +40,11 @@ const hpackLit = (name: string, value: string) =>
 type RawSock = nodetls.TLSSocket;
 type StreamCb = (socket: RawSock, streamId: number, connIndex: number) => void;
 type PrefaceCb = (socket: RawSock, connIndex: number) => void;
+/** `rst` has every RST_STREAM that arrived before this PING ACK. */
+type PingAckCb = (socket: RawSock, rst: ReadonlyArray<{ id: number; code: number }>) => void;
 
 async function withAdversarialServer(
-  opts: { onPreface?: PrefaceCb; onStream?: StreamCb; settingsPayload?: Buffer | null },
+  opts: { onPreface?: PrefaceCb; onStream?: StreamCb; onPingAck?: PingAckCb; settingsPayload?: Buffer | null },
   fn: (url: string, state: { connections: number; rst: Array<{ id: number; code: number }> }) => Promise<void>,
 ) {
   const state = { connections: 0, rst: [] as Array<{ id: number; code: number }> };
@@ -76,6 +78,7 @@ async function withAdversarialServer(
         if (type === 4 && !(flags & 1) && opts.settingsPayload !== null) socket.write(frame(4, 1, 0));
         if (type === 1) opts.onStream?.(socket, id, connIndex);
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
+        if (type === 6 && flags & 1) opts.onPingAck?.(socket, state.rst);
       }
     });
     socket.on("error", () => {});
@@ -267,6 +270,41 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
     );
   });
 
+  // 1f. RFC 9113 section 8.6: HTTP/2 has no 101, so a 101 block is malformed, not
+  //     an interim response. The origin holds the final response until the client
+  //     ACKs the PING it sent after the 1xx block, so a reset that arrived by then
+  //     is for that block alone.
+  test.each([
+    ["103", { status: 200, body: "final" }, []],
+    ["101", { err: "HTTP2ProtocolError" }, [{ id: 1, code: 1 }]],
+  ])(":status %s before the final response", async (interim, expected, expectedRst) => {
+    const rstAtPingAck = Promise.withResolvers<Array<{ id: number; code: number }> | string>();
+    let streamId = 0;
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          streamId = id;
+          // A client that fails the whole connection never sends the ACK.
+          socket.once("close", () => rstAtPingAck.resolve("the connection closed before the PING ACK"));
+          socket.write(Buffer.concat([frame(1, 0x4, id, hpackStatus(interim)), frame(6, 0, 0, Buffer.alloc(8))]));
+        },
+        onPingAck: (socket, rst) => {
+          rstAtPingAck.resolve([...rst]);
+          socket.write(
+            Buffer.concat([frame(1, 0x4, streamId, hpackStatus200), frame(0, 0x1, streamId, Buffer.from("final"))]),
+          );
+        },
+      },
+      async url => {
+        const out = await fetch(url, h2).then(
+          r => r.text().then(body => ({ status: r.status, body })),
+          e => ({ err: errcode(e) }),
+        );
+        expect({ out, rst: await rstAtPingAck.promise }).toEqual({ out: expected, rst: expectedRst });
+      },
+    );
+  });
+
   // 2. MAX_CONCURRENT_STREAMS=0: server allows zero streams.
   test("MAX_CONCURRENT_STREAMS=0 does not hang", async () => {
     await withAdversarialServer(
@@ -438,35 +476,101 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
     await withAdversarialServer(
       {
         onStream: (socket, id) => {
-          // END_HEADERS only (0x4) — no END_STREAM.
+          if (id === 1) {
+            // END_HEADERS only (0x4) — no END_STREAM.
+            socket.write(
+              frame(
+                1,
+                0x4,
+                id,
+                Buffer.concat([
+                  hpackStatus200,
+                  hpackLit("content-length", "0"),
+                  hpackLit("content-type", "text/event-stream"),
+                ]),
+              ),
+            );
+          } else {
+            // The barrier request.
+            socket.write(frame(1, 0x5, id, hpackStatus200));
+          }
+        },
+      },
+      async (url, state) => {
+        await using proc = spawnFetch(`
+          const opts = {
+            protocol: "http2",
+            signal: AbortSignal.timeout(8000),
+            tls: { rejectUnauthorized: false },
+          };
+          const r = await fetch(${JSON.stringify(url)}, opts);
+          const body = await r.text();
+          // RST_STREAM(1) is queued ahead of HEADERS(3) on the same socket, so
+          // this response proves the RST reached the server. Without it the
+          // subprocess can exit with the RST still in the send buffer.
+          const barrier = (await fetch(${JSON.stringify(url)}, opts)).status;
+          console.log(JSON.stringify({ status: r.status, body, barrier }));
+        `);
+        const { stdout, stderr, exitCode } = await collect(proc);
+        // stderr first: on a crash it carries the panic/ASAN report.
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ status: 200, body: "", barrier: 200 });
+        expect(exitCode).toBe(0);
+        // The server never ended stream 1, so the client must send
+        // RST_STREAM(CANCEL). Otherwise the stream stays half-open and counts
+        // against MAX_CONCURRENT_STREAMS.
+        expect({ rst: state.rst, connections: state.connections }).toEqual({
+          rst: [{ id: 1, code: 8 }],
+          connections: 1,
+        });
+      },
+    );
+  });
+
+  // 9b. Same headers with DATA in the same TLS record. The extra byte
+  //     contradicts content-length: 0 (RFC 9113 §8.1.1). The head is already
+  //     valid by then, so fetch() resolves and the body read rejects.
+  test("content-length: 0 with coalesced DATA is a Content-Length mismatch", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          // One write so HEADERS and DATA land in the same parseFrames pass.
           socket.write(
-            frame(
-              1,
-              0x4,
-              id,
-              Buffer.concat([
-                hpackStatus200,
-                hpackLit("content-length", "0"),
-                hpackLit("content-type", "text/event-stream"),
-              ]),
-            ),
+            Buffer.concat([
+              frame(
+                1,
+                0x4,
+                id,
+                Buffer.concat([
+                  hpackStatus200,
+                  hpackLit("content-length", "0"),
+                  hpackLit("content-type", "text/event-stream"),
+                ]),
+              ),
+              frame(0, 0, id, Buffer.from("x")),
+            ]),
           );
         },
       },
       async url => {
         await using proc = spawnFetch(`
-          const r = await fetch(${JSON.stringify(url)}, {
+          const out = await fetch(${JSON.stringify(url)}, {
             protocol: "http2",
             signal: AbortSignal.timeout(8000),
             tls: { rejectUnauthorized: false },
-          });
-          const body = await r.text();
-          console.log(JSON.stringify({ status: r.status, body }));
+          }).then(
+            r =>
+              r.text().then(
+                body => ({ status: r.status, body }),
+                e => ({ status: r.status, bodyErr: e.code || e.name }),
+              ),
+            e => ({ err: e.code || e.name }),
+          );
+          console.log(JSON.stringify(out));
         `);
         const { stdout, stderr, exitCode } = await collect(proc);
-        // stderr first: on a crash it carries the panic/ASAN report.
         expect(stderr).toBe("");
-        expect(stdout.trim()).toBe('{"status":200,"body":""}');
+        expect(JSON.parse(stdout.trim())).toEqual({ status: 200, bodyErr: "HTTP2ContentLengthMismatch" });
         expect(exitCode).toBe(0);
       },
     );

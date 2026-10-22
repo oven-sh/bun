@@ -55,6 +55,12 @@ struct H3App {
     }
     /* GOAWAY + drain. The engine itself is torn down in the destructor. */
     void close() { http3Context->shutdown(); }
+    /* See us_quic_socket_context_on_released. */
+    void onReleased(void (*cb)(void *), void *user) {
+        http3Context->getContextData()->onReleased = cb;
+        http3Context->getContextData()->onReleasedUser = user;
+    }
+    bool isReleased() { return us_quic_socket_context_is_released((us_quic_socket_context_t *) http3Context) != 0; }
     bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {
         us_bun_socket_context_options_t raw;
         memcpy(&raw, &options, sizeof(raw));

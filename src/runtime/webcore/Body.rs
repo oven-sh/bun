@@ -21,6 +21,7 @@ use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFString, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
 use bun_jsc::StringJsc as _;
+use bun_jsc::SysErrorJsc as _;
 use bun_jsc::bun_string_jsc;
 
 /// Deref the `Value::WTFStringImpl` payload.
@@ -971,9 +972,10 @@ impl Value {
 
         if let Some(form_data) = as_dom_form_data(value) {
             // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
-                &mut *form_data
-            })));
+            return match Blob::from_dom_form_data(global_this, unsafe { &mut *form_data }) {
+                Ok(blob) => Ok(Value::Blob(blob)),
+                Err(err) => Err(err.throw(global_this)),
+            };
         }
 
         if let Some(search_params) = as_url_search_params(value) {
@@ -1625,6 +1627,17 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
+    /// Creates the header list if there is none yet, which copies the body's `Content-Type` into it.
+    fn ensure_headers(&self, global_this: &JSGlobalObject) -> JsResult<()>;
+
+    /// Call before a reader takes the body: a used body or a stream no longer has the `Content-Type`.
+    fn copy_content_type_to_headers(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        if matches!(self.get_body_value(), Value::Blob(blob) if !blob.content_type_slice().is_empty())
+        {
+            self.ensure_headers(global_this)?;
+        }
+        Ok(())
+    }
 
     // ────────────────────────────────────────────────────────────────────
     // Twin methods (identical for Request/Response). These were previously
@@ -1769,6 +1782,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
+        self.copy_content_type_to_headers(global_object)?;
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| {
@@ -1791,6 +1805,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 return Ok(readable.value);
             }
         }
+        self.copy_content_type_to_headers(global_this)?;
         let stream = self
             .get_body_value()
             .to_readable_stream(&global_this.js_thread(context))?;
@@ -1824,6 +1839,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         // Step 2: null body → a new empty closed ReadableStream.
         // Steps 3-6: decode directly from the body's backing bytes.
+        self.copy_content_type_to_headers(global_this)?;
         let stream = self.get_body_value().to_text_readable_stream(&cx)?;
         if stream.is_null() {
             return ReadableStream::empty(global_this);
@@ -1917,6 +1933,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
+        self.copy_content_type_to_headers(global_object)?;
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| {
@@ -1972,6 +1989,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
+        self.copy_content_type_to_headers(global_object)?;
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
@@ -2023,6 +2041,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
+        self.copy_content_type_to_headers(global_object)?;
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
@@ -2079,6 +2098,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 .reject());
         };
 
+        self.copy_content_type_to_headers(global_object)?;
         let value = self.get_body_value();
         if let Value::Locked(_locked) = value {
             let owned_readable = self.get_body_readable_stream();
@@ -2180,6 +2200,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
+        self.copy_content_type_to_headers(global_object)?;
         let value = self.get_body_value();
         let blob_ptr = Blob::new(value.use_());
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.

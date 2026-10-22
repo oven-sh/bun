@@ -17,6 +17,7 @@ use crate::h3_client as H3;
 use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
+use crate::ssl_config::{SSLConfig, SharedPtr};
 use crate::{HTTPClient, HeaderResult, Protocol};
 
 use crate::h3_client::h3_client;
@@ -34,10 +35,14 @@ pub struct ClientSession {
     pub(crate) hostname: Vec<u8>,
     pub(crate) port: u16,
     pub(crate) reject_unauthorized: bool,
+    /// The interned TLS options the connection was opened with, `None` for the default context.
+    pub(crate) tls_props: Option<SharedPtr>,
     /// The fetch session whose requests may share this connection.
     pub(crate) pool_id: u64,
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
+    /// `close_if_idle` closed the connection, so its close says nothing about the peer.
+    pub(crate) closed_by_us: bool,
     pub(crate) registry_index: u32,
 
     /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
@@ -53,6 +58,7 @@ impl ClientSession {
         hostname: Vec<u8>,
         port: u16,
         reject_unauthorized: bool,
+        tls_props: Option<SharedPtr>,
         pool_id: u64,
     ) -> *mut ClientSession {
         bun_core::heap::into_raw(Box::new(ClientSession {
@@ -61,9 +67,11 @@ impl ClientSession {
             hostname,
             port,
             reject_unauthorized,
+            tls_props,
             pool_id,
             handshake_done: false,
             closed: false,
+            closed_by_us: false,
             registry_index: u32::MAX,
             pending: Vec::new(),
         }))
@@ -74,12 +82,14 @@ impl ClientSession {
         hostname: &[u8],
         port: u16,
         reject_unauthorized: bool,
+        tls_props: Option<*const SSLConfig>,
         pool_id: u64,
     ) -> bool {
         !self.closed
             && self.port == port
             && self.pool_id == pool_id
             && self.reject_unauthorized == reject_unauthorized
+            && SSLConfig::raw_ptr(self.tls_props.as_ref()) == tls_props
             && strings::eql_long(&self.hostname, hostname, true)
     }
 
@@ -105,6 +115,7 @@ impl ClientSession {
         if let Some(qs) = self.qsocket_mut() {
             // No later request may pick a connection that is going away.
             self.closed = true;
+            self.closed_by_us = true;
             qs.close();
         }
     }
@@ -182,13 +193,14 @@ impl ClientSession {
             let Some(client) = stream.client else {
                 continue;
             };
-            if client_mut(client).async_http_id != async_http_id {
+            let client = client_mut(client);
+            if client.async_http_id != async_http_id {
                 continue;
             }
-            if core::mem::take(&mut stream.read_paused) {
-                if let Some(qs) = stream.qstream_mut() {
-                    qs.want_read(true);
-                }
+            // The consumer can be paused again by the time this runs.
+            let paused = client.signals.is_receive_paused();
+            if let Some(qs) = stream.qstream_mut() {
+                qs.hold_window(paused);
             }
             return true;
         }
@@ -227,6 +239,9 @@ impl ClientSession {
             // the stream instead of leaking it on the pooled session.
             if abort || !request_body_done {
                 qs.reset();
+            } else {
+                // Trailers and the FIN can still arrive, and nothing else releases the hold.
+                qs.hold_window(false);
             }
         }
         st.qstream = None;
@@ -270,6 +285,11 @@ impl ClientSession {
         // (NonNull → shared deref) reads the Copy `flags` field without
         // forming `&mut HTTPClient` across the `detach()` below.
         let client_ref = bun_ptr::ParentRef::from(client_ptr);
+        // An Alt-Svc upgrade whose connection never came up goes back to TCP (RFC 7838 §2.4).
+        if !self.handshake_done && client_ref.flags.forced_protocol != Some(Protocol::Http3) {
+            self.detach_with(stream, true);
+            return client_mut(client_ptr).h3_upgrade_failed(err);
+        }
         // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
         let replay_safe = !st.headers_sent || st.peer_rejected || client_ref.method.is_idempotent();
         if client_ref.flags.h3_retried || st.is_streaming_body || !replay_safe {
@@ -300,7 +320,7 @@ impl ClientSession {
         // detach()'s aliasing write to `client.h3`.
         let client = client_mut(client_ptr);
         if !ClientContext::as_mut(ctx).connect(client, &host, port) {
-            client.fail_from_h2(err);
+            client.h3_upgrade_failed(err);
         }
         // `host` drops here (was `defer bun.default_allocator.free(host)`).
     }
@@ -328,6 +348,27 @@ impl ClientSession {
             return true;
         }
         false
+    }
+
+    /// The stream closed without a FIN (`deliver` detaches at the FIN), so a body that already started is truncated.
+    pub(crate) fn on_stream_closed(&mut self, stream: *mut Stream, peer_reset: bool) {
+        let st = stream_mut(stream);
+        if !st.headers_delivered {
+            return self.deliver(stream, true);
+        }
+        let aborted = st
+            .client
+            .is_some_and(|client| client_mut(client).signals.get(Signal::Aborted));
+        self.fail(
+            stream,
+            if aborted {
+                crate::Error::Aborted
+            } else if peer_reset {
+                crate::Error::HTTP3StreamReset
+            } else {
+                crate::Error::ConnectionClosed
+            },
+        );
     }
 
     /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.

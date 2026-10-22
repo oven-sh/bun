@@ -33,6 +33,7 @@
 #include <string_view>
 #include <span>
 #include <type_traits>
+#include <utility>
 #include <wtf/Vector.h>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
@@ -108,6 +109,10 @@ struct HttpResponseData;
         HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
         /* A byte in the request target that llhttp rejects (HPE_INVALID_URL). node:http compat only. */
         HTTP_PARSER_ERROR_INVALID_URL = 18,
+        /* llhttp's other Content-Length reasons. HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH is a non-digit in the value. */
+        HTTP_PARSER_ERROR_EMPTY_CONTENT_LENGTH = 19,
+        HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW = 20,
+        HTTP_PARSER_ERROR_DUPLICATE_CONTENT_LENGTH = 21,
     };
 
 
@@ -490,6 +495,10 @@ struct HttpResponseData;
 
                         // Move past comma if present
                         if (pos < value.length() && value[pos] == ',') {
+                            /* llhttp rejects any comma after "chunked", even with nothing behind it ("chunked,"). */
+                            if (te.chunked) [[unlikely]] {
+                                te.invalid = true;
+                            }
                             pos++;
                         }
                     }
@@ -720,7 +729,29 @@ struct HttpResponseData;
         bool nodeHttpBodyUntilEof = false;
         /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
         bool sawConnectionClose = false;
+        /* Bun.serve: a response is pending, so the parse loop stops at the next request boundary and parks
+         * the rest of the read in parkedRequestBytes. HttpContext::onData derives it. */
+        bool parkAtNextBoundary = false;
+        /* Offset of the first parked byte in parkedRequestBytes. */
+        unsigned int parkedRequestBytesStart = 0;
+        WTF::Vector<char> parkedRequestBytes;
+        /* The buffer HttpContext::replayParkedRequestBytes is parsing, or nullptr. */
+        WTF::Vector<char> *replayedRequestBytes = nullptr;
     private:
+        void parkRequestBytes(char *data, unsigned int length) {
+            /* A replay parks the tail of its own buffer. Take the buffer back and move the start, so N parked requests don't cost N copies. */
+            if (WTF::Vector<char> *replayed = std::exchange(replayedRequestBytes, nullptr)) {
+                const uintptr_t begin = (uintptr_t) replayed->mutableSpan().data();
+                if (parkedRequestBytes.isEmpty() && (uintptr_t) data >= begin && (uintptr_t) data + length <= begin + replayed->size()) {
+                    parkedRequestBytesStart = (unsigned int) ((uintptr_t) data - begin);
+                    replayed->shrink(parkedRequestBytesStart + length);
+                    parkedRequestBytes = std::exchange(*replayed, {});
+                    return;
+                }
+            }
+            parkedRequestBytes.append(std::span<const char>(data, length));
+        }
+
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
 
@@ -739,6 +770,7 @@ struct HttpResponseData;
          * personality so a client cannot stream unbounded extension bytes. */
         static const uint64_t MAX_CHUNK_EXTENSION_SIZE = 16 * 1024;
 
+    public:
         /* Returns UINT64_MAX on error. Maximum 999999999 is allowed. */
         static uint64_t toUnsignedInteger(std::string_view str) {
             /* We assume at least 64-bit integer giving us safely 999999999999999999 (18 number of 9s) */
@@ -757,6 +789,7 @@ struct HttpResponseData;
             return unsignedIntegerValue;
         }
 
+    private:
         static inline uint64_t hasLess(uint64_t x, uint64_t n) {
             return (((x)-~0ULL/255*(n))&~(x)&~0ULL/255*128);
         }
@@ -1291,12 +1324,20 @@ struct HttpResponseData;
                     }
                 }
             }
-            /* Must stay below the tunnel check, the park and the CR/LF skip, like llhttp's closed state. */
+            /* Must stay below the tunnel check and the CR/LF skip, like llhttp's closed state. */
             if (sawConnectionClose) {
                 if constexpr (IsNodeHttp) {
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
                 }
                 return HttpParserResult::success(consumedTotal + length, user);
+            }
+            /* Stays below the sawConnectionClose check, because parking pauses reads and closing over unread bytes
+             * resets the connection. Bytes that arrive while others are parked queue behind them. */
+            if constexpr (!IsNodeHttp) {
+                if (parkAtNextBoundary || !parkedRequestBytes.isEmpty()) [[unlikely]] {
+                    parkRequestBytes(data, length);
+                    return HttpParserResult::success(consumedTotal + length, user);
+                }
             }
             bool isConnectRequestLine = false;
             auto result = getHeaders<IsNodeHttp>(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields);
@@ -1321,8 +1362,10 @@ struct HttpResponseData;
             /* Add all headers to bloom filter */
             req->bf.reset();
 
+            unsigned int hostHeaderCount = 0;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
+                hostHeaderCount += h->key.length() == 4 && !strncasecmp(h->key.data(), "host", 4);
             }
             if (req->isAncient() || req->hasConnectionClose(IsNodeHttp)) {
                 sawConnectionClose = true;
@@ -1343,12 +1386,12 @@ struct HttpResponseData;
                     if (h->key.length() == 14 && !strncasecmp(h->key.data(), "content-length", 14)) {
                         if (contentLengthString.data() == nullptr) {
                             if (h->value.length() == 0) {
-                                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
+                                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_EMPTY_CONTENT_LENGTH);
                             }
                             contentLengthString = h->value;
                         } else if (h->value.length() != contentLengthString.length() ||
                                    strncmp(h->value.data(), contentLengthString.data(), contentLengthString.length())) {
-                            return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
+                            return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_DUPLICATE_CONTENT_LENGTH);
                         }
                     }
                 }
@@ -1444,9 +1487,14 @@ struct HttpResponseData;
              * detected while llhttp parses the headers, whereas the Host requirement is a
              * post-completion check, so on doubly-invalid input the framing error wins (Node
              * reports e.g. HPE_INVALID_TRANSFER_ENCODING for such requests). */
-            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
+            if (!req->ancientHttp && requireHostHeader && hostHeaderCount == 0
                 && !(IsNodeHttp && (isConnectRequestLine || req->getHeader("upgrade").data()))) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
+            }
+
+            /* RFC 9112 3.2: more than one Host line is a 400. node:http follows llhttp and keeps the first. */
+            if (!IsNodeHttp && hostHeaderCount > 1) [[unlikely]] {
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
             }
 
             /* Parse query */
@@ -1462,7 +1510,8 @@ struct HttpResponseData;
                  * Content-Length value must never reach a flag bit. UINT64_MAX (parse error) is
                  * also caught by this since UINT64_MAX > STATE_SIZE_MASK. */
                 if (remainingStreamingBytes > STATE_SIZE_MASK) [[unlikely]] {
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
+                    const bool allDigits = contentLengthString.find_first_not_of("0123456789") == std::string_view::npos;
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, allDigits ? HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW : HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
                 }
             }
 
@@ -1547,7 +1596,7 @@ struct HttpResponseData;
                 if constexpr (!ConsumeMinimally) {
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
                     std::string_view dataToConsume(data, length);
-                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxBufferedHeaderSize)) {
+                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxBufferedHeaderSize)) {
                         /* llhttp errors at the offending extension byte, before any body bytes from
                          * that chunk reach the application; check before every dispatch. */
                         if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1588,7 +1637,8 @@ struct HttpResponseData;
                     consumedTotal += consumed;
                 }
             } else if (contentLengthStringLen) {
-                if constexpr (!ConsumeMinimally) {
+                /* The caller streams the body after a ConsumeMinimally pass, but only while remainingStreamingBytes isn't 0. Content-Length: 0 has to get its fin here. */
+                if (!ConsumeMinimally || remainingStreamingBytes == 0) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     bool fin = emittable == remainingStreamingBytes;
                     /* Account for the chunk before the handler runs, like the chunked
@@ -1647,7 +1697,7 @@ public:
             } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                  /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
-                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
+                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
                     if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
@@ -1763,7 +1813,7 @@ public:
                     } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                         /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
-                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
+                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
                             if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                             }

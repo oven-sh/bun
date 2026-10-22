@@ -130,6 +130,40 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
       body: headEnd === -1 ? null : received.slice(headEnd + 4),
     }).toEqual({ statusLine: "HTTP/1.1 200 OK", body });
   });
+
+  test.concurrent("res.socket.end() behind 8 MiB the client hasn't read, on a response that never ends", async () => {
+    const size = 8 * 1024 * 1024;
+    const { promise: heldAtEnd, resolve } = Promise.withResolvers<number>();
+    const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+    const onRequest: Handler = (req, res) => {
+      res.writeHead(200, { "Content-Length": size });
+      res.write(Buffer.alloc(size, "a"));
+      res.socket!.on("close", () => onServerSocketClose());
+      res.socket!.end();
+      // In the tick of a write, writableLength also counts the bytes that the transport took.
+      process.nextTick(() => resolve(res.writableLength));
+    };
+    await using server = protocol === "https" ? https.createServer(tlsCert, onRequest) : http.createServer(onRequest);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true };
+    const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+    try {
+      let received = 0;
+      let head = -1;
+      client.on("data", (chunk: Buffer) => {
+        if (head === -1) head = chunk.indexOf("\r\n\r\n") + 4;
+        received += chunk.length;
+      });
+      const serverEnded = once(client, "end");
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      await serverEnded;
+      expect({ body: received - head, finWaited: (await heldAtEnd) > 0 }).toEqual({ body: size, finWaited: true });
+      client.end();
+      await serverSocketClosed;
+    } finally {
+      client.destroy();
+    }
+  });
 });
 
 // An http.Server socket has allowHalfOpen: end() sends the FIN, and the request in flight still gets its body.
@@ -402,5 +436,86 @@ describe.each(["http", "https"] as const)("%s: the request body behind the FIN o
     } finally {
       client.destroy();
     }
+  });
+});
+
+// The response is complete and closes the connection, but the kernel hasn't accepted all of it, so the FIN waits for
+// the drain. A request pipelined in the same read gets no response in that window, and the FIN still comes.
+describe.each(["http", "https"] as const)("%s: an 8 MiB response that closes the connection", protocol => {
+  const BIG = Buffer.alloc(8 << 20, 0x61);
+  const cases: [string, http.RequestListener][] = [
+    [
+      "res.end(body), then req.socket.end()",
+      (req, res) => {
+        res.writeHead(200, { "Content-Length": String(BIG.length) });
+        res.end(BIG);
+        req.socket.end();
+      },
+    ],
+    [
+      "res.end(body) with a Connection: close response header",
+      (req, res) => {
+        res.writeHead(200, { "Content-Length": String(BIG.length), "Connection": "close" });
+        res.end(BIG);
+      },
+    ],
+    [
+      "res.write(body) and res.end(), then req.socket.end()",
+      (req, res) => {
+        res.writeHead(200, { "Content-Length": String(BIG.length) });
+        res.write(BIG);
+        res.end();
+        req.socket.end();
+      },
+    ],
+  ];
+
+  test.each(cases)("%s: a request pipelined behind it is not answered", async (_name, respond) => {
+    let first = true;
+    const onRequest: http.RequestListener = (req, res) => {
+      if (first) {
+        first = false;
+        respond(req, res);
+      } else {
+        // Node.js also runs the listener for the pipelined request, but its socket is no longer writable.
+        res.end("second");
+      }
+    };
+    await using server = protocol === "https" ? https.createServer(tlsCert, onRequest) : http.createServer(onRequest);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const to = { port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" };
+    const client = protocol === "https" ? tls.connect({ ...to, ca: tlsCert.cert }) : net.connect(to);
+    const chunks: Buffer[] = [];
+    let received = 0;
+    let headLength = -1;
+    const { promise: outcome, resolve: settle } = Promise.withResolvers<"close" | "a second response">();
+    client.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      received += chunk.length;
+      if (headLength === -1) {
+        const headEnd = Buffer.concat(chunks).indexOf("\r\n\r\n");
+        if (headEnd === -1) return;
+        headLength = headEnd + 4;
+      }
+      // Settle on the first extra byte. After a second response the FIN only comes with the keep-alive timeout.
+      if (received > headLength + BIG.length) settle("a second response");
+    });
+    // The server can close before the client's own FIN lands.
+    client.on("error", () => {});
+    client.once("close", () => settle("close"));
+    // Neither request asks for Connection: close, so the close has to come from the server.
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    const result = await outcome;
+    client.destroy();
+
+    const response = Buffer.concat(chunks);
+    const body = response.subarray(Math.max(headLength, 0));
+    expect({
+      outcome: result,
+      statusLine: response.subarray(0, response.indexOf("\r\n")).toString("latin1"),
+      bodyLength: body.length,
+      bodyIntact: body.equals(BIG),
+    }).toEqual({ outcome: "close", statusLine: "HTTP/1.1 200 OK", bodyLength: BIG.length, bodyIntact: true });
   });
 });

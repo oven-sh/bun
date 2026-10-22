@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
+import { getSystemErrorName } from "node:util";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -257,6 +258,29 @@ describe("net.createServer listen", () => {
     occupant.close();
     await once(occupant, "close");
     expect(order).toEqual(["error:EADDRINUSE", "nextTick"]);
+  });
+
+  it("a listen() error has Node's negative errno", async () => {
+    const occupant: Server = createServer();
+    occupant.listen(0);
+    await once(occupant, "listening");
+    const { port } = occupant.address() as AddressInfo;
+
+    const server: Server = createServer();
+    server.listen(port);
+    const [err] = (await once(server, "error")) as [NodeJS.ErrnoException];
+    occupant.close();
+    await once(occupant, "close");
+    const { code, syscall, errno } = err;
+    expect({
+      code,
+      syscall,
+      errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno,
+    }).toEqual({
+      code: "EADDRINUSE",
+      syscall: "listen",
+      errno: "EADDRINUSE",
+    });
   });
 
   // How vite, get-port and friends probe for a free port: listen, then close()

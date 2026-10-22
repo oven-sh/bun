@@ -319,7 +319,9 @@ impl EventLoop {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
+        if self.vm_ref().is_inside_deferred_task_queue.get() {
+            self.vm_ref().deferred_task_entered_js.set(true);
+        } else if count == 1 {
             let _ = self.drain_microtasks();
         }
 
@@ -389,7 +391,10 @@ impl EventLoop {
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
         let inside_deferred = self.vm_ref().is_inside_deferred_task_queue.get();
-        let result = if allow_drain_microtask && count == 1 && !inside_deferred {
+        let result = if inside_deferred {
+            self.vm_ref().deferred_task_entered_js.set(true);
+            Ok(())
+        } else if allow_drain_microtask && count == 1 {
             self.drain_microtasks()
         } else {
             Ok(())
@@ -439,6 +444,15 @@ impl EventLoop {
         vm.is_inside_deferred_task_queue.set(true);
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
+
+        // Drain again. Otherwise microtasks queued by that JS wait for the next event, or never run if the loop exits first.
+        if vm.deferred_task_entered_js.replace(false) {
+            match JSC__JSGlobalObject__drainMicrotasks(global_object) {
+                drain_result::SUCCESS | drain_result::PENDING_EXCEPTION => {}
+                drain_result::STOPPED => return Err(Stopped),
+                _ => unreachable!(),
+            }
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT

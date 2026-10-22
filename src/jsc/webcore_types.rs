@@ -381,15 +381,15 @@ impl Blob {
     // pulling the whole `BlobExt` trait into scope.
     // ────────────────────────────────────────────────────────────────────
 
-    /// `Blob.hasContentTypeFromUser()` — `true` when the user set a type
-    /// explicitly *or* the store is file/S3-backed (whose mime is sniffed).
+    /// Returns true if the type isn't empty and the user set it or the store is file/S3-backed (whose mime is sniffed).
     #[inline]
     pub fn has_content_type_from_user(&self) -> bool {
-        self.content_type_was_set.get()
-            || self
-                .store()
-                .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
-                .unwrap_or(false)
+        !self.content_type_slice().is_empty()
+            && (self.content_type_was_set.get()
+                || self
+                    .store()
+                    .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
+                    .unwrap_or(false))
     }
 
     /// `Blob.contentTypeOrMimeType()` — explicit `content_type` if set, else

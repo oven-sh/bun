@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 import path from "node:path";
 
@@ -9,9 +9,12 @@ describe("an Upgrade request with a body", () => {
   const fixture = path.join(import.meta.dir, "node-http-upgrade-body-fixture.js");
   const nativeLog = "[nodehttpresponse] ";
 
-  async function run(options: Record<string, unknown>, env: Record<string, string | undefined> = bunEnv) {
+  type Options = Record<string, unknown>;
+
+  // Runs the rows in order in one child. The fixture prints one JSON line per row.
+  async function run(rows: Options[], env: Record<string, string | undefined> = bunEnv) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), fixture, JSON.stringify(options)],
+      cmd: [bunExe(), fixture, JSON.stringify(rows)],
       env,
       stdout: "pipe",
       stderr: "pipe",
@@ -19,10 +22,8 @@ describe("an Upgrade request with a body", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const lines = stdout.split("\n").filter(Boolean);
-    const printed = lines.filter(line => !line.startsWith(nativeLog));
     return {
-      // What the fixture printed, or the output of a child that died before it could.
-      ...(printed.length === 1 && printed[0].startsWith("{") ? JSON.parse(printed[0]) : { stdout }),
+      rows: lines.filter(line => !line.startsWith(nativeLog)).map(line => JSON.parse(line)),
       native: lines.filter(line => line.startsWith(nativeLog)).map(line => line.slice(nativeLog.length)),
       stderr,
       exitCode,
@@ -36,7 +37,7 @@ describe("an Upgrade request with a body", () => {
   const destroyed = (read: string) => [`req ${read} 100`, "req aborted", "req close", "socket close"];
 
   describe("gets its EOF once when the listener lets go inside the last chunk", () => {
-    const rows: [name: string, options: Record<string, unknown>, expected: { events: string[]; eofs: number }][] = [
+    const rows: [name: string, options: Options, expected: { events: string[]; eofs: number }][] = [
       ["req.destroy() in 'data'", { act: "req.destroy()" }, { events: destroyed("data"), eofs: 1 }],
       [
         "req.destroy() in 'readable'",
@@ -82,22 +83,32 @@ describe("an Upgrade request with a body", () => {
         { act: "socket.destroySoon()" },
         { events: [...ended, "socket end", "socket close"], eofs: 1 },
       ],
-      [
-        "req.destroy() in 'readable', while a TLS write that spilled defers the close",
-        { act: "req.destroy()", read: "readable", secure: true, spill: true },
-        { events: destroyed("readable"), eofs: 1 },
-      ],
     ];
-    for (const [name, options, expected] of rows) {
-      test.concurrent(name, async () => {
-        expect(await run(options)).toMatchObject({ ...expected, ...exited });
+
+    let shared: ReturnType<typeof run>;
+    let spilled: ReturnType<typeof run>;
+    beforeAll(() => {
+      shared = run(rows.map(([, options]) => options));
+      // Gets its own child. After other rows ran in the same process, this row rarely hits the crash it guards against.
+      spilled = run([{ act: "req.destroy()", read: "readable", secure: true, spill: true }]);
+    });
+
+    rows.forEach(([name, , expected], i) => {
+      test(name, async () => {
+        expect((await shared).rows[i]).toEqual(expected);
       });
-    }
+    });
+    test("the child that ran these rows exits cleanly", async () => {
+      expect(await shared).toEqual({ rows: expect.any(Array), native: [], ...exited });
+    });
+    test("req.destroy() in 'readable', while a TLS write that spilled defers the close", async () => {
+      expect(await spilled).toEqual({ rows: [{ events: destroyed("readable"), eofs: 1 }], native: [], ...exited });
+    });
   });
 
   // Only a debug build prints what uws gives to the body handler of the request.
   describe.skipIf(!isDebug)("gets nothing from uws after its last chunk", () => {
-    const rows: [name: string, options: Record<string, unknown>, events: string[]][] = [
+    const rows: [name: string, options: Options, events: string[]][] = [
       ["the close of the socket inside that chunk", { act: "socket.destroy()" }, [...ended, "socket close"]],
       [
         "bytes of the tunnel after socket.end() inside that chunk",
@@ -109,11 +120,10 @@ describe("an Upgrade request with a body", () => {
     for (const [name, options, events] of rows) {
       test.concurrent(name, async () => {
         // A BUN_DEBUG from the shell of the developer sends the log to a file. An empty one keeps it on stdout.
-        const result = await run(options, { ...bunEnv, BUN_DEBUG: "", BUN_DEBUG_NodeHTTPResponse: "1" });
+        const result = await run([options], { ...bunEnv, BUN_DEBUG: "", BUN_DEBUG_NodeHTTPResponse: "1" });
         const native = result.native.filter(line => line.startsWith("onData("));
-        expect({ ...result, native }).toMatchObject({
-          events,
-          eofs: 1,
+        expect({ ...result, native }).toEqual({
+          rows: [{ events, eofs: 1 }],
           native: ["onData(100 bytes, is_last = 1)"],
           ...exited,
         });

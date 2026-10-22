@@ -1157,6 +1157,12 @@ impl JSGlobalObject {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
 
+    /// Returns the `process.env` object, or `None` if JavaScript hasn't read `process.env` yet.
+    pub fn process_env_if_created(&self) -> Option<JSValue> {
+        let env = Bun__Process__getEnvObjectIfCreated(self);
+        (!env.is_empty()).then_some(env)
+    }
+
     // returns false if it throws
     pub fn validate_object(
         &self,
@@ -1444,6 +1450,7 @@ unsafe extern "C" {
         path: &BunString,
     ) -> bool;
 
+    safe fn Bun__Process__getEnvObjectIfCreated(global_object: &JSGlobalObject) -> JSValue;
     safe fn Bun__Process__emitWarning(
         global_object: &JSGlobalObject,
         warning: JSValue,

@@ -45,7 +45,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented. `http.Server` does not extend `net.Server`. Bun ignores `listen(handle)` and the `fd`, `ipv6Only` and `signal` options of `listen()`. `keepAlive`/`keepAliveInitialDelay` on the server are no-ops.
+🟢 Fully implemented. `http.Server` does not extend `net.Server`. `listen({ fd })` is not supported on Windows. Bun ignores `listen(handle)` and the `ipv6Only` option of `listen()`.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
@@ -105,7 +105,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
-🟡 `net` and `dgram` servers in workers are shared through the primary as in Node.js (`SCHED_RR` and `SCHED_NONE`), and handles can be passed with `worker.send()`. `node:http`/`node:https` servers in workers each bind their own socket instead, so load-balancing HTTP requests across processes is only supported on Linux (through `SO_REUSEPORT`). Otherwise, implemented but not battle-tested.
+🟡 `net` and `dgram` servers in workers are shared through the primary as in Node.js (`SCHED_RR` and `SCHED_NONE`), and handles can be passed with `worker.send()`. `node:http`/`node:https` servers in workers that listen on a fixed port each bind their own socket instead, so load-balancing HTTP requests across processes is only supported on Linux (through `SO_REUSEPORT`). A Unix socket path, port `0` and `listen({ fd })` are shared through the primary (not on Windows): every worker accepts on the one socket, as under `SCHED_NONE`. Otherwise, implemented but not battle-tested.
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 

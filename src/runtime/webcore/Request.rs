@@ -21,11 +21,11 @@ use bun_core::{String as BunString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
-use bun_http_jsc::method_jsc::MethodJsc as _;
+use bun_http_jsc::method_jsc::{self, MethodJsc as _};
 use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
-use bun_http_types::Method::Method;
+use bun_http_types::Method::{Method, OwnedMethod};
 use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
@@ -96,10 +96,10 @@ pub(crate) struct Request {
     /// once before `Box::from_raw().drop()` (which would otherwise re-run it).
     body: ManuallyDrop<BodyHiveHandle>,
     js_ref: JsCell<JsRef>,
-    pub method: Method,
-    pub(crate) flags: Flags,
+    pub method: OwnedMethod,
     pub(crate) request_context: AnyRequestContext,
     pub(crate) weak_ptr_data: WeakPtrData,
+    pub(crate) flags: Flags,
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
 }
@@ -186,6 +186,14 @@ impl BodyMixin for Request {
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         Request::get_form_data_encoding(self)
     }
+    #[inline]
+    fn ensure_headers(&self, global_this: &JSGlobalObject) -> bun_jsc::JsResult<()> {
+        if self.headers.get().is_none() {
+            self.ensure_fetch_headers(global_this)?
+                .set_implied_by_body(true);
+        }
+        Ok(())
+    }
 }
 
 // ─── header accessors & simple getters ──────────────────────────────────────
@@ -243,9 +251,10 @@ impl Request {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<&mut HeadersRef> {
-        if self.headers.get().is_some() {
+        if let Some(headers) = self.headers_mut() {
             // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+            headers.set_implied_by_body(false);
+            return Ok(headers);
         }
 
         if let Some(req) = self.request_context.get_request() {
@@ -379,12 +388,9 @@ impl Request {
             .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }
 
-    /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
-    /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
-    /// so it needs the same fetch-spec step-1 usability check.
+    /// `BunRequest.prototype.clone` (`JSBunRequest::clone`) calls this, not [`Self::do_clone`].
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
-        self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
         let cx = global_this.js_thread_of_caller_no_frame();
         self.clone(&cx).ok()
@@ -418,7 +424,7 @@ impl Request {
         url: BunString,
         headers: Option<HeadersRef>,
         body: BodyHiveHandle,
-        method: Method,
+        method: OwnedMethod,
     ) -> Request {
         Request {
             url: JsCell::new(url),
@@ -560,7 +566,7 @@ impl Request {
             )?;
 
             // Wire-form token (e.g. "M-SEARCH"), not the Rust Debug variant identifier.
-            writer.write_str(self.method.as_str())?;
+            write!(writer, "{}", bstr::BStr::new(self.method.as_bytes()))?;
             writer.write_str("\"")?;
             formatter
                 .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
@@ -701,7 +707,10 @@ impl Request {
     }
 
     pub(crate) fn get_method(&self, global_this: &JSGlobalObject) -> JSValue {
-        self.method.to_js(global_this)
+        match &self.method {
+            OwnedMethod::Known(method) => method.to_js(global_this),
+            OwnedMethod::Token(token) => bun_core::EncodedSlice::latin1(token).to_js(global_this),
+        }
     }
 
     pub(crate) fn get_mode(&self, global_this: &JSGlobalObject) -> JSValue {
@@ -993,7 +1002,7 @@ impl Request {
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
-            method: Method::GET,
+            method: Method::GET.into(),
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
@@ -1028,12 +1037,21 @@ impl Request {
         }
 
         if arguments.is_empty() {
-            bail!(Err(cx.global().throw(format_args!(
+            bail!(Err(cx.global().throw_type_error(format_args!(
                 "Failed to construct 'Request': 1 argument required, but only 0 present."
             ))));
         } else if arguments[0].is_empty_or_undefined_or_null() || !arguments[0].is_cell() {
-            bail!(Err(cx.global().throw(format_args!(
-                "Failed to construct 'Request': expected non-empty string or object, got undefined"
+            bail!(Err(cx.global().throw_type_error(format_args!(
+                "Failed to construct 'Request': expected non-empty string or object, got {}",
+                if arguments[0].is_null() {
+                    "null"
+                } else if arguments[0].is_number() {
+                    "number"
+                } else if arguments[0].is_boolean() {
+                    "boolean"
+                } else {
+                    "undefined"
+                }
             ))));
         }
 
@@ -1058,7 +1076,7 @@ impl Request {
                 fields.insert(Fields::Url);
             }
         } else if !url_or_object_type.is_object() {
-            bail!(Err(cx.global().throw(format_args!(
+            bail!(Err(cx.global().throw_type_error(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object"
             ))));
         }
@@ -1080,13 +1098,15 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        for &value in values_to_try {
+        for (i, &value) in values_to_try.iter().enumerate() {
             let value_type = value.js_type();
-            let explicit_check = values_to_try.len() == 2
-                && value_type == bun_jsc::JSType::FinalObject
-                && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
+            // `values_to_try` is `[init?, input?]`.
+            let is_input = !is_first_argument_a_url && i == values_to_try.len() - 1;
+            // A pristine Request or Response is copied without calling its getters.
+            let mut copied_internal_fields = false;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
+                    copied_internal_fields = true;
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
@@ -1105,7 +1125,7 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Method) {
-                        req.method = request.method;
+                        req.method = request.method.clone();
                         fields.insert(Fields::Method);
                     }
 
@@ -1137,8 +1157,11 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null => {}
                             _ => {
+                                if let Err(e) = request.throw_if_body_unusable(cx.global()) {
+                                    bail!(Err(e));
+                                }
                                 match request.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1152,10 +1175,12 @@ impl Request {
                 }
 
                 if let Some(response) = value.as_direct::<Response>() {
+                    copied_internal_fields = true;
                     // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
                     let response = unsafe { &mut *response };
-                    if !fields.contains(Fields::Method) {
-                        req.method = response.get_method();
+                    // A Response has no `method` property, so as `init` it can't set one.
+                    if is_input && !fields.contains(Fields::Method) {
+                        req.method = response.get_method().into();
                         fields.insert(Fields::Method);
                     }
 
@@ -1185,8 +1210,11 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match response.get_body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null => {}
                             _ => {
+                                if let Err(e) = response.throw_if_body_unusable(cx.global()) {
+                                    bail!(Err(e));
+                                }
                                 match response.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1226,11 +1254,6 @@ impl Request {
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
-                }
-
-                // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
-                if cx.global().has_exception() {
-                    bail!(Err(JsError::Thrown));
                 }
             }
 
@@ -1300,39 +1323,31 @@ impl Request {
                 }
             }
 
-            if !fields.contains(Fields::Method) || !fields.contains(Fields::Headers) {
-                match crate::webcore::response::Init::init(cx.global(), value) {
-                    Ok(Some(response_init)) => {
-                        let header_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(cx.global(), bun_jsc::BuiltinName::Headers)
-                                {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if header_check {
-                            if let Some(headers) = response_init.headers {
-                                if !fields.contains(Fields::Headers) {
-                                    req.headers.set(Some(headers));
-                                    fields.insert(Fields::Headers);
-                                } else {
-                                    drop(headers); // headers.deref()
-                                }
+            if !copied_internal_fields && !fields.contains(Fields::Headers) {
+                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Headers) {
+                    Ok(Some(headers_)) => {
+                        match HeadersRef::from_init_value(cx.global(), headers_) {
+                            Ok(Some(headers)) => {
+                                req.headers.set(Some(headers));
+                                fields.insert(Fields::Headers);
                             }
+                            Ok(None) => {}
+                            Err(e) => bail!(Err(e)),
                         }
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
 
-                        let method_check = !explicit_check
-                            || (explicit_check
-                                && match value.fast_get(cx.global(), bun_jsc::BuiltinName::Method) {
-                                    Ok(v) => v.is_some(),
-                                    Err(e) => bail!(Err(e)),
-                                });
-                        if method_check {
-                            if !fields.contains(Fields::Method) {
-                                req.method = response_init.method;
-                                fields.insert(Fields::Method);
-                            }
+            if !copied_internal_fields && !fields.contains(Fields::Method) {
+                match value.fast_get(cx.global(), bun_jsc::BuiltinName::Method) {
+                    Ok(Some(method_)) => {
+                        match method_jsc::request_method_from_js(cx.global(), method_) {
+                            Ok(method) => req.method = method,
+                            Err(e) => bail!(Err(e)),
                         }
+                        fields.insert(Fields::Method);
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
@@ -1377,7 +1392,7 @@ impl Request {
         }
 
         if req.url.get().is_empty() {
-            bail!(Err(cx.global().throw(format_args!(
+            bail!(Err(cx.global().throw_type_error(format_args!(
                 "Failed to construct 'Request': url is required."
             ))));
         }
@@ -1454,7 +1469,6 @@ impl Request {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.throw_if_body_unusable(global_this)?;
         let this_value = callframe.this();
         let cloned = self.clone(&global_this.js_thread_of_caller(callframe))?;
 
@@ -1471,6 +1485,8 @@ impl Request {
         cx: &bun_jsc::JsThread<'_>,
         preserve_url: bool,
     ) -> JsResult<()> {
+        // `clone()`, `new Request(request)` and `server.fetch(request)` all copy through here.
+        self.throw_if_body_unusable(cx.global())?;
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
         let body_ = self.clone_body_value_via_cached_stream(cx)?;
@@ -1484,6 +1500,9 @@ impl Request {
         } else {
             self.url.get().clone()
         };
+        let method = self.method.clone();
+        // The write below doesn't drop the old `req.method`, so it can't own a token.
+        debug_assert!(req.method.known().is_some());
 
         // `ptr::write` is a raw bit-overwrite — no destructors run on the old
         // `*req`, so the Drop impl on `JsRef` doesn't fire on the caller's
@@ -1504,7 +1523,7 @@ impl Request {
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
                     js_ref: JsCell::new(JsRef::empty()),
-                    method: self.method,
+                    method,
                     flags: self.flags,
                     request_context: AnyRequestContext::NULL,
                     weak_ptr_data: WeakPtrData::EMPTY,
@@ -1536,7 +1555,7 @@ impl Request {
                 BodyHiveHandle::from_raw(NonNull::dangling().as_ptr())
             }),
             js_ref: JsCell::new(JsRef::empty()),
-            method: Method::GET,
+            method: Method::GET.into(),
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
@@ -1562,7 +1581,7 @@ impl Request {
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
-            method,
+            method: method.into(),
             flags: Flags {
                 https,
                 ..Flags::default()

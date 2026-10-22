@@ -1,5 +1,7 @@
 const { isIPv4 } = require("internal/net/isIP");
 
+const queueMicrotask = globalThis.queueMicrotask;
+
 const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
   "createNodeHTTPInternalBinding",
@@ -67,6 +69,18 @@ const http1ServerPipeline: {
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
   finishDrainedResponse?: (res: unknown) => void;
   kMustCloseConnection?: symbol;
+  socketOnError?: (this: unknown, err: unknown) => void;
+  socketOnTimeout?: (this: unknown) => void;
+  onResponseFinishHandleSocket?: (server: unknown, socket: unknown, res: unknown) => void;
+  resetSocketTimeout?: (server: unknown, socket: unknown) => void;
+  kConnectionsCheckingInterval?: symbol;
+  // Registered by internal/http1_server_fallback when it loads.
+  checkHttp1Connections?: (
+    server: unknown,
+    headersTimeout: number,
+    requestTimeout: number,
+    onRequestTimeout: (socket: unknown) => void,
+  ) => void;
 } = {};
 
 export const enum NodeHTTPResponseAbortEvent {
@@ -219,7 +233,13 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
   }
 
   if (isLast) {
-    emitEOFIncomingMessage(this);
+    if (chunk) {
+      // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
+      this[eofInProgress] = true;
+      queueMicrotask(emitEOFIncomingMessageOuter.bind(undefined, this));
+    } else {
+      emitEOFIncomingMessage(this);
+    }
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();

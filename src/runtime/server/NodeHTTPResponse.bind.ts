@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 const eventHandler = { getter: b.any, setter: { capability: "js" }, passThis: true } as const;
 const head = {
   statusCode: b.i32.validateInteger(100, 999).default(200),
-  statusMessage: b.string.loose.utf8.nullable,
+  statusMessage: b.string.loose.nullable,
   /** The flat `[name, value, ...]` array, which C++ reads in place. */
   headers: b.any,
 };

@@ -1,7 +1,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
 use bun_core::{EncodedSlice, String as BunString, StringPointer};
 use bun_uws::ResponseKind;
@@ -22,6 +21,7 @@ bun_opaque::opaque_ffi! {
 // (which may free) keep their `unsafe fn` body.
 unsafe extern "C" {
     safe fn WebCore__FetchHeaders__cast_(value0: JSValue, arg1: &VM) -> *mut FetchHeaders;
+    safe fn WebCore__FetchHeaders__castAsInit(value0: JSValue) -> *mut FetchHeaders;
     safe fn WebCore__FetchHeaders__cloneThis(
         arg0: &FetchHeaders,
         arg1: &JSGlobalObject,
@@ -59,6 +59,8 @@ unsafe extern "C" {
         arg3: &JSGlobalObject,
     );
     safe fn WebCore__FetchHeaders__isEmpty(arg0: &FetchHeaders) -> bool;
+    safe fn WebCore__FetchHeaders__setImpliedByBody(arg0: &mut FetchHeaders, implied: bool);
+    safe fn WebCore__FetchHeaders__isImpliedByBody(arg0: &FetchHeaders) -> bool;
     safe fn WebCore__FetchHeaders__toJS(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
     // safe: `FetchHeaders` is an opaque ZST handle (`&mut` ≡ non-null `*mut`);
     // `arg2` is an opaque handle to a C++-owned uWS response (never dereferenced
@@ -132,6 +134,15 @@ impl FetchHeaders {
 
     pub fn is_empty(&mut self) -> bool {
         WebCore__FetchHeaders__isEmpty(self)
+    }
+
+    /// Marks a list created only to hold its body's `Content-Type`. `clone_this` copies the mark.
+    pub fn set_implied_by_body(&mut self, implied: bool) {
+        WebCore__FetchHeaders__setImpliedByBody(self, implied)
+    }
+
+    pub fn is_implied_by_body(&self) -> bool {
+        WebCore__FetchHeaders__isImpliedByBody(self)
     }
 
     pub fn create_from_uws(uws_request: *mut c_void) -> NonNull<FetchHeaders> {
@@ -239,11 +250,9 @@ impl FetchHeaders {
         NonNull::new(WebCore__FetchHeaders__cast_(value, vm))
     }
 
-    pub fn cast(value: JSValue) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: `VirtualMachine::get()` is only called from the JS thread, where
-        // `global` is a live non-null JSGlobalObject for the VM's lifetime.
-        let global = VirtualMachine::get().global();
-        Self::cast_(value, global.vm())
+    /// [`Self::cast_`] for a HeadersInit. Returns `None` if `Symbol.iterator` isn't `Headers.prototype.entries`.
+    pub fn cast_as_init(value: JSValue) -> Option<NonNull<FetchHeaders>> {
+        NonNull::new(WebCore__FetchHeaders__castAsInit(value))
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {

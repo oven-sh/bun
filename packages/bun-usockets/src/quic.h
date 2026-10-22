@@ -41,18 +41,21 @@ struct us_quic_header_t {
     int qpack_index;
 };
 
-/* Process-wide lsquic init. Must be called once before the first
- * us_create_quic_socket_context; the C++ layer (uws_h3_create_app) does this
- * via a thread-safe static local so quic.c stays free of pthread/call_once. */
-void us_quic_global_init(void);
+/* Process-wide lsquic init, run once. Every function that calls
+ * lsquic_engine_new() (here and in node_quic_shim.c) calls it first. Returns 0,
+ * or -1 if lsquic_global_init() failed. */
+int us_quic_global_init(void);
 
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s);
 
 /* Send GOAWAY on every connection and stop accepting new ones; the engine and
- * timer keep running so in-flight streams drain. */
+ * timer keep running so in-flight streams drain. The UDP socket closes with
+ * the last connection, and on_released reports it. */
 void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx);
+/* 1 once the context has no open UDP socket and no connection left. */
+int us_quic_socket_context_is_released(us_quic_socket_context_t *ctx);
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx);
 
 /* Register an additional SSL_CTX for the given SNI hostname. Names match as on a TCP listener. */
@@ -84,10 +87,13 @@ struct addrinfo_request;
  * *out_qs set). Uncached hostnames return 0 with *out_pending set — caller
  * registers a Bun__addrinfo callback and invokes
  * us_quic_pending_connect_resolved() once it fires. -1 on error. `sni` is
- * the TLS ServerNameIndication; `reject_unauthorized` is per-connection. */
+ * the TLS ServerNameIndication; `reject_unauthorized` is per-connection.
+ * `tls` gives the connection an SSL_CTX of its own (ca, cert, key, ...). NULL
+ * uses the default trust store and no client certificate. */
 int us_quic_socket_context_connect(
     us_quic_socket_context_t *ctx, const char *host, int port, const char *sni,
-    int reject_unauthorized, us_quic_socket_t **out_qs,
+    int reject_unauthorized, const struct us_bun_socket_context_options_t *tls,
+    us_quic_socket_t **out_qs,
     struct us_quic_pending_connect_s **out_pending, void *user);
 
 void *us_quic_pending_connect_user(struct us_quic_pending_connect_s *pc);
@@ -116,6 +122,12 @@ void us_quic_socket_context_on_goaway(us_quic_socket_context_t *ctx,
     void (*on_goaway)(us_quic_socket_t *));
 void us_quic_socket_context_on_close(us_quic_socket_context_t *ctx,
     void (*on_close)(us_quic_socket_t *));
+/* us_quic_socket_context_is_released became true. Runs after the close(2), and
+ * can run inside lsquic_engine_process_conns, so it must not enter the engine
+ * or free the context. us_quic_socket_context_free doesn't report. A context
+ * with this hook closes its connections if its last UDP socket goes first. */
+void us_quic_socket_context_on_released(us_quic_socket_context_t *ctx,
+    void (*on_released)(us_quic_socket_context_t *));
 
 /* Stream-level callbacks */
 void us_quic_socket_context_on_stream_open(us_quic_socket_context_t *ctx,
@@ -130,10 +142,17 @@ void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
     void (*on_close)(us_quic_stream_t *));
 
 /* Stream I/O. Read happens via on_stream_data; write returns bytes accepted
- * (may be < len under flow-control backpressure). */
+ * (may be < len under flow-control backpressure). -1 isn't backpressure: the
+ * send half is reset or finished, so no later write succeeds. */
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len);
-void us_quic_stream_want_read(us_quic_stream_t *s, int want);
-void us_quic_stream_want_write(us_quic_stream_t *s, int want);
+/* Receive backpressure, see lsquic_stream_hold_window() in lsquic.h. */
+void us_quic_stream_hold_window(us_quic_stream_t *s, int hold);
+/* -1 when the send half is finished (a FIN or a RESET_STREAM is out): no on_stream_writable follows. */
+int us_quic_stream_want_write(us_quic_stream_t *s, int want);
+/* lsquic holds one outgoing header block per stream and refuses the next one
+ * while an earlier block (a 1xx) is still unsent. Nothing was queued: send the
+ * same block again from on_stream_writable. 0 is sent, -1 is a hard failure. */
+#define US_QUIC_SEND_HEADERS_RETRY 1
 int us_quic_stream_send_headers(us_quic_stream_t *s,
     const struct us_quic_header_t *headers, unsigned int count, int end_stream);
 /* Send a 1xx interim HEADERS frame (`:status` only); the final response
@@ -151,6 +170,8 @@ int us_quic_stream_has_unacked(us_quic_stream_t *s);
 /* The code of the last RESET_STREAM or STOP_SENDING on the stream, 0 without one.
  * on_stream_close can still read it. */
 uint64_t us_quic_stream_reset_code(us_quic_stream_t *s);
+/* The peer sent RESET_STREAM. on_stream_close can still read it. */
+int us_quic_stream_reset_received(us_quic_stream_t *s);
 /* The server did not process a request above the id in its GOAWAY (RFC 9114 §5.2).
  * The RFC says the same of the request at the id, but servers on stock lsquic name
  * the last request they accepted. on_stream_close can still read it. */

@@ -1,6 +1,7 @@
 // An LD_PRELOAD shim makes epoll_ctl(EPOLL_CTL_ADD) fail with ENOSPC (what the
 // kernel returns when fs.epoll.max_user_watches is exhausted) so Bun.serve /
 // Bun.listen must throw and accepted connections must be closed, not parked.
+// The shim also makes getaddrinfo() fail for two fixed names.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import net from "node:net";
@@ -15,6 +16,7 @@ const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <netdb.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
@@ -46,6 +48,41 @@ int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     }
     return real_epoll_ctl(epfd, op, fd, event);
 }
+
+int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
+    static int (*real)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
+    if (!real) real = (int (*)(const char *, const char *, const struct addrinfo *, struct addrinfo **)) dlsym(RTLD_NEXT, "getaddrinfo");
+    if (node && strcmp(node, "eai-noname.test") == 0) return EAI_NONAME;
+    if (node && strcmp(node, "eai-again.test") == 0) return EAI_AGAIN;
+    return real(node, service, hints, res);
+}
+`;
+
+const DNS_FIXTURE = /* js */ `
+const shape = ({ code, syscall, hostname, message }) => ({ code, syscall, hostname, message });
+const out = {};
+for (const hostname of ["eai-noname.test", "eai-again.test"]) {
+  try {
+    Bun.serve({ hostname, port: 0, fetch: () => new Response() }).stop(true);
+    out["Bun.serve " + hostname] = "listening";
+  } catch (e) {
+    out["Bun.serve " + hostname] = shape(e);
+  }
+  try {
+    Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true);
+    out["Bun.listen " + hostname] = "listening";
+  } catch (e) {
+    out["Bun.listen " + hostname] = shape(e);
+  }
+  for (const name of ["http", "net"]) {
+    out[name + " " + hostname] = await new Promise(resolve => {
+      const server = require("node:" + name).createServer();
+      server.on("error", e => resolve(shape(e)));
+      server.listen(0, hostname, () => server.close(() => resolve("listening")));
+    });
+  }
+}
+console.log(JSON.stringify(out));
 `;
 
 const SERVE_FIXTURE = /* js */ `
@@ -147,6 +184,7 @@ beforeAll(async () => {
     "fetch.js": FETCH_FIXTURE,
     "connect.js": CONNECT_FIXTURE,
     "udp.js": UDP_FIXTURE,
+    "dns.js": DNS_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -208,7 +246,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
     const result = JSON.parse(line);
     expect(result).toEqual({
       ok: false,
-      errno: 28, // ENOSPC
+      errno: -28, // ENOSPC
       code: "ENOSPC",
       syscall: "listen",
       message: expect.any(String),
@@ -328,6 +366,40 @@ test.concurrent.skipIf(!isLinux || !cc)(
       code: "ENOSPC",
       errno: 28,
       message: expect.stringContaining("ENOSPC"),
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.skipIf(!isLinux || !cc)(
+  "listening on a hostname that doesn't resolve throws the getaddrinfo error",
+  async () => {
+    // Every listen fails before its epoll_ctl(), so the mode doesn't matter.
+    const { stdout, stderr, exitCode } = await runWithShim("dns.js", "udp");
+    const notFound = {
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname: "eai-noname.test",
+      message: "getaddrinfo ENOTFOUND eai-noname.test",
+    };
+    const again = {
+      code: "EAI_AGAIN",
+      syscall: "getaddrinfo",
+      hostname: "eai-again.test",
+      message: "getaddrinfo EAI_AGAIN eai-again.test",
+    };
+    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({
+      out: {
+        "Bun.serve eai-noname.test": notFound,
+        "Bun.listen eai-noname.test": notFound,
+        "http eai-noname.test": notFound,
+        "net eai-noname.test": notFound,
+        "Bun.serve eai-again.test": again,
+        "Bun.listen eai-again.test": again,
+        "http eai-again.test": again,
+        "net eai-again.test": again,
+      },
+      stderr: "",
     });
     expect(exitCode).toBe(0);
   },

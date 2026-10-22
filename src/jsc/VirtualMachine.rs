@@ -387,6 +387,8 @@ pub struct VirtualMachine {
     /// `&mut VirtualMachine` while `&mut EventLoop` is live. Zero-valid
     /// (`Cell<bool>` is `repr(transparent)` over `bool`).
     pub is_inside_deferred_task_queue: core::cell::Cell<bool>,
+    /// A deferred task called JS, which gets no microtask checkpoint of its own. `Cell` for the same reason.
+    pub(crate) deferred_task_entered_js: core::cell::Cell<bool>,
     /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
     /// reason as [`Self::is_inside_deferred_task_queue`].
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,

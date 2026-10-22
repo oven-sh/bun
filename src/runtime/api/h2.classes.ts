@@ -55,7 +55,7 @@ export default [
       },
       detach: {
         fn: "detachFromJS",
-        length: 0,
+        length: 1,
       },
       rstStream: {
         fn: "rstStream",
@@ -85,10 +85,6 @@ export default [
         fn: "setStreamContext",
         length: 2,
       },
-      getEndAfterHeaders: {
-        fn: "getEndAfterHeaders",
-        length: 1,
-      },
       getStreamState: {
         fn: "getStreamState",
         length: 1,
@@ -108,10 +104,6 @@ export default [
       emitErrorToAllStreams: {
         fn: "emitErrorToAllStreams",
         length: 1,
-      },
-      emitAbortToAllStreams: {
-        fn: "emitAbortToAllStreams",
-        length: 0,
       },
       getNextStream: {
         fn: "getNextStream",

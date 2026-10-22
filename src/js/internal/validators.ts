@@ -171,7 +171,6 @@ export default {
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
   /** `(value, name, oneOf)` */
   validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
-  isUint8Array: value => value instanceof Uint8Array,
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
   getValidatedPath,
   getValidatedFsPath,

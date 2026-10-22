@@ -73,19 +73,23 @@ struct Http3Response {
     bool write(std::string_view data, size_t *writtenPtr = nullptr) {
         Http3ResponseData *d = getHttpResponseData();
         flushHeaders();
-        if (d->backpressure.length() != 0) {
+        if (d->headersDeferred || d->backpressure.length() != 0) {
             d->backpressure.append(data.data(), data.length());
             if (writtenPtr) *writtenPtr = 0;
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
         int w = us_quic_stream_write((us_quic_stream_t *) this, data.data(), (unsigned) data.length());
-        if (w < 0) w = 0;
+        if (w < 0) {
+            failStream();
+            if (writtenPtr) *writtenPtr = 0;
+            return false;
+        }
         d->offset += (uint64_t) w;
         if (writtenPtr) *writtenPtr = (size_t) w;
         if ((size_t) w < data.length()) {
             d->backpressure.append(data.data() + w, data.length() - (size_t) w);
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
         return true;
@@ -106,7 +110,9 @@ struct Http3Response {
             !(d->state & Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
             writeHeader("content-length", (uint64_t) *reportedContentLength);
         }
-        if (d->state & Http3ResponseData::HTTP_WRITE_CALLED) {
+        if (d->headersDeferred) {
+            d->endAfterDrain = true;
+        } else if (d->state & Http3ResponseData::HTTP_WRITE_CALLED) {
             us_quic_stream_shutdown((us_quic_stream_t *) this);
         } else {
             writeStatus("200 OK");
@@ -119,9 +125,9 @@ struct Http3Response {
     bool sendTerminatingChunk(bool /*closeConnection*/ = false) {
         Http3ResponseData *d = getHttpResponseData();
         flushHeaders();
-        if (d->backpressure.length() != 0) {
+        if (d->headersDeferred || d->backpressure.length() != 0) {
             d->endAfterDrain = true;
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
         us_quic_stream_shutdown((us_quic_stream_t *) this);
@@ -137,8 +143,8 @@ struct Http3Response {
     void overrideWriteOffset(uint64_t o) { getHttpResponseData()->offset = o; }
     size_t getBufferedAmount() { return getHttpResponseData()->backpressure.length(); }
 
-    Http3Response *pause() { us_quic_stream_want_read((us_quic_stream_t *) this, 0); return this; }
-    Http3Response *resume() { us_quic_stream_want_read((us_quic_stream_t *) this, 1); return this; }
+    Http3Response *pause() { us_quic_stream_hold_window((us_quic_stream_t *) this, 1); return this; }
+    Http3Response *resume() { us_quic_stream_hold_window((us_quic_stream_t *) this, 0); return this; }
 
     Http3Response *cork(MoveOnlyFunction<void()> &&fn) { fn(); return this; }
     void *getSocketData() { return getHttpResponseData()->socketData; }
@@ -179,10 +185,19 @@ struct Http3Response {
     /* Called from Http3Context's on_stream_writable. */
     bool drain() {
         Http3ResponseData *d = getHttpResponseData();
+        if (d->headersDeferred) {
+            d->headersDeferred = false;
+            sendBufferedHeaders(d, false);
+            if (d->headersDeferred) return false;
+        }
         while (d->backpressure.length() != 0) {
             int w = us_quic_stream_write((us_quic_stream_t *) this,
                 d->backpressure.data(), (unsigned) d->backpressure.length());
-            if (w <= 0) return false;
+            if (w < 0) {
+                failStream();
+                return true;
+            }
+            if (w == 0) return false;
             d->offset += (uint64_t) w;
             d->backpressure.erase((unsigned) w);
         }
@@ -209,13 +224,38 @@ private:
             h.name = base + (uintptr_t) h.name;
             h.value = base + (uintptr_t) h.value;
         }
-        if (us_quic_stream_send_headers((us_quic_stream_t *) this,
-                d->hdrs.mutableSpan().data(), (unsigned) d->hdrs.size(), endStream) != 0) {
-            /* Later writes fail, and on_stream_close reports the abort as it does for a reset by the peer. */
-            us_quic_stream_reset_internal_error((us_quic_stream_t *) this);
+        int r = us_quic_stream_send_headers((us_quic_stream_t *) this,
+            d->hdrs.mutableSpan().data(), (unsigned) d->hdrs.size(), endStream);
+        if (r == US_QUIC_SEND_HEADERS_RETRY) {
+            /* Back to offsets: hdrBuf can still grow before drain() resends the block. */
+            for (auto &h : d->hdrs) {
+                h.name = (const char *) (uintptr_t) (h.name - base);
+                h.value = (const char *) (uintptr_t) (h.value - base);
+            }
+            d->headersDeferred = true;
+            /* endStream is only a shutdown after the send. */
+            if (endStream) d->endAfterDrain = true;
+            wantWrite();
+            return;
         }
         d->hdrBuf.shrink(0);
         d->hdrs.shrink(0);
+        if (r != 0) failStream();
+    }
+
+    /* A -1 from lsquic isn't backpressure: the send half is gone for good and no
+     * on_stream_writable follows. on_stream_close reports the abort, as it does
+     * for a reset by the peer. */
+    void failStream() {
+        Http3ResponseData *d = getHttpResponseData();
+        d->backpressure.clear();
+        d->endAfterDrain = false;
+        us_quic_stream_reset_internal_error((us_quic_stream_t *) this);
+    }
+
+    /* lsquic refuses once it has answered the peer's STOP_SENDING with RESET_STREAM. */
+    void wantWrite() {
+        if (us_quic_stream_want_write((us_quic_stream_t *) this, 1) < 0) failStream();
     }
 
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional,
@@ -238,26 +278,31 @@ private:
             d->state |= Http3ResponseData::HTTP_WRITE_CALLED;
         }
 
-        if (d->backpressure.length() != 0) {
+        if (d->headersDeferred || d->backpressure.length() != 0) {
             if (optional) return false;
             d->backpressure.append(data.data(), data.length());
             d->endAfterDrain = true;
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
 
         int w = data.empty() ? 0
             : us_quic_stream_write((us_quic_stream_t *) this, data.data(), (unsigned) data.length());
-        if (w < 0) w = 0;
+        if (w < 0) {
+            failStream();
+            if (optional) return false;
+            markDone(d);
+            return true;
+        }
         d->offset += (uint64_t) w;
         if ((size_t) w < data.length()) {
             if (optional) {
-                us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+                wantWrite();
                 return false;
             }
             d->backpressure.append(data.data() + w, data.length() - (size_t) w);
             d->endAfterDrain = true;
-            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            wantWrite();
             return false;
         }
 
@@ -266,7 +311,7 @@ private:
             markDone(d);
             return true;
         }
-        us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+        wantWrite();
         return false;
     }
 

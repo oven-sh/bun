@@ -418,6 +418,15 @@ impl App {
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
     }
+    /// Returns true if the app has no open UDP socket and no QUIC connection left.
+    pub fn is_released(&mut self) -> bool {
+        c::uws_h3_app_is_released(self)
+    }
+    /// `cb(user)` runs when [`Self::is_released`] becomes true. It must not enter the QUIC engine or destroy the app.
+    pub fn on_released(&mut self, cb: unsafe extern "C" fn(user: *mut c_void), user: *mut c_void) {
+        // SAFETY: live handle; cb/user are stored and invoked on this thread.
+        unsafe { c::uws_h3_app_on_released(self, cb, user) }
+    }
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
     }
@@ -595,6 +604,12 @@ mod c {
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
+        pub(super) safe fn uws_h3_app_is_released(app: &mut App) -> bool;
+        pub(super) fn uws_h3_app_on_released(
+            app: *mut App,
+            cb: unsafe extern "C" fn(user: *mut c_void),
+            user: *mut c_void,
+        );
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,

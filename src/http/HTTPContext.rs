@@ -243,8 +243,10 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) h2_session: Option<RefPtr<h2::ClientSession>>,
     /// `PoolOptions::id` of the fetch session that opened it.
     pub(crate) pool_id: u64,
-    /// `PoolOptions::idle_timeout_seconds` of the session that parked it.
+    /// Seconds it can be idle before the timer closes it.
     pub(crate) idle_timeout_seconds: u32,
+    /// `find_in` closes the socket instead of reusing it once `http_thread().timer` passes this many nanoseconds.
+    pub(crate) reuse_deadline_ns: u64,
 }
 
 /// `&mut` access to a pooled / found-slot HTTP/2 session, for the field
@@ -687,7 +689,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 proxy_auth_hash,
                 h2_session,
                 pool_id: pool.id,
-                idle_timeout_seconds: pool.idle_timeout_seconds,
+                idle_timeout_seconds: pool.idle_timeout_or_default(),
+                reuse_deadline_ns: crate::async_http::http_thread_timer_read()
+                    .saturating_add(u64::from(pool.idle_timeout_or_default()) * 1_000_000_000),
             };
             let parked = match transport {
                 Transport::Tcp => Self::park(self.pending_sockets.get_or_init(), pooled, pool),
@@ -770,17 +774,16 @@ impl<const SSL: bool> HTTPContext<SSL> {
             ActiveSocket::<SSL>::init(slot.addr().as_ptr().cast_const()),
         );
         socket.flush();
-        Self::arm_idle_timeout(socket, options.idle_timeout_seconds);
+        Self::arm_idle_timeout(socket, pooled.idle_timeout_seconds);
         slot.write(pooled);
         None
     }
 
-    /// How long a parked socket may sit idle; 0 is the 5 minute default.
+    /// The timer wheel is coarse, so the timer only closes the socket. `reuse_deadline_ns` is the exact bound on reuse.
     fn arm_idle_timeout(socket: HTTPSocket<SSL>, idle_timeout_seconds: u32) {
-        socket.set_timeout(match idle_timeout_seconds {
-            0 => 5 * 60,
-            seconds => seconds,
-        });
+        socket.set_timeout(crate::normalize_idle_timeout_seconds(u64::from(
+            idle_timeout_seconds,
+        )));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -840,6 +843,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             transport,
             pool_id,
         } = *key;
+        let now_ns = crate::async_http::http_thread_timer_read();
         let mut iter = pool.used.iterator::<true, true>();
 
         while let Some(pending_socket_index) = iter.next() {
@@ -918,6 +922,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 if http_socket.is_shutdown() || http_socket.get_error() != 0 {
                     Self::terminate_socket(http_socket);
+                    continue;
+                }
+
+                // The origin is about to close it, and a non-idempotent request that loses that race isn't retried.
+                if now_ns >= socket.reuse_deadline_ns {
+                    Self::close_socket(http_socket);
                     continue;
                 }
 
@@ -1573,6 +1583,10 @@ impl<const SSL: bool> Handler<SSL> {
         if let Some(session) = tagged.session() {
             HTTPContext::<SSL>::mark_socket_as_dead(socket);
             h2::ClientSession::on_timeout(session);
+        }
+        // An idle keep-alive socket is healthy, so close it with a FIN, not a reset.
+        if tagged.is::<PooledSocket<SSL>>() {
+            return HTTPContext::<SSL>::close_socket(socket);
         }
 
         HTTPContext::<SSL>::terminate_socket(socket);

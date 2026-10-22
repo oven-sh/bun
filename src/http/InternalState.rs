@@ -34,7 +34,6 @@ pub struct InternalState<'a> {
 
     pub(crate) transfer_encoding: Encoding,
     pub(crate) encoding: Encoding,
-    pub(crate) content_encoding_i: u8,
     pub(crate) chunked_decoder: bun_picohttp::phr_chunked_decoder,
     pub(crate) decompressor: Decompressor,
     pub(crate) stage: Stage,
@@ -46,6 +45,8 @@ pub struct InternalState<'a> {
     /// Prefix of `compressed_body` the decoder has already taken.
     compressed_body_consumed: usize,
     pub(crate) content_length: Option<usize>,
+    /// How long the connection can be reused after this response, from its `Keep-Alive: timeout=N` header.
+    pub(crate) keepalive_reuse_seconds: Option<u32>,
     pub(crate) total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
@@ -77,7 +78,6 @@ pub struct InternalState<'a> {
 pub struct InternalStateFlags {
     pub(crate) allow_keepalive: bool,
     pub(crate) received_last_chunk: bool,
-    pub(crate) did_set_content_encoding: bool,
     pub(crate) is_redirect_pending: bool,
     pub(crate) is_libdeflate_fast_path_disabled: bool,
     pub(crate) resend_request_body_on_redirect: bool,
@@ -98,6 +98,8 @@ pub struct InternalStateFlags {
     pub(crate) body_compressed: bool,
     /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
     pub(crate) decompress_output_pending: bool,
+    /// `decoded_body` has chunks that were decoded before a malformed one. Report them before the failure.
+    pub(crate) has_body_ahead_of_failure: bool,
 }
 
 impl InternalStateFlags {
@@ -106,7 +108,6 @@ impl InternalStateFlags {
         Self {
             allow_keepalive: true,
             received_last_chunk: false,
-            did_set_content_encoding: false,
             is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
@@ -114,6 +115,7 @@ impl InternalStateFlags {
             receive_paused: false,
             body_compressed: false,
             decompress_output_pending: false,
+            has_body_ahead_of_failure: false,
         }
     }
 }
@@ -126,7 +128,6 @@ impl Default for InternalState<'_> {
             flags: InternalStateFlags::new(),
             transfer_encoding: Encoding::Identity,
             encoding: Encoding::Identity,
-            content_encoding_i: u8::MAX,
             chunked_decoder: bun_picohttp::phr_chunked_decoder::default(),
             decompressor: Decompressor::None,
             stage: Stage::Pending,
@@ -134,6 +135,7 @@ impl Default for InternalState<'_> {
             compressed_body: MutableString::init_empty(),
             compressed_body_consumed: 0,
             content_length: None,
+            keepalive_reuse_seconds: None,
             total_body_received: 0,
             request_body: bun_ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),

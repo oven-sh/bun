@@ -1,6 +1,6 @@
 import { addBlockedSPKIForTesting, clearBlockedSPKIsForTesting } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
 import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -247,12 +247,36 @@ test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public 
   );
   try {
     expect([await open("strict"), await open("auto")]).toEqual([
-      "Invalid state: Session was destroyed before it opened",
+      // 'strict' fails the TLS handshake with alert certificate_revoked (44).
+      "QUIC transport error 300: TLS alert 44",
       "QUIC transport error 0: Peer certificate validation failed: certificate revoked [CERT_REVOKED]",
     ]);
   } finally {
     clearBlockedSPKIsForTesting();
   }
+});
+
+test("verifyPeer 'strict' reports an untrusted certificate as the TLS alert's transport error", async () => {
+  await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
+  const errors: unknown[] = [];
+  const session = await connect(server.address!, {
+    alpn: "quic-test",
+    servername: "localhost",
+    verifyPeer: "strict",
+    onerror: (error: unknown) => void errors.push(error),
+  } as SessionOptions);
+  const outcome = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      err => ({ code: err.code, errorCode: err.errorCode }),
+    );
+  // CRYPTO_ERROR (0x100) + alert unknown_ca (48), as in Node.
+  const unknownCA = { code: "ERR_QUIC_TRANSPORT_ERROR", errorCode: 0x130n };
+  expect({ opened: await outcome(session.opened), closed: await outcome(session.closed), errors }).toEqual({
+    opened: unknownCA,
+    closed: unknownCA,
+    errors: [expect.objectContaining(unknownCA)],
+  });
 });
 
 test("connect() with the default verifyPeer refuses an unverifiable certificate before a pending stream reaches the server", async () => {
@@ -361,4 +385,33 @@ test("connect() refuses a servername with a NUL byte", async () => {
         verifyPeer: "manual",
       } as SessionOptions))(),
   ).rejects.toThrow("servername must not contain null bytes");
+});
+
+// `tls` from harness has the SANs DNS:localhost, IP:127.0.0.1 and IP:::1.
+const ipSanIdentity = { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] };
+
+// https://github.com/oven-sh/bun/issues/45514
+test.each(["127.0.0.1", "::1"])("verifies the IP servername %s against the certificate's IP SANs", async servername => {
+  await using server = await listen(ignoreErrors, { sni: { "*": ipSanIdentity }, alpn: ["quic-test"] });
+  const session = await connect(server.address!, { alpn: "quic-test", servername, ca: [Buffer.from(tls.cert)] });
+  try {
+    expect(await session.opened).toMatchObject({ validationErrorCode: undefined, validationErrorReason: undefined });
+  } finally {
+    await session.close();
+  }
+});
+
+test.each([
+  ["127.0.0.2", "IP address mismatch"],
+  ["::2", "IP address mismatch"],
+  ["example.com", "Hostname mismatch"],
+])("rejects the servername %s when no SAN matches it", async (servername, reason) => {
+  await using server = await listen(ignoreErrors, { sni: { "*": ipSanIdentity }, alpn: ["quic-test"] });
+  const session = await connect(server.address!, { alpn: "quic-test", servername, ca: [Buffer.from(tls.cert)] });
+  ignoreErrors(session);
+  try {
+    await expect(session.opened).rejects.toThrow(`Peer certificate validation failed: ${reason}`);
+  } finally {
+    session.destroy();
+  }
 });

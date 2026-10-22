@@ -587,8 +587,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     /// buffer is left untouched (uninitialized bytes are a valid bit-pattern
     /// for `MaybeUninit`).
     ///
-    /// The returned allocation is leaked — callers stash it in a per-thread
-    /// static for the process lifetime.
+    /// The returned allocation is leaked. The caller reclaims it into a `Box`.
     #[inline]
     pub fn new_boxed() -> NonNull<Self> {
         let mut boxed = Box::<Self>::new_uninit();

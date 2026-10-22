@@ -1,9 +1,11 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tmpdirSync } from "harness";
+import { readFileSync } from "node:fs";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
+import { getSystemErrorName } from "node:util";
 
 const networks = Object.values(networkInterfaces()).flat() as NetworkInterfaceInfo[];
 const hasIPv4 = networks.some(({ family }) => family === "IPv4");
@@ -116,7 +118,8 @@ describe.each([
       ? {
           protocol: "unix:",
           pathname: unix.substring(unix.indexOf(":") + 1),
-          hostname: unix.substring(0, unix.indexOf(":")),
+          // "C:" is the URL's host, where a raw ":" would start a port.
+          hostname: unix.substring(0, unix.indexOf(":")) + "%3A",
           port: "",
         }
       : {
@@ -263,4 +266,79 @@ test.skipIf(!isLinux)("server.address / server.port do not panic when getsocknam
   expect({ address: out.address, port: out.port }).toEqual({ address: null, port: 0 });
   expect(out.url).not.toContain("65535");
   expect(out.url).not.toContain(":-1");
+});
+
+describe("Bun.serve() throws the error of the call that failed", () => {
+  // `errno` is the negative libuv number, as in Node.
+  const shape = ({ code, syscall, errno, message }: any) => ({
+    code,
+    syscall,
+    errno: errno < 0 ? getSystemErrorName(errno) : errno,
+    message,
+  });
+
+  test.skipIf(!hasIPv4).each([
+    ["127.0.0.1", { hostname: "127.0.0.1" }],
+    ["every address", {}],
+  ])("EADDRINUSE for a port that is in use on %s", (_, address) => {
+    using occupant = serve({ ...address, port: 0, fetch: () => new Response() });
+    let error: unknown;
+    try {
+      serve({ ...address, port: occupant.port, fetch: () => new Response() }).stop(true);
+    } catch (e) {
+      error = shape(e);
+    }
+    expect(error).toEqual({
+      code: "EADDRINUSE",
+      syscall: "listen",
+      errno: "EADDRINUSE",
+      message: `Failed to start server. Is port ${occupant.port} in use?`,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/30363
+  const isRoot = process.getuid?.() === 0;
+  // root can bind any port, so the child drops to nobody.
+  const asNobody = isRoot ? { uid: 65534, gid: 65534 } : {};
+  const refusesPort80 = (() => {
+    if (isWindows) return false;
+    if (isLinux) {
+      try {
+        if (Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8")) <= 80) return false;
+      } catch {}
+    }
+    if (!isRoot) return true;
+    try {
+      return Bun.spawnSync({ cmd: [bunExe(), "--version"], env: bunEnv, ...asNobody }).exitCode === 0;
+    } catch {
+      return false;
+    }
+  })();
+  test.skipIf(!refusesPort80)("EACCES for a privileged port", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+          Bun.serve({ hostname: "127.0.0.1", port: 80, fetch: () => new Response() }).stop(true);
+          console.log("listening");
+        } catch ({ code, syscall, errno, message }) {
+          console.log(JSON.stringify({ code, syscall, errno, message }));
+        }`,
+      ],
+      env: bunEnv,
+      ...asNobody,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(shape(JSON.parse(stdout))).toEqual({
+      code: "EACCES",
+      syscall: "listen",
+      errno: "EACCES",
+      message: "permission denied 127.0.0.1:80",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

@@ -1,10 +1,15 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
+import type { ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { join } from "node:path";
+import type { Duplex } from "node:stream";
+import { duplexPair } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
@@ -282,6 +287,248 @@ test("closeIdleConnections() with emit('connection'): closes a fresh and an idle
     front.close();
     server.close();
     server.closeAllConnections();
+  }
+});
+
+// Reads one Content-Length framed response from the client half of a duplexPair().
+// Destroying the server half emits 'end' on the client half, not 'close'.
+function readResponseBody(clientSide: Duplex): Promise<string> {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let raw = "";
+  function settle(body?: string, error?: Error) {
+    clientSide.off("data", onData);
+    clientSide.off("end", onClose);
+    clientSide.off("close", onClose);
+    clientSide.off("error", onError);
+    if (error) reject(error);
+    else resolve(body!);
+  }
+  function onData(chunk: Buffer) {
+    raw += chunk.toString("latin1");
+    const headersEnd = raw.indexOf("\r\n\r\n");
+    if (headersEnd === -1) return;
+    const contentLength = /\r\ncontent-length: (\d+)/i.exec(raw.slice(0, headersEnd));
+    if (!contentLength) {
+      settle(undefined, new Error(`expected a Content-Length framed response, got: ${JSON.stringify(raw)}`));
+      return;
+    }
+    const body = raw.slice(headersEnd + 4);
+    if (body.length < Number(contentLength[1])) return;
+    settle(body);
+  }
+  function onClose() {
+    settle(undefined, new Error(`connection closed before the response completed, got: ${JSON.stringify(raw)}`));
+  }
+  function onError(error: Error) {
+    settle(undefined, error);
+  }
+  clientSide.on("data", onData);
+  clientSide.on("end", onClose);
+  clientSide.on("close", onClose);
+  clientSide.on("error", onError);
+  return promise;
+}
+
+// Rejects if the server half of the connection closes before `promise` settles.
+async function beforeClose<T>(serverSide: Duplex, promise: Promise<T>): Promise<T> {
+  const closed = Promise.withResolvers<never>();
+  const onClose = () => closed.reject(new Error("the server closed the connection first"));
+  serverSide.once("close", onClose);
+  try {
+    return await Promise.race([promise, closed.promise]);
+  } finally {
+    serverSide.off("close", onClose);
+  }
+}
+
+// Like Node, a connection is busy from the first byte of a request until both the request and its
+// response have ended. A connection that sent nothing is idle.
+test("closeIdleConnections() with emit('connection'): closes only the idle connections, one per state", async () => {
+  const heldResponse = Promise.withResolvers<ServerResponse>();
+  const server = createServer((req, res) => {
+    switch (req.url) {
+      case "/hold":
+        heldResponse.resolve(res);
+        break;
+      case "/body":
+        // The response ends before the request body has arrived.
+        res.end("early");
+        break;
+      default:
+        res.end(`served ${req.url}`);
+    }
+  });
+  // Node tracks connections only from the 'listening' event of the http.Server.
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const names = ["fresh", "partial", "body", "hold", "reused", "idle"] as const;
+  const pairs = Object.fromEntries(names.map(name => [name, duplexPair()])) as Record<
+    (typeof names)[number],
+    [Duplex, Duplex]
+  >;
+  const client = (name: (typeof names)[number]) => pairs[name][0];
+  const destroyedFlags = () => Object.fromEntries(names.map(name => [name, pairs[name][1].destroyed]));
+  try {
+    for (const name of names) server.emit("connection", pairs[name][1]);
+
+    const partialHeadArrived = beforeClose(pairs.partial[1], once(pairs.partial[1], "data"));
+    client("partial").write("GET /partial HTTP/1.1\r\nHost: x\r\n");
+    await partialHeadArrived;
+    const earlyBody = readResponseBody(client("body"));
+    client("body").write("POST /body HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    expect(await earlyBody).toBe("early");
+    client("hold").write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    const held = await beforeClose(pairs.hold[1], heldResponse.promise);
+    const reusedFirstBody = readResponseBody(client("reused"));
+    client("reused").write("GET /reused-1 HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await reusedFirstBody).toBe("served /reused-1");
+    const reusedSecondHeadArrived = beforeClose(pairs.reused[1], once(pairs.reused[1], "data"));
+    client("reused").write("GET /reused-2 HTTP/1.1\r\n");
+    await reusedSecondHeadArrived;
+    const idleBody = readResponseBody(client("idle"));
+    client("idle").write("GET /idle HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await idleBody).toBe("served /idle");
+
+    server.closeIdleConnections();
+    expect(destroyedFlags()).toEqual({
+      fresh: true,
+      partial: false,
+      body: false,
+      hold: false,
+      reused: false,
+      idle: true,
+    });
+
+    // The connections that survived still get served.
+    const partialBody = readResponseBody(client("partial"));
+    client("partial").write("\r\n");
+    const bodyNextBody = readResponseBody(client("body"));
+    client("body").write("defghijGET /body-next HTTP/1.1\r\nHost: x\r\n\r\n");
+    const holdBody = readResponseBody(client("hold"));
+    held.end("held");
+    const reusedSecondBody = readResponseBody(client("reused"));
+    client("reused").write("Host: x\r\n\r\n");
+    expect(await Promise.all([partialBody, bodyNextBody, holdBody, reusedSecondBody])).toEqual([
+      "served /partial",
+      "served /body-next",
+      "held",
+      "served /reused-2",
+    ]);
+
+    // They're all between requests now, and close() closes idle connections too.
+    server.close();
+    expect(destroyedFlags()).toEqual({
+      fresh: true,
+      partial: true,
+      body: true,
+      hold: true,
+      reused: true,
+      idle: true,
+    });
+  } finally {
+    for (const name of names) {
+      pairs[name][0].destroy();
+      pairs[name][1].destroy();
+    }
+    server.close();
+  }
+});
+
+// res.end() sets `finished` right away, but the response stays assigned to the socket until 'finish'.
+// Node treats the connection as idle in between.
+test("closeIdleConnections() with emit('connection'): closes a connection in the same tick as its res.end()", async () => {
+  const heldResponse = Promise.withResolvers<ServerResponse>();
+  const server = createServer((req, res) => heldResponse.resolve(res));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    clientSide.write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    const res = await beforeClose(serverSide, heldResponse.promise);
+
+    server.closeIdleConnections();
+    const keptWhileResponsePending = !serverSide.destroyed;
+    res.end("done");
+    server.closeIdleConnections();
+    expect({
+      keptWhileResponsePending,
+      responseStillAssigned: (serverSide as any)._httpMessage === res,
+      destroyedOnceEnded: serverSide.destroyed,
+    }).toEqual({ keptWhileResponsePending: true, responseStillAssigned: true, destroyedOnceEnded: true });
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+    server.close();
+  }
+});
+
+// The 'request' listener runs while the parser is still inside the request, so its connection isn't idle yet.
+test("closeIdleConnections() with emit('connection'): keeps the current request's connection when called from the request listener", async () => {
+  const handled = Promise.withResolvers<boolean>();
+  const server = createServer((req, res) => {
+    res.end("body");
+    server.closeIdleConnections();
+    handled.resolve(req.socket.destroyed);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    const destroyedInsideHandler = await beforeClose(serverSide, handled.promise);
+    expect({ destroyedInsideHandler, destroyedAfterHandler: serverSide.destroyed }).toEqual({
+      destroyedInsideHandler: false,
+      destroyedAfterHandler: false,
+    });
+    expect(await readResponseBody(clientSide)).toBe("body");
+    server.closeIdleConnections();
+    expect(serverSide.destroyed).toBe(true);
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+    server.close();
+  }
+});
+
+test("closeAllConnections() with emit('connection'): destroys a connection with a partial head, keeps an upgraded socket", async () => {
+  const upgraded = Promise.withResolvers<void>();
+  const server = createServer(() => {});
+  server.on("upgrade", (req, socket) => {
+    socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+    upgraded.resolve();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const [clientSide, serverSide] = duplexPair();
+  const [upgradeClientSide, upgradeServerSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    server.emit("connection", upgradeServerSide);
+    const headArrived = beforeClose(serverSide, once(serverSide, "data"));
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n");
+    await headArrived;
+    upgradeClientSide.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n");
+    await beforeClose(upgradeServerSide, upgraded.promise);
+
+    server.closeIdleConnections();
+    expect({ partial: serverSide.destroyed, upgraded: upgradeServerSide.destroyed }).toEqual({
+      partial: false,
+      upgraded: false,
+    });
+    // Like Node, the server no longer owns a socket it handed to 'upgrade'.
+    server.closeAllConnections();
+    expect({ partial: serverSide.destroyed, upgraded: upgradeServerSide.destroyed }).toEqual({
+      partial: true,
+      upgraded: false,
+    });
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+    upgradeClientSide.destroy();
+    upgradeServerSide.destroy();
+    server.close();
   }
 });
 
@@ -806,6 +1053,120 @@ test("an upgraded socket whose request body never ended does not hold the proces
   expect(exitCode).toBe(0);
 });
 
+// The server is node-http-server-close-paused-upload-fixture.js in its own process. This process is the client: it sends
+// half of a 2 MiB body, reads nothing until the server prints "close()" or "unref()", and stays connected. With
+// `killAfterBody`, it ends the server when it has that many bytes behind the response head.
+async function runPausedUpload(
+  shape: string,
+  protocol: "http" | "https",
+  framing: "Content-Length" | "chunked",
+  killAfterBody?: number,
+) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-http-server-close-paused-upload-fixture.js"), shape, protocol],
+    env: { ...bunEnv, TLS_KEY: tlsCert.key, TLS_CERT: tlsCert.cert },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stderr = proc.stderr.text();
+  const half = Buffer.alloc(1024 * 1024, "a");
+  const chunked = framing === "chunked";
+  const writeHalf = (client: Socket) => {
+    if (chunked) client.write(half.length.toString(16) + "\r\n");
+    client.write(half);
+    if (chunked) client.write("\r\n");
+  };
+  const decoder = new TextDecoder();
+  let bodyLength = 0;
+  let stdout = "";
+  let client: Socket | undefined;
+  let reading = false;
+  let sentAll = false;
+  try {
+    for await (const bytes of proc.stdout) {
+      stdout += decoder.decode(bytes, { stream: true });
+      if (!client && stdout.includes("\n")) {
+        const port = parseInt(stdout);
+        client =
+          protocol === "https" ? tlsConnect({ port, host: "127.0.0.1", ca: tlsCert.cert }) : connect(port, "127.0.0.1");
+        // The server process exits with this connection open.
+        client.on("error", () => {});
+        client.write(
+          `POST / HTTP/1.1\r\nHost: x\r\n${chunked ? "Transfer-Encoding: chunked" : `Content-Length: ${half.length * 2}`}\r\n\r\n`,
+        );
+        writeHalf(client);
+      }
+      if (!reading && /^(close|unref)\(\)$/m.test(stdout)) {
+        reading = true;
+        client!.on("data", chunk => {
+          // The head comes in one piece, ahead of everything else.
+          bodyLength += bodyLength === 0 ? chunk.length - chunk.indexOf("\r\n\r\n") - 4 : chunk.length;
+          if (bodyLength === killAfterBody) proc.kill();
+        });
+      }
+      if (!sentAll && stdout.includes("half\n")) {
+        sentAll = true;
+        writeHalf(client!);
+        if (chunked) client!.write("0\r\n\r\n");
+      }
+      if (stdout.includes("end ")) client!.destroy();
+    }
+    return {
+      stdout: stdout.slice(stdout.indexOf("\n") + 1),
+      stderr: await stderr,
+      exitCode: await proc.exited,
+      signalCode: proc.signalCode,
+      bodyLength,
+    };
+  } finally {
+    client?.destroy();
+  }
+}
+
+// In Node a connection that stopped reading and has nothing left to write is an inactive libuv handle. It stays open and
+// 'close' waits for it, but it does not hold the process. The expected output is that of Node v20.20.0 and v22.22.0.
+const plain = ["http", "Content-Length"] as const;
+const tlsChunked = ["https", "chunked"] as const;
+test.concurrent.each(
+  (
+    [
+      ["response, stop, close()", "close()\n", plain, tlsChunked, ["http", "chunked"], ["https", "Content-Length"]],
+      ["stop, response, close()", "close()\n", tlsChunked],
+      ["close(), response, stop", "close()\n", plain],
+      // Winsock can take the whole response in one send(). Nothing drains then, and "finish" comes first.
+      ["stop, close(), response drains", "close()\nfinish\n", ...(isWindows ? [] : [plain, tlsChunked])],
+      ["response, stop, unref()", "unref()\n", tlsChunked],
+      ["response, stop, the request is destroyed, close()", "close()\n", plain],
+      // It holds the process again when it reads again.
+      ["reads start again after close()", "close()\nhalf\nend 2097152\nclosed\n", plain, tlsChunked],
+      ["reads start again after unref()", "unref()\nhalf\nend 2097152\n", tlsChunked],
+      ["closeAllConnections() after close()", "close()\nclosed\n", plain],
+    ] as const
+  ).flatMap(([shape, expected, ...variants]) => variants.map(variant => [shape, ...variant, expected] as const)),
+)(
+  "the process exits with a paused upload open behind a sent response: %s (%s, %s)",
+  async (shape, protocol, framing, expected) => {
+    const { bodyLength, ...result } = await runPausedUpload(shape, protocol, framing);
+    expect(result).toEqual({ stdout: expected, stderr: "", exitCode: 0, signalCode: null });
+  },
+);
+
+// Bytes that are left to send do hold the process. Not on Windows: Winsock can take all of them in one send().
+test.skipIf(isWindows).concurrent.each([
+  ["response, stop, raw write, close()", "close()\n"],
+  ["response, raw write, stop, close()", "close()\n"],
+  ["response, stop, raw write, unref()", "unref()\n"],
+  ["response, raw write, stop, unref()", "unref()\n"],
+  ["response, stop, the request is destroyed, raw write, close()", "close()\n"],
+])("sends what was written to a paused upload's socket before the process exits: %s", async (shape, stdout) => {
+  const bodyLength = "ok".length + 16 * 1024 * 1024;
+  expect(await runPausedUpload(shape, "http", "Content-Length", bodyLength)).toMatchObject({
+    stdout,
+    stderr: "",
+    bodyLength,
+  });
+});
+
 test("closeAllConnections() on a listening server destroys the connections and keeps the listener", async () => {
   const events: string[] = [];
   const server = createServer((req, res) => res.end("ok"));
@@ -1053,4 +1414,373 @@ test("closeAllConnections() on a server that took the listener of a Bun.serve se
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("0\n");
   expect(exitCode).toBe(0);
+});
+
+// Each listener runs on the last connection after server.close(), between the native close and the socket's 'close' event.
+test.each<[string, (socket: Socket, client: Socket) => void, string[]]>([
+  [
+    "an 'end' listener calls socket.removeAllListeners()",
+    (socket, client) => {
+      socket.on("end", () => socket.removeAllListeners());
+      client.end();
+    },
+    ["server close", "close callback"],
+  ],
+  [
+    "an 'error' listener calls socket.removeAllListeners('close')",
+    (socket, client) => {
+      socket.on("error", () => socket.removeAllListeners("close"));
+      client.resetAndDestroy();
+    },
+    ["server close", "close callback"],
+  ],
+  [
+    "the peer ends the connection",
+    (socket, client) => void client.end(),
+    ["server close", "close callback", "socket close"],
+  ],
+])("server.close(cb) calls back when %s", async (_, closeConnection, expected) => {
+  const events: string[] = [];
+  const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    req.socket.on("close", () => events.push("socket close"));
+    server.on("close", () => events.push("server close"));
+    server.close(() => {
+      events.push("close callback");
+      // The socket's own 'close' is already queued. Node emits it after the server's.
+      setImmediate(onClosed);
+    });
+    res.end("ok");
+    client.once("data", () => closeConnection(req.socket, client));
+  });
+  server.keepAliveTimeout = 0;
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await closed;
+    expect(events).toEqual(expected);
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+  }
+});
+
+test("server.close(cb) calls back when the last socket's 'close' listener throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http = require("node:http");
+      const net = require("node:net");
+      process.on("uncaughtException", err => console.log("uncaught", err.message));
+      const server = http.createServer((req, res) => {
+        req.socket.on("close", () => {
+          throw new Error("boom");
+        });
+        server.close(() => console.log("close callback"));
+        res.end("ok");
+        client.once("data", () => client.end());
+      });
+      let client;
+      server.listen(0, "127.0.0.1", () => {
+        client = net.connect(server.address().port, "127.0.0.1");
+        client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "close callback\nuncaught boom\n", stderr: "", exitCode: 0 });
+});
+
+// Node runs 'close' in close()'s async context, and so does Bun's net.Server: https://github.com/oven-sh/bun/pull/33719
+test("'close' and the close() callback see the AsyncLocalStorage store of listen()", async () => {
+  const storage = new AsyncLocalStorage<string>();
+  const server = createServer();
+  const seen: unknown[] = [];
+  server.on("close", () => seen.push(storage.getStore()));
+  storage.run("listen", () => server.listen(0, "127.0.0.1"));
+  await once(server, "listening");
+  await new Promise<void>(resolve =>
+    storage.run("close", () =>
+      server.close(() => {
+        seen.push(storage.getStore());
+        resolve();
+      }),
+    ),
+  );
+  expect(seen).toEqual(["listen", "listen"]);
+});
+
+describe("closing a Bun.ModuleGraph's server from the host", () => {
+  async function listenInGraph() {
+    const dir = tempDir("node-http-graph", {
+      "listens.mjs": `
+        import { createServer } from "node:http";
+        export const closedIn = [];
+        export function listen() {
+          const server = createServer().on("close", () => closedIn.push(Bun.ModuleGraph.current));
+          return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server)));
+        }
+      `,
+    });
+    const graph = new Bun.ModuleGraph();
+    const app = await graph.import(join(String(dir), "listens.mjs"));
+    const server = await graph.run(() => app.listen());
+    return {
+      graph,
+      app,
+      server,
+      [Symbol.dispose]() {
+        graph.dispose();
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+
+  test("emits 'close' in the graph's context", async () => {
+    using listening = await listenInGraph();
+    const { graph, app, server } = listening;
+    server.close();
+    await once(server, "close");
+    expect(app.closedIn.map(current => current === graph)).toEqual([true]);
+  });
+
+  test("emits no 'close' once the graph is disposed", async () => {
+    using listening = await listenInGraph();
+    const { graph, app, server } = listening;
+    graph.dispose();
+    let calledBack = false;
+    server.close(() => (calledBack = true));
+    // A host server closed later has emitted 'close' by now, so the graph's server would have too.
+    const hostServer = createServer().listen(0, "127.0.0.1");
+    await once(hostServer, "listening");
+    hostServer.close();
+    await once(hostServer, "close");
+    expect({ calledBack, inTheGraph: app.closedIn.length }).toEqual({ calledBack: false, inTheGraph: 0 });
+  });
+});
+
+// Under `bun --hot`, Bun.serve() answers a listen() on an address it already serves with the same native server, which
+// then dispatches to the new http.Server only. A second listen() in the same load does the same without a reload.
+describe("bun --hot reuses the native server for the next http.Server", () => {
+  async function runHot(fixture: string, env = bunEnv) {
+    using dir = tempDir("node-http-hot", { "server.mjs": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "server.mjs"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: stdout
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line)),
+      stderr: stderr.replaceAll(/^DEBUG:.*\n/gm, ""),
+      exitCode,
+    };
+  }
+
+  const collected = `
+    async function collected(ref) {
+      const deadline = performance.now() + 1000;
+      while (ref.deref() !== undefined && performance.now() < deadline) {
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+      }
+      return ref.deref() === undefined;
+    }
+  `;
+  test.each([
+    ["http", bunEnv, "{}"],
+    // NODE_ENV=production picks the native server class without development mode.
+    ["https", { ...bunEnv, NODE_ENV: "production" }, JSON.stringify({ key: tlsCert.key, cert: tlsCert.cert })],
+  ] as const)("collects the %s servers of earlier loads without emitting 'close'", async (protocol, env, options) => {
+    const fixture = `
+      import { AsyncLocalStorage } from "node:async_hooks";
+      import { once } from "node:events";
+      import { readFileSync, writeFileSync } from "node:fs";
+      import { createServer } from "node:${protocol}";
+
+      const load = (globalThis.loads = (globalThis.loads ?? 0) + 1);
+      const state = (globalThis.state ??= { plain: [], store: [], closes: 0 });
+      const storage = (globalThis.storage ??= new AsyncLocalStorage());
+
+      function serve(kind, listen) {
+        const server = createServer(${options}, (req, res) => res.end("ok"));
+        server.on("close", () => state.closes++);
+        state[kind].push(new WeakRef(server));
+        listen(server);
+        return once(server, "listening");
+      }
+      await Promise.all([
+        serve("plain", server => server.listen(0, "127.0.0.1")),
+        serve("store", server => storage.run({ server }, () => server.listen(0))),
+      ]);
+
+      if (load < 3) {
+        // Writing the file triggers the next load.
+        const self = new URL(import.meta.url);
+        writeFileSync(self, readFileSync(self, "utf8"));
+      } else {
+        const alive = {};
+        for (let i = 0; i < 10; i++) {
+          Bun.gc(true);
+          for (const kind of ["plain", "store"]) {
+            alive[kind] = state[kind].filter(ref => ref.deref() !== undefined).length;
+          }
+          if (alive.plain === 1 && alive.store === 1) break;
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        console.log(JSON.stringify({ alive, closes: state.closes }));
+        process.exit(0);
+      }
+    `;
+    const { stdout, stderr, exitCode } = await runHot(fixture, env);
+    expect({ stdout, stderr }).toEqual({ stdout: [{ alive: { plain: 1, store: 1 }, closes: 0 }], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("collects the first of two servers that listen on one address in the same load", async () => {
+    const fixture = `
+      import { once } from "node:events";
+      import { createServer } from "node:http";
+      ${collected}
+
+      // In a function, so no module variable holds the first server.
+      async function listenTwice() {
+        const heard = [];
+        const first = createServer().once("listening", () => heard.push("first"));
+        const second = createServer().once("listening", () => heard.push("second"));
+        first.listen(0, "127.0.0.1");
+        second.listen(0, "127.0.0.1");
+        await once(second, "listening");
+        return { heard, first: new WeakRef(first) };
+      }
+      const { heard, first } = await listenTwice();
+      console.log(JSON.stringify({ listening: heard, firstCollected: await collected(first) }));
+      process.exit(0);
+    `;
+    const { stdout, stderr, exitCode } = await runHot(fixture);
+    expect({ stdout, stderr }).toEqual({
+      stdout: [{ listening: ["first", "second"], firstCollected: true }],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Shared by the fixtures below: a server that answers with its name and leaves "/slow" in flight, and raw clients.
+  const connections = `
+    let slow;
+    function serve(name, options = {}) {
+      return createServer(options, (req, res) => {
+        if (req.url === "/slow") (slow = res).write("partial");
+        else res.end(name);
+      });
+    }
+    function open(port) {
+      const client = { socket: connect(port, "127.0.0.1").setEncoding("latin1"), received: "", closed: false };
+      client.socket.on("data", chunk => (client.received += chunk));
+      client.socket.on("close", () => (client.closed = true));
+      client.socket.on("error", () => {});
+      return client;
+    }
+    async function received(client, text) {
+      while (!client.received.includes(text) && !client.closed) {
+        await Promise.race([once(client.socket, "data"), once(client.socket, "close")]);
+      }
+      return client.received.includes(text);
+    }
+    const get = path => "GET " + path + " HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n";
+    const count = server => new Promise(resolve => server.getConnections((error, count) => resolve(count)));
+    const refused = port =>
+      new Promise(resolve => {
+        const socket = connect(port, "127.0.0.1");
+        socket.on("error", error => resolve(error.code));
+        socket.on("connect", () => resolve("connected"));
+      });
+    async function checkStopped(server) {
+      const deadline = performance.now() + 1000;
+      while (!server[kConnectionsCheckingInterval]._destroyed && performance.now() < deadline) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      return server[kConnectionsCheckingInterval]._destroyed;
+    }
+  `;
+
+  test("keeps checking timeouts on the replaced server's open connection", async () => {
+    const fixture = `
+      import { kConnectionsCheckingInterval } from "node:_http_server";
+      import { once } from "node:events";
+      import { createServer } from "node:http";
+      import { connect } from "node:net";
+      ${connections}
+
+      const first = serve("first", { connectionsCheckingInterval: 5, headersTimeout: 50 });
+      await once(first.listen(0, "127.0.0.1"), "listening");
+      const client = open(first.address().port);
+      client.socket.write(get("/slow"));
+      await received(client, "partial");
+      const second = serve("second");
+      await once(second.listen(0, "127.0.0.1"), "listening");
+
+      const result = { connections: [await count(first), await count(second)] };
+      slow.end();
+      // The next request on the same connection goes to the second server.
+      client.socket.write(get("/"));
+      result.nextRequest = (await received(client, "second")) && "second";
+      // The first server still sweeps its connection, so an unfinished request head times out.
+      client.socket.write("GET /partial HTTP/1.1\\r\\nHost: localhost\\r\\n");
+      result.timeout = (await received(client, "HTTP/1.1 408")) && "408";
+      if (!client.closed) await once(client.socket, "close");
+      result.checkStopped = await checkStopped(first);
+      console.log(JSON.stringify(result));
+      process.exit(0);
+    `;
+    const { stdout, stderr, exitCode } = await runHot(fixture);
+    expect({ stdout, stderr }).toEqual({
+      stdout: [{ connections: [1, 0], nextRequest: "second", timeout: "408", checkStopped: true }],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("close() on the replaced server still stops the listener", async () => {
+    const fixture = `
+      import { kConnectionsCheckingInterval } from "node:_http_server";
+      import { once } from "node:events";
+      import { createServer } from "node:http";
+      import { connect } from "node:net";
+      ${connections}
+
+      const first = serve("first");
+      await once(first.listen(0, "127.0.0.1"), "listening");
+      const { port } = first.address();
+      const second = serve("second", { connectionsCheckingInterval: 5 });
+      await once(second.listen(0, "127.0.0.1"), "listening");
+
+      const result = { listening: first.listening };
+      result.firstClose = await new Promise(resolve => first.close(error => resolve(error?.code ?? "closed")));
+      result.connect = await refused(port);
+      // The second server notices it lost the listener at its next sweep.
+      result.checkStopped = await checkStopped(second);
+      console.log(JSON.stringify(result));
+      process.exit(0);
+    `;
+    const { stdout, stderr, exitCode } = await runHot(fixture);
+    expect({ stdout, stderr }).toEqual({
+      stdout: [{ listening: true, firstClose: "closed", connect: "ECONNREFUSED", checkStopped: true }],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

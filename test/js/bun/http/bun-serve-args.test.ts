@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tls, tmpdirSync } from "../../../harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isLinux, isWindows, tempDir, tls, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -446,6 +446,52 @@ describe("Bun.serve development options", () => {
     expect(server.development).toBe(false);
     server.stop();
   });
+
+  describe.each(["NODE_ENV", "BUN_ENV"])("the default follows process.env.%s at the time of the call", key => {
+    async function run(atLaunch: string | undefined) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const key = ${JSON.stringify(key)};
+           const development = options => {
+             using server = Bun.serve({ port: 0, fetch: () => new Response("ok"), ...options });
+             return server.development;
+           };
+           const results = { atLaunch: development() };
+           process.env[key] = "production";
+           results.production = development();
+           results.productionWithOption = development({ development: true });
+           process.env[key] = "development";
+           results.development = development();
+           delete process.env[key];
+           results.deleted = development();
+           console.log(JSON.stringify(results));`,
+        ],
+        env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, [key]: atLaunch },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+    }
+
+    test.concurrent("when it's unset at launch", async () => {
+      expect(await run(undefined)).toEqual({
+        stdout: { atLaunch: true, production: false, productionWithOption: true, development: true, deleted: true },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("but a process launched in production stays in production", async () => {
+      expect(await run("production")).toEqual({
+        stdout: { atLaunch: false, production: false, productionWithOption: true, development: false, deleted: false },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 describe("Bun.serve static routes", () => {
@@ -489,6 +535,49 @@ describe("Bun.serve unix socket", () => {
       },
     });
     server.stop();
+  });
+});
+
+describe("Bun.serve unix socket url", () => {
+  // A relative path's first segment is the URL's host, which forbids more bytes than a path does.
+  test.skipIf(isWindows)("percent-encodes what the URL parser can't keep", () => {
+    using dir = tempDir("unix-url", { "sub dir": {} });
+    const cwd = process.cwd();
+    process.chdir(String(dir));
+    try {
+      for (const [path, href] of [
+        ["C:\\test", "unix://C%3A%5Ctest"],
+        ["a#b?c.sock", "unix://a%23b%3Fc.sock"],
+        ["[a b]@c%d.sock", "unix://%5Ba%20b%5D%40c%25d.sock"],
+        ["a+b=c,d.sock", "unix://a+b=c,d.sock"],
+        ["sub dir/a:b@c.sock", "unix://sub%20dir/a:b@c.sock"],
+        [`${dir}/a b#c%d.sock`, `unix://${dir}/a%20b%23c%25d.sock`],
+        [`${dir}/a+b=c@d:e.sock`, `unix://${dir}/a+b=c@d:e.sock`],
+      ]) {
+        using server = serve({ unix: path, fetch: () => new Response("ok") });
+        const url = server.url;
+        expect({ href: url.href, decoded: decodeURIComponent(url.hostname + url.pathname) }).toEqual({
+          href,
+          decoded: path,
+        });
+      }
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/40182
+  test.skipIf(!isWindows)("parses for a path with a drive letter and backslashes", () => {
+    using dir = tempDir("unix-url-drive", {});
+    const path = String(dir).replaceAll("/", "\\") + "\\test.sock";
+    using server = serve({ unix: path, fetch: () => new Response("ok") });
+    expect(decodeURIComponent(server.url.hostname)).toBe(path);
+  });
+
+  test.skipIf(!isLinux)("percent-encodes an abstract socket name", () => {
+    const name = "bun url test/" + Math.random().toString(36).slice(2);
+    using server = serve({ unix: "\0" + name, fetch: () => new Response("ok") });
+    expect(server.url.href).toBe(`abstract://${encodeURIComponent(name)}/`);
   });
 });
 
@@ -863,6 +952,31 @@ describe("Bun.serve unix socket validation", () => {
         },
       }),
     ).toThrow("Cannot disable http1 with a unix socket");
+  });
+
+  test("unix option does not leak the string", async () => {
+    // Both calls throw before binding a socket. The first rejects hostname + unix. The second accepts
+    // the unix path and throws for the missing handler.
+    const code = /* js */ `
+      const base = Buffer.alloc(512 * 1024, "x").toString();
+      function expectThrow(fn, fragment) {
+        try { fn(); } catch (e) { if (e.message.includes(fragment)) return; throw e; }
+        throw new Error("expected Bun.serve() to throw: " + fragment);
+      }
+      function once(i) {
+        expectThrow(() => Bun.serve({ hostname: "127.0.0.1", unix: "/tmp/a" + i + base, fetch() {} }), "both hostname and unix");
+        expectThrow(() => Bun.serve({ unix: "/tmp/b" + i + base }), "fetch");
+      }
+      for (let i = 0; i < 20; i++) once(i);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 200; i++) once(i);
+      Bun.gc(true);
+      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    `;
+
+    // A leak keeps 200 copies of the 512 KiB path per call site, so at least 100 MiB.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
   });
 
   describe("invalid unix socket paths should throw", () => {

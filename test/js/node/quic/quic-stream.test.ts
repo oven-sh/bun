@@ -1,8 +1,9 @@
 // `destroy()` after the app committed AND ended a response (which, under
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
+import { quicSendRawHeaders } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -405,6 +406,841 @@ describe("HTTP/3 header blocks that follow another header block", () => {
   });
 });
 
+// RFC 9114 10.3. nghttp3, which parses fields for Node, removes such a regular field and delivers the rest.
+describe("HTTP/3 header blocks with no field lines", () => {
+  const get = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+
+  // One request, answered by `respond`. A second request then shows that the connection survived.
+  async function request(respond: (stream: any) => void, onwanttrailers?: (this: any) => void) {
+    await using server = await listen(
+      session => {
+        session.onerror = () => {};
+        session.closed.catch(() => {});
+        session.onstream = (stream: any) => void stream.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        onheaders(this: any) {
+          respond(this);
+          respond = stream => stream.sendHeaders({ ":status": "204" }, { terminal: true });
+        },
+        onwanttrailers,
+      },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    try {
+      await client.opened;
+      const exchange = async () => {
+        const events: string[] = [];
+        const log = (name: string) => (headers: Record<string, string>) =>
+          void events.push(`${name} ${JSON.stringify(headers)}`);
+        const stream = await client.createBidirectionalStream({
+          headers: get,
+          oninfo: log("info"),
+          onheaders: log("headers"),
+          ontrailers: log("trailers"),
+        });
+        stream.closed.catch(() => {});
+        let body = "";
+        try {
+          for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+          events.push(`end ${body}`);
+        } catch (err: any) {
+          events.push(`error ${err.code}`);
+        }
+        return events;
+      };
+      return { first: await exchange(), second: await exchange() };
+    } finally {
+      client.close();
+    }
+  }
+  const second = ['headers {":status":"204"}', "end "];
+
+  // sendHeaders({}) still writes the block.
+  test("a received block is delivered as empty trailers", async () => {
+    const result = await request(stream => {
+      stream.sendHeaders({ ":status": "200" });
+      stream.sendHeaders({}, { terminal: true });
+    });
+    expect(result).toEqual({ first: ['headers {":status":"200"}', "trailers {}", "end "], second });
+  });
+
+  test("sendTrailers({}) only sends the FIN, and sendInformationalHeaders({}) sends nothing", async () => {
+    const sent: boolean[] = [];
+    const result = await request(
+      stream => {
+        sent.push(stream.sendInformationalHeaders({}));
+        stream.sendHeaders({ ":status": "200" });
+        stream.writer.writeSync(new TextEncoder().encode("hello"));
+        stream.writer.endSync();
+      },
+      function () {
+        sent.push(this.sendTrailers({}));
+      },
+    );
+    expect({ sent, ...result }).toEqual({
+      sent: [true, true],
+      first: ['headers {":status":"200"}', "end hello"],
+      second,
+    });
+  });
+});
+
+describe("received HTTP/3 fields with CR or LF", () => {
+  const encoder = new TextEncoder();
+  const request = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  const serverOptions = { sni: { "*": { keys: [key], certs: [cert] } }, transportParams: { maxIdleTimeout: 1 } };
+  const clientOptions = {
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 1 },
+  } as SessionOptions;
+  const quietSession = async (serverSession: any) => {
+    serverSession.onerror = () => {};
+    serverSession.onstream = (stream: any) => {
+      stream.closed.catch(() => {});
+    };
+    await serverSession.closed.catch(() => {});
+  };
+
+  test.each([
+    ["CR LF", "a\r\nb: c"],
+    ["LF", "a\nb"],
+    ["CR", "a\rb"],
+  ])("drops a field whose value has %s from every kind of block", async (_, bad) => {
+    const seen: Record<string, unknown> = {};
+    let serverStream: any;
+    await using server = await listen(
+      async (serverSession: any) => {
+        serverSession.onstream = (stream: any) => {
+          serverStream = stream;
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        ...serverOptions,
+        onheaders(this: any, headers: Record<string, any>) {
+          seen.request = { ...headers };
+          this.sendInformationalHeaders({ ":status": "103", "x-bad": bad, "x-ok": "info" });
+          this.sendHeaders({ ":status": "200", "x-bad": bad, "x-ok": "response" });
+          this.writer.writeSync(encoder.encode("body"));
+          this.writer.endSync();
+        },
+        ontrailers(this: any, trailers: Record<string, any>) {
+          seen.requestTrailers = { ...trailers };
+        },
+        onwanttrailers(this: any) {
+          this.sendTrailers({ "x-bad": bad });
+        },
+      },
+    );
+    const client = await connect(server.address!, clientOptions);
+    await client.opened;
+
+    const stream: any = await client.createBidirectionalStream({
+      oninfo: (headers: Record<string, any>) => (seen.info = { ...headers }),
+      onheaders: (headers: Record<string, any>) => (seen.response = { ...headers }),
+      ontrailers: (trailers: Record<string, any>) => (seen.responseTrailers = { ...trailers }),
+    });
+    stream.closed.catch(() => {});
+    stream.sendHeaders({ ...request, "x-bad": bad, "x-ok": "request" });
+    stream.sendTrailers({ "x-bad": bad, "x-ok": "request trailers" });
+    let body = "";
+    for await (const batch of stream) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    }
+    seen.body = body;
+    await stream.closed;
+    await serverStream.closed;
+    await client.close();
+
+    expect(seen).toEqual({
+      request: { ...request, "x-ok": "request" },
+      requestTrailers: { "x-ok": "request trailers" },
+      info: { ":status": "103", "x-ok": "info" },
+      response: { ":status": "200", "x-ok": "response" },
+      responseTrailers: {},
+      body: "body",
+    });
+  });
+
+  // sendHeaders() rejects a name that isn't a token, so these blocks use the raw sender. Kind 1 is the initial block, flag 1 ends the stream.
+  test("drops a field with CR or LF anywhere in its name or value, and keeps a tab", async () => {
+    const seen: Record<string, Record<string, string>> = {};
+    await using server = await listen(quietSession, {
+      ...serverOptions,
+      onheaders(this: any, headers: Record<string, any>) {
+        const { ":path": path, ...rest } = headers;
+        seen[path] = rest;
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      },
+    });
+    const client = await connect(server.address!, clientOptions);
+    await client.opened;
+
+    const rows: Record<string, Record<string, string>> = {
+      "/name-cr-lf": { "x-a\r\nx-b": "v" },
+      "/name-lf-first": { "\nx-b": "v" },
+      "/name-cr-last": { "x-a\r": "v" },
+      "/value-lf-first": { "x-bad": "\nb" },
+      "/value-cr-last": { "x-bad": "a\r" },
+      "/value-is-lf": { "x-bad": "\n" },
+      "/value-tab": { "x-tab": "a\tb", "x-bad": "a\rb" },
+    };
+    for (const [path, fields] of Object.entries(rows)) {
+      const stream = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      quicSendRawHeaders(stream, Object.entries({ ...request, ":path": path, ...fields, "x-ok": "kept" }).flat(), 1, 1);
+      await stream.closed;
+    }
+    await client.close();
+
+    const rest = { ":method": "POST", ":scheme": "https", ":authority": "localhost", "x-ok": "kept" };
+    expect(seen).toEqual({
+      "/name-cr-lf": rest,
+      "/name-lf-first": rest,
+      "/name-cr-last": rest,
+      "/value-lf-first": rest,
+      "/value-cr-last": rest,
+      "/value-is-lf": rest,
+      "/value-tab": { ...rest, "x-tab": "a\tb" },
+    });
+  });
+
+  test("closes the connection when a pseudo-header has CR or LF", async () => {
+    let delivered = false;
+    await using server = await listen(quietSession, {
+      ...serverOptions,
+      onheaders(this: any) {
+        delivered = true;
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      },
+    });
+    const client = await connect(server.address!, { ...clientOptions, onerror() {} } as SessionOptions);
+    await client.opened;
+
+    const stream = await client.createBidirectionalStream({ headers: { ...request, ":path": "/a\r\nb" } });
+    stream.closed.catch(() => {});
+    expect(
+      await client.closed.then(
+        () => "closed",
+        (err: any) => `${err.code} ${err.errorCode}`,
+      ),
+    ).toBe(`ERR_QUIC_APPLICATION_ERROR ${0x10e}`);
+    expect(delivered).toBe(false);
+  });
+
+  test.each([
+    // Room for the four pseudo-headers and one more field.
+    ["maxHeaderPairs", { maxHeaderPairs: 5 }],
+    // The pseudo-headers take 48 bytes. x-bad (9) fits, and x-ok (8) only fits if x-bad isn't counted.
+    ["maxHeaderLength", { maxHeaderLength: 57 }],
+  ])("doesn't count a dropped field against %s", async (_, application) => {
+    let received: Record<string, string> | undefined;
+    await using server = await listen(quietSession, {
+      ...serverOptions,
+      application,
+      onheaders(this: any, headers: Record<string, any>) {
+        received = { ...headers };
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      },
+    } as SessionOptions);
+    const client = await connect(server.address!, clientOptions);
+    await client.opened;
+
+    const stream = await client.createBidirectionalStream({
+      headers: { ...request, "x-bad": "a\r\nb", "x-ok": "kept" },
+    });
+    stream.closed.catch(() => {});
+    await stream.closed;
+    await client.close();
+
+    expect(received).toEqual({ ...request, "x-ok": "kept" });
+  });
+});
+
+describe("STOP_SENDING on a stream whose send side is finished", () => {
+  test.each<[string, (stream: any) => void, bigint]>([
+    ["stopSending()", stream => stream.stopSending(5n), 5n],
+    ["destroy() with a code", stream => stream.destroy(undefined, { code: 7n }), 7n],
+  ])("%s sends the frame right away on an idle connection", async (_name, abort, code) => {
+    const requested = Promise.withResolvers<any>();
+    const stopped = Promise.withResolvers<any>();
+    const acknowledged = { server: Promise.withResolvers<void>(), client: Promise.withResolvers<void>() };
+    await using server = await listen(
+      session => {
+        session.closed.catch(() => {});
+        session.ondatagramstatus = () => acknowledged.server.resolve();
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          stream.onstopsending = stopped.resolve;
+          requested.resolve(session);
+        };
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, ondatagram() {} },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      ondatagram() {},
+      ondatagramstatus: () => acknowledged.client.resolve(),
+    } as SessionOptions);
+    try {
+      await client.opened;
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      });
+      stream.closed.catch(() => {});
+      const serverSession = await requested.promise;
+      // Once each side's last packet is acknowledged, the client has no packet of its own to put the frame in.
+      await client.sendDatagram(new Uint8Array(1));
+      await acknowledged.client.promise;
+      await serverSession.sendDatagram(new Uint8Array(1));
+      await acknowledged.server.promise;
+
+      const stats = client.endpoint.stats;
+      const sentBefore = stats.packetsSent;
+      abort(stream);
+      expect(stats.packetsSent).toBeGreaterThan(sentBefore);
+      expect(await stopped.promise).toMatchObject({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: code });
+    } finally {
+      client.close();
+    }
+  });
+});
+
+describe("a resumed client before its handshake is done", () => {
+  test.each<[string, (stream: any) => void, string[]]>([
+    ["resetStream()", stream => stream.resetStream(42n), ["stream 0", "reset 0 42"]],
+    ["stopSending()", stream => stream.stopSending(42n), ["stream 0", "stop 0 42"]],
+  ])("%s reaches the server", async (_name, abort, expected) => {
+    const events: string[] = [];
+    await using server = await listen(
+      session => {
+        session.onerror = () => {};
+        session.closed.catch(() => {});
+        session.onstream = async (stream: any) => {
+          stream.closed.catch(() => {});
+          events.push(`stream ${stream.id}`);
+          stream.onreset = (error: any) => events.push(`reset ${stream.id} ${error.errorCode}`);
+          stream.onstopsending = (error: any) => events.push(`stop ${stream.id} ${error.errorCode}`);
+          try {
+            for await (const _ of stream);
+          } catch {
+            return;
+          }
+          stream.writer.endSync();
+        };
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+    );
+    const options = { alpn: "quic-test", servername: "localhost", verifyPeer: "manual", onerror() {} };
+    const ticket = Promise.withResolvers<any>();
+    const first = await connect(server.address!, { ...options, onsessionticket: ticket.resolve } as SessionOptions);
+    await first.opened;
+    const sessionTicket = await ticket.promise;
+    await first.close();
+
+    const client = await connect(server.address!, { ...options, sessionTicket } as SessionOptions);
+    try {
+      client.closed.catch(() => {});
+      const early = await client.createBidirectionalStream();
+      early.closed.catch(() => {});
+      abort(early);
+      const { earlyDataAccepted } = await client.opened;
+
+      // The server gets this request after everything the client sent before it.
+      const request = await client.createBidirectionalStream({ body: new Uint8Array(1) });
+      request.closed.catch(() => {});
+      for await (const _ of request);
+      expect({ earlyDataAccepted, events: events.filter(event => event !== `stream ${request.id}`) }).toEqual({
+        earlyDataAccepted: true,
+        events: expected,
+      });
+    } finally {
+      client.close();
+    }
+  });
+});
+
+describe("stream flow control", () => {
+  type TransportParams = Record<string, number>;
+  const sni = { "*": { keys: [key], certs: [cert] } };
+
+  // The period is 251 bytes, so a lost, repeated or reordered chunk changes the hash.
+  function pattern(size: number, seed: number) {
+    const period = Buffer.alloc(251);
+    for (let i = 0; i < period.length; i++) period[i] = (i * 7 + seed) & 0xff;
+    return Buffer.alloc(size, period);
+  }
+  const summary = (bytes: Uint8Array) => ({ length: bytes.byteLength, sha1: Bun.SHA1.hash(bytes, "hex") });
+  async function readAll(stream: any) {
+    const chunks: Uint8Array[] = [];
+    for await (const batch of stream) chunks.push(...batch);
+    return Buffer.concat(chunks);
+  }
+
+  // The server opens a bidirectional stream with `down` as its body, and the client answers with `up`.
+  async function serverOpenedExchange(options: {
+    down: Uint8Array;
+    up: Uint8Array;
+    server?: TransportParams;
+    client?: TransportParams;
+  }) {
+    const errors: string[] = [];
+    const serverRead = Promise.withResolvers<Uint8Array>();
+    const clientRead = Promise.withResolvers<Uint8Array>();
+    await using server = await listen(
+      session => {
+        session.onerror = (err: any) => errors.push(`server: ${err?.message}`);
+        session.closed.catch(() => {});
+        session.opened
+          .then(async () => {
+            const stream = await session.createBidirectionalStream({ body: options.down });
+            stream.closed.catch(() => {});
+            return readAll(stream);
+          })
+          .then(serverRead.resolve, serverRead.reject);
+      },
+      { sni, alpn: ["quic-test"], transportParams: options.server ?? {} },
+    );
+    const client = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: options.client ?? {},
+      onerror(err: any) {
+        errors.push(`client: ${err?.message}`);
+      },
+      onstream(stream: any) {
+        stream.closed.catch(() => {});
+        stream.setBody(options.up);
+        readAll(stream).then(clientRead.resolve, clientRead.reject);
+      },
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    try {
+      const [down, up] = await Promise.all([clientRead.promise, serverRead.promise]);
+      return { down: summary(down), up: summary(up), errors };
+    } finally {
+      client.close();
+    }
+  }
+
+  // A resumed client opens a unidirectional stream with `body` before its handshake is done.
+  async function earlyUnidirectionalStream(body: Uint8Array, serverParams: TransportParams = {}) {
+    const errors: string[] = [];
+    const received = Promise.withResolvers<Uint8Array>();
+    await using server = await listen(
+      session => {
+        session.onerror = (err: any) => errors.push(`server: ${err?.message}`);
+        session.closed.catch(() => {});
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          readAll(stream).then(received.resolve, received.reject);
+        };
+      },
+      { sni, alpn: ["quic-test"], transportParams: serverParams },
+    );
+    const options = { alpn: "quic-test", servername: "localhost", verifyPeer: "manual" };
+    const ticket = Promise.withResolvers<any>();
+    const first = await connect(server.address!, { ...options, onsessionticket: ticket.resolve } as SessionOptions);
+    await first.opened;
+    const sessionTicket = await ticket.promise;
+    await first.close();
+
+    const client = await connect(server.address!, {
+      ...options,
+      sessionTicket,
+      onerror(err: any) {
+        errors.push(`client: ${err?.message}`);
+      },
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    try {
+      const stream = await client.createUnidirectionalStream({ body });
+      stream.closed.catch(() => {});
+      const { earlyDataAccepted } = await client.opened;
+      return { earlyDataAccepted, received: summary(await received.promise), errors };
+    } finally {
+      client.close();
+    }
+  }
+
+  describe("with default transportParams", () => {
+    test("a bidirectional stream the server opens carries 256 KiB each way", async () => {
+      const down = pattern(256 * 1024, 1);
+      const up = pattern(256 * 1024, 2);
+      expect(await serverOpenedExchange({ down, up })).toEqual({ down: summary(down), up: summary(up), errors: [] });
+    });
+
+    test("a unidirectional stream a client opens in 0-RTT carries 400,000 bytes", async () => {
+      const body = pattern(400_000, 3);
+      expect(await earlyUnidirectionalStream(body)).toEqual({
+        earlyDataAccepted: true,
+        received: summary(body),
+        errors: [],
+      });
+    });
+  });
+
+  // A sender that reads the wrong window either overruns the 1,000 bytes or stops at 1,000 and waits for credit forever.
+  test.each<[string, { client?: TransportParams; server?: TransportParams }]>([
+    [
+      "client's bidiRemote is 1,000",
+      { client: { initialMaxStreamDataBidiRemote: 1000, initialMaxStreamDataBidiLocal: 100_000 } },
+    ],
+    [
+      "client's bidiLocal is 1,000",
+      { client: { initialMaxStreamDataBidiRemote: 100_000, initialMaxStreamDataBidiLocal: 1000 } },
+    ],
+    [
+      "server's bidiLocal is 1,000",
+      { server: { initialMaxStreamDataBidiLocal: 1000, initialMaxStreamDataBidiRemote: 100_000 } },
+    ],
+    [
+      "server's bidiRemote is 1,000",
+      { server: { initialMaxStreamDataBidiLocal: 100_000, initialMaxStreamDataBidiRemote: 1000 } },
+    ],
+  ])("a bidirectional stream the server opens carries 50,000 bytes each way when the %s", async (_name, windows) => {
+    const down = pattern(50_000, 4);
+    const up = pattern(50_000, 5);
+    expect(await serverOpenedExchange({ down, up, ...windows })).toEqual({
+      down: summary(down),
+      up: summary(up),
+      errors: [],
+    });
+  });
+
+  test("a unidirectional stream a client opens in 0-RTT stays within the server's unidirectional window", async () => {
+    const body = pattern(400_000, 6);
+    expect(await earlyUnidirectionalStream(body, { initialMaxStreamDataUni: 12288 })).toEqual({
+      earlyDataAccepted: true,
+      received: summary(body),
+      errors: [],
+    });
+  });
+
+  test.each([
+    { name: "raw QUIC", alpn: "quic-test" },
+    { name: "HTTP/3", alpn: "h3" },
+  ])("a sender stops while nothing reads its $name stream, and the reader then gets every byte", async ({ alpn }) => {
+    const WINDOW = 64 * 1024;
+    const body = pattern(2 * 1024 * 1024, 7);
+    const headers = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+    const unread = Promise.withResolvers<any>();
+    await using server = await listen(
+      session => {
+        session.onerror = () => {};
+        session.closed.catch(() => {});
+        let first = true;
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          if (first) unread.resolve(stream);
+          else if (alpn !== "h3") stream.writer.endSync();
+          first = false;
+        };
+      },
+      {
+        sni,
+        alpn: [alpn],
+        transportParams: { initialMaxStreamDataBidiRemote: WINDOW },
+        ...(alpn === "h3" && {
+          onheaders(this: any) {
+            this.sendHeaders({ ":status": "200" }, { terminal: true });
+          },
+        }),
+      },
+    );
+    const client = await connect(server.address!, {
+      alpn,
+      servername: "localhost",
+      verifyPeer: "manual",
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    try {
+      await client.opened;
+      const sender = await client.createBidirectionalStream(alpn === "h3" ? { headers, body } : { body });
+      sender.closed.catch(() => {});
+      const receiver = await unread.promise;
+      // The answer to a later stream arrives after every MAX_STREAM_DATA the server sent before it.
+      const roundTrip = async () => {
+        const stream = await client.createBidirectionalStream(
+          alpn === "h3" ? { headers, onheaders() {} } : { body: new Uint8Array(1) },
+        );
+        await stream.closed;
+      };
+      let sent = -1n;
+      while (sent !== sender.stats.bytesSent) {
+        sent = sender.stats.bytesSent;
+        await roundTrip();
+        await roundTrip();
+      }
+      expect(Number(sent)).toBeGreaterThanOrEqual(WINDOW);
+      expect(Number(sent)).toBeLessThan(512 * 1024);
+
+      expect(summary(await readAll(receiver))).toEqual(summary(body));
+    } finally {
+      client.close();
+    }
+  });
+
+  // Without an idle timeout, a FIN that's never sent can't pass for the clean end of an idle session.
+  describe("a FIN on a stream that has no credit", () => {
+    const empty = new Uint8Array(0);
+    const noStreamCredit = {
+      maxIdleTimeout: 0,
+      initialMaxStreamDataBidiLocal: 0,
+      initialMaxStreamDataBidiRemote: 0,
+      initialMaxStreamDataUni: 0,
+    };
+
+    test("reaches both ends of a bidirectional stream", async () => {
+      expect(
+        await serverOpenedExchange({ down: empty, up: empty, server: noStreamCredit, client: noStreamCredit }),
+      ).toEqual({ down: summary(empty), up: summary(empty), errors: [] });
+    });
+
+    test("reaches the peer of a unidirectional stream, and the stream closes", async () => {
+      const received = Promise.withResolvers<Uint8Array>();
+      await using server = await listen(
+        session => {
+          session.closed.catch(() => {});
+          session.onstream = (stream: any) => {
+            stream.closed.catch(() => {});
+            readAll(stream).then(received.resolve, received.reject);
+          };
+        },
+        { sni, alpn: ["quic-test"], transportParams: noStreamCredit },
+      );
+      const client = await connect(server.address!, {
+        alpn: "quic-test",
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: noStreamCredit,
+      } as SessionOptions);
+      try {
+        await client.opened;
+        const stream = await client.createUnidirectionalStream();
+        stream.writer.endSync();
+        expect((await received.promise).byteLength).toBe(0);
+        await stream.closed;
+      } finally {
+        client.close();
+      }
+    });
+  });
+});
+
+describe("a client's limit for the streams its server opens", () => {
+  test.each([
+    { kind: "bidi", params: { initialMaxStreamsBidi: 2 }, ids: [1n, 5n, 9n, 13n, 17n, 21n] },
+    { kind: "uni", params: { initialMaxStreamsUni: 2 }, ids: [3n, 7n, 11n, 15n, 19n, 23n] },
+  ])("is advertised, and credit comes back for closed $kind streams", async ({ kind, params, ids }) => {
+    const accepted = Promise.withResolvers<any>();
+    await using server = await listen(
+      session => {
+        session.onerror = () => {};
+        session.closed.catch(() => {});
+        accepted.resolve(session);
+      },
+      // A stream that never opens ends the test through `closed`, not through the test's timeout.
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"], transportParams: { maxIdleTimeout: 1 } },
+    );
+    const received: bigint[] = [];
+    let read = Promise.withResolvers<void>();
+    const client = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1, ...params },
+      onerror() {},
+      async onstream(stream: any) {
+        stream.closed.catch(() => {});
+        for await (const _ of stream);
+        // Credit only comes back for a stream that's closed in both directions.
+        if (kind === "bidi") stream.writer.endSync();
+        received.push(stream.id);
+        read.resolve();
+      },
+    } as SessionOptions);
+    try {
+      const closed = client.closed.then(
+        () => "client closed",
+        () => "client closed",
+      );
+      const serverSession = await accepted.promise;
+      await serverSession.opened;
+      const openAll = async () => {
+        for (const _ of ids) {
+          read = Promise.withResolvers<void>();
+          const body = new Uint8Array(1);
+          const stream = await (kind === "bidi"
+            ? serverSession.createBidirectionalStream({ body })
+            : serverSession.createUnidirectionalStream({ body }));
+          stream.closed.catch(() => {});
+          await read.promise;
+        }
+        return "opened all";
+      };
+      const { initialMaxStreamsBidi, initialMaxStreamsUni } = serverSession.remoteTransportParams;
+      expect({
+        advertised: kind === "bidi" ? initialMaxStreamsBidi : initialMaxStreamsUni,
+        outcome: await Promise.race([openAll(), closed]),
+        received,
+      }).toEqual({ advertised: 2n, outcome: "opened all", received: ids });
+    } finally {
+      client.close();
+    }
+  });
+});
+
+describe("pendingTrailers that can't be sent", () => {
+  test.each([
+    ["sendTrailers() throws", { connection: "close" }, "ERR_HTTP2_INVALID_CONNECTION_HEADERS"],
+    // U+0100 becomes a NUL in Latin-1, so the block has more pairs than it declares and the native side refuses it.
+    ["sendTrailers() returns false", { "x-bad": "a\u0100b" }, "ERR_QUIC_STREAM_ABORTED"],
+  ])("destroy the stream when %s", async (_name, trailers, code) => {
+    const closed = Promise.withResolvers<string>();
+    await using server = await listen(
+      session => {
+        session.closed.catch(() => {});
+        session.onstream = () => {};
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        onheaders(this: any) {
+          this.closed.then(
+            () => closed.resolve("resolved"),
+            (err: any) => closed.resolve(err.code),
+          );
+          this.sendHeaders({ ":status": "200" });
+          this.pendingTrailers = trailers;
+          this.writer.writeSync(new TextEncoder().encode("body"));
+          this.writer.endSync();
+        },
+        // The native side only asks a stream for its trailers when this is set.
+        onwanttrailers() {},
+      },
+    );
+    const client = await connect(server.address!, { servername: "localhost", verifyPeer: "manual" } as SessionOptions);
+    try {
+      await client.opened;
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+        onheaders() {},
+      });
+      stream.closed.catch(() => {});
+      expect(await closed.promise).toBe(code);
+    } finally {
+      client.close();
+    }
+  });
+});
+
+// A peer that gets RESET_STREAM or STREAM frames on a stream it only sends on closes the connection (RFC 9000 §19.4, §19.8).
+describe("a unidirectional stream the peer opened", () => {
+  const encoder = new TextEncoder();
+  const settled = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      (err: any) => `rejected: ${err.code}`,
+    );
+
+  // The server writes half a message, so its stream is still open when `call` runs on the client's end of it.
+  async function receive(call: (stream: any) => unknown) {
+    const sessionErrors: string[] = [];
+    const answered = Promise.withResolvers<void>();
+    const out = Promise.withResolvers<any>();
+    await using server = await listen(
+      session => {
+        session.onerror = (err: any) => sessionErrors.push(`server: ${err.message}`);
+        session.closed.catch(() => {});
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          answered.resolve();
+        };
+        session.opened.then(() => session.createUnidirectionalStream()).then(out.resolve, out.reject);
+      },
+      { alpn: ["quic-test"], sni: { "*": { keys: [key], certs: [cert] } } },
+    );
+    const incoming = Promise.withResolvers<any>();
+    const client = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      onstream: incoming.resolve,
+      onerror(err: any) {
+        sessionErrors.push(`client: ${err.message}`);
+      },
+    } as SessionOptions);
+    const died = settled(client.closed).then(() => "the session closed");
+    try {
+      const sender = await out.promise;
+      sender.closed.catch(() => {});
+      sender.writer.writeSync(encoder.encode("part one, "));
+
+      const stream = await incoming.promise;
+      const closed = settled(stream.closed);
+      let thrown = "nothing";
+      try {
+        call(stream);
+      } catch (err: any) {
+        thrown = `${err.code}: ${err.message}`;
+      }
+      const received = (async () => {
+        let text = "";
+        for await (const batch of stream) for (const chunk of batch) text += Buffer.from(chunk).toString("latin1");
+        return text;
+      })().catch((err: any) => `rejected: ${err.code}`);
+
+      // Once the server sees this stream, it has also seen every frame that `call` sent.
+      const answer = await client.createUnidirectionalStream({ body: encoder.encode("go") });
+      answer.closed.catch(() => {});
+      if ((await Promise.race([answered.promise, died])) === "the session closed") return { sessionErrors };
+      sender.writer.writeSync(encoder.encode("part two"));
+      sender.writer.endSync();
+      return { thrown, received: await received, closed: await closed, sessionErrors };
+    } finally {
+      client.close();
+    }
+  }
+
+  test.each<[string, (stream: any) => unknown, string?]>([
+    ["ignores resetStream()", stream => stream.resetStream(7n)],
+    ["drops setBody(bytes)", stream => stream.setBody(new Uint8Array(4096))],
+    ["drops setBody(Blob)", stream => stream.setBody(new Blob([new Uint8Array(4096)]))],
+    ["drops setOutbound(bytes)", stream => stream.setOutbound(new Uint8Array(4096))],
+    ["throws for setBody(null)", stream => stream.setBody(null), "ERR_INVALID_STATE: Stream is not writable"],
+  ])("%s and still delivers every byte", async (_name, call, thrown = "nothing") => {
+    expect(await receive(call)).toEqual({
+      thrown,
+      received: "part one, part two",
+      closed: "resolved",
+      sessionErrors: [],
+    });
+  });
+
+  test.each<[string, (stream: any) => unknown]>([
+    ["setBody(iterable)", stream => stream.setBody([new Uint8Array(4096)])],
+    ["setBody(Promise of null)", stream => stream.setBody(Promise.resolve(null))],
+  ])("is destroyed with ERR_INVALID_STATE by %s, and the session stays open", async (_name, call) => {
+    expect(await receive(call)).toMatchObject({
+      thrown: "nothing",
+      closed: "rejected: ERR_INVALID_STATE",
+      sessionErrors: [],
+    });
+  });
+});
+
 describe("verifyClient", () => {
   test("a server requiring a client certificate never surfaces streams from a client that presented none", async () => {
     let announcedStreams = 0;
@@ -493,6 +1329,343 @@ describe("headers queued before the handshake", () => {
     );
     expect(await Promise.race([gotHeaders.promise, closed])).toBe("/queued");
     client.close();
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/45500
+describe("a stream that's still open when its connection closes", () => {
+  const alpn = "quic-test";
+  type Pair = { session: any; stream: any };
+
+  // Returns a client stream that wrote one byte, and the server's session and stream for it.
+  async function openPair() {
+    const accepted: Pair[] = [];
+    const waiters: ((pair: Pair) => void)[] = [];
+    const server = await listen(
+      (session: any) => {
+        session.closed.catch(() => {});
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          const pair = { session, stream };
+          const waiter = waiters.shift();
+          if (waiter) waiter(pair);
+          else accepted.push(pair);
+        };
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn, transportParams: { maxIdleTimeout: 1 } },
+    );
+    const client = await connect(server.address!, {
+      alpn,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    } as SessionOptions);
+    await client.opened;
+    async function open(direction: "bidi" | "uni" = "bidi", { observeClosed = true } = {}) {
+      const stream: any =
+        direction === "uni" ? await client.createUnidirectionalStream() : await client.createBidirectionalStream();
+      if (observeClosed) stream.closed.catch(() => {});
+      stream.writer.writeSync(Uint8Array.of(1));
+      const peer = accepted.shift() ?? (await new Promise<Pair>(resolve => waiters.push(resolve)));
+      return { stream, peer };
+    }
+    return { server, client, open, ...(await open()) };
+  }
+
+  const settle = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      (err: any) => `rejected ${err.code} ${err.errorCode}`,
+    );
+  const settleRead = (promise: Promise<IteratorResult<unknown>>) =>
+    promise.then(
+      result => (result.done ? "ended cleanly" : "returned data"),
+      (err: any) => `rejected ${err.code}`,
+    );
+
+  test.each([
+    ["application", "ERR_QUIC_APPLICATION_ERROR"],
+    ["transport", "ERR_QUIC_TRANSPORT_ERROR"],
+  ])("rejects a pending read and closed with the connection's %s error", async (type, code) => {
+    const { server, client, stream, peer } = await openPair();
+    await using _ = server;
+    let onerrorCalls = 0;
+    stream.onerror = () => onerrorCalls++;
+    const read = settleRead(stream[Symbol.asyncIterator]().next());
+    const streamClosed = settle(stream.closed);
+    const sessionClosed = settle(client.closed);
+
+    peer.session.destroy(undefined, { code: 2n, type });
+
+    expect({ read: await read, streamClosed: await streamClosed, sessionClosed: await sessionClosed }).toEqual({
+      read: `rejected ${code}`,
+      streamClosed: `rejected ${code} 2`,
+      sessionClosed: `rejected ${code} 2`,
+    });
+    // Node doesn't call onerror for a stream that its connection closed.
+    expect({ destroyed: stream.destroyed, onerrorCalls }).toEqual({ destroyed: true, onerrorCalls: 0 });
+  });
+
+  test("rejects a read that starts after the connection closed", async () => {
+    const { server, client, stream, peer } = await openPair();
+    await using _ = server;
+    const streamClosed = settle(stream.closed);
+    client.closed.catch(() => {});
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+
+    expect(await streamClosed).toBe("rejected ERR_QUIC_APPLICATION_ERROR 2");
+    expect(await settleRead(stream[Symbol.asyncIterator]().next())).toBe("rejected ERR_QUIC_APPLICATION_ERROR");
+  });
+
+  test("rejects closed with the connection's error after the closing peer's writer reset the stream", async () => {
+    const { server, client, stream, peer } = await openPair();
+    await using _ = server;
+    const iterator = stream[Symbol.asyncIterator]();
+    peer.stream.writer.writeSync(Uint8Array.of(2, 3));
+    const first = await iterator.next();
+    const read = settleRead(iterator.next());
+    const streamClosed = settle(stream.closed);
+    client.closed.catch(() => {});
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+
+    expect({ first: first.done, read: await read, streamClosed: await streamClosed }).toEqual({
+      first: false,
+      read: "rejected ERR_QUIC_STREAM_RESET",
+      streamClosed: "rejected ERR_QUIC_APPLICATION_ERROR 2",
+    });
+  });
+
+  test("still delivers a complete body that arrived before the connection's error", async () => {
+    const { server, client, stream, peer } = await openPair();
+    await using _ = server;
+    const streamClosed = settle(stream.closed);
+    client.closed.catch(() => {});
+    peer.stream.writer.writeSync(Uint8Array.of(2, 3));
+    peer.stream.writer.writeSync(Uint8Array.of(4, 5));
+    peer.stream.writer.endSync();
+    // The FIN rides on the last frame of the body.
+    while (stream.stats.bytesReceived < 4n) await new Promise(resolve => setImmediate(resolve));
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+    await streamClosed;
+
+    const bytes: number[] = [];
+    for await (const batch of stream) for (const chunk of batch) bytes.push(...chunk);
+    expect({ bytes, streamClosed: await streamClosed }).toEqual({
+      bytes: [2, 3, 4, 5],
+      streamClosed: "rejected ERR_QUIC_APPLICATION_ERROR 2",
+    });
+  });
+
+  test("resolves closed when the connection closes without an error", async () => {
+    const { server, client, stream, peer } = await openPair();
+    await using _ = server;
+    const streamClosed = settle(stream.closed);
+    const sessionClosed = settle(client.closed);
+
+    peer.session.destroy(undefined, { code: 0n });
+
+    expect({ streamClosed: await streamClosed, sessionClosed: await sessionClosed }).toEqual({
+      streamClosed: "resolved",
+      sessionClosed: "resolved",
+    });
+  });
+
+  test("rejects closed with the peer's reset code when the connection then idles out", async () => {
+    const { server, client, stream, peer } = await openPair();
+    await using _ = server;
+    const reset = Promise.withResolvers<void>();
+    stream.onreset = () => reset.resolve();
+    const streamClosed = settle(stream.closed);
+    const sessionClosed = settle(client.closed);
+
+    // The client's write side stays open, so only the idle timeout closes the stream.
+    peer.stream.resetStream(7n);
+    await reset.promise;
+
+    expect({ streamClosed: await streamClosed, sessionClosed: await sessionClosed }).toEqual({
+      streamClosed: "rejected ERR_QUIC_APPLICATION_ERROR 7",
+      sessionClosed: "resolved",
+    });
+  });
+
+  test("doesn't raise an unhandled rejection for a stream whose closed was never read", async () => {
+    const { server, client, peer, open } = await openPair();
+    await using _ = server;
+    const { stream: unobserved } = await open("bidi", { observeClosed: false });
+    // A finished writer has no failure that would mark `closed` as handled.
+    unobserved.writer.endSync();
+    const sessionClosed = settle(client.closed);
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+
+    expect(await sessionClosed).toBe("rejected ERR_QUIC_APPLICATION_ERROR 2");
+  });
+
+  test("ends the iterator of a write-only stream without an error", async () => {
+    const { server, client, peer, open } = await openPair();
+    await using _ = server;
+    const { stream: uni } = await open("uni");
+    const closed = settle(uni.closed);
+    client.closed.catch(() => {});
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+
+    expect(await closed).toBe("rejected ERR_QUIC_APPLICATION_ERROR 2");
+    expect(await settleRead(uni[Symbol.asyncIterator]().next())).toBe("ended cleanly");
+  });
+
+  test("stream.destroy(error) rejects a pending read with that error", async () => {
+    const { server, client, stream } = await openPair();
+    await using _ = server;
+    const read = stream[Symbol.asyncIterator]()
+      .next()
+      .then(
+        () => "ended",
+        (err: Error) => err.message,
+      );
+
+    stream.destroy(new Error("local abort"));
+
+    expect(await read).toBe("local abort");
+    client.close();
+  });
+
+  // The peer's STOP_SENDING ends the write side, so these don't wait for the connection to close.
+  test("a write-only stream that the peer stops closes with the peer's code", async () => {
+    const { server, client, open } = await openPair();
+    await using _ = server;
+    const { stream: uni, peer } = await open("uni");
+    const closed = settle(uni.closed);
+
+    peer.stream.destroy(new Error("not wanted"));
+
+    expect(await closed).toBe("rejected ERR_QUIC_APPLICATION_ERROR 1");
+    expect((await open()).peer.session).toBe(peer.session);
+    client.close();
+  });
+
+  test("a stream that the peer finished and then stopped closes", async () => {
+    const { server, client, stream, peer, open } = await openPair();
+    await using _ = server;
+    peer.stream.writer.endSync();
+    for await (const _ of stream);
+    const closed = settle(stream.closed);
+
+    peer.stream.stopSending(4n);
+
+    expect(await closed).toBe("resolved");
+    expect((await open()).peer.session).toBe(peer.session);
+    client.close();
+  });
+});
+
+// One sendHeaders() call takes 128 fields at most, so it returns false for this block.
+describe("a response after sendHeaders() returned false", () => {
+  const refused: Record<string, string> = { ":status": "200" };
+  for (let i = 0; i < 128; i++) refused[`x-field-${i}`] = "v";
+  const encoder = new TextEncoder();
+  const outcome = (closed: Promise<unknown>) =>
+    closed.then(
+      () => "closed",
+      (err: any) => `${err.code} ${err.errorCode}`,
+    );
+
+  async function roundTrip(respond: (stream: any) => unknown) {
+    const serverSide = Promise.withResolvers<[unknown, string]>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        async onheaders(this: any) {
+          const sent = await respond(this);
+          serverSide.resolve([sent, await outcome(this.closed)]);
+        },
+      },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      onerror() {},
+    } as SessionOptions);
+    await client.opened;
+    let status: string | undefined;
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders: (headers: Record<string, any>) => (status = headers[":status"]),
+    });
+    const clientClosed = await outcome(stream.closed);
+    const [sent, serverClosed] = await serverSide.promise;
+    client.close();
+    return { sent, status, client: clientClosed, server: serverClosed };
+  }
+
+  const reset = {
+    sent: false,
+    status: undefined,
+    client: "ERR_QUIC_APPLICATION_ERROR 258",
+    server: "ERR_QUIC_APPLICATION_ERROR 258",
+  };
+
+  test("a body write resets the stream with H3_INTERNAL_ERROR", async () => {
+    expect(
+      await roundTrip(stream => {
+        const sent = stream.sendHeaders(refused);
+        stream.writer.writeSync(encoder.encode("body"));
+        stream.writer.endSync();
+        return sent;
+      }),
+    ).toEqual(reset);
+  });
+
+  test("ending the stream resets it instead of sending a bare FIN", async () => {
+    expect(
+      await roundTrip(stream => {
+        const sent = stream.sendHeaders(refused);
+        stream.writer.endSync();
+        return sent;
+      }),
+    ).toEqual(reset);
+  });
+
+  test("a body that was already waiting for the header block resets the stream", async () => {
+    expect(
+      await roundTrip(async stream => {
+        stream.writer.writeSync(encoder.encode("body"));
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        return stream.sendHeaders(refused);
+      }),
+    ).toEqual(reset);
+  });
+
+  test("another sendHeaders() call can still answer", async () => {
+    expect(
+      await roundTrip(stream => {
+        const sent = stream.sendHeaders(refused);
+        stream.sendHeaders({ ":status": "500" }, { terminal: true });
+        return sent;
+      }),
+    ).toEqual({ sent: false, status: "500", client: "closed", server: "closed" });
+  });
+
+  test("a body written before sendHeaders() follows the header block", async () => {
+    expect(
+      await roundTrip(async stream => {
+        stream.writer.writeSync(encoder.encode("body"));
+        stream.writer.endSync();
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        return stream.sendHeaders({ ":status": "200" });
+      }),
+    ).toEqual({ sent: true, status: "200", client: "closed", server: "closed" });
   });
 });
 
@@ -740,3 +1913,471 @@ test("a stream that reuses a destroyed stream's allocation doesn't get its queue
   expect(stdout).toBe(JSON.stringify({ opened: 16, delivered: 16, closedBeforeSent: [] }) + "\n");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+describe.concurrent("a queued body", () => {
+  async function peakRSS(mode: string) {
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: [bunExe(), "--no-warnings", join(import.meta.dir, "outbound-body-rss-fixture.ts"), mode],
+      env: withoutAsanQuarantine(bunEnv),
+    });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return { maxRSS, ...(JSON.parse(stdout) as { bodyBytes: number; bytesSent: number }) };
+  }
+  let baseline: ReturnType<typeof peakRSS> | undefined;
+
+  test.each(["open", "setBody", "writer"])(
+    "is held once natively while lsquic drains it (%s)",
+    async mode => {
+      const [none, queued] = await Promise.all([(baseline ??= peakRSS("none")), peakRSS(mode)]);
+      expect(queued.bytesSent).toBeGreaterThan(0);
+      // About 1 with one queue, about 2 if each write copies the queue first.
+      expect((queued.maxRSS - none.maxRSS) / queued.bodyBytes).toBeLessThan(1.5);
+    },
+    20_000,
+  );
+
+  test("is freed when the stream's FIN is sent, not when the stream is collected", async () => {
+    // Eight kept queues are 32 MiB.
+    await expectRssDeltaBelow(["--no-warnings", join(import.meta.dir, "outbound-body-release-fixture.ts"), "8"], {
+      release: 20,
+      debug: 20,
+    });
+  }, 20_000);
+
+  test("arrives intact after the queue's ring buffer wraps", async () => {
+    // Each chunk is larger than the receiver's window, so the next one is queued behind a partly sent tail.
+    const chunks = Array.from({ length: 8 }, (_, i) => Buffer.alloc(48 * 1024, `chunk ${i} `));
+    const received = Promise.withResolvers<Buffer>();
+    await using server = await listen(
+      (session: any) => {
+        session.closed.catch(() => {});
+        session.onstream = async (stream: any) => {
+          stream.closed.catch(() => {});
+          try {
+            const parts: Uint8Array[] = [];
+            for await (const batch of stream) parts.push(...batch);
+            received.resolve(Buffer.concat(parts));
+          } catch (e) {
+            received.reject(e);
+          }
+        };
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: ["wrap-test"],
+        transportParams: { initialMaxStreamDataBidiRemote: 16 * 1024 },
+      },
+    );
+
+    const client = await connect(server.address!, { alpn: "wrap-test", verifyPeer: "manual" } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+    const stream = await client.createBidirectionalStream({ highWaterMark: chunks[0].length });
+    stream.closed.catch(() => {});
+    stream.setBody(
+      (async function* () {
+        yield* chunks;
+      })(),
+    );
+
+    const got = await received.promise;
+    client.close();
+    expect(got.equals(Buffer.concat(chunks))).toBe(true);
+  });
+});
+
+// A stream is pending until lsquic creates it: once the handshake is done and the peer's stream limit allows it.
+describe("pending streams", () => {
+  const encoder = new TextEncoder();
+  const raw = { server: { alpn: ["quic-test"] }, client: { alpn: "quic-test" } };
+  const drain = async (stream: any) => {
+    for await (const _ of stream);
+  };
+
+  async function connected(onsession: (session: any) => void, serverOptions: any = {}, clientOptions: any = {}) {
+    const sessions: any[] = [];
+    const server = await listen(
+      (session: any) => {
+        sessions.push(session);
+        session.closed.catch(() => {});
+        return onsession(session);
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        ...serverOptions,
+        transportParams: { maxIdleTimeout: 10, ...serverOptions.transportParams },
+      },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      ...clientOptions,
+      transportParams: { maxIdleTimeout: 10 },
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    sessions.push(client);
+    return {
+      client,
+      // A graceful close after a failed expectation would wait for the idle timeout.
+      async [Symbol.asyncDispose]() {
+        for (const session of sessions) session.destroy();
+        await server.close();
+      },
+    };
+  }
+  const opener = (session: any) => async (direction: "uni" | "bidi", body: string) => {
+    const options = { body: encoder.encode(body) };
+    const stream = await (direction === "uni"
+      ? session.createUnidirectionalStream(options)
+      : session.createBidirectionalStream(options));
+    stream.closed.catch(() => {});
+    return stream;
+  };
+  // A unidirectional stream closes once its body is sent. A bidirectional one is answered when the peer ends its side.
+  const sent = (stream: any) => (stream.direction === "uni" ? stream.closed : drain(stream));
+  // Reads each stream and ends its own side. A stream with an id below `heldBelow` keeps its stream credit until `release`.
+  const readAndHold = (heldBelow: bigint, release: Promise<void>) => (session: any) => {
+    session.onstream = async (stream: any) => {
+      stream.closed.catch(() => {});
+      if (stream.id < heldBelow) await release;
+      await drain(stream);
+      if (stream.direction === "bidi") stream.writer.endSync();
+    };
+  };
+
+  // https://github.com/oven-sh/bun/issues/44749
+  test("streams requested before the handshake open in order", async () => {
+    const received: Record<string, string> = {};
+    await using sessions = await connected(
+      session => {
+        session.onstream = async (stream: any) => {
+          stream.closed.catch(() => {});
+          const chunks: Buffer[] = [];
+          for await (const batch of stream) for (const chunk of batch) chunks.push(Buffer.from(chunk));
+          received[String(stream.id)] = Buffer.concat(chunks).toString();
+          if (stream.direction === "bidi") stream.writer.endSync();
+        };
+      },
+      raw.server,
+      raw.client,
+    );
+    const { client } = sessions;
+    const open = opener(client);
+
+    await open("uni", "uni 1");
+    const answered = await open("bidi", "bidi 1");
+    await open("uni", "uni 2");
+    await client.opened;
+    await drain(answered);
+    expect(received).toEqual({ "2": "uni 1", "0": "bidi 1", "6": "uni 2" });
+
+    await open("uni", "uni 3");
+    await drain(await open("bidi", "bidi 2"));
+    expect(received).toEqual({ "2": "uni 1", "0": "bidi 1", "6": "uni 2", "10": "uni 3", "4": "bidi 2" });
+  });
+
+  test.each(["uni", "bidi"] as const)(
+    "a %s stream destroyed before the handshake doesn't use a stream ID",
+    async direction => {
+      await using sessions = await connected(readAndHold(0n, Promise.resolve()), raw.server, raw.client);
+      const { client } = sessions;
+      const open = opener(client);
+
+      (await open(direction, "never sent")).destroy();
+      await client.opened;
+      expect((await open(direction, "first")).id).toBe(direction === "uni" ? 2n : 0n);
+    },
+  );
+
+  // The peer allows four streams and holds them. Four more wait for credit and are destroyed, as a request timeout does.
+  test.each(["uni", "bidi"] as const)(
+    "a %s stream destroyed while it waits for stream credit doesn't use the credit",
+    async direction => {
+      const release = Promise.withResolvers<void>();
+      await using sessions = await connected(
+        readAndHold(16n, release.promise),
+        { ...raw.server, transportParams: { initialMaxStreamsBidi: 4, initialMaxStreamsUni: 4 } },
+        raw.client,
+      );
+      const { client } = sessions;
+      const open = opener(client);
+      await client.opened;
+
+      const streams: any[] = [];
+      for (let i = 0; i < 8; i++) streams.push(await open(direction, "held"));
+      expect(streams.map(stream => stream.pending)).toEqual([false, false, false, false, true, true, true, true]);
+      for (const waiting of streams.slice(4)) waiting.destroy();
+
+      const next = await open(direction, "next");
+      release.resolve();
+      await sent(next);
+      const later = [await open(direction, "a"), await open(direction, "b"), await open(direction, "c")];
+      await Promise.all(later.map(sent));
+      const first = direction === "uni" ? 18n : 16n;
+      expect([next, ...later].map(stream => stream.id)).toEqual([first, first + 4n, first + 8n, first + 12n]);
+    },
+  );
+
+  test.each([
+    ["uni", "the handshake"],
+    ["uni", "stream credit"],
+    ["bidi", "the handshake"],
+    ["bidi", "stream credit"],
+  ] as const)("destroying a %s stream between two that wait for %s keeps their order", async (direction, wait) => {
+    const credit = wait === "stream credit";
+    const release = Promise.withResolvers<void>();
+    await using sessions = await connected(
+      readAndHold(credit ? 8n : 0n, release.promise),
+      { ...raw.server, transportParams: credit ? { initialMaxStreamsBidi: 2, initialMaxStreamsUni: 2 } : {} },
+      raw.client,
+    );
+    const { client } = sessions;
+    const open = opener(client);
+    let first = direction === "uni" ? 2n : 0n;
+    if (credit) {
+      await client.opened;
+      await open(direction, "held");
+      await open(direction, "held");
+      first += 8n;
+    }
+
+    const a = await open(direction, "a");
+    const b = await open(direction, "b");
+    const c = await open(direction, "c");
+    expect([a.pending, b.pending, c.pending]).toEqual([true, true, true]);
+    b.destroy();
+    const d = await open(direction, "d");
+
+    release.resolve();
+    await Promise.all([a, c, d].map(sent));
+    const e = await open(direction, "e");
+    await sent(e);
+    expect([a, c, d, e].map(stream => stream.id)).toEqual([first, first + 4n, first + 8n, first + 12n]);
+  });
+
+  test("an HTTP/3 session opens a unidirectional stream requested before the handshake after its own three", async () => {
+    await using sessions = await connected(readAndHold(0n, Promise.resolve()), {
+      // Each side's control, QPACK encoder and QPACK decoder streams use up the default limit of three.
+      transportParams: { initialMaxStreamsUni: 10 },
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      },
+    });
+    const { client } = sessions;
+
+    const pending = await opener(client)("uni", "early");
+    await client.opened;
+    // The client has read the server's SETTINGS, and opened its QPACK encoder stream, once a request is answered.
+    const answered = Promise.withResolvers<void>();
+    const request = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders: () => answered.resolve(),
+    });
+    request.closed.catch(() => {});
+    await answered.promise;
+    expect(pending.id).toBe(14n);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/45501
+describe("QuicStream.opened", () => {
+  const serverOptions = {
+    sni: { "*": { keys: [key], certs: [cert] } },
+    alpn: "quic-test",
+    transportParams: { initialMaxStreamsBidi: 1 },
+  };
+  const clientOptions = {
+    alpn: "quic-test",
+    servername: "localhost",
+    verifyPeer: "manual",
+  } as SessionOptions;
+
+  // The server answers each FIN with its own, so a finished stream closes and frees its stream credit.
+  async function startServer() {
+    return await listen(async serverSession => {
+      serverSession.onstream = async (stream: any) => {
+        stream.closed.catch(() => {});
+        for await (const _ of stream) {
+        }
+        stream.writer.endSync();
+      };
+      await serverSession.closed.catch(() => {});
+    }, serverOptions);
+  }
+
+  test("is fulfilled for a stream that had stream credit", async () => {
+    await using server = await startServer();
+    const client = await connect(server.address!, clientOptions);
+    try {
+      await client.opened;
+      const stream: any = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      expect(stream.pending).toBe(false);
+      expect(stream.opened).toBeInstanceOf(Promise);
+      expect(stream.opened).toBe(stream.opened);
+      await expect(stream.opened).resolves.toBeUndefined();
+    } finally {
+      client.close();
+    }
+  });
+
+  test("is fulfilled once a pending stream gets its ID", async () => {
+    await using server = await startServer();
+    const client = await connect(server.address!, clientOptions);
+    try {
+      await client.opened;
+      const first: any = await client.createBidirectionalStream();
+      first.closed.catch(() => {});
+      const second: any = await client.createBidirectionalStream();
+      second.closed.catch(() => {});
+      expect(second.pending).toBe(true);
+      expect(second.id).toBeNull();
+      const opened = second.opened.then(() => ({ pending: second.pending, id: second.id }));
+
+      first.writer.writeSync(Uint8Array.of(1));
+      first.writer.endSync();
+      for await (const _ of first) {
+      }
+      await first.closed;
+
+      expect(await opened).toEqual({ pending: false, id: 4n });
+    } finally {
+      client.close();
+    }
+  });
+
+  test("rejects when a pending stream is destroyed before it opens", async () => {
+    await using server = await startServer();
+    const client = await connect(server.address!, clientOptions);
+    try {
+      await client.opened;
+      const first: any = await client.createBidirectionalStream();
+      first.closed.catch(() => {});
+      const awaited: any = await client.createBidirectionalStream();
+      awaited.closed.catch(() => {});
+      const readLater: any = await client.createBidirectionalStream();
+      readLater.closed.catch(() => {});
+      expect(awaited.pending).toBe(true);
+      expect(readLater.pending).toBe(true);
+
+      const opened = awaited.opened;
+      awaited.destroy(new Error("destroyed while pending"));
+      await expect(opened).rejects.toThrow("destroyed while pending");
+
+      // Reading `opened` for the first time after destroy() gives the same result.
+      readLater.destroy(new Error("destroyed before read"));
+      await expect(readLater.opened).rejects.toThrow("destroyed before read");
+
+      // It stays fulfilled for a stream that did open.
+      first.destroy(new Error("after open"));
+      await expect(first.opened).resolves.toBeUndefined();
+    } finally {
+      client.close();
+    }
+  });
+});
+
+describe("QuicStream.onstopsending", () => {
+  const serverOptions = { sni: { "*": { keys: [key], certs: [cert] } }, alpn: "quic-test" };
+  const clientOptions = { alpn: "quic-test", servername: "localhost", verifyPeer: "manual" } as SessionOptions;
+
+  test("is called with the peer's application error when STOP_SENDING arrives", async () => {
+    const accepted = Promise.withResolvers<any>();
+    await using server = await listen(async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        accepted.resolve(stream);
+      };
+      await serverSession.closed.catch(() => {});
+    }, serverOptions);
+    const client = await connect(server.address!, clientOptions);
+    try {
+      await client.opened;
+
+      const stream: any = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      expect(() => {
+        stream.onstopsending = 1;
+      }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+
+      const stopped = Promise.withResolvers<{ sameStream: boolean; error: any }>();
+      stream.onstopsending = function (this: any, error: any) {
+        stopped.resolve({ sameStream: this === stream, error });
+      };
+      expect(typeof stream.onstopsending).toBe("function");
+
+      stream.writer.writeSync(Uint8Array.of(1));
+      const remote = await accepted.promise;
+      remote.stopSending(42n);
+
+      const { sameStream, error } = await stopped.promise;
+      expect(sameStream).toBe(true);
+      expect(error).toMatchObject({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 42n });
+      // Node's writer fails with the same error.
+      expect(stream.writer.desiredSize).toBeNull();
+      await expect(stream.writer.write(Uint8Array.of(2))).rejects.toBe(error);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("is called when STOP_SENDING is the first frame of a peer-opened stream", async () => {
+    const stopped = Promise.withResolvers<{ before: number | null; error: any; after: number | null }>();
+    await using server = await listen(async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        const before = stream.writer.desiredSize;
+        stream.onstopsending = (error: any) => {
+          stopped.resolve({ before, error, after: stream.writer.desiredSize });
+        };
+      };
+      await serverSession.closed.catch(() => {});
+    }, serverOptions);
+    const client = await connect(server.address!, clientOptions);
+    try {
+      await client.opened;
+
+      const stream: any = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      stream.stopSending(11n);
+
+      const { before, error, after } = await stopped.promise;
+      expect(before).toBeGreaterThan(0);
+      expect(error).toMatchObject({ code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 11n });
+      expect(after).toBeNull();
+    } finally {
+      client.close();
+    }
+  });
+
+  // An unhandled rejection fails the test.
+  test("doesn't leave closed's rejection unhandled when the peer resets the stream too", async () => {
+    const accepted = Promise.withResolvers<any>();
+    await using server = await listen(async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        accepted.resolve(stream);
+      };
+      await serverSession.closed.catch(() => {});
+    }, serverOptions);
+    const client = await connect(server.address!, clientOptions);
+    try {
+      client.closed.catch(() => {});
+      await client.opened;
+
+      // Nothing reads `stream.closed`.
+      const stream: any = await client.createBidirectionalStream();
+      const stopped = Promise.withResolvers<void>();
+      stream.onstopsending = () => stopped.resolve();
+      stream.writer.writeSync(Uint8Array.of(1));
+      const remote = await accepted.promise;
+      remote.destroy(new Error("peer error"), { code: 9n });
+      await stopped.promise;
+      while (!stream.destroyed) await new Promise(r => setImmediate(r));
+      await new Promise(r => setImmediate(r));
+    } finally {
+      client.close();
+    }
+    await client.closed;
+  });
+});

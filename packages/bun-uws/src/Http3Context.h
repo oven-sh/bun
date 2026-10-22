@@ -42,7 +42,23 @@ struct Http3Context {
             }
 
             Http3Request req(s);
-            if (req.getHeader("expect") == "100-continue") res->writeContinue();
+            /* HttpRouter drops the URL's first byte without looking at it and
+             * the URL parser strips HTAB, so a malformed :path could reach a
+             * route it doesn't name. */
+            if (!isToken(req.getCaseSensitiveMethod()) ||
+                !validPathForMethod(req.getCaseSensitiveMethod(), req.getFullUrl()) ||
+                req.getHeader("host").empty()) {
+                res->writeStatus("400 Bad Request")->end();
+                return;
+            }
+            std::string_view method = req.getMethod();
+            if (Bun__HTTPMethod__from(method.data(), method.size()) == -1) {
+                /* RFC 9110 §15.6.2. The router would dispatch it to the "any"
+                 * handler, which cannot represent the method and would report GET. */
+                res->writeStatus("501 Not Implemented")->end();
+                return;
+            }
+            if (isExpect100Continue(req.getHeader("expect"))) res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();
@@ -72,6 +88,11 @@ struct Http3Context {
                 rd->onAborted(res, rd->userData);
             }
             rd->~Http3ResponseData();
+        });
+
+        us_quic_socket_context_on_released(ctx, [](us_quic_socket_context_t *ctx) {
+            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(ctx);
+            if (cd->onReleased) cd->onReleased(cd->onReleasedUser);
         });
 
         return (Http3Context *) ctx;

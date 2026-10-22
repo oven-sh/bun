@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { blackholePortSource, bunEnv, bunExe, isASAN, isMusl, isWindows } from "harness";
 
 // Evicting a custom SSL context while it still has in-flight sockets closes
 // those sockets via no-op callbacks (cleanCallbacks runs first in
@@ -9,7 +9,7 @@ import { bunEnv, bunExe, isASAN } from "harness";
 // active (non-pooled) sockets.
 //
 // This test fills the cache past ssl_context_cache_max_size (60) with distinct
-// TLS configs whose connects never complete (TEST-NET-1), so every cache entry
+// TLS configs whose connects never complete, so every cache entry
 // has an active connecting socket. The 61st distinct config triggers
 // evictOldestSslContext. Aborting all requests then drains the tracker.
 //
@@ -19,7 +19,7 @@ import { bunEnv, bunExe, isASAN } from "harness";
 // reused; the fixture spams same-size-class allocations to make that likely
 // (~30% per run before the fix), so loop a few times.
 test("aborting fetches whose custom SSL context was evicted does not crash", async () => {
-  // The fixture relies on connects to TEST-NET-1 staying in-flight; strip any
+  // The fixture relies on its connects staying in-flight; strip any
   // ambient HTTP(S) proxy so those connects aren't intercepted. Raise the
   // per-process request cap so all 65+200 requests plus both barriers start in
   // one FIFO drain pass (default cap is 256; 65+200+1 would defer the second
@@ -51,7 +51,14 @@ test("aborting fetches whose custom SSL context was evicted does not crash", asy
 // fetch queued after the 65 SSL fetches therefore cannot start until every
 // SSL context exists and eviction has fired for indices 60..64, so awaiting
 // that barrier fetch replaces the 5s/0.5s sleeps the original fixture used.
+//
+// blackholePortSource doesn't support Windows or musl, so those still dial TEST-NET-1 (RFC 5737).
 const fixture = /* js */ `
+${
+  isWindows || isMusl
+    ? `const hung = "https://192.0.2.1/", filler = { destroy() {} };`
+    : `${blackholePortSource}const hung = "https://127.0.0.1:" + port + "/";`
+}
 const N = 65; // > ssl_context_cache_max_size (60)
 const controllers = [];
 const promises = [];
@@ -66,7 +73,7 @@ for (let i = 0; i < N; i++) {
   const ac = new AbortController();
   controllers.push(ac);
   promises.push(
-    fetch("https://192.0.2.1/", {
+    fetch(hung, {
       signal: ac.signal,
       tls: { serverName: "host" + i + ".test" },
     }).catch(() => {})
@@ -90,6 +97,7 @@ await barrier();
 // Abort everything — drainQueuedShutdowns walks the tracker.
 for (const ac of controllers) ac.abort();
 await Promise.all(promises);
+filler.destroy();
 
 console.log("ok");
 `;

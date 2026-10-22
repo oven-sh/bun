@@ -81,6 +81,40 @@ test("rejects Transfer-Encoding with chunked not last", async () => {
   });
 });
 
+test.each(["chunked,", "chunked, ", "chunked ,,"])(
+  "rejects a comma after chunked in Transfer-Encoding (%j)",
+  async te => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port!, "127.0.0.1");
+
+    const maliciousRequest = [
+      "POST / HTTP/1.1",
+      "Host: localhost",
+      `Transfer-Encoding: ${te}`,
+      "",
+      "1",
+      "A",
+      "0",
+      "",
+      "",
+    ].join("\r\n");
+
+    const response = await new Promise<string>((resolve, reject) => {
+      client.on("error", reject);
+      client.on("data", data => resolve(data.toString()));
+      client.write(maliciousRequest);
+    });
+    client.destroy();
+    expect(response).toStartWith("HTTP/1.1 400");
+  },
+);
+
 test("rejects duplicate chunked in Transfer-Encoding", async () => {
   await using server = Bun.serve({
     port: 0,
@@ -894,11 +928,11 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
   });
 
-  // TE.TE desync: the last-chunk "0\r\n" must be followed by a strict "\r\n"
-  // (end-of-body). Consuming arbitrary bytes there lets an attacker smuggle a
-  // second request while an upstream proxy parses the same bytes as a valid
-  // trailer line. See https://github.com/oven-sh/bun/issues/29732.
-  test("rejects arbitrary bytes in place of final CRLF after zero-chunk", async () => {
+  // TE.TE desync (https://github.com/oven-sh/bun/issues/29732): skipping two
+  // unchecked bytes after "0\r\n" would drop "X:" and run the rest as a second
+  // request. Those bytes are the first request's trailer section (RFC 9112
+  // 7.1.2), which ends at an empty line.
+  test("doesn't dispatch a request line inside a chunked body's trailer section", async () => {
     const urls: string[] = [];
     await using server = Bun.serve({
       port: 0,
@@ -913,41 +947,41 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
 
     const client = net.connect(server.port!, "127.0.0.1");
 
-    // The bytes "X:" replace the required "\r\n" after the zero-chunk.
-    // A vulnerable server consumes "X:" as the terminator and then parses
-    // "POST /admin HTTP/1.1" as a second (smuggled) request.
+    // The first request can't send "Connection: close", because Bun drops
+    // everything after such a request and the test would pass for the wrong
+    // reason. "/after" is the control: it shows that a request right after the
+    // trailer section does run.
     const smuggleAttempt =
       "POST / HTTP/1.1\r\n" +
       "Host: localhost\r\n" +
       "Transfer-Encoding: chunked\r\n" +
       "\r\n" +
       "0\r\n" +
-      "X:POST /admin HTTP/1.1\r\n" +
+      "X:GET /admin HTTP/1.1\r\n" +
       "Host: localhost\r\n" +
-      "Content-Length: 5\r\n" +
       "\r\n" +
-      "admin";
+      "GET /after HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Connection: close\r\n" +
+      "\r\n";
 
-    await new Promise<void>((resolve, reject) => {
-      let responseData = "";
+    const responseData = await new Promise<string>((resolve, reject) => {
+      let data = "";
       client.on("error", reject);
-      client.on("data", data => {
-        responseData += data.toString();
+      client.on("data", chunk => {
+        data += chunk.toString();
       });
-      client.on("close", () => {
-        expect(responseData).toContain("HTTP/1.1 400");
-        // The smuggled second request must never reach the handler.
-        expect(urls).not.toContain("/admin");
-        // No ADMIN-ACCESS body should have been produced.
-        expect(responseData).not.toContain("ADMIN-ACCESS");
-        resolve();
-      });
+      client.on("close", () => resolve(data));
       client.write(smuggleAttempt);
+    });
+
+    expect({ urls, adminBody: responseData.includes("ADMIN-ACCESS") }).toEqual({
+      urls: ["/", "/after"],
+      adminBody: false,
     });
   });
 
-  test("rejects zero-chunk terminator with wrong first byte", async () => {
-    // First byte of the terminator must be '\r'. Anything else must be rejected.
+  test("rejects a bare LF in the trailer section", async () => {
     await using server = Bun.serve({
       port: 0,
       fetch() {
@@ -958,7 +992,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     const client = net.connect(server.port!, "127.0.0.1");
 
     const maliciousRequest =
-      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "A\n"; // 'A' instead of '\r'
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "A\n";
 
     await new Promise<void>((resolve, reject) => {
       let responseData = "";
@@ -974,8 +1008,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
   });
 
-  test("rejects zero-chunk terminator with CR but wrong second byte", async () => {
-    // Second byte of the terminator must be '\n'. Anything else must be rejected.
+  test("rejects a CR without LF in the trailer section", async () => {
     await using server = Bun.serve({
       port: 0,
       fetch() {
@@ -986,7 +1019,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     const client = net.connect(server.port!, "127.0.0.1");
 
     const maliciousRequest =
-      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\rA"; // '\r' followed by 'A' instead of '\n'
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\rA";
 
     await new Promise<void>((resolve, reject) => {
       let responseData = "";
@@ -1046,14 +1079,8 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
   test("accepts zero-chunk with correct CRLF terminator split across segments", async () => {
     // Control for the fragmentation test above: a valid split must still work.
     //
-    // Tricky bit: the parser emits the FIN chunk as soon as it sees the
-    // zero-chunk size line (`0\r\n`) — before the terminator bytes are
-    // consumed. That means the server can respond to request 1 based on just
-    // the first segment. To prove the `\n` in the second segment *does* get
-    // validated (rather than being ignored or causing an error), we pipeline
-    // a second request after it: if the drop-trailer loop rejected the `\n`
-    // as malformed, the state would go to STATE_IS_ERROR, the connection
-    // would be torn down, and the pipelined GET would never complete.
+    // The pipelined GET only completes if the parser accepted the `\n` in the
+    // second segment.
     const seen: string[] = [];
     await using server = Bun.serve({
       port: 0,
@@ -1781,6 +1808,65 @@ describe("Host header field values in request.url", () => {
     const response = await sendRawRequest(server, "GET /index HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n");
     expect(response).toContain("HTTP/1.1 200");
     expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
+  });
+
+  // RFC 9112 3.2. req.url would use the first line and the Host header would join them all.
+  test.each([
+    ["two Host lines", "GET /index HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n"],
+    ["two identical Host lines", "GET /index HTTP/1.1\r\nHost: a.test\r\nHost: a.test\r\nConnection: close\r\n\r\n"],
+    [
+      "three Host lines in mixed case",
+      "GET /index HTTP/1.1\r\nHost: a.test\r\nHOST: b.test\r\nhost: c.test\r\nConnection: close\r\n\r\n",
+    ],
+    ["two Host lines on HTTP/1.0", "GET /index HTTP/1.0\r\nHost: a.test\r\nHost: b.test\r\n\r\n"],
+    [
+      "two Host lines on a static route",
+      "GET /static HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n",
+    ],
+    [
+      "two Host lines on a WebSocket upgrade",
+      "GET /index HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    ],
+  ])("rejects a request with %s", async (_name, payload) => {
+    const urls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/static": new Response("static") },
+      fetch(req, server) {
+        urls.push(req.url);
+        if (server.upgrade(req)) return;
+        return new Response("OK");
+      },
+      websocket: {
+        message() {},
+      },
+    });
+
+    // The valid request ahead of it is still answered.
+    const response = await sendRawRequest(server, "GET /first HTTP/1.1\r\nHost: a.test\r\n\r\n" + payload);
+    expect({ statuses: response.match(/HTTP\/1\.1 \d+/g), urls }).toEqual({
+      statuses: ["HTTP/1.1 200", "HTTP/1.1 400"],
+      urls: ["http://a.test/first"],
+    });
+  });
+
+  test("node:http keeps the first of two Host lines", async () => {
+    const server = createServer((req, res) => {
+      res.end(String(req.headers.host));
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const response = await sendRawRequest(
+        server.address() as { port: number },
+        "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n",
+      );
+      expect(response).toContain("HTTP/1.1 200");
+      expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("a.test");
+    } finally {
+      server.close();
+    }
   });
 
   // Only node:http relaxes the Host requirement, because Node emits 'upgrade'

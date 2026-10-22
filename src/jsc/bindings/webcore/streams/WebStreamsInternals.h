@@ -124,7 +124,8 @@ bool canTransferArrayBuffer(JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc
 // spec CanTransferArrayBuffer(O) — pure.
 // spec CloneAsUint8Array(O) — allocation-throws only.
 JSC::JSUint8Array* cloneAsUint8Array(JSC::JSGlobalObject*, JSC::JSArrayBufferView*); // userJS: no — WebStreamsMisc.cpp
-// spec StructuredClone(v): no caller — every tee path passes cloneForBranch2 = false.
+// Copies an ArrayBuffer, or the bytes a view covers, into a new buffer of the same type. Returns any other chunk as is.
+JSC::JSValue copyByteChunk(JSC::JSGlobalObject*, JSC::JSValue chunk); // userJS: no (allocation-throws only) — WebStreamsMisc.cpp
 // spec CanCopyDataBlockBytes(toBuffer, toIndex, fromBuffer, fromIndex, count) — pure.
 bool canCopyDataBlockBytes(JSC::ArrayBuffer& toBuffer, size_t toIndex, JSC::ArrayBuffer& fromBuffer, size_t fromIndex, size_t count); // userJS: no — WebStreamsMisc.cpp
 
@@ -273,7 +274,7 @@ void initializeReadableStream(JSReadableStream*); // userJS: no — ReadableStre
 bool isReadableStreamLocked(JSReadableStream*); // userJS: no (pure; includes Bun's m_lockedWithoutReader / detached-handle states) — ReadableStreamOperations.cpp
 
 // Readers.
-JSReadableStreamDefaultReader* acquireReadableStreamDefaultReader(JSC::JSGlobalObject*, JSReadableStream*); // userJS: no (throws TypeError if locked) — ReadableStreamOperations.cpp
+JSReadableStreamDefaultReader* acquireReadableStreamDefaultReader(JSC::JSGlobalObject*, JSReadableStream*, ReaderOwner); // userJS: no (throws TypeError if locked) — ReadableStreamOperations.cpp
 JSReadableStreamBYOBReader* acquireReadableStreamBYOBReader(JSC::JSGlobalObject*, JSReadableStream*); // userJS: no (throws TypeError) — ReadableStreamOperations.cpp
 void setUpReadableStreamDefaultReader(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 void setUpReadableStreamBYOBReader(JSC::JSGlobalObject*, JSReadableStreamBYOBReader*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
@@ -304,10 +305,9 @@ bool readableStreamHasDefaultReader(JSReadableStream*); // userJS: no — Readab
 bool readableStreamHasBYOBReader(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 
 // Tee / from / pipe entry points.
-// Bun: the spec's `cloneForBranch2` is not implemented; both branches share each chunk by
-// reference (see WebStreamsExports.cpp). ALSO runs materializeIfNeeded first.
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
+// `cloneForBranch2` is true for a body clone and false for tee(). See teeBranchCopiesChunks. ALSO runs materializeIfNeeded first.
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
 std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
 // spec ReadableStreamFromIterable(asyncIterable) — `ReadableStream.from`.
 JSReadableStream* readableStreamFromIterable(JSC::JSGlobalObject*, JSC::JSValue asyncIterable); // userJS: yes — ReadableStreamOperations.cpp
@@ -361,6 +361,8 @@ void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefau
 // against unset branch slots). Callers skip a terminal branch.
 JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
+// Returns true if `controller` is a body-clone tee branch that script reads. It hands out copyByteChunk() of each chunk.
+bool teeBranchCopiesChunks(JSReadableStreamDefaultController*); // userJS: no — ReadableStreamOperations.cpp
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
 // True if a chain of tees or text streams has used too much stack for the next link. The link then continues from a microtask.
 bool streamLinkMustDefer(JSC::VM&); // userJS: no (pure) — WebStreamsMisc.cpp
@@ -642,7 +644,8 @@ void directStreamControllerClearSource(JSDirectStreamController*); // userJS: no
 // BunStreamConsumers.h.
 
 JSC::JSValue readableStreamToText(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
-JSC::JSValue readableStreamToArray(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
+// ReaderOwner::Script only for Bun.readableStreamToArray, whose chunk array reaches user code.
+JSC::JSValue readableStreamToArray(JSC::JSGlobalObject*, JSReadableStream*, ReaderOwner); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToArrayBuffer(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToBytes(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToJSON(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
@@ -659,8 +662,8 @@ JSC::JSValue tryUseReadableStreamBufferedFastPath(JSC::JSGlobalObject*, JSReadab
 // conversion (BunStreamConsumers.cpp convertChunksToText); BOM-strips its result.
 JSC::JSValue readableStreamIntoText(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 // toArray's generic path (getReader + readMany until done).
-JSC::JSValue readableStreamIntoArray(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
-// Drop ONE leading U+FEFF, and only on the generic toText path.
+JSC::JSValue readableStreamIntoArray(JSC::JSGlobalObject*, JSReadableStream*, ReaderOwner); // userJS: yes — BunStreamConsumers.cpp
+// Drops one leading U+FEFF.
 WTF::String withoutUTF8BOM(const WTF::String&); // userJS: no — BunStreamConsumers.cpp
 // UTF-8 size / write via the simdutf-backed Buffer encoders. Lone surrogates count (and write) as
 // U+FFFD, so the pair always agrees; plain simdutf::utf8_length_from_utf16 does not.

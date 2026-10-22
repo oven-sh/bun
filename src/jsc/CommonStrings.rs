@@ -49,6 +49,7 @@ pub enum CommonStringsForRust {
     FetchOptionTls = 34,
     FetchOptionUnix = 35,
     FetchOptionVerbose = 36,
+    FetchBasic = 37,
 }
 
 unsafe extern "C" {
@@ -114,6 +115,11 @@ impl<'a> CommonStrings<'a> {
     #[inline]
     pub fn default(self) -> JSValue {
         CommonStringsForRust::FetchDefault.to_js(self.global_object)
+    }
+    /// `"basic"`
+    #[inline]
+    pub fn basic(self) -> JSValue {
+        CommonStringsForRust::FetchBasic.to_js(self.global_object)
     }
     /// `"error"`
     #[inline]

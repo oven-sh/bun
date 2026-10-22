@@ -451,6 +451,33 @@ describe("ConnectionsList", () => {
     // to remove it.
     expect(list.all()).toEqual([p1, p4, p3]);
   });
+
+  // 4,227,858,433 ms in nanoseconds wraps to exactly 1 ms in 32 bits.
+  const longTimeout = 4_227_858_433;
+  test.each([
+    [1, 0, ["incomplete"]],
+    [0, 1, ["incomplete", "complete"]],
+    [longTimeout, 0, []],
+    [0, longTimeout, []],
+    [longTimeout, longTimeout, []],
+    [longTimeout, 1, ["incomplete"]],
+    [1, longTimeout, ["incomplete"]],
+  ])("expired(%d, %d) matches Node", (headersTimeout, requestTimeout, expired) => {
+    const list = new ConnectionsList();
+    const incomplete = new HTTPParser();
+    incomplete.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    const complete = new HTTPParser();
+    complete.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    complete.execute(Buffer.from("POST / HTTP/1.1\r\nContent-Length: 1\r\n\r\n"));
+    expect([incomplete.headersCompleted(), complete.headersCompleted()]).toEqual([false, true]);
+    while (incomplete.duration() < 2 || complete.duration() < 2) {}
+
+    const names = new Map([
+      [incomplete, "incomplete"],
+      [complete, "complete"],
+    ]);
+    expect(list.expired(headersTimeout, requestTimeout).map(parser => names.get(parser))).toEqual(expired);
+  });
 });
 
 test("subclasses of HTTPParser and ConnectionsList return instances of the subclass", () => {

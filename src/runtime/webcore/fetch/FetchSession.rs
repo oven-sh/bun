@@ -138,7 +138,7 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
     let mut headers = None;
     if let Some(headers_value) = proxy_arg.get(global, "headers")? {
         if !headers_value.is_undefined_or_null() {
-            if let Some(fetch_headers) = FetchHeaders::cast(headers_value) {
+            if let Some(fetch_headers) = FetchHeaders::cast_as_init(headers_value) {
                 let fetch_headers = bun_ptr::BackRef::from(fetch_headers);
                 headers = Some(from_fetch_headers(global, Some(&*fetch_headers), None)?);
             } else if let Some(fetch_headers) = HeadersRef::create_from_js(global, headers_value)? {
@@ -335,9 +335,7 @@ impl FetchSession {
                 this.keep_alive = keep_alive.as_boolean();
             } else if keep_alive.is_object() {
                 if let Some(seconds) = positive_number(global, keep_alive, "idleTimeout")? {
-                    // The pool timer has the same wheel limits as the request idle timeout.
-                    this.pool.idle_timeout_seconds =
-                        http::normalize_idle_timeout_seconds(seconds.ceil() as u64);
+                    this.pool.idle_timeout_seconds = seconds.ceil() as u32;
                 }
                 if let Some(count) = keep_alive.get(global, "maxIdleSockets")? {
                     const FIELD_NAME: &[u8] = b"keepAlive.maxIdleSockets";

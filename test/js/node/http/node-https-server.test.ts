@@ -243,12 +243,17 @@ describe("https.createServer forwards every TLS server option", () => {
 
   test("sends sessionTimeout as the ticket lifetime", async () => {
     await using server = https.createServer({ ...validCert, sessionTimeout: 1234 });
-    const client = tls.connect({ port: await listen(server), host: "127.0.0.1", rejectUnauthorized: false, maxVersion: "TLSv1.2" }); // prettier-ignore
+    const port = await listen(server);
+    const startedAt = Math.floor(Date.now() / 1000);
+    const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, maxVersion: "TLSv1.2" });
     await once(client, "secureConnect");
+    // BoringSSL subtracts the whole seconds elapsed since the ClientHello from the ticket lifetime.
+    const boundaries = Math.floor(Date.now() / 1000) - startedAt;
     const session = client.getSession()!.toString("hex");
     client.destroy();
     // SSL_SESSION ::= ... ticketLifetimeHint [9] INTEGER
-    expect(session).toContain("a904020204d2");
+    const [, lifetime] = session.match(/a9040202(....)/) ?? [];
+    expect(parseInt(lifetime, 16)).toBeWithin(1234 - boundaries, 1235);
   });
 
   test.each([

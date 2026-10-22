@@ -203,7 +203,7 @@ if (cluster.isPrimary) {
   });
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("tls listen error code: EINVAL");
-  expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
+  expect(stdout).toContain("http, https and TLS cluster workers cannot share the same address:port with a net worker");
 });
 
 test("cluster pipe listen error carries no port suffix", async () => {
@@ -932,7 +932,7 @@ if (cluster.isPrimary) {
   });
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("net listen error code: EINVAL");
-  expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
+  expect(stdout).toContain("http, https and TLS cluster workers cannot share the same address:port with a net worker");
 }, 30_000);
 
 test.skipIf(isWindows)(
@@ -1532,3 +1532,92 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   expect({ stdout, stderr }).toEqual({ stdout: "loaded\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+// Two workers listen on LISTEN, the primary makes one request, then disconnects both and waits for them to exit.
+const httpWorkersFixture = `
+const cluster = require("node:cluster");
+const http = require("node:http");
+const listen = JSON.parse(process.env.LISTEN);
+const handler = (req, res) => res.end("ok");
+
+if (cluster.isPrimary) {
+  // Holds the port with SO_REUSEPORT so the workers can bind the same fixed port without a race.
+  const holder = listen.port === "held" && http.createServer(handler).listen({ port: 0, host: "127.0.0.1", reusePort: true });
+  const env = holder ? { LISTEN: JSON.stringify({ ...listen, port: holder.address().port }) } : {};
+  const workers = [cluster.fork(env), cluster.fork(env)];
+  const ports = new Set();
+  const exits = [];
+  let body = "";
+  for (const worker of workers) {
+    worker.on("message", error => {
+      console.log(JSON.stringify({ error }));
+      process.exit(1);
+    });
+    worker.on("exit", (code, signal) => {
+      if (exits.push(signal ?? code) < workers.length) return;
+      if (holder) holder.close();
+      const socketFileLeft = !!listen.path && require("node:fs").existsSync(listen.path);
+      console.log(JSON.stringify({ distinctPorts: ports.size, body, exits, socketFileLeft }));
+    });
+  }
+  cluster.on("listening", (worker, address) => {
+    ports.add(address.port);
+    if (Object.values(cluster.workers).some(worker => worker.state !== "listening")) return;
+    const target = process.env.REQUEST ? JSON.parse(process.env.REQUEST) : { port: address.port, host: "127.0.0.1" };
+    http.get({ ...target, agent: false }, res => {
+      res.on("data", chunk => (body += chunk));
+      res.on("end", () => workers.forEach(worker => worker.disconnect()));
+    });
+  });
+} else {
+  http
+    .createServer(handler)
+    .on("error", err => process.send(err.message))
+    .listen(listen);
+}
+`;
+
+test.skipIf(isWindows).concurrent.each(["a unix socket", "port 0", "a fixed port", "a descriptor of the primary"])(
+  "http workers share %s and exit after disconnect()",
+  async kind => {
+    using dir = tempDir("cluster-http", { "fixture.js": httpWorkersFixture });
+    const path = joinP(String(dir), "a.sock");
+    // Stands in for a supervisor such as systemd, which hands the primary a bound socket as descriptor 3.
+    const donor = net.createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => donor.listen(0, "127.0.0.1", resolve));
+    const { port } = donor.address() as net.AddressInfo;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        LISTEN: JSON.stringify(
+          {
+            "a unix socket": { path },
+            "port 0": { port: 0, host: "127.0.0.1" },
+            "a fixed port": { port: "held", host: "127.0.0.1" },
+            "a descriptor of the primary": { fd: 3 },
+          }[kind],
+        ),
+        REQUEST:
+          kind === "a unix socket"
+            ? JSON.stringify({ socketPath: path })
+            : kind === "a descriptor of the primary"
+              ? JSON.stringify({ port, host: "127.0.0.1" })
+              : "",
+      },
+      stdio: ["ignore", "pipe", "pipe", (donor as any)._handle.fd],
+    });
+    // Only the workers may accept on the donor's socket.
+    await new Promise(resolve => donor.close(resolve));
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr }).toEqual({
+      stdout: { distinctPorts: 1, body: "ok", exits: [0, 0], socketFileLeft: false },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

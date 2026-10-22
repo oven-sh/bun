@@ -290,6 +290,10 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
+    pub(crate) fn abandon(&mut self) {
+        c::uws_res_abandon(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
         c::uws_res_end_sendfile(
             Self::ssl_flag(),
@@ -371,8 +375,17 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.as_raw())
     }
 
+    /// Sets `HTTP_FIXED_LENGTH_FILE_BODY`. See `HttpResponseData.h`.
+    pub(crate) fn mark_fixed_length_file_body(&mut self) {
+        c::uws_res_mark_fixed_length_file_body(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn mark_wrote_date_header(&mut self) {
         c::uws_res_mark_wrote_date_header(Self::ssl_flag(), self.as_raw())
+    }
+
+    pub(crate) fn mark_wrote_connection_header(&mut self, close: bool) {
+        c::uws_res_mark_wrote_connection_header(Self::ssl_flag(), self.as_raw(), close)
     }
 
     pub(crate) fn write_mark(&mut self) {
@@ -472,7 +485,8 @@ impl<const SSL: bool> Response<SSL> {
     #[inline]
     pub(crate) fn mark_needs_more(&mut self) {
         if !SSL {
-            c::us_socket_mark_needs_more_not_ssl(self.as_raw())
+            // S008: `us_socket_t` is an `opaque_ffi!` ZST, so the deref is safe.
+            us_socket_t::opaque_mut(self.downcast_socket()).request_writable();
         }
     }
 
@@ -810,8 +824,30 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.mark_wrote_content_length_header())
     }
 
+    /// See `Response::mark_fixed_length_file_body`. An H2 or H3 stream keeps sending after the peer ends its side.
+    pub fn mark_fixed_length_file_body(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).mark_fixed_length_file_body(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).mark_fixed_length_file_body(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
+    }
+
     pub fn mark_wrote_date_header(self) {
         any_dispatch!(self, |r| r.mark_wrote_date_header())
+    }
+
+    /// Sets `HTTP_WROTE_CONNECTION_HEADER`, and `HTTP_CONNECTION_CLOSE` if that header has `close`. No-op on HTTP/2 and HTTP/3.
+    pub fn mark_wrote_connection_header(self, close: bool) {
+        match self {
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).mark_wrote_connection_header(close)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).mark_wrote_connection_header(close)
+            }
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
     }
 
     pub fn write_mark(self) {
@@ -860,12 +896,36 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.flush_headers(flush_immediately))
     }
 
+    /// Ends the header section of a live HTTP/1 response whose body has sent nothing yet.
+    pub fn commit_head(self) {
+        // HTTP/2 and HTTP/3 send HEADERS with the first DATA frame.
+        if matches!(self, AnyResponse::H3(_) | AnyResponse::H2(_)) {
+            return;
+        }
+        let open_head = State::HTTP_STATUS_CALLED | State::HTTP_RESPONSE_PENDING;
+        // A `try_end` parked on backpressure sets only END_CALLED, and its head is out too.
+        let head_is_out = State::HTTP_WRITE_CALLED | State::HTTP_END_CALLED;
+        if self.state().bits() & (open_head | head_is_out).bits() != open_head.bits() {
+            return;
+        }
+        self.corked(|| self.flush_headers(false));
+    }
+
     pub fn is_corked(self) -> bool {
         any_dispatch!(self, |r| r.is_corked())
     }
 
     pub fn uncork(self) {
         any_dispatch!(self, |r| r.uncork())
+    }
+
+    /// See `Response::send_corked`. H2 and H3 have no cork buffer.
+    pub fn send_corked(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).send_corked(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).send_corked(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
     }
 
     pub fn get_buffered_amount(self) -> u64 {
@@ -966,6 +1026,15 @@ impl AnyResponse {
 
     pub fn end_without_body(self, close_connection: bool) {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
+    }
+
+    /// Marks the response ended without writing anything. HTTP/1 only: node:http's `destroy()` is the one caller.
+    pub fn abandon(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).abandon(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).abandon(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
     }
 
     /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
@@ -1296,9 +1365,14 @@ pub mod c {
     // unsafe.
     unsafe extern "C" {
         pub(crate) safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_mark_fixed_length_file_body(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_mark_wrote_date_header(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_mark_wrote_connection_header(
+            ssl: i32,
+            res: &mut uws_res,
+            close: bool,
+        );
         pub(crate) safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
         pub(crate) safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
         // Out-params are `&mut` (non-null, valid for write); the C shim only
@@ -1369,6 +1443,7 @@ pub mod c {
             res: &mut uws_res,
             close_connection: bool,
         );
+        pub(crate) safe fn uws_res_abandon(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_end_sendfile(
             ssl: i32,
             res: &mut uws_res,

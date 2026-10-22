@@ -61,8 +61,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         /* A queued pipelined response (node:http) still owes output on this
-         * connection, so it is not idle between the responses. */
-        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0;
+         * connection, and a parked request (Bun.serve) is still owed a dispatch,
+         * so it is not idle between the responses. */
+        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0 && this->parkedRequestBytes.isEmpty();
+
+        /* HttpContext::onWritable replays the parked requests. Every caller of markDone() is still tearing this response down. */
+        if (!this->parkedRequestBytes.isEmpty()) [[unlikely]] {
+            us_socket_request_writable((us_socket_t *) uwsRes);
+        }
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -171,6 +177,18 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_NODE_PEER_ENDED = 1 << 22,
         /* node:http socket.end() or destroySoon() ended the write side. Until the socket closes, the request in flight still gets its body. */
         HTTP_NODE_HALF_CLOSED = 1 << 23,
+        /* Bun.serve is sending a file of known length itself (sendfile(), or read() and write()). uWS never holds
+         * the rest of the body, so onEnd needs this bit to let the response finish after the peer's FIN. */
+        HTTP_FIXED_LENGTH_FILE_BODY = 1 << 24,
+        /* node:http: the JS socket has a 'data' or 'readable' listener, so it gets every read before the parser does. */
+        HTTP_NODE_RAW_READS = 1 << 25,
+        /* node:http: socket.end() found outgoing bytes still queued. The FIN follows them, even if the response in flight never ends. */
+        HTTP_NODE_SHUTDOWN_AFTER_DRAIN = 1 << 26,
+        /* The caller wrote this response's Connection header (a Response or route header, node:http's writeHead, the 101 of upgrade()), so uWS adds none. */
+        HTTP_WROTE_CONNECTION_HEADER = 1 << 27,
+        /* The idle timer was armed while a write was blocked, and deliveredBytes holds us_socket_delivered_bytes() from that moment.
+         * Stays set after the write drains, so it only counts while the socket's last_write_failed is set. */
+        HTTP_DELIVERED_BYTES_RECORDED = 1 << 28,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -182,7 +200,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
             | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
-            | HTTP_NODE_HALF_CLOSED,
+            | HTTP_NODE_HALF_CLOSED | HTTP_NODE_RAW_READS | HTTP_NODE_SHUTDOWN_AFTER_DRAIN,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -223,6 +241,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     OnTimeoutCallback onTimeout = nullptr;
     /* Outgoing offset */
     uint64_t offset = 0;
+    /* Valid while HTTP_DELIVERED_BYTES_RECORDED is set. */
+    uint64_t deliveredBytes = 0;
 
     /* Let's track number of bytes since last timeout reset in data handler */
     unsigned int received_bytes_per_timeout = 0;
@@ -251,11 +271,17 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * flood). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
+    /* Returns true if the response in flight is the last one on this connection. A graceful stop still answers a parked request. */
+    bool closesAfterResponse() const {
+        return (state & HTTP_CONNECTION_CLOSE) || ((state & HTTP_CLOSE_WHEN_IDLE) && this->parkedRequestBytes.isEmpty());
+    }
+
     /* Whether the connection should be torn down once the in-flight response (if
-     * any) has completed and all buffered outgoing data has been flushed. */
+     * any) has completed and all buffered outgoing data has been flushed. A peer
+     * that sent its FIN still gets answers to the requests it sent before it. */
     bool shouldCloseConnection() const {
         return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
-            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
+            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0 && this->parkedRequestBytes.isEmpty())
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
 

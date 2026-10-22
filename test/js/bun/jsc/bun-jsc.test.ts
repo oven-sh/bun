@@ -27,6 +27,7 @@ import {
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { createHash, type webcrypto } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -734,6 +735,13 @@ describe("deserialize rejects a CryptoKey whose hash tag is not a digest", () =>
   });
 });
 
+// Joins the parts of a patched CryptoKey value and fixes its size: <version:uint32_t> CryptoKeyTag <recordSize:uint32_t> <record>
+function cryptoKeyRecord(...parts: (Uint8Array | number[])[]) {
+  const bytes = Buffer.concat(parts.map(part => Buffer.from(part)));
+  bytes.writeUInt32LE(bytes.length - 9, 5);
+  return bytes;
+}
+
 it("deserialize rejects a CryptoKey record whose key bytes its key class refuses", async () => {
   // Empties the record's last length-prefixed byte vector, which `trailing` bytes follow.
   function withoutKeyBytes(bytes: Uint8Array, trailing: number) {
@@ -741,10 +749,7 @@ it("deserialize rejects a CryptoKey record whose key bytes its key class refuses
     const end = bytes.length - trailing;
     let size = 1;
     while (view.getUint32(end - size - 4, true) !== size) size++;
-    const out = new Uint8Array([...bytes.subarray(0, end - size - 4), 0, 0, 0, 0, ...bytes.subarray(end)]);
-    // <version:uint32_t> CryptoKeyTag <recordSize:uint32_t> <record>
-    new DataView(out.buffer).setUint32(5, out.length - 9, true);
-    return out;
+    return cryptoKeyRecord(bytes.subarray(0, end - size - 4), [0, 0, 0, 0], bytes.subarray(end));
   }
 
   const keys: Record<string, CryptoKey> = {
@@ -773,15 +778,90 @@ it("deserialize rejects a CryptoKey record whose key bytes its key class refuses
       return (e as Error).message;
     }
   };
-  const outcomes: Record<string, [string, string]> = {};
+  // createHash only gets to its own message when the BoringSSL error queue is empty.
+  const unknownDigest = () => {
+    try {
+      createHash("not a digest");
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+  const outcomes: Record<string, (string | undefined)[]> = {};
   const expected: typeof outcomes = {};
   for (const [label, key] of Object.entries(keys)) {
     const bytes = new Uint8Array(serialize(key));
     // An HMAC record's hash tag comes after its key bytes.
-    outcomes[label] = [read(bytes), read(withoutKeyBytes(bytes, label === "HMAC" ? 1 : 0))];
-    expected[label] = ["CryptoKey", "Unable to deserialize data."];
+    outcomes[label] = [read(bytes), read(withoutKeyBytes(bytes, label === "HMAC" ? 1 : 0)), unknownDigest()];
+    expected[label] = ["CryptoKey", "Unable to deserialize data.", "Digest method not supported"];
   }
   expect(outcomes).toEqual(expected);
+});
+
+it("deserialize rejects an RSA CryptoKey with no hash", async () => {
+  const publicKey = await crypto.subtle.importKey(
+    "jwk",
+    { kty: "RSA", n: Buffer.alloc(256, 0xff).toString("base64url"), e: "AQAB" },
+    { name: "RSA-PSS", hash: "SHA-256" },
+    true,
+    ["verify"],
+  );
+  const bytes = Buffer.from(serialize(publicKey));
+  // key class, algorithm tag, isRestrictedToHash, hash tag
+  const offset = bytes.indexOf(Buffer.from([2, 2, 1, 0, 0, 0, 16]));
+  expect(offset).toBeGreaterThan(0);
+
+  const accepted: [string, string | undefined][] = [];
+  // RSAES-PKCS1-v1_5, which no key can have, then RSASSA-PKCS1-v1_5, RSA-PSS and RSA-OAEP
+  for (const algorithmTag of [0, 1, 2, 3]) {
+    for (const hash of [
+      [0, 0, 0, 0],
+      [0, 0, 0, 0, 16],
+      [1, 0, 0, 0, 16],
+    ]) {
+      let key: CryptoKey;
+      try {
+        key = deserialize(
+          cryptoKeyRecord(bytes.subarray(0, offset), [2, algorithmTag, ...hash], bytes.subarray(offset + 7)),
+        );
+      } catch (e) {
+        expect((e as Error).message).toBe("Unable to deserialize data.");
+        continue;
+      }
+      accepted.push([key.algorithm.name, (key.algorithm as webcrypto.RsaHashedKeyAlgorithm).hash?.name]);
+    }
+  }
+  expect(accepted).toEqual([
+    ["RSASSA-PKCS1-v1_5", "SHA-256"],
+    ["RSA-PSS", "SHA-256"],
+    ["RSA-OAEP", "SHA-256"],
+  ]);
+});
+
+it("deserialize rejects a ChaCha20-Poly1305 CryptoKey that is not 32 bytes", async () => {
+  const key = (await crypto.subtle.generateKey("ChaCha20-Poly1305", true, ["encrypt"])) as CryptoKey;
+  const bytes = Buffer.from(serialize(key));
+  // The record ends with <keySize:uint32_t> <keyData>.
+  expect(bytes.readUInt32LE(bytes.length - 36)).toBe(32);
+
+  const accepted: number[] = [];
+  for (const size of [0, 16, 31, 32, 33, 64]) {
+    try {
+      deserialize(cryptoKeyRecord(bytes.subarray(0, -36), [size, 0, 0, 0], new Uint8Array(size)));
+    } catch (e) {
+      expect((e as Error).message).toBe("Unable to deserialize data.");
+      continue;
+    }
+    accepted.push(size);
+  }
+  expect(accepted).toEqual([32]);
+
+  // The other algorithms of its key class take a key of any length. They are never extractable, so serialize() refuses them.
+  for (const name of ["HKDF", "PBKDF2"]) {
+    for (const size of [0, 31, 33]) {
+      const secret = await crypto.subtle.importKey("raw", new Uint8Array(size), name, false, ["deriveBits"]);
+      expect(structuredClone(secret).algorithm).toEqual({ name });
+    }
+  }
 });
 
 it("deserialize applies the same nesting depth limit to arrays as to objects", async () => {

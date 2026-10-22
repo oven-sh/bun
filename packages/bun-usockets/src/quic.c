@@ -781,7 +781,7 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
      *         read half stays open so the response/request that arrived
      *         alongside STOP_SENDING is still delivered. Closing here
      *         would drop it. H3_REQUEST_REJECTED comes with no response. */
-    if (h && stream && (how == 0 || lsquic_stream_get_error_code(stream) == 0x10B))
+    if (h && stream && (how == 0 || lsquic_stream_get_error_code(stream) == US_QUIC_H3_REQUEST_REJECTED))
         lsquic_stream_close(stream);
 }
 
@@ -1294,7 +1294,7 @@ uint64_t us_quic_stream_reset_code(us_quic_stream_t *s) {
 
 int us_quic_stream_refused_by_goaway(us_quic_stream_t *s) {
     return s->stream &&
-        lsquic_stream_id(s->stream) >= lsquic_conn_goaway_stream_id(lsquic_stream_conn(s->stream));
+        lsquic_stream_id(s->stream) > lsquic_conn_goaway_stream_id(lsquic_stream_conn(s->stream));
 }
 
 void *us_quic_stream_ext(us_quic_stream_t *s) { return s + 1; }

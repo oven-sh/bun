@@ -310,6 +310,7 @@ extern "C" fn on_stream_writable(s: *mut quic::Stream) {
 }
 
 /// RFC 9114 §8.1: the server did no application processing.
+/// `US_QUIC_H3_REQUEST_REJECTED` in quic.h.
 const H3_REQUEST_REJECTED: u64 = 0x10B;
 
 extern "C" fn on_stream_close(s: *mut quic::Stream) {

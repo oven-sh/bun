@@ -1328,14 +1328,15 @@ describe("the origin ended the stream with no final response", () => {
 });
 
 // A server that shuts down gracefully sends a GOAWAY with the id of the first
-// request that it did not accept. It did not process that request or any later
-// one (RFC 9114 section 5.2), so they are safe to send again whatever their
-// method. The relay lets two requests leave the client without reaching A.
+// request that it did not accept (RFC 9114 section 5.2). It did not process a
+// request above that id, which is safe to send again whatever its method. The
+// request at the id is not: some servers name the last request they accepted.
+// The relay lets two requests leave the client without reaching A.
 // A is a node:quic server because it can end the connection after the GOAWAY.
 test.each([
-  ["POST", "HTTP3StreamReset", ["a /accepted", "b /first", "b /second"]],
-  ["PUT", "b", ["a /accepted", "b /accepted", "b /first", "b /second"]],
-])("sends a %s again if the server's GOAWAY does not cover it", async (method, acceptedOutcome, expected) => {
+  ["POST", "HTTP3StreamReset", ["a /below", "b /above"]],
+  ["PUT", "b", ["a /below", "b /above", "b /at", "b /below"]],
+])("sends a %s above the id of the server's GOAWAY again", async (method, otherOutcome, expected) => {
   const applied: string[] = [];
   const accepted = Promise.withResolvers<void>();
   let session: any;
@@ -1371,6 +1372,7 @@ test.each([
   let origin = a.address!.port;
   let client = { port: 0, address: "" };
   let bytesForB = 0;
+  const firstInitial = new Map<string, Buffer | null>();
   const back = await Bun.udpSocket({
     hostname: "127.0.0.1",
     socket: { data: (_socket, packet) => void front.send(packet, client.port, client.address) },
@@ -1380,8 +1382,17 @@ test.each([
     socket: {
       data(_socket, packet, port, address) {
         client = { port, address };
-        back.send(packet, origin, "127.0.0.1");
         if (origin === b.port && (bytesForB += packet.length) > 2 * body.length) written.resolve();
+        // A ClientHello takes two Initial packets, and a server that reads the first one
+        // alone answers with a Retry. It gets the first two of a connection together.
+        if ((packet[0] & 0xf0) === 0xc0) {
+          const sourceId = packet.subarray(7 + packet[5], 7 + packet[5] + packet[6 + packet[5]]).toString("hex");
+          const first = firstInitial.get(sourceId);
+          if (first === undefined) return void firstInitial.set(sourceId, Buffer.from(packet));
+          if (first) back.send(first, origin, "127.0.0.1");
+          firstInitial.set(sourceId, null);
+        }
+        back.send(packet, origin, "127.0.0.1");
       },
     },
   });
@@ -1391,16 +1402,16 @@ test.each([
       err => err.code,
     );
   try {
-    const first = send("/accepted");
+    const below = send("/below");
     await accepted.promise;
     origin = b.port!;
-    const late = [send("/first"), send("/second")];
+    const at = send("/at");
+    const above = send("/above");
     await written.promise;
     session.close().catch(() => {});
-    // The request above the id is sent again at once. The one at the id waits for the connection to end.
-    expect(await Promise.any(late)).toBe("b");
+    expect(await above).toBe("b");
     session.destroy(undefined, { code: 0x100, type: "application" });
-    expect(await Promise.all([first, ...late])).toEqual([acceptedOutcome, "b", "b"]);
+    expect(await Promise.all([below, at])).toEqual([otherOutcome, otherOutcome]);
     expect(applied.sort()).toEqual(expected);
   } finally {
     front.close();

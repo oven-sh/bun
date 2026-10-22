@@ -146,11 +146,14 @@ void us_quic_stream_close(us_quic_stream_t *s);
 void us_quic_stream_reset(us_quic_stream_t *s);
 void us_quic_stream_reset_internal_error(us_quic_stream_t *s);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
+/* RFC 9114 §8.1: the server did no application processing. */
+#define US_QUIC_H3_REQUEST_REJECTED 0x10B
 /* The code of the last RESET_STREAM or STOP_SENDING on the stream, 0 without one.
  * on_stream_close can still read it. */
 uint64_t us_quic_stream_reset_code(us_quic_stream_t *s);
-/* RFC 9114 §5.2: the server did not process a request at or above the id in its GOAWAY.
- * on_stream_close can still read it. */
+/* The server did not process a request above the id in its GOAWAY (RFC 9114 §5.2).
+ * The RFC says the same of the request at the id, but servers on stock lsquic name
+ * the last request they accepted. on_stream_close can still read it. */
 int us_quic_stream_refused_by_goaway(us_quic_stream_t *s);
 
 void *us_quic_stream_ext(us_quic_stream_t *s);

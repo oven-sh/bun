@@ -39,7 +39,7 @@ pub struct Stream {
     pub(crate) headers_delivered: bool,
     pub(crate) read_paused: bool,
     /// The origin did not process the request. It ended the stream with
-    /// H3_REQUEST_REJECTED, or its GOAWAY does not cover the stream.
+    /// H3_REQUEST_REJECTED, or the stream is above the id in its GOAWAY.
     pub(crate) peer_rejected: bool,
 }
 

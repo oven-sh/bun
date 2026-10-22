@@ -64,7 +64,7 @@ impl Stream {
         us_quic_stream_reset_code(self)
     }
 
-    /// RFC 9114 §5.2: the server did not process a request at or above the id in its GOAWAY.
+    /// The server did not process a request above the id in its GOAWAY (RFC 9114 §5.2).
     pub fn refused_by_goaway(&mut self) -> bool {
         us_quic_stream_refused_by_goaway(self) != 0
     }

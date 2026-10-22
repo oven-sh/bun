@@ -22,12 +22,11 @@ use crate::diagnostics::CompilerDiagnostic;
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
-    AstAlloc, BasicBlock, BlockId, BlockKind, DeclarationId, DependencyPathEntry, EvaluationOrder,
-    FunctionId, GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionKind,
-    InstructionValue, MutableRange, ParamPattern, Phi, Place, PlaceOrSpread, PropertyLiteral,
-    ReactFunctionType, ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
+    AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
+    GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionKind, InstructionValue,
+    MutableRange, ParamPattern, Phi, Place, PlaceOrSpread, PropertyLiteral, ReactFunctionType,
+    ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
 };
-use crate::inference::align_reactive_scopes_to_block_scopes_hir::block_first_id;
 use crate::optimization::dead_code_elimination::find_semantic_only_caught_instructions;
 
 // =============================================================================
@@ -1847,14 +1846,6 @@ struct Decl {
     scope_stack: Rc<[ScopeId]>, // copy of the scope stack at time of declaration
 }
 
-/// Not in upstream: a variable that a scope that has ended assigns, and what is used of it behind that scope.
-struct GivenBack {
-    scope: ScopeId,
-    declaration: DeclarationId,
-    value_from_before: Option<ReactiveScopeDependency>,
-    uses_what_the_scope_assigned: bool,
-}
-
 /// Context for dependency collection.
 struct DependencyCollectionContext<'a> {
     declarations: IdMap<DeclarationId, Decl>,
@@ -1864,9 +1855,6 @@ struct DependencyCollectionContext<'a> {
     scope_stack_copy: Option<Rc<[ScopeId]>>,
     dep_stack: Vec<Vec<ReactiveScopeDependency>>,
     deps: IndexMap<ScopeId, Vec<ReactiveScopeDependency>>,
-    given_back: Vec<GivenBack>,
-    /// While the phis of a handler are visited: their operands can come from the middle of a scope.
-    in_phis_of_handler: bool,
     temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     inner_fn_context: Option<EvaluationOrder>,
@@ -1884,8 +1872,6 @@ impl<'a> DependencyCollectionContext<'a> {
             scope_stack_copy: None,
             dep_stack: Vec::new(),
             deps: IndexMap::new(),
-            given_back: Vec::new(),
-            in_phis_of_handler: false,
             temporaries,
             processed_instrs_in_optional,
             inner_fn_context: None,
@@ -1925,14 +1911,6 @@ impl<'a> DependencyCollectionContext<'a> {
 
         if !pruned {
             self.deps.insert(scope_id, scoped_deps);
-            for id in &env.scopes[scope_id.0 as usize].reassignments {
-                self.given_back.push(GivenBack {
-                    scope: scope_id,
-                    declaration: env.identifiers[id.0 as usize].declaration_id,
-                    value_from_before: None,
-                    uses_what_the_scope_assigned: false,
-                });
-            }
         }
         Ok(())
     }
@@ -2080,44 +2058,8 @@ impl<'a> DependencyCollectionContext<'a> {
         }
     }
 
-    fn visit_given_back(&mut self, dep: &ReactiveScopeDependency, env: &Environment) {
-        let declaration = env.identifiers[dep.identifier.0 as usize].declaration_id;
-        for index in 0..self.given_back.len() {
-            let scope = self.given_back[index].scope;
-            if self.given_back[index].declaration != declaration {
-                continue;
-            }
-            if self.check_valid_dependency_of(Some(scope), dep, env) {
-                self.given_back[index].value_from_before = Some(ReactiveScopeDependency {
-                    identifier: dep.identifier,
-                    reactive: dep.reactive,
-                    path: hir_vec![],
-                    loc: dep.loc,
-                });
-            } else if !self.in_phis_of_handler
-                && let Some(decl) = self.reassignments.get(dep.identifier)
-                && decl.id < env.scopes[scope.0 as usize].range.end
-            {
-                self.given_back[index].uses_what_the_scope_assigned = true;
-            }
-        }
-    }
-
-    /// The paths through a scope join in it, so it assigned such a variable only where it returns or throws.
-    fn depend_on_values_given_back_unassigned(&mut self) {
-        for given_back in self.given_back.drain(..) {
-            if !given_back.uses_what_the_scope_assigned
-                && let Some(dep) = given_back.value_from_before
-                && let Some(deps) = self.deps.get_mut(&given_back.scope)
-            {
-                deps.push(dep);
-            }
-        }
-    }
-
     fn visit_dependency(&mut self, dep: ReactiveScopeDependency, env: &mut Environment) {
         self.declare_outside_original_scope(dep.identifier, env);
-        self.visit_given_back(&dep, env);
 
         // Handle ref.current access
         let dep = if crate::hir::is_use_ref_type(
@@ -2363,7 +2305,6 @@ fn collect_dependencies(
         &mut ctx,
         &mut traversal,
     )?;
-    ctx.depend_on_values_given_back_unassigned();
 
     Ok(ctx.deps)
 }
@@ -2392,13 +2333,15 @@ fn handle_function_deps(
 
         // Record phi operands
         if !block.phis.is_empty() {
+            let first = match block.instructions.first() {
+                Some(instr_id) => func.instructions[instr_id.0 as usize].id,
+                None => block.terminal.evaluation_order(),
+            };
             // A scope starts at the id of its terminal, and the phis of the block of that terminal are before it.
-            let before_block = EvaluationOrder(block_first_id(func, *block_id).0.saturating_sub(1));
-            ctx.in_phis_of_handler = block.kind == BlockKind::Catch;
+            let before_block = EvaluationOrder(first.0.saturating_sub(1));
             for phi in &block.phis {
                 ctx.visit_phi(phi, before_block, env);
             }
-            ctx.in_phis_of_handler = false;
         }
 
         for &instr_id in &block.instructions {

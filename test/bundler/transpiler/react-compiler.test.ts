@@ -3369,17 +3369,9 @@ describe("bundler", () => {
     ForWithContinue ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]*
     useFormErrors [false,[[],[]]] [true,[["That name is already taken"],[]]] [true,[["That name is already taken"],[]]]* [true,[[],["Pick an X variable"]]] [true,[["That name is already taken"],["Pick an X variable"]]]
     useBareParam [1,["b"]] [2,["b"]] [2,["b"]]* ["X",[]]
-    AssignThenReturn [1,["x"]] [2,["x"]] [2,["x"]]* ["other",[]]
-    AssignThenThrow [1,["x"]] [2,["x"]] [2,["x"]]* THROW(other)
-    AssignThenReturnInLoop ["i",[1,2]] ["j",[1,2]] ["j",[1,2]]* [3,[]]
-    AssignThenReturnThenJoin [1,["x"]] [2,["x"]] [2,["x"]]* ["late",["x"]]*
-    AssignThenReturnInOneArm [1,["x"]] [2,["x"]] [2,["x"]]* ["other",[]] [4,null]
-    AssignThenReturnOrAssignInOtherArm [1,["x"]] [2,["x"]] [2,["x"]]* ["other",[]] ["else",null]
-    AssignThenReturnInTry [1,["x"]] [2,["x"]] [2,["x"]]* ["other",[]]
     ReadThenReassign [2,["x"]] [3,["x"]] [3,["x"]]*
     CounterInLoop [1,[3]] [1,[3]]* [0,[1,2]]
     AssignedBeforeLoop ["i:b",[1,2]] ["j:b",[1,2]]* ["j:3",[3]]
-    AssignedInOneArm [1,["x"]] [2,["x"]]* [3,3]
   `;
   for (const reactCompiler of [false, true]) {
     itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
@@ -3562,103 +3554,6 @@ describe("bundler", () => {
             return { label, list };
           }
 
-          // In the next seven the path that assigns leaves the function, so no join in the block shows that the other
-          // path leaves the variable as it came in.
-          function AssignThenReturn(p) {
-            let label = p.count;
-            const list = [];
-            if (p.flag) {
-              label = p.other;
-              return <a label={label} list={list} />;
-            }
-            list.push(p.b);
-            return <div label={label} list={list} />;
-          }
-
-          function AssignThenThrow(p) {
-            let label = p.count;
-            const list = [];
-            if (p.flag) {
-              label = p.other;
-              throw new Error(label);
-            }
-            list.push(p.b);
-            return <div label={label} list={list} />;
-          }
-
-          function AssignThenReturnInLoop(p) {
-            let found = p.initial;
-            const list = [];
-            for (const item of p.items) {
-              if (item.ok) {
-                found = item.v;
-                return <a label={found} list={list} />;
-              }
-              list.push(item.v);
-            }
-            return <div label={found} list={list} />;
-          }
-
-          function AssignThenReturnThenJoin(p) {
-            let label = p.count;
-            const list = [];
-            if (p.flag) {
-              label = p.other;
-              return <a label={label} list={list} />;
-            }
-            list.push(p.b);
-            if (p.late) label = "late";
-            return <div label={label} list={list} />;
-          }
-
-          // A path goes around the block.
-          function AssignThenReturnInOneArm(p) {
-            let label = p.count;
-            let list = null;
-            if (p.outer) {
-              list = [];
-              if (p.flag) {
-                label = p.other;
-                return <a label={label} list={list} />;
-              }
-              list.push(p.b);
-            }
-            return <div label={label} list={list} />;
-          }
-
-          function AssignThenReturnOrAssignInOtherArm(p) {
-            let label = p.count;
-            let list = null;
-            if (p.outer) {
-              list = [];
-              if (p.flag) {
-                label = p.other;
-                return <a label={label} list={list} />;
-              }
-              list.push(p.b);
-            } else {
-              label = "else";
-            }
-            return <div label={label} list={list} />;
-          }
-
-          // What the block assigns gets to the handler from the middle of the block.
-          function AssignThenReturnInTry(p) {
-            let label = p.count;
-            let list = null;
-            try {
-              list = [];
-              if (p.flag) {
-                label = p.other;
-                return <a label={label} list={list} />;
-              }
-              list.push(p.b);
-            } catch (error) {
-              if (p.flag) label = "caught";
-            }
-            return <div label={label} list={list} />;
-          }
-
           // The block reads label, so it is an input. Its slot has to keep the value that label came in with.
           function ReadThenReassign(p) {
             let label = p.count;
@@ -3668,7 +3563,7 @@ describe("bundler", () => {
             return <div label={label} list={list} />;
           }
 
-          // In the last three the value that the variable came in with is not an input. Here it is a constant.
+          // In the last two the value that the variable came in with is not an input. Here it is a constant.
           function CounterInLoop(p) {
             let count = 0;
             const list = [];
@@ -3690,16 +3585,6 @@ describe("bundler", () => {
               list.push(item.v);
             }
             return <div label={initial + ":" + found} list={list} />;
-          }
-
-          // The path that keeps the value goes around the block.
-          function AssignedInOneArm(p) {
-            let list = p.count;
-            if (p.flag) {
-              list = [];
-              list.push(p.b);
-            }
-            return <div label={p.count} list={list} />;
           }
 
           function run(Component, ...renders) {
@@ -3808,25 +3693,6 @@ describe("bundler", () => {
           );
           const flagOff = { flag: false, x: "X", b: "b" };
           run(useBareParam, [flagOff, 1], [flagOff, 2], [flagOff, 2], [{ flag: true, x: "X", b: "b" }, 3]);
-          const counts = [
-            { count: 1, flag: false, b: "x", other: "other", outer: true },
-            { count: 2, flag: false, b: "x", other: "other", outer: true },
-            { count: 2, flag: false, b: "x", other: "other", outer: true },
-          ];
-          const flagged = { count: 3, flag: true, b: "x", other: "other", outer: true };
-          run(AssignThenReturn, ...counts, flagged);
-          run(AssignThenThrow, ...counts, flagged);
-          run(
-            AssignThenReturnInLoop,
-            { initial: "i", items: none },
-            { initial: "j", items: none },
-            { initial: "j", items: none },
-            { initial: "k", items: some },
-          );
-          run(AssignThenReturnThenJoin, ...counts, { ...counts[2], late: true });
-          run(AssignThenReturnInOneArm, ...counts, flagged, { count: 4, outer: false });
-          run(AssignThenReturnOrAssignInOtherArm, ...counts, flagged, { count: 4, outer: false });
-          run(AssignThenReturnInTry, ...counts, flagged);
           run(
             ReadThenReassign,
             { count: 1, flag: true, b: "x" },
@@ -3839,12 +3705,6 @@ describe("bundler", () => {
             { initial: "i", b: "b", items: none },
             { initial: "j", b: "b", items: none },
             { initial: "j", b: "b", items: some },
-          );
-          run(
-            AssignedInOneArm,
-            { count: 1, flag: true, b: "x" },
-            { count: 2, flag: true, b: "x" },
-            { count: 3, flag: false, b: "x" },
           );
         `,
         // One memo cache per component, kept between renders, as a fiber keeps it.

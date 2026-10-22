@@ -111,20 +111,20 @@ const prefetchTriggerVersion = 1;
  */
 export const pins = {
   nodejs: {
-    version: "26.3.0",
+    version: "26.12.1",
     nodeGypInstallVersion: "11",
     // SHASUMS256.txt beside the files; unofficial-builds.nodejs.org has its own for the musl builds.
     sha256: {
-      headers: "fca113c5d5add8bfb1aa31129a24acb8d49aa69ab3c22a2cc569aec88960526d",
-      "linux-x64": "a6e65cc653e40c1653b77742f9185dbce3ff1f99fa2746d211bddb53530ef206",
-      "linux-aarch64": "b2e01f65905c24cb5dd19c4cfbfefe0118e0504c170cc18beac343a2abbb59bd",
-      "linux-x64-musl": "6ad2e7c0cf693fecc2febb1abf753940244f3baaa04626361ed52d64843ffc67",
-      "linux-aarch64-musl": "2487ff4f03dbd8998a3778886d50c1ee5f13a3b9cefbfa3aed02c32dbf1e1fb8",
-      "darwin-x64": "7453bd54a17bdc656e2e784d702f6eeb224fb517965e6f8c5a31a88c83d3804c",
-      "darwin-aarch64": "77ef7f7a15aa757c2ca19d63cf41c8d9eb3b18590ebc6883871310787d8c6b6c",
+      headers: "a983cdcea96e85d137b9b807cc776bb5564fc9e3e1c9185d59bbfaa781efd08f",
+      "linux-x64": "0fd1eb7770598f52a21995edf6ed35fc690400fa437c2386af329519e9143132",
+      "linux-aarch64": "a6c01af459dd8972ab3fb08ee5da81244d26ba8c4944a62d5bbba8c597ae154f",
+      "linux-x64-musl": "8bf9cc0e7f8e3c7ec5368dca19242cad651b6b09d35bcdcf290ac3f80925e8dd",
+      "linux-aarch64-musl": "c3694551f6cb888fe0befb4cb2e13ffe45b0bb2528ec141e7c3a29a7d7974d13",
+      "darwin-x64": "b85c2ea4420ad0bc4abf2dc6cf1f55130ed681f1cabf60cf3f526e4c9e2712ff",
+      "darwin-aarch64": "1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8",
       // node.lib: Scoop installs Node.js itself on Windows.
-      "windows-x64": "2f71186cc7649a7406b1616566700e397e9dd52bd7267440d78d78a1725bd312",
-      "windows-aarch64": "bd474f1ca8c44b2ab10e908c14447c5d91e1bac3f3a4d3141c78b6dbb5d1a253",
+      "windows-x64": "caad0090dc3add94c06abd01e395e8ec0f1586c10071bda1f99480445d695f6f",
+      "windows-aarch64": "45084cbfc0170d7a30b29ab1eeeb2b0d770995ade0a13a4cc82cf31189f95c9f",
     },
   },
   bun: {
@@ -1944,6 +1944,9 @@ function visualStudio(): Tool {
         installer,
         `--passive --norestart --wait --force --locale en-US ${components.map(id => `--add ${id}`).join(" ")} --includeRecommended`,
         [0, 3010],
+        // dd_<program>_<time>.log and its _errors.log. Not dd_setup_<time>_<n>_<package>.log: there are hundreds,
+        // and an MSI's ends with every property of the machine and the user.
+        [printEndOfLogs(environment("TEMP"), /^dd_[a-z_]+_\d+(_errors)?\.log$/)],
       ),
     ],
   };
@@ -2960,12 +2963,36 @@ const scheduledTaskAtStartup = (options: { name: string; program: string; argume
   ),
 ];
 
-/** An installer that reports through its exit code. 3010: installed, and a restart is needed; the bake ends with one. */
+/**
+ * An installer that reports through its exit code. 3010: installed, and a restart is needed; the bake ends with one.
+ * `onFailure` runs before the bake fails: the machine is deleted next, and what the installer wrote with it.
+ */
 const runInstaller =
-  (what: string, program: Value, argumentList: Value, okExitCodes: number[] = [0]): Step =>
+  (what: string, program: Value, argumentList: Value, okExitCodes: number[] = [0], onFailure: Step[] = []): Step =>
+  c => {
+    const failed = okExitCodes.map(code => `$process.ExitCode -ne ${code}`).join(" -and ");
+    const fail = `throw "bootstrap: ${what} exited with code $($process.ExitCode)"`;
+    return [
+      `$process = Start-Process ${renderValue(program, c)} -ArgumentList ${renderValue(argumentList, c)} -Wait -PassThru -NoNewWindow`,
+      ...(onFailure.length > 0
+        ? [`if (${failed}) {`, ...indent([...render(onFailure, c), fail]), "}"]
+        : [`if (${failed}) { ${fail} }`]),
+    ];
+  };
+
+/**
+ * The last lines of the logs in `directory` that `names` matches. Anyone can read a bake's output, so `names` says
+ * what may be shown rather than what may not, and two things are left out of it: lines about telemetry, which have
+ * ids of the machine and the user, and the query of a URL, which can be a key to what it downloads.
+ */
+const printEndOfLogs =
+  (directory: Value, names: RegExp): Step =>
   c => [
-    `$process = Start-Process ${renderValue(program, c)} -ArgumentList ${renderValue(argumentList, c)} -Wait -PassThru -NoNewWindow`,
-    `if (${okExitCodes.map(code => `$process.ExitCode -ne ${code}`).join(" -and ")}) { throw "bootstrap: ${what} exited with code $($process.ExitCode)" }`,
+    `foreach ($log in Get-ChildItem ${renderValue(directory, c)} -File | Where-Object { $_.Name -match ${renderValue(names.source, c, true)} } | Sort-Object LastWriteTime) {`,
+    `  "---- the end of $($log.Name)"`,
+    // A log that cannot be read must not replace the installer's exit code as the bake's error.
+    `  Get-Content $log.FullName -Tail 100 -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch 'telemetry' } | ForEach-Object { $_ -replace '(https?://[^\\s?]+)\\?\\S*', '$1?...' }`,
+    `}`,
   ];
 
 // --------------------------------------------------------------------- tools

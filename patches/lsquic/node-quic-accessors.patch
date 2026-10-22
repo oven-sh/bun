@@ -1391,18 +1391,6 @@
      lsquic_send_ctl_stash_0rtt_packets(&conn->ifc_send_ctl);
  }
  
-@@ -8153,6 +8457,11 @@ write_datagram (struct ietf_full_conn *conn)
-     packet_out = get_writeable_packet(conn, need);
-     if (!packet_out)
-         return 0;
-+    /* bun: pre-handshake datagrams ride in 0-RTT packets (RFC 9221 sec 5:
-+     * DATAGRAM frames live in the application packet-number space; the
-+     * stream write path stamps the same type in lsquic_stream.c). */
-+    if (!(conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
-+        packet_out->po_header_type = HETY_0RTT;
- 
-     w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
-             packet_out->po_data + packet_out->po_data_sz,
 @@ -8415,7 +8724,12 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
      if (!write_is_possible(conn))
          goto end_write;

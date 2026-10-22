@@ -1420,13 +1420,13 @@ impl Run<'_> {
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
             // SAFETY: same process-lifetime erasure as `name` above.
             let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig::new(
                 name,
                 dir,
-                md_format: opts.md_format,
-                json_format: opts.json_format,
-                interval: opts.interval,
-            });
+                opts.md_format,
+                opts.json_format,
+                opts.interval,
+            ));
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
             // SAFETY: `vm.jsc_vm` set in `init`.
             bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
@@ -1440,11 +1440,11 @@ impl Run<'_> {
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
             // SAFETY: same process-lifetime erasure as `name` above.
             let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
+            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig::new(
                 name,
                 dir,
-                text_format: opts.text_format,
-            });
+                opts.text_format,
+            ));
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
         }
 

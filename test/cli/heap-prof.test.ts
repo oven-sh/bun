@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const testScript = `const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
@@ -257,6 +257,89 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
 
   const profile = await readProfile(join(String(dir), "output"), "custom.heapprofile");
   expectV8HeapSnapshotShape(profile);
+});
+
+// A default-named profile takes its sequence number when the profiler starts,
+// as in node, so a default-named snapshot written while the program runs gets
+// a later number. The snapshots are "{}": only their names matter here.
+// Sequential on a debug build: six debug children at once can exceed the 5 s of `bun bd test`.
+test.concurrentIf(!isDebug).each([
+  {
+    flags: ["--cpu-prof"],
+    snapshots: 2,
+    files: ["CPU.<now>.0.001.cpuprofile", "Heap.<now>.0.002.heapsnapshot", "Heap.<now>.0.003.heapsnapshot"],
+  },
+  {
+    flags: ["--cpu-prof", "--cpu-prof-md"],
+    snapshots: 2,
+    files: [
+      "CPU.<now>.0.001.cpuprofile",
+      "CPU.<now>.0.002.md",
+      "Heap.<now>.0.003.heapsnapshot",
+      "Heap.<now>.0.004.heapsnapshot",
+    ],
+  },
+  {
+    flags: ["--heap-prof"],
+    snapshots: 2,
+    files: ["Heap.<now>.0.001.heapprofile", "Heap.<now>.0.002.heapsnapshot", "Heap.<now>.0.003.heapsnapshot"],
+  },
+  {
+    flags: ["--cpu-prof", "--cpu-prof-md", "--heap-prof"],
+    snapshots: 0,
+    files: ["CPU.<now>.0.001.cpuprofile", "CPU.<now>.0.002.md", "Heap.<now>.0.003.heapprofile"],
+  },
+  {
+    flags: ["--cpu-prof", "--cpu-prof-name", "cpu.cpuprofile"],
+    snapshots: 2,
+    files: ["Heap.<now>.0.001.heapsnapshot", "Heap.<now>.0.002.heapsnapshot", "cpu.cpuprofile"],
+  },
+  {
+    flags: ["--heap-prof", "--heap-prof-name", "heap.heapprofile"],
+    snapshots: 2,
+    files: ["Heap.<now>.0.001.heapsnapshot", "Heap.<now>.0.002.heapsnapshot", "heap.heapprofile"],
+  },
+])("$flags numbers its profiles before $snapshots snapshots of the run", async ({ flags, snapshots, files }) => {
+  using dir = tempDir("heap-prof-sequence-test", {});
+
+  const before = Date.now();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      ...flags,
+      "-e",
+      `Bun.generateHeapSnapshot = () => "{}";
+       const v8 = require("node:v8");
+       for (let i = 0; i < ${snapshots}; i++) v8.writeHeapSnapshot();`,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const after = Date.now();
+
+  // `<yyyymmdd>.<hhmmss>.<pid>` in a name becomes `<now>` when it is a second of this run. The
+  // child runs in UTC. On Windows a profile is stamped by GetLocalTime, which does not read TZ,
+  // so there the date only has to be within a day of this run.
+  const utc = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace("T", ".").replace(/[-:]/g, "");
+  const seconds: string[] = [];
+  for (let ms = before - (before % 1000); ms <= after; ms += 1000) seconds.push(utc(ms));
+  const days = [before - 86_400_000, before, after, after + 86_400_000].map(ms => utc(ms).slice(0, 8));
+  const sinceSpawn = (name: string) =>
+    name.replace(/\.(\d{8})\.(\d{6})\.\d+\./, (stamp, day, time) =>
+      seconds.includes(`${day}.${time}`) || (isWindows && days.includes(day)) ? ".<now>." : stamp,
+    );
+
+  expect({
+    stdout,
+    stderr,
+    files: Array.from(new Bun.Glob("*").scanSync({ cwd: String(dir) }))
+      .map(sinceSpawn)
+      .sort(),
+    exitCode,
+  }).toEqual({ stdout: "", stderr: "", files: [...files], exitCode: 0 });
 });
 
 // Node parity: heap-profiler-scoped flags without --heap-prof exit 9 with

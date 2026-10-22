@@ -1,7 +1,8 @@
 use core::ffi::c_int;
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::io::Write as _;
 
-use crate::VM;
+use crate::{CallFrame, GregorianDateTime, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::String as BunString;
 use bun_paths::{AutoAbsPathChecked, PathBuffer};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
@@ -22,6 +23,39 @@ pub struct CPUProfilerConfig {
     pub md_format: bool,
     pub json_format: bool,
     pub interval: u32,
+    /// Numbers of the default-named files, 0 when `--cpu-prof-name` names the file.
+    json_sequence: u32,
+    md_sequence: u32,
+}
+
+impl CPUProfilerConfig {
+    /// Draws the numbers of the default-named files now, as node does when its profiler starts.
+    pub fn new(
+        name: &'static [u8],
+        dir: &'static [u8],
+        md_format: bool,
+        json_format: bool,
+        interval: u32,
+    ) -> Self {
+        let default_named = name.is_empty();
+        Self {
+            name,
+            dir,
+            md_format,
+            json_format,
+            interval,
+            json_sequence: if default_named && json_format {
+                next_sequence()
+            } else {
+                0
+            },
+            md_sequence: if default_named && md_format {
+                next_sequence()
+            } else {
+                0
+            },
+        }
+    }
 }
 
 // C++ function declarations
@@ -193,7 +227,7 @@ fn build_output_path(
             }
         }
     } else {
-        generate_default_filename(&mut filename_buf, is_md_format)?
+        generate_default_filename(&mut filename_buf, config, is_md_format)?
     };
 
     if !config.dir.is_empty() {
@@ -208,24 +242,40 @@ fn build_output_path(
     Ok(())
 }
 
-fn generate_default_filename(
-    buf: &mut PathBuffer,
+fn generate_default_filename<'a>(
+    buf: &'a mut PathBuffer,
+    config: &CPUProfilerConfig,
     md_format: bool,
-) -> Result<&[u8], ProfilerError> {
-    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
+) -> Result<&'a [u8], ProfilerError> {
+    let (extension, sequence) = if md_format {
+        (".md", config.md_sequence)
+    } else {
+        (".cpuprofile", config.json_sequence)
+    };
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    write_diagnostic_filename(&mut cursor, "CPU", extension)
+    write_diagnostic_filename(&mut cursor, "CPU", extension, 0, local_time_now(), sequence)
         .map_err(|_| ProfilerError::FilenameTooLong)?;
     let len = usize::try_from(cursor.position()).expect("int cast");
     Ok(&buf[..len])
 }
 
+/// Node's `seq`: https://github.com/nodejs/node/blob/v26.3.0/src/util.cc#L59
+static SEQUENCE: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn next_sequence() -> u32 {
+    // Relaxed: the numbers only have to be distinct.
+    SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1
+}
+
 /// Node's DiagnosticFilename: `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
-/// https://github.com/nodejs/node/blob/main/src/util.cc (MakeFilename)
+/// https://github.com/nodejs/node/blob/v26.3.0/src/util.cc#L239-L281 (MakeFilename)
 pub(crate) fn write_diagnostic_filename(
     cursor: &mut dyn std::io::Write,
     prefix: &str,
     extension: &str,
+    thread_id: u32,
+    time: GregorianDateTime,
+    sequence: u32,
 ) -> std::io::Result<()> {
     #[cfg(windows)]
     let pid = bun_sys::windows::GetCurrentProcessId();
@@ -233,37 +283,44 @@ pub(crate) fn write_diagnostic_filename(
     // SAFETY: getpid() is always safe to call.
     let pid = unsafe { libc::getpid() };
 
-    let (year, month, day, hour, minute, second) = local_time_now();
-
-    static SEQ: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-    let seq = SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+    let GregorianDateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        ..
+    } = time;
 
     write!(
         cursor,
-        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
+        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.{thread_id}.{sequence:03}{extension}"
     )
 }
 
+/// The local time the OS reports, which is what node's `MakeFilename` reads.
 #[cfg(not(windows))]
-pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+pub(crate) fn local_time_now() -> GregorianDateTime {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs()) as libc::time_t;
     let mut tm: libc::tm = bun_core::ffi::zeroed();
     // SAFETY: localtime_r only writes into `tm` and is thread-safe.
     unsafe { libc::localtime_r(&raw const secs, &raw mut tm) };
-    (
-        tm.tm_year + 1900,
-        (tm.tm_mon + 1) as u32,
-        tm.tm_mday as u32,
-        tm.tm_hour as u32,
-        tm.tm_min as u32,
-        tm.tm_sec as u32,
-    )
+    GregorianDateTime {
+        year: tm.tm_year + 1900,
+        month: tm.tm_mon + 1,
+        day: tm.tm_mday,
+        hour: tm.tm_hour,
+        minute: tm.tm_min,
+        second: tm.tm_sec,
+        weekday: tm.tm_wday,
+    }
 }
 
 #[cfg(windows)]
-pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+pub(crate) fn local_time_now() -> GregorianDateTime {
     #[repr(C)]
     #[derive(Default)]
     struct SystemTime {
@@ -282,12 +339,38 @@ pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
     let mut st = SystemTime::default();
     // SAFETY: GetLocalTime only writes the out-param (kernel32 SYSTEMTIME layout).
     unsafe { GetLocalTime(&mut st) };
-    (
-        i32::from(st.year),
-        u32::from(st.month),
-        u32::from(st.day),
-        u32::from(st.hour),
-        u32::from(st.minute),
-        u32::from(st.second),
+    GregorianDateTime {
+        year: i32::from(st.year),
+        month: i32::from(st.month),
+        day: i32::from(st.day),
+        hour: i32::from(st.hour),
+        minute: i32::from(st.minute),
+        second: i32::from(st.second),
+        weekday: i32::from(st.day_of_week),
+    }
+}
+
+/// The default name of `v8.writeHeapSnapshot()`: https://github.com/nodejs/node/blob/v26.3.0/src/heap_utils.cc#L461-L462
+pub fn js_heap_snapshot_filename(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let thread_id = global
+        .bun_vm()
+        .worker_ref()
+        .map_or(0, |worker| worker.thread_id());
+    // The DateCache is the zone `Date` uses. Unlike libc, it follows `process.env.TZ`.
+    let time = global.ms_to_gregorian_date_time(bun_core::time::milli_timestamp() as f64);
+
+    // Every field is a 32-bit integer, so the name is at most 119 bytes.
+    let mut name = [0u8; 128];
+    let mut cursor = std::io::Cursor::new(&mut name[..]);
+    write_diagnostic_filename(
+        &mut cursor,
+        "Heap",
+        ".heapsnapshot",
+        thread_id,
+        time,
+        next_sequence(),
     )
+    .expect("a heap snapshot name fits in 128 bytes");
+    let len = usize::try_from(cursor.position()).expect("int cast");
+    crate::bun_string_jsc::create_utf8_for_js(global, &name[..len])
 }

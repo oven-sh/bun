@@ -32,6 +32,7 @@ pub(crate) use bun_install_jsc::npm_jsc::package_manifest_bindings_generate as i
 pub(crate) use bun_install_jsc::ini_jsc::ini_testing_load_npmrc_from_js as ini_ini_ini_testing_ap_is_load_npmrc_from_js;
 pub(crate) use bun_install_jsc::ini_jsc::ini_testing_parse as ini_ini_ini_testing_ap_is_parse;
 
+pub(crate) use bun_jsc::bun_cpu_profiler::js_heap_snapshot_filename as jsc_bun_cpu_profiler_js_heap_snapshot_filename;
 pub(crate) use bun_jsc::bytecode_order_recorder::names_for_testing as jsc_bytecode_order_recorder_names_for_testing;
 pub(crate) use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
 pub(crate) use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks;

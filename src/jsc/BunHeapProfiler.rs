@@ -12,6 +12,24 @@ pub struct HeapProfilerConfig {
     pub name: &'static [u8],
     pub dir: &'static [u8],
     pub text_format: bool,
+    /// Number of the default-named profile, 0 when `--heap-prof-name` names the file.
+    sequence: u32,
+}
+
+impl HeapProfilerConfig {
+    /// Draws the number of a default-named profile now, like `CPUProfilerConfig::new`.
+    pub fn new(name: &'static [u8], dir: &'static [u8], text_format: bool) -> Self {
+        Self {
+            name,
+            dir,
+            text_format,
+            sequence: if name.is_empty() {
+                crate::bun_cpu_profiler::next_sequence()
+            } else {
+                0
+            },
+        }
+    }
 }
 
 // C++ function declarations
@@ -108,7 +126,7 @@ fn build_output_path(
     let filename: &[u8] = if !config.name.is_empty() {
         config.name
     } else {
-        generate_default_filename(&mut filename_buf, config.text_format)?
+        generate_default_filename(&mut filename_buf, config)?
     };
 
     // Join directory and filename; `join` resolves absolute segments where
@@ -120,11 +138,25 @@ fn build_output_path(
     Ok(())
 }
 
-fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<&[u8], Error> {
-    let extension: &str = if text_format { ".md" } else { ".heapprofile" };
+fn generate_default_filename<'a>(
+    buf: &'a mut PathBuffer,
+    config: &HeapProfilerConfig,
+) -> Result<&'a [u8], Error> {
+    let extension: &str = if config.text_format {
+        ".md"
+    } else {
+        ".heapprofile"
+    };
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    crate::bun_cpu_profiler::write_diagnostic_filename(&mut cursor, "Heap", extension)
-        .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
+    crate::bun_cpu_profiler::write_diagnostic_filename(
+        &mut cursor,
+        "Heap",
+        extension,
+        0,
+        crate::bun_cpu_profiler::local_time_now(),
+        config.sequence,
+    )
+    .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
     let written = usize::try_from(cursor.position()).expect("int cast");
     Ok(&buf.as_slice()[..written])
 }

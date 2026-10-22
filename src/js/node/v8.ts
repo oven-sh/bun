@@ -331,23 +331,6 @@ function serialize(arg1) {
   return framed;
 }
 
-function getDefaultHeapSnapshotPath() {
-  const date = new Date();
-
-  const worker_threads = require("node:worker_threads");
-  const thread_id = worker_threads.threadId;
-
-  const yyyy = date.getFullYear();
-  const mm = date.getMonth().toString().padStart(2, "0");
-  const dd = date.getDate().toString().padStart(2, "0");
-  const hh = date.getHours().toString().padStart(2, "0");
-  const MM = date.getMinutes().toString().padStart(2, "0");
-  const ss = date.getSeconds().toString().padStart(2, "0");
-
-  // 'Heap-${yyyymmdd}-${hhmmss}-${pid}-${thread_id}.heapsnapshot'
-  return `Heap-${yyyy}${mm}${dd}-${hh}${MM}${ss}-${process.pid}-${thread_id}.heapsnapshot`;
-}
-
 let fs;
 
 function writeHeapSnapshot(path, _options) {
@@ -360,7 +343,7 @@ function writeHeapSnapshot(path, _options) {
       throw $ERR_INVALID_ARG_VALUE("path", path, "must be a non-empty string");
     }
   } else {
-    path = getDefaultHeapSnapshotPath();
+    path = $newRustFunction("BunCPUProfiler.rs", "jsHeapSnapshotFilename", 0)();
   }
 
   if (!fs) {

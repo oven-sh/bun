@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "v8-heap-snapshot-fixture.ts");
+const namesFixture = join(import.meta.dir, "v8-heap-snapshot-names-fixture.ts");
 
 const NODE_FIELDS = ["type", "name", "id", "self_size", "edge_count", "trace_node_id", "detachedness"];
 const EDGE_FIELDS = ["type", "name_or_index", "to_node"];
@@ -12,9 +13,12 @@ const EDGE_FIELDS = ["type", "name_or_index", "to_node"];
 // with `v8-heapsnapshot` materializes an object per node and per edge, and two
 // parses in a row grow the snapshot by ~10x, until the process is OOM-killed.
 // Every snapshot therefore gets its own short-lived process.
-async function runFixture(mode: string, { cwd = import.meta.dir, args = [] }: { cwd?: string; args?: string[] } = {}) {
+async function runFixture(
+  mode: string,
+  { cwd = import.meta.dir, args = [], script = fixture }: { cwd?: string; args?: string[]; script?: string } = {},
+) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), fixture, mode, ...args],
+    cmd: [bunExe(), script, mode, ...args],
     env: bunEnv,
     cwd,
     stdout: "pipe",
@@ -48,6 +52,18 @@ const walked = {
   undefinedNodes: 0,
 };
 
+// `yyyymmdd.hhmmss` of every second from `before` to `after`, both in ms since
+// the epoch, as a clock `utcOffsetHours` east of UTC shows it. A fixture starts
+// in UTC: `bunEnv` sets TZ.
+function timestamps({ before, after }: { before: number; after: number }, utcOffsetHours = 0) {
+  const stamps: string[] = [];
+  for (let second = Math.floor(before / 1000); second <= Math.floor(after / 1000); second++) {
+    const iso = new Date((second + utcOffsetHours * 3600) * 1000).toISOString();
+    stamps.push(iso.slice(0, 19).replace("T", ".").replace(/[-:]/g, ""));
+  }
+  return stamps;
+}
+
 // Deliberately sequential rather than `test.concurrent`: each fixture is
 // single-threaded, so fanning six snapshots out at once buys wall time this file
 // does not need by multiplying the peak RSS this file exists to bound.
@@ -78,9 +94,39 @@ test("v8.getHeapSnapshot()", async () => {
 test("v8.writeHeapSnapshot()", async () => {
   // Without a path the snapshot is written to the cwd, so give it one we own.
   using dir = tempDir("v8-heap-snapshot", {});
+  const before = Date.now();
   const { filename, ...rest } = await runFixture("write-default", { cwd: String(dir) });
-  expect(filename).toMatch(/^Heap-\d{8}-\d{6}-\d+-\d+\.heapsnapshot$/);
+  const after = Date.now();
+  // The timestamp comes first and accepts any separator, so that a wrong date
+  // fails here whatever the rest of the name looks like.
+  const [, date, time] = filename.match(/^Heap\D(\d{8})\D(\d{6})\D/) ?? [];
+  expect(timestamps({ before, after })).toContain(`${date}.${time}`);
+  // node's DiagnosticFilename: Heap.<yyyymmdd>.<hhmmss>.<pid>.<thread id>.<sequence number>
+  expect(filename).toMatch(/^Heap\.\d{8}\.\d{6}\.\d+\.0\.001\.heapsnapshot$/);
   expect(rest).toEqual(structure);
+});
+
+test("v8.writeHeapSnapshot() default names", async () => {
+  using dir = tempDir("v8-heap-snapshot", {});
+  const { names, underMockedClock, inKiritimati, files } = await runFixture("default-names", {
+    cwd: String(dir),
+    script: namesFixture,
+  });
+
+  // <thread id>.<sequence number> twice on the main thread, twice in a Worker,
+  // then on the main thread: the process has one counter, as in node.
+  const threadAndSequence = (name: string) => name.match(/\.(\d+\.\d{3})\.heapsnapshot$/)?.[1] ?? name;
+  expect(names.map(threadAndSequence)).toEqual(["0.001", "0.002", "1.003", "1.004", "0.005"]);
+
+  const timestamp = (name: string) => name.match(/^Heap\.(\d{8}\.\d{6})\./)?.[1] ?? name;
+  // `setSystemTime` had moved `Date` to the year 2000. The name keeps the real clock.
+  expect(underMockedClock.mockedNow).toBe(Date.UTC(2000, 0, 1));
+  expect(timestamps(underMockedClock)).toContain(timestamp(underMockedClock.name));
+  // `process.env.TZ` had become "Pacific/Kiritimati", which is UTC+14 all year.
+  expect(timestamps(inKiritimati, 14)).toContain(timestamp(inKiritimati.name));
+
+  // Every call wrote a file of its own.
+  expect(files).toEqual([...names, underMockedClock.name, inKiritimati.name].sort());
 });
 
 test("v8.writeHeapSnapshot() with path", async () => {

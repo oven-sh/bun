@@ -2817,6 +2817,14 @@ describe("a package in node_modules", () => {
         exitCode: 0,
         requests: [],
       });
+
+      chmodSync(join(box.cwd, "node_modules", "zzz-last", "cli.js"), 0o644);
+      expect(await box.run(["zzz-last", "arg"])).toEqual({
+        stdout: "",
+        stderr: expect.stringMatching(/^error: .*\/node_modules\/zzz-last\/cli\.js is not executable\n$/),
+        exitCode: 126,
+        requests: [],
+      });
     },
   );
 

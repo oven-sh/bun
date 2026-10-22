@@ -549,26 +549,22 @@ impl BunxCommand {
         package_json: &ZStr,
         real: &[u8],
     ) -> bool {
-        let Some((parent, in_node_modules)) = strings::rsplit_once(real, b"/node_modules/") else {
-            return false;
-        };
-        let name_len = Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
-            let optional = root.get(b"optionalDependencies")?;
-            let ExprData::EObjectJSON(optional) = &optional.data else {
-                return None;
-            };
-            (optional.get().properties().iter())
-                .map(|dependency| dependency.key.slice())
-                .find(|name| {
-                    (in_node_modules.strip_prefix(*name)).is_some_and(|rest| rest.starts_with(b"/"))
+        let dependency_json =
+            Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
+                let optional = root.get(b"optionalDependencies")?;
+                let ExprData::EObjectJSON(optional) = &optional.data else {
+                    return None;
+                };
+                // `node_modules` can be a link to a folder of another name, which is the name in `real`.
+                optional.get().properties().iter().find_map(|dependency| {
+                    let name = dependency.key.slice();
+                    let (parent, _) = strings::rsplit_once(real, &[b"/", name, b"/"].concat())?;
+                    Some([parent, b"/", name, b"/package.json"].concat())
                 })
-                .map(<[u8]>::len)
-        });
-        let Some(Some(name_len)) = name_len else {
+            });
+        let Some(Some(dependency_json)) = dependency_json else {
             return false;
         };
-        let name = &in_node_modules[..name_len];
-        let dependency_json = [parent, b"/node_modules/", name, b"/package.json"].concat();
         Self::read_package_json(transpiler, &dependency_json, |root| {
             root.get(b"os").is_some() && root.get(b"cpu").is_some()
         })

@@ -230,7 +230,7 @@ impl<'s> Checker<'_, 's> {
     /// `saveCurrentNode`.
     #[inline]
     pub(super) fn enter_source_element(&mut self, node: CurrentNode) -> Option<CurrentNode> {
-        self.instantiation_count = 0;
+        self.reset_instantiation_count();
         self.current_source_element.replace(node)
     }
 

@@ -440,7 +440,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // names, so this visit takes a different path.
                 let resolution_start = std::mem::replace(&mut self.resolution_start, visible_from);
                 // `checkExpressionEx`
-                self.instantiation_count = 0;
+                self.reset_instantiation_count();
                 let entered = self.enter(Query::Expr(file, e));
                 self.resolution_start = resolution_start;
                 if !entered {
@@ -566,7 +566,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Hides the first visit from `enter`, which still fails when time, native stack or query
         // depth run out.
         let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
-        self.instantiation_count = 0;
+        self.reset_instantiation_count();
         let entered = self.enter(Query::Expr(file, e));
         self.resolution_start = resolution_start;
         if !entered {

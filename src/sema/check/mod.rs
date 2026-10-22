@@ -3283,6 +3283,12 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
         self.note_gave_up();
         self.instantiation_limit_hits += 1;
+        // Nothing the task does from now on is kept. With every instantiation at the limit, it gets to the end of the
+        // statement without 5,000,000 more of them.
+        if self.task.was_discarded() {
+            self.instantiation_count = 5_000_000;
+            return TypeId::ERROR;
+        }
         if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Rejected
         {
             return TypeId::UNRESOLVED;
@@ -3364,9 +3370,17 @@ impl<'p, 's> Checker<'p, 's> {
             && self.current_source_element.is_none()
             && self.outermost_comparison.is_none();
         if is_idle {
-            self.instantiation_count = 0;
+            self.reset_instantiation_count();
         }
         is_idle
+    }
+
+    /// `c.instantiationCount = 0`. A discarded task stays at the limit (see `instantiation_too_deep`).
+    #[inline]
+    pub(super) fn reset_instantiation_count(&mut self) {
+        if !self.task.was_discarded() {
+            self.instantiation_count = 0;
+        }
     }
 
     /// Call at the start of a `checkTypeRelatedToEx` run, or of `checkTypeAssignableToAndOptionallyElaborate`,

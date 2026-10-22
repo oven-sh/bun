@@ -1,7 +1,18 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir } from "harness";
-import { mkdirSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, isWindows, tempDir } from "harness";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 
 describe("--hot with many directories", () => {
@@ -245,4 +256,136 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     expect(leaks).toEqual([]);
     expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
+});
+
+// The position of a watchlist entry was a u16. A change to the entry at
+// position 65,535 aborted the process with "index out of bounds: the len is 0
+// but the index is 0" when no entry before it changed in the same batch, and a
+// change to a later entry aborted it with "TryFromIntError(PosOverflow)". An
+// eviction of the entry at 65,535 was dropped.
+//
+// Windows: its watcher takes only paths inside the project root, and this
+// fixture keeps its files outside of it, so that one write is one event.
+test.skipIf(isWindows)("--hot delivers changes to watchlist entries at position 65,535 and past it", async () => {
+  const positions = [8, 65_534, 65_535, 65_536];
+  using dir = tempDir("hot-watchlist-index", {
+    ...Object.fromEntries(positions.map(position => [`f/${position}.file`, "a"])),
+    "proj/late.cjs": "module.exports = 0;",
+    "proj/entry.cjs": `
+      const { readFileSync } = require("node:fs");
+      const { padWatchlistForTesting } = require("bun:internal-for-testing");
+
+      // On the first load, inert entries fill the watchlist up to "position",
+      // so the entry of "path" gets exactly that position. A later load adds
+      // the entry again when an eviction removed it.
+      const watch = (position, path) => {
+        if (!globalThis.loaded && padWatchlistForTesting(position) !== position) {
+          throw new Error("watchlist position " + position + " is taken");
+        }
+        return require(path);
+      };
+      const files = ${JSON.stringify(positions)}.map(position =>
+        readFileSync(watch(position, "../f/" + position + ".file"), "utf8"),
+      );
+      const late = watch(65_544, "./late.cjs");
+      globalThis.loaded = true;
+      console.log(JSON.stringify({ files, late, length: padWatchlistForTesting(0) }));
+    `,
+  });
+  const proj = join(String(dir), "proj");
+  const late = join(proj, "late.cjs");
+  const at = (position: number) => join(String(dir), "f", `${position}.file`);
+  const trace = join(String(dir), "trace.jsonl");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--hot", "entry.cjs"],
+    cwd: proj,
+    env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  // What the fixture prints on each load. The length shows that every file
+  // above has an entry of its own at the position in its name.
+  const state = { files: positions.map(() => "a"), late: 0, length: 65_545 };
+  const lines = forEachLine(proc.stdout);
+  const loaded = async () => {
+    const expected = JSON.stringify(state);
+    while (true) {
+      const { value: line, done } = await lines.next();
+      if (done) {
+        const exitCode = await proc.exited;
+        throw new Error(`--hot exited before it printed ${expected} (exit ${proc.signalCode ?? exitCode})`);
+      }
+      if (line === expected) return;
+    }
+  };
+  /** One write(2) and no truncate: the file gets one modify event. */
+  const overwrite = async (position: number, text: string) => {
+    const fd = openSync(at(position), "r+");
+    try {
+      writeSync(fd, text, 0);
+    } finally {
+      closeSync(fd);
+    }
+    state.files[positions.indexOf(position)] = text;
+    await loaded();
+  };
+  /** What a save by rename does: the path gets a new inode. */
+  const replace = (path: string, text: string) => {
+    const replacement = join(String(dir), "replacement");
+    writeFileSync(replacement, text);
+    renameSync(replacement, path);
+  };
+  /** The path of the watchlist entry that each event went to. */
+  const traced = () =>
+    readFileSync(trace, "utf8")
+      .split("\n")
+      .filter(line => line.length > 0)
+      .map(line => JSON.parse(line).files);
+
+  await loaded();
+
+  for (const position of positions.slice(1)) await overwrite(position, "b");
+  expect(traced()).toEqual(positions.slice(1).map(position => ({ [at(position)]: { events: ["write"] } })));
+
+  // "late" is a transpiled module, so its entry holds a descriptor. When a
+  // save replaces the file, the reloader evicts the entry by its position,
+  // 65,544, and the load adds a new one.
+  replace(late, "module.exports = 1;");
+  state.late = 1;
+  await loaded();
+  if (isLinux) {
+    const descriptors = readdirSync(`/proc/${proc.pid}/fd`).flatMap(fd => {
+      try {
+        return [readlinkSync(`/proc/${proc.pid}/fd/${fd}`)];
+      } catch {
+        return [];
+      }
+    });
+    expect({ replaced: descriptors.includes(`${late} (deleted)`), current: descriptors.includes(late) }).toEqual({
+      replaced: false,
+      current: true,
+    });
+  }
+  // 65,544 % 65,536 is 8. That entry must keep its watch.
+  await overwrite(8, "b");
+
+  // The entry at 65,535 holds no descriptor on Linux. A save that replaces the
+  // file is a delete event for that entry, which evicts it. The load adds a
+  // new entry, and only that one has a watch on the new inode.
+  replace(at(65_535), "c");
+  state.files[positions.indexOf(65_535)] = "c";
+  await loaded();
+  await overwrite(65_535, "d");
+
+  if (isLinux) {
+    expect(traced().slice(positions.length - 1)).toEqual([
+      { [proj + "/"]: { events: ["move_to"], changed: ["late.cjs"] } },
+      { [at(8)]: { events: ["write"] } },
+      { [at(65_535)]: { events: ["delete"] } },
+      { [at(65_535)]: { events: ["write"] } },
+    ]);
+  }
+  expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: null, signalCode: null });
 });

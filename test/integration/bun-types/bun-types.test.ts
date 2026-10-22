@@ -359,6 +359,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "node_zlib_binding.bind.ts": null,
   "socket_body.bind.ts": null,
   "udp_socket.bind.ts": null,
+  "watchlist_testing.bind.ts": null,
 };
 
 /**

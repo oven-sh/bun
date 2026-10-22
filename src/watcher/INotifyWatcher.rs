@@ -445,7 +445,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 .iter()
                 .position(|&x| x == event.watch_descriptor)
             {
-                Some(idx) => WatchItemIndex::try_from(idx).unwrap(),
+                Some(idx) => WatchItemIndex::init(idx),
                 None => {
                     events_processed += 1;
                     continue;
@@ -491,7 +491,7 @@ fn process_inotify_event_batch(
     index_sort::sort_slice_unstable_by(watch_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
-    let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
+    let mut last_event_id: Option<WatchItemIndex> = None;
 
     for i in 0..watch_events.len() {
         if watch_events[i].name_len > 0 {
@@ -506,14 +506,14 @@ fn process_inotify_event_batch(
             }
         }
 
-        if watch_events[i].index == last_event_id {
+        if Some(watch_events[i].index) == last_event_id {
             // reshaped for borrowck — split_at_mut to get two disjoint &mut.
             let (head, tail) = watch_events.split_at_mut(i);
             head[last_event_index].merge(tail[0]);
             continue;
         }
         last_event_index = i;
-        last_event_id = watch_events[i].index;
+        last_event_id = Some(watch_events[i].index);
     }
     if watch_events.is_empty() {
         return Ok(());

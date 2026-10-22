@@ -77,8 +77,8 @@ pub(crate) fn write_events(
 
     let mut first_file = true;
     for event in events {
-        let file_path: &[u8] = if (event.index as usize) < file_paths.len() {
-            &file_paths[event.index as usize]
+        let file_path: &[u8] = if event.index.get_usize() < file_paths.len() {
+            &file_paths[event.index.get_usize()]
         } else {
             b"(unknown)"
         };

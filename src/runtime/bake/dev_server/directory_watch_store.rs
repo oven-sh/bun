@@ -63,12 +63,9 @@ impl DirectoryWatchStore {
             entry.dir
         );
 
-        self.dev_bun_watcher().remove_at_index::<true>(
-            bun_watcher::WatchItemKind::File,
-            entry.watch_index,
-            0,
-            &[],
-        );
+        if let Some(watch_index) = entry.watch_index {
+            self.dev_bun_watcher().remove_at_index::<true>(watch_index);
+        }
 
         // The Box key drops on swap_remove_at.
         let _ = self.watches.swap_remove_at(entry_index);
@@ -93,8 +90,8 @@ pub(crate) struct Entry {
     pub(crate) dir_fd_owned: bool,
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
-    /// To pass to `Watcher.remove`.
-    pub(crate) watch_index: bun_watcher::WatchItemIndex,
+    /// To pass to `Watcher::remove_at_index`. `None`: the directory is not watched.
+    pub(crate) watch_index: Option<bun_watcher::WatchItemIndex>,
 }
 impl Default for Entry {
     fn default() -> Self {
@@ -102,7 +99,7 @@ impl Default for Entry {
             dir: bun_sys::Fd::INVALID,
             dir_fd_owned: false,
             first_dep: 0,
-            watch_index: 0,
+            watch_index: None,
         }
     }
 }

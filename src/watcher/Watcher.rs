@@ -48,10 +48,8 @@ pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
 pub type HashType = u32;
-pub type WatchItemIndex = u32;
-pub const MAX_EVICTION_COUNT: usize = 8096;
-
-const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
+/// A position in `Watcher::watchlist`, stale after the next `flush_evictions` (it moves entries).
+pub type WatchItemIndex = bun_core::GenericIndex<usize, WatchItem>;
 
 // ─── erased upward types (CYCLEBREAK) ─────────────────────────────────────
 
@@ -126,8 +124,8 @@ pub struct Watcher {
     /// thread) after the loop exits.
     pub(crate) close_descriptors: bun_core::AtomicCell<bool>,
 
-    pub(crate) evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
-    pub(crate) evict_list_i: WatchItemIndex,
+    /// Filled by `remove_at_index`, drained by `flush_evictions`.
+    pub(crate) evict_list: Vec<WatchItemIndex>,
 
     /// Scratch snapshot of `watchlist.eventlist_index` used by
     /// `watch_loop_cycle`; owned by the watcher thread.
@@ -206,8 +204,7 @@ impl Watcher {
             thread: None,
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
-            evict_list: [0; MAX_EVICTION_COUNT],
-            evict_list_i: 0,
+            evict_list: Vec::new(),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
@@ -386,7 +383,7 @@ impl Watcher {
     }
 
     pub fn flush_evictions(&mut self) {
-        if self.evict_list_i == 0 {
+        if self.evict_list.is_empty() {
             return;
         }
         // The close+swap_remove below must be serialized against the JS
@@ -405,26 +402,23 @@ impl Watcher {
             self.mutex.is_held_by_current_thread(),
             "flush_evictions: caller must hold self.mutex (platform watcher holds it around on_file_update)",
         );
-        let evict_list_i = self.evict_list_i as usize;
 
         // swapRemove messes up the order
         // But, it only messes up the order if any elements in the list appear after the item being removed
         // So if we just sort the list by the biggest index first, that should be fine
-        index_sort::sort_slice_by(&mut self.evict_list[0..evict_list_i], |a, b| b.cmp(a));
+        index_sort::sort_slice_by(&mut self.evict_list, |a, b| b.get().cmp(&a.get()));
+        // catch duplicates, since the list is sorted, duplicates will appear right after each other
+        self.evict_list.dedup();
 
         // reshaped for borrowck — capture fds.len() before loop
         let slice = self.watchlist.slice();
         let fds = slice.items_fd();
         let fds_len = fds.len();
-        let mut last_item = NO_WATCH_ITEM;
 
-        for &item in &self.evict_list[0..evict_list_i] {
-            // catch duplicates, since the list is sorted, duplicates will appear right after each other
-            if item == last_item {
-                continue;
-            }
+        for &item in &self.evict_list {
+            let item = item.get_usize();
             // Stale udata from a kevent can point past the compacted watchlist; match the second pass's guard.
-            if item as usize >= fds_len {
+            if item >= fds_len {
                 continue;
             }
 
@@ -432,22 +426,20 @@ impl Watcher {
             {
                 // on mac and linux we can just close the file descriptor
                 // we don't need to call inotify_rm_watch on linux because it gets removed when the file descriptor is closed
-                if fds[item as usize].is_valid() {
-                    let _ = bun_sys::close(fds[item as usize]);
+                if fds[item].is_valid() {
+                    let _ = bun_sys::close(fds[item]);
                 }
             }
-            last_item = item;
         }
 
-        last_item = NO_WATCH_ITEM;
         // This is split into two passes because reading the slice while modified is potentially unsafe.
-        for i in 0..evict_list_i {
-            let item = self.evict_list[i];
-            if item == last_item || self.watchlist.len() <= item as usize {
+        for i in 0..self.evict_list.len() {
+            let item = self.evict_list[i].get_usize();
+            if self.watchlist.len() <= item {
                 continue;
             }
             // Frees an owned `file_path`; the fd was closed in the first pass.
-            drop(self.watchlist.swap_remove(item as usize));
+            drop(self.watchlist.swap_remove(item));
 
             // swapRemove put a different entry at `item`, but its kqueue registration still
             // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
@@ -455,18 +447,16 @@ impl Watcher {
             // place. See #29524.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             {
-                if (item as usize) < self.watchlist.len() {
-                    let moved_fd = self.watchlist.items_fd()[item as usize];
+                if item < self.watchlist.len() {
+                    let moved_fd = self.watchlist.items_fd()[item];
                     if moved_fd.is_valid() {
-                        self.add_file_descriptor_to_kqueue_without_checks(moved_fd, item as usize);
+                        self.add_file_descriptor_to_kqueue_without_checks(moved_fd, item);
                     }
                 }
             }
-
-            last_item = item;
         }
 
-        self.evict_list_i = 0;
+        self.evict_list.clear();
     }
 
     fn watch_loop(&mut self) -> sys::Result<()> {
@@ -600,7 +590,7 @@ impl Watcher {
         stored_fd: Fd,
         file_path: &[u8],
         hash: HashType,
-    ) -> sys::Result<WatchItemIndex> {
+    ) -> sys::Result<Option<WatchItemIndex>> {
         #[cfg(windows)]
         {
             let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
@@ -609,7 +599,7 @@ impl Watcher {
                     "Directory {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
                 );
-                return Ok(NO_WATCH_ITEM);
+                return Ok(None);
             }
         }
 
@@ -679,7 +669,7 @@ impl Watcher {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
-        Ok((self.watchlist.len() - 1) as WatchItemIndex)
+        Ok(Some(WatchItemIndex::init(self.watchlist.len() - 1)))
     }
 
     // Below is platform-independent
@@ -703,24 +693,18 @@ impl Watcher {
         let parent_dir = pathname.dir_with_trailing_slash();
         let parent_dir_hash: HashType = Self::get_hash(parent_dir);
 
-        let mut parent_watch_item: Option<WatchItemIndex> = None;
+        let mut parent_is_watched = false;
         let autowatch_parent_dir =
             feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir);
         if autowatch_parent_dir {
             let watchlist_slice = self.watchlist.slice();
 
             if dir_fd.is_valid() {
-                let fds = watchlist_slice.items_fd();
-                if let Some(i) = fds.iter().position(|f| *f == dir_fd) {
-                    parent_watch_item = Some(i as WatchItemIndex);
-                }
+                parent_is_watched = watchlist_slice.items_fd().contains(&dir_fd);
             }
 
-            if parent_watch_item.is_none() {
-                let hashes = watchlist_slice.items_hash();
-                if let Some(i) = hashes.iter().position(|h| *h == parent_dir_hash) {
-                    parent_watch_item = Some(i as WatchItemIndex);
-                }
+            if !parent_is_watched {
+                parent_is_watched = watchlist_slice.items_hash().contains(&parent_dir_hash);
             }
         }
         // Abort on OOM:
@@ -728,25 +712,18 @@ impl Watcher {
         // allocation failure (does NOT abort), so discarding it would let the
         // following `append_assume_capacity` write past capacity.
         self.watchlist
-            .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()))
+            .ensure_unused_capacity(1 + usize::from(!parent_is_watched))
             .unwrap_or_else(|_| bun_core::out_of_memory());
 
-        if autowatch_parent_dir {
-            parent_watch_item = Some(match parent_watch_item {
-                Some(v) => v,
-                None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
-                    dir_fd,
-                    parent_dir,
-                    parent_dir_hash,
-                ) {
-                    Err(err) => {
-                        return Err(err.with_path(parent_dir));
-                    }
-                    Ok(r) => r,
-                },
-            });
+        if autowatch_parent_dir && !parent_is_watched {
+            if let Err(err) = self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
+                dir_fd,
+                parent_dir,
+                parent_dir_hash,
+            ) {
+                return Err(err.with_path(parent_dir));
+            }
         }
-        let _ = parent_watch_item;
 
         match self.append_file_assume_capacity::<CLONE_FILE_PATH>(
             fd,
@@ -793,16 +770,17 @@ impl Watcher {
         self.cwd
     }
 
+    /// `None`: the directory is not watched (outside the project root on Windows).
     pub fn add_directory<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
         file_path: &[u8],
         hash: HashType,
-    ) -> sys::Result<WatchItemIndex> {
+    ) -> sys::Result<Option<WatchItemIndex>> {
         // RAII guard; see append_file_maybe_lock.
         let _guard = self.mutex.lock_guard();
         if let Some(idx) = self.index_of(hash) {
-            return Ok(idx as WatchItemIndex);
+            return Ok(Some(idx));
         }
         self.watchlist
             .ensure_unused_capacity(1)
@@ -897,8 +875,8 @@ impl Watcher {
                 // is never replaced: the watchlist owns it until eviction,
                 // and the old overwrite leaked it.
                 let fds = self.watchlist.items_fd_mut();
-                if !fds[index as usize].is_valid() {
-                    fds[index as usize] = fd;
+                if !fds[index.get_usize()].is_valid() {
+                    fds[index.get_usize()] = fd;
                     ownership = FdOwnership::Watcher;
                 }
             }
@@ -917,40 +895,19 @@ impl Watcher {
         r
     }
 
-    pub fn index_of(&self, hash: HashType) -> Option<u32> {
+    pub fn index_of(&self, hash: HashType) -> Option<WatchItemIndex> {
         for (i, other) in self.watchlist.items_hash().iter().enumerate() {
             if hash == *other {
-                return Some(i as u32);
+                return Some(WatchItemIndex::init(i));
             }
         }
         None
     }
 
-    // Const-generic
-    // enum params need `adt_const_params` (nightly); the value is only
-    // compared to `.Directory`, so a plain runtime parameter is fine.
-    pub fn remove_at_index<const LOCK: bool>(
-        &mut self,
-        kind: WatchItemKind,
-        index: WatchItemIndex,
-        hash: HashType,
-        parents: &[HashType],
-    ) {
+    /// Queues the entry at `index` for the next `flush_evictions`.
+    pub fn remove_at_index<const LOCK: bool>(&mut self, index: WatchItemIndex) {
         let _guard = LOCK.then(|| self.mutex.lock_guard());
-
-        debug_assert!(index != NO_WATCH_ITEM);
-
-        self.evict_list[self.evict_list_i as usize] = index;
-        self.evict_list_i += 1;
-
-        if kind == WatchItemKind::Directory {
-            for &parent in parents {
-                if parent == hash {
-                    self.evict_list[self.evict_list_i as usize] = parent as WatchItemIndex;
-                    self.evict_list_i += 1;
-                }
-            }
-        }
+        self.evict_list.push(index);
     }
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
@@ -999,7 +956,7 @@ impl WatchEvent {
 
     #[cfg(any(target_os = "linux", target_os = "android", windows))]
     pub(crate) fn sort_by_index(event: WatchEvent, rhs: WatchEvent) -> core::cmp::Ordering {
-        event.index.cmp(&rhs.index)
+        event.index.get().cmp(&rhs.index.get())
     }
 
     pub(crate) fn merge(&mut self, other: WatchEvent) {

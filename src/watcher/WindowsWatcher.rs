@@ -463,7 +463,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                             continue;
                         }
                         this.watch_events[event_id] =
-                            create_watch_event(&event, item_idx as WatchItemIndex);
+                            create_watch_event(&event, WatchItemIndex::init(item_idx));
                         event_id += 1;
                     }
                 }
@@ -497,17 +497,17 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     index_sort::sort_slice_unstable_by(all_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
-    let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
+    let mut last_event_id: Option<WatchItemIndex> = None;
 
     for i in 0..all_events.len() {
-        if all_events[i].index == last_event_id {
+        if Some(all_events[i].index) == last_event_id {
             // reshaped for borrowck — copy then merge to avoid two &mut into all_events.
             let ev = all_events[i];
             all_events[last_event_index].merge(ev);
             continue;
         }
         last_event_index = i;
-        last_event_id = all_events[i].index;
+        last_event_id = Some(all_events[i].index);
     }
     if all_events.is_empty() {
         return Ok(());

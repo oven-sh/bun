@@ -10551,6 +10551,49 @@ export const notGeneric = (o: { p?: number }) => {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the callee of a type guard call again for the effects of the call", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const isString: (value: unknown) => value is string;
+export function narrowed(u: unknown) {
+  fail();
+  return () => {
+    try {
+      u = 1;
+    } catch {
+      while (c && c) {}
+      while (typeof u === "string") {
+        if (isString(u)) u;
+        if (isString(u)) c;
+      }
+    }
+  };
+}
+export function notNarrowed(u: unknown) {
+  fail();
+  return () => {
+    try {
+      u = 1;
+    } catch {
+      while (c && c) {}
+      while (typeof u === "string") {
+        if (isString(u)) c;
+        if (isString(u)) c;
+      }
+    }
+  };
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(13,13): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

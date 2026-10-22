@@ -7715,7 +7715,10 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         } else {
             // `checkNonNullType(getOptionalExpressionType(..))`, `checkNonNullExpression`
-            let ty = self.chain_receiver(file, callee, hir[c].chain).0;
+            let ty = match (self.check_expression_again(file, callee), hir[c].chain) {
+                (ty, Chain::No) => ty,
+                (_, chain) => self.chain_receiver(file, callee, chain).0,
+            };
             self.check_non_null_type(file, callee, ty)
         };
         self.effects_signature_of_function_type(file, call, func_type, required_resolution)

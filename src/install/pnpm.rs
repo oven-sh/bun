@@ -12,6 +12,7 @@ use crate::dependency::{self, Behavior, Dependency, DependencyExt as _, VersionT
 use crate::integrity::Integrity;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile, join_top_level_dir};
+use crate::lockfile_real::package::recordable_version;
 use crate::migration::{
     as_str, get_str, parse_manifest_bin, props, push_workspace_dependency, record_workspace, sbuf,
     string_bytes, string_hash, take_appended_dependencies,
@@ -1027,6 +1028,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         }
         if let Some(libc_expr) = package_obj.get(b"libc") {
             pkg.meta.libc = npm::negatable_from_json::<npm::Libc>(&libc_expr)?;
+        }
+        if pkg.meta.pins(res.tag)
+            && let Some(version) = get_str(&package_obj, b"version")
+        {
+            let version = sbuf!(lockfile).append(recordable_version(version))?;
+            pkg.meta.record_version(version);
         }
 
         let has_unbound_peers = parse_append_package_dependencies(

@@ -2240,7 +2240,8 @@ ${yarnEntry("peer-deps-too", "1.0.0", `  peerDependencies:\n    no-deps "*"\n`)}
       expect(stderr).toContain("migrated lockfile from yarn.lock");
       expect(fs.readFileSync(join(project, "node_modules", "git-dep", "index.js"), "utf8")).toBe("pinned");
       const lock = Bun.JSONC.parse(fs.readFileSync(join(project, "bun.lock"), "utf8")) as { packages: unknown };
-      expect(lock.packages).toEqual({ "git-dep": [`git-dep@${url}#${pinned}`, {}, pinned] });
+      // The install records the version of what it checked out. The migrator does not: yarn.lock has no package name.
+      expect(lock.packages).toEqual({ "git-dep": [`git-dep@${url}#${pinned}`, { version: "1.0.0" }, pinned] });
       expect(exitCode).toBe(0);
     },
   );
@@ -2279,7 +2280,11 @@ ${yarnEntry("peer-deps-too", "1.0.0", `  peerDependencies:\n    no-deps "*"\n`)}
     const lock = Bun.JSONC.parse(fs.readFileSync(join(String(dir), "bun.lock"), "utf8")) as {
       packages: Record<string, unknown[]>;
     };
-    expect(lock.packages["gh-dep"].slice(0, 3)).toEqual([`gh-dep@github:me/gh-dep#${commit.slice(0, 7)}`, {}, tag]);
+    expect(lock.packages["gh-dep"].slice(0, 3)).toEqual([
+      `gh-dep@github:me/gh-dep#${commit.slice(0, 7)}`,
+      { version: "1.0.0" },
+      tag,
+    ]);
     expect(exitCode).toBe(0);
   });
 
@@ -2334,7 +2339,9 @@ ${yarnEntry("peer-deps-too", "1.0.0", `  peerDependencies:\n    no-deps "*"\n`)}
       const same = await install(locked);
       expect(same.stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
       expect(same.installed).toBe("locked");
-      expect(same.lock).toContain(`{}, "sha1-${sha1.toString("base64")}"]`);
+      // A registry row has the version in its resolution. A tarball row records it in the info object.
+      const info = kind === "registry" ? "{}" : `{ "version": "1.0.0" }`;
+      expect(same.lock).toContain(`${info}, "sha1-${sha1.toString("base64")}"]`);
       expect(same.exitCode).toBe(0);
     },
   );

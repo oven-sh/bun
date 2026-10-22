@@ -20,8 +20,8 @@ use crate::external_slice::ExternalSlice;
 use crate::hosted_git_info::{HostProvider, HostedGitInfo};
 use crate::integrity::Integrity;
 use crate::lockfile::{self, Lockfile, PackageListEntry};
-use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
+use crate::lockfile_real::package::{PackageColumns as _, recordable_version};
 use crate::npm as Npm;
 use crate::npm::NegatableExt as _;
 use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
@@ -401,7 +401,7 @@ impl<'a> Migrator<'a> {
             os: parse_platform_list(pkg.get(b"os"), Npm::OperatingSystem::ALL)?,
             libc: parse_platform_list(pkg.get(b"libc"), Npm::Libc::NONE)?,
 
-            man_dir: SemverString::default(),
+            package_json_version: SemverString::default(),
 
             has_install_script: if let Some(h) = pkg.get(b"hasInstallScript") {
                 let E::JsonValue::Boolean(b) = h else {
@@ -486,6 +486,12 @@ impl<'a> Migrator<'a> {
 
         let id = self.this.packages.len() as PackageID;
         meta.id = id;
+        if meta.pins(res.tag)
+            && let Some(version) = pkg.get(b"version").and_then(|v| v.as_str())
+        {
+            let version = self.this.string_buf().append(recordable_version(version))?;
+            meta.record_version(version);
+        }
         let bin_value = Self::parse_bin(self.this, pkg, name)?;
 
         self.this.packages.append(PackageListEntry {

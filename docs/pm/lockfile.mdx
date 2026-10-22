@@ -54,6 +54,12 @@ Bun v1.2 changed the default lockfile format to the text-based `bun.lock`. To mi
 
 For more on the format, see [the blog post](https://bun.com/blog/bun-lock-text-lockfile).
 
+A registry package has its version in its `bun.lock` entry (`"pkg@1.2.3"`). A package from a tarball, git, or GitHub has a URL or a commit there, so Bun records the `version` of its `package.json` next to it. [`bun audit`](/pm/cli/audit) reads it from there.
+
+```jsonc bun.lock icon="file-json"
+"pkg": ["pkg@https://example.com/pkg.tgz", { "version": "1.2.3" }, "sha512-..."],
+```
+
 #### Automatic lockfile migration
 
 When you run `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:

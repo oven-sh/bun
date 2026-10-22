@@ -1526,10 +1526,12 @@ snapshots:
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(String(dir));
-      expect(bunLock).toContain(`["tar-pkg@../tar-pkg-1.0.0.tgz", {}, "${LOCAL_TARBALL_INTEGRITY}"]`);
-      expect(bunLock).toContain(`["tar-gz-pkg@../tar-gz-pkg-1.0.0.tar.gz", {}, "sha512-`);
-      expect(bunLock).toContain(`["plain@../plain-1.0.0.tar", {}, "sha512-`);
-      expect(bunLock).toContain(`["upper@../UPPER-1.0.0.TGZ", {}, "sha512-`);
+      expect(bunLock).toContain(
+        `["tar-pkg@../tar-pkg-1.0.0.tgz", { "version": "1.0.0" }, "${LOCAL_TARBALL_INTEGRITY}"]`,
+      );
+      expect(bunLock).toContain(`["tar-gz-pkg@../tar-gz-pkg-1.0.0.tar.gz", { "version": "1.0.0" }, "sha512-`);
+      expect(bunLock).toContain(`["plain@../plain-1.0.0.tar", { "version": "1.0.0" }, "sha512-`);
+      expect(bunLock).toContain(`["upper@../UPPER-1.0.0.TGZ", { "version": "1.0.0" }, "sha512-`);
       expect(bunLock).not.toContain("tar-gz-pkg@file:");
       expect(bunLock).not.toContain("plain@file:");
       expect(bunLock).not.toContain("upper@file:");
@@ -1569,7 +1571,7 @@ snapshots:
         expect(exitCode).toBe(0);
 
         const bunLock = await bunLockOf(String(dir));
-        expect(bunLock).toContain(`["pkg@vendor/${file}", {}, "${LOCAL_TARBALL_INTEGRITY}"]`);
+        expect(bunLock).toContain(`["pkg@vendor/${file}", { "version": "1.0.0" }, "${LOCAL_TARBALL_INTEGRITY}"]`);
         expect(bunLock).not.toContain(`pkg@file:vendor/${file}`);
       },
     );
@@ -3371,7 +3373,7 @@ snapshots:
     expect(exitCode).toBe(0);
 
     const bunLock = await bunLockOf(String(dir));
-    expect(bunLock).toContain(`"c": ["c@${repo}#${commit}", {}`);
+    expect(bunLock).toContain(`"c": ["c@${repo}#${commit}", { "version": "1.0.0" }`);
     expect(bunLock).not.toContain("git+git+");
   });
 
@@ -3413,7 +3415,9 @@ snapshots:
 
     expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(await bunLockOf(String(dir))).toContain(`"c": ["c@git+${url}#${repo.sha}", {}, "${repo.sha}"]`);
+    expect(await bunLockOf(String(dir))).toContain(
+      `"c": ["c@git+${url}#${repo.sha}", { "version": "1.0.0" }, "${repo.sha}"]`,
+    );
     expect(existsSync(join(String(dir), "node_modules", "c", "package.json"))).toBe(true);
     expect(exitCode).toBe(0);
   });
@@ -3516,7 +3520,9 @@ snapshots:
     expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(await Bun.file(join(project, "node_modules", "c", "index.js")).text()).toBe("pinned");
-    expect(await bunLockOf(project)).toContain(`"c": ["c@${inBunLock}#${pinned}", {}, "${pinned}"]`);
+    expect(await bunLockOf(project)).toContain(
+      `"c": ["c@${inBunLock}#${pinned}", { "version": "1.0.0" }, "${pinned}"]`,
+    );
     expect(exitCode).toBe(0);
 
     const frozen = await runWithEnv(project, env, "install", "--frozen-lockfile");
@@ -3569,7 +3575,9 @@ snapshots:
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(requests).toEqual([`/repos/me/c/tarball/${commit}`]);
     expect(existsSync(join(String(dir), "node_modules", "c", "package.json"))).toBe(true);
-    expect(await bunLockOf(String(dir))).toContain(`"c": ["c@github:me/c#${commit}", {}, "${commit}"`);
+    expect(await bunLockOf(String(dir))).toContain(
+      `"c": ["c@github:me/c#${commit}", { "version": "1.0.0" }, "${commit}"`,
+    );
     expect(exitCode).toBe(0);
   });
 

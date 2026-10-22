@@ -286,7 +286,7 @@ test.concurrent("migrate package with npm dependency that resolves to a git pack
         },
       },
       "packages": {
-        "jquery": ["jquery@<repo>#<sha>", {}, "<sha>"],
+        "jquery": ["jquery@<repo>#<sha>", { "version": "3.7.1" }, "<sha>"],
       }
     }"
   `);
@@ -971,7 +971,7 @@ test.concurrent(
         },
       },
       "packages": {
-        "baz": ["baz@<tarball>", {}, "sha512-NDeQ0yQgI9RPCbmajKIrJnQStwKUz04Ve/WkZimSqijwqgE8RhAxqpzdXC/ica+GZFwLkeoZHtukOuOG2b4ENg=="],
+        "baz": ["baz@<tarball>", { "version": "0.0.3" }, "sha512-NDeQ0yQgI9RPCbmajKIrJnQStwKUz04Ve/WkZimSqijwqgE8RhAxqpzdXC/ica+GZFwLkeoZHtukOuOG2b4ENg=="],
       }
     }"
   `);

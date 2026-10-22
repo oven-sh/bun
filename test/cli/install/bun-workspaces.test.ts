@@ -1551,7 +1551,9 @@ describe("relative tarballs", async () => {
         });
       }
 
-      expect(await file(join(packageDir, "bun.lock")).text()).toContain('"bar": ["bar@./bar.tgz", {}, "sha512-');
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+        '"bar": ["bar@./bar.tgz", { "version": "0.0.2" }, "sha512-',
+      );
     });
   }
 
@@ -5086,7 +5088,7 @@ describe("the git and github dependencies that bun.lock has already resolved", (
     await run(cwd, env, "install");
     expect(downloads).toEqual([download]);
     expect(await file(join(cwd, "bun.lock")).text()).toContain(
-      '"gh-dep": ["gh-dep@github:testowner/testrepo#aaaaaaa", {}, "testowner-testrepo-aaaaaaa"',
+      '"gh-dep": ["gh-dep@github:testowner/testrepo#aaaaaaa", { "version": "1.0.0" }, "testowner-testrepo-aaaaaaa"',
     );
     for (const name of ["a", "b"]) {
       const from = linker === "hoisted" ? cwd : join(cwd, "packages", name);

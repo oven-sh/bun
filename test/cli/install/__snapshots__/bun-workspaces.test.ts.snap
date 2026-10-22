@@ -73,7 +73,7 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -91,7 +91,7 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -107,7 +107,7 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -196,7 +196,7 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -214,7 +214,7 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -230,7 +230,7 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -319,7 +319,7 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -337,7 +337,7 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -353,7 +353,7 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -445,7 +445,7 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -463,7 +463,7 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -479,7 +479,7 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -568,7 +568,7 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -586,7 +586,7 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -602,7 +602,7 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -691,7 +691,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -709,7 +709,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -725,7 +725,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -831,7 +831,7 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -849,7 +849,7 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -865,7 +865,7 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -881,7 +881,7 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
       },
       "dependencies": [],
       "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -987,7 +987,7 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -1005,7 +1005,7 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1021,7 +1021,7 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1037,7 +1037,7 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
       },
       "dependencies": [],
       "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1143,7 +1143,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -1161,7 +1161,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1177,7 +1177,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1193,7 +1193,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
       },
       "dependencies": [],
       "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1299,7 +1299,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -1317,7 +1317,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1333,7 +1333,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1349,7 +1349,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
       },
       "dependencies": [],
       "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1455,7 +1455,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -1473,7 +1473,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1489,7 +1489,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1505,7 +1505,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1611,7 +1611,7 @@ exports[`dependency on workspace without version in package.json: version: *+bui
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -1629,7 +1629,7 @@ exports[`dependency on workspace without version in package.json: version: *+bui
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1645,7 +1645,7 @@ exports[`dependency on workspace without version in package.json: version: *+bui
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1661,7 +1661,7 @@ exports[`dependency on workspace without version in package.json: version: *+bui
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1767,7 +1767,7 @@ exports[`dependency on workspace without version in package.json: version: lates
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -1785,7 +1785,7 @@ exports[`dependency on workspace without version in package.json: version: lates
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1801,7 +1801,7 @@ exports[`dependency on workspace without version in package.json: version: lates
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1817,7 +1817,7 @@ exports[`dependency on workspace without version in package.json: version: lates
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1923,7 +1923,7 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -1941,7 +1941,7 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1957,7 +1957,7 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -1973,7 +1973,7 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -2079,7 +2079,7 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
         1
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "local",
       "bin": null,
       "scripts": {}
@@ -2097,7 +2097,7 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
         2
       ],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -2113,7 +2113,7 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
       },
       "dependencies": [],
       "integrity": null,
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}
@@ -2129,7 +2129,7 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
-      "man_dir": "",
+      "package_json_version": null,
       "origin": "npm",
       "bin": null,
       "scripts": {}

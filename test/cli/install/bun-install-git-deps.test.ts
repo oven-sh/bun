@@ -331,7 +331,11 @@ function expectedGitPackages(
     const name = nameOf(l);
     const sha = commits[`pkg-${l}`];
     resolutions[name] = `${repoUrl}#${sha}`;
-    locked[name] = [`${name}@${repoUrl}#${sha}`, name in dependencies ? { dependencies: dependencies[name] } : {}, sha];
+    locked[name] = [
+      `${name}@${repoUrl}#${sha}`,
+      name in dependencies ? { version: "1.0.0", dependencies: dependencies[name] } : { version: "1.0.0" },
+      sha,
+    ];
   }
   return { resolutions, locked };
 }
@@ -409,7 +413,11 @@ test.concurrent(
     const locked = Object.fromEntries(
       letters.map(l => [
         nameOf(l),
-        [`${nameOf(l)}@${urlOf(l)}`, l === "a" ? { dependencies: transitive } : {}, integrityOf(tarballs.get(l)!)],
+        [
+          `${nameOf(l)}@${urlOf(l)}`,
+          l === "a" ? { version: "1.0.0", dependencies: transitive } : { version: "1.0.0" },
+          integrityOf(tarballs.get(l)!),
+        ],
       ]),
     );
 
@@ -473,7 +481,7 @@ test.concurrent(
         nameOf(l),
         [
           `${nameOf(l)}@github:scope/pkg-${l}#0000000`,
-          l === "a" ? { dependencies: transitive } : {},
+          l === "a" ? { version: "1.0.0", dependencies: transitive } : { version: "1.0.0" },
           `scope-pkg-${l}-0000000`,
           integrityOf(tarballs.get(l)!),
         ],
@@ -629,7 +637,7 @@ async function serveGithub() {
   });
   const leafRow = (commit: string) => [
     `gh-leaf@github:testowner/leaf#${commit}`,
-    {},
+    { version: "1.0.0" },
     `testowner-leaf-${commit}`,
     integrityOf(tarballs.leaf[commit]),
   ];
@@ -640,7 +648,7 @@ async function serveGithub() {
     // the bun.lock rows of the packages
     ghDep: [
       "gh-dep@github:testowner/testrepo#aaaaaaa",
-      { dependencies: { "gh-leaf": "github:testowner/leaf#main" } },
+      { version: "1.0.0", dependencies: { "gh-leaf": "github:testowner/leaf#main" } },
       "testowner-testrepo-aaaaaaa",
       integrityOf(tarballs.testrepo.aaaaaaa),
     ],
@@ -738,19 +746,24 @@ for (const linker of ["isolated", "hoisted"] as const) {
 }
 
 // The same for a repository whose package.json has no name, or that has no package.json. The package is named after the
-// repository, for every ref.
+// repository, for every ref. The last column is the version that bun.lock records.
 test.concurrent.skipIf(isWindows).each([
-  ["a package.json without a name", { "package.json": JSON.stringify({ version: "1.0.0" }) }],
-  ["no package.json", {}],
+  ["a package.json without a name", { "package.json": JSON.stringify({ version: "1.0.0" }) }, "1.0.0"],
+  ["no package.json", {}, ""],
 ])(
   "isolated linker installs github: refs that point to one commit of a repository with %s as one package",
-  async (_, manifest) => {
+  async (_, manifest, version) => {
     using dir = tempDir("github-one-commit-nameless", {});
     const root = String(dir);
     const tarball = await tarballOf("testowner-nameless-ddddddd", { ...manifest, "index.js": indexJs("nameless") });
     await using server = Bun.serve({ port: 0, fetch: () => new Response(tarball) });
     const project = writeProject(root, { a: "github:testowner/nameless#main", b: "github:testowner/nameless#v1" });
-    const row = ["nameless@github:testowner/nameless#ddddddd", {}, "testowner-nameless-ddddddd", integrityOf(tarball)];
+    const row = [
+      "nameless@github:testowner/nameless#ddddddd",
+      { version },
+      "testowner-nameless-ddddddd",
+      integrityOf(tarball),
+    ];
 
     const { stdout, stderr, exitCode } = await runInstall(
       project,
@@ -846,7 +859,7 @@ for (const parent of ["github:", "git+"] as const) {
         const repoUrl = `git+${pathToFileURL(bare)}`;
         const sha = branchCommits(bare).main;
         spec = `${repoUrl}#main`;
-        parentRow = [`git-dep@${repoUrl}#${sha}`, { dependencies }, sha];
+        parentRow = [`git-dep@${repoUrl}#${sha}`, { version: "1.0.0", dependencies }, sha];
       }
       const project = writeProject(root, { a: spec });
       {
@@ -878,7 +891,7 @@ test.concurrent(
     await git(bare, "branch", "v1", "main");
     const repoUrl = `git+${pathToFileURL(bare)}`;
     const sha = branchCommits(bare).main;
-    const gitDep = [`git-dep@${repoUrl}#${sha}`, {}, sha];
+    const gitDep = [`git-dep@${repoUrl}#${sha}`, { version: "1.0.0" }, sha];
 
     const project = writeProject(root, { a: `${repoUrl}#main` });
     {
@@ -940,7 +953,7 @@ test.concurrent(
     };
     const row = (name: string, dependencies?: Record<string, string>) => [
       `${name}@${urlOf(name)}`,
-      dependencies ? { dependencies } : {},
+      dependencies ? { version: "1.0.0", dependencies } : { version: "1.0.0" },
       integrityOf(tarballs[`/${name}.tgz`]),
     ];
 
@@ -1553,6 +1566,7 @@ for (const linker of ["hoisted", "isolated"]) {
     const locked = await lockedPackages(project);
     expect(Object.keys(locked).sort()).toEqual(["leaf", "lib", "lib/next", "lib/sub"]);
     expect(locked.lib[1]).toEqual({
+      version: "1.0.0",
       dependencies: { leaf: `${repoUrl}#leaf`, next: "file:packages/next", sub: "file:./packages/sub" },
     });
     expect(first.exitCode).toBe(0);
@@ -1601,7 +1615,10 @@ test.concurrent("a file: folder inside a git dependency can't reach into the pro
 
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
   expect(stderr).not.toContain("error:");
-  expect((await lockedPackages(project)).lib[1]).toEqual({ dependencies: { sub: "file:./packages/sub" } });
+  expect((await lockedPackages(project)).lib[1]).toEqual({
+    version: "1.0.0",
+    dependencies: { sub: "file:./packages/sub" },
+  });
   expect(exitCode).toBe(0);
 });
 
@@ -2041,7 +2058,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       expect({ ...(await state()), locked: await lockedPackages(project) }).toEqual({
         ...bundled,
         locked: {
-          b: [`b@${url}#${sha}`, { dependencies: { y: "2.0.0" } }, sha],
+          b: [`b@${url}#${sha}`, { version: "1.0.0", dependencies: { y: "2.0.0" } }, sha],
           "b/y": ["y@2.0.0", `${registry.url}y/-/y-2.0.0.tgz`, { bundled: true }, ""],
         },
       });
@@ -2756,7 +2773,7 @@ test.concurrent.each([
   expectInstalled(first.stdout, { lib: resolution });
   expect(existsSync(join(project, lockfile))).toBe(true);
   if (lockfile === "bun.lock") {
-    expect(await lockedPackages(project)).toEqual({ lib: [`lib@${resolution}`, {}, repo.sha] });
+    expect(await lockedPackages(project)).toEqual({ lib: [`lib@${resolution}`, { version: "1.0.0" }, repo.sha] });
   }
   expect(first.exitCode).toBe(0);
 
@@ -4177,7 +4194,7 @@ test.concurrent("a package.json that is a link to a file of the repository is a 
     expect(lstatSync(cached).isFile()).toBe(true);
     expect(readFileSync(join(project, "node_modules", "dep", "package.json"), "utf8")).toBe(manifest);
     expect(await installedVersions(project, ["dep", "leaf"])).toEqual({ dep: "main", leaf: "leaf" });
-    expect((await lockedPackages(project)).dep[1]).toEqual({ dependencies: { leaf: `${url}#leaf` } });
+    expect((await lockedPackages(project)).dep[1]).toEqual({ version: "1.2.3", dependencies: { leaf: `${url}#leaf` } });
     expect(exitCode).toBe(0);
   };
   await install();

@@ -1046,6 +1046,7 @@ pub fn install_with_manager(
                 || manager.options.enable.force_save_lockfile()));
 
     if should_save_lockfile {
+        manager.record_versions_from_cache()?;
         super::package_json_write_back::write_migrated(manager);
         save_lockfile(
             manager,
@@ -2686,6 +2687,7 @@ fn save_lockfile_only(
         packages_len_before_install,
     )?;
 
+    manager.record_versions_from_cache()?;
     super::package_json_write_back::write_migrated(manager);
     let saved = save_lockfile(
         manager,

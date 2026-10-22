@@ -35,7 +35,7 @@ use bun_install_types::DependencyVersionTag;
 use super::PackageIDSlice;
 use super::override_map::ScopedOverride;
 use super::override_selector::{PackageSelector, parse_package_segment};
-use super::package::{Meta, PackageColumns as _, value_loc_of};
+use super::package::{Meta, PackageColumns as _, recordable_version, value_loc_of};
 use super::{
     CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
     PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
@@ -715,7 +715,7 @@ impl Stringifier {
                     // the result
                     sort_by_name(&mut pkg_deps_sort_buf, deps_buf, buf);
 
-                    // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc, hasInstallScript, bin, binDir }
+                    // INFO = { version, prod/dev/optional/peer dependencies, os, cpu, libc, hasInstallScript, bin, binDir }
 
                     // first index is resolution for each type of package
                     // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
@@ -736,6 +736,11 @@ impl Stringifier {
                                 &unresolved_names,
                                 &pkg_deps_sort_buf,
                                 pkg_meta,
+                                if res.tag.records_package_json_version() {
+                                    pkg_meta.recorded_version(buf)
+                                } else {
+                                    None
+                                },
                                 pkg_bin,
                                 buf,
                                 &mut optional_peers_buf,
@@ -936,6 +941,7 @@ impl Stringifier {
         unresolved_names: &dyn Fn(&[DependencyID]) -> Vec<String>,
         pkg_dep_ids: &[DependencyID],
         meta: &Meta,
+        version: Option<&[u8]>,
         bin: &Bin,
         buf: &[u8],
         optional_peers_buf: &mut Vec<String>,
@@ -947,6 +953,14 @@ impl Stringifier {
         writer.write_byte(b'{')?;
 
         let mut any = false;
+        if let Some(version) = version {
+            write!(
+                writer,
+                " \"version\": {}",
+                bun_core::fmt::format_json_string_utf8(version, Default::default()),
+            )?;
+            any = true;
+        }
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
             let mut first = true;
             for &dep_id in pkg_dep_ids {
@@ -2607,6 +2621,16 @@ pub(crate) fn parse_into_binary_lockfile(
                             {
                                 pkg.meta.set_has_install_script(has_install_script);
                             }
+                            // Optional: a lockfile from before the version was recorded has none.
+                            if res.tag.records_package_json_version()
+                                && let Some(version) = (deps_os_cpu_libc_bin_bundle_obj
+                                    .get(b"version"))
+                                .and_then(|version| version.as_str())
+                            {
+                                pkg.meta.record_version(
+                                    sbuf!(lockfile).append(recordable_version(version))?,
+                                );
+                            }
                         }
                     }
                     ResolutionTag::Root => {
@@ -2732,6 +2756,10 @@ pub(crate) fn parse_into_binary_lockfile(
             {
                 pkg.meta.integrity =
                     parse_integrity(integrity_str, lockfile_version, log, source, key_loc, i)?;
+            }
+            // Without an integrity, the version is not of bytes that this row pins.
+            if res.tag.is_tarball() && !pkg.meta.pins(res.tag) {
+                pkg.meta.forget_version();
             }
 
             pkg.name = name;

@@ -2901,8 +2901,7 @@ impl TestCommand {
 
         let resolved: &[u8] = match vm.transpiler.resolve_entry_point(file_name) {
             Ok(resolution) => resolution.path_pair.primary.text,
-            // The loader resolves the file again, and a miss there is this file's failure.
-            // It reports the miss, so take back the error `resolve_entry_point` logged.
+            // The loader resolves again and reports a miss as this file's failure (#44473).
             Err(bun_bundler::Error::Resolver(_)) => {
                 let log = vm.transpiler.log_mut();
                 log.msgs.pop();

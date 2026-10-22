@@ -2123,9 +2123,6 @@ describe.concurrent("a test file that does not resolve at its turn", () => {
     appendFileSync(join(String(dir), "z.test.ts"), "// touched\n");
     await waitFor("Ran 2 tests across 2 files.", firstRun);
     expect(output.slice(firstRun)).toContain(" 2 pass\n 0 fail\n");
-
-    reader.releaseLock();
-    proc.kill();
   });
 
   // The scanner reads a backslash in a file name as a separator, so the path it hands to the

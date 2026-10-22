@@ -116,3 +116,12 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         opts,
     )
 }
+
+/// `shutdown(fd, SHUT_WR)`. The result is ignored, as in node: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L560-L566
+pub(crate) fn shutdown_write_fd(fd: i32) {
+    // fstat reports no socket on Windows, so node:net adopts none there, and a CRT fd is not a SOCKET.
+    #[cfg(not(windows))]
+    uws::socket_transfer::bsd_shutdown_socket(fd);
+    #[cfg(windows)]
+    let _ = fd;
+}

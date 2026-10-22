@@ -280,6 +280,8 @@ const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkSer
 const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
 const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
 const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
+// Created by the first stream socket fd that is adopted for synchronous writes, and by its end().
+let guessHandleType, shutdownWriteFd;
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -302,6 +304,8 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
+// end() shuts the write side of the kSyncWriteFd down.
+const kSyncFdShutdown = Symbol("kSyncFdShutdown");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -448,6 +452,17 @@ function endNT(self, socket, callback) {
   const current = self._handle;
   (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
   callback();
+}
+// endNT for a socket that wrote its fd synchronously. A destroy() since end() closed the fd, and there is then nothing to shut down.
+function endSyncFdNT(self, callback) {
+  const fd = self[kSyncWriteFd];
+  if (fd !== undefined) (shutdownWriteFd ??= $bindgen("node_net_binding.bind.ts", "shutdownWriteFd"))(fd);
+  callback();
+}
+// shutdown(2) on a datagram or SEQPACKET socket stops the sends of every holder. node refuses such an fd.
+function isStreamSocketFd(fd) {
+  const type = (guessHandleType ??= $bindgen("udp_socket.bind.ts", "dgramGuessHandleType"))(fd);
+  return type === "TCP" || type === "PIPE";
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -2064,6 +2079,9 @@ function Socket(options?): void {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;
+        // Not fd 0-2, which process.stdout and process.stderr share. Not with `readable` omitted: the EOF pushed below ends that socket with no end() call.
+        if (optionsReadable === false && fd > 2 && stats.isSocket() && isStreamSocketFd(fd))
+          this[kSyncFdShutdown] = true;
         // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
         if (optionsReadable !== true && optionsReadable !== false) {
           this.push(null);
@@ -2320,6 +2338,8 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd != null) {
+      // A native handle closes its fd when the peer does: the number is not end()'s to shut down after that.
+      if (this[kSyncFdShutdown] === true) this[kSyncFdShutdown] = undefined;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -2582,7 +2602,10 @@ Socket.prototype._final = function _final(callback) {
   const socket = this._handle;
 
   // already closed call destroy. A server-side wrap attaches its handle on the tick its constructor queued, ahead of endNT.
-  if (!socket && !this[kupgraded]) return callback();
+  if (!socket && !this[kupgraded]) {
+    if (this[kSyncFdShutdown] === true) return process.nextTick(endSyncFdNT, this, callback);
+    return callback();
+  }
 
   // emit FIN allowHalfOpen only allow the readable side to close first
   process.nextTick(endNT, this, socket, callback);

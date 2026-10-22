@@ -12,6 +12,7 @@ import {
   isDebug,
   isMusl,
   isWindows,
+  nodeExe,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -1624,6 +1625,290 @@ describe("Socket fd adoption", () => {
     } finally {
       fs.closeSync(fd);
     }
+  });
+
+  // node's _final hands the shutdown of the socket to libuv, which issues it from the event loop:
+  // the peer reads end-of-file before 'prefinish', the end() callback and 'finish'. bun issues it
+  // one tick after end(), as for a socket that has a handle.
+  // socket-fd-end-fixture.js runs under node unchanged. The reports are what node v26.3.0 gives.
+  describe.skipIf(isWindows)("end() on an adopted socket fd", () => {
+    const fixture = join(import.meta.dir, "socket-fd-end-fixture.js");
+    type Report = Record<string, Record<string, unknown>>;
+    const fifoScenario = "the fd is a FIFO";
+    const datagramScenario = "the fd is a datagram socket";
+    const tcpScenario = "the fd is a TCP socket";
+
+    // What the other end of a socket, or the read end of a FIFO, has right now.
+    function peek(fd: number) {
+      const chunk = Buffer.alloc(256);
+      let data = "";
+      for (;;) {
+        let n: number;
+        try {
+          n = fs.readSync(fd, chunk);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "EAGAIN") return { data, eof: false };
+          throw e;
+        }
+        if (n === 0) return { data, eof: true };
+        data += chunk.toString("utf8", 0, n);
+      }
+    }
+    // Whether the write side of a socket is shut, from another fd of the same socket.
+    function isHalfClosed(fd: number) {
+      try {
+        fs.writeSync(fd, "late");
+        return false;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EPIPE") return true;
+        throw e;
+      }
+    }
+
+    // Runs one group of the fixture. To each scenario of the child's report it adds what this
+    // process sees while the child is alive:
+    // - `halfClosed`, for a scenario that expects it. This process and a `cat` hold the socket of
+    //   that scenario too, so a close in the child gives the peer no end-of-file. The datagram
+    //   socket and the TCP socket are ones that this process made and holds. `afterExit`: looked at
+    //   when the child is gone.
+    // - `data` and `eof` for any other scenario: what the other end of the child's fd got.
+    async function reportOf(exe: string, group: string, expected: Report, afterExit = false) {
+      const names = Object.keys(expected);
+      const made = [datagramScenario, tcpScenario];
+      const held = names.filter(name => !made.includes(name) && "halfClosed" in expected[name]);
+      await using holder = Bun.spawn({
+        cmd: ["cat"],
+        stdio: ["pipe", "ignore", "ignore", ...held.map(() => "pipe" as const)],
+      });
+      // Reading .stdio makes these fds ours to close.
+      const heldFds = holder.stdio.slice(3) as number[];
+      const open = new Set(heldFds);
+      const close = (fd: number) => open.delete(fd) && fs.closeSync(fd);
+      // The fd of each socket that this process made for a scenario, and what closes the socket.
+      const own = new Map<string, number>();
+      const closers: (() => void)[] = [];
+      try {
+        const fifo = names.includes(fifoScenario) ? openFifo(`${group}.fifo`) : undefined;
+        if (fifo) open.add(fifo.rfd).add(fifo.wfd);
+        if (names.includes(datagramScenario)) {
+          // Connected, so that a write(2) on its fd sends.
+          const receiver = await Bun.udpSocket({ hostname: "127.0.0.1" });
+          closers.push(() => receiver.close());
+          const sender = await Bun.udpSocket({
+            hostname: "127.0.0.1",
+            connect: { hostname: "127.0.0.1", port: receiver.port },
+          });
+          closers.push(() => sender.close());
+          own.set(datagramScenario, (sender as unknown as { fd: number }).fd);
+        }
+        if (names.includes(tcpScenario)) {
+          // Neither end closes when the other one sends its FIN.
+          const socket = { data() {}, error() {}, end() {} };
+          const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, allowHalfOpen: true, socket });
+          closers.push(() => listener.stop(true));
+          const client = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, allowHalfOpen: true, socket });
+          closers.push(() => client.terminate());
+          own.set(tcpScenario, (client as unknown as { fd: number }).fd);
+        }
+        await using child = Bun.spawn({
+          cmd: [exe, fixture, group],
+          env: bunEnv,
+          stdio: [
+            "pipe",
+            "pipe",
+            "pipe",
+            ...names.map(name =>
+              held.includes(name)
+                ? heldFds[held.indexOf(name)]
+                : name === fifoScenario
+                  ? fifo!.wfd
+                  : (own.get(name) ?? ("pipe" as const)),
+            ),
+          ],
+        });
+        // This process's fd for each scenario: the other end of the child's fd, or the fd it passed.
+        const fds = child.stdio.slice(3) as number[];
+        // A socket that this process made closes its own fd.
+        for (const [i, fd] of fds.entries()) if (!own.has(names[i])) open.add(fd);
+        if (fifo) close(fifo.wfd);
+
+        const stderr = child.stderr.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        const readMore = async () => {
+          const { value, done } = await stderr.read();
+          if (!done) text += decoder.decode(value, { stream: true });
+          return !done;
+        };
+        while (!text.includes("\n") && (await readMore()));
+        const line = text.slice(0, text.indexOf("\n"));
+        if (!line.startsWith("{")) throw new Error(`no report from the "${group}" group: ${text}`);
+
+        // The child has run every scenario, and lives until its stdin closes.
+        const fromChild = JSON.parse(line);
+        const report: Report = {};
+        let onStdout: string | undefined;
+        const heldSockets = () => {
+          for (const [i, name] of names.entries()) {
+            if (held.includes(name) || own.has(name)) report[name].halfClosed = isHalfClosed(fds[i]);
+          }
+        };
+        for (const [i, name] of names.entries()) {
+          const { fd, ...entry } = fromChild[name];
+          if (fd === 1) onStdout = name;
+          const other = !held.includes(name) && !own.has(name);
+          report[name] = {
+            ...entry,
+            ...(other && (name === fifoScenario ? peek(fifo!.rfd) : fd === 3 + i && peek(fds[i]))),
+          };
+        }
+        if (!afterExit) heldSockets();
+        child.stdin.end();
+        const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+        while (await readMore());
+        if (afterExit) heldSockets();
+        if (onStdout) report[onStdout].data = stdout;
+        return { report, stderr: text.slice(line.length + 1), exitCode };
+      } finally {
+        for (const fd of open) close(fd);
+        for (const closeSocket of closers) closeSocket();
+      }
+    }
+
+    const end: Report = {
+      // Nothing destroys these three sockets.
+      "the end() callback throws": { events: ["prefinish", "uncaughtException"], late: "EPIPE", data: "x", eof: true },
+      "a 'finish' listener throws": {
+        events: ["prefinish", "finish", "uncaughtException"],
+        late: "EPIPE",
+        data: "x",
+        eof: true,
+      },
+      // The fd is half-closed when 'prefinish' fires, and the throw is reported in the async context of end().
+      "a 'prefinish' listener throws": {
+        events: ["prefinish", "uncaughtException in store"],
+        late: "EPIPE",
+        data: "x",
+        eof: true,
+      },
+      "autoDestroy is off": { events: ["prefinish", "end callback", "finish"], late: "EPIPE", data: "x", eof: true },
+      "another process holds the socket": { events: ["prefinish", "finish", "close"], halfClosed: true },
+      "the fd is held as a double": { events: ["prefinish", "finish", "close"], halfClosed: true },
+      // shutdown(2) fails on a FIFO: its reader gets end-of-file when the fd closes.
+      [fifoScenario]: { events: ["prefinish", "uncaughtException"], late: "written", data: "xlate", eof: false },
+    };
+    // Nothing of end() is pending at 'close'.
+    const cancelled = { events: ["end callback ERR_STREAM_DESTROYED", "close"], pendingcb: 0, halfClosed: false };
+    const completed = { events: ["prefinish", "end callback", "finish", "close"], pendingcb: 0, halfClosed: true };
+    const destroy: Report = {
+      "destroy() in the block of end()": cancelled,
+      "write() after end()": {
+        events: [
+          "write callback ERR_STREAM_WRITE_AFTER_END",
+          "end callback ERR_STREAM_WRITE_AFTER_END",
+          "error ERR_STREAM_WRITE_AFTER_END",
+          "close",
+        ],
+        pendingcb: 0,
+        halfClosed: false,
+      },
+      "end() two times": completed,
+      // Nothing finishes the next life: its lookup never answers.
+      "'close' connects the socket again": { events: ["close"], connecting: true, data: "x", eof: true },
+      "connect() after the shutdown": { events: ["prefinish", "finish"], connecting: true, data: "x", eof: true },
+      "end() in the next life of the socket": {
+        events: ["close", "prefinish", "finish", "close"],
+        pendingcb: 0,
+        data: "",
+        eof: true,
+      },
+    };
+    const ended = { events: ["prefinish", "finish", "close"], pendingcb: 0, halfClosed: true };
+    const loop: Report = {
+      "destroy() in setImmediate": completed,
+      "an immediate that was queued before end() calls destroy()": completed,
+      "end() in a socket callback, destroy() in a timer that is due": completed,
+      "end() in an immediate, destroy() in a socket callback that is ready": completed,
+      "destroy() in the end() callback of a socket that has a handle": completed,
+      "pipe() from a file ends it, finished() of the file destroys it": ended,
+      "pipeline() from a file ends it": { ...ended, pipeline: "over" },
+      "destroySoon()": ended,
+    };
+    const tcp: Report = { [tcpScenario]: { events: ["prefinish", "finish", "close"], halfClosed: true } };
+    // process.exit() comes before the shutdown: neither runtime issues it.
+    const exit: Report = { "process.exit() in the block of end()": { events: [], halfClosed: false } };
+    // What node gives where bun differs. libuv issues the shutdown after every tick of the place that called
+    // end(), so a destroy() on one of those ticks cancels it, and a write on one of them still goes through.
+    // bun issues it on the first of those ticks, as for a socket that has a handle.
+    const laterInNode: Report = {
+      "destroy() on the next tick": cancelled,
+      "destroy() in a microtask": cancelled,
+      "destroy() after an await": cancelled,
+      "writes through the fd after end()": {
+        events: ["prefinish", "finish"],
+        late: { block: "written", nextTick: "written", await: "written", finish: "EPIPE" },
+        data: "xlatelatelate",
+        eof: true,
+      },
+    };
+    // What bun adopts and does not shut down stays as it was: 'prefinish' comes inside end(). Not in node: its
+    // connect() takes no fd, it reads an fd that has no `readable: false`, it shuts fd 1 down, 'prefinish' comes
+    // after end() returns for a FIFO too, and it refuses a datagram socket.
+    const unarmed: Report = {
+      "connect({ fd }) gave the fd to a handle": { events: ["prefinish", "end() returned"], data: "", eof: true },
+      "`readable` is omitted": { events: ["prefinish", "finish", "close"], halfClosed: false },
+      // process.stdout and process.stderr write to fd 0-2 too.
+      "the fd is 1": { events: ["prefinish", "end() returned", "finish", "close"], late: "written", data: "xlate" },
+      [fifoScenario]: { events: ["prefinish", "end() returned", "finish", "close"], data: "x", eof: true },
+      // This process can still send on the socket.
+      [datagramScenario]: { events: ["prefinish", "end() returned", "finish", "close"], halfClosed: false },
+    };
+
+    it("half-closes the fd one tick after end()", async () => {
+      expect(await reportOf(bunExe(), "end", end)).toEqual({ report: end, stderr: "", exitCode: 0 });
+    });
+
+    it("a destroy() in the block of end() cancels the half-close", async () => {
+      expect(await reportOf(bunExe(), "destroy", destroy)).toEqual({ report: destroy, stderr: "", exitCode: 0 });
+    });
+
+    it("what the loop runs after the block of end() finds the socket finished", async () => {
+      expect(await reportOf(bunExe(), "loop", loop)).toEqual({ report: loop, stderr: "", exitCode: 0 });
+    });
+
+    it("half-closes a TCP socket fd", async () => {
+      expect(await reportOf(bunExe(), "tcp", tcp)).toEqual({ report: tcp, stderr: "", exitCode: 0 });
+    });
+
+    it("process.exit() in the block of end() issues no shutdown", async () => {
+      expect(await reportOf(bunExe(), "exit", exit, true)).toEqual({ report: exit, stderr: "", exitCode: 0 });
+    });
+
+    it.failing("gives node's reports for a destroy() or a write on a later tick of end()", async () => {
+      expect(await reportOf(bunExe(), "later", laterInNode)).toEqual({ report: laterInNode, stderr: "", exitCode: 0 });
+    });
+
+    it("leaves the fds that it does not shut down as they were", async () => {
+      expect(await reportOf(bunExe(), "unarmed", unarmed)).toEqual({ report: unarmed, stderr: "", exitCode: 0 });
+    });
+
+    it.skipIf(!nodeExe())("node gives the same reports", async () => {
+      expect([
+        await reportOf(nodeExe()!, "end", end),
+        await reportOf(nodeExe()!, "destroy", destroy),
+        await reportOf(nodeExe()!, "loop", loop),
+        await reportOf(nodeExe()!, "tcp", tcp),
+        await reportOf(nodeExe()!, "exit", exit, true),
+        await reportOf(nodeExe()!, "later", laterInNode),
+      ]).toEqual([
+        { report: end, stderr: "", exitCode: 0 },
+        { report: destroy, stderr: "", exitCode: 0 },
+        { report: loop, stderr: "", exitCode: 0 },
+        { report: tcp, stderr: "", exitCode: 0 },
+        { report: exit, stderr: "", exitCode: 0 },
+        { report: laterInNode, stderr: "", exitCode: 0 },
+      ]);
+    });
   });
 });
 

@@ -4472,8 +4472,8 @@ impl Program {
         let mut alternative_end = usize::MAX;
         // Ends of alternatives of the open groups that aren't among the same 64 nodes as the latest ones.
         let mut earlier_ends: SmallVec<[Nodes; 2]> = SmallVec::new();
-        // `{**,a}/` globstars whose `/` hasn't been reached: the index of the `/`, the node, and whether it is `not_at_end`.
-        let mut waiting: SmallVec<[(u32, u32, bool); 2]> = SmallVec::new();
+        // `{**,a}/` globstars whose `/` hasn't been reached: the index of the `/`, and the node.
+        let mut waiting: SmallVec<[(u32, u32); 2]> = SmallVec::new();
         let mut no_class_from = usize::MAX;
         // Every group before this index in `alternatives` starts before `i`.
         let mut next_group = 0;
@@ -4645,7 +4645,6 @@ impl Program {
                         Some(group) if alternative_end == after => group.outside as usize,
                         _ => after,
                     };
-                    let is_before_last_star = &glob[outside..] == b"/*";
                     // `**/**` is the last `**`.
                     if at > i {
                         let first = node!(i);
@@ -4655,14 +4654,16 @@ impl Program {
                     i = after;
                     // `{**,a}/b`: the `/` that makes this a globstar comes after the group.
                     if starts_segment && outside > after && glob.get(outside) == Some(&b'/') {
-                        // Not inside `!(a)`: an alternative that matches less there makes the pattern match more.
-                        let is_not_at_end =
-                            is_before_last_star && open.iter().all(|it| it.kind != b'!');
-                        let node = match is_not_at_end {
-                            true => node!(at, not_at_end),
-                            false => node!(at),
+                        // Not with a `!(a)`: what matches less after it makes the pattern match more.
+                        let is_not = |it: &Alternative| {
+                            it.close > 0 && glob[..it.start as usize].ends_with(b"!(")
                         };
-                        waiting.push((outside as u32, node, is_not_at_end));
+                        let node =
+                            match &glob[outside..] == b"/*" && !alternatives.iter().any(is_not) {
+                                true => node!(at, not_at_end),
+                                false => node!(at),
+                            };
+                        waiting.push((outside as u32, node));
                         to.imply_node(node);
                         node!(at + 1, skips, wildcards);
                         continue;
@@ -4672,7 +4673,7 @@ impl Program {
                     if (after.saturating_sub(part_start) < 3 || glob[after - 3] == b'/')
                         && (is_last || glob[after] == b'/')
                     {
-                        let node = match is_before_last_star {
+                        let node = match !is_last && &glob[after..] == b"/*" {
                             true => node!(at, not_at_end),
                             false => node!(at),
                         };
@@ -4720,9 +4721,7 @@ impl Program {
                 b'/' => {
                     // `{**,a}/*` matches `x/`: the `**` can end before this `/`, like any other alternative.
                     for it in waiting.iter().rev().take_while(|it| it.0 as usize == i) {
-                        if it.2 {
-                            to.imply_node(it.1 + 1);
-                        }
+                        to.imply_node(it.1 + 1);
                     }
                     node!(i, separators);
                     while let Some(it) = waiting.last().filter(|it| it.0 as usize == i) {

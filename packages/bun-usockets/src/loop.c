@@ -238,6 +238,14 @@ int us_loop_close_all_groups(struct us_loop_t *loop) {
     return any;
 }
 
+/* A timeout stamp is a slot on the 240-tick wheel, or 255 when no timeout is armed. */
+static unsigned char us_internal_next_timeout_stamp(unsigned char stamp) {
+    return stamp == 255 ? 255 : (stamp + 1) % 240;
+}
+
+/* Hold a parked socket's timeouts back for at most 120 s, Node's default TLS handshakeTimeout. */
+static const int MAX_LOW_PRIO_TICKS = 120 / LIBUS_TIMEOUT_GRANULARITY;
+
 /* This functions should never run recursively */
 void us_internal_timer_sweep(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
@@ -272,8 +280,12 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             group->iterator = s;
 
             if (short_ticks == s->timeout) {
-                s->timeout = 255;
-                s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
+                if (s->timeout_laps) {
+                    s->timeout_laps--;
+                } else {
+                    s->timeout = 255;
+                    s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
+                }
             }
             /* An owner must not deinit the embedding group from a timeout handler
              * (see us_socket_group_deinit). Survive one that closed every socket
@@ -304,27 +316,33 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
     }
 
     /* Sockets parked in the low-priority queue are unlinked from head_sockets
-     * (the queue reuses prev/next), so the walk above never visits them. On an
-     * idle loop the queue drains only as fast as loop iterations occur, so a
-     * burst of pre-handshake TLS accepts can still be parked when the single
-     * tick their s->timeout stamp matches passes, after which the exact-match
-     * test above can never fire again. Sweep the parked set here against each
-     * socket's own group's freshly-advanced timestamps. low_prio_iterator lets
-     * close_raw/detach advance iteration past a socket they unlink, same as
-     * group->iterator does for head_sockets. */
+     * (the queue reuses prev/next), so the walk above never visits them. The
+     * loop turned their reads off, so time in the queue doesn't count against
+     * the owner's timeouts: advance each stamp with the tick, for at most
+     * MAX_LOW_PRIO_TICKS. The library's own wait for a spilled close still
+     * fires. low_prio_iterator lets close_raw advance the walk past a socket
+     * it unlinks, like group->iterator does for head_sockets. */
     for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
         struct us_socket_t *s = loop_data->low_prio_iterator;
-        unsigned char stamp = s->group->timestamp;
-        unsigned char long_stamp = s->group->long_timestamp;
-        if (stamp == s->timeout) {
-            s->timeout = 255;
-            s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
-            if (loop_data->low_prio_iterator != s) continue;
-        }
-        if (long_stamp == s->long_timeout) {
-            s->long_timeout = 255;
-            us_dispatch_long_timeout(s);
-            if (loop_data->low_prio_iterator != s) continue;
+        if (!s->ssl_close_after_spill && s->low_prio_ticks < MAX_LOW_PRIO_TICKS) {
+            s->low_prio_ticks++;
+            s->timeout = us_internal_next_timeout_stamp(s->timeout);
+            if (s->group->global_tick % 15 == 0) {
+                s->long_timeout = us_internal_next_timeout_stamp(s->long_timeout);
+            }
+        } else {
+            if (s->group->timestamp == s->timeout && s->timeout_laps) {
+                s->timeout_laps--;
+            } else if (s->group->timestamp == s->timeout) {
+                s->timeout = 255;
+                us_internal_ssl_on_timeout(s);
+                if (loop_data->low_prio_iterator != s) continue;
+            }
+            if (s->group->long_timestamp == s->long_timeout) {
+                s->long_timeout = 255;
+                us_dispatch_long_timeout(s);
+                if (loop_data->low_prio_iterator != s) continue;
+            }
         }
         loop_data->low_prio_iterator = s->next;
     }
@@ -332,8 +350,18 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
 /* We do not want to block the loop with tons and tons of CPU-intensive work for SSL handshakes.
  * Spread it out during many loop iterations, prioritizing already open connections, they are far
- * easier on CPU */
+ * easier on CPU.
+ *
+ * A socket over the budget is parked in the low-priority queue: unlinked from its group, reads
+ * off. Only a socket with unread input is parked, so a FIN doesn't close it (the EOF arm of
+ * us_internal_dispatch_ready_poll) and its owner's timeouts wait for up to MAX_LOW_PRIO_TICKS
+ * (us_internal_timer_sweep). */
 static const int MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION = 5;
+
+/* An accepted socket's handlers run inside the accept loop, so a client they answer can reconnect
+ * before the next accept(). Unbounded, the loop never ends under that load and starves timers and
+ * every other socket. The listener's poll is level-triggered and reports the rest on the next tick. */
+static const int MAX_ACCEPTS_PER_READINESS_EVENT = 32;
 
 void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
@@ -537,16 +565,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * rather than exact equality so the connect-complete is still
              * recognized; listen sockets only ever poll READABLE. */
             if (us_poll_events(p) & LIBUS_SOCKET_WRITABLE) {
-                /* The connecting fd became writable with an error/HUP flag also
-                 * set: the handshake may have completed and then been reset
-                 * before we collected the event. Report the kernel's actual
-                 * SO_ERROR (ECONNRESET for that race) instead of the literal
-                 * boolean, which downstream would misreport as ECONNREFUSED.
-                 * libuv does the same getsockopt in uv__stream_connect. */
+                /* The first event carries an error or hangup flag, so SO_ERROR decides,
+                 * like libuv's uv__stream_connect. If SO_ERROR is 0 and connect() had
+                 * returned 0, the peer accepted and already closed: open the socket, and
+                 * the next event reads what the peer sent. If connect() was in progress,
+                 * a send() or another SO_ERROR read consumed the error: report ECONNRESET. */
                 int connect_error = 0;
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
-                    if (connect_error == 0) {
+                    if (connect_error == 0 && !((struct us_socket_t *) p)->connect_returned_zero) {
                         connect_error = LIBUS_ECONNRESET;
                     }
                 }
@@ -557,7 +584,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 struct us_loop_t *loop = accept_group->loop;
                 struct bsd_addr_t addr;
 
-                LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
+                LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared);
                 if (client_fd == LIBUS_SOCKET_ERROR) {
                     /* Todo: start timer here */
 
@@ -565,6 +592,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     /* Todo: stop timer if any */
 
+                    int accepted = 0;
                     do {
                         struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
                         us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
@@ -596,15 +624,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
                         s->send_rejected = 0;
+                        s->connect_returned_zero = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
 
                         us_internal_socket_group_link_socket(accept_group, s);
 
+                        int handshake_budget_spent = 0;
                         if (listen_socket->ssl_ctx) {
                             us_internal_ssl_attach(s, listen_socket->ssl_ctx, /*is_client*/ 0, NULL, listen_socket);
                             us_internal_ssl_on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
+                            handshake_budget_spent = loop->data.low_prio_budget <= 0;
                         } else {
                             us_dispatch_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
                         }
@@ -615,8 +646,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * on Linux, SO_ACCEPTFILTER on FreeBSD), the request/ClientHello is already
                          * in the buffer. Dispatch readable now instead of returning to epoll just to
                          * learn what we already know. The POLL_TYPE_SOCKET handler tolerates
-                         * EWOULDBLOCK for the rare case where the defer timed out with no data. */
-                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(s)) {
+                         * EWOULDBLOCK for the rare case where the defer timed out with no data.
+                         * Once the handshake budget is spent that dispatch parks the socket, and only
+                         * a socket with input may be parked, so check for input first. */
+                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(s) &&
+                            (!handshake_budget_spent || us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA)) {
                             us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
                         }
 
@@ -625,7 +659,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             break;
                         }
 
-                    } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                    } while (++accepted < MAX_ACCEPTS_PER_READINESS_EVENT && (client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared)) != LIBUS_SOCKET_ERROR);
                 }
             }
         break;
@@ -670,6 +704,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     /* Kqueue one-shot writable needs to be re-registered */
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
                     #endif
+                }
+
+                /* `events` was masked before the handler ran, and the handler may have paused the socket. */
+                if (!(us_poll_events(&s->p) & LIBUS_SOCKET_READABLE)) {
+                    events &= ~LIBUS_SOCKET_READABLE;
                 }
             }
 
@@ -730,6 +769,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         loop->data.low_prio_head = s;
 
                         flags->low_prio_state = 1;
+                        s->low_prio_ticks = 0;
 
                         break;
                     }
@@ -749,7 +789,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     if(s->flags.is_ipc) {
                         struct msghdr msg = {0};
                         struct iovec iov = {0};
-                        char cmsg_buf[CMSG_SPACE(sizeof(int))];
+                        /* The protocol sends one descriptor per message. macOS installs every descriptor a peer
+                         * sends before it truncates the control message, so the ones that don't fit here leak. */
+                        char cmsg_buf[CMSG_SPACE(64 * sizeof(int))];
 
                         iov.iov_base = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
                         iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
@@ -774,12 +816,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         // protocol; close anything else a peer packed into the buffer.
                         if (length > 0 && msg.msg_controllen > 0) {
                             int fd = -1;
+                            unsigned char *control_end = (unsigned char *) msg.msg_control + msg.msg_controllen;
                             for (struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg); cmsg_ptr; cmsg_ptr = CMSG_NXTHDR(&msg, cmsg_ptr)) {
                                 if (cmsg_ptr->cmsg_level != SOL_SOCKET || cmsg_ptr->cmsg_type != SCM_RIGHTS || cmsg_ptr->cmsg_len < CMSG_LEN(0)) {
                                     continue;
                                 }
                                 unsigned char *fds = CMSG_DATA(cmsg_ptr);
                                 size_t nfds = (cmsg_ptr->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+                                /* macOS keeps the untruncated cmsg_len in a truncated control message. */
+                                size_t received_fds = fds < control_end ? (size_t) (control_end - fds) / sizeof(int) : 0;
+                                if (nfds > received_fds) {
+                                    nfds = received_fds;
+                                }
                                 for (size_t i = 0; i < nfds; i++) {
                                     int received;
                                     memcpy(&received, fds + i * sizeof(int), sizeof(int));
@@ -998,9 +1046,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                      * stream's 'finish' never happened - the FIN-terminated
                      * http response tests hung on every Linux target. The
                      * writable dispatch disables writable polling again once
-                     * the buffer is drained, so this does not busy-poll. */
-                    us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
+                     * the buffer is drained, so this does not busy-poll.
+                     * on_end runs first: an owner that closes there needs no poll
+                     * change, and a shutdown there already armed what it needs. */
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
+                    s = us_internal_socket_follow_adopted(s);
+                    if (s && !error && us_internal_socket_can_raw_write(s)) {
+                        us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
+                    }
                 } else {
                     /* Half-open not allowed, or a hangup (both directions down, level-triggered):
                      * emit end unless a FIN already did, then close so EPOLLHUP stops re-firing. */

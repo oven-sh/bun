@@ -260,7 +260,7 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         // weak cache so a `tls.connect()` with default options later resolves
         // to the same CTX rather than building a second one with the same
         // digest. The +1 ref returned here is held, so the entry never tombstones.
-        let ctx = if vm.tls_default_ciphers().is_some() {
+        let ctx = if vm.tls_client_defaults_set() {
             cache.get_or_create(&crate::socket::tls_true_defaults(vm, false), &mut err)
         } else {
             cache.get_or_create_opts(&Default::default(), &mut err)

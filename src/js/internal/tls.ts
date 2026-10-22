@@ -291,8 +291,6 @@ function processPfxOptions(options) {
   const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];
   const pfxCAs: string[] = [];
   const entries = Array.isArray(out.pfx) ? out.pfx : [out.pfx];
-  // CAs added after the context is built complete the chain of a lone identity only; several carry theirs, as in Node.
-  const several = entries.length + Math.max(keys.length, certs.length) > 1;
   for (const entry of entries) {
     let buf = entry;
     let passphrase = out.passphrase;
@@ -306,7 +304,8 @@ function processPfxOptions(options) {
     const parsed = NativeSecureContext.parsePkcs12(buf, passphrase);
     const parsedCA = parsed.ca;
     keys.push(parsed.key);
-    certs.push(several && parsedCA ? parsed.cert + parsedCA : parsed.cert);
+    // The bundle's other certificates are the chain: https://github.com/nodejs/node/blob/v26.5.0/src/crypto/crypto_context.cc#L2324
+    certs.push(parsedCA ? parsed.cert + parsedCA : parsed.cert);
     // A CA bundled inside the PKCS#12 EXTENDS the trust set (Node loads it
     // via addCACert on top of the default roots); folding it into the `ca`
     // option would instead REPLACE the trust store and break verification
@@ -470,8 +469,22 @@ function tlsHandshakeError(verifyError) {
   return new (require("internal/shared").ConnResetException)("socket hang up");
 }
 
+// Returns true if `stream` has every method the TLS engine calls on a wrapped stream.
+function hasStreamMethods(stream) {
+  return (
+    typeof stream.pause === "function" &&
+    typeof stream.resume === "function" &&
+    typeof stream.on === "function" &&
+    typeof stream.once === "function" &&
+    typeof stream.write === "function" &&
+    typeof stream.end === "function" &&
+    typeof stream.destroy === "function"
+  );
+}
+
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  hasStreamMethods,
   nodeClientTlsKeys,
   nodeClientTlsToNative,
   normalizePemKeyOption,

@@ -1,6 +1,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
@@ -8,7 +9,7 @@ use crate::response::Response;
 use crate::socket_context::BunSocketContextOptions;
 use crate::web_socket::c::{uws_app_ws_package_context, uws_ws};
 use crate::{
-    AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
+    AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus, SslCtx,
     WebSocketBehavior, WebSocketUpgradeContext, thunk, us_socket_t, uws_res,
 };
 use bun_ptr::ThisPtr;
@@ -115,6 +116,16 @@ impl<const SSL: bool> App<SSL> {
         } else {
             Some(app.cast::<Self>())
         }
+    }
+
+    /// A TLS app that serves `ctx`, which already carries its verify mode. `None` for an app without TLS.
+    pub fn create_with_ssl_ctx(ctx: &OwnedSslCtx, reject_unauthorized: bool) -> Option<*mut Self> {
+        if !SSL {
+            return None;
+        }
+        let app =
+            c::uws_create_app_with_ssl_ctx(SslCtx::opaque_ref(ctx.as_ptr()), reject_unauthorized);
+        Some(app.cast::<Self>())
     }
 
     /// # Safety
@@ -523,6 +534,11 @@ pub mod c {
             user_data: *mut c_void,
         );
         pub(crate) fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;
+        // safe: C++ up-refs `ssl_ctx` before it stores the pointer.
+        pub(crate) safe fn uws_create_app_with_ssl_ctx(
+            ssl_ctx: &SslCtx,
+            reject_unauthorized: bool,
+        ) -> *mut uws_app_t;
         pub(crate) fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
         pub(crate) safe fn uws_app_set_flags(
             ssl: i32,

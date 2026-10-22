@@ -52,6 +52,8 @@ pub(super) mod ffi {
     pub(crate) const NID_secp384r1: c_int = 715;
     pub(crate) const NID_secp521r1: c_int = 716;
     pub(crate) const NID_X25519: c_int = 948;
+    pub(crate) const NID_X25519MLKEM768: c_int = 965;
+    pub(crate) const NID_ML_KEM_1024: c_int = 966;
     pub(crate) const NID_kx_ecdhe: c_int = 952;
 
     // ffi-safe-fn: every handle type below (`SSL`, `X509`, `SSL_CIPHER`,
@@ -203,27 +205,15 @@ pub(super) mod ffi {
         // Swaps the cert/key/chain (and session-related state) this connection
         // serves to those of `ctx`; takes its own reference to `ctx`.
         pub(crate) fn SSL_set_SSL_CTX(ssl: *mut SSL, ctx: *mut SSL_CTX) -> *mut SSL_CTX;
-        // Apply `ctx`'s leaf certificate / private key / extra chain directly
-        // to the connection - SSL_set_SSL_CTX alone does not retarget the
-        // certificate once ClientHello processing has reached ALPN selection.
-        pub(crate) fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
-        pub(crate) fn SSL_CTX_get0_privatekey(ctx: *const SSL_CTX) -> *mut core::ffi::c_void;
-        pub(crate) fn SSL_use_certificate(
+        /// openssl.c: `setKeyCert()` on a server. Returns 0 if `ctx` has no certificate.
+        pub(crate) fn us_ssl_set_key_cert(
             ssl: *mut SSL,
-            x509: *mut core::ffi::c_void,
+            ctx: *mut SSL_CTX,
+            sid_ctx: *const u8,
+            sid_ctx_length: usize,
         ) -> core::ffi::c_int;
-        pub(crate) fn SSL_use_PrivateKey(
-            ssl: *mut SSL,
-            pkey: *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
-        pub(crate) fn SSL_CTX_get0_chain_certs(
-            ctx: *const SSL_CTX,
-            out_chain: *mut *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
-        pub(crate) fn SSL_set1_chain(
-            ssl: *mut SSL,
-            chain: *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
+        /// openssl.c: hands the ALPN protocols of this SSL's ClientHello to `us_dispatch_alpn_offer`.
+        pub(crate) safe fn us_ssl_on_alpn_offer(ssl: &SSL);
         // Stores `cb`/`arg` opaquely on the CTX (BoringSSL never derefs `arg`
         // outside the callback). Opaque-ZST `&SSL_CTX` + by-value fn-ptr +
         // opaque `*mut c_void` ⇒ no caller-side precondition.
@@ -279,6 +269,86 @@ use crate::node::StringOrBuffer;
 // `crate::api::TLSSocket` always picked the `mod.rs` shape and broke the
 // `socket_body` instance.
 type This = super::TLSSocket;
+
+/// Gives the getters that only read the `SSL*` their handle. `ssl()` returns `None` once the connection has closed.
+pub(crate) trait TlsHandle {
+    fn ssl(&self) -> Option<*mut boringssl::SSL>;
+}
+
+impl TlsHandle for This {
+    fn ssl(&self) -> Option<*mut boringssl::SSL> {
+        self.socket.get().ssl()
+    }
+}
+
+/// `this` of a JSNodeHTTPServerSocket method, the handle of a node:https `req.socket`.
+struct NodeHTTPServerSocket(JSValue);
+
+impl TlsHandle for NodeHTTPServerSocket {
+    fn ssl(&self) -> Option<*mut boringssl::SSL> {
+        let ssl = Bun__NodeHTTPServerSocket__ssl(self.0);
+        (!ssl.is_null()).then_some(ssl)
+    }
+}
+
+unsafe extern "C" {
+    // Null unless `value` is the JSNodeHTTPServerSocket of an open TLS connection.
+    safe fn Bun__NodeHTTPServerSocket__ssl(value: JSValue) -> *mut boringssl::SSL;
+}
+
+// The methods of JSNodeHTTPServerSocketPrototype.cpp that `tls.TLSSocket` calls on its handle.
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getPeerCertificate")]
+fn node_http_get_peer_certificate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    get_peer_certificate(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getCertificate")]
+fn node_http_get_certificate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    get_certificate(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getX509Certificate")]
+fn node_http_get_x509_certificate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    get_x509_certificate(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getCipher")]
+fn node_http_get_cipher(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    get_cipher(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getTLSVersion")]
+fn node_http_get_tls_version(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    get_tls_version(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getEphemeralKeyInfo")]
+fn node_http_get_ephemeral_key_info(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    get_ephemeral_key_info(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getTLSFinishedMessage")]
+fn node_http_get_tls_finished_message(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    get_tls_finished_message(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__getTLSPeerFinishedMessage")]
+fn node_http_get_tls_peer_finished_message(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    get_tls_peer_finished_message(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__isSessionReused")]
+fn node_http_is_session_reused(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    is_session_reused(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
+#[bun_jsc::host_fn(export = "Bun__NodeHTTPServerSocket__exportKeyingMaterial")]
+fn node_http_export_keying_material(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    export_keying_material(&NodeHTTPServerSocket(frame.this()), global, frame)
+}
 
 pub(super) fn get_servername(
     this: &This,
@@ -362,11 +432,11 @@ pub(super) fn get_peer_x509_certificate(
 }
 
 pub(super) fn get_x509_certificate(
-    this: &This,
+    this: &impl TlsHandle,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
     let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -379,13 +449,13 @@ pub(super) fn get_x509_certificate(
 }
 
 pub(super) fn get_tls_version(
-    this: &This,
+    this: &impl TlsHandle,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::NULL);
     };
     let version = ffi::SSL_get_version(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -433,7 +503,7 @@ pub(super) fn set_max_send_fragment(
 }
 
 pub(super) fn get_peer_certificate(
-    this: &This,
+    this: &impl TlsHandle,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -448,7 +518,7 @@ pub(super) fn get_peer_certificate(
         abbreviated = arg.to_boolean();
     }
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
     let is_server_ssl = ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0;
@@ -616,11 +686,11 @@ pub(super) fn get_peer_certificate(
 }
 
 pub(super) fn get_certificate(
-    this: &This,
+    this: &impl TlsHandle,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
     let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -632,11 +702,11 @@ pub(super) fn get_certificate(
 }
 
 pub(super) fn get_tls_finished_message(
-    this: &This,
+    this: &impl TlsHandle,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
     // We cannot just pass nullptr to SSL_get_finished()
@@ -771,11 +841,11 @@ pub(super) fn get_shared_sigalgs(
 }
 
 pub(super) fn get_cipher(
-    this: &This,
+    this: &impl TlsHandle,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
     let cipher = ffi::SSL_get_current_cipher(boringssl::SSL::opaque_ref(ssl_ptr));
@@ -832,11 +902,11 @@ pub(super) fn get_cipher(
 }
 
 pub(super) fn get_tls_peer_finished_message(
-    this: &This,
+    this: &impl TlsHandle,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
     // We cannot just pass nullptr to SSL_get_peer_finished()
@@ -870,6 +940,7 @@ pub(super) fn get_tls_peer_finished_message(
 /// `tlsSocket.setKeyCert(secureContext)` - serve this connection's identity
 /// from the given context: SSL_set_SSL_CTX swaps the cert/key/chain used for
 /// the rest of the handshake (Node calls it from ALPNCallback / SNICallback).
+/// A server keeps its SSL_CTX and only takes the identity and the CAs (`us_ssl_set_key_cert`).
 pub(crate) fn set_key_cert(
     this: &This,
     global: &JSGlobalObject,
@@ -891,28 +962,21 @@ pub(crate) fn set_key_cert(
     // SAFETY: `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
     unsafe {
         let ctx = &(*sc).ctx;
-        ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
-        // A client keeps no session id context (see `us_internal_ssl_attach`).
         if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {
+            ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
+            // A client keeps no session id context (see `us_internal_ssl_attach`).
             boringssl::SSL_set_session_id_context(ssl_ptr, core::ptr::null(), 0);
-        }
-        // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
-        // processing has reached ALPN selection, and Node supports calling
-        // setKeyCert from ALPNCallback - apply the identity directly.
-        let leaf = ffi::SSL_CTX_get0_certificate(ctx.as_ptr().cast());
-        let pkey = ffi::SSL_CTX_get0_privatekey(ctx.as_ptr().cast());
-        if !leaf.is_null() && !pkey.is_null() {
-            let ok_cert = ffi::SSL_use_certificate(ssl_ptr.cast(), leaf);
-            let ok_key = ffi::SSL_use_PrivateKey(ssl_ptr.cast(), pkey);
-            let mut ok_chain = 1;
-            let mut chain: *mut core::ffi::c_void = core::ptr::null_mut();
-            if ffi::SSL_CTX_get0_chain_certs(ctx.as_ptr().cast(), &raw mut chain) == 1
-                && !chain.is_null()
+        } else {
+            let sid_ctx = (*sc).digest.get();
+            if ffi::us_ssl_set_key_cert(
+                ssl_ptr.cast(),
+                ctx.as_ptr().cast(),
+                sid_ctx.as_ptr(),
+                sid_ctx.len(),
+            ) == 0
             {
-                ok_chain = ffi::SSL_set1_chain(ssl_ptr.cast(), chain);
-            }
-            if ok_cert != 1 || ok_key != 1 || ok_chain != 1 {
-                return Err(global.throw(format_args!("setKeyCert failed to apply the context")));
+                // Node's message (`TLSWrap::SetKeyCert`).
+                return Err(global.throw(format_args!("SetKeyCert")));
             }
         }
     }
@@ -920,11 +984,11 @@ pub(crate) fn set_key_cert(
 }
 
 pub(crate) fn export_keying_material(
-    this: &This,
+    this: &impl TlsHandle,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    if this.socket.get().is_detached() {
+    if this.ssl().is_none() {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -971,7 +1035,7 @@ pub(crate) fn export_keying_material(
     let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
 
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
 
@@ -998,11 +1062,11 @@ pub(crate) fn export_keying_material(
 }
 
 pub(super) fn get_ephemeral_key_info(
-    this: &This,
+    this: &impl TlsHandle,
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::NULL);
     };
     let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
@@ -1016,16 +1080,20 @@ pub(super) fn get_ephemeral_key_info(
     {
         return Ok(result);
     }
-    let (name, size) = match ffi::SSL_get_negotiated_group(ssl) {
-        ffi::NID_X25519 => ("X25519", 253),
-        ffi::NID_X9_62_prime256v1 => ("prime256v1", 256),
-        ffi::NID_secp384r1 => ("secp384r1", 384),
-        ffi::NID_secp521r1 => ("secp521r1", 521),
+    let (kind, name, size) = match ffi::SSL_get_negotiated_group(ssl) {
+        ffi::NID_X25519 => ("ECDH", "X25519", Some(253)),
+        ffi::NID_X9_62_prime256v1 => ("ECDH", "prime256v1", Some(256)),
+        ffi::NID_secp384r1 => ("ECDH", "secp384r1", Some(384)),
+        ffi::NID_secp521r1 => ("ECDH", "secp521r1", Some(521)),
+        ffi::NID_X25519MLKEM768 => ("TLSGroup", "X25519MLKEM768", None),
+        ffi::NID_ML_KEM_1024 => ("TLSGroup", "MLKEM1024", None),
         _ => return Ok(result),
     };
-    result.put(global, b"type", BunString::static_("ECDH").to_js(global)?);
+    result.put(global, b"type", BunString::static_(kind).to_js(global)?);
     result.put(global, b"name", BunString::static_(name).to_js(global)?);
-    result.put(global, b"size", JSValue::js_number(f64::from(size)));
+    if let Some(size) = size {
+        result.put(global, b"size", JSValue::js_number(f64::from(size)));
+    }
     Ok(result)
 }
 
@@ -1220,11 +1288,11 @@ pub(super) fn disable_renegotiation(
 }
 
 pub(super) fn is_session_reused(
-    this: &This,
+    this: &impl TlsHandle,
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let Some(ssl_ptr) = this.socket.get().ssl() else {
+    let Some(ssl_ptr) = this.ssl() else {
         return Ok(JSValue::FALSE);
     };
     Ok(JSValue::from(

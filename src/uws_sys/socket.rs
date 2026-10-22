@@ -291,6 +291,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0
     }
 
+    /// Returns true if TLS records that `write` already counted as written still wait in user space for the kernel.
+    pub fn ssl_spill_pending(&self) -> bool {
+        on_socket!(self.socket;
+            connected s => s.ssl_spill_pending(),
+            duplex _d => false,
+            pipe _p => false,
+            else => false,
+        )
+    }
+
     /// TLS sockets only. The kernel rejected a send of TLS records, so the error
     /// code of the close stands for the lost records, not for a failed read.
     pub fn ssl_send_rejected(&self) -> bool {
@@ -500,6 +510,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Fires `on_timeout` after any number of seconds, for owners that don't handle `on_long_timeout`.
+    pub fn set_timeout_without_long_timeout(&self, seconds: c_uint) {
+        match self.socket {
+            InternalSocket::Connected(s) => {
+                let s = sock(s);
+                s.set_timeout(seconds);
+                s.set_long_timeout(0);
+            }
+            _ => self.set_timeout(seconds),
+        }
+    }
+
     // ── flow control / sockopts ─────────────────────────────────────────────
 
     /// A connect that has not completed yet is left alone (like the
@@ -561,18 +583,20 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Resume a handshake suspended by an asynchronous SNICallback. The ctx
-    /// reference is consumed (freed here when the socket is no longer a real
-    /// connected socket).
+    /// reference is consumed (freed here when no TLS engine is left to resume).
     pub fn sni_resolve(&self, ctx: *mut crate::SslCtx, error: bool) {
         match self.socket {
-            InternalSocket::Connected(s) => sock(s).sni_resolve(ctx, error),
-            _ => {
-                // The socket is gone; release the reference the caller handed us.
-                if !ctx.is_null() {
-                    // SAFETY: the caller passed an owned SSL_CTX reference.
-                    unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
-                }
-            }
+            InternalSocket::Connected(s) => return sock(s).sni_resolve(ctx, error),
+            InternalSocket::UpgradedDuplex(d) => return duplex(d).sni_resolve(ctx, error),
+            // A named pipe's engine has no resolver (`WindowsNamedPipe::wrapper_handlers`).
+            #[cfg(windows)]
+            InternalSocket::Pipe(_) => {}
+            InternalSocket::Connecting(_) | InternalSocket::Detached => {}
+        }
+        // No handshake is waiting for the answer, so release the caller's reference.
+        if !ctx.is_null() {
+            // SAFETY: the caller passed an owned SSL_CTX reference.
+            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
         }
     }
 

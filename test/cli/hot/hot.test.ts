@@ -12,7 +12,18 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDir,
+  tls,
+  tmpdirSync,
+  waitForFileToExist,
+} from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -1332,3 +1343,90 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/26036
+it.each(isWindows ? ["tcp", "tls"] : ["tcp", "unix", "tls"])(
+  "should let Bun.listen() take over the previous run's %s address",
+  async transport => {
+    const { key, cert } = tls;
+    const source = (comment: string) => `
+      const generation = (globalThis.generation = (globalThis.generation ?? 0) + 1);
+      if (!globalThis.address) {
+        if (${JSON.stringify(transport)} === "unix") {
+          globalThis.address = { unix: "s.sock" };
+        } else {
+          const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+          globalThis.address = { hostname: "127.0.0.1", port: probe.port };
+          probe.stop(true);
+        }
+      }
+      Bun.listen({
+        ...globalThis.address,
+        tls: ${transport === "tls" ? JSON.stringify({ key, cert }) : "undefined"},
+        socket: {
+          open: socket => void socket.write("open " + generation + "\\n"),
+          data: socket => void socket.write("data " + generation + "\\n"),
+        },
+      });
+      console.log(JSON.stringify({ generation, ...globalThis.address }));
+      // ${comment}
+    `;
+    using dir = tempDir("hot-listen", { "index.ts": source("first") });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    // Yields complete lines, whatever the chunk boundaries are.
+    async function* lines(stream: AsyncIterable<Uint8Array>) {
+      let buffered = "";
+      for await (const chunk of stream) {
+        const parts = (buffered + Buffer.from(chunk).toString()).split("\n");
+        buffered = parts.pop()!;
+        yield* parts;
+      }
+    }
+    const runs = lines(runner.stdout);
+    const nextRun = async () => JSON.parse((await runs.next()).value!);
+
+    // Resolves once the server has greeted the connection.
+    async function connect(address: { unix: string } | { hostname: string; port: number }) {
+      while (true) {
+        const stream = new TransformStream<Uint8Array, Uint8Array>();
+        const writer = stream.writable.getWriter();
+        const socket = await Bun.connect({
+          ...("unix" in address ? { unix: join(String(dir), address.unix) } : address),
+          tls: transport === "tls" ? { ca: cert } : undefined,
+          socket: { data: (_socket, chunk) => void writer.write(chunk), close: () => void writer.close() },
+        });
+        const replies = lines(stream.readable);
+        const nextReply = async () => (await replies.next()).value;
+        const greeting = await nextReply();
+        // A TLS listener binds again on every run, which drops a connection it hasn't accepted yet.
+        if (greeting !== undefined) return { socket, greeting, nextReply };
+      }
+    }
+
+    const { generation, ...address } = await nextRun();
+    expect(generation).toBe(1);
+    const first = await connect(address);
+    expect(first.greeting).toBe("open 1");
+
+    writeFileSync(join(String(dir), "index.ts"), source("second"));
+    expect((await nextRun()).generation).toBe(2);
+
+    // A watcher can report one write twice, so a later run may already have taken over.
+    const second = await connect(address);
+    expect(second.greeting).toMatch(/^open [2-9]$/);
+    first.socket.write("x");
+    expect(await first.nextReply()).toMatch(/^data [2-9]$/);
+
+    first.socket.end();
+    second.socket.end();
+  },
+  timeout,
+);

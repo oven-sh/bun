@@ -1502,6 +1502,8 @@ class ChildProcess extends EventEmitter {
       });
       this.pid = this.#handle.pid;
 
+      if ($isJSArray(stdio)) stopReadingSharedStdio(stdio);
+
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
       process.nextTick(() => {
@@ -1782,6 +1784,19 @@ function streamFdOf(item): number | undefined {
   }
 
   return undefined;
+}
+
+// The child reads these sockets now, so the parent stops: https://github.com/nodejs/node/blob/v26.5.0/lib/internal/child_process.js#L477-L488
+function stopReadingSharedStdio(stdio) {
+  for (let i = 0; i < stdio.length; i++) {
+    const stream = stdio[i];
+    if (typeof stream !== "object" || stream === null) continue;
+    const readStop = stream[require("internal/net/symbols").kReadStop];
+    if (typeof readStop !== "function") continue;
+    readStop.$call(stream);
+    stream.pause();
+    stream._readableState.reading = false;
+  }
 }
 
 function nodeToBun(item: string, index: number): Bun.Spawn.NodeStdio[number] {

@@ -4837,6 +4837,21 @@ declare module "bun" {
      */
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
 
+    /**
+     * The minimum TLS protocol version to allow, by the same names as `node:tls`.
+     *
+     * @default "TLSv1.2"
+     */
+    minVersion?: "TLSv1" | "TLSv1.1" | "TLSv1.2" | "TLSv1.3" | undefined;
+
+    /**
+     * The maximum TLS protocol version to allow. A `maxVersion` below
+     * `"TLSv1.2"` also needs a `minVersion`, because the default minimum is `"TLSv1.2"`.
+     *
+     * @default "TLSv1.3"
+     */
+    maxVersion?: "TLSv1" | "TLSv1.1" | "TLSv1.2" | "TLSv1.3" | undefined;
+
     ALPNProtocols?: string | BufferSource;
 
     ciphers?: string;
@@ -6830,10 +6845,13 @@ declare module "bun" {
      * The socket remains readable until the remote end also closes its write side or the connection is terminated.
      * This sends a TCP FIN packet after writing the data.
      *
+     * Unlike `write()`, `end(data)` accepts the whole chunk. Bytes the socket can't take right away are queued and sent
+     * before the FIN.
+     *
      * @param data Optional final data to write before closing. Same types as `write()`.
      * @param byteOffset Optional offset for buffer data.
      * @param byteLength Optional length for buffer data.
-     * @returns The number of bytes written for the final chunk. Returns `-1` if the socket was already closed or shutting down.
+     * @returns The byte length of the final chunk. Returns `-1` if the socket was already closed or shutting down.
      * @example
      * ```ts
      * // send some data and close the write side
@@ -6858,11 +6876,15 @@ declare module "bun" {
     ref(): void;
 
     /**
-     * Set a timeout until the socket automatically closes.
+     * Call the {@link SocketHandler.timeout `timeout`} handler once, `seconds` seconds from now.
      *
-     * To reset the timeout, call this function again.
+     * The socket stays open. Call {@link end `end()`} or {@link terminate `terminate()`} in the handler to close it.
+     * `end()` first sends the data an earlier `end(data)` queued, so it never closes a socket whose peer stopped
+     * reading. `terminate()` drops that data and closes right away.
      *
-     * When a timeout happens, the `timeout` callback is called and the socket is closed.
+     * Reads and writes don't restart the timer. To reset the timeout, call this function again. `0` cancels it.
+     *
+     * Bun checks socket timeouts about every 4 seconds, so the handler can run up to 4 seconds early.
      */
     timeout(seconds: number): void;
 
@@ -7315,9 +7337,12 @@ declare module "bun" {
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
     /**
-     * Called when a handler throws, and when an established TLS session fails
-     * (a record that does not decrypt, a fatal alert from the peer). After a
-     * TLS failure the socket closes, with or without this handler.
+     * Called when a handler throws, when an established TLS session fails
+     * (a record that does not decrypt, a fatal alert from the peer), and when
+     * sending the data queued by `end(data)` fails because the peer is gone
+     * (`EPIPE` or `ECONNRESET`). After a TLS failure or a failed send the
+     * socket closes, with or without this handler. A reset that a read reports
+     * goes to `close(socket, error)` instead.
      */
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
@@ -7352,7 +7377,8 @@ declare module "bun" {
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
 
     /**
-     * Called when a message times out.
+     * Called when the timeout set by {@link Socket.timeout `socket.timeout()`} expires. A socket accepted by
+     * `Bun.listen` starts with a 120 second timeout. The socket stays open.
      */
     timeout?(socket: Socket<Data>): void | Promise<void>;
     /**
@@ -7420,6 +7446,20 @@ declare module "bun" {
      */
     exclusive?: boolean;
     /**
+     * Set `SO_REUSEPORT` so multiple processes can bind to the same port, which is useful for load balancing.
+     *
+     * Ignored when {@link exclusive} is `true`.
+     *
+     * @default false
+     */
+    reusePort?: boolean;
+    /**
+     * Set `IPV6_V6ONLY` so a socket bound to an IPv6 address doesn't also accept IPv4 connections.
+     *
+     * @default false
+     */
+    ipv6Only?: boolean;
+    /**
      * Whether to allow half-open connections.
      *
      * A half-open connection occurs when one end of the connection has called `close()`
@@ -7447,22 +7487,24 @@ declare module "bun" {
      */
     port: number;
     /**
-     * TLS configuration with which to create the socket
+     * TLS configuration with which to create the socket.
+     *
+     * `true` or any options object connects with TLS. An object that sets no
+     * option, such as `{}`, is the same as `true`. Omit `tls` or pass `false`
+     * to connect without TLS.
      */
     tls?: TLSOptions | boolean;
     /**
-     * Whether to use exclusive mode.
-     *
-     * When set to `true`, the socket binds exclusively to the specified address:port
-     * combination, preventing other processes from binding to the same port.
-     *
-     * When `false` (default), other sockets may be able to bind to the same port
-     * depending on the operating system's socket sharing capabilities and settings.
-     *
-     * @default false
+     * @deprecated Has no effect on a client socket. This is a {@link Bun.listen} option (see {@link TCPSocketListenOptions}).
      */
     exclusive?: boolean;
+    /**
+     * @deprecated Has no effect on a client socket. This is a {@link Bun.listen} option (see {@link TCPSocketListenOptions}).
+     */
     reusePort?: boolean;
+    /**
+     * @deprecated Has no effect on a client socket. This is a {@link Bun.listen} option (see {@link TCPSocketListenOptions}).
+     */
     ipv6Only?: boolean;
   }
 
@@ -7473,14 +7515,20 @@ declare module "bun" {
     unix: string;
 
     /**
-     * TLS configuration with which to create the socket
+     * TLS configuration with which to create the socket.
+     *
+     * For {@link Bun.connect}, `true` or any options object connects with TLS.
+     * An object that sets no option, such as `{}`, is the same as `true`.
      */
     tls?: TLSOptions | boolean;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {
     /**
-     * TLS configuration with which to create the socket
+     * TLS configuration with which to create the socket.
+     *
+     * `true` or any options object connects with TLS. An object that sets no
+     * option, such as `{}`, is the same as `true`.
      */
     tls?: TLSOptions | boolean;
     /**

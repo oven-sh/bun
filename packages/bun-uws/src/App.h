@@ -104,7 +104,7 @@ private:
     /* The app always owns at least one http context, but creates websocket contexts on demand */
     HttpContext<SSL> *httpContext;
     /* Shared SSL_CTX for every accepted socket. nullptr for plain HTTP. Built
-     * once in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
+     * or up_ref'd in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
     struct ssl_ctx_st *sslCtx = nullptr;
     /* SNI: the tree hangs off the listen socket, but addServerName() is allowed
      * before listen(). Queue them and replay onto each us_listen_socket_t. */
@@ -311,6 +311,13 @@ private:
         }
         httpContext = HttpContext<SSL>::create(Loop::get(), options.request_cert, options.reject_unauthorized);
     }
+
+    /* Serves an SSL_CTX the caller built, which already carries its verify mode. */
+    TemplatedApp(struct ssl_ctx_st *ctx, bool rejectUnauthorized) {
+        us_internal_ssl_ctx_up_ref(ctx);
+        sslCtx = ctx;
+        httpContext = HttpContext<SSL>::create(Loop::get(), rejectUnauthorized, rejectUnauthorized);
+    }
 public:
 
     static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
@@ -320,6 +327,10 @@ public:
             return nullptr;
         }
         return app;
+    }
+
+    static TemplatedApp<SSL>* create(struct ssl_ctx_st *ctx, bool rejectUnauthorized) {
+        return new TemplatedApp<SSL>(ctx, rejectUnauthorized);
     }
 
     bool constructorFailed() {

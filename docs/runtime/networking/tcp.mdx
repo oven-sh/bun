@@ -135,7 +135,7 @@ const socket = await Bun.connect({
 });
 ```
 
-To require TLS, specify `tls: true`.
+To require TLS, specify `tls: true` or a `tls` options object. An object that sets no option, such as `{}`, is the same as `tls: true`.
 
 ```ts
 // The client
@@ -182,7 +182,9 @@ socket.reload({
 
 ## Buffering
 
-TCP sockets in Bun do not buffer data, so performance-sensitive code should buffer writes itself. For example, this:
+`socket.write()` does not buffer data. It returns the number of bytes the socket accepted, and you send the rest from the `drain` handler. `socket.end(data)` accepts the whole chunk: Bun queues what the socket didn't accept, sends it once the socket is writable again, and then closes the socket.
+
+Performance-sensitive code should buffer writes itself. For example, this:
 
 ```ts
 socket.write("h");

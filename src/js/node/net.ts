@@ -24,6 +24,8 @@ const Duplex = require("internal/streams/duplex");
 const { isUint8Array } = require("node:util/types");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const EventEmitter = require("node:events");
+// Fake timers replace the global, and 'close' must still fire.
+const setImmediate = $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
 let dns: typeof import("./dns").default;
 
 const normalizedArgsSymbol = Symbol("normalizedArgs");
@@ -32,6 +34,7 @@ const {
   ConnResetException,
   NodeAggregateError,
   ErrnoException,
+  guardCallback,
   hasObserver,
   startPerf,
   stopPerf,
@@ -43,10 +46,14 @@ const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const {
+  kAcceptedTLS,
   kArmHandshakeTimeout,
   kDestroyOnRead,
   kPreHandshakeWrite,
+  kReadStop,
   kSecureConnectDone,
+  kSelectSNIContext,
+  kSNIError,
   kStandaloneWrap,
   kUpgradeClientTLS,
   kVerifyError,
@@ -67,6 +74,7 @@ interface ListenerHandle extends SocketListener<ServerInstance> {
 
 interface SocketInternals {
   bytesRead: number;
+  _bytesDispatched: number;
   connecting: boolean;
   isServer: boolean;
   data?: null;
@@ -205,16 +213,31 @@ function uv() {
 }
 const isWindows = process.platform === "win32";
 
-const getDefaultAutoSelectFamily = $bindgen("node_net_binding.bind.ts", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $bindgen("node_net_binding.bind.ts", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $bindgen(
-  "node_net_binding.bind.ts",
-  "getDefaultAutoSelectFamilyAttemptTimeout",
-);
-const setDefaultAutoSelectFamilyAttemptTimeout = $bindgen(
-  "node_net_binding.bind.ts",
-  "setDefaultAutoSelectFamilyAttemptTimeout",
-);
+// Module state, like Node's lib/net.js, so each Worker has its own copy.
+let autoSelectFamilyDefault = true;
+// Node's docs say 250, but its CLI default in node_options.h is 500.
+let autoSelectFamilyAttemptTimeoutDefault = 500;
+
+function getDefaultAutoSelectFamily() {
+  return autoSelectFamilyDefault;
+}
+
+function setDefaultAutoSelectFamily(value) {
+  validateBoolean(value, "value");
+  autoSelectFamilyDefault = value;
+}
+
+function getDefaultAutoSelectFamilyAttemptTimeout() {
+  return autoSelectFamilyAttemptTimeoutDefault;
+}
+
+function setDefaultAutoSelectFamilyAttemptTimeout(value) {
+  validateInt32(value, "value", 1);
+  if (value < 10) {
+    value = 10;
+  }
+  autoSelectFamilyAttemptTimeoutDefault = value;
+}
 
 /**
  * `--tls-keylog=<file>`: every TLS socket appends its NSS key-log lines here,
@@ -280,6 +303,7 @@ const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkSer
 const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
 const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
 const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
+const getBytesRead = $bindgen("socket_body.bind.ts", "getBytesRead");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -288,7 +312,9 @@ const { owner_symbol } = require("internal/async_hooks").symbols;
 // Write-only by design: the onconnection write is a GC edge keeping the
 // native Listener reachable via accepted socket handles (see a93d2fa48e).
 const kServerSocket = Symbol("kServerSocket");
+const kBytesRead = Symbol("kBytesRead");
 const kBytesWritten = Symbol("kBytesWritten");
+const kLastWriteQueueSize = Symbol("kLastWriteQueueSize");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // tls.Server exposes its native SecureContext constructor through this key so
 // the SNI dispatch (below) can recognize a raw native context the way Node's
@@ -302,6 +328,7 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
+const kSyncWriteSink = Symbol("kSyncWriteSink");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -321,7 +348,6 @@ const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
 const kpendingSession = Symbol("pendingSession");
-const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
@@ -353,6 +379,7 @@ const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
 const kRejectedWrite = Symbol("kRejectedWrite");
+const kCanceledWrite = Symbol("kCanceledWrite");
 const kSocketClass = Symbol("kSocketClass");
 
 // A completed write whose status is a negative errno: Node hands it to the write
@@ -419,13 +446,28 @@ function failWriteWith(self, er, callback) {
     }
   }
 }
-// No drain comes from a handle that has closed. Node cancels the write that waits for one after 'error' and before 'close'.
-function cancelPendingWriteNT(self) {
+// A write waiting for 'connect' or for its TLS handle fails from its 'close' listener. A rejected TLS write fails with its own error.
+function takeWriteToCancel(self) {
   const callback = self[kwriteCallback];
-  if (!callback || !self[kclosed]) return;
-  self._pendingData = self[kwriteCallback] = null;
+  if (!callback || self._pendingData != null || self[kRejectedWrite] !== undefined) return false;
+  self[kwriteCallback] = null;
+  self[kCanceledWrite] = callback;
+  return true;
+}
+// Node cancels the write the handle held after 'error' and before 'close'.
+function cancelWriteNT(self, err?) {
+  const callback = self[kCanceledWrite];
+  if (!callback) return;
+  self[kCanceledWrite] = undefined;
   const reason = self.encrypted ? "Canceled because of SSL destruction" : undefined;
-  callback(new ErrnoException(uv().UV_ECANCELED, "write", reason));
+  callback(err ?? new ErrnoException(uv().UV_ECANCELED, "write", reason));
+}
+// Runs a tick after the close, behind 'end'. A TLS handshake cut short destroys the socket there, which cancels this write.
+function failStrandedWriteNT(self, err?) {
+  const callback = self[kwriteCallback];
+  if (!callback) return;
+  self[kwriteCallback] = null;
+  callback(err ?? $ERR_SOCKET_CLOSED());
 }
 // Node's errnoException(status, 'write') for the negative errno $write returns.
 function writeErrnoException(negErrno) {
@@ -458,8 +500,17 @@ function emitCloseNT(self, hasError) {
 function closeAdoptedTLSRawNT(self, handle, isException) {
   setImmediate(closeSocketHandle, self, handle, isException);
 }
+// Bytes an onread callback declined don't count until it gets them.
+function handleBytesRead(self, handle) {
+  return getBytesRead(handle) - (self[kOnreadTail]?.length ?? 0);
+}
 function detachSocket(self) {
   if (!self) self = this;
+  const handle = self._handle;
+  if (handle) {
+    self[kBytesRead] = handleBytesRead(self, handle);
+    self[kBytesWritten] = handle.bytesWritten;
+  }
   self._handle = null;
 }
 function destroyNT(self, err) {
@@ -493,6 +544,14 @@ function onUpgradedReadError(self, err) {
   SocketEmitEndNT(self, err);
   self.destroy();
 }
+// Node wraps any stream in a JSStreamSocket, so a Duplex from another implementation (readable-stream) works too.
+function isWrappableStream(stream) {
+  return stream instanceof Duplex || require("internal/tls").hasStreamMethods(stream);
+}
+// Like Node's `connecting || !_handle`, except that an http 'connect' or 'upgrade' socket is connected without a handle.
+function isNotConnected(socket) {
+  return socket.pending || socket.destroyed;
+}
 // Whatever state the wrapped stream is in: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function linkUpgraded(self, connection: SocketInstance) {
   const isSocket = connection instanceof Socket;
@@ -500,11 +559,11 @@ function linkUpgraded(self, connection: SocketInstance) {
   self._parent = isSocket ? connection : null;
   destroyWhenUpgradedCloses(self, connection);
   connection.on("error", onUpgradedError.bind(null, self));
-  self.connecting = isSocket && (connection.connecting || !connection._handle);
+  self.connecting = isSocket && isNotConnected(connection);
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self, connection) {
-  if (self.destroyed || self[kupgraded] !== connection) return;
+  if (self.destroyed || !self.connecting || self[kupgraded] !== connection) return;
   self.connecting = false;
   self.emit("connect");
 }
@@ -512,15 +571,19 @@ function onUpgradedConnect(self, connection) {
 function onUpgradedEnd(connection, eof) {
   if (!connection.destroyed) eof();
 }
+// Marks the handle of a TLS engine that runs over a stream, where one write is one SSL_write() of at most 2^31 - 1 bytes.
+const kTLSOverStream = Symbol("kTLSOverStream");
+const kMaxTLSWrite = 0x7fffffff;
+const kMaxTLSWriteUnits = (kMaxTLSWrite / 3) | 0; // A UTF-16 unit encodes to at most 3 bytes.
 function attachTLSEngine(self, connection, options) {
   const [handle, events] = upgradeDuplexToTLS(connection, options);
   connection.on("data", events[0]);
   connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
-  connection.on("drain", events[2]);
-  connection.on("close", events[3]);
+  connection.on("close", events[2]);
   connection.once(kReadError, onUpgradedReadError.bind(null, self));
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L120
   connection.resume();
+  handle[kTLSOverStream] = true;
   self._handle = handle;
 }
 function adoptTLSPair(self, connection, pair) {
@@ -686,6 +749,8 @@ function onClientHandshake(self, socket, success, verifyError) {
   self._securePending = false;
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
+  // https://github.com/nodejs/node/blob/v26.5.0/lib/internal/tls/wrap.js#L1190
+  self.servername ||= false;
   self.alpnProtocol = socket.alpnProtocol;
   // Node has no try/catch around these emits; a listener throw reaches
   // InternalCallbackScope as uncaughtException. reportError mirrors that
@@ -829,7 +894,6 @@ const SocketHandlers = {
     if (!self) return;
 
     self._unrefTimer();
-    self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
   // `rejected`: the -errno of the send that failed for what a TLS handle still held of the pending write.
@@ -847,12 +911,11 @@ const SocketHandlers = {
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
         unrefAfterDrain(self, socket);
+        afterQueuedWrite(self);
         callback(null);
       } else {
         self._pendingData = null;
       }
-
-      self[kBytesWritten] = socket.bytesWritten;
     }
   },
   end(socket) {
@@ -892,8 +955,7 @@ const SocketHandlers = {
       self[kwriteCallback] = null;
       callback(error);
     }
-
-    self.emit("error", error);
+    if (!self.destroyed) self.destroy(error);
   },
   open(socket) {
     const self = socket.data;
@@ -932,11 +994,14 @@ const SocketHandlers = {
     }
 
     if (!self[kupgraded]) {
-      self[kBytesWritten] = socket.bytesWritten;
       // this is not actually emitted on nodejs when socket used on the connection
       // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
-      self.emit("connect", self);
-      self.emit("ready");
+      try {
+        self.emit("connect", self);
+        self.emit("ready");
+      } catch (e) {
+        reportError(e);
+      }
     }
 
     SocketHandlers.drain(socket);
@@ -985,8 +1050,15 @@ function unrefAfterDrain(self, handle) {
   if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed] && handle === self._handle) handle.unref?.();
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L101-L102
+function afterQueuedWrite(self) {
+  self[kLastWriteQueueSize] = 0;
+  self._unrefTimer();
+}
+
 function finishSocketEnd(self) {
-  if (self[kended]) return;
+  // destroy() isn't an EOF from the peer, so it emits 'close' without 'end'.
+  if (self[kended] || self.destroyed) return;
   self[kended] = true;
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
   self.push(null);
@@ -1034,10 +1106,11 @@ function SocketEmitEndNT(self, _err?) {
   // merely called): a peer reset while queued data is still unflushed is the
   // peer aborting mid-transfer and must surface (test-net-error-twice).
   const teardownNoise = self[kended] && self.writableFinished;
-  // _hadError: the failure already reached JS through the error dispatch
-  // (native on_error / a fatal write); node emits a socket error exactly
-  // once, so the close that follows it is delivered plain.
-  if (_err && !self.destroyed && !self._hadError && !teardownNoise && self.listenerCount("error") > 0) {
+  const hasErrorListener = self.listenerCount("error") > 0;
+  // A write in flight fails the socket anyway, so report the read error like Node does.
+  const reportsReadError = hasErrorListener || (self[kwriteCallback] != null && !self[kended]);
+  // _hadError: the error dispatch (native on_error, a fatal write) already reported this failure, and Node emits 'error' once.
+  if (_err && !self.destroyed && !self._hadError && !teardownNoise && reportsReadError) {
     // Its TLS socket reports the error. The handle is gone, so this socket closes with nothing to report.
     if (self.emit(kReadError, _err)) return void self.destroy();
     // The consumer can detach its 'error' listener between this close
@@ -1045,7 +1118,7 @@ function SocketEmitEndNT(self, _err?) {
     // finished just as the reset arrived); a last-resort no-op listener keeps
     // that race from surfacing as an uncaught exception - the no-listener
     // case is already a documented silent close.
-    self.once("error", () => {});
+    if (hasErrorListener) self.once("error", () => {});
     let errErrno;
     if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
       // A codeless close error that still carries the errno (Windows IOCP
@@ -1085,16 +1158,13 @@ function SocketEmitEndNT(self, _err?) {
     // no further events. What a finished exchange left unread is still the
     // reader's: its 'end' closes the socket.
     self.destroy();
+    cancelWriteNT(self, _err);
   }
   // A write that was waiting on the native drain can never complete once the
   // socket is gone - fail it so 'finish'/destroy are not stuck behind it.
   // kclosed, not _err: a native close can carry no error. A half-open 'end'
   // also lands here, and its write stays parked because it can still drain.
-  const pendingWrite = self[kwriteCallback];
-  if (pendingWrite && (self[kclosed] || self.destroyed)) {
-    self[kwriteCallback] = null;
-    pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
-  }
+  if (self[kwriteCallback] && (self[kclosed] || self.destroyed)) process.nextTick(failStrandedWriteNT, self, _err);
 }
 
 // --- SNICallback dispatch helpers (hoisted: no per-handshake closures) ---
@@ -1108,7 +1178,7 @@ function toSNIError(err) {
 
 // Applies one SNICallback resolution to the dispatch state. Node assigns
 // `sni_context = context.context || context`: both the SecureContext wrapper
-// and a raw native context are accepted, null/undefined falls through to the
+// and a raw native context are accepted, a falsy or primitive value keeps the
 // default context, and anything else is an invalid SNI context that drops the
 // connection before the handshake completes.
 function consumeSNIResult(state, err, context) {
@@ -1116,14 +1186,13 @@ function consumeSNIResult(state, err, context) {
     state.failed = toSNIError(err);
     return;
   }
-  if (context == null) return;
-  const innerContext = typeof context === "object" ? context.context : undefined;
-  if (innerContext) {
-    state.selected = innerContext;
-  } else if (state.server?.[kNativeSecureContextCtor] && context instanceof state.server[kNativeSecureContextCtor]) {
-    state.selected = context;
-  } else {
-    state.failed = new Error("Invalid SNI context");
+  if (!context) return;
+  const selected = context.context || context;
+  const NativeSecureContext = state.server?.[kNativeSecureContextCtor];
+  if (NativeSecureContext && selected instanceof NativeSecureContext) {
+    state.selected = selected;
+  } else if (typeof selected === "object" || typeof selected === "function") {
+    state.failed = new TypeError("Invalid SNI context");
   }
 }
 
@@ -1158,7 +1227,6 @@ const ServerHandlers = {
     if (!self) return;
 
     self._unrefTimer();
-    self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
   keylog(socket, line) {
@@ -1215,7 +1283,7 @@ const ServerHandlers = {
     //     (BoringSSL select-certificate retry) until then.
     // Nothing is cached - the callback runs per-connection the way Node's
     // does. The native dispatch passes the listener's `data` (the owning
-    // tls.Server) and the accepted connection's handle.
+    // tls.Server) and the accepted connection's handle, whose `data` is its TLSSocket.
     const cb = server?._SNICallback;
     if (typeof cb !== "function" || !servername) return undefined;
     const state: SNIState = {
@@ -1227,7 +1295,8 @@ const ServerHandlers = {
       suspended: false,
     };
     try {
-      cb.$call(server, servername, onSNIResolution.bind(null, state));
+      // https://github.com/nodejs/node/blob/v26.5.0/lib/internal/tls/wrap.js#L298
+      cb.$call(socketHandle?.data, servername, onSNIResolution.bind(null, state));
     } catch (err) {
       state.settled = true;
       state.failed = toSNIError(err);
@@ -1384,6 +1453,14 @@ const ServerHandlers = {
       }
     }
     self[kSessionAccepted] = true;
+    // A net.Socket with its own transport never emits 'connect', but a finished handshake proves it's connected.
+    if (self.connecting) {
+      try {
+        onUpgradedConnect(self, self[kupgraded]);
+      } catch (err) {
+        reportError(err);
+      }
+    }
     const pauseOnConnect = server?.pauseOnConnect;
     if (pauseOnConnect) {
       pauseOnCreate(self, socket);
@@ -1587,8 +1664,10 @@ function onconnection(err, clientHandle) {
   // Use the server's normalized fields so the per-socket flag agrees with the
   // native listener: node's tlsConnectionListener passes `this.requestCert`
   // (`=== true`-normalized), not the raw option.
-  _socket._requestCert = self._requestCert;
-  _socket._rejectUnauthorized = self._rejectUnauthorized;
+  if (typeof _socket[bunTlsSymbol] === "function") {
+    _socket._requestCert = self._requestCert;
+    _socket._rejectUnauthorized = self._rejectUnauthorized;
+  }
 
   _socket[kAttach](clientHandle.localPort, clientHandle);
 
@@ -1641,20 +1720,18 @@ function onconnection(err, clientHandle) {
   _socket.server = self;
   _socket._server = self;
 
-  if (pauseOnConnect && !isTLS) {
-    pauseOnCreate(_socket, clientHandle);
-  }
-
-  if (isTLS) initAcceptedTLSSocket(self, _socket);
+  // Before 'connection', so it can't undo a listener's readStop: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L623-L632
+  if (isTLS) {
+    initAcceptedTLSSocket(self, _socket);
+    _socket[kAcceptedTLS] = self;
+  } else if (pauseOnConnect) pauseOnCreate(_socket, clientHandle);
+  else _socket.read(0);
 
   // Node reports a throwing 'connection' listener as uncaughtException and keeps the socket.
   try {
     self.emit("connection", _socket);
   } catch (e) {
     reportError(e);
-  }
-  if (!pauseOnConnect && !isTLS) {
-    _socket.read(0);
   }
 }
 
@@ -1687,7 +1764,6 @@ const SocketHandlers2 = {
     $debug("Bun.Socket data");
     const { self } = socket.data;
     self._unrefTimer();
-    self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
   // See SocketHandlers.drain.
@@ -1701,15 +1777,13 @@ const SocketHandlers2 = {
       const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
-        self[kBytesWritten] = socket.bytesWritten;
         if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
       } else if (res) {
-        self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         unrefAfterDrain(self, socket);
+        afterQueuedWrite(self);
         callback(null);
       } else {
-        self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
       }
     }
@@ -1751,12 +1825,14 @@ const SocketHandlers2 = {
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
-    if (!leftToTLSSocket && err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
+    const hasErrorListener = self.listenerCount("error") > 0;
+    const reportsReadError = hasErrorListener || self[kwriteCallback] != null;
+    if (!leftToTLSSocket && err && !self.destroyed && socket === self._handle && reportsReadError) {
       // See SocketEmitEndNT.
       if (self.emit(kReadError, err)) return void self.destroy();
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
-      self.once("error", () => {});
+      if (hasErrorListener) self.once("error", () => {});
       if (err.code === undefined || err.code === "ECONNRESET") {
         // Shape it like Node's errnoException(UV_ECONNRESET, 'read').
         const er = new ConnResetException("read ECONNRESET") as Error & { errno?: number; syscall?: string };
@@ -1778,11 +1854,7 @@ const SocketHandlers2 = {
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).
-    const pendingWrite = self[kwriteCallback];
-    if (pendingWrite) {
-      self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
-    }
+    if (self[kwriteCallback]) process.nextTick(failStrandedWriteNT, self);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");
@@ -1895,6 +1967,11 @@ function traceConnectEnd(req) {
 
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
+  // Node dials through the handle, and @mswjs/interceptors replaces these methods to take over the connection.
+  const handle = self._handle;
+  const replaced = addressType === 6 ? handle.connect6 : handle.connect;
+  if (typeof replaced === "function") return replaced.$call(handle, req, address, port);
+  traceConnectStart(req);
   return kConnectDispatch(self, req, {
     hostname: address,
     port,
@@ -1916,16 +1993,30 @@ function kConnectTcp(self, addressType, req, address, port) {
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
-  return kConnectDispatch(self, req, {
+  const handle = self._handle;
+  const replaced = handle.connect;
+  if (typeof replaced === "function") return replaced.$call(handle, req, address);
+  traceConnectStart(req, address);
+  const data = { self, req };
+  const errno = kConnectDispatch(self, req, {
     hostname: address,
     unix: address,
     // Always half-open natively; see kConnect.
     allowHalfOpen: true,
     tls: req.tls,
     pauseOnConnect: req.pauseOnConnect,
-    data: { self, req },
+    data,
     socket: self[khandlers],
   });
+  // libuv returns EINVAL for a name it can't use and reports a failed connect(2) from the loop.
+  if (errno === 0 || errno === uv().UV_EINVAL) return errno;
+  setImmediate(afterPipeConnectFailed, self, handle, data, req, errno);
+  return 0;
+}
+
+function afterPipeConnectFailed(self, handle, data, req, errno) {
+  // destroy() or another connect() already ended this request.
+  if (self._handle === handle && handle.data === data) req.oncomplete(errno, handle, req, true, true);
 }
 
 function kConnectDispatch(self, req, opts) {
@@ -2004,8 +2095,9 @@ function Socket(options?): void {
 
   this[khandlers] = SocketHandlers2;
   this[kDestroyOnRead] = false;
-  this.bytesRead = 0;
+  this[kBytesRead] = 0;
   this[kBytesWritten] = undefined;
+  this[kLastWriteQueueSize] = 0;
   this[kclosed] = false;
   this[kended] = false;
   this.connecting = false;
@@ -2017,6 +2109,7 @@ function Socket(options?): void {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L401
   this[kTimeout] = null;
   this[kwriteCallback] = undefined;
+  this[kCanceledWrite] = undefined;
   this._pendingData = undefined;
   this._pendingEncoding = undefined; // for compatibility
   this._hadError = false;
@@ -2032,19 +2125,14 @@ function Socket(options?): void {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
+  let stats;
   if (fd !== undefined) {
     // Adopt pipe/character-device fds with synchronous writes. Matches
     // node's effective semantics for stdio-style sockets: writes to a pipe
     // complete inline, so data survives an immediate process.exit().
     // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
-    // e.g. new Socket({ fd: 2, readable: false, writable: true })): a bare
-    // { fd } is the connect({ fd }) path (child_process extra stdio), which
-    // attaches a native duplex handle in Socket.prototype.connect - adopting
-    // here would end its readable side and stomp its write path.
-    // Network-socket fds are not supported (handle adoption needs native
-    // support); those keep the previous validated-but-inert behavior.
+    // e.g. new Socket({ fd: 2, readable: false, writable: true })).
     if (opts.writable === true) {
-      let stats;
       try {
         stats = require("node:fs").fstatSync(fd);
       } catch {
@@ -2056,19 +2144,27 @@ function Socket(options?): void {
       if (stats.isFile()) {
         throw $ERR_INVALID_FD_TYPE("FILE");
       }
-      // isSocket() covers stdio handed to a child as a socketpair (how spawn
-      // implements pipes on unix); writable-only adoption with sync write(2)
-      // is correct there too.
-      const optionsReadable = opts.readable;
-      if (stats.isFIFO() || stats.isCharacterDevice() || (stats.isSocket() && optionsReadable !== true)) {
-        this[kSyncWriteFd] = fd;
-        this._write = fdSyncWrite;
-        this._writev = fdSyncWritev;
-        // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
-        if (optionsReadable !== true && optionsReadable !== false) {
-          this.push(null);
-          this.read(0);
-        }
+    }
+  }
+
+  // After the fd type check like Node, but before adopting the fd: a socket discarded by the throw would close it.
+  const typeOfService = opts.typeOfService;
+  if (typeOfService !== undefined) {
+    validateInt32(typeOfService, "options.typeOfService", 0, 255);
+    this[kSetTOS] = typeOfService;
+  }
+
+  if (stats !== undefined) {
+    // isSocket() covers stdio handed to a child as a socketpair, which is how spawn implements pipes on unix.
+    const optionsReadable = opts.readable;
+    if (stats.isFIFO() || stats.isCharacterDevice() || (stats.isSocket() && optionsReadable !== true)) {
+      this[kSyncWriteFd] = fd;
+      this._write = fdSyncWrite;
+      this._writev = fdSyncWritev;
+      // No native reads on this path: an unspecified `readable` gets EOF here (`false` already ended it in the Duplex).
+      if (optionsReadable !== true && optionsReadable !== false) {
+        this.push(null);
+        this.read(0);
       }
     }
   }
@@ -2116,7 +2212,7 @@ function Socket(options?): void {
         if (dest === true) {
           let ret;
           try {
-            ret = onreadCallback(total - offset, true);
+            ret = onreadCallback.$call(self, total - offset, true);
             if (onreadBufferIsFn) {
               const next = onreadBuffer();
               if (isUint8Array(next)) self[kOnreadBuffer] = next;
@@ -2147,7 +2243,7 @@ function Socket(options?): void {
         offset += n;
         let ret;
         try {
-          ret = onreadCallback(n, dest);
+          ret = onreadCallback.$call(self, n, dest);
           if (onreadBufferIsFn) {
             const next = onreadBuffer();
             if (isUint8Array(next)) self[kOnreadBuffer] = next;
@@ -2201,6 +2297,20 @@ function Socket(options?): void {
     }
     this.blockList = optsBlockList;
   }
+
+  // usockets can't read a FIFO (recv() fails with ENOTSOCK), and it would close fds 0-2 on destroy, which Node never does.
+  if (
+    process.platform !== "win32" &&
+    fd > 2 &&
+    this[kSyncWriteFd] === undefined &&
+    opts.readable !== false &&
+    !this[bunTlsSymbol]
+  ) {
+    try {
+      stats ??= require("node:fs").fstatSync(fd);
+    } catch {}
+    if (stats?.isSocket()) Socket.prototype.connect.$call(this, { fd });
+  }
 }
 $toClass(Socket, "Socket", Duplex);
 
@@ -2215,15 +2325,20 @@ Socket.prototype.address = function address() {
 Socket.prototype._onTimeout = function () {
   // if there is pending data, write is in progress
   // so we suppress the timeout
-  if (this._pendingData) {
+  // A write queued before 'connect' isn't in progress yet.
+  if (this._pendingData && !this.connecting) {
     return;
   }
 
   const handle = this._handle;
-  // if there is a handle, and it has pending data,
-  // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
-    return;
+  if (handle) {
+    // A write queue that moved since the last tick is still draining, so wait another period. A stalled one times out.
+    const writeQueueSize = getBufferedAmount(handle);
+    if (writeQueueSize !== this[kLastWriteQueueSize]) {
+      this[kLastWriteQueueSize] = writeQueueSize;
+      this._unrefTimer();
+      return;
+    }
   }
   this.emit("timeout");
 };
@@ -2237,15 +2352,27 @@ Object.defineProperty(Socket.prototype, "bufferSize", {
   },
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L939-L950
+Object.defineProperty(Socket.prototype, "bytesRead", {
+  configurable: false,
+  enumerable: true,
+  get: function () {
+    const handle = this._handle;
+    return handle ? handleBytesRead(this, handle) : this[kBytesRead];
+  },
+});
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1043-L1045
 Object.defineProperty(Socket.prototype, "_bytesDispatched", {
   get: function () {
-    return this[kBytesWritten] || 0;
+    const handle = this._handle;
+    return (handle ? handle.bytesWritten : this[kBytesWritten]) || 0;
   },
 });
 
 Object.defineProperty(Socket.prototype, "bytesWritten", {
   get: function (this: SocketInstance) {
-    let bytes = this[kBytesWritten] || 0;
+    let bytes = this._bytesDispatched;
     const data = this._pendingData;
     const writableBuffer = this.writableBuffer;
     if (!writableBuffer) return undefined;
@@ -2282,7 +2409,6 @@ Socket.prototype[kAttach] = function (port, socket) {
   }
 
   if (!this[kupgraded]) {
-    this[kBytesWritten] = socket.bytesWritten;
     // this is not actually emitted on nodejs when socket used on the connection
     // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
     this.emit("connect", this);
@@ -2296,13 +2422,15 @@ Socket.prototype[kCloseRawConnection] = function () {
   // Only a destroy the connection's owner started counts as it closing under this socket.
   if (!connection.destroyed) connection.removeListener("close", this[kOnUpgradedClose]);
   connection.connecting = false;
-  connection._handle = null;
+  detachSocket(connection);
   connection.unref();
   connection.destroy();
 };
 
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
+  // A write that destroy() canceled belongs to the old connection. Settled later, it would fail this one.
+  cancelWriteNT(this);
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
@@ -2315,12 +2443,14 @@ Socket.prototype.connect = function connect(...args) {
       process.nextTick(destroyNT, this, ex);
       return this;
     }
-    this.servername = options.servername;
+    if (typeof this[bunTlsSymbol] === "function") this.servername = options.servername;
     if (socket) {
       connection = socket;
     }
-    if (fd != null) {
-      doConnect(this._handle, {
+    // createConnection({ fd }) gets here after the constructor already adopted the fd.
+    const { _handle } = this;
+    if (fd != null && _handle?.fd !== fd) {
+      doConnect(_handle, {
         data: this,
         fd: fd,
         ...(options.fdIsRawSocket === true ? { fdIsRawSocket: true } : {}),
@@ -2353,16 +2483,20 @@ Socket.prototype.connect = function connect(...args) {
     if (fd != null) {
       return this;
     }
+    const bunTLS = this[bunTlsSymbol];
     if (
       // TLSSocket already created a socket and is forwarding it here. This is a private API.
-      !(socket && $isObject(socket) && socket instanceof Duplex) &&
+      !(
+        socket &&
+        $isObject(socket) &&
+        (typeof bunTLS === "function" ? isWrappableStream(socket) : socket instanceof Duplex)
+      ) &&
       // public api for net.Socket.connect
       port === undefined &&
       path == null
     ) {
       throw $ERR_MISSING_ARGS(["options", "port", "path"]);
     }
-    const bunTLS = this[bunTlsSymbol];
     var tls: TLSConnectOptions | undefined = undefined;
     if (typeof bunTLS === "function") {
       tls = bunTLS.$call(this, port, host, true);
@@ -2380,12 +2514,15 @@ Socket.prototype.connect = function connect(...args) {
         this[bunTLSConnectOptions] = tls;
       }
       if (connection) {
+        // An http 'connect' or 'upgrade' socket is connected but has no fd to adopt.
+        const connectedWithoutHandle = !connection._handle && !isNotConnected(connection);
         if (
           typeof connection !== "object" ||
           !(connection instanceof Socket) ||
-          typeof connection[bunTlsSymbol] === "function"
+          typeof connection[bunTlsSymbol] === "function" ||
+          connectedWithoutHandle
         ) {
-          if (connection instanceof Duplex) {
+          if (isWrappableStream(connection)) {
             upgradeDuplex = true;
           } else {
             throw new TypeError("socket must be an instance of net.Socket or Duplex");
@@ -2478,6 +2615,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  // Closing the handle first would fail this write from the close handler, ahead of 'error'.
+  const canceled = takeWriteToCancel(this);
   const upgraded = this[kupgraded];
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
@@ -2490,6 +2629,18 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     // socket goes through the fresh handle's normal write path.
     delete this._write;
     delete this._writev;
+    const sink = this[kSyncWriteSink];
+    if (sink !== undefined) {
+      this[kSyncWriteSink] = undefined;
+      // The sink has its own dup of the fd. Unref it, or bytes the reader never reads would block process exit.
+      sink.unref();
+      try {
+        const ended = sink.end();
+        if ($isPromise(ended)) ended.$then(noop, noop);
+      } catch (e) {
+        err ||= e;
+      }
+    }
     if (syncFd > 2) {
       try {
         require("node:fs").closeSync(syncFd);
@@ -2509,7 +2660,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     $debug("close handle");
     const isException = err ? true : false;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
-    // this[kBytesRead] = this._handle.bytesRead;
+    this[kBytesRead] = handleBytesRead(this, this._handle);
     this[kBytesWritten] = this._handle.bytesWritten;
 
     const currentHandle = this._handle;
@@ -2553,11 +2704,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     }
     callback(err);
     closeOwedRaw(this, upgraded);
-    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
+    if (canceled) process.nextTick(cancelWriteNT, this);
   } else {
     callback(err);
     closeOwedRaw(this, upgraded);
-    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
+    if (canceled) process.nextTick(cancelWriteNT, this);
     const transport = transportToDestroy(this);
     if (transport !== undefined) abortTransport(transport);
     if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
@@ -2679,17 +2830,31 @@ Socket.prototype.pause = function pause() {
   return Duplex.prototype.pause.$call(this);
 };
 
+Socket.prototype[kReadStop] = function () {
+  const handle = this._handle;
+  if (handle) readStop(this, handle);
+};
+
 // Server-side TLS upgrade over an accepted socket, for
 // `new tls.TLSSocket(socket, { isServer: true })`. Adopts the connection's fd
 // into an accept-state TLS socket (us_socket_adopt_tls with is_client=0) so the
 // native read path drives the handshake. Lives here, not tls.ts, to reach
 // ServerHandlers — the shared accepted-socket handler table, with per-socket
 // state carried via `data` (mirrors tls.createServer's one-handler-for-all model).
-Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, tls) {
+Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (
+  connection: SocketInstance & { encrypted?: boolean },
+  tls,
+) {
   linkUpgraded(this, connection);
   const options = { data: this, tls, socket: serverHandlersFor(this), isServer: true };
   const socket = connection._handle;
-  if (!socket || connection.encrypted || isNamedPipeSocket(socket) || hasUnflushedWrites(connection)) {
+  if (
+    !socket ||
+    !(connection instanceof Socket) ||
+    connection.encrypted ||
+    isNamedPipeSocket(socket) ||
+    hasUnflushedWrites(connection)
+  ) {
     // No adoptable fd (generic Duplex, named pipe, never dialed), TLS over TLS (the fd belongs to the
     // outer SSL layer), or pending plain writes that must flush first.
     attachTLSEngine(this, connection, options);
@@ -2813,41 +2978,84 @@ function fdSyncWrite(chunk, encoding, callback) {
   const fs = require("node:fs");
   // node's _writeGeneric restarts the idle timer on every write.
   this._unrefTimer();
+  const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+  let offset = 0;
   try {
-    const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-    let offset = 0;
     while (offset < buf.length) {
       offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
     }
-    // No native handle on this path, so feed bytesWritten/_bytesDispatched
-    // directly (node accounts these via the libuv handle).
-    this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
-    callback();
   } catch (err) {
-    callback(err);
+    if (!isFullPipe(this, err)) return callback(err);
+    return queueFdWrite(this, offset, buf.subarray(offset), callback);
   }
+  // No native handle counts these bytes for bytesWritten and _bytesDispatched.
+  this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
+  callback();
+}
+
+function toBuffer({ chunk, encoding }) {
+  return typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
 }
 
 function fdSyncWritev(data, callback) {
   const fs = require("node:fs");
   this._unrefTimer();
-  try {
-    let total = 0;
-    for (let i = 0; i < data.length; i++) {
-      const { chunk, encoding } = data[i];
-      const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-      let offset = 0;
+  let total = 0;
+  for (let i = 0; i < data.length; i++) {
+    const buf = toBuffer(data[i]);
+    let offset = 0;
+    try {
       while (offset < buf.length) {
         offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
       }
-      total += offset;
+    } catch (err) {
+      if (!isFullPipe(this, err)) return callback(err);
+      const rest = [buf.subarray(offset)];
+      while (++i < data.length) ArrayPrototypePush.$call(rest, toBuffer(data[i]));
+      return queueFdWrite(this, total + offset, Buffer.concat(rest), callback);
     }
-    // See fdSyncWrite: no native handle to account these on.
-    this[kBytesWritten] = (this[kBytesWritten] || 0) + total;
-    callback();
-  } catch (err) {
-    callback(err);
+    total += offset;
   }
+  // See fdSyncWrite: no native handle to account these on.
+  this[kBytesWritten] = (this[kBytesWritten] || 0) + total;
+  callback();
+}
+
+// Returns true if write(2) failed because the fd is non-blocking, its buffer is full, and a FileSink can poll it.
+function isFullPipe(self, err) {
+  if (process.platform === "win32" || err?.code !== "EAGAIN") return false;
+  if (self[kSyncWriteSink] !== undefined) return true;
+  const stats = require("node:fs").fstatSync(self[kSyncWriteFd]);
+  return stats.isFIFO() || stats.isSocket();
+}
+
+// Writes `rest` once the fd is writable again, like Node's pipe handle. `written` bytes of this write are already out.
+function queueFdWrite(self, written, rest, callback) {
+  // Node counts a write when the handle gets it.
+  self[kBytesWritten] = (self[kBytesWritten] || 0) + written + rest.length;
+  let result;
+  try {
+    const sink = (self[kSyncWriteSink] ??= Bun.file(self[kSyncWriteFd]).writer());
+    result = sink.write(rest);
+    // The sink buffers a small chunk instead of writing it.
+    if (!$isPromise(result)) result = sink.flush();
+  } catch (e) {
+    return callback(e);
+  }
+  if (!$isPromise(result)) return callback();
+  self[kwriteCallback] = callback;
+  result.$then(
+    afterQueuedFdWrite.bind(undefined, self, callback, null),
+    afterQueuedFdWrite.bind(undefined, self, callback),
+  );
+}
+
+function afterQueuedFdWrite(self, callback, err) {
+  // destroy() canceled it.
+  if (self[kwriteCallback] !== callback) return;
+  self[kwriteCallback] = null;
+  // A throw from a promise reaction would be an unhandled rejection. Node reports it as an uncaught exception.
+  guardCallback(callback)(err);
 }
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {
@@ -2901,6 +3109,11 @@ Socket.prototype.setNoDelay = function setNoDelay(enable = true) {
   return this;
 };
 
+// EINVAL is a unix socket, EBADF is TLS over a stream. Node's Pipe and TLSWrap lack these methods, so it only caches the value.
+function handleHasNoTypeOfService(socket, err) {
+  return err === uv().UV_EINVAL || (err === uv().UV_EBADF && !socket.connecting);
+}
+
 // Matches Node's setTypeOfService/getTypeOfService (lib/net.js + TCPWrap).
 // The native handle does the setsockopt (IP_TOS / IPV6_TCLASS); a socket
 // without a handle yet caches the value and applies it on connect.
@@ -2921,7 +3134,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
     const err = this._handle.setTypeOfService(tos);
     // Windows often restricts TOS or reports errors even when partially
     // applied - best-effort there, the way Node treats it.
-    if (err && process.platform !== "win32") {
+    if (err && process.platform !== "win32" && !handleHasNoTypeOfService(this, err)) {
       throw new ErrnoException(err, "setTypeOfService");
     }
   }
@@ -2936,7 +3149,7 @@ Socket.prototype.getTypeOfService = function getTypeOfService() {
   if (typeof res === "number" && res < 0) {
     // getsockopt(IP_TOS) commonly fails on Windows: fall back to the cached
     // value the way Node does.
-    if (process.platform === "win32") {
+    if (process.platform === "win32" || handleHasNoTypeOfService(this, res)) {
       return this[kSetTOS] !== undefined ? this[kSetTOS] : 0;
     }
     throw new ErrnoException(res, "getTypeOfService");
@@ -3068,6 +3281,15 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   }
   this._unrefTimer();
   if (this.secureConnecting) this[kPreHandshakeWrite] = true;
+  if (
+    chunk.length > kMaxTLSWriteUnits &&
+    socket[kTLSOverStream] &&
+    (typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length) > kMaxTLSWrite
+  ) {
+    // https://github.com/nodejs/node/blob/v26.5.0/src/crypto/crypto_tls.cc#L1124-L1126
+    callback(new ErrnoException(uv().UV_EPROTO, "write"));
+    return false;
+  }
   if (socket.readyState < 0) {
     // The handle's native socket was already closed (e.g. handle.close() was
     // called directly): fail the write the way a write(2) on a closed fd does
@@ -3083,7 +3305,6 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   const res = socket.$write(chunk, encoding);
-  this[kBytesWritten] = socket.bytesWritten;
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.
@@ -3383,6 +3604,8 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
+  // A listener may destroy() the socket. Connecting now would open a handle with no owner.
+  if (!self.connecting) return;
 
   if (addressType === 6 || addressType === 4) {
     if (self.blockList?.check(address, `ipv${addressType}`)) {
@@ -3399,7 +3622,6 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
     req.tls = tls;
     req.pauseOnConnect = options.pauseOnConnect;
 
-    traceConnectStart(req);
     err = kConnectTcp(self, addressType, req, address, port);
     // kConnectTcp returns 0 (not undefined) on the async-connect path, so the
     // perf context must be established whenever the attempt was dispatched
@@ -3420,7 +3642,6 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
     req.tls = tls;
     req.pauseOnConnect = options.pauseOnConnect;
 
-    traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
   }
 
@@ -3502,6 +3723,7 @@ function internalConnectMultiple(context, canceled?) {
 
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
+  if (!self.connecting) return;
 
   // const req = new TCPConnectWrap();
   const req: ConnectReq = {};
@@ -3516,7 +3738,6 @@ function internalConnectMultiple(context, canceled?) {
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 
-  traceConnectStart(req);
   err = kConnectTcp(self, addressType, req, address, port);
 
   if (err) {
@@ -3529,9 +3750,7 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
-  // The if(err) above covers sync failure; this catches a sync open or a
-  // destroy() from a 'connectionAttempt' listener. Arming the timer now
-  // would capture a stale handle and overwrite the next attempt's kTimeout.
+  // After a sync open, arming the timer would capture a stale handle and overwrite the next attempt's kTimeout.
   if (!self.connecting || context.current !== current + 1) {
     return;
   }
@@ -3623,8 +3842,13 @@ function afterConnect(status, handle, req, readable, writable) {
     const pausedBeforeConnect = self.isPaused() || (self.readableEnded && self[kOnreadBuffer] === undefined);
     if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
 
-    self.emit("connect");
-    self.emit("ready");
+    // Node reports a throwing 'connect' or 'ready' listener as uncaughtException and keeps the socket.
+    try {
+      self.emit("connect");
+      self.emit("ready");
+    } catch (e) {
+      reportError(e);
+    }
 
     if (self[kPerfHooksNetConnectContext] && hasObserver("net")) {
       stopPerf(self, kPerfHooksNetConnectContext);
@@ -3881,21 +4105,18 @@ Server.prototype.address = function address() {
 
 Server.prototype.getConnections = function getConnections(callback) {
   if (typeof callback === "function") {
-    //in Bun case we will never error on getConnections
-    //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
-    //if disconnected will only pass null as well and 0 connected
-    callback(null, this._handle ? this._connections : 0);
+    process.nextTick(callback, null, this._connections);
   }
   return this;
 };
 
-Server.prototype.listen = function listen(port, hostname, onListen) {
+Server.prototype.listen = function listen(port, hostname, backlogArg) {
   const argsLength = arguments.length;
-  if (typeof port === "string") {
-    const numPort = Number(port);
-    if (!Number.isNaN(numPort)) port = numPort;
-  }
-  let backlog;
+  // The callback is always the last argument: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L315-L319
+  const lastArg = argsLength > 0 ? arguments[argsLength - 1] : undefined;
+  let onListen = typeof lastArg === "function" ? lastArg : undefined;
+  // (path, backlog), (port, backlog) or (port, host, backlog)
+  let backlog = toNumber(argsLength > 1 && hostname) || toNumber(argsLength > 2 && backlogArg);
   let path;
   let exclusive = false;
   let reusePort = false;
@@ -3903,35 +4124,14 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   let readableAll = false;
   let writableAll = false;
   let fd;
-  //port is actually path
-  if (typeof port === "string") {
-    if (Number.isSafeInteger(hostname)) {
-      if (hostname > 0) {
-        //hostname is backlog
-        backlog = hostname;
-      }
-    } else if (typeof hostname === "function") {
-      //hostname is callback
-      onListen = hostname;
-    }
-
+  if (isPipeName(port)) {
     path = port;
     hostname = undefined;
     port = undefined;
   } else {
-    if (typeof hostname === "number") {
-      backlog = hostname;
-      hostname = undefined;
-    } else if (typeof hostname === "function") {
-      onListen = hostname;
-      hostname = undefined;
-    } else if (typeof hostname === "string" && typeof onListen === "number") {
-      backlog = onListen;
-      onListen = argsLength > 3 ? arguments[3] : undefined;
-    }
+    if (typeof hostname !== "string") hostname = undefined;
 
     if (typeof port === "function") {
-      onListen = port;
       port = 0;
     } else if (port !== null && typeof port === "object") {
       const options = port;
@@ -3946,7 +4146,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       // constructor (it shapes accepted sockets' Duplex behavior); the native
       // listen always uses allowHalfOpen: true.
       reusePort = options.reusePort;
-      backlog = options.backlog;
+      backlog = options.backlog || backlog;
       // For a unix-socket listen, readableAll/writableAll chmod the socket file
       // in kRealListen; threaded through as locals (not stashed on the instance).
       readableAll = options.readableAll;
@@ -4102,13 +4302,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       contexts,
       onListen,
     );
-  } catch (err) {
+  } catch (err: any) {
     const isUnix = path != null;
-    process.nextTick(
-      emitErrorNextTick,
-      this,
-      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
-    );
+    // After the IPv4 fallback, the address that failed isn't `hostname`.
+    const address = isUnix ? path : err?.address || hostname;
+    process.nextTick(emitErrorNextTick, this, formatListenError(err, address, isUnix ? undefined : port));
   }
   return this;
 };
@@ -4126,6 +4324,7 @@ Server.prototype[kRealListen] = function (
   contexts,
   _onListen,
   fd,
+  hostDefaulted,
 ) {
   // NOTE: accepted sockets are always allowHalfOpen:true at the native layer
   // (hardcoded below); the stream layer implements allowHalfOpen=false
@@ -4181,7 +4380,7 @@ Server.prototype[kRealListen] = function (
       pauseOnConnect: this.pauseOnConnect,
     });
   } else {
-    this._handle = Bun.listen({
+    const listenOptions = {
       port,
       hostname,
       tls,
@@ -4192,7 +4391,15 @@ Server.prototype[kRealListen] = function (
       socket: serverHandlersFor(this),
       data: this,
       pauseOnConnect: this.pauseOnConnect,
-    });
+    };
+    try {
+      this._handle = Bun.listen(listenOptions);
+    } catch (err: any) {
+      // No IPv6 in the kernel: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2127-L2139
+      if (!hostDefaulted || err?.code !== "EAFNOSUPPORT") throw err;
+      listenOptions.hostname = "0.0.0.0";
+      this._handle = Bun.listen(listenOptions);
+    }
   }
 
   this._handle[owner_symbol] = this;
@@ -4329,6 +4536,7 @@ function listenInCluster(
       contexts,
       onListen,
       fd,
+      address == null,
     );
     return;
   }
@@ -4501,6 +4709,11 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  // Bytes the onread callback declined belong to the previous connection.
+  if (self[kOnreadTail] !== undefined) {
+    self[kOnreadTail] = undefined;
+    self[kOnreadPendingEnd] = false;
+  }
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;
@@ -4557,6 +4770,8 @@ function uvListenErrorDescription(code) {
       return "address not available";
     case "EINVAL":
       return "invalid argument";
+    case "EAFNOSUPPORT":
+      return "address family not supported";
     default:
       return undefined;
   }
@@ -4615,6 +4830,10 @@ function _setSimultaneousAccepts() {
 
 Server.prototype[kArmHandshakeTimeout] = function (socket) {
   initAcceptedTLSSocket(this, socket);
+};
+
+Server.prototype[kSelectSNIContext] = function (servername, socketHandle) {
+  return ServerHandlers.serverName(this, servername, socketHandle);
 };
 
 const netExports = {

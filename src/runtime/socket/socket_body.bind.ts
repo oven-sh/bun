@@ -20,3 +20,4 @@ export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandl
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
+export const getBytesRead = b.fn({ args: { socket: SocketHandle }, returns: b.f64 });

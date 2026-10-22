@@ -151,7 +151,8 @@ enum {
     LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
     /* Ask the kernel to defer accept() until the client has sent data (TCP_DEFER_ACCEPT on
      * Linux, SO_ACCEPTFILTER "dataready" on FreeBSD). When set, accepted sockets are
-     * dispatched as readable immediately, skipping a round-trip through the event loop.
+     * dispatched as readable immediately, skipping a round-trip through the event loop
+     * (once the TLS handshake budget is spent, only if the socket has input).
      * Safe for HTTP/TLS where the client always sends first; do not use for protocols where
      * the server sends the first bytes. */
     LIBUS_LISTEN_DEFER_ACCEPT = 64,
@@ -432,7 +433,8 @@ void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
     char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
     char **out_ca, size_t *out_ca_len, const char **err_reason);
-/* After us_listen_socket_close(ls) the resolver still runs for accepted connections, with NULL in place of `ls`. */
+/* The resolver alone selects: the names of us_listen_socket_add_server_name aren't looked up, and NULL keeps the default context.
+ * After us_listen_socket_close(ls) the resolver still runs for accepted connections, with NULL in place of `ls`. */
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
     struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket)) nonnull_fn_decl;
 /* Resume a handshake suspended by an async SNICallback (the dynamic resolver
@@ -453,6 +455,12 @@ int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it: us_dispatch_socket_server_name then resolves. */
 void us_socket_on_server_name(us_socket_r s);
+/* For a server-side SSL, before its handshake starts. us_dispatch_alpn_offer then runs before BoringSSL picks the
+ * cipher, the certificate and the session: ahead of the server name resolvers on TLS 1.3, after them on TLS 1.2. */
+void us_ssl_on_alpn_offer(struct ssl_st *ssl);
+/* node:tls setKeyCert() on a server: gives this connection `ctx`'s certificate, key and CAs, with `sid_ctx` as its session
+ * id context. A context that SNI selects later replaces them. Returns 0 if `ctx` has no certificate. */
+int us_ssl_set_key_cert(struct ssl_st *ssl, struct ssl_ctx_st *ctx, const unsigned char *sid_ctx, size_t sid_ctx_length);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or
@@ -582,6 +590,10 @@ int us_ssl_take_error_reason(char *reason, size_t length);
 void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
 /* `ctx` is the X509_STORE_CTX of a verify callback. */
 void *us_ssl_wrapper_from_verify(void *ctx);
+/* Switches `ssl` to the context that its server name selected. */
+void us_ssl_apply_selected_ctx(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
+/* Makes the select-certificate step of `ssl` ask its wrapper (us_ssl_wrapper_select_cert). */
+void us_ssl_wrapper_on_server_name(struct ssl_st *ssl);
 /* Owner data for us_dispatch_new_session. `on_free(sink)` runs once, on SSL_free. */
 void us_socket_set_session_sink(us_socket_r s, void *sink, void (*on_free)(void *));
 void *us_socket_session_sink(us_socket_r s);
@@ -729,6 +741,8 @@ void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) nonnull_fn_decl;
+/* Call before another process gets a duplicate of the listening socket. */
+void us_listen_socket_set_shared(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* Walk a group's live listeners. The list is the source of truth — anything
  * that caches us_listen_socket_t* across event-loop ticks (e.g. a std::vector
  * in C++) is a UAF once a listener is closed and freed in loop_post. */

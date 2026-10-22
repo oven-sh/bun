@@ -84,6 +84,7 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
 #define LIBUS_ECONNRESET WSAECONNRESET
+#define LIBUS_EADDRINUSE WSAEADDRINUSE
 /* What libuv translates to UV_ECANCELED (uv_translate_sys_error). */
 #define LIBUS_ECANCELED WSAEINTR
 #else
@@ -91,6 +92,7 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
 #define LIBUS_ECONNRESET ECONNRESET
+#define LIBUS_EADDRINUSE EADDRINUSE
 #define LIBUS_ECANCELED ECANCELED
 #endif
 #include <stdbool.h>
@@ -154,6 +156,9 @@ extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session
 /* Returns a US_IDENTITY_* verdict on the name of the server's certificate. Must not run JS. */
 extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
 extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
+/* The ALPN protocols a ClientHello offers, as entries of (u8 length, bytes). Only for an SSL that called us_ssl_on_alpn_offer.
+ * Returns 0 if the owner refuses them all. */
+extern int us_dispatch_alpn_offer(struct ssl_st *ssl, const unsigned char *protocols, unsigned int length);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 /* crypto/sni_tree.cpp: the one place server names are compared. */
 void *sni_new();
@@ -373,11 +378,13 @@ struct us_socket_t {
   unsigned char ssl_sni_resolver : 1;
   /* This socket has entries in the loop's ssl_pending_events. */
   unsigned char ssl_has_pending_events : 1;
-  /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
+  /* Peer FIN was dispatched as on_end on a half-open socket. on_end never re-fires, and only a shutdown re-adds readable interest, to close. */
   unsigned char read_eof : 1;
   /* A hangup that leaves bytes unsent closes the socket even while it is paused (loop.c defers it otherwise).
    * For an owner whose pause can wait for those bytes to drain: node:http's pipelining. */
   unsigned char hangup_closes_unsent : 1;
+  /* connect() itself returned 0 (AF_UNIX), so the connection was established before its first poll event. */
+  unsigned char connect_returned_zero : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
@@ -395,19 +402,36 @@ struct us_socket_t {
    * us_socket_write_check_error). Reset by any send that makes progress.
    * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
   unsigned char unclassified_send_failures;
+  /* Timer-sweep ticks this socket has spent parked in the low-priority queue. Fits in the same gap. */
+  unsigned char low_prio_ticks;
+  /* Full turns of the 240-tick wheel to skip before a match on `timeout` fires. Fits in the same gap. */
+  uint16_t timeout_laps;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
    * in adopt_tls / connect-with-ssl_ctx / accept-with-ssl_ctx. */
   struct ssl_st *ssl;
   struct us_socket_t *prev, *next;
-  struct us_socket_t *connect_next;
+  union {
+    /* connect_state != NULL: the next candidate of that us_connecting_socket_t. */
+    struct us_socket_t *connect_next;
+    /* connect_state == NULL, still connecting: the DNS cache entry this socket's address came from. */
+    struct addrinfo_request *connect_addrinfo_req;
+  };
   struct us_connecting_socket_t *connect_state;
 };
 
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
+
+/* Call once a connect without a connect_state succeeds, fails or is closed. `failed` evicts the cache entry. */
+static inline void us_internal_socket_release_addrinfo(struct us_socket_t *s, int failed) {
+    if (s->connect_addrinfo_req) {
+        Bun__addrinfo_freeRequest(s->connect_addrinfo_req, failed);
+        s->connect_addrinfo_req = NULL;
+    }
+}
 
 /* Whether a raw write can send: the fd is open and no FIN went out. */
 static inline int us_internal_socket_can_raw_write(struct us_socket_t *s) {
@@ -453,6 +477,8 @@ struct us_connecting_socket_t {
     unsigned char kind;
     uint16_t port;
     int error;
+    /* Why the most recent address failed (LIBUS_ERR numbering). Becomes `error` once every address has. */
+    int last_candidate_error;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;
@@ -533,6 +559,8 @@ struct us_listen_socket_t {
   unsigned char deferred_accept;
   /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */
   unsigned char accept_paused;
+  /* Another process can accept on this socket too: it was sent over IPC or adopted from a descriptor (bsd_accept_socket). */
+  unsigned char shared;
 };
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);

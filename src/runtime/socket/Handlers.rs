@@ -423,6 +423,13 @@ impl Handlers {
         self.cell.set_callbacks(global_object, &wrapped);
         self.binary_type.set(reloaded.binary_type);
     }
+
+    /// Like [`apply_reload`](Self::apply_reload), but copies `source`'s callbacks, which are already context-wrapped.
+    pub(crate) fn copy_callbacks_from(&self, global_object: &JSGlobalObject, source: &Handlers) {
+        self.cell
+            .set_callbacks(global_object, &source.cell.callbacks());
+        self.binary_type.set(source.binary_type.get());
+    }
 }
 
 /// One in-flight dispatch into JS. Holds an `Rc` so the callbacks it is about
@@ -479,9 +486,8 @@ impl SocketConfig {
             uws::LIBUS_LISTEN_DEFAULT
         };
 
-        if self.allow_half_open {
-            flags |= uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
-        }
+        // The loop never closes on a FIN. `NewSocket::on_end` applies `allow_half_open`.
+        flags |= uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
         if self.ipv6_only {
             flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
         }
@@ -509,7 +515,12 @@ impl SocketConfig {
                     }
                 }
                 SocketOptionsTLS::Object(ssl) => {
-                    SSLConfig::from_generated(vm, global, ssl, mode.is_server())?
+                    match SSLConfig::from_generated(vm, global, ssl, mode.is_server()) {
+                        // `None` means the object sets no option. A client that passed one still asked for TLS.
+                        Ok(None) if !mode.is_server() => Some(super::tls_true_defaults(vm, false)),
+                        Ok(configured) => configured,
+                        Err(err) => return Err(err),
+                    }
                 }
             };
             break 'blk SocketConfig {

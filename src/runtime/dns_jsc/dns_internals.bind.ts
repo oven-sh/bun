@@ -3,6 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::dns_jsc::Resolver" });
 
 export const getRuntimeDefaultResultOrderOption = b.fn({ returns: b.string });
+export const setConnectResultOrder = b.fn({ args: { order: b.string.utf8 } });
 
 /** A non-string means "A". */
 export const RecordTypeArgument = b.union({ label: b.string.utf8, ignored: b.any });

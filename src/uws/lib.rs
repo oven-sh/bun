@@ -172,15 +172,15 @@ pub mod ssl_wrapper {
             BIO, BIO_CTRL_FLUSH, BIO_METHOD, BIO_TYPE_SOURCE_SINK, BIO_clear_retry_flags,
             BIO_get_data, BIO_get_new_index, BIO_meth_new, BIO_meth_set_ctrl, BIO_meth_set_read,
             BIO_meth_set_write, BIO_new, BIO_set_data, BIO_set_init, BIO_set_retry_read,
-            ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX, SSL_ERROR_SSL, SSL_ERROR_SYSCALL,
-            SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE,
-            SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free,
-            SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
-            SSL_free, SSL_get_error, SSL_get_shutdown, SSL_get_verify_result, SSL_is_init_finished,
-            SSL_new, SSL_pending, SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio,
-            SSL_set_connect_state, SSL_set_renegotiate_mode, SSL_set_session_id_context,
-            SSL_set_verify, SSL_shutdown, SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit,
-            ssl_renegotiate_never,
+            ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX, SSL_ERROR_PENDING_CERTIFICATE,
+            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION,
+            SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER,
+            SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_servername, SSL_get_shutdown,
+            SSL_get_verify_result, SSL_is_init_finished, SSL_new, SSL_pending, SSL_read,
+            SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
+            SSL_set_renegotiate_mode, SSL_set_session_id_context, SSL_set_verify, SSL_shutdown,
+            SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -218,6 +218,8 @@ pub mod ssl_wrapper {
     const MAX_RECORD_PLAINTEXT: usize = 16384;
     /// `SSL3_RT_HEADER_LENGTH + SSL3_RT_SEND_MAX_ENCRYPTED_OVERHEAD`
     const MAX_RECORD_OVERHEAD: usize = 5 + 88;
+    /// `kMaxEarlyDataSkipped` in BoringSSL's tls_record.cc: the rejected early data a server skips.
+    const MAX_EARLY_DATA_SKIPPED: usize = 16384;
 
     /// What the one BIO of the `SSL` reads and writes. No borrow spans an `SSL_*` call or a handler.
     #[derive(Default)]
@@ -317,6 +319,7 @@ pub mod ssl_wrapper {
         inline_reject: Cell<bool>,
         verify_failed: Cell<bool>,
         identity_checked: Cell<bool>,
+        server_name: Cell<ServerName>,
         /// `SSLWrapper::<T>::server_identity`, which finds its wrapper from this field's address.
         server_identity: Option<
             unsafe fn(&CallbackState, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity,
@@ -326,6 +329,19 @@ pub mod ssl_wrapper {
         latest_session: Cell<Option<NonNull<boring_sys::SSL_SESSION>>>,
         sessions: RefCell<VecDeque<Box<[u8]>>>,
         keylog: RefCell<VecDeque<Box<[u8]>>>,
+    }
+
+    /// State of a server wrapper's `Handlers::on_server_name` request.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum ServerName {
+        /// No resolver, or its answer was applied.
+        Settled,
+        /// The owner has a resolver and no ClientHello has arrived.
+        Armed,
+        /// The handshake is suspended. The owner is asked once `SSL_do_handshake` has returned.
+        Parked,
+        /// The owner was asked. `resolve_server_name` resumes the handshake.
+        Asked,
     }
 
     impl Drop for CallbackState {
@@ -514,6 +530,8 @@ pub mod ssl_wrapper {
         pub on_keylog: Option<fn(T, &[u8])>,
         /// The name check of the verify step. `None`: the owner checks after the handshake.
         pub server_identity: Option<fn(T, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity>,
+        /// Server only: asks for the context of a server name. `resolve_server_name` answers.
+        pub on_server_name: Option<fn(T, &core::ffi::CStr)>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -596,6 +614,7 @@ pub mod ssl_wrapper {
                     inline_reject: Cell::new(false),
                     verify_failed: Cell::new(false),
                     identity_checked: Cell::new(false),
+                    server_name: Cell::new(ServerName::Settled),
                     server_identity: handlers
                         .server_identity
                         .is_some()
@@ -627,6 +646,11 @@ pub mod ssl_wrapper {
                     core::ptr::from_ref(&this.callbacks).cast_mut().cast(),
                 )
             };
+            if !is_client && handlers.on_server_name.is_some() {
+                this.callbacks.server_name.set(ServerName::Armed);
+                // SAFETY: `ssl` is live.
+                unsafe { us_ssl_wrapper_on_server_name(ssl.as_ptr()) };
+            }
             Ok(this)
         }
 
@@ -1121,6 +1145,21 @@ pub mod ssl_wrapper {
                     self.trigger_close_callback();
                     return false;
                 }
+                if err == boring_sys::SSL_ERROR_PENDING_CERTIFICATE
+                    && self.callbacks.server_name.get() != ServerName::Settled
+                {
+                    if self.callbacks.server_name.get() == ServerName::Parked {
+                        self.ask_server_name(ssl);
+                    }
+                    // BoringSSL fails a handshake that has to skip more early data than this.
+                    if self.callbacks.server_name.get() == ServerName::Asked
+                        && self.ciphertext.incoming.borrow().len() > MAX_EARLY_DATA_SKIPPED
+                    {
+                        self.drop_suspended_handshake();
+                    }
+                    // Suspended: a read would drive the handshake again.
+                    return false;
+                }
                 // as far as I know these are the only errors we want to handle
                 if err != boring_sys::SSL_ERROR_WANT_READ && err != boring_sys::SSL_ERROR_WANT_WRITE
                 {
@@ -1149,6 +1188,49 @@ pub mod ssl_wrapper {
             self.trigger_handshake_callback(HandshakeOutcome::Established);
 
             true
+        }
+
+        fn ask_server_name(&self, ssl: NonNull<boring_sys::SSL>) {
+            self.callbacks.server_name.set(ServerName::Asked);
+            let handlers = self.handlers.get();
+            // SAFETY: ssl is live and owns the name. A `deinit` in this pass frees it afterwards.
+            let name = unsafe { boring_sys::SSL_get_servername(ssl.as_ptr(), 0) };
+            match handlers.on_server_name {
+                Some(on_server_name) if !name.is_null() => {
+                    // SAFETY: BoringSSL keeps the server name NUL-terminated.
+                    let name = unsafe { core::ffi::CStr::from_ptr(name) };
+                    on_server_name(handlers.ctx, name)
+                }
+                _ => self.resolve_server_name(Ok(None)),
+            }
+        }
+
+        /// Closes without a TLS alert and reports ECONNRESET, like the fd engine.
+        fn drop_suspended_handshake(&self) {
+            self.callbacks.server_name.set(ServerName::Settled);
+            self.flags.set_fatal_error(true);
+            self.flags
+                .set_handshake_state(HandshakeState::HandshakeCompleted);
+            self.trigger_handshake_callback(HandshakeOutcome::PeerClosed);
+            self.trigger_close_callback();
+        }
+
+        /// Answers `on_server_name`: a context, the default one (`None`), or a refusal (`Err`).
+        pub fn resolve_server_name(&self, answer: Result<Option<boring_sys::OwnedSslCtx>, ()>) {
+            let Some(ssl) = self.ssl.get() else { return };
+            if self.flags.closed_notified() || self.callbacks.server_name.get() != ServerName::Asked
+            {
+                return;
+            }
+            let Ok(selected) = answer else {
+                return self.drop_suspended_handshake();
+            };
+            self.callbacks.server_name.set(ServerName::Settled);
+            if let Some(ctx) = selected {
+                // SAFETY: `ssl` and `ctx` are live, and `ssl` is at its select-certificate step.
+                unsafe { us_ssl_apply_selected_ctx(ssl.as_ptr(), ctx.as_ptr()) };
+            }
+            self.handle_traffic();
         }
 
         /// Handle the end of a renegotiation if it was pending. This function
@@ -1381,7 +1463,10 @@ pub mod ssl_wrapper {
                 self.flush_pending_events();
             } else {
                 debug_assert!(
-                    self.flags.closed_notified() || self.ssl.get().is_none(),
+                    self.flags.closed_notified()
+                        || self.ssl.get().is_none()
+                        || self.callbacks.server_name.get() == ServerName::Asked
+                        || self.traffic.get() == Traffic::RerunRequested,
                     "update_handshake_state stopped the pass and left the wrapper open"
                 );
             }
@@ -1413,6 +1498,29 @@ pub mod ssl_wrapper {
     impl<T: Copy> Drop for SSLWrapper<T> {
         fn drop(&mut self) {
             Self::free(self.ssl.take());
+        }
+    }
+
+    /// For `us_select_cert_cb` (openssl.c). 0 suspends the handshake until the owner answers.
+    #[unsafe(no_mangle)]
+    extern "C" fn us_ssl_wrapper_select_cert(
+        state: *const CallbackState,
+        ssl: *mut boring_sys::SSL,
+    ) -> c_int {
+        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on this live `ssl`.
+        let state = unsafe { &*state };
+        match state.server_name.get() {
+            ServerName::Settled => 1,
+            ServerName::Armed => {
+                // SAFETY: `ssl` is live for this callback.
+                if unsafe { boring_sys::SSL_get_servername(ssl, 0) }.is_null() {
+                    state.server_name.set(ServerName::Settled);
+                    return 1;
+                }
+                state.server_name.set(ServerName::Parked);
+                0
+            }
+            ServerName::Parked | ServerName::Asked => 0,
         }
     }
 
@@ -1547,6 +1655,10 @@ pub mod ssl_wrapper {
         fn us_ssl_take_error_reason(reason: *mut c_char, length: usize) -> c_int;
         /// openssl.c: makes the callbacks of `ssl` go to `wrapper`. `wrapper` must outlive `ssl`.
         fn us_ssl_set_wrapper(ssl: *mut boring_sys::SSL, wrapper: *mut c_void);
+        /// openssl.c: switches `ssl` to the context its server name selected.
+        fn us_ssl_apply_selected_ctx(ssl: *mut boring_sys::SSL, ctx: *mut boring_sys::SSL_CTX);
+        /// openssl.c: makes the select-certificate step of `ssl` call `us_ssl_wrapper_select_cert`.
+        fn us_ssl_wrapper_on_server_name(ssl: *mut boring_sys::SSL);
         /// openssl.c: the pointer `us_ssl_set_wrapper` stored on the `SSL` that `ctx` verifies, or null.
         fn us_ssl_wrapper_from_verify(ctx: *mut boring_sys::X509_STORE_CTX) -> *mut c_void;
         fn i2d_SSL_SESSION(session: *mut boring_sys::SSL_SESSION, out: *mut *mut u8) -> c_int;

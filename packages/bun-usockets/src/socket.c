@@ -99,7 +99,10 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
     if (seconds) {
-        s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
+        unsigned int ticks = (unsigned int) (((uint64_t) seconds + 3) >> 2);
+        unsigned int laps = (ticks - 1) / 240;
+        s->timeout = ((unsigned int)s->group->timestamp + ticks) % 240;
+        s->timeout_laps = laps > UINT16_MAX ? UINT16_MAX : laps;
     } else {
         s->timeout = 255;
     }
@@ -267,9 +270,9 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     }
 
     if (c->addrinfo_req) {
-        /* Invalidate the cache entry for a refused connect (addresses may be
+        /* Invalidate the cache entry for a failed connect (addresses may be
          * stale) and for a resolver failure (never cache a negative result). */
-        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED || c->error_is_dns);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error != LIBUS_ECANCELED || c->error_is_dns);
         c->addrinfo_req = 0;
     }
     us_dispatch_connecting_error(c, c->error);
@@ -338,6 +341,8 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
             res = s->ssl ? us_internal_ssl_on_close(s, code, reason)
                          : us_dispatch_close(s, code, reason);
         } else if (!s->connect_state) {
+            /* Before the handler, so a retry from inside it resolves the name again. */
+            us_internal_socket_release_addrinfo(s, connect_error != LIBUS_ECANCELED);
             res = us_dispatch_connect_error(s, connect_error);
         }
         /* A candidate of a us_connecting_socket_t is held through that, which hears
@@ -480,6 +485,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
     s->send_rejected = 0;
+    s->connect_returned_zero = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -761,7 +767,15 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
      * so far, the app has to track this and call close as needed */
     if (us_internal_socket_can_raw_write(s)) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
-        us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+        int events = us_poll_events(&s->p) & LIBUS_SOCKET_READABLE;
+#ifndef LIBUS_USE_EPOLL
+        /* After read_eof the poll may have no events armed. Arm READABLE so the loop sees the EOF again and closes the socket.
+         * epoll reports the hangup with nothing armed. */
+        if (s->read_eof) {
+            events = LIBUS_SOCKET_READABLE;
+        }
+#endif
+        us_poll_change(&s->p, s->group->loop, events);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }

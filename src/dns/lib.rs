@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_int;
+use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
 use bun_core::String as BunString;
@@ -460,7 +461,22 @@ impl Order {
             bun_core::Global::exit(1)
         })
     }
+
+    /// The address family `fetch()` and `Bun.connect()` dial first. Process-wide, like the DNS cache they share.
+    pub fn for_connect() -> Order {
+        match CONNECT_ORDER.load(Ordering::SeqCst) {
+            4 => Order::Ipv4first,
+            6 => Order::Ipv6first,
+            _ => Order::Verbatim,
+        }
+    }
+
+    pub fn set_for_connect(order: Order) {
+        CONNECT_ORDER.store(order as u8, Ordering::SeqCst);
+    }
 }
+
+static CONNECT_ORDER: AtomicU8 = AtomicU8::new(Order::Verbatim as u8);
 
 /// A numeric address, or a host name within the RFC 1035 limits made of the bytes
 /// c-ares allows in one (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names).

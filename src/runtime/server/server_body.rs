@@ -3282,22 +3282,25 @@ where
             callback.call(
                 &global,
                 JSValue::UNDEFINED,
-                &[
-                    JSValue::from(is_ssl),
-                    node_socket,
-                    error_code_value,
-                    raw_packet_value,
-                ],
+                &[node_socket, error_code_value, raw_packet_value],
             )?;
         }
         Ok(())
     }
 
-    /// node:http compat: a connection was accepted on this server (for TLS,
-    /// its handshake completed). Hands the JSNodeHTTPServerSocket to the JS
-    /// `onConnection` callback so `node:http` can emit 'connection' before any
-    /// request bytes arrive.
-    pub(crate) fn on_connection_callback(&self, socket: *mut c_void) -> JsResult<()> {
+    /// node:http: reports a connection to JS at TCP accept (`2`), and a TLS one again, as `secured`, when its handshake ends (`1`).
+    pub(crate) fn on_connection_event(&self, socket: *mut c_void, event: i32) {
+        let secured = match event {
+            // Plain TCP sends `1` right after.
+            2 if SSL => false,
+            1 => SSL,
+            _ => return,
+        };
+        crate::dispatch::fold(self.on_connection_callback(socket, secured));
+    }
+
+    /// Calls the JS `onConnection` callback with the JSNodeHTTPServerSocket and `secured`. Skips a failed handshake.
+    fn on_connection_callback(&self, socket: *mut c_void, secured: bool) -> JsResult<()> {
         if self.js_value_for_dispatch().is_none() {
             return Ok(());
         }
@@ -3306,16 +3309,24 @@ where
             return Ok(());
         }
         let global = self.global();
-        let node_socket = jsc::from_js_host_call(&global, || {
-            Bun__getOrCreateNodeHTTPServerSocket(SSL, socket, &global)
-        })?;
-        if node_socket.is_undefined_or_null() {
+        let node_socket = if secured {
+            Bun__NodeHTTP__securedServerSocket(socket)
+        } else {
+            jsc::from_js_host_call(&global, || {
+                Bun__getOrCreateNodeHTTPServerSocket(SSL, socket, &global)
+            })?
+        };
+        if node_socket.is_empty_or_undefined_or_null() {
             return Ok(());
         }
         // SAFETY: event_loop() returns a live raw pointer tied to the global.
         let _scope =
             unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
-        callback.call(&global, JSValue::UNDEFINED, &[node_socket])?;
+        callback.call(
+            &global,
+            JSValue::UNDEFINED,
+            &[node_socket, JSValue::from(secured)],
+        )?;
         Ok(())
     }
 
@@ -3453,22 +3464,16 @@ fn server_set_on_connection(
                             <$T>::js_gc_on_connection_set,
                         );
                     }
-                    // uws filters fire with `1` when an HTTP connection is opened
-                    // (for TLS, when its handshake completes) and `-1` on close;
-                    // only the open notification is forwarded to JS.
                     extern "C" fn thunk(
                         socket: *mut uws_sys::us_socket_t,
                         opened: i32,
                         user_data: *mut c_void,
                     ) {
-                        if opened != 1 {
-                            return;
-                        }
                         // SAFETY: user_data is the `*mut Self` registered below;
                         // socket is a live uWS socket for this server's group.
                         // Shared — the callback re-enters JS.
                         let this = unsafe { &*user_data.cast::<$T>() };
-                        crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
+                        this.on_connection_event(socket.cast::<c_void>(), opened);
                     }
                     if first {
                         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -3692,6 +3697,9 @@ unsafe extern "C" {
         socket: *mut c_void,
         global: &JSGlobalObject,
     ) -> JSValue;
+
+    // `socket` is a live TLS `uws::Socket*`. Runs no JS.
+    safe fn Bun__NodeHTTP__securedServerSocket(socket: *mut c_void) -> JSValue;
 
     // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
     // preconditions; `request_ptr`/`req` are opaque handles that C++ stores or

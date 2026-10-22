@@ -19,6 +19,19 @@ export const BunServer = b.union({
 });
 export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });
 
+export const BunTLSServer = b.union({
+  https: b.classRef("HTTPSServer"),
+  debugHttps: b.classRef("DebugHTTPSServer"),
+});
+/** `https.Server#setSecureContext()` while listening. Accepted sockets keep their context. */
+export const setSecureContext = b.fn({ args: { server: BunTLSServer, context: b.classRef("SecureContext") } });
+/** Calls `onservername(hostname, handle)` of each connection's handle during its handshake, for `SNICallback`. */
+export const dispatchServerNames = b.fn({ args: { server: BunTLSServer } });
+/** `https.Server#addContext()` while listening. */
+export const addServerName = b.fn({
+  args: { server: BunTLSServer, hostname: b.string.utf8, context: b.classRef("SecureContext") },
+});
+
 /** `kInternalSocketData` of the socket given to `handleUpgrade()` of `ws`, which can be any `Duplex`. */
 export const UpgradeResponse = b.union({ response: NodeHTTPResponse, ignored: b.any });
 export const DeflateParams = b.dictionary({

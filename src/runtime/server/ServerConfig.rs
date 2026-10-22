@@ -18,6 +18,7 @@ use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
+use crate::api::bun_secure_context::SecureContext;
 pub(crate) use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
 use bun_collections::index_sort;
@@ -33,6 +34,8 @@ pub(crate) struct ServerConfig {
     pub(crate) base_uri: Box<[u8]>,
 
     pub(crate) ssl_config: Option<SSLConfig>,
+    /// The `SSL_CTX` a node:http server built in its constructor. `ssl_config` then has no key material.
+    pub(crate) ssl_ctx: Option<bun_boringssl_sys::OwnedSslCtx>,
     // Vec drop runs each element's `Drop`, and `SSLConfig: Drop` calls
     // `deinit()` (frees the owned C strings).
     pub(crate) sni: Option<Vec<SSLConfig>>,
@@ -83,6 +86,7 @@ impl Default for ServerConfig {
             has_idle_timeout: false,
             base_uri: Box::default(),
             ssl_config: None,
+            ssl_ctx: None,
             sni: None,
             max_request_body_size: 1024 * 1024 * 128,
             development: DevelopmentOption::Development,
@@ -283,6 +287,7 @@ impl ServerConfig {
             has_idle_timeout: self.has_idle_timeout,
             base_uri: core::mem::take(&mut self.base_uri),
             ssl_config: self.ssl_config.take(),
+            ssl_ctx: self.ssl_ctx.take(),
             sni: self.sni.take(),
             max_request_body_size: self.max_request_body_size,
             development: self.development,
@@ -573,6 +578,26 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
         }
     }
     Ok(None)
+}
+
+/// The `SSL_CTX` of `tls.secureContext`. Only node:http passes one, so no other server reads the key.
+fn node_http_ssl_ctx(
+    global: &JSGlobalObject,
+    args: &ServerConfig,
+    tls: JSValue,
+) -> JsResult<Option<bun_boringssl_sys::OwnedSslCtx>> {
+    if !args.is_node_http_server || !tls.is_object() {
+        return Ok(None);
+    }
+    let Some(value) = tls.get_truthy(global, "secureContext")? else {
+        return Ok(None);
+    };
+    match value.as_class_ref::<SecureContext>() {
+        Some(secure_context) => Ok(Some(secure_context.ctx.clone())),
+        None => {
+            Err(global.throw_invalid_argument_type_value(b"secureContext", b"SecureContext", value))
+        }
+    }
 }
 
 impl ServerConfig {
@@ -1217,10 +1242,12 @@ impl ServerConfig {
                         }
                     }
                 }
-            } else {
-                if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
-                    args.ssl_config = Some(ssl_config);
-                }
+            } else if let Some(ctx) = node_http_ssl_ctx(global, &args, tls)? {
+                args.ssl_ctx = Some(ctx);
+                // Marks the server as TLS for every reader of `ssl_config`.
+                args.ssl_config = Some(crate::socket::tls_true_defaults(vm, true));
+            } else if let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? {
+                args.ssl_config = Some(ssl_config);
             }
         }
 

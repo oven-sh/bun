@@ -322,10 +322,11 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
   const keys = join(import.meta.dir, "../test/fixtures/keys");
   const ca1 = readFileSync(join(keys, "ca1-cert.pem"), "utf8");
 
-  async function connectWith(env: Record<string, string | undefined>) {
+  async function connectWith(env: Record<string, string | undefined>, flags: string[] = []) {
     await using proc = spawn({
       cmd: [
         bunExe(),
+        ...flags,
         "-e",
         `const tls = require("tls"), fs = require("fs");
          const server = tls.createServer({ key: fs.readFileSync(${JSON.stringify(join(keys, "agent1-key.pem"))}), cert: fs.readFileSync(${JSON.stringify(join(keys, "agent1-cert.pem"))}) }, s => s.end());
@@ -367,6 +368,11 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
     expect(await connectWith({ SSL_CERT_FILE: join(String(dir), `${file}.pem`) })).toBe(expected);
   });
 
+  test.each(["SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"])("--use-openssl-ca trusts a private CA from %s", async source => {
+    using dir = tempDir("openssl-ca-file", { "ca.pem": ca1 });
+    expect(await connectWith({ [source]: join(String(dir), "ca.pem") }, ["--use-openssl-ca"])).toBe("authorized");
+  });
+
   // `openssl x509 -subject_hash -in ca1-cert.pem` is 468820ba; the hash-dir lookup only opens <hash>.<n> names.
   test.each([
     ["468820ba.0", "authorized"],
@@ -374,5 +380,158 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
   ] as const)("a CA in the $SSL_CERT_DIR hash directory as %s -> %s", async (name, expected) => {
     using dir = tempDir("default-ca-dir", { [name]: ca1 });
     expect(await connectWith({ SSL_CERT_DIR: String(dir) })).toBe(expected);
+  });
+});
+
+describe.concurrent("--use-openssl-ca", () => {
+  test("native verification excludes bundled roots unless explicitly selected", async () => {
+    const root = rootCertificates.find(pem => new X509Certificate(pem).subject.includes("DigiCert Global Root G2"));
+    expect(root).toBeDefined();
+    using dir = tempDir("openssl-bundled-root", { "root.pem": root! });
+    for (const [flags, source, expected] of [
+      [[], undefined, "ERR_SSL_KEY_USAGE_BIT_INCORRECT"],
+      [["--use-openssl-ca"], undefined, "DEPTH_ZERO_SELF_SIGNED_CERT"],
+      [["--use-openssl-ca"], "SSL_CERT_FILE", "ERR_SSL_KEY_USAGE_BIT_INCORRECT"],
+      [["--use-openssl-ca"], "NODE_EXTRA_CA_CERTS", "ERR_SSL_KEY_USAGE_BIT_INCORRECT"],
+    ] as const) {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          ...flags,
+          "-e",
+          `
+          const net = require("node:net");
+          const tls = require("node:tls");
+          const { X509Certificate } = require("node:crypto");
+          const cert = new X509Certificate(require("node:fs").readFileSync(${JSON.stringify(join(String(dir), "root.pem"))})).raw;
+          const u24 = n => Buffer.from([n >> 16, n >> 8, n]);
+          const handshake = (type, body) => Buffer.concat([Buffer.from([type]), u24(body.length), body]);
+          const hello = handshake(2, Buffer.concat([Buffer.from([3, 3]), Buffer.alloc(32, 1), Buffer.from([0, 0, 0x9c, 0])]));
+          const certificates = handshake(11, Buffer.concat([u24(cert.length + 3), u24(cert.length), cert]));
+          const flight = Buffer.concat([hello, certificates, handshake(14, Buffer.alloc(0))]);
+          let peer;
+          const server = net.createServer(socket => {
+            peer = socket;
+            socket.on("error", () => {});
+            let input = Buffer.alloc(0);
+            const onData = chunk => {
+              input = Buffer.concat([input, chunk]);
+              if (input.length < 5 || input.length < 5 + input.readUInt16BE(3)) return;
+              socket.removeListener("data", onData);
+              socket.write(Buffer.concat([Buffer.from([22, 3, 3, flight.length >> 8, flight.length & 255]), flight]));
+            };
+            socket.on("data", onData);
+          });
+          server.on("error", error => { console.error(error); process.exit(1); });
+          server.listen(0, "127.0.0.1", () => {
+            const client = tls.connect({
+              host: "127.0.0.1", port: server.address().port,
+              minVersion: "TLSv1.2", maxVersion: "TLSv1.2",
+              ciphers: "AES128-GCM-SHA256", checkServerIdentity: () => undefined,
+            });
+            client.on("error", error => console.log(error.code));
+            client.on("close", () => { peer?.destroy(); server.close(); });
+          });
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          NODE_USE_SYSTEM_CA: undefined,
+          NODE_EXTRA_CA_CERTS: undefined,
+          SSL_CERT_FILE: "",
+          SSL_CERT_DIR: "",
+          ...(source ? { [source]: join(String(dir), "root.pem") } : {}),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // BoringSSL checks RSA key usage after chain verification, so this control needs no CA private key.
+      expect(stdout.trim()).toBe(expected);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test.each([undefined, "0"])("excludes bundled and system roots (NODE_USE_SYSTEM_CA=%s)", async systemCA => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "--use-openssl-ca",
+        "-e",
+        `
+        const assert = require("node:assert/strict");
+        const tls = require("node:tls");
+        assert.ok(tls.rootCertificates.length > 0);
+        assert.deepEqual(tls.getCACertificates("bundled"), tls.rootCertificates);
+        assert.equal(tls.getCACertificates("default").length, 0);
+        console.log("OK");
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        NODE_USE_SYSTEM_CA: systemCA,
+        NODE_EXTRA_CA_CERTS: undefined,
+        SSL_CERT_FILE: "",
+        SSL_CERT_DIR: "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    ["--use-openssl-ca", "-e", 'console.log("executed")'],
+    ["--use-openssl-ca", "install"],
+    ["install", "--use-openssl-ca"],
+  ])("rejects NODE_USE_SYSTEM_CA=1 before executing %j", async (...args) => {
+    using dir = tempDir("openssl-ca-conflict", { "package.json": "{}" });
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, NODE_USE_SYSTEM_CA: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: "error: either --use-openssl-ca or --use-system-ca can be used, not both\n",
+      exitCode: 1,
+    });
+  });
+
+  test("keeps NODE_EXTRA_CA_CERTS additive", async () => {
+    const ca = readFileSync(join(import.meta.dir, "../test/fixtures/keys/ca1-cert.pem"), "utf8");
+    using dir = tempDir("openssl-extra-ca", { "ca.pem": ca });
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "--use-openssl-ca",
+        "-e",
+        `
+        const assert = require("node:assert/strict");
+        const tls = require("node:tls");
+        const extra = tls.getCACertificates("extra");
+        assert.equal(extra.length, 1);
+        assert.equal(tls.getCACertificates("default").length, 1);
+        assert.deepEqual(tls.getCACertificates("default"), extra);
+        console.log("OK");
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem"),
+        NODE_USE_SYSTEM_CA: undefined,
+        SSL_CERT_FILE: "",
+        SSL_CERT_DIR: "",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
   });
 });

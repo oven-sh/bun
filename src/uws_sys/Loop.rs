@@ -526,6 +526,8 @@ mod c {
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        /// One pass of the socket timeout sweep. Must not run recursively.
+        pub fn us_internal_timer_sweep(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
@@ -543,6 +545,9 @@ mod c {
 // `us_wakeup_loop` concurrently; routing either through a `&mut self`
 // receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
+
+/// For `bun:internal-for-testing` only.
+pub use c::us_internal_timer_sweep;
 
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.

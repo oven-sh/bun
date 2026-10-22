@@ -74,10 +74,10 @@ test.concurrent.skipIf(skip)(
         // 2 rounds x (1 primer + 2 waves x 32).
         opened: 130,
         closed: 130,
-        // Every wave socket is closed mid-handshake by the unread-ciphertext
-        // guard, which reports the handshake as failed; the primers are
-        // closed by stop(true) and report nothing.
-        handshakeFailed: 128,
+        // Every socket is closed mid-handshake, which reports the handshake as
+        // failed: the wave sockets by the unread-ciphertext guard, the primers
+        // by stop(true) with their flight still unsent after the peer's FIN.
+        handshakeFailed: 130,
         handshakeOk: 0,
         data: 0,
         errors: 0,
@@ -155,6 +155,57 @@ test.concurrent(
         pongs: 32,
         errors: 0,
       },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
+
+// The loop turned a parked socket's reads off, so its peer isn't idle and its timeouts must wait. The fixture parks 15
+// of 20 Bun.listen sockets, runs the timeout sweep by hand and counts `timeout` handlers as [while parked, after release].
+// Firing on a parked socket gives oneTick "20,0", losing the timeout in the queue gives "5,0".
+test.concurrent(
+  "TLS low-prio queue: a parked socket's timeout fires after the queue releases it",
+  async () => {
+    expect(await runFixture("tls-parked-handshake-timeout-fixture.ts")).toEqual({
+      summary: { opened: 20, oneTick: ["5,15"], unarmed: [0, 0], parkedTooLong: [5, 15], errors: 0 },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
+
+// A parked socket's input can't wake the loop, so the loop must keep iterating until the queue is empty. The fixture
+// parks 59 of 64 sockets and pauses all but the one released last, so no readable event drives the next iteration.
+// Reaching that socket takes ceil(58 / 5) = 12 iterations, plus its handshake's round trips.
+test.concurrent(
+  "TLS low-prio queue: the loop releases parked sockets without an unrelated event",
+  async () => {
+    const result = await runFixture("tls-parked-handshake-turns-fixture.ts");
+    expect(result).toEqual({
+      summary: { opened: 64, clientHandshakes: 6, iterationsToHandshake: expect.any(Number), errors: 0 },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+    const { iterationsToHandshake } = result.summary as { iterationsToHandshake: number };
+    expect(iterationsToHandshake).toBeGreaterThanOrEqual(12);
+    expect(iterationsToHandshake).toBeLessThanOrEqual(24);
+  },
+  60_000,
+);
+
+// With a deferred accept (Linux) the accept path dispatches a new socket's first readable event itself. Of 12
+// connections that arrive with input, the server times out the 5 it read, and the 7 it parked only after their release.
+test.concurrent.skipIf(!isLinux)(
+  "TLS low-prio queue: Bun.serve parks an accepted connection that has input once the handshake budget is spent",
+  async () => {
+    expect(await runFixture("tls-serve-deferred-accept-fixture.ts")).toEqual({
+      summary: { clients: 12, closedWhileParked: 5, closedAfterRelease: 12 },
       signalCode: null,
       exitCode: 0,
       stderrTail: "",
@@ -250,6 +301,33 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
     `),
   );
 });
+
+test.concurrent.skipIf(skip).each(["ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH"])(
+  "Bun.connect to a hostname reports %s when that's why its last address failed",
+  async errno => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { socketFaultInjection: fault, dnsCacheSeed } = require("bun:internal-for-testing");
+         dnsCacheSeed("two-addresses.test", ["127.0.0.1", "127.0.0.1"]);
+         fault.set({ syscall: "connect", action: "errno", errno: ${JSON.stringify(errno)}, repeat: -1 });
+         const result = await Bun.connect({ hostname: "two-addresses.test", port: 1, socket: { data() {} } }).then(
+           () => "connected",
+           e => e.code,
+         );
+         fault.clear();
+         console.log(result, Bun.dns.getCacheStats().size);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The failed connect also evicts the name from the DNS cache.
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: errno + " 0\n", stderr: "", exitCode: 0 });
+  },
+);
 
 // A paused socket whose peer hung up is taken out of epoll by the dispatcher
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by

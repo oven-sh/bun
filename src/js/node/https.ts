@@ -12,7 +12,12 @@ const {
   kWaitForProxyTunnel,
   kPerRequestCheckServerIdentity,
   isTlsSymbol,
+  serverSymbol,
+  tlsSymbol,
 } = require("internal/http");
+const { kSNIContexts } = require("internal/net/symbols");
+const setListenerSecureContext = $bindgen("node_http_binding.bind.ts", "setSecureContext");
+const addServerName = $bindgen("node_http_binding.bind.ts", "addServerName");
 const { validateHeaderValue } = require("node:_http_common");
 const { isAnyArrayBuffer, isDataView } = require("node:util/types");
 
@@ -615,6 +620,30 @@ function Server(options, requestListener): void {
 $toClass(Server, "Server", http.Server);
 // A listener of this class speaks TLS whatever its options hold.
 Server.prototype[isTlsSymbol] = true;
+
+Server.prototype.addContext = function addContext(hostname, context) {
+  const tlsServer = this[tlsSymbol];
+  tlsServer.addContext(hostname, context);
+  const handle = this[serverSymbol];
+  if (handle) addServerName(handle, hostname, tlsServer[kSNIContexts].$get(hostname).context);
+};
+
+Server.prototype.setSecureContext = function setSecureContext(options) {
+  validateObject(options, "options");
+  const tlsServer = this[tlsSymbol];
+  // BoringSSL has no DHE suites to apply dhparam to.
+  tlsServer.setSecureContext({ ...options, dhparam: undefined });
+  const handle = this[serverSymbol];
+  if (handle) setListenerSecureContext(handle, tlsServer._sharedCreds.context);
+};
+
+Server.prototype.getTicketKeys = function getTicketKeys() {
+  return this[tlsSymbol].getTicketKeys();
+};
+
+Server.prototype.setTicketKeys = function setTicketKeys(keys) {
+  this[tlsSymbol].setTicketKeys(keys);
+};
 
 function createServer(options, requestListener) {
   return new Server(options, requestListener);

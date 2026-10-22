@@ -14,6 +14,20 @@ extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" void us_socket_shutdown(us_socket_t*);
 extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
+extern "C" void us_socket_sni_resolve(us_socket_t*, struct ssl_ctx_st*, int error);
+extern "C" void* us_socket_get_native_handle(us_socket_t*);
+// tls_socket_functions.rs
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__getPeerCertificate);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__getCertificate);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__getX509Certificate);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__getCipher);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__getTLSVersion);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__getEphemeralKeyInfo);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__getTLSFinishedMessage);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__getTLSPeerFinishedMessage);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__isSessionReused);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPServerSocket__exportKeyingMaterial);
+extern "C" void* Bun__ServerNameAnswer__fromJS(JSC::EncodedJSValue result, int* abortHandshake);
 
 namespace Bun {
 
@@ -52,6 +66,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseWhenDrained);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseIfIdle);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketResumeSNI);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
@@ -98,6 +113,17 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
     { "closeWhenDrained"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseWhenDrained, 0 } },
     { "closeIfIdle"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseIfIdle, 0 } },
+    { "resumeSNI"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketResumeSNI, 2 } },
+    { "getPeerCertificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__getPeerCertificate, 1 } },
+    { "getCertificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__getCertificate, 0 } },
+    { "getX509Certificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__getX509Certificate, 0 } },
+    { "getCipher"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__getCipher, 0 } },
+    { "getTLSVersion"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__getTLSVersion, 0 } },
+    { "getEphemeralKeyInfo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__getEphemeralKeyInfo, 0 } },
+    { "getTLSFinishedMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__getTLSFinishedMessage, 0 } },
+    { "getTLSPeerFinishedMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__getTLSPeerFinishedMessage, 0 } },
+    { "isSessionReused"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__isSessionReused, 0 } },
+    { "exportKeyingMaterial"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, Bun__NodeHTTPServerSocket__exportKeyingMaterial, 3 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
     { "servername"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterServername, noOpSetter } },
     { "authorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterAuthorizationError, noOpSetter } },
@@ -153,6 +179,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel, (JSC::JS
     // upgradeToTunnel(afterBody, response): with a truthy afterBody the switch happens only
     // once the request body has been fully parsed (Upgrade requests with a body).
     thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<JSNodeHTTPResponse>(callFrame->argument(1)));
+    return JSValue::encode(JSC::jsUndefined());
+}
+
+// The SSL* the methods in tls_socket_functions.rs read. Null unless `value` is the handle of an open TLS connection.
+extern "C" void* Bun__NodeHTTPServerSocket__ssl(JSC::EncodedJSValue value)
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSValue::decode(value));
+    if (!thisObject || !thisObject->is_ssl || thisObject->isClosed()) {
+        return nullptr;
+    }
+    return us_socket_get_native_handle(thisObject->socket);
+}
+
+// (secureContext, isError): resumes the handshake that an asynchronous SNICallback suspended.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketResumeSNI, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (!thisObject || !thisObject->is_ssl || thisObject->isClosed()) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    int abortHandshake = callFrame->argument(1).toBoolean(globalObject);
+    void* sslCtx = abortHandshake ? nullptr : Bun__ServerNameAnswer__fromJS(JSValue::encode(callFrame->argument(0)), &abortHandshake);
+    us_socket_sni_resolve(thisObject->socket, static_cast<struct ssl_ctx_st*>(sslCtx), abortHandshake);
     return JSValue::encode(JSC::jsUndefined());
 }
 

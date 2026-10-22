@@ -2523,11 +2523,12 @@ pub(crate) mod internal {
     fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;
-        let first_family = if info.is_null() {
-            netc::AF_UNSPEC
-        } else {
+        let first_family = match Order::for_connect() {
+            Order::Ipv4first => netc::AF_INET,
+            Order::Ipv6first => netc::AF_INET6,
+            Order::Verbatim if info.is_null() => netc::AF_UNSPEC,
             // SAFETY: info is a live addrinfo node; freed by caller after we return.
-            unsafe { (*info).ai_family }
+            Order::Verbatim => unsafe { (*info).ai_family },
         };
         let mut info_: *mut AddrInfo = info;
         while !info_.is_null() {
@@ -3208,6 +3209,32 @@ pub(crate) mod internal {
                 guard.remove(req);
                 Request::deinit(req);
             }
+        }
+    }
+
+    /// Invalidates every cache entry too: `process_results` packed them, or is about to, in the old order.
+    pub(crate) fn set_connect_order(order: Order) {
+        if Order::for_connect() == order {
+            return;
+        }
+        Order::set_for_connect(order);
+
+        let mut guard = global_cache().lock();
+        let mut i: usize = 0;
+        while i < guard.len {
+            let entry = guard.cache[i];
+            // SAFETY: entries 0..len are valid heap Requests, only mutated under `global_cache().lock()`, held here.
+            unsafe {
+                (*entry).valid = false;
+                if (*entry).result.is_some() && (*entry).refcount == 0 {
+                    // Swaps the last entry into slot `i`.
+                    let len = guard.len;
+                    let _ = guard.delete_entry_at(len, i);
+                    Request::deinit(entry);
+                    continue;
+                }
+            }
+            i += 1;
         }
     }
 
@@ -5893,6 +5920,12 @@ impl Resolver {
             _ => Order::Verbatim,
         };
         bun::String::static_(<&'static str>::from(order))
+    }
+
+    pub(crate) fn set_connect_result_order(order: &[u8]) {
+        if let Some(order) = Order::from_string(order) {
+            internal::set_connect_order(order);
+        }
     }
 }
 

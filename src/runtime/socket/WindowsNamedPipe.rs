@@ -77,7 +77,7 @@ bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub struct Flags: u16 {
         const DISCONNECTED = 1 << 0;
         const IS_CLOSED    = 1 << 1;
         const IS_CLIENT    = 1 << 2;
@@ -89,7 +89,10 @@ bitflags::bitflags! {
         const PIPE_ADOPTED = 1 << 4;
         const WRAPPER_BUSY = 1 << 5;
         const WRITER_BUSY  = 1 << 6;
-        // _: u2 padding
+        /// `shutdown()` ran on a plain pipe. The write side ends once queued data drains, and reads continue.
+        const SHUTDOWN_REQUESTED = 1 << 7;
+        /// libuv has the `uv_shutdown` request.
+        const SHUTDOWN_SENT = 1 << 8;
     }
 }
 
@@ -262,6 +265,7 @@ impl WindowsNamedPipe {
                         source.unref();
                     }
                 });
+                self.send_shutdown_if_drained();
             }
             WriteStatus::EndOfFile => {
                 // we send FIN so we close after this
@@ -386,6 +390,7 @@ impl WindowsNamedPipe {
             on_session: Some(Self::ssl_on_session),
             on_keylog: Some(Self::ssl_on_keylog),
             server_identity: Some(Self::ssl_server_identity),
+            on_server_name: None,
         }
     }
 
@@ -600,6 +605,8 @@ impl WindowsNamedPipe {
             }
         }
         self.flush();
+        // With nothing queued, no `on_write(Drained)` follows to send a shutdown requested before the connect.
+        self.send_shutdown_if_drained();
         self.deref();
     }
 
@@ -892,13 +899,48 @@ impl WindowsNamedPipe {
             let _ = w.shutdown(false);
         });
         if handled.is_none() {
-            // Plain (non-TLS) named pipe: half-close the write side so the peer
-            // observes EOF. Without this, Socket.prototype.end() over a Windows
-            // named pipe (endNT → shutdown()) never signals the peer, and an
-            // allowHalfOpen peer waiting on 'end' hangs. `writer.end()` is
-            // idempotent and mirrors `close`'s unconditional writer teardown.
+            let flags = self.flags.get();
+            if flags.contains(Flags::SHUTDOWN_REQUESTED) || flags.is_closed() {
+                return;
+            }
+            self.update_flags(|f| f.insert(Flags::SHUTDOWN_REQUESTED));
+            self.send_shutdown_if_drained();
+        }
+    }
+
+    /// Half-closes with `uv_shutdown` once libuv has every queued byte. `writer.end()` would close the read side too and drop the peer's reply.
+    fn send_shutdown_if_drained(&self) {
+        let flags = self.flags.get();
+        if !flags.contains(Flags::SHUTDOWN_REQUESTED)
+            || flags.contains(Flags::SHUTDOWN_SENT)
+            || flags.is_closed()
+            || flags.disconnected()
+            || self.writer.get().has_pending_data()
+        {
+            return;
+        }
+        let Some(stream) = self.writer.with_mut(|w| w.get_stream()) else {
+            self.with_writer(|w| w.end());
+            return;
+        };
+        self.update_flags(|f| f.insert(Flags::SHUTDOWN_SENT));
+        let req = bun_core::heap::alloc(bun_core::ffi::zeroed::<uv::uv_shutdown_t>());
+        // SAFETY: `stream` is the live pipe stream owned by `self.writer.source`. libuv
+        // owns `req` until it calls `uv_on_shutdown`, with `UV_ECANCELED` if the handle
+        // closes first.
+        let rc = unsafe { uv::uv_shutdown(req, stream, Some(Self::uv_on_shutdown)) };
+        if rc.is_err() {
+            // SAFETY: libuv didn't take `req`, so the callback never runs.
+            unsafe { bun_core::heap::destroy(req) };
+            // Close the whole handle so the peer still sees EOF.
             self.with_writer(|w| w.end());
         }
+    }
+
+    /// Only frees the request. A canceled shutdown can run after its `WindowsNamedPipe` is gone.
+    extern "C" fn uv_on_shutdown(req: *mut uv::uv_shutdown_t, _status: core::ffi::c_int) {
+        // SAFETY: `req` comes from `heap::alloc` in `send_shutdown_if_drained`, and libuv calls this once.
+        unsafe { bun_core::heap::destroy(req) };
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown_read")]
@@ -920,7 +962,10 @@ impl WindowsNamedPipe {
             return wrapper.is_shutdown();
         }
 
-        self.flags.get().disconnected() || self.writer.get().is_done
+        let flags = self.flags.get();
+        flags.disconnected()
+            || flags.contains(Flags::SHUTDOWN_REQUESTED)
+            || self.writer.get().is_done
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_closed", no_catch)]

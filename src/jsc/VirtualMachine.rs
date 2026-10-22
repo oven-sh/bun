@@ -4334,6 +4334,16 @@ impl VirtualMachine {
             .and_then(RareData::tls_default_ciphers)
     }
 
+    /// Returns the `tls.setDefaultCACertificates()` list, or `None` if it was never called.
+    pub fn tls_default_ca(&self) -> Option<&[Box<[u8]>]> {
+        self.rare_data.as_deref().and_then(RareData::tls_default_ca)
+    }
+
+    /// Returns true if `tls.DEFAULT_CIPHERS` or `tls.setDefaultCACertificates()` overrides what a client with no TLS options uses.
+    pub fn tls_client_defaults_set(&self) -> bool {
+        self.tls_default_ciphers().is_some() || self.tls_default_ca().is_some()
+    }
+
     /// Registers a spawned subprocess with the auto-killer.
     pub fn on_subprocess_spawn(&mut self, process: core::ptr::NonNull<bun_spawn::Process>) {
         self.auto_killer.on_subprocess_spawn(process);
@@ -6058,6 +6068,10 @@ impl VirtualMachine {
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
             rare.node_quic_callbacks.deinit();
+            // The next file's `node:tls` starts with no override, so native clients must too.
+            if rare.tls_default_ca.take().is_some() {
+                rare.default_client_ssl_ctx = None;
+            }
         }
         let _ = self.event_loop_mut().drain_microtasks();
 

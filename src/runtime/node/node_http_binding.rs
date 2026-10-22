@@ -7,7 +7,10 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
 
-use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams, UpgradeResponse};
+use crate::api::bun_secure_context::SecureContext;
+use crate::generated_bindgen::node_http_binding::{
+    BunServer, BunTLSServer, DeflateParams, UpgradeResponse,
+};
 use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket};
 
 pub(crate) fn get_bun_server_all_closed_promise(
@@ -58,6 +61,38 @@ pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
         BunServer::Https(server) => open_count!(server),
         BunServer::DebugHttp(server) => open_count!(server),
         BunServer::DebugHttps(server) => open_count!(server),
+    }
+}
+
+/// `None` once the server has stopped listening.
+fn tls_listen_socket(server: BunTLSServer<'_>) -> Option<&mut bun_uws_sys::ListenSocket> {
+    let listener = match server {
+        BunTLSServer::Https(server) => server.listener?.cast::<bun_uws_sys::ListenSocket>(),
+        BunTLSServer::DebugHttps(server) => server.listener?.cast::<bun_uws_sys::ListenSocket>(),
+    };
+    Some(bun_opaque::opaque_deref_mut(listener))
+}
+
+pub(crate) fn set_secure_context(server: BunTLSServer<'_>, context: &SecureContext) {
+    if let Some(listener) = tls_listen_socket(server) {
+        listener.set_default_ssl_ctx(&context.ctx);
+    }
+}
+
+pub(crate) fn dispatch_server_names(server: BunTLSServer<'_>) {
+    if let Some(listener) = tls_listen_socket(server) {
+        listener.on_server_name(crate::socket::listener::us_dispatch_server_name);
+    }
+}
+
+pub(crate) fn add_server_name(server: BunTLSServer<'_>, hostname: &[u8], context: &SecureContext) {
+    // No ClientHello can carry a NUL, so this pattern matches nothing, as in Node.
+    if bun_core::strings::contains_char(hostname, 0) {
+        return;
+    }
+    if let Some(listener) = tls_listen_socket(server) {
+        let hostname = bun_core::ZBox::from_bytes(hostname);
+        listener.add_server_name(hostname.as_zstr().as_cstr(), context.ctx.as_ptr());
     }
 }
 

@@ -21,6 +21,8 @@ pub(crate) mod js_socket_handlers;
 #[path = "Listener.rs"]
 pub(crate) mod listener;
 
+pub(crate) mod pending_writes;
+
 #[path = "UpgradedDuplex.rs"]
 pub(crate) mod upgraded_duplex;
 
@@ -75,8 +77,8 @@ pub(crate) mod uws_jsc;
 #[path = "SSLConfig.rs"]
 pub(crate) mod ssl_config;
 pub(crate) use ssl_config::{
-    SSLConfig, SSLConfigFromJs, http_client_defaults, resolve_reject_unauthorized,
-    tls_true_defaults,
+    SSLConfig, SSLConfigFromJs, apply_empty_default_ca, http_client_defaults,
+    resolve_reject_unauthorized, tls_true_defaults,
 };
 
 // ─── canonical type surface ──────────────────────────────────────────────────

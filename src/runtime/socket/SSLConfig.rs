@@ -119,6 +119,31 @@ fn read_from_blob(
 // fromJS / fromGenerated — extension trait (orphan-rule workaround)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// The protocol code for a `minVersion` / `maxVersion` option, 0 if it isn't set.
+fn protocol_version(
+    global: &JSGlobalObject,
+    bound: &str,
+    version: &generated::TLSVersion,
+) -> JsResult<i32> {
+    let name = match version {
+        generated::TLSVersion::None => return Ok(0),
+        generated::TLSVersion::Code(code) => return Ok(*code),
+        generated::TLSVersion::Name(name) => name,
+    };
+    match name.to_utf8().slice() {
+        b"TLSv1" => Ok(0x0301),
+        b"TLSv1.1" => Ok(0x0302),
+        b"TLSv1.2" => Ok(0x0303),
+        b"TLSv1.3" => Ok(0x0304),
+        _ => Err(global
+            .err(
+                jsc::ErrorCode::TLS_INVALID_PROTOCOL_VERSION,
+                format_args!("\"{name}\" is not a valid {bound} TLS protocol version"),
+            )
+            .throw()),
+    }
+}
+
 /// JSC-dependent constructors for the canonical `bun_http::SSLConfig`.
 /// Import this trait to call `SSLConfig::from_js(..)` / `::from_generated(..)`.
 /// An unset `rejectUnauthorized` is `true` for a server and `NODE_TLS_REJECT_UNAUTHORIZED` for a client, as in Node.js.
@@ -186,8 +211,8 @@ impl SSLConfigFromJs for SSLConfig {
             as i32;
         result.request_cert = generated.request_cert as i32;
         result.secure_options = generated.secure_options;
-        result.ssl_min_version = generated.ssl_min_version;
-        result.ssl_max_version = generated.ssl_max_version;
+        result.ssl_min_version = protocol_version(global, "minimum", &generated.ssl_min_version)?;
+        result.ssl_max_version = protocol_version(global, "maximum", &generated.ssl_max_version)?;
         result.session_timeout = generated.session_timeout;
         result.allow_partial_trust_chain = generated.allow_partial_trust_chain;
         if let Some(sigalgs) = generated.sigalgs.as_ref() {
@@ -277,6 +302,12 @@ impl SSLConfigFromJs for SSLConfig {
         if generated.ciphers.is_none() {
             apply_default_ciphers(vm, &mut result);
         }
+        // `ca: []` parses to no list, but it was given, so it skips the default.
+        if matches!(generated.ca, generated::TLSOptionsFile::None) && result.ca_file_name.is_null()
+        {
+            apply_default_ca(vm, &mut result);
+        }
+        apply_empty_default_ca(vm, &mut result);
         Ok(Some(result))
     }
 }
@@ -287,12 +318,15 @@ pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConf
     let mut cfg = SSLConfig::zero();
     cfg.reject_unauthorized = (is_server || vm.get_tls_reject_unauthorized()) as i32;
     apply_default_ciphers(vm, &mut cfg);
+    apply_default_ca(vm, &mut cfg);
     cfg
 }
 
-/// For a request without TLS options: its default context is built on the HTTP thread, which does not see `tls.DEFAULT_CIPHERS`.
+/// For a request without TLS options: its default context is built on the HTTP thread, which sees neither `tls.DEFAULT_CIPHERS` nor `tls.setDefaultCACertificates`.
 pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_config::SharedPtr> {
-    vm.tls_default_ciphers()?;
+    if !vm.tls_client_defaults_set() {
+        return None;
+    }
     Some(bun_http::ssl_config::global_registry::intern(
         tls_true_defaults(vm, false),
     ))
@@ -302,6 +336,23 @@ pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_
 fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
     if let Some(ciphers) = vm.tls_default_ciphers() {
         cfg.set_default_ciphers(ciphers);
+    }
+}
+
+/// No `ca` means `tls.setDefaultCACertificates`' list, as in Node's `configSecureContext`.
+fn apply_default_ca(vm: &VirtualMachine, cfg: &mut SSLConfig) {
+    if let Some(certs) = vm.tls_default_ca() {
+        cfg.set_default_ca(certs);
+    }
+}
+
+/// `tls.setDefaultCACertificates([])` for a `SecureContext`: its `ca: []` parses as no list, which would mean the default store.
+pub(crate) fn apply_empty_default_ca(vm: &VirtualMachine, cfg: &mut SSLConfig) {
+    if cfg.ca.is_none()
+        && cfg.ca_file_name.is_null()
+        && vm.tls_default_ca().is_some_and(<[_]>::is_empty)
+    {
+        cfg.set_default_ca(&[]);
     }
 }
 

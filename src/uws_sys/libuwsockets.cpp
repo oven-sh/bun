@@ -131,6 +131,11 @@ extern "C"
     return (uws_app_t *)uWS::App::create(socket_context_options);
   }
 
+  uws_app_t *uws_create_app_with_ssl_ctx(struct ssl_ctx_st *ssl_ctx, bool reject_unauthorized)
+  {
+    return (uws_app_t *)uWS::SSLApp::create(ssl_ctx, reject_unauthorized);
+  }
+
   void uws_app_clear_routes(int ssl, uws_app_t *app)
   {
     if (ssl)

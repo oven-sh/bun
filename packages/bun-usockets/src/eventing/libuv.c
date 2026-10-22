@@ -147,6 +147,10 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
 static void prepare_cb(uv_prepare_t *p) {
   struct us_loop_t *loop = p->data;
   us_internal_loop_pre(loop);
+  /* Only a loop iteration releases a parked socket (us_internal_handle_low_priority_sockets). */
+  if (loop->data.low_prio_head) {
+    us_wakeup_loop(loop);
+  }
 }
 
 /* Note: libuv timers execute AFTER the post callback */

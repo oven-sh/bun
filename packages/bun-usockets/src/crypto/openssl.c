@@ -27,6 +27,7 @@
 
 #ifdef LIBUS_USE_OPENSSL
 #include <openssl/bio.h>
+#include <openssl/bytestring.h>
 #include <openssl/dh.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -201,18 +202,34 @@ struct us_ssl_spill_t {
   char data[];
 };
 
+/* Ciphertext a client sent behind its ClientHello (TLS 1.3 early data) while an asynchronous SNICallback has the
+ * handshake suspended. The loop's read BIO is a window onto one recv(), so it can't wait there. */
+struct us_ssl_held_t {
+  unsigned int length;
+  char data[];
+};
+
+/* A ChangeCipherSpec record, then as much rejected early data as BoringSSL skips (kMaxEarlyDataSkipped in tls_record.cc). */
+#define US_SSL_SNI_HELD_MAX (6 + 16384)
+
 /* Allocated for an accepted socket, a node:tls socket's events, a client's first renegotiation, fetch's session sink, and a first spill. */
 struct us_ssl_rare_t {
   /* Non-NULL exactly while us_socket_t::ssl_spilled is set. */
   struct us_ssl_spill_t *spill;
   /* One reference to the accepting listen socket's names. */
   struct us_server_names_t *server_names;
+  /* us_socket_sni_resolve feeds it to BoringSSL after the answer. */
+  struct us_ssl_held_t *sni_held;
   /* Sessions and keylog lines parked inside SSL_read/SSL_do_handshake, in arrival order. */
   struct us_ssl_pending_event_t *pending_head, *pending_tail;
   void *session_sink;
   void (*session_sink_free)(void *sink);
   uint64_t reneg_window_start_ms;
   uint32_t reneg_count;
+  /* Set by us_ssl_on_alpn_offer, until us_select_cert_cb has dispatched the offer. */
+  unsigned char alpn_offer_wanted;
+  /* us_ssl_set_key_cert changed this SSL, so it no longer matches its SSL_CTX. */
+  unsigned char has_key_cert;
 };
 
 static void us_ctx_ex_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
@@ -234,6 +251,7 @@ static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   }
   if (rare->session_sink_free) rare->session_sink_free(rare->session_sink);
   if (rare->server_names) us_server_names_unref(rare->server_names);
+  us_free(rare->sni_held);
   us_free(rare);
 }
 
@@ -244,6 +262,7 @@ static void us_ssl_rare_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
 
 /* Defined in src/uws/lib.rs. `wrapper` is what us_ssl_set_wrapper stored. */
 extern int us_ssl_wrapper_server_identity(void *wrapper, SSL *ssl);
+extern int us_ssl_wrapper_select_cert(void *wrapper, SSL *ssl);
 extern int us_ssl_wrapper_identity_checked(void *wrapper);
 extern void us_ssl_wrapper_new_session(void *wrapper, SSL_SESSION *session);
 extern void us_ssl_wrapper_keylog(void *wrapper, const char *line, size_t length);
@@ -1380,7 +1399,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       ssl_ctx_build_fail(ssl_context);
       return NULL;
     }
-  } else if (options.ca && options.ca_count > 0) {
+  } else if (options.ca) { /* A count of 0 is a list that trusts nothing. */
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
@@ -2230,7 +2249,9 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
 /* `fin_ends_handshake` is 0 only from the writable event, which the read path
  * re-enters while a handshake is in progress: the socket keeps reading after
  * our FIN or close_notify, and the peer's next flight can still complete that
- * handshake. For every other caller a half-closed socket's handshake is over. */
+ * handshake. For every other caller a half-closed socket's handshake is over,
+ * unless ssl_raw_write sent that FIN after a refused send: then us_internal_ssl_close
+ * or ssl_close_after_rejected_send reports the reset. */
 static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) {
   /* The OpenSSL error queue is per-thread and another socket's failure (a
    * server and a client commonly share this thread) may have left entries on
@@ -2252,7 +2273,7 @@ static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) 
 
   if (us_socket_is_closed(s) || s->ssl_fatal_error ||
       (SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN) ||
-      (fin_ends_handshake && us_internal_ssl_is_shut_down(s))) {
+      (fin_ends_handshake && us_internal_ssl_is_shut_down(s) && !s->ssl_send_rejected)) {
     ssl_trigger_handshake(s, 0);
     return;
   }
@@ -2449,7 +2470,11 @@ struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
 
 /* The read side delivers what the peer sent before it closes, unless the owner already let go. */
 static struct us_socket_t *ssl_close_after_rejected_send(struct us_socket_t *s, int send_error) {
-  if (!s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) return s;
+  if (!s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) {
+    /* This handshake can't complete, so the read delivers no data, only the failure. A paused owner would never hear it. */
+    if (s->ssl_handshake_state == HANDSHAKE_PENDING) us_socket_resume(s);
+    return s;
+  }
   if (s->ssl_handshake_state == HANDSHAKE_PENDING) {
     ssl_set_loop_data(s);
     ssl_trigger_handshake_econnreset(s);
@@ -2557,6 +2582,21 @@ static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, s
   }
   ssl_close(s, 0, NULL);
   return NULL;
+}
+
+/* Appends the unread rest of the read window to what `s` already holds. Returns 0 if that's more than US_SSL_SNI_HELD_MAX. */
+static int ssl_hold_input(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data) {
+  unsigned int length = loop_ssl_data->ssl_read_input_length;
+  struct us_ssl_rare_t *rare = us_ssl_rare_ensure(s_ssl(s));
+  unsigned int held = rare->sni_held ? rare->sni_held->length : 0;
+  if (length > US_SSL_SNI_HELD_MAX - held) return 0;
+  struct us_ssl_held_t *grown = us_realloc(rare->sni_held, sizeof(*grown) + held + length);
+  if (!grown) return 0;
+  memcpy(grown->data + held, loop_ssl_data->ssl_read_input + loop_ssl_data->ssl_read_input_offset, length);
+  grown->length = held + length;
+  rare->sni_held = grown;
+  loop_ssl_data->ssl_read_input_length = 0;
+  return 1;
 }
 
 struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *socket, char *data, int length) {
@@ -2724,9 +2764,10 @@ restart:
         loop_ssl_data->ssl_last_fatal_error[0] = 0;
         return NULL;
       } else {
-        /* If the BIO still has unread ciphertext at this point, the TLS
-         * framing is broken — close. */
-        if (loop_ssl_data->ssl_read_input_length) {
+        /* A suspended handshake reads nothing, so its input waits for the answer. Anywhere else,
+         * unread ciphertext means the TLS framing is broken — close. */
+        if (loop_ssl_data->ssl_read_input_length &&
+            (err != SSL_ERROR_PENDING_CERTIFICATE || !ssl_hold_input(s, loop_ssl_data))) {
           return ssl_close(s, 0, NULL);
         }
         /* SSL_read drove the handshake to completion but returned no app
@@ -3062,6 +3103,10 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   struct loop_ssl_data *loop_ssl_data = ssl_set_loop_data(s);
   SSL_CTX *outer_ctx = loop_ssl_data->ssl_sni_resolved_ctx;
   loop_ssl_data->ssl_sni_resolved_ctx = NULL;
+  /* Taken now: the re-drive can free the SSL, and the rare block with it. */
+  struct us_ssl_rare_t *rare = us_ssl_rare(s_ssl(s));
+  struct us_ssl_held_t *held = rare ? rare->sni_held : NULL;
+  if (held) rare->sni_held = NULL;
   if (error) {
     s->ssl_sni_pending = US_SNI_ERROR;
     if (ctx) SSL_CTX_free(ctx);
@@ -3079,6 +3124,20 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   }
   /* Re-drive the handshake; select_cert_cb re-fires and consumes the state. */
   ssl_update_handshake(s, 1);
+  /* No read or writable event is due that would close a socket whose handshake just failed. */
+  ssl_close_if_fatal(s);
+  if (held) {
+    if (!ssl_gone(s) && s->ssl_handshake_state == HANDSHAKE_PENDING) {
+      /* The raw half of an upgradeTLS() pair saw these bytes when they arrived. */
+      unsigned char raw_tap = s->ssl_raw_tap;
+      s->ssl_raw_tap = 0;
+      struct us_socket_t *fed = us_internal_ssl_on_data(s, held->data, (int)held->length);
+      if (fed && !ssl_gone(fed)) fed->ssl_raw_tap = raw_tap;
+      /* The read window must not outlive `held`. */
+      loop_ssl_data->ssl_read_input_length = 0;
+    }
+    us_free(held);
+  }
   if (loop_ssl_data->ssl_sni_resolved_ctx) SSL_CTX_free(loop_ssl_data->ssl_sni_resolved_ctx);
   loop_ssl_data->ssl_sni_resolved_ctx = outer_ctx;
 }
@@ -3150,7 +3209,7 @@ struct us_server_names_t {
   /* hostname -> sni_node_t. NULL until the first name is added. */
   void *tree;
   /* Returns the SSL_CTX to serve for `hostname` on the in-flight handshake only
-   * (the caller does not cache it), or NULL to fall through to the tree. */
+   * (the caller does not cache it), or NULL to keep the default one. While this is set nothing reads the tree. */
   struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
 };
 
@@ -3203,6 +3262,8 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
   SSL_CTX_set_session_id_context(ctx, (const uint8_t *)&sid, sizeof(sid));
 }
 
+static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello);
+
 /* Every SNI context switch goes through here: SSL_set_SSL_CTX alone leaves
  * verify_mode as inherited from the default context at accept, so a
  * per-serverName entry's requestCert/rejectUnauthorized are added on top of
@@ -3217,7 +3278,19 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
  * authenticated again, against this context's CA. That refusal is deliberate
  * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
  * hosts") and must not be relaxed for parity with another runtime. */
-static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+  struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
+  /* An SSLWrapper switches between two runs of us_select_cert_cb, and BoringSSL reads that callback off the current SSL_CTX. */
+  if (rare && rare->alpn_offer_wanted) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+  if (rare && rare->has_key_cert) {
+    rare->has_key_cert = 0;
+    SSL_set0_client_CAs(ssl, NULL);
+    /* SSL_set_SSL_CTX does nothing for the SSL_CTX the SSL is already on, so move it off first. */
+    SSL_CTX *blank = SSL_CTX_new(TLS_method());
+    if (!blank) Bun__outOfMemory();
+    SSL_set_SSL_CTX(ssl, blank);
+    SSL_CTX_free(blank);
+  }
   SSL_set_SSL_CTX(ssl, ctx);
   if (us_ctx_sni_policy_ex_idx < 0) return;
   uintptr_t policy = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
@@ -3276,15 +3349,14 @@ static size_t us_client_hello_servername(const SSL_CLIENT_HELLO *hello, char *ou
   return 0;
 }
 
-/* The async-capable certificate selector. Registered (instead of relying on
+/* The SNI stage of us_select_cert_cb.
+ * The async-capable certificate selector. Registered (instead of relying on
  * sni_cb alone) on listener contexts that have a dynamic JS resolver, so an
  * SNICallback that cannot answer synchronously suspends the handshake
  * (ssl_select_cert_retry -> SSL_ERROR_PENDING_CERTIFICATE) instead of falling
  * through to the default context. us_socket_sni_resolve() resumes it. */
-static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
+static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *hello, struct us_socket_t *s) {
   SSL *ssl = hello->ssl;
-  struct us_socket_t *s = ssl ? us_ssl_socket(ssl) : NULL;
-  if (!s) return ssl_select_cert_success;
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   struct us_server_names_t *names = rare ? rare->server_names : NULL;
 
@@ -3297,24 +3369,6 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     if (resolved_ctx) {
       us_ssl_apply_selected_ctx(ssl, resolved_ctx);
       SSL_CTX_free(resolved_ctx);
-      return ssl_select_cert_success;
-    }
-    /* The asynchronous resolution selected nothing (cb(null, null)): fall
-     * through to the static SNI tree below, exactly like a synchronous
-     * resolver returning null - the resume must not skip the tree fallback
-     * the sync path gets. */
-    if (names) {
-      /* Read the servername from the raw ClientHello, same as the first-call
-       * path below: that is the read the early-callback contract guarantees
-       * (SSL_get_servername happens to be populated by the resume re-drive
-       * today, but the raw parse does not depend on that). */
-      char resumed_host[256];
-      if (us_client_hello_servername(hello, resumed_host, sizeof(resumed_host))) {
-        struct sni_node_t *resumed_node = us_server_names_find(names, resumed_host);
-        if (resumed_node) {
-          us_ssl_apply_selected_ctx(ssl, resumed_node->ctx);
-        }
-      }
     }
     return ssl_select_cert_success;
   }
@@ -3339,14 +3393,8 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_success;
   }
 
-  /* The dynamic resolver (the user's SNICallback) runs FIRST, matching Node
-   * where a user-provided SNICallback replaces the default SNI handling
-   * entirely (tree-first would shadow the callback for every name that also
-   * has an addContext entry). The static tree (addContext entries) is the
-   * fallback when the resolver selects nothing, which is also the
-   * no-user-callback path: the JS dispatch returns undefined immediately in
-   * that case. */
-
+  /* The resolver alone selects. In Node a user SNICallback replaces the default one, the only reader of the addContext()
+   * entries: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1270 */
   void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
@@ -3370,16 +3418,78 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   if (dyn) {
     us_ssl_apply_selected_ctx(ssl, dyn);
     SSL_CTX_free(dyn);
-    return ssl_select_cert_success;
-  }
-
-  /* No dynamic selection: fall back to the static SNI tree (the
-   * addContext() entries). An adopted socket has no tree. */
-  struct sni_node_t *node = us_server_names_find(names, hostname);
-  if (node) {
-    us_ssl_apply_selected_ctx(ssl, node->ctx);
   }
   return ssl_select_cert_success;
+}
+
+static int sni_cb(SSL *ssl, int *al, void *arg);
+
+/* Returns 1 if BoringSSL's negotiate_version, which runs after us_select_cert_cb, will pick TLS 1.3. */
+static int us_client_hello_is_tls13(const SSL_CLIENT_HELLO *hello) {
+  const uint8_t *extension;
+  size_t extension_length;
+  if (SSL_get_max_proto_version(hello->ssl) < TLS1_3_VERSION || (SSL_get_options(hello->ssl) & SSL_OP_NO_TLSv1_3) ||
+      !SSL_early_callback_ctx_extension_get(hello, TLSEXT_TYPE_supported_versions, &extension, &extension_length)) {
+    return 0;
+  }
+  CBS contents, versions;
+  uint16_t version;
+  CBS_init(&contents, extension, extension_length);
+  if (!CBS_get_u8_length_prefixed(&contents, &versions)) return 0;
+  while (CBS_get_u16(&versions, &version)) {
+    if (version == TLS1_3_VERSION) return 1;
+  }
+  return 0;
+}
+
+/* The ALPN stage of us_select_cert_cb. Returns 0 if the owner refused every protocol the client offers. */
+static int us_select_cert_alpn(const SSL_CLIENT_HELLO *hello, struct us_ssl_rare_t *rare) {
+  rare->alpn_offer_wanted = 0;
+  const uint8_t *extension;
+  size_t extension_length;
+  if (!SSL_early_callback_ctx_extension_get(
+          hello, TLSEXT_TYPE_application_layer_protocol_negotiation, &extension, &extension_length)) {
+    return 1;
+  }
+  /* ssl_negotiate_alpn (vendor/boringssl/ssl/extensions.cc) runs these checks later and fails the handshake. */
+  CBS contents, list, names, name;
+  CBS_init(&contents, extension, extension_length);
+  if (!CBS_get_u16_length_prefixed(&contents, &list) || CBS_len(&contents) != 0 || CBS_len(&list) == 0) return 1;
+  names = list;
+  while (CBS_len(&names) > 0) {
+    if (!CBS_get_u8_length_prefixed(&names, &name) || CBS_len(&name) == 0) return 1;
+  }
+  return us_dispatch_alpn_offer(hello->ssl, CBS_data(&list), (unsigned int)CBS_len(&list));
+}
+
+/* BoringSSL picks the cipher, the certificate and the session after this callback and only then runs its ALPN
+ * callback, too late for node:tls setKeyCert(). So us_dispatch_alpn_offer runs here, in OpenSSL's order: before
+ * SNI on TLS 1.3, after it on TLS 1.2. */
+static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
+  SSL *ssl = hello->ssl;
+  if (!ssl) return ssl_select_cert_success;
+  struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
+  if (rare && rare->alpn_offer_wanted && us_client_hello_is_tls13(hello) && !us_select_cert_alpn(hello, rare)) {
+    /* BoringSSL's ALPN selection sends the alert. */
+    return ssl_select_cert_success;
+  }
+  struct us_socket_t *s = us_ssl_socket(ssl);
+  enum ssl_select_cert_result_t result = ssl_select_cert_success;
+  if (s) {
+    result = us_select_cert_sni(hello, s);
+  } else {
+    /* No us_socket_t drives this SSL, so its SSLWrapper decides (src/uws/lib.rs). */
+    void *wrapper = us_ssl_wrapper(ssl);
+    if (wrapper && !us_ssl_wrapper_select_cert(wrapper, ssl)) result = ssl_select_cert_retry;
+  }
+  if (result == ssl_select_cert_success && rare && rare->alpn_offer_wanted) {
+    sni_cb(ssl, NULL, NULL);
+    /* BoringSSL calls sni_cb again later. Dropping the names keeps that call from undoing a us_ssl_set_key_cert. */
+    if (rare->server_names) us_server_names_unref(rare->server_names);
+    rare->server_names = NULL;
+    us_select_cert_alpn(hello, rare);
+  }
+  return result;
 }
 
 static int sni_cb(SSL *ssl, int *al, void *arg) {
@@ -3391,11 +3501,7 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
   struct us_server_names_t *names = rare ? rare->server_names : NULL;
   if (!names) return SSL_TLSEXT_ERR_OK;
   if (names->on_server_name) {
-    /* A dynamic resolver (user SNICallback) exists: us_select_cert_cb already
-     * ran it - and the static-tree fallback - at the earlier
-     * select-certificate stage. Consulting the tree again here would
-     * OVERWRITE the resolver's per-connection selection with the tree entry,
-     * undoing the SNICallback-takes-precedence contract. */
+    /* us_select_cert_cb already ran the resolver, which alone selects for this listener. */
     return SSL_TLSEXT_ERR_OK;
   }
   const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
@@ -3468,9 +3574,7 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
   us_listen_socket_server_names(ls)->on_server_name = cb;
   /* The dynamic resolver may need to suspend the handshake (async
    * SNICallback); only the early select-certificate callback supports retry,
-   * so register it on the listener's default context. The servername-stage
-   * sni_cb stays registered for the static SNI tree (it is a no-op when the
-   * early callback already installed a context). */
+   * so register it on the listener's default context. */
   SSL_CTX_set_select_certificate_cb(ls->ssl_ctx, us_select_cert_cb);
 }
 
@@ -3486,6 +3590,39 @@ void us_socket_on_server_name(struct us_socket_t *s) {
    * stay a no-op on any SSL carrying neither resolver. */
   SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
   if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+}
+
+/* us_socket_on_server_name for an SSLWrapper's SSL, which has no us_socket_t. */
+void us_ssl_wrapper_on_server_name(SSL *ssl) {
+  SSL_CTX_set_select_certificate_cb(SSL_get_SSL_CTX(ssl), us_select_cert_cb);
+}
+
+/* Takes the SSL, not the socket: an SSLWrapper's has no us_socket_t. */
+void us_ssl_on_alpn_offer(SSL *ssl) {
+  us_ssl_rare_ensure(ssl)->alpn_offer_wanted = 1;
+  /* Permanent on a possibly shared SSL_CTX, like us_socket_on_server_name. */
+  SSL_CTX_set_select_certificate_cb(SSL_get_SSL_CTX(ssl), us_select_cert_cb);
+}
+
+/* https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1674-L1699. The SSL_CTX stays, and with it the
+ * callbacks, the ciphers and the signature algorithms. `sid_ctx` keeps sessions apart as in us_ssl_apply_selected_ctx. */
+int us_ssl_set_key_cert(SSL *ssl, SSL_CTX *ctx, const unsigned char *sid_ctx, size_t sid_ctx_length) {
+  X509 *leaf = SSL_CTX_get0_certificate(ctx);
+  EVP_PKEY *key = SSL_CTX_get0_privatekey(ctx);
+  STACK_OF(X509) *chain = NULL;
+  if (leaf == NULL || key == NULL || !SSL_CTX_get0_chain_certs(ctx, &chain)) return 0;
+  us_ssl_rare_ensure(ssl)->has_key_cert = 1;
+  SSL_certs_clear(ssl);
+  if (!SSL_use_certificate(ssl, leaf) || !SSL_use_PrivateKey(ssl, key) ||
+      (sk_X509_num(chain) > 0 && !SSL_set1_chain(ssl, chain)) ||
+      !SSL_set1_verify_cert_store(ssl, SSL_CTX_get_cert_store(ctx)) ||
+      !SSL_set_session_id_context(ssl, sid_ctx, sid_ctx_length)) {
+    return 0;
+  }
+  SSL_set_client_CA_list(ssl, SSL_dup_CA_list(SSL_CTX_get_client_CA_list(ctx)));
+  /* Past the ServerHello the new session already carries the old session id context, and `ctx`'s CAs will judge the client. */
+  SSL_SESSION *session = SSL_in_init(ssl) && !SSL_session_reused(ssl) ? SSL_get_session(ssl) : NULL;
+  return session == NULL || SSL_SESSION_set1_id_context(session, sid_ctx, sid_ctx_length);
 }
 
 const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {

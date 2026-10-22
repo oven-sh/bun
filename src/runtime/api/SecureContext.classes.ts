@@ -35,6 +35,14 @@ export default [
         fn: "add_ca_cert",
         length: 1,
       },
+      getTicketKeys: {
+        fn: "get_ticket_keys",
+        length: 0,
+      },
+      setTicketKeys: {
+        fn: "set_ticket_keys",
+        length: 1,
+      },
     },
   }),
 ];

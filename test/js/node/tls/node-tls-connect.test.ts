@@ -176,6 +176,21 @@ it("should thow ECONNRESET if FIN is received before handshake", async () => {
   expect(error).toBeDefined();
   expect((error as NodeJS.ErrnoException).code as string).toBe("ECONNRESET");
 });
+it("reports ECONNRESET when the peer closes during the handshake with a write pending", async () => {
+  await using server = net.createServer(c => {
+    c.on("error", () => {});
+    c.once("data", () => c.end());
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = tls.connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+  const events: string[] = [];
+  socket.on("end", () => events.push("end"));
+  socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+  socket.write("hello", (err?: NodeJS.ErrnoException | null) => events.push(`write ${err?.code}`));
+  await new Promise(resolve => socket.once("close", resolve));
+  // As in Node.
+  expect(events).toEqual(["end", "error ECONNRESET", "write ECANCELED"]);
+});
 it.each(["socket", "port"])(
   "write() and end() made before secureConnect call back when the connection is reset ({ %s })",
   async form => {
@@ -2749,6 +2764,64 @@ it("verifies against the CAs of its context when the TLS socket rides on a Duple
   }
 });
 
+it("tls.connect() and https.request() build their context with a replaced tls.createSecureContext", async () => {
+  const fixtures = join(import.meta.dir, "fixtures");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+  const server = https.createServer(
+    {
+      key: readFileSync(join(fixtures, "agent1-key.pem"), "utf8"),
+      cert: readFileSync(join(fixtures, "agent1-cert.pem"), "utf8"),
+    },
+    (req, res) => res.end("hi"),
+  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const target = { port: (server.address() as AddressInfo).port, host: "127.0.0.1", servername: "agent1" };
+
+  function connectOutcome(options: tls.ConnectionOptions = {}): Promise<string> {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const client = tls.connect({ ...target, ...options }, () => resolve(`authorized=${client.authorized}`));
+    client.on("error", err => resolve((err as NodeJS.ErrnoException).code!));
+    return promise.finally(() => client.destroy());
+  }
+  function requestOutcome(): Promise<string> {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const req = https.get({ ...target, agent: false }, res => {
+      res.resume();
+      res.on("end", () => resolve(`status=${res.statusCode}`));
+    });
+    req.on("error", err => resolve((err as NodeJS.ErrnoException).code!));
+    return promise;
+  }
+
+  // This is how win-ca, mac-ca and syswide-cas add their certificates to every client connection.
+  const createSecureContext = tls.createSecureContext;
+  const seenCiphers: unknown[] = [];
+  const addsCA = (options?: tls.SecureContextOptions) => {
+    seenCiphers.push(options?.ciphers);
+    const context = createSecureContext(options);
+    context.context.addCACert(ca1);
+    return context;
+  };
+  try {
+    const before = await connectOutcome();
+    tls.createSecureContext = addsCA;
+    const replaced = { connect: await connectOutcome(), request: await requestOutcome() };
+    const calls = seenCiphers.length;
+    const ownContext = await connectOutcome({ secureContext: createSecureContext() });
+    expect({ before, replaced, calls, seenCiphers, ownContext, callsAfterOwnContext: seenCiphers.length }).toEqual({
+      before: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      replaced: { connect: "authorized=true", request: "status=200" },
+      calls: 2,
+      seenCiphers: [tls.DEFAULT_CIPHERS, tls.DEFAULT_CIPHERS],
+      ownContext: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      callsAfterOwnContext: 2,
+    });
+  } finally {
+    tls.createSecureContext = createSecureContext;
+    server.close();
+  }
+});
+
 describe("a TLS server wrap over a Duplex transport whose peer ends the handshake with close_notify", () => {
   // The peer keeps the transport open, so only the alert says that no handshake will come. BoringSSL reads the alert
   // as the peer's close at every point of the handshake. OpenSSL refuses one ahead of the ClientHello and reads one
@@ -5175,10 +5248,12 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
     });
 
     it.skipIf(skip)("a session that is set before the handshake starts is resumed", async () => {
-      expect(await session()).toEqual({
+      const { boundSession, ...reused } = await session();
+      // Newer Node releases wrap getSession() in a host-bound envelope that the TLSSocket constructor doesn't unwrap.
+      expect(reused).toEqual({
         "tls.connect({ port, session })": true,
         "tls.connect({ socket, session })": true,
-        "new TLSSocket(socket, { session })": true,
+        "new TLSSocket(socket, { session })": !(_runtime === "node" && boundSession),
         "tls.connect({ port }), then setSession()": true,
       });
     });
@@ -5241,6 +5316,8 @@ describe("negotiated parameters", () => {
   const x25519 = { type: "ECDH", name: "X25519", size: 253 };
   const p256 = { type: "ECDH", name: "prime256v1", size: 256 };
   const p384 = { type: "ECDH", name: "secp384r1", size: 384 };
+  const x25519mlkem768 = { type: "TLSGroup", name: "X25519MLKEM768", size: undefined };
+  const mlkem1024 = { type: "TLSGroup", name: "MLKEM1024", size: undefined };
 
   // The client holds an EC certificate: its long-term key is not the ephemeral key.
   describe.each(["fd", "Duplex"] as const)("getEphemeralKeyInfo() over a %s", engine => {
@@ -5251,11 +5328,12 @@ describe("negotiated parameters", () => {
       ["TLSv1.2", { ciphers: "AES128-SHA" }, none, none],
       ["TLSv1.3", { ecdhCurve: "X25519" }, x25519, x25519],
       ["TLSv1.3", { ecdhCurve: "secp384r1" }, p384, p384],
-      // X25519MLKEM768: not a key type Node maps.
-      ["TLSv1.3", {}, none, none],
+      ["TLSv1.3", {}, x25519mlkem768, x25519mlkem768],
+      ["TLSv1.3", { ecdhCurve: "MLKEM1024" }, mlkem1024, mlkem1024],
     ] as const)("%s %j", async (maxVersion, options, full, resumed) => {
       using server = await listen({ maxVersion, ...options });
-      const clientOptions = { ...ecClientCert, ciphers: (options as tls.TlsOptions).ciphers };
+      const { ciphers, ecdhCurve } = options as tls.TlsOptions;
+      const clientOptions = { ...ecClientCert, ciphers, ecdhCurve };
       using first = await connectTo(server.port, engine, clientOptions);
       expect(first.client.getProtocol()).toBe(maxVersion);
       expect(first.client.isSessionReused()).toBe(false);
@@ -6204,6 +6282,11 @@ describe.concurrent("a write that is the first to observe the peer's reset fails
           const deadline = Date.now() + 30000;
           while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
             Atomics.wait(cell, 0, 0, 5);
+          }
+          // The kernel can apply the RST after the peer's close() returns. _handle.remotePort calls getpeername(),
+          // which fails on POSIX once the socket is reset.
+          while (process.platform !== "win32" && socket._handle.remotePort !== undefined && Date.now() < deadline) {
+            Atomics.wait(cell, 0, 0, 1);
           }
           socket.write("ping", function onWritten(err) {
             write = err ? { code: err.code, syscall: err.syscall } : "ok";

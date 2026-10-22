@@ -136,6 +136,18 @@ impl JSSocketHandlers {
         Bun__SocketHandlers__setCallbacks(global, self.0, callbacks.as_ptr());
     }
 
+    /// The inverse of [`set_callbacks`](Self::set_callbacks): unset fields read as `JSValue::ZERO`.
+    pub(crate) fn callbacks(self) -> [JSValue; CALLBACK_COUNT] {
+        core::array::from_fn(|i| {
+            let value = Bun__SocketHandlers__getField(self.0, i as u32);
+            if value.is_undefined() {
+                JSValue::ZERO
+            } else {
+                value
+            }
+        })
+    }
+
     /// Drops the `open` callback: a client socket clears it after its first TLS
     /// handshake so renegotiations do not fire it again.
     #[inline]

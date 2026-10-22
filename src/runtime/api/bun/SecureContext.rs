@@ -76,7 +76,9 @@ impl SecureContext {
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        let mut config =
+            SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        crate::socket::apply_empty_default_ca(vm, &mut config);
         // `defer config.deinit()` — handled by Drop.
 
         SecureContext::create(global, &config)
@@ -235,7 +237,9 @@ impl SecureContext {
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        let mut config =
+            SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        crate::socket::apply_empty_default_ca(vm, &mut config);
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();
@@ -276,7 +280,9 @@ impl SecureContext {
         // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
         let vm = global.bun_vm().as_mut();
         // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        let mut config =
+            SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
+        crate::socket::apply_empty_default_ca(vm, &mut config);
         // `defer config.deinit()` — handled by Drop.
 
         let ctx_opts = config.as_usockets();
@@ -435,12 +441,77 @@ impl SecureContext {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `secureContext.context.getTicketKeys()`, for `tls.Server#getTicketKeys()`.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn get_ticket_keys(
+        this: &Self,
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let mut keys = [0u8; TICKET_KEYS_LEN];
+        // SAFETY: `this.ctx` is live and `keys` has the length BoringSSL requires.
+        let ok = unsafe {
+            boringssl::SSL_CTX_get_tlsext_ticket_keys(
+                this.ctx.as_ptr(),
+                keys.as_mut_ptr().cast(),
+                keys.len(),
+            )
+        };
+        // Setting the keys stops BoringSSL's 48-hour rotation, so a copy given to another server stays valid as in Node.
+        if ok != 1 || (!this.shared && !this.apply_ticket_keys(&keys)) {
+            return Err(global.throw(format_args!("Failed to get the session ticket keys")));
+        }
+        bun_jsc::ArrayBuffer::create_buffer(global, &keys)
+    }
+
+    /// `secureContext.context.setTicketKeys(keys)`, for `tls.Server#setTicketKeys()` and the `ticketKeys` option.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn set_ticket_keys(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if this.shared {
+            return Err(global.throw(format_args!(
+                "cannot mutate a shared SecureContext; use tls.createSecureContext()"
+            )));
+        }
+        let keys = frame.argument(0).as_array_buffer(global);
+        let Some(keys) = keys.as_ref().map(|keys| keys.byte_slice()) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "setTicketKeys requires a Buffer, TypedArray, or DataView"
+            )));
+        };
+        if keys.len() != TICKET_KEYS_LEN {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Session ticket keys must be a 48-byte buffer"
+            )));
+        }
+        if !this.apply_ticket_keys(keys) {
+            return Err(global.throw(format_args!("Failed to set the session ticket keys")));
+        }
+        Ok(JSValue::TRUE)
+    }
+
+    fn apply_ticket_keys(&self, keys: &[u8]) -> bool {
+        // SAFETY: `self.ctx` is live; the call copies `keys` and rejects any length but 48.
+        unsafe {
+            boringssl::SSL_CTX_set_tlsext_ticket_keys(
+                self.ctx.as_ptr(),
+                keys.as_ptr().cast(),
+                keys.len(),
+            ) == 1
+        }
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         core::mem::size_of::<SecureContext>() + self.extra_memory
     }
 }
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
+/// A 16-byte name, a 16-byte HMAC key and a 16-byte AES key.
+const TICKET_KEYS_LEN: usize = 48;
 
 use bun_uws_sys::socket_context::c;
 

@@ -645,26 +645,40 @@ it.concurrent.each([
 );
 
 // After its own close_notify the client cannot answer the request. That is the end of the client's own close, not an
-// error, and no second 'secureConnect'.
-it.concurrent.each(["TCP", "a Duplex"])(
-  "a request for a renegotiation after the client's own end() is not an 'error' over %s",
-  async transport => {
-    const { socket, raw } = connectOver(transport, afterEndPort, { ca: tls.cert });
+// error, and no second 'secureConnect'. With an untrusted chain the session keeps its handshake's verify error, which
+// must not be reported as the result of a second handshake.
+it.concurrent.each([
+  { transport: "TCP", trusted: true },
+  { transport: "a Duplex", trusted: true },
+  { transport: "TCP", trusted: false },
+  { transport: "a Duplex", trusted: false },
+] as const)(
+  "a request for a renegotiation after the client's own end() is not an 'error' over $transport (trusted chain: $trusted)",
+  async ({ transport, trusted }) => {
+    const { socket, raw } = connectOver(
+      transport,
+      afterEndPort,
+      trusted ? { ca: tls.cert } : { rejectUnauthorized: false },
+    );
     const events: string[] = [];
     const closed = Promise.withResolvers<void>();
     socket.on("secureConnect", () => {
-      events.push(`secureConnect authorized=${socket.authorized}`);
+      events.push(`secureConnect authorized=${socket.authorized} authError=${socket.authorizationError}`);
       socket.end("go");
     });
     socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
     socket.on("close", (hadError: boolean) => {
-      events.push(`close hadError=${hadError}`);
+      events.push(`close hadError=${hadError} authError=${socket.authorizationError}`);
       closed.resolve();
     });
     socket.resume();
     try {
       await closed.promise;
-      expect(events).toEqual(["secureConnect authorized=true", "close hadError=false"]);
+      const authError = trusted ? null : "DEPTH_ZERO_SELF_SIGNED_CERT";
+      expect(events).toEqual([
+        `secureConnect authorized=${trusted} authError=${authError}`,
+        `close hadError=false authError=${authError}`,
+      ]);
     } finally {
       socket.destroy();
       raw?.destroy();
@@ -1397,7 +1411,8 @@ it.concurrent(
   },
 );
 
-it.concurrent("a write made in the middle of a renegotiation leaves when it ends, over a Duplex", async () => {
+const duplexes = ["a Duplex", "a Duplex that emits 'drain' in its write()"] as const;
+it.concurrent.each(duplexes)("a write made in the middle of a renegotiation leaves once, over %s", async duplexKind => {
   const tcp = netConnect(quiet.staysOpen, "127.0.0.1");
   tcp.on("error", () => {});
   const APPLICATION_DATA = 23;
@@ -1408,6 +1423,7 @@ it.concurrent("a write made in the middle of a renegotiation leaves when it ends
   const duplex = new Duplex({
     read() {},
     write(chunk: Buffer, _encoding: string, callback: () => void) {
+      if (duplexKind !== "a Duplex") this.emit("drain");
       const forward = () => void tcp.write(chunk, callback);
       if (!established) return forward();
       if (sent.push(chunk[0]) === 1) clientHello.resolve(forward);
@@ -1425,7 +1441,10 @@ it.concurrent("a write made in the middle of a renegotiation leaves when it ends
     socket.write("parked", err => (err ? written.reject(err) : written.resolve()));
     forward();
     await Promise.race([written.promise, failed.promise]);
-    expect(sent.at(-1)).toBe(APPLICATION_DATA);
+    expect({ last: sent.at(-1), applicationData: sent.filter(type => type === APPLICATION_DATA).length }).toEqual({
+      last: APPLICATION_DATA,
+      applicationData: 1,
+    });
   } finally {
     socket.destroy();
     tcp.destroy();

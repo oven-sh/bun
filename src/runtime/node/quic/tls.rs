@@ -453,7 +453,16 @@ impl TlsContext {
                 }
             }
             if config.ca_pem.is_empty() {
-                ssl::SSL_CTX_set_default_verify_paths(ctx);
+                // `load_crl_store` writes to the context's store, and every context shares the default one.
+                let store = if config.crl_pem.is_empty() {
+                    us_get_shared_default_ca_store()
+                } else {
+                    us_get_default_ca_store()
+                };
+                if store.is_null() {
+                    return Err("failed to load the default CA store");
+                }
+                ssl::SSL_CTX_set_cert_store(ctx, store);
             }
 
             // Node pairs `certs[i]` with `keys[i]`.
@@ -578,6 +587,10 @@ unsafe extern "C" {
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
     /// openssl.c: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
     fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
+    /// root_certs.cpp: the CA store every other TLS context of Bun verifies against without a `ca`. The caller owns a reference.
+    fn us_get_shared_default_ca_store() -> *mut ssl::X509_STORE;
+    /// root_certs.cpp: a new store with the same contents. The caller owns it.
+    fn us_get_default_ca_store() -> *mut ssl::X509_STORE;
 }
 
 /// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate

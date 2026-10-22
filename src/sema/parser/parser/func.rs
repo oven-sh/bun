@@ -1024,7 +1024,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !allow_return_type && has_return_colon && self.token() != T::Colon {
             return None;
         }
+        // Once its `=>` is read, TypeScript keeps an arrow function whatever its body is, and reports any errors in it.
         if self.has_failed() {
+            self.keep_failure();
             return None;
         }
         if self.options.is_javascript {

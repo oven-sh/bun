@@ -32,7 +32,7 @@ bun_bundler::link_impl_DevServerHandle! {
             // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap
             // bytes as an owned blob (ownership is transferred).
             let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
-            let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
+            let blob = crate::webcore::blob::Any::from_owned_slice(contents);
             (*this).put_or_overwrite_asset(path, blob, content_hash).map_err(Into::into)
         },
         track_resolution_failure(import_source, specifier, renderer, loader) => {

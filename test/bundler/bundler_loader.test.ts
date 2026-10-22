@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -590,6 +591,232 @@ describe("bundler", async () => {
         },
       });
     }
+  });
+
+  describe("a copied asset", () => {
+    // A slow build gets smaller files and runs one test at a time, to stay inside the default timeout.
+    const slow = isDebug || isASAN;
+    const concurrentTest = slow ? test : test.concurrent;
+
+    // The bundler reads a copied asset once, and the output file (or the asset store of the dev
+    // server) takes that buffer. It read the file into the worker arena and then copied it for
+    // the output, so each asset was in memory twice until the end of the build.
+    describe("is in memory once", () => {
+      const assetSize = (slow ? 32 : 64) * 1024 * 1024;
+      const buildFixture = `
+        const [target, outdir] = process.argv.slice(2);
+        const build = await Bun.build({ entrypoints: [import.meta.dir + "/entry.js"], target, outdir });
+        console.log(build.outputs.find(output => output.kind === "asset").size);
+      `;
+      const serveFixture = `
+        import page from "./index.html";
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
+        const html = await (await fetch(server.url)).text();
+        const script = await (await fetch(new URL(html.match(/src="([^"]+)"/)[1], server.url))).text();
+        const asset = await fetch(new URL(script.match(/\\/_bun\\/asset\\/[0-9a-f]+\\.bin/)[0], server.url));
+        console.log(asset.headers.get("content-length"));
+        await asset.body.cancel();
+        await server.stop(true);
+      `;
+      const sizeOnDisk = (cwd: string) => {
+        const outdir = join(cwd, "out");
+        const asset = readdirSync(outdir).find(name => name.startsWith("asset-"))!;
+        return fs.statSync(join(outdir, asset)).size;
+      };
+      const sizeOnStdout = (_cwd: string, stdout: string) => Number(stdout.trim());
+      const importedFile = { asset: "asset.bin", entry: `import url from "./asset.bin";\nconsole.log(url);\n` };
+      // Each loader that copies its file is in one row.
+      const routes: Record<
+        string,
+        {
+          asset: string;
+          entry: string;
+          files?: Record<string, string>;
+          args: string[];
+          env?: Record<string, string>;
+          emittedSize: (cwd: string, stdout: string) => number;
+          skip?: boolean;
+        }
+      > = {
+        "Bun.build with outdir, wasm loader": {
+          asset: "asset.wasm",
+          entry: `import url from "./asset.wasm";\nconsole.log(url);\n`,
+          args: ["build-fixture.js", "browser", "out"],
+          emittedSize: sizeOnDisk,
+        },
+        // macOS and Windows read files on the IO pool. This runs that route on Linux too.
+        "Bun.build with outdir and the file read on the IO pool, napi loader": {
+          asset: "asset.node",
+          entry: `console.log(require("./asset.node"));\n`,
+          args: ["build-fixture.js", "bun", "out"],
+          env: { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
+          emittedSize: sizeOnDisk,
+        },
+        "Bun.build in memory, embedded sqlite loader": {
+          asset: "asset.db",
+          entry: `import db from "./asset.db" with { type: "sqlite", embed: "true" };\nconsole.log(db);\n`,
+          args: ["build-fixture.js", "bun"],
+          emittedSize: sizeOnStdout,
+        },
+        "dev server, file loader": { ...importedFile, args: ["serve-fixture.js"], emittedSize: sizeOnStdout },
+        // The plugin's buffer of zeros is never touched, so only Bun's copy of it is in the peak.
+        "dev server, file loader of a JS onLoad plugin": {
+          ...importedFile,
+          files: {
+            "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+            "plugin.ts": `
+              import { statSync } from "node:fs";
+              export default {
+                name: "asset",
+                setup(build) {
+                  build.onLoad({ filter: /asset\\.bin$/ }, ({ path }) => ({
+                    contents: new Uint8Array(statSync(path).size),
+                    loader: "file",
+                  }));
+                },
+              };
+            `,
+          },
+          args: ["serve-fixture.js"],
+          emittedSize: sizeOnStdout,
+        },
+        "bun build --outdir, file loader": {
+          ...importedFile,
+          args: ["build", "entry.js", "--outdir", "out"],
+          emittedSize: sizeOnDisk,
+          // The peak of a child is never below the peak of its spawner (see `runCommandMaxRSS`).
+          // `bun build` starts no JS VM: in a debug or ASAN build it stays below that floor.
+          skip: slow,
+        },
+      };
+
+      for (const [name, { asset, entry, files, args, env, emittedSize, skip }] of Object.entries(routes)) {
+        const routeTest = test.skipIf(!!skip);
+        (slow ? routeTest : routeTest.concurrent)(name, async () => {
+          const fixture = {
+            "entry.js": entry,
+            [asset]: "x",
+            "index.html": `<!doctype html><script type="module" src="./entry.js"></script>`,
+            "build-fixture.js": buildFixture,
+            "serve-fixture.js": serveFixture,
+            ...files,
+          };
+          using dir = tempDir("bundler-asset-once", { small: fixture, big: fixture });
+          // A hole: the file takes no disk space.
+          fs.truncateSync(join(String(dir), "big", asset), assetSize);
+
+          const run = async (which: "small" | "big") => {
+            const cwd = join(String(dir), which);
+            const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+              cmd: [bunExe(), ...args],
+              cwd,
+              env: withoutAsanQuarantine({ ...bunEnv, ...env }),
+            });
+            expect(exitCode, stderr).toBe(0);
+            return { size: emittedSize(cwd, stdout), maxRSS };
+          };
+          const [small, big] = await Promise.all([run("small"), run("big")]);
+          expect({ small: small.size, big: big.size }).toEqual({ small: 1, big: assetSize });
+
+          // The two runs differ only in the bytes of the asset. An asset that is in memory once
+          // adds 0.9 to 1.2 times its size to the peak. In memory twice, it added 1.9 to 2.2 times.
+          expect((big.maxRSS - small.maxRSS) / assetSize).toBeLessThan(1.6);
+        });
+      }
+    });
+
+    // The buffer of a copied file is on the global heap, so every exit of a build has to free
+    // it. This build reads two of them: an asset that loads, and a .node file that the browser
+    // target refuses.
+    concurrentTest("is freed when the build fails", async () => {
+      const fileSize = 4 * 1024 * 1024;
+      const rounds = slow ? 12 : 24;
+      // One buffer that every build leaves behind is three times this limit.
+      const limit = (rounds / 3) * fileSize;
+      using dir = tempDir("bundler-asset-failed-build", {
+        "entry.js": `import url from "./asset.bin";\nconsole.log(url, require("./addon.node"));\n`,
+        "asset.bin": "x",
+        "addon.node": "x",
+        "failed-build-fixture.js": `
+          import { bundlerWorkerLiveCount } from "bun:internal-for-testing";
+          const build = () =>
+            Bun.build({ entrypoints: [import.meta.dir + "/entry.js"], target: "browser", throw: false });
+          // A build frees its files after its promise settles, on the bundle thread and on the pool threads.
+          const settledRSS = async ceiling => {
+            const deadline = Date.now() + 2000;
+            for (;;) {
+              while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
+              Bun.gc(true);
+              const rss = process.memoryUsage.rss();
+              if (rss <= ceiling || Date.now() >= deadline) return rss;
+              await Bun.sleep(10);
+            }
+          };
+          // The first builds start the thread pool and fill the caches of the allocator.
+          for (let i = 0; i < 4; i++) await build();
+          const before = await settledRSS(Infinity);
+          let result;
+          for (let i = 0; i < ${rounds}; i++) result = await build();
+          const growth = (await settledRSS(before + ${limit})) - before;
+          console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message), growth }));
+        `,
+      });
+      for (const name of ["asset.bin", "addon.node"]) fs.truncateSync(join(String(dir), name), fileSize);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "failed-build-fixture.js"],
+        cwd: String(dir),
+        env: withoutAsanQuarantine(bunEnv),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { growth, ...result } = JSON.parse(stdout || "{}");
+      expect({ ...result, stderr, exitCode }).toEqual({
+        success: false,
+        logs: [`Loading .node files won't work in the browser. Make sure to set target to "bun" or "node"`],
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(growth).toBeLessThan(limit);
+    });
+
+    describe("keeps its bytes at every size around the first read", () => {
+      const sizes = [0, 1, 16382, 16383, 16384, 16385, 100_000];
+      const contents = (size: number) => {
+        const bytes = Buffer.alloc(size);
+        for (let i = 0; i < size; i++) bytes[i] = (i * 31 + 7) & 0xff;
+        return bytes;
+      };
+      const digest = (bytes: Uint8Array) => ({ size: bytes.length, sha256: Bun.SHA256.hash(bytes, "hex") });
+      const files = {
+        "entry.js":
+          sizes.map(size => `import size${size} from "./size${size}.bin";\n`).join("") +
+          `console.log(${sizes.map(size => `size${size}`).join(", ")});\n`,
+        ...Object.fromEntries(sizes.map(size => [`size${size}.bin`, contents(size)])),
+      };
+      const emitted = async (build: Bun.BuildOutput) => {
+        const assets: Record<string, { size: number; sha256: string }> = {};
+        for (const output of build.outputs) {
+          if (output.kind !== "asset") continue;
+          assets[output.path.match(/size\d+/)![0]] = digest(new Uint8Array(await output.arrayBuffer()));
+        }
+        return assets;
+      };
+      const expected = Object.fromEntries(sizes.map(size => [`size${size}`, digest(contents(size))]));
+
+      // The read fills a 16 KiB buffer first, and takes the size of the file only when that buffer is full.
+      concurrentTest("on disk", async () => {
+        using dir = tempDir("bundler-asset-sizes", files);
+        expect(await emitted(await Bun.build({ entrypoints: [join(String(dir), "entry.js")] }))).toEqual(expected);
+      });
+
+      // These bytes have another owner, so the output file copies them.
+      concurrentTest("in the files map", async () => {
+        const inMemory = Object.fromEntries(Object.entries(files).map(([name, bytes]) => ["/" + name, bytes]));
+        expect(await emitted(await Bun.build({ entrypoints: ["/entry.js"], files: inMemory }))).toEqual(expected);
+      });
+    });
   });
 
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the

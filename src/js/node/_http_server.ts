@@ -251,8 +251,7 @@ function releaseServerParserShim(socket, req?) {
 function onNodeHTTPServerSocketTimeout() {
   // The request whose message the connection still receives, also after its response finished.
   const req = this.parser?.incoming;
-  // Not in Node.js: a request that the stream destroyer took off its connection never turns complete here (Node's
-  // parser completes it when its body has arrived), so it is told only while a response is on the socket.
+  // Not in Node.js: a stream-destroyed request never turns complete here, so it is told only while a response is on the socket.
   const reqTimeout = req && !req.complete && !(req.destroyed && !this._httpMessage) && req.emit("timeout", this);
   const res = this._httpMessage;
   const resTimeout = res && res.emit("timeout", this);
@@ -1618,18 +1617,16 @@ function onSocketTimeoutTimerExpired(socket) {
       return;
     }
   }
-  // The fired timer is dead, and a 'timeout' listener can keep the socket. A stand-in takes the slot: the
-  // response-finish fast path must not take a dead timer whose _idleTimeout still matches for an armed one, and
-  // _unrefTimer() arms a new timer through it, as Timeout#refresh() arms the fired one in Node.js.
+  // A 'timeout' listener can keep the socket, and a dead timer in the slot passes for an armed one in onResponseFinishHandleSocket.
   socket[kSocketTimeoutTimer] = { refresh: rearmFiredSocketTimer, socket, msecs: socket.timeout };
   socket._onTimeout();
 }
 
 // A request that came since has given the socket another timeout.
 function rearmFiredSocketTimer(this: { socket: NodeHTTPServerSocket; msecs: number }) {
-  const socket = this.socket;
+  const { socket, msecs } = this;
   socket[kSocketTimeoutTimer] = undefined;
-  if (socket.timeout === this.msecs) socket.setTimeout(this.msecs);
+  if (socket.timeout === msecs) socket.setTimeout(msecs);
 }
 
 // Extends net.Socket so server connection sockets satisfy Node's class
@@ -1878,10 +1875,6 @@ function getNodeHTTPServerSocket() {
       // not yet finished (`resOnFinish` does `incoming.shift()`). Our
       // equivalent of "still in the queue" is `_httpMessage` being non-null:
       // `detachSocket()` (called from `res.end()` / on `"finish"`) clears it.
-      // Do NOT abort a request whose response already finished: that raced
-      // `req._dump()`'s nextTick into a spurious `"aborted"` on a keep-alive
-      // close (flakes in the express `res.sendFile` suite, where supertest
-      // closes the socket right after reading the body).
       //
       // Gate on `!req.destroyed` rather than `!req.complete`: a body-less GET
       // flips `complete` before the response is written, so an aborted

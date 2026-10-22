@@ -2603,7 +2603,8 @@ describe("bundler", () => {
   // destructuring pattern, a declaration without an initializer, classes that
   // run code when they are defined, and the variable that
   // `export default <expr>` becomes. A declaration that runs no code (`offset`,
-  // `Plain`) leaves the try as it is.
+  // `Plain`) leaves the try as it is. A `var` of the source keeps its place,
+  // so a read before it (`early`) still sees `undefined`.
   const loweredTopLevelUsing = {
     Using: `using handle = { val: 42, [Symbol.dispose]() { state.disposed = true; } };`,
     AwaitUsing: `await using handle = { val: 42, async [Symbol.asyncDispose]() { state.disposed = true; } };`,
@@ -2616,12 +2617,14 @@ describe("bundler", () => {
     let assignedLater;
     assignedLater = val + 1;
     const offset = 2;
+    export const early = typeof hoisted;
+    var hoisted = 1;
     class Plain { get() { return val + offset; } }
     class Local { static seen = handle.val + 3; }
     export class Sub extends Local {}
     export class WithStaticBlock { static seen; static { WithStaticBlock.seen = handle.val + 4; } }
     export function internals() {
-      return [val, assignedLater, new Plain().get(), Local.seen];
+      return [val, assignedLater, new Plain().get(), Local.seen, early, hoisted];
     }
     export default { tag: "default", val };
   `;
@@ -2646,15 +2649,15 @@ describe("bundler", () => {
       expect(out).toContain("__callDispose(");
       // Everything the try block assigns is declared outside the wrapper in one declaration.
       expect(out).toMatch(
-        /^var assignedLater, offset = 2, __stack, state, handle, result, val, Local, Sub, WithStaticBlock, lazy_default;$/m,
+        /^var assignedLater, offset = 2, __stack, state, handle, result, val, early, hoisted, Local, Sub, WithStaticBlock, lazy_default;$/m,
       );
       // A class that runs no code when it is defined leaves the try as a declaration.
       expect(out).toMatch(/^class Plain \{$/m);
     },
     run: {
       stdout: `
-        ["static",42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]
-        ["dynamic",42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]
+        ["static",42,true,[42,43,44,45,"undefined",1],45,46,{"tag":"default","val":42}]
+        ["dynamic",42,true,[42,43,44,45,"undefined",1],45,46,{"tag":"default","val":42}]
       `,
     },
   });
@@ -2684,7 +2687,7 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("__callDispose(");
     },
     run: {
-      stdout: '[42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]',
+      stdout: '[42,true,[42,43,44,45,"undefined",1],45,46,{"tag":"default","val":42}]',
     },
   });
   itBundled("edgecase/LoweredTopLevelUsingInlined", loweredTopLevelUsingInlined("Using"));
@@ -2702,7 +2705,7 @@ describe("bundler", () => {
         "/lazy.mjs": loweredTopLevelUsingModule("Using"),
       },
       run: {
-        stdout: '[42,true,[42,43,44,45],45,{"tag":"default","val":42}]',
+        stdout: '[42,true,[42,43,44,45,"undefined",1],45,{"tag":"default","val":42}]',
       },
     });
   }
@@ -2723,7 +2726,7 @@ describe("bundler", () => {
       "/lazy.js": loweredTopLevelUsingModule("Using"),
     },
     run: {
-      stdout: '[42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]',
+      stdout: '[42,true,[42,43,44,45,"undefined",1],45,46,{"tag":"default","val":42}]',
     },
   });
 
@@ -2745,8 +2748,8 @@ describe("bundler", () => {
     splitting: true,
     target: "node",
     run: [
-      { file: "/out/a.js", stdout: '["a",42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]' },
-      { file: "/out/b.js", stdout: '["b",42,true,[42,43,44,45],45,46,{"tag":"default","val":42}]' },
+      { file: "/out/a.js", stdout: '["a",42,true,[42,43,44,45,"undefined",1],45,46,{"tag":"default","val":42}]' },
+      { file: "/out/b.js", stdout: '["b",42,true,[42,43,44,45,"undefined",1],45,46,{"tag":"default","val":42}]' },
     ],
   });
 

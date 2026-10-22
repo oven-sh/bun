@@ -1305,6 +1305,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         if constexpr (checkPrototypes) {
+            if (!hasNamedProperties(o1->structure()) && !hasNamedProperties(o2->structure())) {
+                return true;
+            }
             // node compares own enumerable non-index string+symbol props via getOwnNonIndexProperties;
             // the Bun.deepEquals symbol-only block below walks the prototype chain, so diverge here.
             return nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, o1, o2);
@@ -1367,10 +1370,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (!o1Structure->hasNonReifiedStaticProperties() && o1Structure->canPerformFastPropertyEnumeration()) {
         JSC::Structure* o2Structure = o2->structure();
         // The mixed-structure fast path resolves properties with getDirect(),
-        // which also finds non-enumerable ones node ignores; the node entry
+        // which also finds non-enumerable ones node ignores; the node strict entry
         // point only takes the fast path when the structures match.
         if (!o2Structure->hasNonReifiedStaticProperties() && o2Structure->canPerformFastPropertyEnumeration()
-            && (!checkPrototypes || o2Structure->id() == o1Structure->id())) {
+            && (!checkPrototypes || kNodeLoose || o2Structure->id() == o1Structure->id())) {
 
             bool result = true;
             bool sameStructure = o2Structure->id() == o1Structure->id();
@@ -1381,11 +1384,16 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
+                    if constexpr (kNodeLoose) {
+                        if (PropertyName(entry.key()).isSymbol()) {
+                            return true;
+                        }
+                    }
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right = o2->getDirect(entry.offset());
 
-                    if constexpr (!isStrict) {
+                    if constexpr (!kExactKeys) {
                         if (left.isUndefined() && right.isEmpty()) {
                             return true;
                         }
@@ -1406,15 +1414,19 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
+                    if constexpr (kNodeLoose) {
+                        if (PropertyName(entry.key()).isSymbol()) {
+                            return true;
+                        }
+                    }
                     count++;
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right;
-                    if constexpr (isStrict) {
+                    if constexpr (kExactKeys) {
                         // Only an enumerable property on o2 can match an enumerable one on o1.
                         // getDirect() alone would also find a non-enumerable property, which the
-                        // reverse loop skips, so the two objects would compare equal. Loose
-                        // comparison keeps matching either, as node does.
+                        // reverse loop skips, so the two objects would compare equal.
                         unsigned o2Attributes = 0;
                         PropertyOffset o2Offset = o2Structure->get(vm, JSC::PropertyName(entry.key()), o2Attributes);
                         if (o2Offset != invalidOffset && !(o2Attributes & PropertyAttribute::DontEnum)) {
@@ -1424,7 +1436,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
                     }
 
-                    if constexpr (!isStrict) {
+                    if constexpr (!kExactKeys) {
                         if (left.isUndefined() && right.isEmpty()) {
                             return true;
                         }
@@ -1446,8 +1458,13 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                             return true;
                         }
+                        if constexpr (kNodeLoose) {
+                            if (PropertyName(entry.key()).isSymbol()) {
+                                return true;
+                            }
+                        }
 
-                        if constexpr (!isStrict) {
+                        if constexpr (!kExactKeys) {
                             if (o2->getDirect(entry.offset()).isUndefined()) {
                                 return true;
                             }
@@ -1494,8 +1511,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
-    JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    constexpr PropertyNameMode propertyNameMode = kNodeLoose ? PropertyNameMode::Strings : PropertyNameMode::StringsAndSymbols;
+    JSC::PropertyNameArrayBuilder a1(vm, propertyNameMode, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder a2(vm, propertyNameMode, PrivateSymbolMode::Exclude);
     if constexpr (checkPrototypes) {
         // node compares own enumerable properties only; getPropertyNames also
         // collects enumerable properties from the prototype chain.
@@ -1512,7 +1530,19 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     const size_t propertyArrayLength1 = a1.size();
     const size_t propertyArrayLength2 = a2.size();
-    if constexpr (isStrict) {
+    // The value of an Error's `stack` never compares. node does not list the key, and JSC lists one that user code assigns to an Error without a trace.
+    [[maybe_unused]] const bool isErrorPair = checkPrototypes && c1->type() == ErrorInstanceType;
+    if constexpr (kNodeLoose) {
+        size_t count1 = propertyArrayLength1;
+        size_t count2 = propertyArrayLength2;
+        if (isErrorPair) {
+            count1 -= a1.data()->propertyNameVector().contains(vm.propertyNames->stack);
+            count2 -= a2.data()->propertyNameVector().contains(vm.propertyNames->stack);
+        }
+        if (count1 != count2) {
+            return false;
+        }
+    } else if constexpr (kExactKeys) {
         if (propertyArrayLength1 != propertyArrayLength2) {
             return false;
         }
@@ -1523,6 +1553,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     for (i = 0; i < propertyArrayLength1; i++) {
         Identifier i1 = a1[i];
         PropertyName propertyName1 = PropertyName(i1);
+        [[maybe_unused]] const bool isStack = isErrorPair && i1 == vm.propertyNames->stack;
+        if constexpr (kNodeLoose) {
+            if (isStack) {
+                continue;
+            }
+        }
 
         JSValue prop1 = o1->get(globalObject, propertyName1);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1541,14 +1577,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (!has || (slot2.attributes() & PropertyAttribute::DontEnum)) {
                 return false;
             }
-            prop2 = slot2.getValue(globalObject, propertyName1);
+            if (isStack) {
+                continue;
+            }
+            // node reads the value with [[Get]], and the get trap of a Proxy can answer differently from its descriptor.
+            prop2 = o2->isProxy() ? o2->get(globalObject, propertyName1) : slot2.getValue(globalObject, propertyName1);
             RETURN_IF_EXCEPTION(scope, false);
         } else {
             prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
             RETURN_IF_EXCEPTION(scope, false);
         }
 
-        if constexpr (!isStrict) {
+        if constexpr (!kExactKeys) {
             if (prop1.isUndefined() && prop2.isEmpty()) {
                 continue;
             }
@@ -1561,6 +1601,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, false);
         if (!eql) return false;
+    }
+
+    if constexpr (kNodeLoose) {
+        return true;
     }
 
     // for the remaining properties in the other object, make sure they are undefined

@@ -1623,7 +1623,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         } else {
                             bun_sys::O::RDONLY | bun_sys::O::NOCTTY
                         };
-                        bun_sys::open(zpath, flags, 0)
+                        // On Windows `zpath` starts with `\\?\`. Report the caller's path, like `.text()` does.
+                        bun_sys::open(zpath, flags, 0).map_err(|err| err.with_path(path.slice()))
                     }
                 }
             };

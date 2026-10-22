@@ -464,7 +464,7 @@ impl ClientSession {
                 let client = client_mut(client_ptr);
                 return finish(client);
             }
-            // Also without a report: a paused consumer's body arrived whole and waits undecoded, and the update that ends it frees `client`.
+            // A paused consumer's body can be complete with nothing to report. Detach first, because the update that ends it frees `client`.
             if client.state.is_done() {
                 self.detach(stream);
                 // SAFETY: re-derive — detach() invalidated the prior Unique tag.

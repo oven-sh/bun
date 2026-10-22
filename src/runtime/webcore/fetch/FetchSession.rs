@@ -266,7 +266,7 @@ impl FetchSession {
         let mut this = Box::new(FetchSession {
             pool: http::PoolOptions {
                 id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
-                idle_timeout_seconds: 0,
+                idle_timeout_ms: 0,
                 max_idle_sockets: 0,
             },
             keep_alive: true,
@@ -335,7 +335,7 @@ impl FetchSession {
                 this.keep_alive = keep_alive.as_boolean();
             } else if keep_alive.is_object() {
                 if let Some(seconds) = positive_number(global, keep_alive, "idleTimeout")? {
-                    this.pool.idle_timeout_seconds = seconds.ceil() as u32;
+                    this.pool.idle_timeout_ms = (seconds.ceil() as u32).saturating_mul(1000);
                 }
                 if let Some(count) = keep_alive.get(global, "maxIdleSockets")? {
                     const FIELD_NAME: &[u8] = b"keepAlive.maxIdleSockets";

@@ -4868,7 +4868,8 @@ describe("RST_STREAM from close(code) and destroy() (RFC 9113 §6.4)", () => {
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     try {
       client.on("error", () => {});
-      await once(client, "connect");
+      // The client's 'connect' can come before the raw server's 'connection', which sets raw.socket.
+      await raw.waitFor(f => f.type === FrameType.SETTINGS);
       raw.sendFrame(FrameType.SETTINGS, 0, 0);
       const req = client.request({ ":method": "POST", ":path": "/" });
       req.on("error", () => {});
@@ -5011,7 +5012,8 @@ describe("client requests queued behind SETTINGS_MAX_CONCURRENT_STREAMS (RFC 911
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     client.on("error", () => {});
-    await once(client, "connect");
+    // The client's 'connect' can come before the raw server's 'connection', which sets raw.socket.
+    await raw.waitFor(f => f.type === FrameType.SETTINGS);
     raw.sendFrame(FrameType.SETTINGS, 0, 0, http2.getPackedSettings({ maxConcurrentStreams: 1 }));
     await once(client, "remoteSettings");
     const open = client.request({ ":method": "POST", ":path": "/" }, { signal });

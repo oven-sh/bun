@@ -689,9 +689,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 proxy_auth_hash,
                 h2_session,
                 pool_id: pool.id,
-                idle_timeout_seconds: pool.idle_timeout_or_default(),
+                idle_timeout_seconds: pool.idle_timeout_ms_or_default().div_ceil(1000),
                 reuse_deadline_ns: crate::async_http::http_thread_timer_read()
-                    .saturating_add(u64::from(pool.idle_timeout_or_default()) * 1_000_000_000),
+                    .saturating_add(u64::from(pool.idle_timeout_ms_or_default()) * 1_000_000),
             };
             let parked = match transport {
                 Transport::Tcp => Self::park(self.pending_sockets.get_or_init(), pooled, pool),

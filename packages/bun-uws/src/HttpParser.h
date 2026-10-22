@@ -623,10 +623,11 @@ struct HttpResponseData;
          * and no trailer is surfaced, where Node's llhttp rejects the message.
          * Consumes the section: it is post-padded in place and the returned
          * string_views point into it, so it must outlive their use.
-         * Fields past outCapacity are validated but not written.
+         * Fields past outCapacity are validated but not written. framingField gets the
+         * error for the first Content-Length or Transfer-Encoding field, written or not.
          * KEEP IN LOCKSTEP with getHeaders' field-line loop below (same
          * consumeFieldName → tryConsumeFieldValue → CRLF/OWS sequence). */
-        static unsigned parseTrailerFields(std::string &section, std::pair<std::string_view, std::string_view> *out, bool useInsecureHTTPParser = false, unsigned outCapacity = MAX_TRAILER_FIELDS) {
+        static unsigned parseTrailerFields(std::string &section, std::pair<std::string_view, std::string_view> *out, bool useInsecureHTTPParser = false, unsigned outCapacity = MAX_TRAILER_FIELDS, HttpParserError *framingField = nullptr) {
             if (section.size() < 4) {
                 return 0;
             }
@@ -670,6 +671,13 @@ struct HttpResponseData;
                 while (value.length() && isHTTPHeaderValueWhitespace(value.front())) {
                     value.remove_prefix(1);
                 }
+                if (framingField && *framingField == HTTP_PARSER_ERROR_NONE) {
+                    if (key.length() == 14 && !strncasecmp(key.data(), "content-length", 14)) {
+                        *framingField = HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH;
+                    } else if (key.length() == 17 && !strncasecmp(key.data(), "transfer-encoding", 17)) {
+                        *framingField = HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING;
+                    }
+                }
                 if (count < outCapacity) {
                     out[count] = { key, value };
                     count++;
@@ -699,25 +707,15 @@ struct HttpResponseData;
                 copy = *section;
             }
             std::pair<std::string_view, std::string_view> scratch[MAX_TRAILER_FIELDS];
-            unsigned count = parseTrailerFields(IsNodeHttp ? copy : *section, scratch, useInsecureHTTPParser);
+            HttpParserError framingField = HTTP_PARSER_ERROR_NONE;
+            unsigned count = parseTrailerFields(IsNodeHttp ? copy : *section, scratch, useInsecureHTTPParser, MAX_TRAILER_FIELDS, &framingField);
             if (count == 0) {
                 return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
             }
             if (maxHeadersCount && count > maxHeadersCount) {
                 return HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
             }
-            if (!useLenientTransferEncoding) {
-                for (unsigned i = 0; i < count; i++) {
-                    std::string_view name = scratch[i].first;
-                    if (name.length() == 14 && !strncasecmp(name.data(), "content-length", 14)) {
-                        return HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH;
-                    }
-                    if (name.length() == 17 && !strncasecmp(name.data(), "transfer-encoding", 17)) {
-                        return HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING;
-                    }
-                }
-            }
-            return HTTP_PARSER_ERROR_NONE;
+            return useLenientTransferEncoding ? HTTP_PARSER_ERROR_NONE : framingField;
         }
 
     private:

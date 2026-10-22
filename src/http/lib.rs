@@ -369,7 +369,7 @@ pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
 }
 
 /// Stop reusing a connection this long before the origin's `Keep-Alive: timeout=N` runs out (undici's `keepAliveTimeoutThreshold`).
-const KEEPALIVE_TIMEOUT_MARGIN_SECONDS: u32 = 2;
+const KEEPALIVE_TIMEOUT_MARGIN_MS: u64 = 2000;
 
 /// Returns `N` from a `Keep-Alive: timeout=N, max=M` header value (RFC 9112 appendix C.2.2).
 fn parse_keepalive_timeout(value: &[u8]) -> Option<u32> {
@@ -544,15 +544,15 @@ pub struct HTTPClientResult<'a> {
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct PoolOptions {
     pub id: u64,
-    pub idle_timeout_seconds: u32,
+    pub idle_timeout_ms: u32,
     pub max_idle_sockets: u16,
 }
 
 impl PoolOptions {
-    pub(crate) fn idle_timeout_or_default(self) -> u32 {
-        match self.idle_timeout_seconds {
-            0 => 5 * 60,
-            seconds => seconds,
+    pub(crate) fn idle_timeout_ms_or_default(self) -> u32 {
+        match self.idle_timeout_ms {
+            0 => 5 * 60 * 1000,
+            ms => ms,
         }
     }
 }
@@ -2493,11 +2493,11 @@ impl<'a> HTTPClient<'a> {
 
     /// `self.pool` with its idle timeout lowered to what the response's `Keep-Alive: timeout=N` allows.
     fn pool_for_release(&self) -> PoolOptions {
-        let Some(reuse_seconds) = self.state.keepalive_reuse_seconds else {
+        let Some(reuse_ms) = self.state.keepalive_reuse_ms else {
             return self.pool;
         };
         PoolOptions {
-            idle_timeout_seconds: self.pool.idle_timeout_or_default().min(reuse_seconds),
+            idle_timeout_ms: self.pool.idle_timeout_ms_or_default().min(reuse_ms),
             ..self.pool
         }
     }
@@ -4674,7 +4674,7 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// `drain_response_body` for HTTP/3: decodes a held body until its consumer pauses again or the body ends.
+    /// HTTP/3's `drain_response_body`. Decodes a held body until its consumer pauses again or the body ends.
     pub(crate) fn drain_response_body_h3(&mut self) {
         loop {
             match self.decode_held_body() {
@@ -5001,8 +5001,11 @@ impl<'a> HTTPClient<'a> {
         self.state.flags.received_last_chunk = true;
         let trailing =
             &incoming_data[incoming_data.len().saturating_sub(undecoded.unsigned_abs())..];
-        // Nothing is pipelined, so the peer lost framing. A repeated terminator is harmless, as it is on an idle socket.
-        if !trailing.is_empty() && trailing != END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY {
+        // Nothing is pipelined, so the peer lost framing. A repeated terminator or one empty line is harmless.
+        if !matches!(
+            trailing,
+            b"" | b"\r\n" | END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY
+        ) {
             self.state.flags.allow_keepalive = false;
         }
     }
@@ -5243,11 +5246,16 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Keep-Alive") => {
                     if let Some(timeout) = parse_keepalive_timeout(header.value()) {
-                        match timeout.saturating_sub(KEEPALIVE_TIMEOUT_MARGIN_SECONDS) {
+                        let timeout_ms = u64::from(timeout) * 1000;
+                        // The margin is at most half the timeout, so back-to-back requests share a connection for any N above 0.
+                        let reuse_ms = timeout_ms
+                            .saturating_sub(KEEPALIVE_TIMEOUT_MARGIN_MS)
+                            .max(timeout_ms / 2);
+                        match u32::try_from(reuse_ms).unwrap_or(u32::MAX) {
                             0 => self.state.flags.allow_keepalive = false,
-                            seconds => {
-                                let reuse = &mut self.state.keepalive_reuse_seconds;
-                                *reuse = Some(reuse.map_or(seconds, |prev| prev.min(seconds)));
+                            ms => {
+                                let reuse = &mut self.state.keepalive_reuse_ms;
+                                *reuse = Some(reuse.map_or(ms, |prev| prev.min(ms)));
                             }
                         }
                     }

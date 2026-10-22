@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, isWindows, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -7636,38 +7636,42 @@ it("end(callback) on a GET request, which request() already ended, calls back as
 });
 
 // https://github.com/oven-sh/bun/issues/39796
-it("client keeps parsing inbound frames while the continuation of an awaited response spins the event loop", async () => {
-  const server = http2.createServer();
-  let serverSession;
-  server.on("session", session => (serverSession = session));
-  let streams = 0;
-  server.on("stream", stream => {
-    stream.respond({ ":status": 200 });
-    stream.end(`response ${++streams}`);
-  });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-  // Only fires if the client stopped parsing. Nothing else can end the nested wait below.
-  const guard = setTimeout(() => serverSession.destroy(), 3000);
-  try {
-    const request = () =>
-      new Promise((resolve, reject) => {
-        const req = client.request({ ":path": "/" });
-        req.setEncoding("utf8");
-        let body = "";
-        req.on("data", chunk => (body += chunk));
-        req.on("end", () => resolve(body));
-        req.on("error", reject);
-      });
-    expect(await request()).toBe("response 1");
-    // expect().resolves spins the event loop from inside the checkpoint that delivered the first response.
-    await expect(request()).resolves.toBe("response 2");
-  } finally {
-    clearTimeout(guard);
-    client.close();
-    server.close();
-  }
-});
+// Not on Windows. libuv re-arms a socket's poll only after its callback returns, so a loop spun inside that callback may never read the socket.
+it.skipIf(isWindows)(
+  "client keeps parsing inbound frames while the continuation of an awaited response spins the event loop",
+  async () => {
+    const server = http2.createServer();
+    let serverSession;
+    server.on("session", session => (serverSession = session));
+    let streams = 0;
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end(`response ${++streams}`);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    // Only fires if the client stopped parsing. Nothing else can end the nested wait below.
+    const guard = setTimeout(() => serverSession.destroy(), 3000);
+    try {
+      const request = () =>
+        new Promise((resolve, reject) => {
+          const req = client.request({ ":path": "/" });
+          req.setEncoding("utf8");
+          let body = "";
+          req.on("data", chunk => (body += chunk));
+          req.on("end", () => resolve(body));
+          req.on("error", reject);
+        });
+      expect(await request()).toBe("response 1");
+      // expect().resolves spins the event loop from inside the checkpoint that delivered the first response.
+      await expect(request().catch(err => `rejected with ${err.code}`)).resolves.toBe("response 2");
+    } finally {
+      clearTimeout(guard);
+      client.close();
+      server.close();
+    }
+  },
+);
 
 // The raw client never sends WINDOW_UPDATE, so the PING is the first inbound frame after the write on B.
 // A DATA frame that had to wait for a flush shows up after the PING ACK.

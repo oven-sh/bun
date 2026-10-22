@@ -1048,6 +1048,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     ["Transfer-Encoding", "Transfer-Encoding: chunked\r\n"],
     ["Content-Length", "Content-Length: 5\r\n"],
     ["a malformed line behind 200 fields", "X-T: 1\r\n".repeat(200) + "justtext\r\n"],
+    ["Content-Length behind 200 fields", "X-T: 1\r\n".repeat(200) + "Content-Length: 5\r\n"],
   ])("rejects a trailer section with %s", async (_name, trailers) => {
     const urls: string[] = [];
     await using server = Bun.serve({

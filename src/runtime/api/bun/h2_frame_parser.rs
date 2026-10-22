@@ -995,14 +995,6 @@ enum Target {
     Stream(u32),
 }
 
-struct ClearOnDrop<'a>(&'a Cell<bool>);
-
-impl Drop for ClearOnDrop<'_> {
-    fn drop(&mut self) {
-        self.0.set(false);
-    }
-}
-
 /// Follows the byte stream `write()` emits over a JS-backed transport and reports when it
 /// sits at a point where another frame may legally begin: between frames, and not inside a
 /// header block (HEADERS / PUSH_PROMISE without END_HEADERS up to the CONTINUATION that carries
@@ -2746,10 +2738,10 @@ impl H2FrameParser {
     /// be sure that we dont have any backpressure/data queued on writerBuffer before calling this
     fn flush_stream_queue(&self) -> usize {
         // A write callback that calls flush() would nest one level per queued stream. The loop below picks up its frames.
-        if self.flushing_stream_queue.replace(true) {
+        if self.flushing_stream_queue.get() {
             return 0;
         }
-        let _flushing = ClearOnDrop(&self.flushing_stream_queue);
+        let _flushing = FlagGuard::set(&self.flushing_stream_queue);
         bun_output::scoped_log!(
             H2FrameParser,
             "flushStreamQueue {}",
@@ -3130,6 +3122,8 @@ impl H2FrameParser {
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
+        // Flushing can call JS (a JS transport's write, write callbacks, the socket's 'close').
+        self.global_this.bun_vm().deferred_task_called_js.set(true);
         if self.transport_write_fatal.get() {
             // The close cancels open streams, so deliver the rest of this frame (its END_STREAM) first.
             if !self.deferred.get().is_empty() {

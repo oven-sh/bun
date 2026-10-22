@@ -1099,7 +1099,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             const int run_recv = events & LIBUS_SOCKET_READABLE;
 #endif
             if (run_recv && !u->closed) {
-
+                /* Datagrams that arrive as fast as on_data handles them would keep
+                 * this loop going and starve timers and every other poll. Return
+                 * to the event loop after 32 reads, as libuv's uv__udp_recvmsg
+                 * does. The poll is level-triggered, so the next turn reads on. */
+                int reads_left = 32;
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -1151,7 +1155,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                         break;
                     }
-                } while (!u->closed);
+                } while (!u->closed && --reads_left);
+#if defined(__linux__)
+                /* Datagrams are left, so a residual EPOLLERR is the next turn's to judge. */
+                if (reads_left == 0) {
+                    recv_would_block_only = 1;
+                }
+#endif
             }
 
             if (events & LIBUS_SOCKET_WRITABLE && !u->closed) {

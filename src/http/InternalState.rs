@@ -46,7 +46,7 @@ pub struct InternalState<'a> {
     compressed_body_consumed: usize,
     pub(crate) content_length: Option<usize>,
     /// How long the connection can be reused after this response, from its `Keep-Alive: timeout=N` header.
-    pub(crate) keepalive_reuse_seconds: Option<u32>,
+    pub(crate) keepalive_reuse_ms: Option<u32>,
     pub(crate) total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
@@ -135,7 +135,7 @@ impl Default for InternalState<'_> {
             compressed_body: MutableString::init_empty(),
             compressed_body_consumed: 0,
             content_length: None,
-            keepalive_reuse_seconds: None,
+            keepalive_reuse_ms: None,
             total_body_received: 0,
             request_body: bun_ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),

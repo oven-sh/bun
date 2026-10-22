@@ -345,13 +345,14 @@ describe("transportParams.maxIdleTimeout", () => {
 // closing (packages/bun-usockets/src/quic.c us_quic_on_new_conn).
 describe("the default congestion controller", () => {
   test("keeps its window while the sender's event loop is busy", async () => {
+    let received = 0;
     await using server = await listen(
       (session: any) => {
         session.closed.catch(() => {});
         session.onstream = async (stream: any) => {
           stream.closed.catch(() => {});
           stream.setBody(null);
-          for await (const _ of stream);
+          for await (const batch of stream) for (const chunk of batch) received += chunk.byteLength;
         };
       },
       { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
@@ -366,9 +367,12 @@ describe("the default congestion controller", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
+      // Kills a sender that hangs, before the test's own timeout.
+      timeout: 15_000,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    // If the sender had to be killed, its output and the bytes it sent show where it hung.
+    expect({ stderr, killed: proc.signalCode && { stdout, received } }).toEqual({ stderr: "", killed: null });
     // BBRv1 takes loop latency for the path and shrinks to its 4-packet floor, 5840 bytes. Cubic only reacts to loss.
     expect(JSON.parse(stdout).minCwnd).toBeGreaterThanOrEqual(16 * 1024);
     expect(exitCode).toBe(0);

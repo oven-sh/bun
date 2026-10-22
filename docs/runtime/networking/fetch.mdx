@@ -475,7 +475,7 @@ bun --fetch-preconnect https://bun.com ./my-script.ts
 
 Bun automatically reuses connections to the same host. This is called **connection pooling**, and it can significantly reduce the time spent establishing connections.
 
-An idle connection is reused for up to 5 minutes. If the response has a `Keep-Alive: timeout=N` header, Bun stops reusing the connection 2 seconds before the server's timeout runs out, and doesn't pool it at all when `N` is 2 or less. A request that reaches the server just as it closes an idle connection fails with `ECONNRESET`, and Bun only retries idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, ...), never a `POST`. If your server closes idle connections early and doesn't send that header, set a shorter `keepAlive.idleTimeout` on a fetch session.
+An idle connection is reused for up to 5 minutes. If the response has a `Keep-Alive: timeout=N` header, Bun stops reusing the connection 2 seconds before the server's timeout runs out, or halfway through it when `N` is less than 4. `timeout=0` means the connection isn't pooled. A request that reaches the server just as it closes an idle connection fails with `ECONNRESET`, and Bun only retries idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, ...), never a `POST`. If your server closes idle connections early and doesn't send that header, set a shorter `keepAlive.idleTimeout` on a fetch session.
 
 Each process has one pool of idle connections for plain HTTP, one for HTTPS, and one for each custom `tls` configuration. A pool holds up to 64 connections, including connections through a proxy and HTTP/2 sessions. When it's full, Bun closes the connection that has been idle the longest. `BUN_CONFIG_MAX_HTTP_REQUESTS` limits simultaneous requests and doesn't change the pool size.
 

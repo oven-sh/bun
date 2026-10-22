@@ -253,7 +253,7 @@ impl ClientContext {
         false
     }
 
-    /// Keeps `client` reachable by its id until `take_held`.
+    /// Registers `client` so that `take_held` can find it by id.
     pub(crate) fn hold(client: &mut HTTPClient) {
         if let Some(this) = Self::get() {
             Self::as_mut(this).held.push(client.as_erased_ptr());

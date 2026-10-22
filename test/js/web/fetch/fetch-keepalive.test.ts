@@ -1097,19 +1097,7 @@ test.concurrent(
   },
 );
 
-// Reuse stops 2 seconds before the origin's `Keep-Alive: timeout=N` runs out, so N <= 2 never reaches the pool.
-test.concurrent.each([
-  ["timeout=1", 2],
-  ["timeout=2", 2],
-  ["max=100, timeout=1", 2],
-  ["timeout=1; max=100", 2],
-  ["TIMEOUT = 2", 2],
-  ["timeout=60\r\nKeep-Alive: timeout=1", 2],
-  ["timeout=60", 1],
-  ["timeout=99999999999", 1],
-  ["timeout=soon", 1],
-  ["max=100", 1],
-])("two POSTs to an origin that sends Keep-Alive: %s use %i connection(s)", async (keepAlive, expected) => {
+async function originThatSendsKeepAlive(keepAlive: string) {
   const sockets: Socket[] = [];
   const server = createServer(socket => {
     sockets.push(socket);
@@ -1120,14 +1108,52 @@ test.concurrent.each([
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
-  try {
-    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
-    for (let i = 0; i < 2; i++) {
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  return {
+    sockets,
+    async post() {
       expect(await (await fetch(url, { method: "POST", body: "select 1" })).text()).toBe("ok");
-    }
-    expect(sockets.length).toBe(expected);
-  } finally {
-    for (const socket of sockets) socket.destroy();
-    await new Promise(closed => server.close(closed));
-  }
+    },
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise(closed => server.close(closed));
+    },
+  };
+}
+
+test.concurrent.each([
+  ["timeout=0", 2],
+  ["max=100, timeout=0", 2],
+  ["timeout=0; max=100", 2],
+  ["TIMEOUT = 0", 2],
+  ["timeout=60\r\nKeep-Alive: timeout=0", 2],
+  ["timeout=60", 1],
+  ["timeout=99999999999", 1],
+  ["timeout=soon", 1],
+  ["max=100", 1],
+])("two POSTs to an origin that sends Keep-Alive: %s use %i connection(s)", async (keepAlive, expected) => {
+  await using origin = await originThatSendsKeepAlive(keepAlive);
+  await origin.post();
+  await origin.post();
+  expect(origin.sockets.length).toBe(expected);
+});
+
+// Reuse stops 2 seconds before the timeout, but never earlier than halfway through it. A loaded machine can miss a
+// window, so this only rules out a connection per request.
+test.concurrent.each([1, 2])(
+  "back-to-back POSTs share connections when the origin sends Keep-Alive: timeout=%i",
+  async timeout => {
+    await using origin = await originThatSendsKeepAlive(`timeout=${timeout}`);
+    for (let i = 0; i < 10; i++) await origin.post();
+    expect(origin.sockets.length).toBeLessThan(10);
+  },
+);
+
+// The window of timeout=1 is half a second, and only the clock shows its end.
+test.concurrent("a POST dials a new connection 600 ms after a response with Keep-Alive: timeout=1", async () => {
+  await using origin = await originThatSendsKeepAlive("timeout=1");
+  await origin.post();
+  await Bun.sleep(600);
+  await origin.post();
+  expect(origin.sockets.length).toBe(2);
 });

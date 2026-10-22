@@ -823,6 +823,10 @@ private:
                         closeDestroyedNodeHttpSocket(s, httpResponseData);
                         return s;
                     }
+                    /* The listener kept the socket. No request can follow, so unless a response still owns the connection only this timer closes it. */
+                    if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) && httpResponseData->nodeHttpQueuedPipelinedCount == 0) {
+                        ((HttpResponse<SSL> *) s)->setTimeout(HttpResponseData<SSL>::DEFAULT_IDLE_TIMEOUT);
+                    }
                 }
                 /* Flush anything the 'clientError' handler wrote (uncorking a
                  * closed socket is a no-op). */

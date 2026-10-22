@@ -923,18 +923,17 @@ impl NodeHTTPResponse {
             JSValue::UNDEFINED
         };
         // The status line is Latin-1, like Node's. A code unit above 0xFF becomes NUL, which the check below rejects.
+        let status_message = status_message.unwrap_or_default();
         let narrowed: Vec<u8>;
-        let status_message_bytes: &[u8] = match &status_message {
-            None => &[],
-            Some(message) if message.is_8bit() => message.latin1(),
-            Some(message) => {
-                narrowed = message
-                    .utf16()
-                    .iter()
-                    .map(|&unit| u8::try_from(unit).unwrap_or(0))
-                    .collect();
-                &narrowed
-            }
+        let status_message_bytes: &[u8] = if status_message.is_8bit() {
+            status_message.latin1()
+        } else {
+            narrowed = status_message
+                .utf16()
+                .iter()
+                .map(|&unit| u8::try_from(unit).unwrap_or(0))
+                .collect();
+            &narrowed
         };
 
         if self.is_requested_completed_or_ended() {

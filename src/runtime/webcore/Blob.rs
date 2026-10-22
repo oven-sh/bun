@@ -3660,7 +3660,8 @@ impl FormDataContext<'_> {
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
-                    if blob.size.get() == MAX_SIZE {
+                    // `read_file` reads a file of unknown size to EOF. macOS reports only the buffered bytes as a pipe's `st_size`.
+                    if blob.size.get() == MAX_SIZE && !blob.needs_to_read_file() {
                         blob.resolve_size();
                     }
                     let store = blob

@@ -758,6 +758,7 @@ test("bare-LF in trailer section fires clientError instead of hanging", async ()
 test.each([
   ["a CR without LF, before the section ends", "\rX"],
   ["a malformed line behind 200 fields", "X-T: 1\r\n".repeat(200) + "justtext\r\n\r\n"],
+  ["Transfer-Encoding behind 200 fields", "X-T: 1\r\n".repeat(200) + "Transfer-Encoding: chunked\r\n\r\n"],
 ])("%s in the trailer section fires clientError", async (_name, trailers) => {
   const { promise, resolve, reject } = Promise.withResolvers<any>();
   await using server = createServer((req, res) => {

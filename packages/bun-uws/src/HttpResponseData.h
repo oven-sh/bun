@@ -249,7 +249,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
     /* Current state (content-length sent, status sent, write called, etc */
     uint32_t state = 0;
-    uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
+    static constexpr uint8_t DEFAULT_IDLE_TIMEOUT = 10; // seconds
+    uint8_t idleTimeout = DEFAULT_IDLE_TIMEOUT;
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;

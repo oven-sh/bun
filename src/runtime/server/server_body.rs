@@ -2039,7 +2039,7 @@ where
             return Ok(());
         }
         self.init_dev_server()
-            .inspect_err(|_| self.config.bake = None)
+            .inspect_err(|_| self.config.drop_dev_server_options())
     }
 
     pub(crate) fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {

@@ -687,6 +687,43 @@ describe("udpSocket()", () => {
     expect(exitCode).toBe(0);
   });
 
+  // In its own process, because a starved event loop can't run the test's timeout either.
+  test("a socket that always has a datagram waiting doesn't starve the event loop", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const first = Promise.withResolvers();
+        let stopped = false;
+        // Every datagram is answered with one to the same socket, so a read never finds it empty.
+        const socket = await Bun.udpSocket({
+          hostname: "127.0.0.1",
+          socket: {
+            data(socket) {
+              first.resolve();
+              if (!stopped) socket.send("x", socket.port, "127.0.0.1");
+            },
+          },
+        });
+        for (let i = 0; i < 64; i++) socket.send("x", socket.port, "127.0.0.1");
+        await first.promise;
+        await new Promise(resolve => setImmediate(resolve));
+        stopped = true;
+        socket.close();
+        console.log("setImmediate ran");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 10_000,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("setImmediate ran");
+    expect(exitCode).toBe(0);
+  }, 20_000);
+
   // sendMany() iterates the input array and may run user JS (array index
   // getters, port `valueOf()`, address `toString()`). That user JS can
   // connect or disconnect the socket; sendMany must snapshot the connection

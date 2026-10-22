@@ -4069,6 +4069,10 @@ it("does not reuse a keep-alive connection whose chunked response carried bytes 
       injected,
     ]),
     "/repeated-terminator": Buffer.concat([chunkedResponse(Buffer.from("hello")), Buffer.from("0\r\n\r\n")]),
+    "/one-crlf": Buffer.concat([chunkedResponse(Buffer.from("hello")), Buffer.from("\r\n")]),
+    "/one-crlf-large": Buffer.concat([chunkedResponse(Buffer.from(largeBody)), Buffer.from("\r\n")]),
+    "/two-crlf": Buffer.concat([chunkedResponse(Buffer.from("hello")), Buffer.from("\r\n\r\n")]),
+    "/crlf-overshoot": Buffer.concat([chunkedResponse(Buffer.from("hello")), Buffer.from("\r\n"), injected]),
   };
 
   let connections = 0;
@@ -4103,12 +4107,18 @@ it("does not reuse a keep-alive connection whose chunked response carried bytes 
       "/overshoot-gzip",
       "/repeated-terminator",
       "/legit",
+      "/one-crlf",
+      "/one-crlf-large",
+      "/two-crlf",
+      "/crlf-overshoot",
+      "/legit",
     ]) {
       const response = await fetch(`http://127.0.0.1:${port}${path}`);
       const body = await response.text();
       results.push([path, body === largeBody ? "<large body>" : body, connections]);
     }
-    // Each body still arrives in full. Only the request after an overshoot dials a new connection.
+    // Each body still arrives in full. Only the request after an overshoot dials a new connection. A repeated
+    // terminator or one empty line isn't an overshoot.
     expect(results).toEqual([
       ["/overshoot", "hello", 1],
       ["/legit", "legit!", 2],
@@ -4117,6 +4127,11 @@ it("does not reuse a keep-alive connection whose chunked response carried bytes 
       ["/overshoot-gzip", "hello", 3],
       ["/repeated-terminator", "hello", 4],
       ["/legit", "legit!", 4],
+      ["/one-crlf", "hello", 4],
+      ["/one-crlf-large", "<large body>", 4],
+      ["/two-crlf", "hello", 4],
+      ["/crlf-overshoot", "hello", 5],
+      ["/legit", "legit!", 6],
     ]);
   } finally {
     for (const socket of sockets) socket.destroy();

@@ -425,6 +425,28 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         enclosing: Option<NodeRef>,
         flags: TypeFormatFlags,
     ) -> Vec<u8> {
+        self.type_to_string_with(ty, enclosing, flags, 0)
+    }
+
+    /// `type_to_string` with object types' members in TypeScript 6's order, as in
+    /// `properties_of_type_in_insertion_order`.
+    pub fn type_to_string_in_insertion_order(
+        &mut self,
+        ty: TypeId,
+        enclosing: Option<NodeRef>,
+        flags: TypeFormatFlags,
+    ) -> Vec<u8> {
+        self.type_to_string_with(ty, enclosing, flags, print::INSERTION_ORDER)
+    }
+
+    /// `extra_print_flags` are printer flags that no `TypeFormatFlags` stands for.
+    fn type_to_string_with(
+        &mut self,
+        ty: TypeId,
+        enclosing: Option<NodeRef>,
+        flags: TypeFormatFlags,
+        extra_print_flags: u32,
+    ) -> Vec<u8> {
         const FLAGS: [(TypeFormatFlags, u32); 10] = [
             (TypeFormatFlags::NO_TRUNCATION, print::NO_TRUNCATION),
             (
@@ -464,7 +486,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let flags = FLAGS
             .iter()
             .filter(|it| flags.contains(it.0))
-            .fold(0, |all, it| all | it.1);
+            .fold(extra_print_flags, |all, it| all | it.1);
         let enclosing = enclosing.and_then(|node| {
             let scope = self.scope_at(node)?;
             let at = super::super::enclosing_declaration::Enclosing::at_scope(node.file, scope);

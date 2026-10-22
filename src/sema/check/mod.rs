@@ -4018,12 +4018,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.lowest_taint = self.lowest_taint.min(depth);
         self.note_taint_event(depth);
+        // A walk can end with an incomplete type after its loops are complete (`get_flow_type_of_reference`).
+        let stores_signatures = !self.is_in_flow_loop();
         // `getTypeOfVariableOrParameterOrProperty` stores what `getQuickTypeOfExpression` returns,
         // which checks the callee with the loops visible, and the type of a `...rest`. Nothing stores
         // the type of a pattern around a binding element, which is recomputed for the next element.
         for at in depth..self.frames.len() {
             let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&at);
             if self.quick_initializers.iter().any(is_quick) && self.is_resolution(self.stack[at]) {
+                continue;
+            }
+            if stores_signatures && matches!(self.stack[at], Query::Call(..)) {
                 continue;
             }
             self.frames[at].tainted = true;

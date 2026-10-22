@@ -135,7 +135,7 @@ impl Checker<'_, '_> {
         };
         let called = self.check_non_null_callee(file, data.callee, called, is_new);
         // `silentNeverSignature`
-        if called == TypeId::SILENT_NEVER {
+        if resolved.sig.is_none() && resolved.ret == TypeId::SILENT_NEVER {
             return;
         }
         let apparent = self.apparent_type(called);

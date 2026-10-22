@@ -11131,6 +11131,36 @@ export function b8() { let s: S | null = mk(); while (s) { const t = s.get(); co
       expect(exitCode).toBe(1);
     });
 
+    test("keeps the signature of a generic assertion that the analysis of another reference resolves", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare function make<T>(): T;
+declare const assertIs: <T>(value: unknown, expected: T) => asserts value is T;
+export const f = () => {
+  fail();
+  try {
+    for (const item of [1]) {}
+    var assigned = 1;
+  } catch {
+    assertIs(assigned, 1);
+    assertIs(assigned, 2);
+  }
+  const kind = make<"a" | "b">();
+  switch (kind) {
+    case "a":
+      return;
+  }
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,5): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("resolves a generic assertion in a loop for every reference, which reports TS7022", async () => {
       using dir = project({
         "a.ts": `declare function deep<T>(a: unknown, e: T): asserts a is T;

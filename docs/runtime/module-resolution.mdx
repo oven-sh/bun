@@ -479,5 +479,6 @@ const names = {
 
 - If Bun can't replace a call, for example because the pattern is a variable, the call throws a `TypeError` when it runs.
 - `eager` needs `import` statements, so it throws in a CommonJS module.
+- `Object.keys(import.meta.glob(...))` only needs the paths, so it imports nothing, even with `eager`. Vite does the same.
 - If a file assigns its own function to `import.meta.glob`, Bun leaves that file's calls alone.
 - With `--watch`, `--hot` and the [dev server](/bundler/fullstack), a new matching file isn't picked up until the file that calls `import.meta.glob()` changes.

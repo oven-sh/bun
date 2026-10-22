@@ -92,9 +92,12 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
       process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
     `);
     try {
-      expect(await fetch(`http://127.0.0.1:${port}/excess`).then(res => res.status, error => error.code)).toBe(
-        "ECONNRESET",
-      );
+      expect(
+        await fetch(`http://127.0.0.1:${port}/excess`).then(
+          res => res.status,
+          error => error.code,
+        ),
+      ).toBe("ECONNRESET");
       const res = await fetch(`http://127.0.0.1:${port}/`);
       expect({ status: res.status, length: (await res.arrayBuffer()).byteLength }).toEqual({
         status: 200,

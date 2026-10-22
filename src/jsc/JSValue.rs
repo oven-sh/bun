@@ -2593,7 +2593,6 @@ impl JSValue {
         self,
         formatter: &'a mut crate::console_object::Formatter<'b>,
     ) -> crate::console_object::formatter::ZigFormatter<'a, 'b> {
-        formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
         formatter.stack_check.update();
         crate::console_object::formatter::ZigFormatter::new(formatter, self)
     }

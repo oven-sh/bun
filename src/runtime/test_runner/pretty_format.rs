@@ -2641,7 +2641,6 @@ impl From<bun_jsc::FormatTag> for Tag {
         // (Boolean / Double / Object / Private / String); the rest collapse
         // onto `Object` so any future caller still renders something useful.
         match tag {
-            Ft::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
             Ft::String => Tag::String,
             Ft::Undefined => Tag::Undefined,
             Ft::Double => Tag::Double,

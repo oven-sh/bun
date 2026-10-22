@@ -14,6 +14,7 @@ use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
 use bun_install::CommandLineArguments;
 use bun_install::dependency::VersionTag;
+use bun_install::postinstall_optimizer;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER};
@@ -493,18 +494,30 @@ impl BunxCommand {
             let is_in_package = |real: &[u8]| {
                 (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP))
             };
-            // The installer links the bin of a package with native builds into an optional dependency,
-            // and skips the install script that replaces the package's own file.
-            if let Some(entry) = entry
-                && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
-                && (is_in_package(real)
-                    || Self::is_in_platform_package(transpiler, &package_json, real))
-            {
-                return Ok(InProject::Run(entry));
-            }
+            // The installer links the bin of a native dependency into its platform package, and skips
+            // the install script that replaces the package's own file.
+            let entry = match entry {
+                Some(entry)
+                    if bun_sys::realpath(&entry, &mut buf).is_ok_and(|real| {
+                        is_in_package(real)
+                            || Self::is_in_platform_package(
+                                transpiler,
+                                project,
+                                &package_json,
+                                real,
+                            )
+                    }) =>
+                {
+                    return Ok(InProject::Run(entry));
+                }
+                entry => entry,
+            };
             let Some(file) = file else {
                 return Ok(Self::find_without_executable_file(
+                    transpiler,
+                    &package_json,
                     package_name,
+                    entry,
                     file_path,
                     real_dir,
                 ));
@@ -521,11 +534,21 @@ impl BunxCommand {
     /// The project has the package, and the file of its bin is not an executable file.
     #[cold]
     fn find_without_executable_file(
+        transpiler: &mut Transpiler,
+        package_json: &ZStr,
         package_name: &[u8],
+        entry: Option<ZBox>,
         file: Vec<u8>,
         real_dir: &[u8],
     ) -> InProject {
         let mut buf = bun_paths::path_buffer_pool::get();
+        if let Some(entry) = entry
+            && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
+            && Self::is_in_optional_dependency(transpiler, package_json, real, |_| true)
+        {
+            return InProject::Run(entry);
+        }
+
         let file = ZBox::from_vec(file);
         match bun_sys::realpath(&file, &mut buf) {
             Ok(real) if (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP)) => {
@@ -542,33 +565,60 @@ impl BunxCommand {
         }
     }
 
-    /// Whether `real` is in one of the `optionalDependencies` of the package at `package_json` that
-    /// has an `os` and a `cpu`. The installer links the bin of a package into no other package.
+    /// Whether the installer linked the bin of the package at `package_json` to `real`. It does that
+    /// for a native dependency of `project`, into an optional dependency with an `os` and a `cpu`.
     fn is_in_platform_package(
         transpiler: &mut Transpiler,
+        project: &[u8],
         package_json: &ZStr,
         real: &[u8],
     ) -> bool {
-        let dependency_json =
-            Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
-                let optional = root.get(b"optionalDependencies")?;
-                let ExprData::EObjectJSON(optional) = &optional.data else {
-                    return None;
-                };
-                // `node_modules` can be a link to a folder of another name, which is the name in `real`.
-                optional.get().properties().iter().find_map(|dependency| {
-                    let name = dependency.key.slice();
-                    let (parent, _) = strings::rsplit_once(real, &[b"/", name, b"/"].concat())?;
-                    Some([parent, b"/", name, b"/package.json"].concat())
-                })
-            });
-        let Some(Some(dependency_json)) = dependency_json else {
+        if !Self::is_in_optional_dependency(transpiler, package_json, real, |dependency| {
+            dependency.get(b"os").is_some() && dependency.get(b"cpu").is_some()
+        }) {
+            return false;
+        }
+        // Under an alias, the folder does not have the name of the package.
+        let name = Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
+            Some(root.get(b"name")?.as_utf8_string_literal()?.to_vec())
+        });
+        let Some(Some(name)) = name else {
             return false;
         };
-        Self::read_package_json(transpiler, &dependency_json, |root| {
-            root.get(b"os").is_some() && root.get(b"cpu").is_some()
+        let project_json = [project, SEP, b"package.json"].concat();
+        Self::read_package_json(transpiler, &project_json, |root| {
+            postinstall_optimizer::List::is_native_dependency(root, &name)
         })
         .unwrap_or(false)
+    }
+
+    /// Whether `real` is in one of the `optionalDependencies` of the package at `package_json`
+    /// whose package.json `is_match`.
+    fn is_in_optional_dependency(
+        transpiler: &mut Transpiler,
+        package_json: &ZStr,
+        real: &[u8],
+        is_match: impl Fn(&bun_ast::Expr) -> bool,
+    ) -> bool {
+        let candidates = Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
+            let optional = root.get(b"optionalDependencies")?;
+            let ExprData::EObjectJSON(optional) = &optional.data else {
+                return None;
+            };
+            // `node_modules` can be a link to a folder of another name, which is the name in `real`.
+            // A folder above the project can have the name of a dependency too.
+            let candidates = optional.get().properties().iter().filter_map(|dependency| {
+                let name = dependency.key.slice();
+                let (parent, _) = strings::rsplit_once(real, &[b"/", name, b"/"].concat())?;
+                Some([parent, b"/", name, b"/package.json"].concat())
+            });
+            Some(candidates.collect::<Vec<_>>())
+        });
+        candidates.flatten().is_some_and(|candidates| {
+            candidates.iter().any(|dependency_json| {
+                Self::read_package_json(transpiler, dependency_json, &is_match).unwrap_or(false)
+            })
+        })
     }
 
     fn read_package_json<T>(

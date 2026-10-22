@@ -302,9 +302,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
 
-    /// As above, with the `var` at the top level too. `hoist_symbols` sets the
-    /// flag above for a `var` in a nested block, part of the way through its walk.
-    pub(crate) has_top_level_function_and_var_of_one_name: bool,
+    /// The scope members that `hoist_symbols` removed: "var foo; { var foo; }".
+    pub(crate) redeclared_var_members: Vec<(js_ast::StoreRef<Scope>, js_ast::scope::Member)>,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
@@ -3326,9 +3325,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
         }
 
-        self.has_top_level_function_and_var_of_one_name =
-            self.has_top_level_function_merged_with_var;
         self.hoist_symbols(self.module_scope_ref());
+        if !self.redeclared_var_members.is_empty() {
+            self.keep_block_symbols_beside_function_merged_with_var();
+        }
 
         let mut generated_symbols_count: u32 = 3;
 
@@ -3427,6 +3427,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn will_use_renamer(&self) -> bool {
         self.options.bundle || self.options.features.minify_identifiers
+    }
+
+    /// A top-level `var exports` or `var module` of a CommonJS file is the wrapper's
+    /// argument (`declare_common_js_symbol`). The parser rewrites uses of that symbol,
+    /// which is wrong for a block that stores its own value under the name.
+    fn is_commonjs_wrapper_argument(&self, name: &[u8]) -> bool {
+        !self.has_es_module_syntax && (name == b"exports" || name == b"module")
+    }
+
+    /// Module code rejects `function f() {}` beside `var f`, so a bundle of such a
+    /// file loads only while tree shaking drops the pair. The file keeps its block
+    /// symbols, which keep no declaration alive. Bun reads a CommonJS bundle that
+    /// has no CommonJS syntax as module code too.
+    #[cold]
+    #[inline(never)]
+    fn keep_block_symbols_beside_function_merged_with_var(&mut self) {
+        let removed = core::mem::take(&mut self.redeclared_var_members);
+        if !self.has_top_level_function_merged_with_var
+            || !self.options.bundle
+            || !matches!(
+                self.options.output_format,
+                options::Format::Esm | options::Format::Cjs
+            )
+        {
+            return;
+        }
+        for (mut scope, member) in removed {
+            let name = self.symbols[member.ref_.inner_index() as usize]
+                .original_name
+                .slice();
+            // SAFETY: `name` is a symbol's `original_name`.
+            unsafe { scope.members.put(name, member) };
+        }
+        let module_scope = self.module_scope_ref();
+        for (_, member) in module_scope.members.iter() {
+            self.symbols[member.ref_.inner_index() as usize].set_redeclared_in_nested_scope(false);
+        }
     }
 
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
@@ -3609,25 +3646,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                                 .value_ptr = member_in_scope;
 
-                                // "var foo; { var foo; foo }" declares one module-level
-                                // variable. The block gives up its member, so a lookup there
-                                // goes on up the scope chain, and a use in the block is a use
-                                // of the module scope's symbol. Left as they are: a sloppy
-                                // block-level function (another variable), a `var` in a file
-                                // whose top level declares a function and a `var` of one name
-                                // (module code rejects that pair, so no use may keep it), and
-                                // the CommonJS `module` and `exports`.
-                                if _scope_ptr == self.module_scope
-                                    && value.ref_ == original_member_ref
+                                // "var foo = {}; { var foo; foo }"
+                                if !is_sloppy_mode_block_level_fn_stmt
                                     && self.symbols[symbol_idx].kind
                                         == js_ast::symbol::Kind::Hoisted
                                     && existing_kind == js_ast::symbol::Kind::Hoisted
-                                    && !self.has_top_level_function_and_var_of_one_name
-                                    && (self.has_es_module_syntax
-                                        || (name != b"module" && name != b"exports"))
                                 {
-                                    self.symbols[existing_idx].set_redeclared_in_nested_scope(true);
-                                    scope.members.remove_hashed(hash.unwrap(), name);
+                                    let root = if self.symbols[existing_idx].has_link() {
+                                        let root = js_ast::symbol::follow_symbols(
+                                            &self.symbols,
+                                            member_in_scope.ref_,
+                                        );
+                                        root.inner_index() as usize
+                                    } else {
+                                        existing_idx
+                                    };
+                                    self.symbols[root].set_redeclared_in_nested_scope(true);
+                                    // Tree shaking looks a use up by its own symbol, so the block resolves the name
+                                    // to this one. esbuild keeps the member, and drops the first statement above.
+                                    if _scope_ptr == self.module_scope
+                                        && !self.is_commonjs_wrapper_argument(name)
+                                    {
+                                        self.redeclared_var_members.push((scope, value));
+                                        scope.members.remove_hashed(hash.unwrap(), name);
+                                    }
                                 }
 
                                 // "function foo() {} { var foo; }"
@@ -4992,7 +5034,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.symbols[_member.ref_.inner_index() as usize].kind
                 == js_ast::symbol::Kind::Hoisted
                 && kind == js_ast::symbol::Kind::Hoisted
-                && !self.has_es_module_syntax
+                && self.is_commonjs_wrapper_argument(name)
             {
                 return Ok(_member.ref_);
             }
@@ -7872,6 +7914,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MPromise => ident!(b"Promise"),
             M::MIdentifier(ref_) => {
+                // The parse pass resolved this name before `hoist_symbols` ran.
+                let ref_ = if self.is_redeclared_in_nested_scope(ref_) {
+                    js_ast::symbol::follow_symbols(&self.symbols, ref_)
+                } else {
+                    ref_
+                };
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
                     self.note_import_use(ref_, IdentifierOpts::new());
@@ -9768,7 +9816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
-            has_top_level_function_and_var_of_one_name: false,
+            redeclared_var_members: Vec::new(),
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

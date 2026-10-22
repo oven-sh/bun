@@ -164,6 +164,31 @@ test("a macro result is not inlined into a var that a nested block declares agai
         var readInBlock: any;
         console.log(readInBlock);
       }
+
+      if (globalThis.process) {
+        var inTwoBlocks = identity(42);
+      }
+      if (globalThis.process) {
+        var inTwoBlocks: any = 7;
+      }
+      console.log(inTwoBlocks);
+
+      if (globalThis.process) {
+        var inBlockOfItsBlock = identity(42);
+        if (globalThis.process) {
+          var inBlockOfItsBlock: any = 7;
+        }
+      }
+      console.log(inBlockOfItsBlock);
+
+      function inFunction(stores: boolean) {
+        var local = identity(42);
+        if (stores) {
+          var local: any = 7;
+        }
+        return local;
+      }
+      console.log(inFunction(true), inFunction(false));
     `,
     "macro.ts": `
       export function identity(arg: any) {
@@ -185,7 +210,11 @@ test("a macro result is not inlined into a var that a nested block declares agai
     .trim()
     .split("\n")
     .filter(line => !line.startsWith("[macro]"));
-  expect({ lines, stderr, exitCode }).toEqual({ lines: ["7", "7", "42"], stderr: "", exitCode: 0 });
+  expect({ lines, stderr, exitCode }).toEqual({
+    lines: ["7", "7", "42", "7", "7", "7 42"],
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("ireturnapromise", async () => {

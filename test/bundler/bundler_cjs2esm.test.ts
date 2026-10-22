@@ -2636,18 +2636,51 @@ describe("bundler", () => {
             var read;
             console.log(read.name);
           }
+
+          function inFunction(stores) {
+            var local = require("react-server");
+            if (stores) {
+              var local = { name: "stored in a function" };
+            }
+            return local.name;
+          }
+          console.log(inFunction(true), inFunction(false));
         `,
         ...unwrappedPackage("react"),
         ...unwrappedPackage("react-dom"),
         ...unwrappedPackage("react-is"),
         ...unwrappedPackage("scheduler"),
         ...unwrappedPackage("react-client"),
+        ...unwrappedPackage("react-server"),
       },
       run: {
-        stdout: "react\nstored\nstored one block deeper\nreact-client",
+        stdout: "react\nstored\nstored one block deeper\nreact-client\nstored in a function react-server",
       },
     });
   }
+  // In a CommonJS file, a block that declares `var exports` again keeps its
+  // own symbol for the name. An object that the block stores is not the
+  // module's `exports`.
+  itBundled("cjs2esm/ExportsRedeclaredInNestedBlock", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./exports-stored.js";
+      `,
+      "/exports-stored.js": /* js */ `
+        var exports;
+        exports.a = 1;
+        exports.b = 2;
+        if (globalThis.process) {
+          var exports = { a: "stored" };
+          console.log(exports.a, exports.b);
+        }
+        console.log(module.exports.a, module.exports.b);
+      `,
+    },
+    run: {
+      stdout: "stored undefined\n1 2",
+    },
+  });
   // In a CommonJS file, a block that declares `var module` again keeps its own
   // symbol for the name. An object that the block stores is read as written,
   // and `module.require()`, `module.id` and `require.main === module` outside

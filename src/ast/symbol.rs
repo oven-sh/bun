@@ -108,12 +108,7 @@ pub struct Symbol {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
-    pub struct SymbolFlags: u8 {
-        /// A nested scope declares this module-level `var` again, and the name
-        /// resolves to this symbol there. That declaration can assign the
-        /// variable.
-        const REDECLARED_IN_NESTED_SCOPE = 1 << 0;
-
+    pub struct SymbolFlags: u16 {
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
 
         /// Certain symbols must not be renamed or minified. For example, the
@@ -136,6 +131,10 @@ bitflags::bitflags! {
 
         /// A call of this function declaration or lifted export ignores `this`.
         const CALL_IGNORES_THIS = 1 << 7;
+
+        /// A nested scope declares this `var` again, and that declaration can
+        /// assign it. Set on the root of the link chain.
+        const REDECLARED_IN_NESTED_SCOPE = 1 << 9;
     }
 }
 
@@ -157,7 +156,6 @@ macro_rules! symbol_flag_accessors {
 }
 
 symbol_flag_accessors! {
-    redeclared_in_nested_scope, set_redeclared_in_nested_scope => REDECLARED_IN_NESTED_SCOPE;
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
     import_used_as_value, set_import_used_as_value => IMPORT_USED_AS_VALUE;
@@ -165,6 +163,7 @@ symbol_flag_accessors! {
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
     called_as_method, set_called_as_method => CALLED_AS_METHOD;
     call_ignores_this, set_call_ignores_this => CALL_IGNORES_THIS;
+    redeclared_in_nested_scope, set_redeclared_in_nested_scope => REDECLARED_IN_NESTED_SCOPE;
 }
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);

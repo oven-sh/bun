@@ -5,7 +5,6 @@
 #include "BunProcess.h"
 #include "ZigGlobalObject.h"
 #include "FormatStackTraceForJS.h"
-#include "ErrorStackTrace.h"
 #include "headers.h" // For Bun__Process__createExecArgv and other exports
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSObject.h"
@@ -253,7 +252,6 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
         WTF::Vector<StackFrame> stackFrames;
         vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
-        Zig::JSCStackTrace stackTrace = Zig::JSCStackTrace::fromExisting(vm, stackFrames);
 
         String name = "Error"_s;
         String message = "JavaScript Callstack"_s;
@@ -264,7 +262,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         WTF::String stackProperty = Bun::formatStackTrace(
             vm, globalObject, globalObject, name, message,
             line, column,
-            sourceURL, stackTrace, nullptr);
+            sourceURL, stackFrames, nullptr);
         RETURN_IF_EXCEPTION(scope, {});
 
         WTF::String stack;

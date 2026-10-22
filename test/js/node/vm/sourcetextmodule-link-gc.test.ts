@@ -71,9 +71,9 @@ test.skipIf(isWindows)(
   120_000,
 );
 
-// snapshotStackTrace (src/jsc/bindings/FormatStackTraceForJS.cpp,
-// installed via vm.setOnSnapshotStackTrace) runs from ErrorInstance::
-// reconcileWeakReferencesAtGCEnd during Heap::runEndPhase. It used to clear whatever
+// computeErrorInfoWrapperToString (src/jsc/bindings/FormatStackTraceForJS.cpp,
+// installed via vm.setOnComputeErrorInfo) runs from ErrorInstance::
+// finalizeUnconditionally during Heap::runEndPhase. It used to clear whatever
 // exception was pending after computing a stack string. With concurrent GC,
 // that finalizer lands at an arbitrary safepoint: if it fires while the mutator
 // is mid vm.SourceTextModule evaluation with a module's evaluation error

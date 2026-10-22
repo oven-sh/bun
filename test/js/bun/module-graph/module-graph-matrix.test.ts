@@ -942,10 +942,9 @@ describe("ModuleGraph matrix: many concurrent instances", () => {
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 // 7. error.stack × where the error is read × when it is first read × what became of the graph it
-//    came from. A stack is made on first access, from the trace's frames or from what JSC keeps of
-//    them at the end of a collection that finds one dead; it must be the same either way, as a string
-//    and as call sites, from any reader, whether the graph whose modules are in the trace is alive,
-//    disposed or collected.
+//    came from. A stack is materialized on first access, or by JSC at the end of a collection that
+//    finds a frame of an unread trace dead; its text must be the same either way, from any reader,
+//    whether the graph whose modules are in the trace is alive, disposed or collected.
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 describe("ModuleGraph matrix: error.stack reader × first read × origin graph", () => {
   // Throw and catch, and keep every call out of tail position: modules are strict, and a frame a
@@ -961,7 +960,7 @@ export function capture(message) {
     return error;
   }
 }
-// Two errors with the same trace: one to read as a string, one to read as call sites.
+// Two errors with the same trace: one to read as a string, one to read through Error.prepareStackTrace.
 export function pair(message) {
   const errors = [capture(message), capture(message)];
   return errors;
@@ -987,7 +986,7 @@ import { join } from "node:path";
 const dir = import.meta.dir;
 const trace = process.argv[2];
 const tick = () => new Promise(resolve => setImmediate(resolve));
-// A collection that finds a frame of an unread trace dead lets go of the frames
+// A collection that finds a frame of an unread trace dead makes the stack a string
 // (ErrorInstance::reconcileWeakReferencesAtGCEnd); underDeadFrame() gives every trace such a frame.
 // Back to the event loop first, so nothing on the stack refers to what the cells dropped.
 async function collect() {
@@ -997,8 +996,8 @@ async function collect() {
 // graph.run(...args) under a function that is garbage once it returns, and a WeakRef that tells when it
 // is collected. Its frame is not one of the graphs' modules, so graphFrames() leaves it out.
 const underDeadFrame = (graph, args) => {
-  const frame = new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}');
-  return [...frame(graph, args), new WeakRef(frame)];
+  const deadFrame = new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}');
+  return [...deadFrame(graph, args), new WeakRef(deadFrame)];
 };
 
 // Whether a root reaches the graph that globalThis.__matrixProbe.weak points at. A WeakRef that still
@@ -1041,9 +1040,9 @@ function rootReachesProbedGraph() {
 const other = new Bun.ModuleGraph();
 const otherModule = await other.import(join(dir, "other.mjs"));
 
-// Whether the collection finds a frame of a given trace dead is not up to the test, so a cell that is
-// read after the collection gets several pairs, each under its own dead frame, and reports on the
-// first one whose frame was collected.
+// Whether the collection materializes a given stack is not up to the test (it does when it finds one
+// of the trace's frames dead), so a cell that is read after the collection gets several pairs, each
+// under its own dead frame, and reports on the first one the collection materialized.
 const CANDIDATES = 4;
 
 // One origin graph per state, and CANDIDATES pairs of errors from it per cell. Everything that refers
@@ -1067,40 +1066,40 @@ const graphFrames = stack =>
     .filter((line, index) => index === 0 || /[\\/](origin|other)\.mjs:/.test(line))
     .map(line => line.replace(/\(?[^()]*[\\/]((?:origin|other)\.mjs:\d+:\d+)\)?/, "$1"));
 
-// What a first read makes the stack from.
-const firstReadPath = ([, , frame]) => (frame.deref() === undefined ? "collected frames" : "frames");
+// How a first read finds a stack.
+const firstReadPath = ([, , deadFrame]) => (deadFrame.deref() === undefined ? "early" : "on access");
 
-// The twin's stack as graphFrames() of the call sites an Error.prepareStackTrace gets.
-function callSites([, twin]) {
+// Whether a prepareStackTrace installed for the first read of the error's twin is consulted.
+function consultsPrepareStackTrace([, twin]) {
+  let consulted = false;
   const builtin = Error.prepareStackTrace;
-  Error.prepareStackTrace = (error, sites) => [String(error), ...sites.map(site => "at " + site.getFunctionName() + " (" + site.getFileName() + ":" + site.getLineNumber() + ":" + site.getColumnNumber() + ")")].join("\n");
+  Error.prepareStackTrace = () => ((consulted = true), "");
   try {
-    return graphFrames(twin.stack);
+    void twin.stack;
   } finally {
     Error.prepareStackTrace = builtin;
   }
+  return consulted;
 }
 
 // A cell up to the point where the collection may pass over it. A cell with no collection is done here.
 function begin({ gc, firstRead, reader }, { keep, weak }, candidates) {
   const read = ([error]) => (reader === "origin" ? keep.origin.run(keep.originModule.read, error) : reader === "other" ? other.run(otherModule.read, error) : error.stack);
-  const state = { gc, firstRead, reader, read, weak, candidates, pair: undefined, path: undefined, before: undefined, sites: undefined };
+  const state = { gc, firstRead, reader, read, weak, candidates, pair: undefined, path: undefined, before: undefined };
   if (firstRead === "before" || gc === "none") {
     state.pair = candidates[0];
     state.path = firstReadPath(state.pair);
-    state.sites = callSites(state.pair);
   }
   if (firstRead === "before") state.before = read(state.pair);
   return state;
 }
 
-function finish({ gc, firstRead, reader, read, weak, candidates, pair, path, before, sites }) {
+function finish({ gc, firstRead, reader, read, weak, candidates, pair, path, before }) {
   for (const candidate of pair ? [] : candidates) {
     pair = candidate;
     path = firstReadPath(candidate);
-    if (path === "collected frames") break;
+    if (path === "early") break;
   }
-  sites ??= callSites(pair);
   const after = read(pair);
   // "alive": the WeakRef derefs. For an origin that was dropped, a WeakRef that still derefs is not
   // enough to call it kept (see rootReachesProbedGraph): "rooted" means something really holds it.
@@ -1110,7 +1109,7 @@ function finish({ gc, firstRead, reader, read, weak, candidates, pair, path, bef
     origin = rootReachesProbedGraph() ? "rooted" : "gone";
     delete globalThis.__matrixProbe;
   }
-  return { gc, firstRead, reader, path, stack: graphFrames(after), sites, stable: before === undefined || before === after, origin };
+  return { gc, firstRead, reader, path, consulted: consultsPrepareStackTrace(pair), stack: graphFrames(after), stable: before === undefined || before === after, origin };
 }
 
 // Every cell is set up first, and one collection passes over all of them.
@@ -1148,11 +1147,6 @@ void kept;
       "call other.mjs:2:18",
     ],
   };
-  // The twin is from the second capture() in pair().
-  const sites = {
-    "origin": frames["origin"].with(3, "pair origin.mjs:13:37"),
-    "origin+other": frames["origin+other"].with(3, "pair origin.mjs:13:37"),
-  };
 
   test.concurrent.each(["origin", "origin+other"] as const)("trace through %s", async trace => {
     await using proc = Bun.spawn({
@@ -1173,9 +1167,10 @@ void kept;
             gc,
             firstRead,
             reader,
-            path: firstRead === "after" && gc !== "none" ? "collected frames" : "frames",
+            // Only an unread stack that collections passed over is materialized by one.
+            path: firstRead === "after" && gc !== "none" ? "early" : "on access",
+            consulted: true,
             stack: frames[trace],
-            sites: sites[trace],
             stable: true,
             origin: gc === "collected" ? "gone" : "alive",
           });

@@ -20,9 +20,14 @@ namespace Zig {
 
 const JSC::ClassInfo CallSite::s_info = { "CallSite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CallSite) };
 
+static JSC::JSFunction* calleeFunction(JSC::JSCell* callee)
+{
+    return callee ? dynamicDowncast<JSC::JSFunction>(callee) : nullptr;
+}
+
 static bool isUserFunction(JSC::JSCell* callee)
 {
-    auto* function = callee ? dynamicDowncast<JSC::JSFunction>(callee) : nullptr;
+    auto* function = calleeFunction(callee);
     if (!function || function->isHostFunction() || function->isBuiltinFunction()) {
         return false;
     }
@@ -31,34 +36,83 @@ static bool isUserFunction(JSC::JSCell* callee)
     return !JSC::isGeneratorOrAsyncFunctionBodyParseMode(function->jsExecutable()->parseMode());
 }
 
-void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
+// What Zig::sourceURL(VM&, const StackFrame&) and JSCStackFrame::retrieveSourceURL() give a frame that has no source URL.
+static WTF::String sourceURLPlaceholder(const JSC::CollectedStackFrame& collectedFrame)
 {
-    Base::finishCreation(vm);
+    if (collectedFrame.flags & static_cast<unsigned int>(CallSite::Flags::IsWasm)) {
+        return "[wasm code]"_s;
+    }
+    if (!collectedFrame.lineColumn.line) {
+        return "[native code]"_s;
+    }
+    if (collectedFrame.sourceID != JSC::noSourceID) {
+        return makeString("[source:"_s, collectedFrame.sourceID, "]"_s);
+    }
+    return "[unknown]"_s;
+}
 
+unsigned int CallSite::flagsOf(JSCStackFrame& stackFrame)
+{
+    unsigned int flags = 0;
+    JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
+    if (codeBlock && codeBlock->ownerExecutable()->isInStrictContext()) {
+        flags |= static_cast<unsigned int>(Flags::IsStrict);
+    } else {
+        // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
+        auto* function = calleeFunction(stackFrame.callee());
+        if (function && !function->isHostFunction()) {
+            flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
+        }
+    }
+
+    if (stackFrame.isEval()) {
+        flags |= static_cast<unsigned int>(Flags::IsEval);
+    } else if (stackFrame.isFunctionOrEval()) {
+        flags |= static_cast<unsigned int>(Flags::IsFunction);
+    }
+    if (stackFrame.isConstructor()) {
+        flags |= static_cast<unsigned int>(Flags::IsConstructor);
+    }
+    if (!codeBlock) {
+        flags |= static_cast<unsigned int>(Flags::IsNative);
+    }
+    if (stackFrame.isWasmFrame()) {
+        flags |= static_cast<unsigned int>(Flags::IsWasm);
+    }
+    if (stackFrame.isAsync()) {
+        flags |= static_cast<unsigned int>(Flags::IsAsync);
+    }
+    return flags;
+}
+
+void CallSite::setFlags(unsigned int flags, bool encounteredStrictFrame)
+{
     /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
      * "To maintain restrictions imposed on strict mode functions, frames that have a
      * strict mode function and all frames below (its caller etc.) are not allow to access
      * their receiver and function objects. For those frames, getFunction() and getThis()
      * will return undefined.".
      * Thus, if we've already encountered a strict frame, we'll treat our frame as strict too. */
+    if (encounteredStrictFrame) {
+        flags |= static_cast<unsigned int>(Flags::IsStrict);
+        flags &= ~static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
+    }
+    m_flags = flags;
+}
 
-    bool isStrictFrame = encounteredStrictFrame || stackFrame.isStrict();
-    JSC::JSCell* callee = stackFrame.callee();
+void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
+{
+    Base::finishCreation(vm);
+    setFlags(flagsOf(stackFrame), encounteredStrictFrame);
 
     // JSC::StackFrame has no receiver, so getThis() is always undefined.
     m_thisValue.set(vm, this, JSC::jsUndefined());
-    if (isStrictFrame) {
-        m_flags |= static_cast<unsigned int>(Flags::IsStrict);
-    }
     // Hiding a callee must not set IsStrict: that cascades to the callers, and JSC shows host frames that V8 omits.
-    if (isStrictFrame || !isUserFunction(callee)) {
+    JSC::JSCell* callee = stackFrame.callee();
+    if (isStrict() || !isUserFunction(callee)) {
         m_function.set(vm, this, JSC::jsUndefined());
     } else {
         m_function.set(vm, this, callee);
-    }
-    // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
-    if (!isStrictFrame && stackFrame.calleeIsNonHostFunction()) {
-        m_flags |= static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
     }
 
     m_functionName.set(vm, this, stackFrame.functionName());
@@ -70,20 +124,27 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         m_lineNumber = sourcePositions->line;
         m_columnNumber = sourcePositions->column;
     }
+}
 
-    if (stackFrame.isEval()) {
-        m_flags |= static_cast<unsigned int>(Flags::IsEval);
-    } else if (stackFrame.isFunctionOrEval()) {
-        m_flags |= static_cast<unsigned int>(Flags::IsFunction);
+void CallSite::finishCreation(VM& vm, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame, bool encounteredStrictFrame)
+{
+    Base::finishCreation(vm);
+    setFlags(collectedFrame.flags, encounteredStrictFrame);
+
+    m_thisValue.set(vm, this, JSC::jsUndefined());
+    m_function.set(vm, this, JSC::jsUndefined());
+    m_functionName.set(vm, this, jsString(vm, stackString.substring(collectedFrame.functionNameOffset, collectedFrame.functionNameLength)));
+    m_sourceID = collectedFrame.sourceID;
+
+    WTF::String sourceURL = stackString.substring(collectedFrame.sourceURLOffset, collectedFrame.sourceURLLength);
+    if (sourceURL.isEmpty()) {
+        sourceURL = sourceURLPlaceholder(collectedFrame);
     }
-    if (stackFrame.isConstructor()) {
-        m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
-    }
-    if (stackFrame.isNative()) {
-        m_flags |= static_cast<unsigned int>(Flags::IsNative);
-    }
-    if (stackFrame.isAsync()) {
-        m_flags |= static_cast<unsigned int>(Flags::IsAsync);
+    m_sourceURL.set(vm, this, jsString(vm, sourceURL));
+
+    if (collectedFrame.lineColumn.line) {
+        m_lineNumber = OrdinalNumber::fromOneBasedInt(collectedFrame.lineColumn.line);
+        m_columnNumber = OrdinalNumber::fromOneBasedInt(collectedFrame.lineColumn.column);
     }
 }
 

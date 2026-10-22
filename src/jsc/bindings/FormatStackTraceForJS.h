@@ -34,7 +34,7 @@ namespace JSC {
 class VM;
 class JSGlobalObject;
 class StackFrame;
-class StackTraceSnapshot;
+struct CollectedStackFrame;
 class ErrorInstance;
 class CallFrame;
 enum class PropertyAttribute : unsigned;
@@ -68,8 +68,9 @@ WTF::String formatStackTrace(
     WTF::OrdinalNumber& line,
     WTF::OrdinalNumber& column,
     WTF::String& sourceURL,
-    Zig::JSCStackTrace& stackTrace,
-    JSC::JSObject* errorInstance);
+    WTF::Vector<JSC::StackFrame>& stackTrace,
+    JSC::JSObject* errorInstance,
+    WTF::Vector<JSC::CollectedStackFrame>* collectedFrames = nullptr);
 
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
@@ -81,8 +82,9 @@ JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);
 JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 
 // Internal wrapper functions for JSC error info callbacks
-JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackFrames, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);
-std::unique_ptr<JSC::StackTraceSnapshot> snapshotStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& stackFrames, JSC::JSGlobalObject* lexicalGlobalObject);
+WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, WTF::Vector<JSC::CollectedStackFrame>& collectedFrames);
+JSC::JSValue computeCollectedErrorInfoToJSValue(JSC::VM& vm, const WTF::String& stackString, const WTF::Vector<JSC::CollectedStackFrame>& collectedFrames, JSC::JSObject* errorInstance);
+JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL);
 } // namespace Bun
 

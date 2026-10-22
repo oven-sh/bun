@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// snapshotStackTrace (src/jsc/bindings/FormatStackTraceForJS.cpp,
-// the vm.setOnSnapshotStackTrace hook) runs from
+// computeErrorInfoWrapperToString (src/jsc/bindings/FormatStackTraceForJS.cpp,
+// the vm.setOnComputeErrorInfo hook) runs from
 // ErrorInstance::reconcileWeakReferencesAtGCEnd during Heap::runEndPhase, to
 // materialize the stack of a live Error whose frames have died. It used to
 // clear whatever exception was pending on the VM. The entry module's

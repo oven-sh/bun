@@ -632,8 +632,9 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     Bun__REPRL__registerFuzzilliFunctions(static_cast<Zig::GlobalObject*>(globalObject));
 #endif
 
+    vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
-    vm.setOnSnapshotStackTrace(snapshotStackTrace);
+    vm.setOnComputeCollectedErrorInfoJSValue(computeCollectedErrorInfoToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
         // if you process.nextTick on a microtask we need this

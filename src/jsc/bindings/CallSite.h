@@ -53,6 +53,18 @@ public:
         return callSite;
     }
 
+    // For a frame a collection found dead. getFunction() is undefined, and the position is the one in stackString.
+    static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame, bool encounteredStrictFrame)
+    {
+        auto& vm = JSC::getVM(globalObject);
+        CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
+        callSite->finishCreation(vm, stackString, collectedFrame, encounteredStrictFrame);
+        return callSite;
+    }
+
+    // The Flags of a frame with no strict frame above it.
+    static unsigned int flagsOf(JSCStackFrame& stackFrame);
+
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -82,6 +94,10 @@ public:
     bool isAsync() const { return m_flags & static_cast<unsigned int>(Flags::IsAsync); }
     bool isSloppyFunctionCall() const { return m_flags & static_cast<unsigned int>(Flags::IsSloppyFunctionCall); }
 
+    void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
+    void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }
+    void setSourceURL(JSC::VM& vm, JSC::JSString* sourceURL) { m_sourceURL.set(vm, this, sourceURL); }
+
     void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 
 private:
@@ -95,6 +111,8 @@ private:
     }
 
     void finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
+    void finishCreation(VM& vm, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame, bool encounteredStrictFrame);
+    void setFlags(unsigned int flags, bool encounteredStrictFrame);
 
     DECLARE_VISIT_CHILDREN;
 };

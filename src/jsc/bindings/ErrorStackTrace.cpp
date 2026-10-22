@@ -105,46 +105,12 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
 
     newFrames.reserveInitialCapacity(frameCount);
     for (size_t i = 0; i < frameCount; i++) {
-        newFrames.constructAndAppend(vm, existingFrames.at(i));
+        if (!isImplementationVisibilityPrivate(existingFrames.at(i))) {
+            newFrames.constructAndAppend(vm, existingFrames.at(i));
+        }
     }
 
     return JSCStackTrace(newFrames);
-}
-
-void JSCStackTrace::detachFromCells()
-{
-    if (!m_frames.isEmpty()) {
-        firstFrameExecutableSourceURL();
-    }
-    for (auto& frame : m_frames) {
-        frame.detachFromCells();
-    }
-    m_isDetached = true;
-}
-
-const WTF::String& JSCStackTrace::firstFrameExecutableSourceURL()
-{
-    if (!m_firstFrameExecutableSourceURL) {
-        auto& frame = m_frames.first();
-        m_firstFrameExecutableSourceURL = frame.m_stackFrame->sourceURL(frame.m_vm);
-    }
-    return m_firstFrameExecutableSourceURL;
-}
-
-size_t JSCStackTrace::sizeInBytes() const
-{
-    size_t size = sizeof(JSCStackTrace) + m_frames.sizeInBytes();
-    for (auto& frame : m_frames) {
-        size += frame.sizeOfStrings();
-    }
-    return size;
-}
-
-void JSCStackTrace::reconcileWeakReferencesAtGCEnd(JSC::VM&)
-{
-    for (auto& frame : m_frames) {
-        frame.clearCalleeIfDead();
-    }
 }
 
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
@@ -237,19 +203,13 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     , m_functionName()
     , m_isWasmFrame(false)
     , m_isAsync(frame.isAsyncFrame())
-    , m_hasLineAndColumnInfo(frame.hasLineAndColumnInfo())
-    , m_isImplementationVisibilityPrivate(Zig::isImplementationVisibilityPrivate(frame))
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
     m_callee = frame.callee();
-    if (m_callee) {
-        if (auto* function = dynamicDowncast<JSC::JSFunction>(m_callee)) {
-            m_calleeIsNonHostFunction = !function->isHostFunction();
-        }
-    }
 
     // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
     if (frame.isWasmFrame()) {
+        m_wasmFunctionIndexOrName = frame.wasmFunctionIndexOrName();
         m_isWasmFrame = true;
     } else if (auto* codeBlock = frame.codeBlock()) {
         auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
@@ -262,8 +222,6 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
         if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
             m_isFunctionOrEval = true;
         }
-        m_codeType = codeType;
-        m_codeBlockIsConstructor = codeBlock->isConstructor();
     }
 
     if (!m_codeBlock && frame.hasLineAndColumnInfo()) {
@@ -275,51 +233,11 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
             m_isFunctionOrEval = true;
         }
     }
-
-    m_isNative = !m_codeBlock;
-    if (m_codeBlock) {
-        auto* executable = m_codeBlock->ownerExecutable();
-        m_sourceID = executable->sourceID();
-        m_isStrict = executable->isInStrictContext();
-        m_isEval = m_codeBlock->codeType() == JSC::EvalCode || executable->evalContextType() != JSC::EvalContextType::None;
-        m_isConstructor = JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind();
-    }
 }
 
-void JSCStackFrame::detachFromCells()
+intptr_t JSCStackFrame::sourceID() const
 {
-    if (!m_sourceURL) {
-        m_sourceURL = retrieveSourceURL();
-    }
-    if (!m_functionName) {
-        // Not null, so that functionName() does not look for it again.
-        auto functionName = retrieveFunctionName();
-        m_functionName = functionName.isNull() ? emptyString() : functionName;
-    }
-    getSourcePositions();
-    m_stackFrameFunctionName = stackFrameFunctionName(m_stackFrameFunctionNameFlags);
-
-    m_stackFrame = nullptr;
-    m_codeBlock = nullptr;
-    clearCalleeIfDead();
-}
-
-void JSCStackFrame::clearCalleeIfDead()
-{
-    if (m_callee && !m_vm.heap.isMarked(m_callee)) {
-        m_callee = nullptr;
-    }
-}
-
-size_t JSCStackFrame::sizeOfStrings() const
-{
-    size_t size = 0;
-    for (auto* string : { &m_sourceURL, &m_functionName, &m_stackFrameFunctionName, &m_stackLinePosition.sourceURL }) {
-        if (auto* impl = string->impl()) {
-            size += impl->costDuringGC();
-        }
-    }
-    return size;
+    return m_codeBlock ? m_codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
 }
 
 JSC::JSString* JSCStackFrame::sourceURL()
@@ -338,26 +256,6 @@ JSC::JSString* JSCStackFrame::functionName()
     }
 
     return jsString(this->m_vm, m_functionName);
-}
-
-WTF::String JSCStackFrame::stackFrameFunctionName(unsigned& flags) const
-{
-    if (m_stackFrame) {
-        return Zig::functionName(m_vm, *m_stackFrame, &flags);
-    }
-
-    bool addNewKeyword = flags & FunctionNameFlags::AddNewKeyword;
-    flags |= m_stackFrameFunctionNameFlags;
-    if (addNewKeyword && m_codeBlockIsConstructor && !m_stackFrameFunctionName.isEmpty()) {
-        return makeString("new "_s, m_stackFrameFunctionName);
-    }
-    return m_stackFrameFunctionName;
-}
-
-void JSCStackFrame::setSourcePositions(SourcePositions sourcePositions)
-{
-    m_sourcePositions = sourcePositions;
-    m_sourcePositionsState = SourcePositionsState::Calculated;
 }
 
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
@@ -413,7 +311,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 {
 
     if (m_isWasmFrame) {
-        return JSC::Wasm::makeString(m_stackFrame->wasmFunctionIndexOrName());
+        return JSC::Wasm::makeString(m_wasmFunctionIndexOrName);
     }
 
     if (m_callee) {
@@ -653,6 +551,7 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
     }
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {
+        *flags |= static_cast<unsigned int>(FunctionNameFlags::Constructor);
         return makeString("new "_s, functionName);
     }
 

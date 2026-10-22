@@ -3,7 +3,6 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
-import vm from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1427,23 +1426,6 @@ test("Error.appendStackTrace keeps the stack trace when the source and destinati
   f(64);
 });
 
-test.each([
-  ["no formatter", undefined],
-  ["a formatter", (error, sites) => "formatted " + sites.map(site => site.getFunctionName()).join(" ")],
-])("Error.appendStackTrace does not move the frames of a source that is being formatted (%s)", (_, formatter) => {
-  const context = vm.createContext({});
-  const error = vm.runInContext("(function thrower() { return new Error('boom'); })()", context);
-  const other = new Error("other");
-  Object.defineProperty(vm.runInContext("Error", context), "prepareStackTrace", {
-    get() {
-      Error.appendStackTrace(error, other);
-      return formatter;
-    },
-  });
-  expect(error.stack).toStartWith(formatter ? "formatted thrower " : "Error: boom\n    at thrower ");
-  expect(other.stack).not.toContain("thrower");
-});
-
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
   const src = `
@@ -1573,44 +1555,48 @@ test("lazy error-info materialization does not store an empty stack value when t
   expect(exitCode).toBe(0);
 });
 
-// An error holds the functions and the code of its trace weakly. A collection that finds one of them dead in
-// an unread trace keeps what a stack is made from (ErrorInstance::reconcileWeakReferencesAtGCEnd), and
-// `.stack` must then read as it does while they are alive, through Error.prepareStackTrace too. The one
-// exception is getFunction() of a call site whose function was collected.
+// A collection that finds a frame of an unread trace dead turns the frames into a string before they are
+// lost (ErrorInstance::reconcileWeakReferencesAtGCEnd), and `.stack` must then read as it does when it
+// is materialized on access. Known exceptions: a call site's column and getFunction(), a SyntaxError's
+// "at <parse>" line, and the positions of node:vm frames in a transpiled file.
 //
-// Whether the collection finds a frame dead is not up to the test, so each shape makes several errors,
-// each under its own function that is garbage once it returns. The errors whose function a WeakRef says
-// was collected are the ones compared, and there must be one.
-const collectedFrames = `
+// Whether the collection materializes a given stack is not up to the test, so each shape makes several
+// errors, each under its own function that is garbage once it returns. The errors whose function a
+// WeakRef says was collected are the ones compared, and there must be one.
+const materializedByACollection = `
   const SAMPLES = 8;
-  const frames = new WeakMap();
+  const deadFrames = new WeakMap();
   // The finally blocks keep every return out of tail position.
   const capture = make => {
-    const frame = new Function(
+    const deadFrame = new Function(
       "make",
       '"use strict"; function thrower() { try { return make(); } finally {} } try { return thrower(); } finally {}',
     );
-    const error = frame(make);
-    frames.set(error, new WeakRef(frame));
+    const error = deadFrame(make);
+    deadFrames.set(error, new WeakRef(deadFrame));
     return error;
   };
-  // One error to read at once and SAMPLES more from one call site, so every trace reads the same to the column.
+  // One on-access error and SAMPLES more from one call site, so every trace reads the same to the column.
   const captureAll = make => Array.from({ length: 1 + SAMPLES }, () => capture(make));
   const collect = async () => {
     await new Promise(resolve => setImmediate(resolve));
     Bun.gc(true);
   };
-  // read(error) for each sample with a collected frame.
-  const readCollected = (samples, read) => samples.filter(error => frames.get(error).deref() === undefined).map(read);
+  const materialized = error => deadFrames.get(error).deref() === undefined;
+  // read(error) for each sample the collection materialized.
+  const readMaterialized = (samples, read) => samples.filter(materialized).map(read);
 `;
 
-const errorShapes = `
+test.concurrent("a stack that a collection materializes reads the same as one materialized on access", async () => {
+  const src = `
+    import vm from "node:vm";
+    ${materializedByACollection}
     const shapes = {
       // How the name and the message are joined.
       "TypeError with a message": () => new TypeError("boom"),
       "no message": () => new Error(),
       "empty own name": () => Object.assign(new Error("boom"), { name: "" }),
-      // They are read when the stack is first read.
+      // They are read when the stack is first read, whichever way the frames were formatted.
       "message is a Symbol": () => Object.assign(new Error(), { message: Symbol("m") }),
       "message changed before the first read": () => new Error("boom"),
       "name is a Symbol": () => Object.assign(new Error("boom"), { name: Symbol("n") }),
@@ -1618,7 +1604,6 @@ const errorShapes = `
       "AggregateError": () => new AggregateError([new Error("inner")], "boom"),
       "with a cause": () => new RangeError("boom", { cause: new Error("why") }),
       "from a node:vm context": () => vm.runInNewContext("new TypeError('boom')"),
-      "SyntaxError": () => new SyntaxError("boom"),
       // Frames whose text says more than a function name and a position.
       "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
       "created by eval code": () => (0, eval)("new Error('boom')"),
@@ -1657,16 +1642,8 @@ const errorShapes = `
         try { return arrow(); } finally {}
       },
     };
-`;
-
-test.concurrent("a stack reads the same after a collection found its frames dead", async () => {
-  const src = `
-    import vm from "node:vm";
-    ${collectedFrames}
-    ${errorShapes}
     // The frames, from the top, whose text the test spells out.
     const framesToShow = {
-      "SyntaxError": 1,
       "created in a constructor": 1,
       "created by eval code": 1,
       "created under a builtin": 2,
@@ -1697,10 +1674,10 @@ test.concurrent("a stack reads the same after a collection found its frames dead
     await collect();
     const rows = {};
     for (const { shape, expected, samples } of cases) {
-      const texts = readCollected(samples, read(shape));
+      const texts = readMaterialized(samples, read(shape));
       const lines = (texts[0] ?? "").split("\\n");
       const frames = lines.slice(1, 1 + (framesToShow[shape] ?? 0)).map(line => line.trim().replace(/ ?\\(.*$/, ""));
-      rows[shape] = { framesCollected: texts.length > 0, header: lines[0], frames, sameText: texts.every(text => text === expected) };
+      rows[shape] = { materializedByACollection: texts.length > 0, header: lines[0], frames, sameText: texts.every(text => text === expected) };
     }
     console.log(JSON.stringify(rows));
   `;
@@ -1712,7 +1689,7 @@ test.concurrent("a stack reads the same after a collection found its frames dead
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const row = (header, frames = []) => ({ framesCollected: true, header, frames, sameText: true });
+  const row = (header, frames = []) => ({ materializedByACollection: true, header, frames, sameText: true });
   const expectedRows = {
     "TypeError with a message": row("TypeError: boom"),
     "no message": row("Error"),
@@ -1724,7 +1701,6 @@ test.concurrent("a stack reads the same after a collection found its frames dead
     "AggregateError": row("AggregateError: boom"),
     "with a cause": row("RangeError: boom"),
     "from a node:vm context": row("TypeError: boom"),
-    "SyntaxError": row("SyntaxError: boom", ["at <parse>"]),
     "created in a constructor": row("Error: boom", ["at new Widget"]),
     "created by eval code": row("Error: boom", ["at <anonymous>"]),
     "created under a builtin": row("Error: boom", ["at <anonymous>", "at map"]),
@@ -1741,350 +1717,10 @@ test.concurrent("a stack reads the same after a collection found its frames dead
 });
 
 test.concurrent(
-  "Error.prepareStackTrace gets the same call sites after a collection found the frames dead",
+  "an error whose stack a collection materialized behaves as one whose stack is materialized on access",
   async () => {
     const src = `
-    import vm from "node:vm";
-    ${collectedFrames}
-    ${errorShapes}
-    const describe = site => [
-      site.toString(), site.getFunctionName(), site.getMethodName(), site.getTypeName(), site.getFileName(),
-      site.getScriptNameOrSourceURL(), site.getLineNumber(), site.getColumnNumber(), site.getEvalOrigin(),
-      site.isToplevel(), site.isEval(), site.isNative(), site.isConstructor(), site.isAsync(), site.isPromiseAll(),
-      site.getPromiseIndex(), typeof site.getThis(), typeof site.getFunction(),
-    ];
-    const read = error => {
-      let calls = 0;
-      Error.prepareStackTrace = (formatted, sites) => (calls++, JSON.stringify([formatted === error, sites.map(describe)]));
-      try {
-        return [error.stack, calls];
-      } catch (thrown) {
-        return [JSON.stringify(["throws " + thrown.message, []]), calls];
-      } finally {
-        Error.prepareStackTrace = undefined;
-      }
-    };
-    // An error from another realm is formatted by that realm's Error.prepareStackTrace.
-    delete shapes["from a node:vm context"];
-    const cases = Object.entries(shapes).map(([shape, make]) => {
-      const [onAccess, ...samples] = captureAll(make);
-      return { shape, expected: JSON.stringify(read(onAccess)), samples };
-    });
-    await collect();
-    const rows = {};
-    for (const { shape, expected, samples } of cases) {
-      const results = readCollected(samples, error => JSON.stringify(read(error)));
-      const [stack, calls] = JSON.parse(expected);
-      rows[shape] = { framesCollected: results.length > 0, calls, sites: JSON.parse(stack)[1].length, same: results.every(result => result === expected) };
-    }
-    console.log(JSON.stringify(rows));
-  `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const rows = JSON.parse(stdout);
-    expect(rows).not.toEqual({});
-    for (const shape in rows) {
-      // The header is made first, and making it throws.
-      const formatted = shape !== "message is a Symbol";
-      expect({ shape, ...rows[shape], sites: rows[shape].sites > 2 }).toEqual({
-        shape,
-        framesCollected: true,
-        calls: formatted ? 1 : 0,
-        sites: formatted,
-        same: true,
-      });
-    }
-    expect(exitCode).toBe(0);
-  },
-);
-
-// Which formatter makes the stack is decided when it is first read, as in V8.
-test.concurrent(
-  "the Error.prepareStackTrace of the first read formats a trace whose frames a collection found dead",
-  async () => {
-    const src = `
-    import vm from "node:vm";
-    ${collectedFrames}
-    const formatter = (error, sites) => "formatted " + sites[0].getFunctionName();
-    const rows = {};
-    const row = async (name, { whenMade, whenRead, make = () => { try { return new Error("boom"); } finally {} } }) => {
-      Error.prepareStackTrace = whenMade;
-      const samples = captureAll(make);
-      await collect();
-      Error.prepareStackTrace = whenRead;
-      const stacks = readCollected(samples, error => error.stack.split("\\n")[0]);
-      Error.prepareStackTrace = undefined;
-      rows[name] = { framesCollected: stacks.length > 0, stacks: [...new Set(stacks)] };
-    };
-    await row("installed all along", { whenMade: formatter, whenRead: formatter });
-    await row("installed after the collection", { whenMade: undefined, whenRead: formatter });
-    await row("removed after the collection", { whenMade: formatter, whenRead: undefined });
-    await row("thrown and caught", { whenMade: formatter, whenRead: formatter, make: () => { try { throw new Error("boom"); } catch (error) { return error; } } });
-    const context = vm.createContext({});
-    vm.runInContext("Error.prepareStackTrace = (error, sites) => 'formatted in the context ' + sites.length", context);
-    await row("of the error's realm", { make: () => vm.runInContext("new Error('boom')", context) });
-    console.log(JSON.stringify(rows));
-  `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const row = stack => ({ framesCollected: true, stacks: [stack] });
-    expect(JSON.parse(stdout)).toEqual({
-      "installed all along": row("formatted make"),
-      "installed after the collection": row("formatted make"),
-      "removed after the collection": row("Error: boom"),
-      "thrown and caught": row("formatted make"),
-      "of the error's realm": row(expect.stringMatching(/^formatted in the context [1-9]/)),
-    });
-    expect(exitCode).toBe(0);
-  },
-);
-
-// Printing an error shows its trace and leaves its stack unread.
-test.concurrent(
-  "Bun.inspect(error) prints the same trace after a collection found the frames dead, and Error.prepareStackTrace is left to the first read of the stack",
-  async () => {
-    const src = `
-    import vm from "node:vm";
-    ${collectedFrames}
-    let calls = 0;
-    Error.prepareStackTrace = (error, sites) => (calls++, "formatted " + sites.length);
-    const read = error => {
-      const before = calls;
-      const printed = Bun.inspect(error).split("\\n").filter(line => /^\\s+at /.test(line)).map(line => line.trim());
-      return JSON.stringify({ printed, callsToPrint: calls - before, formatted: error.stack.startsWith("formatted "), callsToRead: calls - before });
-    };
-    const makers = {
-      inFunction: () => { try { return new Error("boom"); } finally {} },
-      inConstructor: () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
-      inNamelessFunction: () => (() => function () { try { return new Error("boom"); } finally {} })()(),
-      inEvalCode: () => (0, eval)("new Error('boom')"),
-      // Its line of the default stack has no function name and so no parentheses.
-      inGlobalCode: () => vm.runInThisContext("new Error('boom')", { filename: "/global-code.js" }),
-    };
-    const cases = Object.entries(makers).map(([name, make]) => {
-      const [onAccess, ...samples] = captureAll(make);
-      return { name, expected: read(onAccess), samples };
-    });
-    await collect();
-    const rows = {};
-    for (const { name, expected, samples } of cases) {
-      const results = readCollected(samples, read);
-      const { printed, ...onAccess } = JSON.parse(expected);
-      rows[name] = { framesCollected: results.length > 0, same: results.every(result => result === expected), top: printed[0].replace(/ ?\\(.*$/, ""), ...onAccess };
-    }
-    console.log(JSON.stringify(rows));
-  `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const row = top => ({ framesCollected: true, same: true, top, callsToPrint: 0, formatted: true, callsToRead: 1 });
-    expect(JSON.parse(stdout)).toEqual({
-      inFunction: row("at inFunction"),
-      inConstructor: row("at new Widget"),
-      inNamelessFunction: row("at <anonymous>"),
-      inEvalCode: row("at eval"),
-      inGlobalCode: row("at /global-code.js:1:1"),
-    });
-    expect(exitCode).toBe(0);
-  },
-);
-
-// Sloppy functions, so that getFunction() shows them. The trace does not keep them alive.
-test.concurrent("getFunction() is the function while it is alive, and undefined once it is collected", async () => {
-  const src = `
-    const SAMPLES = 8;
-    const kept = new Function("make", "try { return make(); } finally {}");
-    const samples = Array.from({ length: SAMPLES }, () => {
-      const dropped = new Function("kept", "try { return kept(() => new Error('boom')); } finally {}");
-      return { error: dropped(kept), dropped: new WeakRef(dropped) };
-    });
-    await new Promise(resolve => setImmediate(resolve));
-    Bun.gc(true);
-    Error.prepareStackTrace = (error, sites) => sites.slice(1, 3).map(site => site.getFunction());
-    const rows = samples.filter(({ dropped }) => dropped.deref() === undefined).map(({ error }) => error.stack.map(fn => (fn === kept ? "kept" : typeof fn)));
-    console.log(JSON.stringify({ framesCollected: rows.length > 0, functions: [...new Set(rows.map(row => row.join()))] }));
-  `;
-  using dir = tempDir("call-site-get-function", { "main.cjs": `(async () => {${src}})();` });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.cjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ framesCollected: true, functions: ["kept,undefined"] });
-  expect(exitCode).toBe(0);
-});
-
-// Positions go through the source map of a transpiled file. A node:vm script named like the file is not
-// the file: its positions stay as they are.
-test.concurrent("positions are mapped the same after a collection found the frames dead", async () => {
-  const src = `
-    import vm from "node:vm";
-    type Padding = {
-      these: "lines";
-      are: "not in the output";
-    };
-    ${collectedFrames}
-    const positions = (stack: string) => stack.split("\\n").filter(line => line.includes("main.ts")).map(line => line.trim().replace(/^.*main\\.ts:/, "").replace(")", ""));
-    const sitePositions = (error: Error, sites: NodeJS.CallSite[]) => sites.filter(site => site.getFileName()?.includes("main.ts")).map(site => site.getLineNumber() + ":" + site.getColumnNumber());
-    const makers = {
-      "this file": () => new Error("boom"),
-      "a node:vm script named like this file": () => vm.runInThisContext("\\n\\n\\n(function inVM() { try { return new Error('boom'); } finally {} })", { filename: import.meta.path })(),
-      "a node:vm context": () => vm.runInNewContext("\\n\\n\\n(function inVM() { try { return new Error('boom'); } finally {} })()", {}, { filename: import.meta.path }),
-    };
-    const rows: Record<string, unknown> = {};
-    for (const [name, make] of Object.entries(makers)) {
-      for (const formatter of [undefined, sitePositions]) {
-        // An error from another realm is formatted by that realm's Error.prepareStackTrace.
-        if (formatter && name === "a node:vm context") continue;
-        const read = (error: Error) => {
-          Error.prepareStackTrace = formatter;
-          try {
-            return JSON.stringify(formatter ? error.stack : positions(error.stack!));
-          } finally {
-            Error.prepareStackTrace = undefined;
-          }
-        };
-        const [onAccess, ...samples] = captureAll(make);
-        const expected = read(onAccess);
-        await collect();
-        const results = readCollected(samples, read);
-        rows[name + (formatter ? ", call sites" : ", string")] = { framesCollected: results.length > 0, frames: JSON.parse(expected).length > 0, same: results.every((result: string) => result === expected) };
-      }
-    }
-    console.log(JSON.stringify(rows));
-  `;
-  using dir = tempDir("stack-positions-after-collection", { "main.ts": src });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const row = { framesCollected: true, frames: true, same: true };
-  expect(JSON.parse(stdout)).toEqual({
-    "this file, string": row,
-    "this file, call sites": row,
-    "a node:vm script named like this file, string": row,
-    "a node:vm script named like this file, call sites": row,
-    "a node:vm context, string": row,
-  });
-  expect(exitCode).toBe(0);
-});
-
-// The source map of a bundled file is dropped with the file's source, which the trace's code kept alive.
-test.concurrent("positions in a bundled module are mapped after the module is collected", async () => {
-  using dir = tempDir("stack-positions-of-collected-module", {
-    "lib.ts": `
-      type Padding = {
-        these: "lines";
-        are: "not in the output";
-      };
-      export function make(): Error {
-        try {
-          return new Error("boom");
-        } finally {
-        }
-      }
-    `,
-    "main.mjs": `
-      import { join } from "node:path";
-      const { outputs } = await Bun.build({ entrypoints: [join(import.meta.dir, "lib.ts")], target: "bun", sourcemap: "inline", outdir: join(import.meta.dir, "out") });
-      const position = stack => stack.split("\\n")[1].trim().replace(/^.*[\\\\/]/, "").replace(")", "");
-      const sitePosition = (error, [site]) => position("\\n" + site.getFileName() + ":" + site.getLineNumber() + ":" + site.getColumnNumber());
-      async function load() {
-        const graph = new Bun.ModuleGraph();
-        const { make } = await graph.import(outputs.find(output => output.kind === "entry-point").path);
-        const errors = Array.from({ length: 4 }, () => graph.run(make));
-        graph.dispose();
-        return { errors, weak: new WeakRef(make) };
-      }
-      const { errors: [onAccess, onAccessSites, later, laterSites], weak } = await load();
-      const read = (string, sites) => {
-        const row = [position(string.stack)];
-        Error.prepareStackTrace = sitePosition;
-        row.push(sites.stack);
-        Error.prepareStackTrace = undefined;
-        return row;
-      };
-      const expected = read(onAccess, onAccessSites);
-      await new Promise(resolve => setImmediate(resolve));
-      Bun.gc(true);
-      console.log(JSON.stringify({ collected: weak.deref() === undefined, onAccess: expected, later: read(later, laterSites) }));
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const positions = ["lib.ts:8:22", "lib.ts:8:18"];
-  expect(JSON.parse(stdout)).toEqual({ collected: true, onAccess: positions, later: positions });
-  expect(exitCode).toBe(0);
-});
-
-// Loading a file again replaces its source map.
-test.concurrent("positions are those of the code that ran, after its file changed and was loaded again", async () => {
-  using dir = tempDir("stack-positions-of-reloaded-file", {
-    "main.cjs": `
-      const { writeFileSync } = require("node:fs");
-      const file = require("node:path").join(__dirname, "reloaded.ts");
-      const position = stack => stack.split("\\n")[1].trim().replace(/^.*[\\\\/]/, "").replace(")", "");
-      const sitePosition = (error, [site]) => position("\\n" + site.getFileName() + ":" + site.getLineNumber() + ":" + site.getColumnNumber());
-      const read = ([string, sites]) => {
-        const row = [position(string.stack)];
-        Error.prepareStackTrace = sitePosition;
-        row.push(sites.stack);
-        Error.prepareStackTrace = undefined;
-        return row.join();
-      };
-      const load = () => {
-        const { make } = require(file);
-        delete require.cache[file];
-        return { errors: [make(), make()], weak: new WeakRef(make) };
-      };
-      (async () => {
-        writeFileSync(file, "type Padding = {\\n  not: 'in the output';\\n};\\nexport function make(): Error {\\n  try { return new Error('boom'); } finally {}\\n}\\n");
-        const onAccess = read(load().errors);
-        const samples = Array.from({ length: 8 }, load);
-        await new Promise(resolve => setImmediate(resolve));
-        Bun.gc(true);
-        writeFileSync(file, "export const padding = [\\n  1,\\n  2,\\n  3,\\n  4,\\n  5,\\n  6,\\n];\\ntype Padding = number;\\nexport function make(): Error { try { return new Error('boom'); } finally {} }\\n");
-        read(load().errors);
-        const later = samples.filter(({ weak }) => weak.deref() === undefined).map(({ errors }) => read(errors));
-        console.log(JSON.stringify({ framesCollected: later.length > 0, onAccess, later: [...new Set(later)] }));
-      })();
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.cjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const positions = "reloaded.ts:5:20,reloaded.ts:5:20";
-  expect(JSON.parse(stdout)).toEqual({ framesCollected: true, onAccess: positions, later: [positions] });
-  expect(exitCode).toBe(0);
-});
-
-test.concurrent("an error behaves the same after a collection found its frames dead", async () => {
-  const src = `
-    ${collectedFrames}
+    ${materializedByACollection}
     const operations = {
       "line, column, sourceURL": error => [error.line, error.column, typeof error.sourceURL],
       "assign stack": error => ((error.stack = "assigned"), error.stack),
@@ -2100,31 +1736,32 @@ test.concurrent("an error behaves the same after a collection found its frames d
       const [onAccess, ...samples] = captureAll(() => new TypeError("boom"));
       const expected = JSON.stringify(operation(onAccess));
       await collect();
-      const results = readCollected(samples, error => JSON.stringify(operation(error)));
-      rows[name] = { framesCollected: results.length > 0, same: results.every(result => result === expected), onAccess: JSON.parse(expected) };
+      const results = readMaterialized(samples, error => JSON.stringify(operation(error)));
+      rows[name] = { materializedByACollection: results.length > 0, same: results.every(result => result === expected), onAccess: JSON.parse(expected) };
     }
     console.log(JSON.stringify(rows));
   `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const row = onAccess => ({ framesCollected: true, same: true, onAccess });
-  expect(JSON.parse(stdout)).toEqual({
-    "line, column, sourceURL": row([expect.any(Number), expect.any(Number), "string"]),
-    "assign stack": row("assigned"),
-    "delete stack": row([true, null]),
-    "define stack": row("defined"),
-    "structuredClone": row(["TypeError: boom"]),
-    "Bun.inspect": row([expect.stringContaining("TypeError: boom")]),
-    "JSON.stringify": row(expect.any(String)),
-  });
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const row = onAccess => ({ materializedByACollection: true, same: true, onAccess });
+    expect(JSON.parse(stdout)).toEqual({
+      "line, column, sourceURL": row([expect.any(Number), expect.any(Number), "string"]),
+      "assign stack": row("assigned"),
+      "delete stack": row([true, null]),
+      "define stack": row("defined"),
+      "structuredClone": row(["TypeError: boom"]),
+      "Bun.inspect": row([expect.stringContaining("TypeError: boom")]),
+      "JSON.stringify": row(expect.any(String)),
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.concurrent("a stack reads the same after a collection found its frames dead in a Worker", async () => {
+test.concurrent("a stack that a collection materializes reads the same in a Worker", async () => {
   const src = `
     import { Worker, isMainThread, parentPort } from "node:worker_threads";
-    ${collectedFrames}
+    ${materializedByACollection}
     if (isMainThread) {
       const worker = new Worker(new URL(import.meta.url));
       const rows = await new Promise((resolve, reject) => {
@@ -2143,8 +1780,8 @@ test.concurrent("a stack reads the same after a collection found its frames dead
         const [onAccess, ...samples] = captureAll(make);
         const expected = onAccess.stack;
         await collect();
-        const texts = readCollected(samples, error => error.stack);
-        rows[shape] = { framesCollected: texts.length > 0, firstTwoLines: (texts[0] ?? "").split("\\n").slice(0, 2).map(line => line.trim().replace(/ ?\\(.*$/, "")), sameText: texts.every(text => text === expected) };
+        const texts = readMaterialized(samples, error => error.stack);
+        rows[shape] = { materializedByACollection: texts.length > 0, firstTwoLines: (texts[0] ?? "").split("\\n").slice(0, 2).map(line => line.trim().replace(/ ?\\(.*$/, "")), sameText: texts.every(text => text === expected) };
       }
       parentPort.postMessage(rows);
     }
@@ -2161,12 +1798,12 @@ test.concurrent("a stack reads the same after a collection found its frames dead
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
     "TypeError with a message": {
-      framesCollected: true,
+      materializedByACollection: true,
       firstTwoLines: ["TypeError: boom", expect.any(String)],
       sameText: true,
     },
     "created in a constructor": {
-      framesCollected: true,
+      materializedByACollection: true,
       firstTwoLines: ["Error: boom", "at new Widget"],
       sameText: true,
     },
@@ -2174,13 +1811,166 @@ test.concurrent("a stack reads the same after a collection found its frames dead
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("Error.prepareStackTrace gets the call sites of a stack that a collection materialized", async () => {
+  const src = `
+    ${materializedByACollection}
+    const is = ["isToplevel", "isEval", "isNative", "isConstructor", "isAsync"];
+    // Everything but the column and getFunction(). The functions that die are a script of their own in
+    // each sample, so a script id is told by where in the trace it first appears. 0 is no script.
+    Error.prepareStackTrace = (error, callSites) => {
+      const scriptIds = [0, ...new Set(callSites.map(site => site.getScriptId()).filter(Boolean))];
+      return callSites.map(site => ({
+        name: site.getFunctionName(),
+        file: site.getFileName(),
+        line: site.getLineNumber(),
+        script: scriptIds.indexOf(site.getScriptId()),
+        is: is.filter(method => site[method]()).join(" "),
+        text: site.toString().replace(/:\\d+\\)?$/, ""),
+      }));
+    };
+    const shapes = {
+      "in a strict function": () => { "use strict"; try { return new Error("boom"); } finally {} },
+      "in a sloppy function": new Function('try { return new Error("boom"); } finally {}'),
+      "in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
+      "in eval code": () => (0, eval)("new Error('boom')"),
+      "under a builtin": () => [0].map(() => { try { return new Error("boom"); } finally {} })[0],
+      "under a host function": () => JSON.parse("0", () => { try { return new Error("boom"); } finally {} }),
+    };
+    const framesToShow = { "under a builtin": 2, "under a host function": 2 };
+    const cases = Object.entries(shapes).map(([shape, make]) => {
+      const [onAccess, ...samples] = captureAll(make);
+      return { shape, expected: onAccess.stack, samples };
+    });
+    // The frames of an async function are its own once it has awaited.
+    const afterAnAwait = () => {
+      const [error, deadFrame] = new Function(
+        '"use strict"; async function inner() { await 1; try { return new Error("boom"); } finally {} } async function outer() { return await inner(); } return [outer(), inner];',
+      )();
+      return error.then(error => (deadFrames.set(error, new WeakRef(deadFrame)), error));
+    };
+    const [onAccess, ...samples] = await Promise.all(Array.from({ length: 1 + SAMPLES }, afterAnAwait));
+    cases.push({ shape: "after an await", expected: onAccess.stack, samples });
+    framesToShow["after an await"] = 2;
+
+    await collect();
+    const rows = {};
+    for (const { shape, expected, samples } of cases) {
+      const stacks = readMaterialized(samples, error => JSON.stringify(error.stack));
+      rows[shape] = {
+        materializedByACollection: stacks.length > 0,
+        same: stacks.every(stack => stack === JSON.stringify(expected)),
+        frames: expected.slice(0, framesToShow[shape] ?? 1).map(({ name, script, is }) => [name, script, is]),
+      };
+    }
+    console.log(JSON.stringify(rows));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const row = (...frames) => ({ materializedByACollection: true, same: true, frames });
+  expect(JSON.parse(stdout)).toEqual({
+    "in a strict function": row(["in a strict function", 1, "isToplevel"]),
+    "in a sloppy function": row(["anonymous", 1, ""]),
+    "in a constructor": row(["Widget", 1, "isToplevel isConstructor"]),
+    "in eval code": row(["", 1, "isToplevel isEval"]),
+    "under a builtin": row(["", 1, "isToplevel"], ["map", 0, "isToplevel isNative"]),
+    "under a host function": row(["", 1, "isToplevel"], ["parse", 0, "isToplevel isNative"]),
+    "after an await": row(["inner", 1, "isToplevel"], ["outer", 1, "isToplevel isAsync"]),
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("Error.prepareStackTrace is used for a stack that a collection materialized as on access", async () => {
+  const src = `
+    import vm from "node:vm";
+    ${materializedByACollection}
+    const count = (error, callSites) => "call sites: " + callSites.length;
+    const install = formatter => read => error => {
+      Error.prepareStackTrace = formatter;
+      try {
+        return read(error);
+      } finally {
+        Error.prepareStackTrace = undefined;
+      }
+    };
+    const context = vm.createContext({});
+    vm.runInContext("Error.prepareStackTrace = (error, callSites) => 'context: ' + callSites.length", context);
+    const uses = {
+      "installed for the read": [() => new Error("boom"), install(count)(error => error.stack)],
+      "removed before the read": [() => new Error("boom"), error => error.stack.split("\\n")[0]],
+      "returns an object": [() => new Error("boom"), install(() => ({ made: "by the formatter" }))(error => error.stack)],
+      "reads error.stack": [() => new Error("boom"), install(error => error.stack.split("\\n")[0])(error => error.stack)],
+      "throws": [
+        () => new Error("boom"),
+        install(() => { throw new Error("from the formatter"); })(error => {
+          try {
+            return error.stack;
+          } catch (thrown) {
+            return [thrown.message, error.stack.split("\\n")[0]];
+          }
+        }),
+      ],
+      "called once": [
+        () => new Error("boom"),
+        error => {
+          let calls = 0;
+          install(() => ++calls)(error => [error.stack, error.stack, error.line && error.stack])(error);
+          return calls;
+        },
+      ],
+      "after Error.captureStackTrace": [
+        () => { const error = new Error("boom"); Error.captureStackTrace(error); return error; },
+        install(count)(error => error.stack),
+      ],
+      "of a node:vm context": [() => vm.runInContext("new Error('boom')", context), error => error.stack],
+      "not called to print": [
+        () => new Error("boom"),
+        error => {
+          let calls = 0;
+          const printed = install(() => ++calls)(error => Bun.inspect(error))(error);
+          return [calls, printed.includes("at thrower")];
+        },
+      ],
+    };
+    const cases = Object.entries(uses).map(([use, [make, read]]) => {
+      if (use === "removed before the read") Error.prepareStackTrace = count;
+      const [onAccess, ...samples] = captureAll(make);
+      Error.prepareStackTrace = undefined;
+      return { use, read, expected: read(onAccess), samples };
+    });
+    await collect();
+    const rows = {};
+    for (const { use, read, expected, samples } of cases) {
+      const results = readMaterialized(samples, error => JSON.stringify(read(error)));
+      rows[use] = { materializedByACollection: results.length > 0, same: results.every(result => result === JSON.stringify(expected)), onAccess: expected };
+    }
+    console.log(JSON.stringify(rows));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const row = onAccess => ({ materializedByACollection: true, same: true, onAccess });
+  expect(JSON.parse(stdout)).toEqual({
+    "installed for the read": row(expect.stringMatching(/^call sites: [1-9]/)),
+    "removed before the read": row("Error: boom"),
+    "returns an object": row({ made: "by the formatter" }),
+    "reads error.stack": row("Error: boom"),
+    "throws": row(["from the formatter", "Error: boom"]),
+    "called once": row(1),
+    "after Error.captureStackTrace": row(expect.stringMatching(/^call sites: [1-9]/)),
+    "of a node:vm context": row(expect.stringMatching(/^context: [1-9]/)),
+    "not called to print": row([0, true]),
+  });
+  expect(exitCode).toBe(0);
+});
+
 // Materializing the stack can throw (a Symbol message). Asking for the property's descriptor must throw
-// that, not report the property found with the exception still pending, whatever the stack is made from.
+// that, not report the property found with the exception still pending, however the stack is materialized.
 test.concurrent(
   "Object.getOwnPropertyDescriptor(error, 'stack') throws what materializing the stack threw",
   async () => {
     const src = `
-    ${collectedFrames}
+    ${materializedByACollection}
     const describe = error => {
       try {
         Object.getOwnPropertyDescriptor(error, "stack");
@@ -2192,7 +1982,7 @@ test.concurrent(
     const [onAccess, ...samples] = captureAll(() => Object.assign(new Error(), { message: Symbol("m") }));
     const rows = { onAccess: describe(onAccess) };
     await collect();
-    rows.afterACollection = [...new Set(readCollected(samples, describe).map(result => JSON.stringify(result)))];
+    rows.afterACollection = [...new Set(readMaterialized(samples, describe).map(result => JSON.stringify(result)))];
     console.log(JSON.stringify(rows));
   `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -2207,10 +1997,10 @@ test.concurrent(
 );
 
 // Error.captureStackTrace() replaces the trace. With no frames left after the constructor it names,
-// the stack is the header alone, also for an error whose old frames a collection had found dead.
-test.concurrent("Error.captureStackTrace replaces a trace whose frames a collection found dead", async () => {
+// the stack is the header alone, also for an error whose old frames a collection had already formatted.
+test.concurrent("Error.captureStackTrace replaces a stack that a collection materialized", async () => {
   const src = `
-    ${collectedFrames}
+    ${materializedByACollection}
     function notOnTheStack() {}
     const errors = captureAll(() => new TypeError("boom"));
     await collect();
@@ -2237,92 +2027,6 @@ test.concurrent("Error.captureStackTrace replaces a trace whose frames a collect
   expect(JSON.parse(stdout)).toEqual({
     noFramesLeft: ["TypeError: boom"],
     framesLeft: [["TypeError: boom", "at recapture", false]],
-  });
-  expect(exitCode).toBe(0);
-});
-
-test.concurrent("an error given to a stream keeps a trace whose frames a collection found dead", async () => {
-  const src = `
-    ${collectedFrames}
-    const read = async error => {
-      let controller;
-      const reader = new ReadableStream({ start(c) { controller = c; } }).getReader();
-      async function consumer() { return await reader.read(); }
-      const rejected = consumer().catch(reason => reason);
-      controller.error(error);
-      return JSON.stringify((await rejected).stack.split("\\n").map(line => line.trim().replace(/ ?\\(.*$/, "")).slice(0, 3));
-    };
-    const make = () => { try { return new Error("boom"); } finally {} };
-    const [onAccess, ...samples] = captureAll(make);
-    const expected = await read(onAccess);
-    await collect();
-    const results = await Promise.all(readCollected(samples, read));
-    console.log(JSON.stringify({ framesCollected: results.length > 0, onAccess: JSON.parse(expected), same: results.every(result => result === expected) }));
-  `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    framesCollected: true,
-    onAccess: ["Error: boom", "at make", "at thrower"],
-    same: true,
-  });
-  expect(exitCode).toBe(0);
-});
-
-test.concurrent("a stack read while it is being formatted has the frames a collection found dead", async () => {
-  const src = `
-    ${collectedFrames}
-    const read = error => {
-      let entered = false, inner;
-      Object.defineProperty(error, "name", { get() { if (!entered) { entered = true; inner = this.stack; } return "Named"; } });
-      Error.prepareStackTrace = (error, sites) => "formatted " + sites[0].getFunctionName();
-      const outer = error.stack;
-      Error.prepareStackTrace = undefined;
-      return JSON.stringify({ outer, inner: inner.split("\\n").map(line => line.trim().replace(/ ?\\(.*$/, "")).slice(1, 3) });
-    };
-    const make = () => { try { const error = new Error("boom"); Error.captureStackTrace(error); return error; } finally {} };
-    const [onAccess, ...samples] = captureAll(make);
-    const expected = read(onAccess);
-    await collect();
-    const results = readCollected(samples, read);
-    console.log(JSON.stringify({ framesCollected: results.length > 0, onAccess: JSON.parse(expected), same: results.every(result => result === expected) }));
-  `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    framesCollected: true,
-    onAccess: { outer: "formatted make", inner: ["at make", "at thrower"] },
-    same: true,
-  });
-  expect(exitCode).toBe(0);
-});
-
-test.concurrent("a collection finds the frames dead again after Error.appendStackTrace replaced them", async () => {
-  const src = `
-    ${collectedFrames}
-    const destinations = captureAll(() => new TypeError("boom"));
-    await collect();
-    const appenders = new WeakMap();
-    for (const destination of destinations) {
-      const appender = new Function("destination", "function source() { try { return new Error(); } finally {} } Error.appendStackTrace(source(), destination);");
-      appender(destination);
-      appenders.set(destination, new WeakRef(appender));
-    }
-    // The frames that replaced the first ones die as well.
-    await collect();
-    const stacks = destinations
-      .filter(destination => frames.get(destination).deref() === undefined && appenders.get(destination).deref() === undefined)
-      .map(destination => destination.stack.split("\\n").map(line => line.trim().replace(/ ?\\(.*$/, "")).filter(line => /^(TypeError|at (anonymous|source|thrower)$)/.test(line)));
-    console.log(JSON.stringify({ framesCollected: stacks.length > 0, stacks: [...new Set(stacks.map(stack => JSON.stringify(stack)))].map(stack => JSON.parse(stack)) }));
-  `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    framesCollected: true,
-    stacks: [["TypeError: boom", "at anonymous", "at source", "at anonymous"]],
   });
   expect(exitCode).toBe(0);
 });

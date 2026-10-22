@@ -2677,7 +2677,6 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         {
             WTF::Vector<JSC::StackFrame> stackFrames;
             vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
-            Zig::JSCStackTrace stackTrace = Zig::JSCStackTrace::fromExisting(vm, stackFrames);
             String name = "Error"_s;
             String message = "JavaScript Callstack"_s;
             OrdinalNumber line = OrdinalNumber::beforeFirst();
@@ -2686,7 +2685,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
             WTF::String stackProperty = Bun::formatStackTrace(
                 vm, globalObject, globalObject, name, message,
                 line, column,
-                sourceURL, stackTrace, nullptr);
+                sourceURL, stackFrames, nullptr);
             RETURN_IF_EXCEPTION(scope, {});
 
             WTF::String stack;

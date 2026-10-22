@@ -1720,7 +1720,15 @@ test.concurrent(
   "an error whose stack a collection materialized behaves as one whose stack is materialized on access",
   async () => {
     const src = `
+    import vm from "node:vm";
     ${materializedByACollection}
+    const errorAStreamThatIsRead = error => {
+      let controller;
+      const reader = new ReadableStream({ start: c => void (controller = c) }).getReader();
+      (async function awaitsRead() { await reader.read(); })().catch(() => {});
+      controller.error(error);
+    };
+    const captureStackTraceOfAContext = vm.runInContext("Error.captureStackTrace", vm.createContext({}));
     const operations = {
       "line, column, sourceURL": error => [error.line, error.column, typeof error.sourceURL],
       "assign stack": error => ((error.stack = "assigned"), error.stack),
@@ -1730,6 +1738,15 @@ test.concurrent(
       "structuredClone": error => structuredClone(error).stack.split("\\n").filter(line => line.includes("boom")),
       "Bun.inspect": error => Bun.inspect(error).split("\\n").filter(line => line.includes("boom")).map(line => line.trim()),
       "JSON.stringify": error => JSON.stringify(error),
+      "given to a stream": error => (errorAStreamThatIsRead(error), error.stack.includes("at thrower")),
+      "printed, then given to a stream": error => (Bun.inspect(error), errorAStreamThatIsRead(error), error.stack.includes("at thrower")),
+      "printed, then Error.appendStackTrace": error => (Bun.inspect(error), Error.appendStackTrace(new Error("source"), error), error.stack.includes("at thrower")),
+      "not extensible, captureStackTrace of a node:vm context, assign stack, printed": error => {
+        Object.preventExtensions(error);
+        captureStackTraceOfAContext(error);
+        error.stack = "Error: assigned\\n    at assigned (/assigned.js:1:1)";
+        return Bun.inspect(error).includes("at assigned");
+      },
     };
     const rows = {};
     for (const [name, operation] of Object.entries(operations)) {
@@ -1753,6 +1770,10 @@ test.concurrent(
       "structuredClone": row(["TypeError: boom"]),
       "Bun.inspect": row([expect.stringContaining("TypeError: boom")]),
       "JSON.stringify": row(expect.any(String)),
+      "given to a stream": row(true),
+      "printed, then given to a stream": row(true),
+      "printed, then Error.appendStackTrace": row(true),
+      "not extensible, captureStackTrace of a node:vm context, assign stack, printed": row(true),
     });
     expect(exitCode).toBe(0);
   },
@@ -1934,7 +1955,7 @@ test.concurrent(
         Object.defineProperty(() => { try { return new Error("boom"); } finally {} }, "name", { value: "two\\nlines" }),
         error => {
           let calls = 0;
-          return install(() => ++calls)(error => [Bun.inspect(error).split("\\n", 1)[0], calls, error.stack !== undefined])(error);
+          return install(() => ++calls)(error => (Bun.inspect(error), [calls, error.stack !== undefined]))(error);
         },
       ],
       "read by the stack getter of an error that is printed": [
@@ -1969,7 +1990,7 @@ test.concurrent(
       "after Error.captureStackTrace": row(expect.stringMatching(/^call sites: [1-9]/)),
       "of a node:vm context": row(expect.stringMatching(/^context: [1-9]/)),
       "not called to print, and called for a read after it": row([true, 0, 1]),
-      "not called to print a stack whose text has no frame to parse": row([expect.any(String), 0, true]),
+      "not called to print a stack whose text has no frame to parse": row([0, true]),
       "read by the stack getter of an error that is printed": row(expect.stringMatching(/^call sites: [1-9]/)),
     });
     expect(exitCode).toBe(0);

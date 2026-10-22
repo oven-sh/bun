@@ -795,8 +795,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    // A destination that is materialized, or is being formatted right now, never renders frames again.
-    if (destination->hasMaterializedErrorInfo()) {
+    // A destination that is materialized, is being formatted right now, or that a collection formatted never renders frames again.
+    if (destination->hasMaterializedErrorInfo() || !destination->collectedStackString().isNull()) {
         return JSC::JSValue::encode(jsUndefined());
     }
 
